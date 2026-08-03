@@ -5,8 +5,8 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
-from app.services.ragservice import RAGService
-from app.services.aiservice import AIService
+from agent.app.services.ragservice import RAGService
+from agent.app.services.aiservice import AIService
 
 logger = logging.getLogger(__name__)
 

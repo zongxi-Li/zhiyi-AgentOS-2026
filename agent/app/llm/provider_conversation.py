@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from app.llm.contracts import (
+from agent.app.llm.contracts import (
     ProviderConversationState,
     ProviderProtocolMessage,
     ProviderRawResult,
@@ -339,7 +339,7 @@ _configured_manager: Optional[ProviderConversationManager] = None
 
 def configured_provider_conversation_manager() -> Optional[ProviderConversationManager]:
     global _configured_manager, _configured_store
-    from app.config import settings
+    from agent.app.config import settings
 
     if not settings.PROVIDER_STATE_ENABLED:
         return None

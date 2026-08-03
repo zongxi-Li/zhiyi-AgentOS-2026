@@ -6,7 +6,7 @@
 import logging
 import httpx
 from typing import Dict, Optional
-from app.config import settings
+from agent.app.config import settings
 
 logger = logging.getLogger(__name__)
 

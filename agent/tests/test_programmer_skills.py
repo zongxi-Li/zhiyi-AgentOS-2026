@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 from unittest.mock import patch
 
 from agentos.core.models.types import SkillRequest
-from packs.programmer.skills import (
+from agent.packs.programmer.skills import (
     CodeGenerationSkill,
     CodebaseSemanticSearchSkill,
     DiagramGenerationSkill,

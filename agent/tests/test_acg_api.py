@@ -14,7 +14,7 @@ from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
 from agentos.core.models.types import WorkflowDefinition, WorkflowStepDefinition
 from agentos.core.runtime import WorkflowRuntime
 from agentos.core.workflow.registry import WorkflowRegistry
-from app.api.agentos_core import _safe_runtime_projection, create_router
+from agent.app.api.agentos_core import _safe_runtime_projection, create_router
 
 
 class _Agent(BaseAgent):

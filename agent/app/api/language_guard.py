@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Dict, List, Optional
 
-from app.services.aiservice import AIService
+from agent.app.services.aiservice import AIService
 
 logger = logging.getLogger(__name__)
 

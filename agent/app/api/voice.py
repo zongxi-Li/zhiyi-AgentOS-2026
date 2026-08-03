@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 import io
-from app.services.aiservice import AIService
+from agent.app.services.aiservice import AIService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

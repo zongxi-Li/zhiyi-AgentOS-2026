@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 from agentos.core.planning.default_catalog import build_default_capability_catalog
 from agentos.core.planning.intent_parser import IntentParser
-from packs.legal.agents import contract_review_migration as contract_agents
-from packs.legal.planning import register_legal_capabilities
+from agent.packs.legal.agents import contract_review_migration as contract_agents
+from agent.packs.legal.planning import register_legal_capabilities
 
 
 class _IntentLLM:

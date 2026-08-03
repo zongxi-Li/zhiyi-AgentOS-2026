@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
-from app.services.kylinosintegration import kylin_os_integration_service
+from agent.app.services.kylinosintegration import kylin_os_integration_service
 
 router = APIRouter()
 

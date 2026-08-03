@@ -4,8 +4,8 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, List, Set
 
-from app.rag.legal_evidence_schema import LegalEvidence
-from app.rag.legal_text_splitter import LegalChunk
+from agent.app.rag.legal_evidence_schema import LegalEvidence
+from agent.app.rag.legal_text_splitter import LegalChunk
 
 
 class KeywordLegalEvidenceRetriever:

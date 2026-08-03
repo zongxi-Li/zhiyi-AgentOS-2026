@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from app.rag.legal_document_loader import DEFAULT_LEGAL_KNOWLEDGE_DIR, LegalDocumentLoader
-from app.rag.legal_text_splitter import LegalTextSplitter
-from app.rag.providers.keyword_retriever import KeywordLegalEvidenceRetriever
+from agent.app.rag.legal_document_loader import DEFAULT_LEGAL_KNOWLEDGE_DIR, LegalDocumentLoader
+from agent.app.rag.legal_text_splitter import LegalTextSplitter
+from agent.app.rag.providers.keyword_retriever import KeywordLegalEvidenceRetriever
 
 
 class LegalEvidenceRetriever(KeywordLegalEvidenceRetriever):

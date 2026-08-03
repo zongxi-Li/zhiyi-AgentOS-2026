@@ -6,9 +6,9 @@ import logging
 from typing import Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.services.modelselector import ModelSelector, ModelType
+    from agent.app.services.modelselector import ModelSelector, ModelType
 
-from app.services.federatedlearning import FederatedLearningService
+from agent.app.services.federatedlearning import FederatedLearningService
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,8 @@ class FederatedModelOptimizer:
     
     def __init__(self):
         # 延迟导入避免循环依赖
-        from app.services.modelselector import ModelSelector, ModelType
-        from app.services.federatedlearning import FederatedLearningService
+        from agent.app.services.modelselector import ModelSelector, ModelType
+        from agent.app.services.federatedlearning import FederatedLearningService
         self.model_selector = ModelSelector()
         self.federated_learning = FederatedLearningService()
         self.optimized_models = {}  # 存储优化后的模型参数

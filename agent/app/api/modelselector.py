@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
-from app.services.modelselector import model_selector, ModelType
+from agent.app.services.modelselector import model_selector, ModelType
 
 router = APIRouter()
 

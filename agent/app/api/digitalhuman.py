@@ -5,8 +5,8 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Dict, Optional
 import logging
-from app.paths import DIGITAL_HUMAN_IMAGE_DIR
-from app.services.digitalhumanservice import digital_human_service
+from agent.app.paths import DIGITAL_HUMAN_IMAGE_DIR
+from agent.app.services.digitalhumanservice import digital_human_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

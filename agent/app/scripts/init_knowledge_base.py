@@ -11,7 +11,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.services.ragservice import RAGService
+from agent.app.services.ragservice import RAGService
 
 # 角色ID映射（根据实际角色名称或ID）
 ROLE_MAPPING = {

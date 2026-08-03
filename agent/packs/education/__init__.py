@@ -4,7 +4,7 @@
 
 from pathlib import Path
 
-from packs.education.agents import LessonPlanAgent
+from agent.packs.education.agents import LessonPlanAgent
 
 
 def register_pack(agent_registry, workflow_registry) -> None:

@@ -100,7 +100,7 @@ class TextAIGCGenerator:
         """根据风格生成文字（使用通义千问文本生成）"""
         try:
             # 使用通义千问文本生成
-            from app.ai_engine.kylin_sdk.client import KylinAIClient
+            from agent.app.ai_engine.kylin_sdk.client import KylinAIClient
             
             ai_client = KylinAIClient()
             result = await ai_client.generate_text(
@@ -190,7 +190,7 @@ class ImageAIGCGenerator:
         # 调用AI接口生成图像
         try:
             # 使用独立的图像生成服务
-            from app.services.imagegenerationservice import image_generation_service
+            from agent.app.services.imagegenerationservice import image_generation_service
             
             result = await image_generation_service.generate_image(
                 prompt=prompt,
@@ -240,7 +240,7 @@ class ImageAIGCGenerator:
         """获取AI客户端（延迟初始化，用于文本生成等其他功能）"""
         if self._ai_client is None:
             try:
-                from app.ai_engine.kylin_sdk.client import KylinAIClient
+                from agent.app.ai_engine.kylin_sdk.client import KylinAIClient
                 self._ai_client = KylinAIClient()
             except Exception as e:
                 logger.error(f"初始化AI客户端失败: {e}", exc_info=True)

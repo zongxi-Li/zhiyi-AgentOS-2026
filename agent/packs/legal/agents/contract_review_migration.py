@@ -5,12 +5,12 @@ import json
 from typing import Any, Callable, Dict, List
 
 from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
-from app.llm.gateway import get_llm_gateway
-from app.llm.prompts import render_parse_contract_prompt, render_report_generate_prompt, render_risk_detect_prompt
-from app.llm.schemas import PARSE_CONTRACT_SCHEMA, REPORT_GENERATE_SCHEMA, RISK_DETECT_SCHEMA
-from app.rag import LegalEvidenceRetriever
-from app.rag.legal_evidence_schema import normalize_evidence
-from packs.legal.agents.common import case_text
+from agent.app.llm.gateway import get_llm_gateway
+from agent.app.llm.prompts import render_parse_contract_prompt, render_report_generate_prompt, render_risk_detect_prompt
+from agent.app.llm.schemas import PARSE_CONTRACT_SCHEMA, REPORT_GENERATE_SCHEMA, RISK_DETECT_SCHEMA
+from agent.app.rag import LegalEvidenceRetriever
+from agent.app.rag.legal_evidence_schema import normalize_evidence
+from agent.packs.legal.agents.common import case_text
 
 
 def _contract_text(context) -> str:

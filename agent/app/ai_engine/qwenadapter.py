@@ -34,7 +34,7 @@ class QwenAdapter:
         # 所有配置都从主目录的.env文件读取（通过app.config.settings）
         if base_url is None:
             try:
-                from app.config import settings
+                from agent.app.config import settings
                 self.base_url = settings.QWEN_BASE_URL
             except Exception as e:
                 logger.warning(f"无法读取QWEN_BASE_URL配置: {e}，使用默认值")
@@ -238,7 +238,7 @@ class QwenAdapter:
             # 所有配置都从主目录的.env文件读取（通过app.config.settings）
             if model is None:
                 try:
-                    from app.config import settings
+                    from agent.app.config import settings
                     model = settings.IMAGE_GENERATION_MODEL
                 except Exception as e:
                     logger.warning(f"无法读取IMAGE_GENERATION_MODEL配置: {e}，使用默认值")

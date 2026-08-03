@@ -5,10 +5,10 @@ import json
 
 import pytest
 
-from app.config import settings
-from app.tools.catalog import ReadOnlyToolCatalog
-from app.tools.contracts import SourceReference, ToolPayload, ToolUnavailableError
-from app.tools.runtime import AgentsToolRuntime, ToolInvocationContext, _tool_call_id
+from agent.app.config import settings
+from agent.app.tools.catalog import ReadOnlyToolCatalog
+from agent.app.tools.contracts import SourceReference, ToolPayload, ToolUnavailableError
+from agent.app.tools.runtime import AgentsToolRuntime, ToolInvocationContext, _tool_call_id
 
 
 class _FakeTavily:

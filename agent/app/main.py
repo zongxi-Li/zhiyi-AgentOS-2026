@@ -4,6 +4,7 @@
 提供AI能力：文本生成、语音识别、语音合成
 """
 from contextlib import asynccontextmanager
+from agent.app.api import adaptivelearning, agentos_core, aigc, chat, collaborativechat, communicationoptimizer, digitalhuman, digitalhumanmodelselector, emotion, emotiondriven, federateddigitalhuman, federatedglobal, federatedmodelmanagement, federatedrag, knowledgegraph, kylinos, modelselector, multimodal, performance, performanceoptimizer, ragenhanced, realtimeasr, rolefusion
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -13,19 +14,20 @@ import uvicorn
 import logging
 
 from fastapi.exceptions import RequestValidationError
-from app.api import chat, tts, agentos_core
-from app.paths import APP_DATA_DIR
-from app.services.aiservice import AIService
-from app.integrations.model_adapter import configure_model_adapter
-from app.integrations.tool_adapter import configure_tool_adapter
-from app.tools import get_tool_runtime
-from app.config import settings
-from app.security.internal_auth import (
+from agent.app.api import tts
+from agent.app.api import rolestylelearning
+from agent.app.paths import APP_DATA_DIR
+from agent.app.services.aiservice import AIService
+from agent.app.integrations.model_adapter import configure_model_adapter
+from agent.app.integrations.tool_adapter import configure_tool_adapter
+from agent.app.tools import get_tool_runtime
+from agent.app.config import settings
+from agent.app.security.internal_auth import (
     InternalServiceAuthMiddleware,
     require_valid_internal_token_configuration,
 )
-from app.utils.logger import setup_logger
-from app.middleware.errorhandler import (
+from agent.app.utils.logger import setup_logger
+from agent.app.middleware.errorhandler import (
     validation_exception_handler,
     general_exception_handler
 )
@@ -53,7 +55,7 @@ async def lifespan(app: FastAPI):
         await agentos_core.coordinator.shutdown()
     
         # 关闭时执行 - 简化日志输出
-        from app.llm.provider_conversation import close_configured_provider_conversation_store
+        from agent.app.llm.provider_conversation import close_configured_provider_conversation_store
 
         await close_configured_provider_conversation_store()
 
@@ -63,7 +65,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-from app.middleware.trace import TraceIdMiddleware
+from agent.app.middleware.trace import TraceIdMiddleware
 
 app.add_middleware(InternalServiceAuthMiddleware, token=settings.AI_INTERNAL_TOKEN)
 
@@ -89,7 +91,7 @@ app.include_router(chat.router, prefix="/ai", tags=["AI"])
 app.include_router(tts.router, prefix="/ai", tags=["TTS"])
 app.include_router(agentos_core.router, prefix="/ai", tags=["AgentOSCore"])
 if settings.SSE_TEST_MODE:
-    from app.api import sse_test
+    from agent.app.api import sse_test
     app.include_router(sse_test.router, prefix="/ai", tags=["SSETest"])
 
 # 注册静态文件服务（用于访问数字人图像和其他数据文件）
@@ -116,7 +118,7 @@ if _is_main_process:
 
 # 创新功能路由
 try:
-    from app.api import digitalhuman, emotion, rolefusion, knowledgegraph, adaptivelearning, multimodal, aigc, modelselector, performance, realtimeasr, rolestylelearning, collaborativechat, emotiondriven, federateddigitalhuman, digitalhumanmodelselector, kylinos, ragenhanced, communicationoptimizer, performanceoptimizer, federatedmodelmanagement, federatedglobal, federatedrag, voice
+    from agent.app.api import voice
     app.include_router(digitalhuman.router, prefix="/ai", tags=["DigitalHuman"])
     app.include_router(emotion.router, prefix="/ai", tags=["Emotion"])
     app.include_router(rolefusion.router, prefix="/ai", tags=["RoleFusion"])
@@ -172,7 +174,7 @@ async def readiness_check():
         probe.write_text("ready", encoding="utf-8")
         probe.unlink()
         checks["dataDirectory"] = True
-        from app.api.agentos_core import runtime
+        from agent.app.api.agentos_core import runtime
 
         checks["packsRegistered"] = bool(runtime.workflow_registry.all())
         runtime.workflow_store.list_runs(page=1, page_size=1)
@@ -190,7 +192,7 @@ async def dependency_check():
     provider_state = {"status": "DISABLED", "affectsReadiness": False}
     if settings.PROVIDER_STATE_ENABLED:
         try:
-            from app.llm.provider_conversation import configured_provider_conversation_manager
+            from agent.app.llm.provider_conversation import configured_provider_conversation_manager
 
             manager = configured_provider_conversation_manager()
             provider_state["status"] = "UP" if manager and await manager.ping() else "DOWN"
@@ -209,7 +211,7 @@ async def dependency_check():
 
 # RAG路由
 try:
-    from app.api import rag
+    from agent.app.api import rag
     app.include_router(rag.router, prefix="/rag", tags=["RAG"])
     if _is_main_process:
         logger.info("✅ RAG路由已加载")

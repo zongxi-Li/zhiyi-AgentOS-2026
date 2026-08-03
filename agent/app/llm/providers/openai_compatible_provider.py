@@ -4,8 +4,8 @@ import json
 import re
 from typing import Any, Dict
 
-from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
-from app.llm.contracts import ProviderRawResult, ProviderToolCall
+from agent.app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
+from agent.app.llm.contracts import ProviderRawResult, ProviderToolCall
 
 
 class LLMProviderError(RuntimeError):

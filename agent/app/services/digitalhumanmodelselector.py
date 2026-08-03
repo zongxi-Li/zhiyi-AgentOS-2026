@@ -4,8 +4,8 @@
 """
 import logging
 from typing import Dict, Optional, List
-from app.services.modelselector import ModelSelector, ModelType
-from app.services.digitalhumanservice import DigitalHumanGenerator
+from agent.app.services.modelselector import ModelSelector, ModelType
+from agent.app.services.digitalhumanservice import DigitalHumanGenerator
 
 logger = logging.getLogger(__name__)
 

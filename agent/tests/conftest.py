@@ -61,7 +61,7 @@ class _ContractReviewTestProvider:
         return ""
 
     def generate_json(self, prompt, schema, **kwargs):
-        from app.llm.schemas import compact_schema_name
+        from agent.app.llm.schemas import compact_schema_name
 
         task = compact_schema_name(schema)
         if task == "parse_contract":
@@ -138,7 +138,7 @@ class _ReadOnlyToolTestRuntime:
         return _ReadOnlyToolTestRuntime(self.allowed_tools.intersection(allowed_tools))
 
     async def run(self, text, **kwargs):
-        from app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
+        from agent.app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
 
         source = SourceReference(
             citationId="src_test_evidence",
@@ -163,7 +163,7 @@ class _ReadOnlyToolTestRuntime:
         )
 
     async def execute(self, name, arguments, **kwargs):
-        from app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
+        from agent.app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
 
         if name not in self.allowed_tools:
             raise PermissionError(f"tool is not allowed in this test run: {name}")
@@ -216,7 +216,7 @@ def _force_mock_llm(monkeypatch):
     测试仍可用 set_llm_gateway_for_tests 注入自定义 provider。
     """
     monkeypatch.setenv("AGENTOS_LLM_PROVIDER", "mock")
-    from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
+    from agent.app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
     from agentos.adapters.tool_adapter import (
         clear_tool_runtime_factory,
         register_tool_runtime_factory,

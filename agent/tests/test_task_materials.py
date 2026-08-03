@@ -5,8 +5,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.services import taskmaterialservice as materials
-from app.api import agentos_core
+from agent.app.services import taskmaterialservice as materials
+from agent.app.api import agentos_core
 
 
 def test_text_material_is_persisted_bound_and_released(tmp_path):

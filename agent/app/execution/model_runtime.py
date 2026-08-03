@@ -12,7 +12,7 @@ from agentos.adapters.model_adapter import (
     StructuredGenerationResult,
 )
 
-from app.llm.gateway import get_llm_gateway
+from agent.app.llm.gateway import get_llm_gateway
 
 
 def _positive_int(name: str, default: int) -> int:

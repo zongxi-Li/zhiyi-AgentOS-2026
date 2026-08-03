@@ -2,8 +2,8 @@ import asyncio
 import time
 from types import SimpleNamespace
 
-from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
-from packs.legal.agents.contract_review_migration import ContractParseAgent
+from agent.app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
+from agent.packs.legal.agents.contract_review_migration import ContractParseAgent
 
 
 class _BlockingProvider:

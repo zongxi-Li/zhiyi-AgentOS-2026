@@ -9,8 +9,8 @@ import pytest
 from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
 from agentos.agents import AgentRegistry
 from agentos.core.execution import ACGWorkflowAdapter
-from app.execution.runtime import configure_runtime
-from packs.legal import register_pack as register_legal_pack
+from agent.app.execution.runtime import configure_runtime
+from agent.packs.legal import register_pack as register_legal_pack
 from agentos.core.workflow.state_machine import InvalidStateTransition, StateMachine
 from agentos.core.models.types import (
     ReviewDecision,
@@ -297,7 +297,7 @@ def test_agentos_core_api_task_run_review_flow():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -388,7 +388,7 @@ def test_workbench_can_start_workflow_in_one_request():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -420,7 +420,7 @@ def test_chat_can_upgrade_message_to_workflow_run():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -456,7 +456,7 @@ def test_legacy_lawyer_agent_chat_endpoint_returns_status_payload():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -487,7 +487,7 @@ def test_legacy_lawyer_agent_chat_smalltalk_returns_direct_intro_without_trace(t
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -520,7 +520,7 @@ def test_legacy_lawyer_agent_chat_smalltalk_returns_direct_intro_without_trace(t
 
 
 def test_legacy_chat_smalltalk_rule_cannot_be_overridden_by_llm(monkeypatch):
-    from app.api import agentos_core
+    from agent.app.api import agentos_core
 
     monkeypatch.setattr(
         agentos_core,
@@ -549,7 +549,7 @@ def test_legacy_lawyer_agent_chat_vpn_question_is_not_contract_template():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -581,7 +581,7 @@ def test_legacy_lawyer_agent_chat_contract_review_routes_to_acg_trace():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -617,8 +617,8 @@ def test_legacy_lawyer_agent_chat_respects_llm_route_before_graph_fallback():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
-    from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
+    from agent.app.api.agentos_core import create_router
+    from agent.app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
 
     class _CaseAnalysisRoutingProvider:
         provider_name = "route-test-provider"
@@ -667,8 +667,8 @@ def test_legacy_programmer_agent_chat_endpoint_returns_full_deliverable():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from packs.programmer import register_pack as register_programmer_pack
-    from app.api.agentos_core import create_router
+    from agent.packs.programmer import register_pack as register_programmer_pack
+    from agent.app.api.agentos_core import create_router
 
     agent_registry = AgentRegistry()
     workflow_registry = WorkflowRegistry()
@@ -706,8 +706,8 @@ def test_legacy_teacher_agent_chat_endpoint_returns_chinese_lesson_plan():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from packs.education import register_pack as register_education_pack
-    from app.api.agentos_core import create_router
+    from agent.packs.education import register_pack as register_education_pack
+    from agent.app.api.agentos_core import create_router
 
     agent_registry = AgentRegistry()
     workflow_registry = WorkflowRegistry()
@@ -739,8 +739,8 @@ def test_legacy_writer_agent_chat_endpoint_detects_science_fiction_genre():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from packs.writer import register_pack as register_writer_pack
-    from app.api.agentos_core import create_router
+    from agent.packs.writer import register_pack as register_writer_pack
+    from agent.app.api.agentos_core import create_router
 
     agent_registry = AgentRegistry()
     workflow_registry = WorkflowRegistry()
@@ -769,7 +769,7 @@ def test_agentos_core_api_lists_tasks_and_runs_with_filters():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
 
@@ -826,7 +826,7 @@ def test_acg_start_source_is_normalized_without_rewriting_generic_workbench():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.agentos_core import create_router
+    from agent.app.api.agentos_core import create_router
 
     runtime = _runtime_with_legal_pack()
     app = FastAPI()
@@ -852,7 +852,7 @@ def test_acg_start_source_is_normalized_without_rewriting_generic_workbench():
 
 
 def test_default_runtime_uses_sqlite_store_when_env_is_set(tmp_path, monkeypatch):
-    from app.api import agentos_core
+    from agent.app.api import agentos_core
 
     db_path = tmp_path / "workflow.db"
     monkeypatch.setenv("AGENTOS_WORKFLOW_DB_PATH", str(db_path))
@@ -864,7 +864,7 @@ def test_default_runtime_uses_sqlite_store_when_env_is_set(tmp_path, monkeypatch
 
 
 def test_default_runtime_requires_database_path_when_env_is_missing(monkeypatch):
-    from app.api import agentos_core
+    from agent.app.api import agentos_core
 
     monkeypatch.delenv("AGENTOS_WORKFLOW_DB_PATH", raising=False)
 

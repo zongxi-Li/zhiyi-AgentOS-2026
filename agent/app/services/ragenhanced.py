@@ -4,8 +4,8 @@
 """
 import logging
 from typing import Dict, List, Optional
-from app.services.ragservice import RAGService
-from app.services.knowledgegraphservice import KnowledgeGraphService
+from agent.app.services.ragservice import RAGService
+from agent.app.services.knowledgegraphservice import KnowledgeGraphService
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class EnhancedRAGService:
         """
         try:
             # 尝试使用embedding服务计算查询-文档相似度
-            from app.services.embeddingservice import embedding_service
+            from agent.app.services.embeddingservice import embedding_service
             import asyncio
             
             # 异步计算查询向量

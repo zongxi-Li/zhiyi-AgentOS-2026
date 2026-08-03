@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Dict, Optional
-from app.services.ragenhanced import enhanced_rag_service
+from agent.app.services.ragenhanced import enhanced_rag_service
 
 router = APIRouter()
 

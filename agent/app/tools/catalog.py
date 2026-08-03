@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tavily import AsyncTavilyClient
 
-from app.config import settings
-from app.tools.contracts import SourceReference, ToolPayload, ToolUnavailableError
+from agent.app.config import settings
+from agent.app.tools.contracts import SourceReference, ToolPayload, ToolUnavailableError
 
 
 def _now_iso() -> str:
@@ -202,7 +202,7 @@ class ReadOnlyToolCatalog:
     ) -> ToolPayload:
         query = _validate_query(arguments.get("query", ""))
         top_k = max(1, min(int(arguments.get("top_k", 5) or 1), 5))
-        from app.services.ragtoolsintegration import rag_tools_integration
+        from agent.app.services.ragtoolsintegration import rag_tools_integration
 
         rows = await rag_tools_integration.search(query=query, top_k=top_k, role_id=role_id)
         sources: list[SourceReference] = []

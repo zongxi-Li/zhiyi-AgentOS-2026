@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_agentos_core_imports_from_runtime_package():
-    import agentos
+    import agent.agentos as agentos
     from agentos.core.runtime import build_default_runtime
 
     package_path = Path(agentos.__file__).resolve()

@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, Optional
 from openai import OpenAI
 
-from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
+from agent.app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ import os
 import uuid
 from datetime import datetime
 
-from app.paths import DIGITAL_HUMAN_IMAGE_DIR, DIGITAL_HUMAN_METADATA_DIR
+from agent.app.paths import DIGITAL_HUMAN_IMAGE_DIR, DIGITAL_HUMAN_METADATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +389,7 @@ class DigitalHumanGenerator:
         """
         try:
             # 使用独立的图像生成服务
-            from app.services.imagegenerationservice import image_generation_service
+            from agent.app.services.imagegenerationservice import image_generation_service
             
             style = role_features.get("style", "realistic")
             size = "1024*1024"  # 默认尺寸
@@ -416,7 +416,7 @@ class DigitalHumanGenerator:
         """获取AI客户端（延迟初始化，用于其他功能）"""
         if self._ai_client is None:
             try:
-                from app.ai_engine.kylin_sdk.client import KylinAIClient
+                from agent.app.ai_engine.kylin_sdk.client import KylinAIClient
                 self._ai_client = KylinAIClient()
             except Exception as e:
                 logger.error(f"初始化AI客户端失败: {e}", exc_info=True)
@@ -604,7 +604,7 @@ class VoiceDrivenDigitalHuman:
     def _analyze_audio(self, audio_stream: bytes) -> Dict:
         """分析音频特征（使用专业音频分析服务）"""
         try:
-            from app.services.audioanalysisservice import audio_analysis_service
+            from agent.app.services.audioanalysisservice import audio_analysis_service
             return audio_analysis_service.analyze_audio(
                 audio_data=audio_stream,
                 sample_rate=16000
@@ -640,7 +640,7 @@ class VoiceDrivenDigitalHuman:
     def _text_to_phonemes(self, text: str) -> List[str]:
         """文本转音素（使用音频分析服务）"""
         try:
-            from app.services.audioanalysisservice import audio_analysis_service
+            from agent.app.services.audioanalysisservice import audio_analysis_service
             return audio_analysis_service._text_to_phonemes(text)
         except Exception as e:
             logger.warning(f"使用音频分析服务音素转换失败: {e}，使用简化实现")
@@ -681,8 +681,8 @@ class VoiceDrivenDigitalHuman:
     def _detect_emotion_from_audio(self, audio: bytes) -> Dict:
         """从音频检测情感（增强实现，使用音频分析服务）"""
         try:
-            from app.services.audioanalysisservice import audio_analysis_service
-            from app.services.voiceemotionrecognition import VoiceEmotionRecognizer
+            from agent.app.services.audioanalysisservice import audio_analysis_service
+            from agent.app.services.voiceemotionrecognition import VoiceEmotionRecognizer
             
             # 使用音频分析服务提取特征
             audio_features = audio_analysis_service.analyze_audio(

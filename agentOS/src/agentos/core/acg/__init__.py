@@ -1,6 +1,6 @@
 """ACG（Agentic Computation Graph）核心包。
 
-提供设计书定义的统一计算模型：节点（Step/Agent/Skill/Memory/Evidence/Control）、
+提供统一计算模型：节点（Step/Agent/Skill/Memory/Evidence/Control）、
 边（Dependency/Communication/ControlFlow…）、蓝图（ACGBlueprint）、图算法
 （环检测/拓扑排序/就绪集），以及线性工作流自动升格。
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 from agentos.core.acg.blueprint import ACGBlueprint
 from agentos.core.acg.edges import ACGEdge, EdgeActivation
 from agentos.core.acg.enums import (
+    BlueprintStatus,
     ComplexityLevel,
     ControlType,
     EdgeType,
@@ -45,6 +46,7 @@ __all__ = [
     "EdgeType",
     "ControlType",
     "ComplexityLevel",
+    "BlueprintStatus",
     "ConditionOperator",
     "ConditionSpec",
     # nodes

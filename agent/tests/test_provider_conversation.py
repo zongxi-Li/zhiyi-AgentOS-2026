@@ -4,13 +4,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.llm.contracts import (
+from agent.app.llm.contracts import (
     ProviderConversationState,
     ProviderProtocolMessage,
     ProviderRawResult,
     ProviderToolCall,
 )
-from app.llm.provider_conversation import (
+from agent.app.llm.provider_conversation import (
     EncryptedRedisProviderConversationStore,
     IncompleteToolBranchError,
     ProviderConversationManager,

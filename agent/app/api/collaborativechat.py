@@ -4,8 +4,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.services.collaborativechatservice import collaborative_chat_service
-from app.services.aiservice import AIService
+from agent.app.services.collaborativechatservice import collaborative_chat_service
+from agent.app.services.aiservice import AIService
 
 router = APIRouter()
 

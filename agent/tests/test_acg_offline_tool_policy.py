@@ -1,4 +1,4 @@
-from packs.legal.agents.statute import StatuteAgent
+from agent.packs.legal.agents.statute import StatuteAgent
 
 
 def test_legal_statute_agent_uses_only_local_tools_while_acg_is_offline():

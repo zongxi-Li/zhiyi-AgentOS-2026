@@ -1,7 +1,7 @@
 from pydantic import ValidationError
 import pytest
 
-from app.api.agentos_core import WorkflowStartRequest, _normalize_acg_start_request
+from agent.app.api.agentos_core import WorkflowStartRequest, _normalize_acg_start_request
 
 
 def test_workflow_start_accepts_camel_case_stochastic_planning_fields():

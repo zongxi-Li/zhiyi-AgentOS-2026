@@ -4,16 +4,16 @@ from typing import Any, Dict, List
 from unittest.mock import patch
 
 from agentos.core.models.types import SkillRequest
-from packs.education.skills.classroom_interaction_design_skill import ClassroomInteractionDesignSkill
-from packs.education.skills.error_analysis_question_push_skill import ErrorAnalysisQuestionPushSkill
-from packs.education.skills.homework_grading_skill import HomeworkGradingSkill
-from packs.education.skills.learning_path_planning_skill import LearningPathPlanningSkill
-from packs.education.skills.lesson_plan_generation_skill import LessonPlanGenerationSkill
-from packs.education.skills.parent_communication_suggestion_skill import ParentCommunicationSuggestionSkill
-from packs.education.skills.progress_report_generation_skill import ProgressReportGenerationSkill
-from packs.education.skills.student_diagnosis_skill import StudentDiagnosisSkill
-from packs.education.skills.tutoring_qa_skill import TutoringQASkill
-from packs.education.skills.common import TeacherSkillHelper
+from agent.packs.education.skills.classroom_interaction_design_skill import ClassroomInteractionDesignSkill
+from agent.packs.education.skills.error_analysis_question_push_skill import ErrorAnalysisQuestionPushSkill
+from agent.packs.education.skills.homework_grading_skill import HomeworkGradingSkill
+from agent.packs.education.skills.learning_path_planning_skill import LearningPathPlanningSkill
+from agent.packs.education.skills.lesson_plan_generation_skill import LessonPlanGenerationSkill
+from agent.packs.education.skills.parent_communication_suggestion_skill import ParentCommunicationSuggestionSkill
+from agent.packs.education.skills.progress_report_generation_skill import ProgressReportGenerationSkill
+from agent.packs.education.skills.student_diagnosis_skill import StudentDiagnosisSkill
+from agent.packs.education.skills.tutoring_qa_skill import TutoringQASkill
+from agent.packs.education.skills.common import TeacherSkillHelper
 
 
 class FakeAIService:

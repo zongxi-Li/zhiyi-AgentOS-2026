@@ -6,8 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from app.observability.context import current_trace_id
-from app.security.internal_auth import current_trusted_user
+from agent.app.observability.context import current_trace_id
+from agent.app.security.internal_auth import current_trusted_user
 
 router = APIRouter()
 request_states: dict[str, str] = {}

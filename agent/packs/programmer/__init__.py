@@ -4,7 +4,7 @@
 
 from pathlib import Path
 
-from packs.programmer.agents import (
+from agent.packs.programmer.agents import (
     CodeGenerationAgent,
     CodebaseSearchAgent,
     DiagramGenerationAgent,

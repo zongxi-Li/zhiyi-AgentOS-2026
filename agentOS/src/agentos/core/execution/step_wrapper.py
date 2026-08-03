@@ -1,6 +1,6 @@
 """统一节点执行 wrapper。
 
-对应设计书任务5《统一节点 Trace wrapper》与执行器“可观测性”关键特性：
+执行器可观测性支持：
 每个 Step 执行都产生 STEP_STARTED → AGENT_CALLED/STEP_SUCCEEDED → STEP_FAILED
 的统一事件序列，并带 durationMs、输入摘要、输出摘要、error。
 

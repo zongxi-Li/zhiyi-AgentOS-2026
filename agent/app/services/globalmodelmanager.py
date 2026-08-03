@@ -207,7 +207,7 @@ class GlobalModelManager:
         logger.info(f"开始聚合{len(self.pending_updates)}个客户端的参数更新")
         
         # 1. 解密参数(使用加密服务)
-        from app.services.encryptionservice import encryption_service
+        from agent.app.services.encryptionservice import encryption_service
         decrypted_updates = []
         for update_info in self.pending_updates:
             decrypted = encryption_service.decrypt_parameters(
@@ -230,7 +230,7 @@ class GlobalModelManager:
         ]
         
         # 3. 聚合参数(使用联邦学习服务)
-        from app.services.federatedlearning import federated_learning_service
+        from agent.app.services.federatedlearning import federated_learning_service
         aggregated_params = federated_learning_service.aggregate_parameters(
             client_parameters=[u['params'] for u in decrypted_updates],
             weights=weights

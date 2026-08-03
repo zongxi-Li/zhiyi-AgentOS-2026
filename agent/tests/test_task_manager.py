@@ -15,7 +15,7 @@ from agentos.core.models.types import WorkflowDefinition, WorkflowStatus, Workfl
 from agentos.core.workflow.registry import WorkflowRegistry
 from agentos.core.runtime import WorkflowRuntime
 from agentos.stores.memory_workflow_store import MemoryWorkflowStore
-from app.api.agentos_core import create_router
+from agent.app.api.agentos_core import create_router
 
 
 class EchoAgent(BaseAgent):

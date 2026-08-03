@@ -1,7 +1,5 @@
-"""ACG 节点定义。
-
-严格对应设计书附件一表2-7。所有节点共享 node_id / node_type / metadata，
-各类型再扩展专有字段。使用 Pydantic 判别联合，便于序列化与运行时校验。
+"""
+    ACG 节点定义
 """
 
 from __future__ import annotations
@@ -9,9 +7,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from agentos.core.acg.enums import ControlType, NodeType
+from agentos.core.acg.enums import BlueprintStatus, ControlType, NodeType
 from agentos.core.conditions import ConditionSpec
 
 
@@ -30,9 +28,48 @@ class ACGNodeBase(BaseModel):
     description: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_appendix_identity_fields(cls, value: Any) -> Any:
+        """Accept appendix-specific identity keys without duplicating graph state."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        node_kind = data.get("nodeType") or data.get("node_type")
+        if isinstance(node_kind, NodeType):
+            node_kind = node_kind.value
+        node_kind = node_kind or {
+            "StepNode": "step",
+            "AgentNode": "agent",
+            "SkillNode": "skill",
+            "MemoryNode": "memory",
+            "EvidenceNode": "evidence",
+            "ControlNode": "control",
+        }.get(cls.__name__)
+        appendix_id = {
+            "step": "stepId",
+            "agent": "agentId",
+            "skill": "skillId",
+            "memory": "memoryId",
+            "evidence": "evidenceId",
+            "control": "controlId",
+        }.get(node_kind)
+        appendix_name = {
+            "step": "stepName",
+            "agent": "agentName",
+            "skill": "skillName",
+            "memory": "memoryName",
+            "evidence": "evidenceName",
+        }.get(node_kind)
+        if "nodeId" not in data and "node_id" not in data and appendix_id in data:
+            data["nodeId"] = data[appendix_id]
+        if "name" not in data and appendix_name and appendix_name in data:
+            data["name"] = data[appendix_name]
+        return data
+
 
 class StepNode(ACGNodeBase):
-    """执行步骤节点（附件一表4）。ACG 中的最小执行单元。"""
+    """执行步骤节点 ACG 中的最小执行单元。"""
 
     node_type: Literal[NodeType.STEP] = Field(default=NodeType.STEP, alias="nodeType")
     step_type: str = Field(default="agent", alias="stepType")
@@ -49,11 +86,22 @@ class StepNode(ACGNodeBase):
     timeout: int = 0
     retry_limit: int = Field(default=0, alias="retryLimit")
     priority: int = 0
+    status: BlueprintStatus = BlueprintStatus.DRAFT
     review_required: bool = Field(default=False, alias="reviewRequired")
+
+    @computed_field(alias="stepId", return_type=str)
+    @property
+    def step_id(self) -> str:
+        return self.node_id
+
+    @computed_field(alias="stepName", return_type=str)
+    @property
+    def step_name(self) -> str:
+        return self.name
 
 
 class AgentNode(ACGNodeBase):
-    """智能体节点（附件一表2）。"""
+    """智能体节点"""
 
     node_type: Literal[NodeType.AGENT] = Field(default=NodeType.AGENT, alias="nodeType")
     role: str = ""
@@ -62,11 +110,22 @@ class AgentNode(ACGNodeBase):
     skill_ids: List[str] = Field(default_factory=list, alias="skillIds")
     memory_ids: List[str] = Field(default_factory=list, alias="memoryIds")
     max_concurrency: int = Field(default=1, alias="maxConcurrency")
+    status: BlueprintStatus = BlueprintStatus.DRAFT
     ephemeral: bool = False  # 动态角色生成器产出的临时角色标记
+
+    @computed_field(alias="agentId", return_type=str)
+    @property
+    def agent_id(self) -> str:
+        return self.node_id
+
+    @computed_field(alias="agentName", return_type=str)
+    @property
+    def agent_name(self) -> str:
+        return self.name
 
 
 class SkillNode(ACGNodeBase):
-    """技能节点（附件一表3）。"""
+    """技能节点"""
 
     node_type: Literal[NodeType.SKILL] = Field(default=NodeType.SKILL, alias="nodeType")
     skill_type: str = Field(default="generic", alias="skillType")
@@ -75,26 +134,58 @@ class SkillNode(ACGNodeBase):
     tool_name: Optional[str] = Field(default=None, alias="toolName")
     version: str = "1.0.0"
 
+    @computed_field(alias="skillId", return_type=str)
+    @property
+    def skill_id(self) -> str:
+        return self.node_id
+
+    @computed_field(alias="skillName", return_type=str)
+    @property
+    def skill_name(self) -> str:
+        return self.name
+
 
 class MemoryNode(ACGNodeBase):
-    """记忆节点（附件一表5）。提供长程上下文连续性。"""
+    """记忆节点 提供长程上下文连续性。"""
 
     node_type: Literal[NodeType.MEMORY] = Field(default=NodeType.MEMORY, alias="nodeType")
     memory_type: str = Field(default="working", alias="memoryType")
     storage_type: str = Field(default="inline", alias="storageType")
+    schema_: Dict[str, Any] = Field(default_factory=dict, alias="schema")
     retention_policy: str = Field(default="task", alias="retentionPolicy")
+
+    @computed_field(alias="memoryId", return_type=str)
+    @property
+    def memory_id(self) -> str:
+        return self.node_id
+
+    @computed_field(alias="memoryName", return_type=str)
+    @property
+    def memory_name(self) -> str:
+        return self.name
 
 
 class EvidenceNode(ACGNodeBase):
-    """证据节点（附件一表6）。承载可信交付与审计依据。"""
+    """证据节点 承载可信交付与审计依据。"""
 
     node_type: Literal[NodeType.EVIDENCE] = Field(default=NodeType.EVIDENCE, alias="nodeType")
     evidence_type: str = Field(default="document", alias="evidenceType")
     source: str = ""
+    schema_: Dict[str, Any] = Field(default_factory=dict, alias="schema")
+
+    @computed_field(alias="evidenceId", return_type=str)
+    @property
+    def evidence_id(self) -> str:
+        return self.node_id
+
+    @computed_field(alias="evidenceName", return_type=str)
+    @property
+    def evidence_name(self) -> str:
+        return self.name
 
 
 class ControlNode(ACGNodeBase):
-    """控制节点（附件一表7）。实现条件/循环/并行/共识。"""
+    """控制节点 实现条件/循环/并行/共识。"""
 
     node_type: Literal[NodeType.CONTROL] = Field(default=NodeType.CONTROL, alias="nodeType")
     control_type: ControlType = Field(default=ControlType.START, alias="controlType")
@@ -102,6 +193,11 @@ class ControlNode(ACGNodeBase):
     condition_spec: Optional[ConditionSpec] = Field(default=None, alias="conditionSpec")
     branch_edge_ids: List[str] = Field(default_factory=list, alias="branchEdgeIds")
     join_node_id: Optional[str] = Field(default=None, alias="joinNodeId")
+
+    @computed_field(alias="controlId", return_type=str)
+    @property
+    def control_id(self) -> str:
+        return self.node_id
 
 
 ACGNode = Union[StepNode, AgentNode, SkillNode, MemoryNode, EvidenceNode, ControlNode]

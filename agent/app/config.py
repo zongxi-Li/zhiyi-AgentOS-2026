@@ -176,7 +176,7 @@ class Settings(BaseSettings):
 # 初始化配置
 try:
     settings = Settings(**_secret_file_values)
-    from app.utils.logger import configure_logging
+    from agent.app.utils.logger import configure_logging
     import logging
     configure_logging(
         json_format=settings.ENVIRONMENT.strip().lower() in {"prod", "production"},
@@ -251,7 +251,7 @@ import logging
 
 # 使用统一的日志工具（如果可用）
 try:
-    from app.utils.logger import get_logger
+    from agent.app.utils.logger import get_logger
     _logger = get_logger("config")
 except ImportError:
     # 如果logger工具不可用，使用基本配置

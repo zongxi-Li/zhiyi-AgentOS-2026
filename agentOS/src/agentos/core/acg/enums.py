@@ -1,7 +1,6 @@
 """ACG（Agentic Computation Graph）核心枚举定义。
 
-严格对应设计书附件一《ACG 节点完整结构信息表》，作为静态规划层与
-动态运行时层共享的类型词表。
+作为静态规划层与动态运行时层共享的类型词表。
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ class EdgeType(str, Enum):
 
 
 class ControlType(str, Enum):
-    """Control 节点的控制语义，对应设计书附件一表7。"""
+    """Control 节点的控制语义"""
 
     START = "start"
     END = "end"
@@ -61,7 +60,7 @@ class ControlType(str, Enum):
 
 
 class ComplexityLevel(str, Enum):
-    """ACG 复杂度等级，对应设计书表2.2 ACG 字段结构。"""
+    """ACG 复杂度等级。"""
 
     SIMPLE = "simple"
     MEDIUM = "medium"
@@ -69,4 +68,12 @@ class ComplexityLevel(str, Enum):
     EXTREME = "extreme"
 
 
-__all__ = ["NodeType", "EdgeType", "ControlType", "ComplexityLevel"]
+class BlueprintStatus(str, Enum):
+    """静态蓝图节点的声明状态。"""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+__all__ = ["NodeType", "EdgeType", "ControlType", "ComplexityLevel", "BlueprintStatus"]

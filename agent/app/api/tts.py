@@ -4,7 +4,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
-from app.services.aiservice import AIService
+from agent.app.services.aiservice import AIService
 
 router = APIRouter()
 

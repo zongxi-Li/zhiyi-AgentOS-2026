@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from app.llm.contracts import ProviderModelCapabilities, ThinkingMode
+from agent.app.llm.contracts import ProviderModelCapabilities, ThinkingMode
 
 
 DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"

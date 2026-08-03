@@ -2,7 +2,7 @@
 
 
 from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
-from packs.legal.agents.common import case_text
+from agent.packs.legal.agents.common import case_text
 
 
 class CaseIntakeAgent(BaseAgent):

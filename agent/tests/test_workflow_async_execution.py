@@ -29,8 +29,8 @@ from agentos.core.workflow.progress import ProgressAssembler
 from agentos.core.workflow.registry import WorkflowRegistry
 from agentos.stores.memory_workflow_store import MemoryWorkflowStore
 from agentos.stores.sqlite_workflow_store import SQLiteWorkflowStore
-from app.api.agentos_core import create_router
-from app.security.internal_auth import InternalServiceAuthMiddleware
+from agent.app.api.agentos_core import create_router
+from agent.app.security.internal_auth import InternalServiceAuthMiddleware
 
 
 class _RecordingStore(MemoryWorkflowStore):

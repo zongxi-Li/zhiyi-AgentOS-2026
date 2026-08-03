@@ -127,7 +127,7 @@ class LocalTrainingManager:
             RAG构建结果
         """
         try:
-            from app.services.ragservice import RAGService
+            from agent.app.services.ragservice import RAGService
             
             # 创建本地RAG实例
             self.local_rag = RAGService(
@@ -277,7 +277,7 @@ class LocalTrainingManager:
         """
         try:
             # 1. 添加差分隐私
-            from app.services.encryptionservice import encryption_service
+            from agent.app.services.encryptionservice import encryption_service
             noisy_updates = encryption_service.add_differential_privacy(
                 parameters=param_updates,
                 epsilon=1.0,

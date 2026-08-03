@@ -13,9 +13,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from app.paths import APP_DATA_DIR
-from app.security.internal_auth import current_trusted_user
-from app.services.multimodalservice import multimodal_fusion_service
+from agent.app.paths import APP_DATA_DIR
+from agent.app.security.internal_auth import current_trusted_user
+from agent.app.services.multimodalservice import multimodal_fusion_service
 
 
 MAX_MATERIAL_BYTES = 10 * 1024 * 1024

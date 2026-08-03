@@ -20,8 +20,8 @@ from agentos.core.models.types import (
 from agentos.core.runtime import WorkflowRuntime
 from agentos.core.workflow.registry import WorkflowRegistry
 from agentos.stores.memory_workflow_store import MemoryWorkflowStore
-from app.api.agentos_core import create_router
-from app.security.internal_auth import InternalServiceAuthMiddleware
+from agent.app.api.agentos_core import create_router
+from agent.app.security.internal_auth import InternalServiceAuthMiddleware
 
 
 TOKEN = "0123456789abcdef0123456789abcdef"
@@ -336,7 +336,7 @@ def test_terminal_run_can_be_deleted_once(status, phase, suffix):
 
 
 def test_material_release_failure_does_not_undo_terminal_run_delete(monkeypatch):
-    from app.api import agentos_core
+    from agent.app.api import agentos_core
 
     runtime = _runtime()
     run = _save_summary_run(

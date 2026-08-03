@@ -4,9 +4,9 @@ import logging
 import time
 from typing import Any, Dict, Optional, Protocol
 
-from app.llm.config import LLMConfig
-from app.llm.providers.mock_provider import MockLLMProvider
-from app.llm.providers.openai_compatible_provider import LLMProviderError, OpenAICompatibleProvider
+from agent.app.llm.config import LLMConfig
+from agent.app.llm.providers.mock_provider import MockLLMProvider
+from agent.app.llm.providers.openai_compatible_provider import LLMProviderError, OpenAICompatibleProvider
 
 logger = logging.getLogger(__name__)
 

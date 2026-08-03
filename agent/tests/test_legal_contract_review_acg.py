@@ -7,11 +7,11 @@ from agentos.agents import AgentRegistry
 from agentos.core.models.types import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
 from agentos.core.runtime import WorkflowRuntime
 from agentos.core.workflow.registry import WorkflowRegistry
-from app.api.agentos_core import create_router
-from app.execution.runtime import configure_runtime
-from app.llm.config import LLMConfig
-from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
-from packs.legal import register_pack as register_legal_pack
+from agent.app.api.agentos_core import create_router
+from agent.app.execution.runtime import configure_runtime
+from agent.app.llm.config import LLMConfig
+from agent.app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
+from agent.packs.legal import register_pack as register_legal_pack
 
 
 def _runtime() -> WorkflowRuntime:
@@ -143,7 +143,7 @@ def test_acg_contract_review_invalid_llm_json_fails_closed_without_invented_resu
 
 
 def test_acg_contract_review_partial_retrieval_does_not_fabricate_evidence(monkeypatch):
-    from packs.legal.agents import contract_review_migration as migration
+    from agent.packs.legal.agents import contract_review_migration as migration
 
     class _PartialFailureRetriever:
         def __init__(self):
@@ -166,7 +166,7 @@ def test_acg_contract_review_partial_retrieval_does_not_fabricate_evidence(monke
 
     class _TwoRiskProvider(_InvalidJSONProvider):
         def generate_json(self, prompt: str, schema: dict, **kwargs):
-            from app.llm.schemas import compact_schema_name
+            from agent.app.llm.schemas import compact_schema_name
 
             if compact_schema_name(schema) != "risk_detect":
                 return super().generate_json(prompt, schema, **kwargs)

@@ -3,7 +3,7 @@ import pytest
 from agentos.agents import AgentRegistry
 from agentos.core.runtime import WorkflowRuntime
 from agentos.core.workflow.registry import WorkflowRegistry
-from packs.legal import register_pack as register_legal_pack
+from agent.packs.legal import register_pack as register_legal_pack
 
 
 def test_canonical_contract_review_has_no_legacy_engine_aliases():

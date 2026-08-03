@@ -20,12 +20,12 @@ from agents import (
 from agents.tool_context import ToolContext
 from openai import AsyncOpenAI
 
-from app.ai_engine.model_runtime import resolve_system_runtime_config, validate_runtime_config
-from app.config import settings
-from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
-from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
-from app.tools.catalog import ReadOnlyToolCatalog
-from app.tools.contracts import (
+from agent.app.ai_engine.model_runtime import resolve_system_runtime_config, validate_runtime_config
+from agent.app.config import settings
+from agent.app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
+from agent.app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
+from agent.app.tools.catalog import ReadOnlyToolCatalog
+from agent.app.tools.contracts import (
     SourceReference,
     ToolExecutionRecord,
     ToolLimitExceededError,

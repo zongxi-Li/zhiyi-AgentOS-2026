@@ -1,4 +1,6 @@
-"""ACG 边定义（附件一表8/表9）。"""
+"""
+    ACG 边定义
+"""
 
 from __future__ import annotations
 

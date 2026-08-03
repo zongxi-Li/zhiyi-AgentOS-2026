@@ -19,6 +19,7 @@ from agentos.core.acg import (
     ACGBlueprint,
     ACGEdge,
     ACGValidationError,
+    AgentNode,
     ControlNode,
     ControlType,
     EdgeType,
@@ -26,6 +27,7 @@ from agentos.core.acg import (
     MemoryNode,
     NodeType,
     StepNode,
+    SkillNode,
     detect_cycle,
     find_dangling_dependencies,
     parse_node,
@@ -59,6 +61,33 @@ def test_parse_node_dispatches_by_type():
     assert isinstance(mem, MemoryNode)
     ev = parse_node({"nodeId": "e1", "nodeType": "evidence"})
     assert isinstance(ev, EvidenceNode)
+
+
+def test_nodes_expose_appendix_identity_fields_and_schemas():
+    """附件一的专属标识应能与统一图节点标识双向兼容。"""
+    nodes = [
+        StepNode(nodeId="step-1", name="Analyse", agentName="executor"),
+        AgentNode(agentId="agent-1", agentName="Researcher"),
+        SkillNode(skillId="skill-1", skillName="Search"),
+        MemoryNode(memoryId="memory-1", memoryName="Context", schema={"type": "object"}),
+        EvidenceNode(evidenceId="evidence-1", evidenceName="Source", schema={"type": "object"}),
+        ControlNode(controlId="control-1", name="Start"),
+    ]
+
+    serialized = [node.model_dump(by_alias=True) for node in nodes]
+    assert serialized[0]["stepId"] == "step-1"
+    assert serialized[0]["stepName"] == "Analyse"
+    assert serialized[1]["agentId"] == "agent-1"
+    assert serialized[1]["agentName"] == "Researcher"
+    assert serialized[2]["skillId"] == "skill-1"
+    assert serialized[2]["skillName"] == "Search"
+    assert serialized[3]["memoryId"] == "memory-1"
+    assert serialized[3]["memoryName"] == "Context"
+    assert serialized[3]["schema"] == {"type": "object"}
+    assert serialized[4]["evidenceId"] == "evidence-1"
+    assert serialized[4]["evidenceName"] == "Source"
+    assert serialized[4]["schema"] == {"type": "object"}
+    assert serialized[5]["controlId"] == "control-1"
 
 
 def test_blueprint_counts_and_lookup():
@@ -174,6 +203,15 @@ def test_validation_rejects_unsupported_control_and_unsafe_communication():
     )
     with pytest.raises(ACGValidationError, match="unsupported control"):
         validate_blueprint(unsupported)
+
+    consensus = ACGBlueprint(
+        objective="structural consensus",
+        nodes=[
+            StepNode(nodeId="a", name="a", agentName="a"),
+            ControlNode(nodeId="consensus", controlType=ControlType.CONSENSUS),
+        ],
+    )
+    validate_blueprint(consensus)
 
     unsafe = ACGBlueprint(
         objective="unsafe communication",

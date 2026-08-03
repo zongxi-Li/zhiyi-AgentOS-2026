@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.sse_test import router
-from app.middleware.trace import TraceIdMiddleware
-from app.security.internal_auth import INTERNAL_SERVICE_TOKEN_HEADER, InternalServiceAuthMiddleware
+from agent.app.api.sse_test import router
+from agent.app.middleware.trace import TraceIdMiddleware
+from agent.app.security.internal_auth import INTERNAL_SERVICE_TOKEN_HEADER, InternalServiceAuthMiddleware
 
 
 TOKEN = "0123456789abcdef0123456789abcdef"

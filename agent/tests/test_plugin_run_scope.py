@@ -15,9 +15,9 @@ from agentos.core.runtime import WorkflowRuntime
 from agentos.core.workflow.registry import WorkflowRegistry
 from agentos.stores.memory_workflow_store import MemoryWorkflowStore
 from agentos.packs.registry import load_pack_manifest
-from app.api.agentos_core import create_router
-from app.execution.model_runtime import GatewayStructuredGenerationRuntime
-from packs.legal import register_pack as register_legal_pack
+from agent.app.api.agentos_core import create_router
+from agent.app.execution.model_runtime import GatewayStructuredGenerationRuntime
+from agent.packs.legal import register_pack as register_legal_pack
 
 
 def _runtime() -> WorkflowRuntime:

@@ -4,7 +4,7 @@
 
 from pathlib import Path
 
-from packs.writer.agents import OutlineGenerateAgent
+from agent.packs.writer.agents import OutlineGenerateAgent
 
 
 def register_pack(agent_registry, workflow_registry) -> None:

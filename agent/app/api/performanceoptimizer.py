@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from app.services.performanceoptimizer import performance_optimizer
+from agent.app.services.performanceoptimizer import performance_optimizer
 
 router = APIRouter()
 

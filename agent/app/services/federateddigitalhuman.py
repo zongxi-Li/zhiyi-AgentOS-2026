@@ -4,8 +4,8 @@
 """
 import logging
 from typing import Dict, Optional, List
-from app.services.digitalhumanservice import DigitalHumanGenerator, VoiceDrivenDigitalHuman
-from app.services.federatedlearning import FederatedLearningService
+from agent.app.services.digitalhumanservice import DigitalHumanGenerator, VoiceDrivenDigitalHuman
+from agent.app.services.federatedlearning import FederatedLearningService
 
 logger = logging.getLogger(__name__)
 

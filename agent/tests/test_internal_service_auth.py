@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.security.internal_auth import (
+from agent.app.security.internal_auth import (
     INTERNAL_SERVICE_TOKEN_HEADER,
     InternalServiceAuthMiddleware,
     current_trusted_user,

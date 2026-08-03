@@ -8,7 +8,7 @@ from typing import Optional
 import json
 import logging
 
-from app.services.realtimeasservice import realtime_asr_service
+from agent.app.services.realtimeasservice import realtime_asr_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

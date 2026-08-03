@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from app.ai_engine.model_runtime import (
+from agent.app.ai_engine.model_runtime import (
     apply_reasoning_instruction,
     build_messages,
     completion_options,
@@ -66,7 +66,7 @@ def test_native_reasoning_options_cover_openai_and_qwen():
 
 
 def test_system_runtime_model_override_reuses_server_credentials(monkeypatch):
-    from app.config import settings
+    from agent.app.config import settings
 
     monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "server-secret")
     monkeypatch.setattr(settings, "DEEPSEEK_BASE_URL", "https://api.example.com/v1")

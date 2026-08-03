@@ -8,8 +8,8 @@ from typing import Any, Dict
 
 from agentos.core.runtime import WorkflowRuntime, build_default_runtime as build_core_default_runtime
 
-from app.execution.instance_lock import acquire_workflow_instance_lock
-from app.execution.model_runtime import GatewayStructuredGenerationRuntime
+from agent.app.execution.instance_lock import acquire_workflow_instance_lock
+from agent.app.execution.model_runtime import GatewayStructuredGenerationRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class _GatewayIntentLLM:
     """
 
     def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        from app.llm.gateway import get_llm_gateway
+        from agent.app.llm.gateway import get_llm_gateway
 
         return get_llm_gateway().generate_json(prompt, schema, **kwargs)
 

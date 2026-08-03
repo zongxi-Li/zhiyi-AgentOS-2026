@@ -9,8 +9,8 @@ from agentos.core.planning.default_catalog import build_default_capability_catal
 from agentos.core.runtime import WorkflowRuntime
 from agentos.core.workflow.registry import WorkflowRegistry
 from agentos.packs.registry import discover_pack_manifests
-from packs.legal import register_pack as register_legal_pack
-from packs.legal.planning import (
+from agent.packs.legal import register_pack as register_legal_pack
+from agent.packs.legal.planning import (
     LEGAL_CAPABILITY_IDS,
     legal_capability_descriptors,
     register_legal_capabilities,

@@ -62,7 +62,7 @@ class RAGToolsIntegration:
         # 3. 检测 FastGPT（通常作为服务运行，通过API访问）
         try:
             # FastGPT通常是服务部署，检测配置
-            from app.config import settings
+            from agent.app.config import settings
             fastgpt_url = getattr(settings, 'FASTGPT_API_URL', None)
             fastgpt_key = getattr(settings, 'FASTGPT_API_KEY', None)
             
@@ -233,7 +233,7 @@ class RAGToolsIntegration:
     ) -> List[Dict]:
         """使用FastGPT API搜索"""
         try:
-            from app.config import settings
+            from agent.app.config import settings
             api_url = getattr(settings, 'FASTGPT_API_URL', '')
             api_key = getattr(settings, 'FASTGPT_API_KEY', '')
             
@@ -284,7 +284,7 @@ class RAGToolsIntegration:
     ) -> List[Dict]:
         """使用内置RAG服务搜索"""
         try:
-            from app.services.ragservice import RAGService
+            from agent.app.services.ragservice import RAGService
             
             # 创建或获取RAG服务实例
             rag_service = RAGService(use_vector_db=True)
@@ -395,7 +395,7 @@ class RAGToolsIntegration:
         role_id: Optional[str]
     ) -> str:
         """上传到FastGPT"""
-        from app.config import settings
+        from agent.app.config import settings
         api_url = getattr(settings, 'FASTGPT_API_URL', '')
         api_key = getattr(settings, 'FASTGPT_API_KEY', '')
         
@@ -428,7 +428,7 @@ class RAGToolsIntegration:
         role_id: Optional[str]
     ) -> str:
         """上传到内置RAG服务"""
-        from app.services.ragservice import RAGService
+        from agent.app.services.ragservice import RAGService
         
         rag_service = RAGService(use_vector_db=True)
         doc_id = rag_service.upload_document(

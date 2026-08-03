@@ -17,12 +17,12 @@ from agentos.core.plugin_scope import PluginScopeError
 from agentos.core.runtime import ReviewConflictError, WorkflowRuntime
 from agentos.core.workflow.progress import ProgressAssembler
 from agentos.stores.workflow_store import WorkflowRunNotTerminalError
-from app.execution.runtime import build_default_runtime
-from app.llm.gateway import get_llm_gateway
-from app.llm.schemas import CHAT_ROUTE_DECISION_SCHEMA
-from app.security.internal_auth import current_trusted_user
-from app.observability.context import execution_context
-from app.services.taskmaterialservice import (
+from agent.app.execution.runtime import build_default_runtime
+from agent.app.llm.gateway import get_llm_gateway
+from agent.app.llm.schemas import CHAT_ROUTE_DECISION_SCHEMA
+from agent.app.security.internal_auth import current_trusted_user
+from agent.app.observability.context import execution_context
+from agent.app.services.taskmaterialservice import (
     MaterialError,
     extract_material,
     task_material_store,

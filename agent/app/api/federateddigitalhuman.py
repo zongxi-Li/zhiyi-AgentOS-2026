@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from app.services.federateddigitalhuman import federated_digital_human_service
+from agent.app.services.federateddigitalhuman import federated_digital_human_service
 
 router = APIRouter()
 

@@ -2,9 +2,9 @@
 
 import asyncio
 
-from app.api import chat
-from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
-from app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
+from agent.app.api import chat
+from agent.app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
+from agent.app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
 
 
 class _ChatToolRuntimeStub:

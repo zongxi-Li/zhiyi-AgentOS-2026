@@ -4,8 +4,8 @@
 from pathlib import Path
 
 from agentos.core.workflow.registry import WorkflowRegistry
-from packs.legal.agents.case_intake import CaseIntakeAgent
-from packs.legal.agents.contract_review_migration import (
+from agent.packs.legal.agents.case_intake import CaseIntakeAgent
+from agent.packs.legal.agents.contract_review_migration import (
     ClauseClassifyAgent,
     ContractFinalReviewAgent,
     ContractParseAgent,
@@ -15,12 +15,12 @@ from packs.legal.agents.contract_review_migration import (
     RevisionSuggestAgent,
     RiskDetectAgent,
 )
-from packs.legal.agents.draft import DraftAgent
-from packs.legal.agents.evidence import EvidenceAgent
-from packs.legal.agents.review import ReviewAgent
-from packs.legal.agents.risk import RiskAgent
-from packs.legal.agents.statute import StatuteAgent
-from packs.legal.planning import (
+from agent.packs.legal.agents.draft import DraftAgent
+from agent.packs.legal.agents.evidence import EvidenceAgent
+from agent.packs.legal.agents.review import ReviewAgent
+from agent.packs.legal.agents.risk import RiskAgent
+from agent.packs.legal.agents.statute import StatuteAgent
+from agent.packs.legal.planning import (
     LEGAL_PLUGIN_ID,
     LEGAL_PLUGIN_VERSION,
     register_legal_capabilities,

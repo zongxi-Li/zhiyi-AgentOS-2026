@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.api.chat import _stream_sse_events
+from agent.app.api.chat import _stream_sse_events
 
 
 class FakeRequest:

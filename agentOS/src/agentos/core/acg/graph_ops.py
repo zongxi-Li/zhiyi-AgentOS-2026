@@ -222,7 +222,9 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
 
     for node in blueprint.nodes:
         if isinstance(node, ControlNode) and node.control_type == ControlType.LOOP:
-            raise ACGValidationError(f"unsupported control node: {node.node_id} (loop)")
+            raise ACGValidationError(
+                f"unsupported control node: {node.node_id} ({node.control_type.value})"
+            )
         if isinstance(node, ControlNode) and node.control_type == ControlType.IF:
             _validate_conditional_control(blueprint, node)
         if not isinstance(node, StepNode):

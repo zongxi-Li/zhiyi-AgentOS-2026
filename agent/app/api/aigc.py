@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import logging
-from app.services.aigcservice import aigc_service
+from agent.app.services.aigcservice import aigc_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

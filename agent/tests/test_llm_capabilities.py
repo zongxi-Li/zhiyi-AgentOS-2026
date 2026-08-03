@@ -1,22 +1,22 @@
 import sys
 from types import SimpleNamespace
 
-from app.llm.capabilities import (
+from agent.app.llm.capabilities import (
     adapt_chat_completion_parameters,
     normalize_model_request,
     normalize_thinking_mode,
     provider_model_capabilities,
 )
-from app.llm.contracts import (
+from agent.app.llm.contracts import (
     LLMInvocationResult,
     LLMUsage,
     ModelInvocationAudit,
     ProviderRawResult,
     ThinkingMode,
 )
-from app.llm.config import LLMConfig
-from app.llm.providers.openai_compatible_provider import OpenAICompatibleProvider
-from app.ai_engine.deepseekadapter import DeepSeekAdapter
+from agent.app.llm.config import LLMConfig
+from agent.app.llm.providers.openai_compatible_provider import OpenAICompatibleProvider
+from agent.app.ai_engine.deepseekadapter import DeepSeekAdapter
 
 
 def test_legacy_thinking_values_map_to_three_internal_modes():

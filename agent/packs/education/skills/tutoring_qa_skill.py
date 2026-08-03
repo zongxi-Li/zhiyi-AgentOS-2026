@@ -9,7 +9,7 @@ from typing import Any, Dict
 from agentos.adapters.retrieval_adapter import education_index_builder
 from agentos.core.models.types import SkillRequest, SkillResult
 from agentos.skills.base import BaseSkill
-from packs.education.skills.common import TeacherSkillHelper
+from agent.packs.education.skills.common import TeacherSkillHelper
 from agentos.adapters.model_adapter import AIService
 
 logger = logging.getLogger(__name__)
