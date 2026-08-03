@@ -3,7 +3,8 @@ FROM ${MAVEN_IMAGE}
 
 WORKDIR /app
 
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends gosu iproute2 netcat-openbsd rsync util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s "$(command -v gosu)" /usr/local/bin/su-exec \

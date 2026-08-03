@@ -11,7 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10002 kinlin \
@@ -20,11 +21,11 @@ RUN apt-get update \
 
 COPY agent/requirements.lock ./requirements.lock
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --require-hashes --only-binary=:all: -r requirements.lock \
+    pip install --timeout 120 --retries 10 --resume-retries 20 --require-hashes --only-binary=:all: -r requirements.lock \
     && sha256sum requirements.lock | cut -d ' ' -f 1 > "$VIRTUAL_ENV/.kinlin-requirements.sha256"
 COPY agent/requirements.tools.lock ./requirements.tools.lock
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --require-hashes --only-binary=:all: -r requirements.tools.lock \
+    pip install --timeout 120 --retries 10 --resume-retries 20 --require-hashes --only-binary=:all: -r requirements.tools.lock \
     && cat requirements.lock requirements.tools.lock \
        | sha256sum \
        | cut -d ' ' -f 1 > "$VIRTUAL_ENV/.kinlin-requirements.sha256"
