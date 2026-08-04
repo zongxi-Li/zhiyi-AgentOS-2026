@@ -1,8 +1,8 @@
 import pytest
 
-from agentos.core.planning import CapabilityCatalog, PlanningCapabilityDescriptor
-from agentos.core.planning.default_catalog import build_default_capability_catalog
-from agentos.core.planning.native_capabilities import NATIVE_CAPABILITY_IDS
+from core.planning import CapabilityCatalog, PlanningCapabilityDescriptor
+from core.planning.default_catalog import build_default_capability_catalog
+from core.planning.native_capabilities import NATIVE_CAPABILITY_IDS
 
 
 def descriptor(capability_id: str, **kwargs) -> PlanningCapabilityDescriptor:

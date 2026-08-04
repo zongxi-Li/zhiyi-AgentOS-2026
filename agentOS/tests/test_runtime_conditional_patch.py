@@ -1,7 +1,7 @@
 import pytest
 
-from agentos.agents import AgentRegistry
-from agentos.core.acg import (
+from agents import AgentRegistry
+from core.acg import (
     ACGBlueprint,
     ACGEdge,
     ControlNode,
@@ -10,25 +10,25 @@ from agentos.core.acg import (
     StepNode,
     validate_blueprint,
 )
-from agentos.core.conditions import ConditionEvaluator
-from agentos.core.governance.checkpoint import CheckpointStore
-from agentos.core.governance.trace import TraceStore
-from agentos.core.models.types import (
+from core.conditions import ConditionEvaluator
+from core.governance.checkpoint import CheckpointStore
+from core.governance.trace import TraceStore
+from core.models.types import (
     StepStatus,
     WorkflowRun,
     WorkflowStatus,
     WorkflowStep,
 )
-from agentos.core.recovery import (
+from core.recovery import (
     DeterministicProposalFactory,
     PatchValidationError,
     RuntimeController,
     PatchConflictError,
     RuntimeGraphPatchCompiler,
 )
-from agentos.core.run_locks import RunLockManager
-from agentos.core.runtime_graph import RuntimeGraph
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
+from core.run_locks import RunLockManager
+from core.runtime_graph import RuntimeGraph
+from stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def conditional_blueprint() -> ACGBlueprint:

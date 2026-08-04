@@ -4,12 +4,12 @@ import asyncio
 import hashlib
 import json
 
-from agentos.agents import AgentRegistry
-from agentos.core.acg import ACGBlueprint, ControlType, EdgeType, NodeType
-from agentos.core.models.types import WorkflowStatus
-from agentos.core.native import register_native_runtime
-from agentos.core.runtime import WorkflowRuntime
-from agentos.core.workflow.registry import WorkflowRegistry
+from agents import AgentRegistry
+from core.acg import ACGBlueprint, ControlType, EdgeType, NodeType
+from core.models.types import WorkflowStatus
+from core.native import register_native_runtime
+from core.runtime import WorkflowRuntime
+from core.workflow.registry import WorkflowRegistry
 
 
 SOFTWARE_TASK = (

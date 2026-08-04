@@ -1,18 +1,18 @@
 import json
 from types import SimpleNamespace
 
-from agentos.adapters.tool_adapter import register_tool_runtime_factory
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
-from agentos.agents.registry import AgentRegistry
-from agentos.core.models.types import (
+from adapters.tool_adapter import register_tool_runtime_factory
+from agents.base import AgentOutput, AgentProfile, BaseAgent
+from agents.registry import AgentRegistry
+from core.models.types import (
     AgentTask,
     WorkflowDefinition,
     WorkflowRun,
     WorkflowStep,
 )
-from agentos.core.native import NativeGeneralAgent
-from agentos.core.workflow.orchestrator import Orchestrator
-from agentos.memory.workflow_memory import WorkflowMemory
+from core.native import NativeGeneralAgent
+from core.workflow.orchestrator import Orchestrator
+from memory.workflow_memory import WorkflowMemory
 
 
 class _RecordingRuntime:

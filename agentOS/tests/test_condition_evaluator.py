@@ -1,13 +1,13 @@
 import pytest
 
-from agentos.core.acg import ACGBlueprint, StepNode
-from agentos.core.conditions import (
+from core.acg import ACGBlueprint, StepNode
+from core.conditions import (
     ConditionEvaluationError,
     ConditionEvaluator,
     ConditionSpec,
 )
-from agentos.core.models.types import StepStatus
-from agentos.core.runtime_graph import RuntimeGraph
+from core.models.types import StepStatus
+from core.runtime_graph import RuntimeGraph
 
 
 def _evaluate(spec: ConditionSpec, output):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import EdgeType, validate_blueprint
-from agentos.core.planning import CapabilityCatalog, PlanningCapabilityDescriptor, PlanningEngine
-from agentos.core.workflow.registry import WorkflowRegistry
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import EdgeType, validate_blueprint
+from core.planning import CapabilityCatalog, PlanningCapabilityDescriptor, PlanningEngine
+from core.workflow.registry import WorkflowRegistry
 
 
 class _Agent(BaseAgent):

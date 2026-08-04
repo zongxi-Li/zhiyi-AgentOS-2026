@@ -1,5 +1,5 @@
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.recovery import CandidateResolver, ExecutionBinding
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.recovery import CandidateResolver, ExecutionBinding
 
 
 class _Agent(BaseAgent):

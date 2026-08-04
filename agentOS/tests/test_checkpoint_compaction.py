@@ -1,14 +1,14 @@
 import json
 
-from agentos.core.acg import ACGBlueprint, StepNode
-from agentos.core.governance.checkpoint import (
+from core.acg import ACGBlueprint, StepNode
+from core.governance.checkpoint import (
     COMPACT_CHECKPOINT_VERSION,
     CheckpointStore,
     checkpoint_snapshot_hash,
     checkpoint_trace_payload,
 )
-from agentos.core.models.types import Checkpoint, WorkflowRun, WorkflowStep
-from agentos.core.runtime_graph import RuntimeGraph
+from core.models.types import Checkpoint, WorkflowRun, WorkflowStep
+from core.runtime_graph import RuntimeGraph
 
 
 def _run() -> WorkflowRun:

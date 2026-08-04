@@ -2,19 +2,19 @@ import asyncio
 
 import pytest
 
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import ACGBlueprint, ACGEdge, StepNode
-from agentos.core.governance.checkpoint import CheckpointStore
-from agentos.core.governance.trace import TraceStore
-from agentos.core.models.types import AgentTask, StepStatus, WorkflowRun, WorkflowStep
-from agentos.core.recovery import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import ACGBlueprint, ACGEdge, StepNode
+from core.governance.checkpoint import CheckpointStore
+from core.governance.trace import TraceStore
+from core.models.types import AgentTask, StepStatus, WorkflowRun, WorkflowStep
+from core.recovery import (
     PatchConflictError,
     RuntimeController,
     RuntimeGraphPatch,
 )
-from agentos.core.run_locks import RunLockManager
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
-from agentos.stores.sqlite_workflow_store import SQLiteWorkflowStore
+from core.run_locks import RunLockManager
+from stores.memory_workflow_store import MemoryWorkflowStore
+from stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
 class _Agent(BaseAgent):

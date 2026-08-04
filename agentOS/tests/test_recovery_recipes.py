@@ -1,8 +1,8 @@
 import pytest
 
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import ACGBlueprint, StepNode
-from agentos.core.recovery import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import ACGBlueprint, StepNode
+from core.recovery import (
     CandidateResolver,
     DeterministicProposalFactory,
     EventPolicyAction,
@@ -11,7 +11,7 @@ from agentos.core.recovery import (
     RuntimeEventPolicy,
     RuntimeEventType,
 )
-from agentos.core.runtime_graph import RuntimeGraph
+from core.runtime_graph import RuntimeGraph
 
 
 class _Agent(BaseAgent):

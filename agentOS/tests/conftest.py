@@ -18,11 +18,11 @@ if value not in sys.path:
     sys.path.insert(0, value)
 
 
-from agentos.adapters.tool_adapter import (  # noqa: E402
+from adapters.tool_adapter import (  # noqa: E402
     clear_tool_runtime_factory,
     register_tool_runtime_factory,
 )
-from agentos.adapters.model_adapter import StructuredGenerationResult  # noqa: E402
+from adapters.model_adapter import StructuredGenerationResult  # noqa: E402
 
 
 def _schema_value(schema, field_name="value"):

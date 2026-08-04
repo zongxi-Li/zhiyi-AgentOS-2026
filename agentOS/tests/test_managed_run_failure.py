@@ -1,10 +1,10 @@
-from agentos.core.acg import ACGBlueprint, StepNode
-from agentos.core.execution.acg_executor import ACGExecutor
-from agentos.core.execution.projection import refresh_run_execution_projection
-from agentos.core.models.types import AgentTask, StepStatus, WorkflowRun, WorkflowStatus
-from agentos.core.runtime import WorkflowRuntime
-from agentos.core.runtime_graph import RuntimeAttempt, RuntimeGraph
-from agentos.stores.sqlite_workflow_store import SQLiteWorkflowStore
+from core.acg import ACGBlueprint, StepNode
+from core.execution.acg_executor import ACGExecutor
+from core.execution.projection import refresh_run_execution_projection
+from core.models.types import AgentTask, StepStatus, WorkflowRun, WorkflowStatus
+from core.runtime import WorkflowRuntime
+from core.runtime_graph import RuntimeAttempt, RuntimeGraph
+from stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
 class _NullableCodeError(Exception):

@@ -9,7 +9,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from agentos.core.models import (
+from core.models import (
     ACGCheckpoint,
     ACGTask,
     AgentInstance,
@@ -17,7 +17,7 @@ from agentos.core.models import (
     MemorySnapshot,
     StepExecution,
 )
-from agentos.core.workflow.consensus import ConsensusEngine
+from core.workflow.consensus import ConsensusEngine
 
 
 def test_appendix_runtime_records_serialize_all_required_fields():

@@ -1,9 +1,9 @@
 import pytest
 
-from agentos.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
-from agentos.agents.registry import AgentRegistry
-from agentos.core.governance.trace import TraceStore
-from agentos.core.models.types import (
+from agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
+from agents.registry import AgentRegistry
+from core.governance.trace import TraceStore
+from core.models.types import (
     ReviewDecision,
     ReviewDecisionType,
     StepStatus,
@@ -12,11 +12,11 @@ from agentos.core.models.types import (
     WorkflowStatus,
     WorkflowStepDefinition,
 )
-from agentos.core.runtime import WorkflowRuntime
-from agentos.core.workflow.registry import WorkflowRegistry
-from agentos.core.workflow.state_machine import InvalidStateTransition
-from agentos.core.workflow.task_manager import TaskManager
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
+from core.runtime import WorkflowRuntime
+from core.workflow.registry import WorkflowRegistry
+from core.workflow.state_machine import InvalidStateTransition
+from core.workflow.task_manager import TaskManager
+from stores.memory_workflow_store import MemoryWorkflowStore
 
 
 class EchoAgent(BaseAgent):

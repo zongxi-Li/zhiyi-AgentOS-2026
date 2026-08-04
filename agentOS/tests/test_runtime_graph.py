@@ -1,13 +1,13 @@
 import pytest
 
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import ACGBlueprint, ACGEdge, EdgeType, StepNode
-from agentos.core.recovery import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from core.recovery import (
     PatchValidationError,
     PatchValidator,
     RuntimeGraphPatch,
 )
-from agentos.core.runtime_graph import (
+from core.runtime_graph import (
     AppliedPatchRecord,
     RuntimeGraph,
     RuntimeNodeStatus,

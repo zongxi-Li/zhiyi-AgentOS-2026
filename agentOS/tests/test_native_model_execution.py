@@ -5,24 +5,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentos.adapters.model_adapter import (
+from adapters.model_adapter import (
     StructuredGenerationError,
     StructuredGenerationResult,
 )
-from agentos.agents import AgentRegistry
-from agentos.agents.base import AgentRunContext
-from agentos.core.data_contracts import apply_contract_defaults
-from agentos.core.models.types import (
+from agents import AgentRegistry
+from agents.base import AgentRunContext
+from core.data_contracts import apply_contract_defaults
+from core.models.types import (
     AgentTask,
     WorkflowDefinition,
     WorkflowRun,
     WorkflowStatus,
     WorkflowStep,
 )
-from agentos.core.native import NativeGeneralAgent
-from agentos.core.planning.default_catalog import build_default_capability_catalog
-from agentos.memory.workflow_memory import WorkflowMemory
-from agentos.core.workflow.orchestrator import Orchestrator
+from core.native import NativeGeneralAgent
+from core.planning.default_catalog import build_default_capability_catalog
+from memory.workflow_memory import WorkflowMemory
+from core.workflow.orchestrator import Orchestrator
 
 
 class _RepairRuntime:

@@ -1,8 +1,8 @@
-from agentos.core.acg import ACGBlueprint, StepNode
-from agentos.core.execution.package import StepExecutionOutcome
-from agentos.core.models.types import StepStatus, utc_now
-from agentos.core.recovery import RuntimeEventClassifier, RuntimeEventStatus, RuntimeEventType
-from agentos.core.runtime_graph import RuntimeGraph
+from core.acg import ACGBlueprint, StepNode
+from core.execution.package import StepExecutionOutcome
+from core.models.types import StepStatus, utc_now
+from core.recovery import RuntimeEventClassifier, RuntimeEventStatus, RuntimeEventType
+from core.runtime_graph import RuntimeGraph
 
 
 def _graph() -> RuntimeGraph:

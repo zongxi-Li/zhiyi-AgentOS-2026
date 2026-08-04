@@ -3,9 +3,9 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import ControlType, EdgeType, NodeType, validate_blueprint
-from agentos.core.planning import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import ControlType, EdgeType, NodeType, validate_blueprint
+from core.planning import (
     ACGBuilder,
     CapabilityCatalog,
     CognitiveRouter,
@@ -13,8 +13,8 @@ from agentos.core.planning import (
     PlanningCapabilityDescriptor,
     TaskSemanticProfile,
 )
-from agentos.core.planning.cognitive_router import CapabilityBinding, CollaborationNetwork
-from agentos.core.planning.default_catalog import build_default_capability_catalog
+from core.planning.cognitive_router import CapabilityBinding, CollaborationNetwork
+from core.planning.default_catalog import build_default_capability_catalog
 
 
 class Agent(BaseAgent):

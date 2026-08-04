@@ -1,6 +1,6 @@
 import pytest
 
-from agentos.domain import (
+from domain import (
     AgentProfile,
     StepDefinition,
     Task,

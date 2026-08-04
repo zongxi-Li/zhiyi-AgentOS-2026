@@ -13,14 +13,14 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from agentos.core.acg import (
+from core.acg import (
     NodeType,
     ComplexityLevel,
     promote_workflow_to_acg,
     ready_steps,
     validate_blueprint,
 )
-from agentos.core.models.types import WorkflowDefinition
+from core.models.types import WorkflowDefinition
 
 
 def _linear_workflow(step_count: int = 3) -> WorkflowDefinition:

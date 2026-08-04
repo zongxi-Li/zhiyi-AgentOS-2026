@@ -2,21 +2,21 @@ from pathlib import Path
 
 import pytest
 
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.models.types import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.models.types import (
     PluginSnapshot,
     RunExecutionScope,
     WorkflowDefinition,
     WorkflowStepDefinition,
 )
-from agentos.core.native import register_native_runtime
-from agentos.core.planning import PlanningCapabilityDescriptor
-from agentos.core.planning.intent_parser import IntentParser
-from agentos.core.recovery.bindings import CandidateResolver
-from agentos.core.planning.default_catalog import build_default_capability_catalog
-from agentos.core.plugin_scope import PluginScopeError, PluginScopeResolver
-from agentos.core.workflow.registry import WorkflowRegistry
-from agentos.packs.registry import PackManifest
+from core.native import register_native_runtime
+from core.planning import PlanningCapabilityDescriptor
+from core.planning.intent_parser import IntentParser
+from core.recovery.bindings import CandidateResolver
+from core.planning.default_catalog import build_default_capability_catalog
+from core.plugin_scope import PluginScopeError, PluginScopeResolver
+from core.workflow.registry import WorkflowRegistry
+from packs.registry import PackManifest
 
 
 class _PluginAgent(BaseAgent):

@@ -2,8 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from agentos.core.acg import ACGBlueprint, StepNode
-from agentos.core.models.types import (
+from core.acg import ACGBlueprint, StepNode
+from core.models.types import (
     AgentTask,
     StepStatus,
     WorkflowDefinition,
@@ -12,15 +12,15 @@ from agentos.core.models.types import (
     WorkflowStep,
     WorkflowStepDefinition,
 )
-from agentos.core.workflow.progress import (
+from core.workflow.progress import (
     ProgressAssembler,
     ProgressCalculator,
     WorkflowProgressPhase,
 )
-from agentos.core.workflow.registry import WorkflowRegistry
-from agentos.core.workflow.task_manager import TaskManager
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
-from agentos.core.runtime_graph import RuntimeGraph
+from core.workflow.registry import WorkflowRegistry
+from core.workflow.task_manager import TaskManager
+from stores.memory_workflow_store import MemoryWorkflowStore
+from core.runtime_graph import RuntimeGraph
 
 
 def _workflow() -> WorkflowDefinition:

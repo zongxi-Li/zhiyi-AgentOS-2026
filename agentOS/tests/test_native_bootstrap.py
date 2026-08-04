@@ -4,26 +4,26 @@ import asyncio
 
 import pytest
 
-from agentos.agents import AgentRegistry
-from agentos.core.acg import NodeType, validate_blueprint
-from agentos.core.models.types import (
+from agents import AgentRegistry
+from core.acg import NodeType, validate_blueprint
+from core.models.types import (
     TraceEventType,
     WorkflowDefinition,
     WorkflowDefinitionType,
     WorkflowStatus,
     WorkflowStepDefinition,
 )
-from agentos.core.native import (
+from core.native import (
     NATIVE_ACG_WORKFLOW_ID,
     native_bootstrap_definition,
     register_native_runtime,
 )
-from agentos.core.planning import ACGBuilder, TaskSemanticProfile
-from agentos.core.planning.cognitive_router import CapabilityBinding, CollaborationNetwork
-from agentos.core.runtime import WorkflowRuntime, build_default_runtime
-from agentos.core.workflow.registry import WorkflowRegistry
-from agentos.core.workflow.task_manager import TaskManager
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
+from core.planning import ACGBuilder, TaskSemanticProfile
+from core.planning.cognitive_router import CapabilityBinding, CollaborationNetwork
+from core.runtime import WorkflowRuntime, build_default_runtime
+from core.workflow.registry import WorkflowRegistry
+from core.workflow.task_manager import TaskManager
+from stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def _static_workflow(workflow_id: str, *, domain: str = "legal") -> WorkflowDefinition:
@@ -247,7 +247,7 @@ def test_native_runtime_fails_explicitly_without_a_model():
 
 
 def test_default_runtime_registers_native_before_application_packs(monkeypatch, tmp_path):
-    from agentos.core import runtime as runtime_module
+    from core import runtime as runtime_module
 
     observed: list[str] = []
 

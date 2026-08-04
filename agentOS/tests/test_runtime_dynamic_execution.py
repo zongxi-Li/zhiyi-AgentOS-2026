@@ -1,9 +1,9 @@
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import ACGBlueprint, ACGEdge, StepNode
-from agentos.core.governance.checkpoint import CheckpointStore
-from agentos.core.governance.trace import TraceStore
-from agentos.core.models.types import StepStatus, WorkflowRun, WorkflowStep
-from agentos.core.recovery import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import ACGBlueprint, ACGEdge, StepNode
+from core.governance.checkpoint import CheckpointStore
+from core.governance.trace import TraceStore
+from core.models.types import StepStatus, WorkflowRun, WorkflowStep
+from core.recovery import (
     CandidateResolver,
     DeterministicProposalFactory,
     RecoveryRecipeRegistry,
@@ -14,9 +14,9 @@ from agentos.core.recovery import (
     RuntimeEventType,
     RuntimeGraphPatchCompiler,
 )
-from agentos.core.run_locks import RunLockManager
-from agentos.core.runtime_graph import RuntimeGraph
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
+from core.run_locks import RunLockManager
+from core.runtime_graph import RuntimeGraph
+from stores.memory_workflow_store import MemoryWorkflowStore
 
 
 class _Agent(BaseAgent):

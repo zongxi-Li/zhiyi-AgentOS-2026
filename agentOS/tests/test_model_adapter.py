@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agentos.adapters.model_adapter import (
+from adapters.model_adapter import (
     AIService,
     clear_model_service_factory,
     register_model_service_factory,

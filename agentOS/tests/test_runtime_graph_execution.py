@@ -2,12 +2,12 @@
 
 import pytest
 
-from agentos.core.acg import ACGBlueprint, ACGEdge, StepNode
-from agentos.core.communication import ContextAssembler
-from agentos.core.execution.projection import refresh_run_execution_projection
-from agentos.core.models.types import StepStatus, WorkflowRun, WorkflowStep
-from agentos.core.runtime_graph import RuntimeAttempt, RuntimeGraph
-from agentos.core.workflow.state_machine import InvalidStateTransition, StateMachine
+from core.acg import ACGBlueprint, ACGEdge, StepNode
+from core.communication import ContextAssembler
+from core.execution.projection import refresh_run_execution_projection
+from core.models.types import StepStatus, WorkflowRun, WorkflowStep
+from core.runtime_graph import RuntimeAttempt, RuntimeGraph
+from core.workflow.state_machine import InvalidStateTransition, StateMachine
 
 
 def _graph() -> RuntimeGraph:

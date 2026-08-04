@@ -1,10 +1,10 @@
 import pytest
 
-from agentos.core.models.types import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
-from agentos.core.workflow.registry import WorkflowRegistry
-from agentos.core.workflow.state_machine import InvalidStateTransition
-from agentos.core.workflow.task_manager import TaskManager
-from agentos.stores.memory_workflow_store import MemoryWorkflowStore
+from core.models.types import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
+from core.workflow.registry import WorkflowRegistry
+from core.workflow.state_machine import InvalidStateTransition
+from core.workflow.task_manager import TaskManager
+from stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def _workflow_registry() -> WorkflowRegistry:

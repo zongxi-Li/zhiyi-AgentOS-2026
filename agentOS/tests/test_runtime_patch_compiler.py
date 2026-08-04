@@ -1,7 +1,7 @@
-from agentos.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from agentos.core.acg import ACGBlueprint, ACGEdge, EdgeType, StepNode
-from agentos.core.models.types import StepStatus
-from agentos.core.recovery import (
+from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from core.acg import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from core.models.types import StepStatus
+from core.recovery import (
     CandidateResolver,
     DeterministicProposalFactory,
     RecoveryRecipeRegistry,
@@ -10,7 +10,7 @@ from agentos.core.recovery import (
     RuntimeEventType,
     RuntimeGraphPatchCompiler,
 )
-from agentos.core.runtime_graph import RuntimeGraph
+from core.runtime_graph import RuntimeGraph
 
 
 class _Agent(BaseAgent):
