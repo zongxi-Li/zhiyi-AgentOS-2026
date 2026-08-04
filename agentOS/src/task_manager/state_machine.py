@@ -4,7 +4,7 @@
 from enum import Enum
 from typing import TypeVar
 
-from core.models.types import StepStatus, WorkflowStatus
+from contracts.workflow import StepStatus, WorkflowStatus
 
 StatusT = TypeVar("StatusT", WorkflowStatus, StepStatus)
 

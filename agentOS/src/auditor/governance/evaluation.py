@@ -4,7 +4,7 @@
 from collections import Counter
 from typing import Iterable, Optional
 
-from core.models.types import EvaluationRun, TraceEventType, WorkflowMetric, WorkflowRun, WorkflowStatus
+from contracts.workflow import EvaluationRun, TraceEventType, WorkflowMetric, WorkflowRun, WorkflowStatus
 
 
 class WorkflowEvaluator:

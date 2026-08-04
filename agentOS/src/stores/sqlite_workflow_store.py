@@ -8,7 +8,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from core.models.types import AgentTask, StepStatus, WorkflowRun, WorkflowStatus
+from contracts.workflow import AgentTask, StepStatus, WorkflowRun, WorkflowStatus
 from stores.workflow_store import (
     WorkflowRunDeleteResult,
     WorkflowRunNotTerminalError,

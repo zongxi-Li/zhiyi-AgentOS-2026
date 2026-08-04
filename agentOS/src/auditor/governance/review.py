@@ -3,8 +3,8 @@
 
 from typing import List
 
-from core.models.types import ReviewDecision, ReviewDecisionType, ReviewRecord, TraceEventType, WorkflowRun
-from core.governance.trace import TraceStore
+from contracts.workflow import ReviewDecision, ReviewDecisionType, ReviewRecord, TraceEventType, WorkflowRun
+from auditor.governance.trace import TraceStore
 
 
 class ReviewManager:

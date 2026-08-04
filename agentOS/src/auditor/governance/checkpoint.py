@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import Any, Dict, List
 
-from core.models.types import Checkpoint, WorkflowRun
+from contracts.workflow import Checkpoint, WorkflowRun
 
 
 COMPACT_CHECKPOINT_VERSION = 2

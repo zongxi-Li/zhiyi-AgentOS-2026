@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
-from core.models.types import WorkflowDefinition
+from contracts.workflow import WorkflowDefinition
 
 
 class WorkflowRegistry:
@@ -138,7 +138,7 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
-from core.models.types import WorkflowDefinition
+from contracts.workflow import WorkflowDefinition
 
 
 class WorkflowRegistry:

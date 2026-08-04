@@ -7,8 +7,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from executor.dispatcher import StepExecutionOutcome
-from core.models.types import TraceEventType
-from core.recovery.constants import MAX_SAME_BINDING_RETRIES
+from contracts.workflow import TraceEventType
+from recovery.runtime_recovery.constants import MAX_SAME_BINDING_RETRIES
 from executor.graph import RuntimeEvent, RuntimeEventStatus, RuntimeEventType
 if TYPE_CHECKING:
     from executor.graph import RuntimeGraph, RuntimeNode

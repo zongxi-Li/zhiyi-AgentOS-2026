@@ -8,15 +8,15 @@ from planner.models import ACGEdge, EdgeActivation
 from planner.models import ControlType, EdgeType, NodeType
 from planner.models import ACGValidationError, validate_blueprint
 from planner.models import ControlNode, StepNode, parse_node
-from core.recovery.bindings import CandidateResolver
+from recovery.runtime_recovery.bindings import CandidateResolver
 from executor.algorithms import (
     ConditionEvaluationError,
     ConditionEvaluator,
     conditional_branch_exclusive_nodes,
 )
-from core.recovery.constants import MAX_BINDING_SWITCHES_PER_NODE
-from core.recovery.errors import PatchValidationError
-from core.recovery.models import (
+from recovery.runtime_recovery.constants import MAX_BINDING_SWITCHES_PER_NODE
+from recovery.runtime_recovery.errors import PatchValidationError
+from recovery.runtime_recovery.models import (
     PatchOperationType,
     RuntimeGraphPatch,
     SubgraphInsertionMode,

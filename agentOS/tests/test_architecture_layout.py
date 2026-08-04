@@ -118,6 +118,14 @@ def test_legacy_planner_and_task_manager_modules_are_removed() -> None:
         assert not (SOURCE_ROOT / legacy_file).exists(), legacy_file
 
 
+def test_core_package_is_fully_removed_and_new_components_do_not_import_it() -> None:
+    """最终架构不保留 core 目录，也不允许任何新部件回退依赖 core。"""
+    assert not (SOURCE_ROOT / "core").exists()
+    for module in SOURCE_ROOT.rglob("*.py"):
+        assert "from core" not in module.read_text(encoding="utf-8")
+        assert "import core" not in module.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "legacy_file",
     ("core/communication/__init__.py", "core/communication/contract.py", "core/communication/assembler.py", "core/communication/audit.py"),

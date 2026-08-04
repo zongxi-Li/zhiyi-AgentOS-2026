@@ -9,13 +9,13 @@ from typing import Any
 
 from adapters.model_adapter import StructuredGenerationError
 from agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
-from core.data_contracts import (
+from contracts.communication import (
     ContextContractError,
     apply_contract_defaults,
     validate_contract_payload,
 )
-from core.models.types import WorkflowDefinition, WorkflowDefinitionType, utc_now
-from core.native_prompt import (
+from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, utc_now
+from adapters.model.native_prompt import (
     NATIVE_CAPABILITY_PROMPT_VERSION,
     NativeCapabilityPromptBuilder,
 )

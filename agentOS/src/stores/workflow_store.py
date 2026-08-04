@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Generic, Sequence, TypeVar
 
-from core.models.types import AgentTask, WorkflowRun, WorkflowStatus
+from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
 
 
 T = TypeVar("T")

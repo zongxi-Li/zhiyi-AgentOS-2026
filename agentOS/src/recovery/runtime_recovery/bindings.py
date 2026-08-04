@@ -9,12 +9,12 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from agents.registry import AgentNotFound
-from core.models.types import utc_now
-from core.recovery.constants import (
+from contracts.workflow import utc_now
+from recovery.runtime_recovery.constants import (
     MAX_BINDING_SWITCHES_PER_NODE,
     MAX_SAME_BINDING_RETRIES,
 )
-from core.recovery.events import stable_hash
+from recovery.runtime_recovery.events import stable_hash
 
 
 class BindingType(str, Enum):

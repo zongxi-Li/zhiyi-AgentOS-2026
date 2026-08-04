@@ -3,7 +3,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from core.models.types import AgentTask, TraceEvent, TraceEventType, WorkflowRun
+from contracts.workflow import AgentTask, TraceEvent, TraceEventType, WorkflowRun
 
 
 class TraceStore:

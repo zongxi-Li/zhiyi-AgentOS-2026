@@ -8,8 +8,8 @@ from typing import Optional
 
 from pydantic import Field
 
-from core.models.enums import WorkflowProgressPhase
-from core.models.types import (
+from contracts.execution import WorkflowProgressPhase
+from contracts.workflow import (
     AgentTask,
     CoreModel,
     StepStatus,

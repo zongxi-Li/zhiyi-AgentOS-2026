@@ -1,41 +1,41 @@
 """Controlled runtime-graph change models and services."""
 
-from core.recovery.controller import RuntimeController
-from core.recovery.bindings import (
+from recovery.runtime_recovery.controller import RuntimeController
+from recovery.runtime_recovery.bindings import (
     BindingAvailabilityProvider,
     BindingHistoryRecord,
     BindingType,
     ExecutionBinding,
     RegistryBindingAvailabilityProvider,
 )
-from core.recovery.errors import (
+from recovery.runtime_recovery.errors import (
     PatchConflictError,
     PatchValidationError,
     RuntimeGraphError,
 )
-from core.recovery.models import (
+from recovery.runtime_recovery.models import (
     PatchApplyResult,
     PatchBudgetImpact,
     PatchOperationType,
     RuntimeGraphPatch,
     SubgraphInsertionMode,
 )
-from core.recovery.validator import PatchValidator
-from core.recovery.events import (
+from recovery.runtime_recovery.validator import PatchValidator
+from recovery.runtime_recovery.events import (
     RuntimeEvent,
     RuntimeEventClassifier,
     RuntimeEventStatus,
     RuntimeEventType,
 )
-from core.recovery.policy import EventPolicyAction, EventPolicyDecision, RuntimeEventPolicy
-from core.recovery.proposal import (
+from recovery.runtime_recovery.policy import EventPolicyAction, EventPolicyDecision, RuntimeEventPolicy
+from recovery.runtime_recovery.proposal import (
     CandidateResolver,
     DeterministicProposalFactory,
     GraphChangeProposal,
     GraphChangeType,
     RuntimeGraphPatchCompiler,
 )
-from core.recovery.recipes import (
+from recovery.runtime_recovery.recipes import (
     RecoveryNodeTemplate,
     RecoveryRecipe,
     RecoveryRecipeRegistry,

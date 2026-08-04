@@ -13,4 +13,6 @@ class ModelProvider(Protocol):
 
 # TODO: 实现 OpenAI/本地模型客户端时，统一超时、重试、限流和结构化错误映射。
 
-__all__ = ["ModelProvider"]
+from .native import NativeGeneralAgent, register_native_runtime
+
+__all__ = ["ModelProvider", "NativeGeneralAgent", "register_native_runtime"]

@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.recovery.events import RuntimeEventType
-from core.recovery.models import SubgraphInsertionMode
+from recovery.runtime_recovery.events import RuntimeEventType
+from recovery.runtime_recovery.models import SubgraphInsertionMode
 
 
 class RecoveryNodeTemplate(BaseModel):

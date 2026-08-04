@@ -12,9 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from planner.models import ACGEdge
 from planner.models import ACGNode, parse_node
-from core.models.types import utc_now
+from contracts.workflow import utc_now
 from executor.graph import RuntimeGraph, RuntimeNodeStatus
-from core.recovery.bindings import ExecutionBinding
+from recovery.runtime_recovery.bindings import ExecutionBinding
 
 
 def _hash(payload: dict[str, Any]) -> str:

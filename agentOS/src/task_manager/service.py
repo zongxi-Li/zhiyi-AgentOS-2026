@@ -5,11 +5,11 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from core.governance.trace import TraceStore
+from auditor.governance.trace import TraceStore
 from .store import WorkflowRegistry
 from .models import ProgressCalculator, WorkflowProgress
 from .state_machine import StateMachine
-from core.models.types import (
+from contracts.workflow import (
     AgentTask,
     TraceEventType,
     WorkflowDefinition,

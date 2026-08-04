@@ -6,8 +6,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.recovery.events import RuntimeEvent, RuntimeEventType
-from core.recovery.recipes import RecoveryRecipeRegistry
+from recovery.runtime_recovery.events import RuntimeEvent, RuntimeEventType
+from recovery.runtime_recovery.recipes import RecoveryRecipeRegistry
 from executor.graph import RuntimeGraph
 
 

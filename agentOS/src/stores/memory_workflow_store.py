@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from core.models.types import AgentTask, WorkflowRun, WorkflowStatus
+from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
 from stores.workflow_store import (
     WorkflowRunDeleteResult,
     WorkflowRunNotTerminalError,

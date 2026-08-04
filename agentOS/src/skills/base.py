@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from core.models.types import SkillRequest, SkillResult
+from contracts.workflow import SkillRequest, SkillResult
 
 
 class BaseSkill(ABC):

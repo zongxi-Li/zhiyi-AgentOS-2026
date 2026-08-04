@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from planner.models import ACGBlueprint
 from executor.algorithms import BranchDecision
-from core.governance.checkpoint import CheckpointStore
-from core.governance.trace import TraceStore
+from auditor.governance.checkpoint import CheckpointStore
+from auditor.governance.trace import TraceStore
 from executor import refresh_run_execution_projection
-from core.models.enums import StepStatus
-from core.models.types import TraceEventType, WorkflowStatus, utc_now
-from core.recovery.errors import PatchConflictError, RuntimeGraphError
-from core.recovery.models import PatchApplyResult, RuntimeGraphPatch
-from core.recovery.models import PatchOperationType
-from core.recovery.validator import PatchValidator
-from core.run_locks import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
+from contracts.execution import StepStatus
+from contracts.workflow import TraceEventType, WorkflowStatus, utc_now
+from recovery.runtime_recovery.errors import PatchConflictError, RuntimeGraphError
+from recovery.runtime_recovery.models import PatchApplyResult, RuntimeGraphPatch
+from recovery.runtime_recovery.models import PatchOperationType
+from recovery.runtime_recovery.validator import PatchValidator
+from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from executor.graph import AppliedPatchRecord, RuntimeGraph
 from task_manager.state_machine import StateMachine
 
