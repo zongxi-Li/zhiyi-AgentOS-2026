@@ -10,7 +10,11 @@ NATIVE_CAPABILITY_PROMPT_VERSION = "native-capability.v1"
 
 
 class NativeCapabilityPromptBuilder:
-    """Build one capability prompt from normalized runtime facts only."""
+    """把已归一化的运行时事实编排为原生能力调用提示词。
+
+    构造过程只读取调用者给定的任务、上下文和合同，返回单个 JSON 请求
+    提示词；不访问模型或外部数据源，因而对相同输入保持确定性。
+    """
 
     def build(
         self,
@@ -24,6 +28,12 @@ class NativeCapabilityPromptBuilder:
         evidence_refs: list[str],
         output_schema: dict[str, Any],
     ) -> str:
+        """构造一次能力执行的完整提示词。
+
+        输入包含能力描述、任务事实、白名单上下文、证据引用及输出 JSON
+        Schema；返回要求模型仅依据这些事实输出合同 JSON 的字符串。该方法
+        不验证 Schema，也不清洗调用者提供的业务数据。
+        """
         descriptor = capability_descriptor.model_dump(
             by_alias=True,
             mode="json",
@@ -103,6 +113,11 @@ class NativeCapabilityPromptBuilder:
         invalid_data: dict[str, Any],
         validation_error: str,
     ) -> str:
+        """为已通过 JSON 解析但未通过合同校验的结果构造一次修复提示词。
+
+        ``original_prompt`` 保留原始事实边界，``invalid_data`` 与错误信息帮助
+        模型定向修正；返回值仍只是一段提示词，实际重试次数由调用方限制。
+        """
         invalid = json.dumps(invalid_data, ensure_ascii=False, separators=(",", ":"))
         return (
             f"{original_prompt}\n"
@@ -117,6 +132,11 @@ class NativeCapabilityPromptBuilder:
         original_prompt: str,
         validation_error: str,
     ) -> str:
+        """为无效或截断的 JSON 响应构造一次更保守的重试提示词。
+
+        输入是原提示词和解析错误，输出要求缩短结果并返回完整 JSON。此方法
+        不尝试解析或修复数据，以免在适配器层伪造模型输出。
+        """
         return (
             f"{original_prompt}\n"
             "The previous response was invalid or truncated JSON. Retry once with a "
@@ -126,6 +146,11 @@ class NativeCapabilityPromptBuilder:
         )
 
     def build_artifact(self, **kwargs) -> str:
+        """在普通能力提示词后附加最终交付物的组成约束。
+
+        ``kwargs`` 必须满足 :meth:`build` 的关键字参数约定；返回字符串要求
+        产物覆盖固定章节并显式保留事实来源和未决问题，不执行生成或校验。
+        """
         return (
             self.build(**kwargs)
             + "\nFINAL_COMPOSITION_RULES="

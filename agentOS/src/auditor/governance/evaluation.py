@@ -8,7 +8,11 @@ from contracts.workflow import EvaluationRun, TraceEventType, WorkflowMetric, Wo
 
 
 class WorkflowEvaluator:
-    """计算工作流级治理指标。"""
+    """从工作流运行集合计算可审计的治理指标。
+
+    该评估器不持久化结果，也不按 domain、workflow 或 source 过滤输入；这些
+    可选值只原样写入输出标签，调用方须先完成所需筛选。
+    """
 
     def evaluate(
         self,
@@ -18,6 +22,12 @@ class WorkflowEvaluator:
         workflow_id: Optional[str] = None,
         source: Optional[str] = None,
     ) -> EvaluationRun:
+        """聚合 ``runs`` 的状态、恢复、Trace 与人工审核统计。
+
+        输入迭代器会被一次性物化，以便多次统计；空输入返回全零指标。成功返回
+        新 ``EvaluationRun``，不修改任一运行对象。时间复杂度 O(n + e)，其中
+        e 为全部 Trace 事件数，额外空间 O(n)。
+        """
         items = list(runs)
         total = len(items)
         if total == 0:

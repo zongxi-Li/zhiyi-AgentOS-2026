@@ -1,4 +1,4 @@
-"""AgentOS Core 的适配器 federated_adapter 模块，连接模型、检索和联邦增强等外部能力。"""
+"""联邦增强服务的失败开放适配器边界。"""
 
 
 import logging
@@ -11,7 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class FederatedAdapter:
-    """可选联邦增强调用的失败开放适配器。"""
+    """可选调用联邦增强服务，并在其不可用时保持主流程可运行。
+
+    配置从环境变量读取，实例不缓存远端结果；网络或协议失败会记录警告并返回
+    空字典。风险调整被限制在固定范围，调用者不得把空结果视为成功增强。
+    """
 
     def __init__(self) -> None:
         self.enabled = os.getenv("AGENT_FEDERATED_ENABLED", "false").strip().lower() == "true"
@@ -46,9 +50,11 @@ class FederatedAdapter:
         return None
 
     async def get_risk_enhancement(self, case_info: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Return federated enhancement payload.
-        Any failure must not break the main pipeline, so this method returns {} on errors.
+        """请求联邦优化与节点统计，返回受限的风险增强载荷。
+
+        ``case_info`` 作为 JSON 特征提交；成功返回风险调整、置信度和节点数。
+        适配器禁用、非 200 响应、网络及解析异常均返回空字典并记录警告，绝不
+        破坏主流程。该协程执行常数次远程调用，时延受配置超时和网络影响。
         """
         if not self.enabled:
             return {}

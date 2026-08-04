@@ -29,7 +29,12 @@ NATIVE_CAPABILITIES = NATIVE_CAPABILITY_IDS
 
 
 class NativeGeneralAgent(BaseAgent):
-    """Small offline-safe Agent that executes the native bootstrap capabilities."""
+    """执行原生启动能力的通用 Agent，并保持离线安全边界。
+
+    它只根据运行时上下文、已注册能力和显式注入的模型/工具运行时工作；
+    不直接访问供应商 SDK。模型不可用、工具结果非法或输出违反合同会以
+    明确异常失败，而不会编造业务结果。
+    """
 
     def __init__(self) -> None:
         super().__init__(
@@ -47,6 +52,13 @@ class NativeGeneralAgent(BaseAgent):
         self.prompt_builder = NativeCapabilityPromptBuilder()
 
     async def run(self, context: AgentRunContext) -> AgentOutput:
+        """执行 ``context`` 所声明的一项能力并返回受合同约束的输出。
+
+        信息检索能力仅经只读工具运行时取得证据；其余能力使用注入模型生成
+        JSON，并至多进行一次解析或合同修复。成功时返回 ``AgentOutput``，
+        缺少能力描述、模型、证据或得到非法结果时抛出结构化或运行时异常。
+        该协程不保证并发调用间共享状态隔离，隔离责任由运行时提供。
+        """
         objective = str(
             context.task.input.get("userIntent")
             or context.task.input.get("intent")
@@ -429,7 +441,11 @@ class NativeGeneralAgent(BaseAgent):
 
 
 def native_bootstrap_definition() -> WorkflowDefinition:
-    """Return the empty ACG definition that enters the existing PlanningEngine."""
+    """返回进入既有规划引擎的空原生 ACG 工作流定义。
+
+    返回的定义不含步骤，只提供稳定的工作流标识和领域元数据，供后续规划
+    填充；函数不注册对象、不读写全局状态，对每次调用返回独立合同对象。
+    """
 
     return WorkflowDefinition(
         workflowId=NATIVE_ACG_WORKFLOW_ID,
@@ -444,7 +460,12 @@ def native_bootstrap_definition() -> WorkflowDefinition:
 
 
 def register_native_runtime(*, agent_registry, workflow_registry) -> None:
-    """Register Core definitions before any application Pack is discovered."""
+    """向给定注册表登记原生 Agent 与启动工作流。
+
+    两个参数必须提供兼容的 ``register`` 方法；本函数按 Agent、工作流顺序
+    执行注册，重复项或注册表错误由其实现直接抛出，不吞没异常也不实现
+    外部持久化。
+    """
 
     agent_registry.register(NativeGeneralAgent())
     workflow_registry.register(native_bootstrap_definition())

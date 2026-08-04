@@ -29,7 +29,12 @@ class WorkingMemory:
 
     @classmethod
     def from_run(cls, run: object) -> "WorkingMemory":
-        """从运行快照提取已完成观察，不要求特定的旧 core 模型。"""
+        """从兼容的运行对象或映射提取已完成步骤的工作记忆。
+
+        读取 ``steps`` 或 ``nodes`` 中 completed/waiting_review 的映射输出，返回
+        新 ``WorkingMemory``；未知字段被忽略，不反向依赖旧运行时模型。步骤数
+        为 n 时复杂度 O(n)，输入对象与嵌套输出不被修改。
+        """
         raw_steps = _read(run, "steps", []) or _read(run, "nodes", []) or []
         observations: dict[str, dict[str, Any]] = {}
         for step in raw_steps:
@@ -45,12 +50,20 @@ class WorkingMemory:
         )
 
     def record(self, step_id: str, output: Mapping[str, Any]) -> None:
-        """写入一个步骤的输出副本，调用方后续改动不会污染历史观察。"""
+        """以 ``step_id`` 写入一份浅复制的步骤输出观察。
+
+        同标识会覆盖先前观察，调用者随后增删顶层键不会影响已存值；嵌套可变值
+        仍按引用共享。写入是唯一副作用，复杂度 O(k)，k 为输出顶层字段数。
+        """
         self.observations[str(step_id)] = dict(output)
 
     @classmethod
     def from_context_pack(cls, run: object, pack: object) -> "WorkingMemory":
-        """仅采纳通信器已白名单过滤后的 source_data，禁止旁路读取上游全量输出。"""
+        """从通信器已过滤的 ``source_data`` 构建一份工作记忆。
+
+        仅采纳映射类型的来源数据，禁止从上游全量输出旁路读取；返回新对象且不
+        修改 ``run`` 或 ``pack``。来源数为 n、字段数为 m 时复杂度 O(n + m)。
+        """
         source_data = _read(pack, "source_data", None) or _read(pack, "sourceData", {}) or {}
         observations = {
             str(source_id): dict(data)

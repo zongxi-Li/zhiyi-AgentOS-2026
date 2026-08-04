@@ -7,7 +7,11 @@ from contracts.workflow import AgentTask, TraceEvent, TraceEventType, WorkflowRu
 
 
 class TraceStore:
-    """绑定 WorkflowRun 对象的内存 Trace 写入器。"""
+    """向运行或孤立任务写入内存 Trace，并提供确定性导出。
+
+    运行事件附着在传入 ``WorkflowRun``，任务事件保存在实例私有字典；该实现
+    没有锁或持久化层，跨线程/进程写入与保留策略由调用方负责。
+    """
 
     def __init__(self):
         self._task_events: dict[str, list[TraceEvent]] = {}
@@ -22,6 +26,11 @@ class TraceStore:
         payload: Optional[Dict[str, Any]] = None,
         duration_ms: int = 0,
     ) -> TraceEvent:
+        """创建事件并原子性语义之外地追加到 ``run.trace``。
+
+        ``duration_ms`` 会截断为非负整数，空载荷规范化为空字典；返回追加的
+        ``TraceEvent``。列表追加是唯一副作用，合同构造或并发冲突错误不被吞没。
+        """
         event = TraceEvent(
             runId=run.run_id,
             stepId=step_id,
@@ -41,6 +50,11 @@ class TraceStore:
         observation: str = "",
         payload: Optional[Dict[str, Any]] = None,
     ) -> TraceEvent:
+        """为尚未绑定运行的 ``task`` 记录一条内存任务事件。
+
+        返回新事件并追加到以 task_id 分组的内部列表；该事件的 runId 固定为空。
+        任务被删除后应调用清理方法，且并发访问不受本类同步保护。
+        """
         event = TraceEvent(
             runId=None,
             eventType=event_type,
@@ -51,15 +65,28 @@ class TraceStore:
         return event
 
     def task_events(self, task_id: str) -> List[TraceEvent]:
+        """返回 ``task_id`` 的当前事件列表副本。
+
+        未知任务返回空列表；容器副本不会影响内部列表，但其中事件对象仍共享。
+        查找和复制的时间复杂度为 O(n)，其中 n 为该任务事件数。
+        """
         return list(self._task_events.get(task_id, []))
 
     def delete_task_events(self, task_id: str) -> None:
-        """Release task-level in-memory trace data after an orphan task is deleted."""
+        """删除孤立任务的全部内存事件，释放该任务占用的引用。
+
+        未知任务是无操作；删除后事件不可由此实例恢复。该方法不影响运行 Trace，
+        并发读写同一 task_id 时的先后次序由调用方负责。
+        """
 
         self._task_events.pop(task_id, None)
 
     def export_json(self, run: WorkflowRun) -> Dict[str, Any]:
-        """返回可供 API、审计和报告使用的可移植 Trace 数据。"""
+        """把运行 Trace 导出为仅含 JSON 兼容值的可移植字典。
+
+        事件经 :meth:`events` 排序后序列化，返回值可供 API、审计或报告使用；
+        不修改运行对象。时间和额外空间均为 O(n)。
+        """
 
         return {
             "runId": run.run_id,
@@ -72,7 +99,11 @@ class TraceStore:
         }
 
     def export_markdown(self, run: WorkflowRun) -> str:
-        """渲染紧凑的人类可读 Trace 报告。"""
+        """渲染按时间稳定排序的人类可读 Markdown Trace 报告。
+
+        返回以换行结尾的字符串，包含运行元数据和每个事件的关键字段，不输出
+        原始载荷以避免意外泄露。函数无副作用，时间和空间复杂度均为 O(n)。
+        """
 
         lines: List[str] = [
             f"# Workflow Trace: {run.run_id}",
@@ -101,4 +132,9 @@ class TraceStore:
         return "\n".join(lines).rstrip() + "\n"
 
     def events(self, run: WorkflowRun) -> List[TraceEvent]:
+        """按创建时间、事件标识返回运行事件的新列表。
+
+        原始 ``run.trace`` 顺序不会被改写；排序复杂度 O(n log n)、额外空间
+        O(n)。读取期间若被并发修改，结果遵循底层列表的可见状态。
+        """
         return sorted(run.trace, key=lambda event: (event.created_at, event.event_id))

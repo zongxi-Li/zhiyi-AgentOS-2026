@@ -9,31 +9,55 @@ from .provenance import ProvenanceLedger
 
 
 class CommunicatorService:
-    """组装可序列化消息，网络投递仍由应用层适配器承担。"""
+    """提供消息装配、保守压缩和字段合同上下文服务。
+
+    实例维护按运行隔离的内存血缘账本，但不执行 HTTP、队列或 WebSocket 投递；
+    可靠传输、持久化及跨协程同步仍是应用层适配器的职责。
+    """
 
     def __init__(self, *, run_id: str = "", task_id: str = "") -> None:
         """服务拥有一份按运行隔离的血缘账本，不向旧运行时索取状态。"""
         self._assembler = ContextAssembler(ProvenanceLedger(run_id=run_id, task_id=task_id))
 
     def compose(self, message_id: str, topic: str, sender: str, payload: dict[str, object], recipient: str | None = None) -> MessageEnvelope:
-        """返回消息信封，不执行 HTTP、队列或 WebSocket 副作用。"""
+        """把消息标识、主题、发送方和载荷封装为 ``MessageEnvelope``。
+
+        返回新合同对象且不执行网络或队列副作用；字段非法时由合同校验错误上抛。
+        输入载荷不在服务内变更，固定字段装配的时间与空间复杂度均为 O(1)。
+        """
         return assemble(message_id, topic, sender, payload, recipient)
 
     def compact(self, text: str, limit: int = 512) -> str:
-        """提供本地、可预测的文本缩略服务。"""
+        """以本地字符上限生成可预测的文本缩略结果。
+
+        返回策略由 ``compress_text`` 定义，不调用模型、不解释语义；调用不修改
+        原字符串，时间与空间复杂度随截取长度增长。
+        """
         return compress_text(text, limit)
 
     def assemble_context(self, **kwargs: object) -> ContextPack:
-        """字段合同驱动的上下文装配入口。"""
+        """将关键字参数转交给字段合同驱动的上下文装配器。
+
+        返回包含白名单数据、缺失字段和血缘统计的 ``ContextPack``，并追加账本
+        消费/交互事件；参数不满足装配器约定时错误直接上抛，不作隐式全量透传。
+        """
         return self._assembler.assemble(**kwargs)  # type: ignore[arg-type]
 
     def record_production(self, step_id: str, output: dict[str, object], **kwargs: object) -> None:
-        """生产方调用此入口登记字段、Token 与证据血缘。"""
+        """为 ``step_id`` 的输出登记字段、Token 与证据血缘。
+
+        该调用会向内部账本追加生产事件而不修改 ``output``；额外参数遵循装配器
+        的代理名称、尝试次数等约定。账本错误或无效输入保持原样上抛。
+        """
         self._assembler.record_production(step_id, output, **kwargs)  # type: ignore[arg-type]
 
     @property
     def provenance(self) -> ProvenanceLedger:
-        """返回可导出的链式血缘账本。"""
+        """返回本服务持有的可导出内存血缘账本引用。
+
+        返回的不是副本，调用者可读取事件或验证完整性，但直接修改公开列表可能
+        破坏链式不变量；并发读取与写入须由调用方协调。
+        """
         return self._assembler.ledger
 
     # TODO: 注入消息总线客户端，以支持 HTTP、队列或 WebSocket 的可靠投递。

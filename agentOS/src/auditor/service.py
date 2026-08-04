@@ -5,10 +5,18 @@ from .risk import classify_risk
 
 
 class AuditorService:
-    """汇总发现等级并输出可读审计摘要。"""
+    """汇总本地发现数量并输出最小审计摘要。
+
+    服务只组合纯评分与风险映射，不保存请求状态、不查询证据库；组织级规则和
+    引用验证保留给后续外部依赖接入。
+    """
 
     def assess(self, severity_counts: dict[str, int]) -> dict[str, object]:
-        """不访问外部证据库，仅计算本地汇总评分。"""
+        """计算 ``severity_counts`` 的分数及对应风险等级。
+
+        返回只含 ``score`` 与 ``severity`` 的字典；未知级别的处理遵循
+        :func:`audit_score`。函数无副作用，复杂度为 O(n)，不验证证据存在性。
+        """
         score = audit_score(severity_counts)
         return {"score": score, "severity": classify_risk(score)}
 

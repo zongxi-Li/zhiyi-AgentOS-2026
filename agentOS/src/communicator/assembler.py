@@ -12,17 +12,30 @@ from .provenance import ProvenanceLedger
 
 
 def assemble(message_id: str, topic: str, sender: str, payload: dict[str, object], recipient: str | None = None) -> MessageEnvelope:
-    """将通用 JSON 负载封装为 contracts 定义的消息信封。"""
+    """将通用 JSON 负载封装为通信合同规定的消息信封。
+
+    输入标识、主题、发送方及可选接收方原样交给 ``MessageEnvelope`` 校验；返回
+    新信封且不执行网络投递。合同字段不合法时由模型校验错误上抛，复杂度 O(1)。
+    """
     return MessageEnvelope(messageId=message_id, topic=topic, sender=sender, recipient=recipient, payload=payload)
 
 
 class ContextAssembler:
-    """仅从 input_spec 声明的字段向下游投递，顺便汇集证据和血缘。"""
+    """按输入合同白名单装配下游上下文，并记录通信血缘。
+
+    实例持有一个可注入账本；首个装配调用会设置其运行标识，之后应仅服务同一
+    运行。该类不访问网络，账本并发写入与跨运行复用由调用方同步。
+    """
     def __init__(self, ledger: ProvenanceLedger | None = None) -> None:
         self.ledger = ledger or ProvenanceLedger()
 
     def assemble(self, *, run_id: str, step_id: str | None = None, input_spec: Mapping[str, Any] | None = None, upstream_outputs: Mapping[str, Mapping[str, Any]], objective: str = "", step_goal: str = "", task_id: str = "", attempt_id: str = "", binding_id: str = "", graph_version: int = 0, token_budget: int | None = None, step_node: object | None = None, **_: Any) -> ContextPack:
-        """装配最小充分上下文；无字段合同即投递空 data，而不是隐式全量透传。"""
+        """从上游输出装配满足 ``input_spec`` 的最小充分 ``ContextPack``。
+
+        只投递白名单字段并按预算选择，缺少必填字段会使返回包标记为 invalid；
+        同时向账本追加消费和交互事件。无字段合同产生空数据而非全量透传。设
+        字段数为 n，主要排序成本为 O(n log n)，输入映射不被修改。
+        """
         if not self.ledger.run_id:
             self.ledger.run_id, self.ledger.task_id = run_id, task_id
         if step_node is not None:
@@ -56,6 +69,11 @@ class ContextAssembler:
         return pack
 
     def record_production(self, step_id: str, output: dict[str, Any], *, agent_name: str = "", attempt: int = 1) -> None:
+        """把步骤 ``output`` 的字段、Token 与证据血缘登记到当前账本。
+
+        该方法不复制或变更输出，仅追加一条生产事件；证据从约定字段中提取。
+        账本错误会直接上抛，处理复杂度取决于输出序列化与字段数，为 O(n)。
+        """
         self.ledger.record_production(step_id, output, estimate_tokens(output), agent_name=agent_name, attempt=attempt, evidence_refs=self._collect_evidence([step_id], {step_id: output}))
 
     @staticmethod

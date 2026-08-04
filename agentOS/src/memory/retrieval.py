@@ -4,7 +4,11 @@ from contracts.memory import MemoryQuery, MemoryRecord
 
 
 def retrieve(records: list[MemoryRecord], query: MemoryQuery) -> list[MemoryRecord]:
-    """按范围、类型、标签做确定性过滤，不伪装为语义向量检索。"""
+    """按类型、范围和标签对本地记录作确定性过滤并限制数量。
+
+    返回保留输入相对顺序的前 ``query.limit`` 条，未做向量相似度、权限或过期
+    处理；这些边界由外部检索适配器负责。时间 O(n)，返回列表额外空间 O(k)。
+    """
     selected = [record for record in records if (not query.memory_types or record.memory_type in query.memory_types) and (query.scope is None or record.scope == query.scope) and set(query.tags).issubset(record.tags)]
     return selected[:query.limit]
 

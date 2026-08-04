@@ -12,7 +12,11 @@ from contracts.communication import ContextPackRef, MessageEnvelope
 
 
 def estimate_tokens(payload: Any) -> int:
-    """提供稳定的相对 Token 度量，避免把具体模型分词器耦合进通信层。"""
+    """以规范文本长度估算稳定的相对 Token 数。
+
+    ``None`` 返回零，其余对象优先按排序 JSON 编码，失败时退回 ``str``；结果仅
+    用于预算排序，不能替代模型分词器计费。时间与空间复杂度随序列化大小 O(n)。
+    """
     if payload is None:
         return 0
     try:
@@ -23,13 +27,22 @@ def estimate_tokens(payload: Any) -> int:
 
 
 def input_revision(payload: Any) -> str:
-    """为一份已解析输入生成可审计的稳定版本号。"""
+    """为已解析输入计算规范 JSON 的 SHA-256 版本标识。
+
+    映射键排序且使用固定分隔符，因此等价输入得到稳定摘要；不可原生编码的值
+    转为字符串。函数无副作用，时间和额外空间随编码大小均为 O(n)。
+    """
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class ContextPack(BaseModel):
-    """下游步骤的最小充分上下文；data 只能来自字段白名单。"""
+    """描述可投递给下游步骤的最小充分、可审计上下文。
+
+    ``data`` 与 ``source_data`` 只能来自上游字段白名单；合同状态、缺失字段、
+    Token 统计和输入版本共同记录装配边界。模型禁止额外字段，调用方负责确保
+    同一包的账本事件与内容保持一致。
+    """
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
