@@ -2,5 +2,5 @@
 
 
 def task_complexity(constraint_count: int, dependency_count: int = 0) -> float:
-    """以约束和依赖数估计任务复杂度，供排序而非业务决策使用。"""
+    """以约束和依赖数估计任务复杂度（O(1)），仅用于稳定排序而非业务决策。"""
     return max(0, constraint_count) + max(0, dependency_count) * 1.5

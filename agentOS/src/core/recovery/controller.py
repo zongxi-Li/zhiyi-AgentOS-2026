@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from core.acg.blueprint import ACGBlueprint
-from core.conditions import BranchDecision
+from planner.models import ACGBlueprint
+from executor.algorithms import BranchDecision
 from core.governance.checkpoint import CheckpointStore
 from core.governance.trace import TraceStore
 from executor import refresh_run_execution_projection
@@ -15,7 +15,7 @@ from core.recovery.models import PatchOperationType
 from core.recovery.validator import PatchValidator
 from core.run_locks import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from executor.graph import AppliedPatchRecord, RuntimeGraph
-from core.workflow.state_machine import StateMachine
+from task_manager.state_machine import StateMachine
 
 
 class RuntimeController:

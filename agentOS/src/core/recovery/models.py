@@ -10,8 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from core.acg.edges import ACGEdge
-from core.acg.nodes import ACGNode, parse_node
+from planner.models import ACGEdge
+from planner.models import ACGNode, parse_node
 from core.models.types import utc_now
 from executor.graph import RuntimeGraph, RuntimeNodeStatus
 from core.recovery.bindings import ExecutionBinding

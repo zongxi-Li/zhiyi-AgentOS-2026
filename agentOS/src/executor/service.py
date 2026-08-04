@@ -166,4 +166,59 @@ def refresh_run_execution_projection(run: Any) -> None:
     run.active_step_ids = sorted(active)
     run.current_step_id = next((node.node_id for node in graph.nodes if node.node_type == "step" and node.status in {RuntimeNodeStatus.RUNNING, RuntimeNodeStatus.WAITING_REVIEW, RuntimeNodeStatus.RETRYING, RuntimeNodeStatus.FAILED}), None)
 
-__all__ = ["ACGExecutor", "ACGWorkflowAdapter", "ExecutionAdapterFactory", "ExecutorService", "SchedulerPort", "refresh_run_execution_projection"]
+class Orchestrator:
+    """应用层 Agent 调用适配器。
+
+    它位于 executor 是因为唯一职责是把已规划步骤交给已选 Agent，
+    不再把调度逻辑藏在已删除的旧工作流路径中。
+    """
+
+    def __init__(self, agent_registry: Any, capability_catalog: Any = None) -> None:
+        self.agent_registry = agent_registry
+        self.capability_catalog = capability_catalog
+        self.model_runtime: Any = None
+
+    def set_model_runtime(self, model_runtime: Any) -> None:
+        self.model_runtime = model_runtime
+
+    def _capability_descriptor(self, capability: str | None) -> Any:
+        if self.capability_catalog is None or not capability:
+            return None
+        try:
+            return self.capability_catalog.get(capability)
+        except KeyError:
+            return None
+
+    async def dispatch_agent(self, task: Any, run: Any, workflow: Any, step: Any,
+                             memory: Any, context_pack: Any = None) -> tuple[Any, int]:
+        """调度一个已绑定步骤；耗时测量 O(1)，不影响图拓扑或状态机。"""
+        from time import perf_counter
+        from agents.base import AgentRunContext
+        from adapters.tool_adapter import configured_tool_runtime
+
+        agent = self.agent_registry.resolve(
+            domain=run.domain, agent_name=step.agent_name, capability=step.capability,
+            allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
+        )
+        tool_runtime = configured_tool_runtime()
+        if tool_runtime is not None:
+            tool_runtime = tool_runtime.scoped([
+                name for name in agent.profile.allowed_tools
+                if name not in {"web_search", "web_extract"}
+            ])
+        context = AgentRunContext(task=task, run=run, workflow=workflow, step=step,
+                                  memory=memory, contextPack=context_pack,
+                                  toolRuntime=tool_runtime, modelRuntime=self.model_runtime,
+                                  capabilityDescriptor=self._capability_descriptor(step.capability))
+        started = perf_counter()
+        return await agent.run(context), int((perf_counter() - started) * 1000)
+
+    def compose_final_output(self, run: Any) -> dict[str, Any]:
+        """按步骤逆序选择最终答案，保证最后产物对调用方具有确定性。"""
+        artifacts = {step.step_id: step.output for step in run.steps if step.output}
+        final_answer = next((str(step.output[key]) for step in reversed(run.steps)
+                             for key in ("final_answer", "draft") if step.output.get(key)), "")
+        return {"artifacts": artifacts, **({"final_answer": final_answer} if final_answer else {})}
+
+
+__all__ = ["ACGExecutor", "ACGWorkflowAdapter", "ExecutionAdapterFactory", "ExecutorService", "Orchestrator", "SchedulerPort", "refresh_run_execution_projection"]

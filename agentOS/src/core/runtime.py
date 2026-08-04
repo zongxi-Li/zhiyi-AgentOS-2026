@@ -12,18 +12,18 @@ from time import monotonic
 from typing import Mapping, Optional
 
 from agents import AgentRegistry
-from core.acg import (
+from planner.models import (
     ACGBlueprint,
     promote_workflow_to_acg,
 )
 from executor import ACGWorkflowAdapter, ExecutionAdapterFactory, refresh_run_execution_projection
 from core.governance.checkpoint import CheckpointStore, checkpoint_trace_payload
 from core.governance.evaluation import WorkflowEvaluator
-from core.workflow.orchestrator import Orchestrator
-from core.workflow.registry import WorkflowRegistry
+from executor.service import Orchestrator
+from task_manager.store import WorkflowRegistry
 from core.governance.review import ReviewManager
-from core.workflow.state_machine import StateMachine
-from core.workflow.task_manager import TaskManager
+from task_manager.state_machine import StateMachine
+from task_manager.service import TaskManager
 from core.governance.trace import TraceStore
 from core.models.types import (
     AgentTask,
@@ -54,9 +54,9 @@ from core.recovery.proposal import (
 from core.recovery.recipes import RecoveryRecipeRegistry
 from core.run_locks import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from executor.graph import RuntimeGraph
-from core.planning.default_catalog import build_default_capability_catalog
-from core.planning.capabilities import CapabilityCatalog
-from core.planning.variants import (
+from planner.models import build_default_capability_catalog
+from planner.models import CapabilityCatalog
+from planner.algorithms import (
     PLANNER_ALGORITHM_VERSION,
     normalize_planning_diversity,
     normalize_planning_seed,
@@ -181,7 +181,7 @@ class WorkflowRuntime:
     @property
     def planning_engine(self):
         if self._planning_engine is None:
-            from core.planning import PlanningEngine
+            from planner.service import PlanningEngine
 
             self._planning_engine = PlanningEngine(
                 workflow_registry=self.workflow_registry,
@@ -1220,7 +1220,7 @@ class WorkflowRuntime:
     def _planning_engine_for_run(self, run: WorkflowRun):
         if run.execution_scope is None:
             return self.planning_engine
-        from core.planning import PlanningEngine
+        from planner.service import PlanningEngine
 
         return PlanningEngine(
             workflow_registry=self.plugin_scope_resolver.scoped_workflows(

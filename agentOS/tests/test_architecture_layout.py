@@ -107,6 +107,17 @@ def test_legacy_executor_runtime_modules_are_removed() -> None:
         assert not (SOURCE_ROOT / legacy_file).exists(), legacy_file
 
 
+def test_legacy_planner_and_task_manager_modules_are_removed() -> None:
+    """ACG、规划和任务生命周期只允许在新部件中保留一个实现。"""
+    for legacy_file in (
+        "core/acg",
+        "core/planning",
+        "core/workflow",
+        "core/conditions.py",
+    ):
+        assert not (SOURCE_ROOT / legacy_file).exists(), legacy_file
+
+
 @pytest.mark.parametrize(
     "legacy_file",
     ("core/communication/__init__.py", "core/communication/contract.py", "core/communication/assembler.py", "core/communication/audit.py"),
