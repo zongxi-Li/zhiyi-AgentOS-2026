@@ -1,0 +1,51 @@
+"""资源健康与候选筛选所需的纯计算函数。"""
+
+from __future__ import annotations
+
+from contracts.resource import ResourceProfile, ResourceSnapshot
+
+from .models import ResourceHealth
+
+
+def exponential_moving_average(previous: float | None, observation: float, alpha: float) -> float:
+    """计算 EMA；首次观测直接采用样本，避免虚构历史数据。"""
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("alpha must be in (0, 1]")
+    if previous is None:
+        return observation
+    return alpha * observation + (1.0 - alpha) * previous
+
+
+def ema(previous: float | None, observation: float, alpha: float) -> float:
+    """``exponential_moving_average`` 的简短别名，便于策略代码表达。"""
+    return exponential_moving_average(previous, observation, alpha)
+
+
+def health_score(health: ResourceHealth, utilization: float) -> float:
+    """把可靠性、时延和负载压缩为可稳定排序的健康分数。"""
+    if not health.healthy:
+        return 0.0
+    latency_penalty = 1.0 if health.latency_ms is None else 1.0 / (1.0 + health.latency_ms / 1000.0)
+    return health.reliability * latency_penalty * (1.0 - utilization)
+
+
+def is_resource_available(
+    profile: ResourceProfile,
+    snapshot: ResourceSnapshot,
+    health: ResourceHealth,
+    required_capabilities: list[str] | tuple[str, ...] | set[str],
+    labels: dict[str, str] | None = None,
+) -> bool:
+    """判定资源是否能在当前时刻被调度，不在这里产生任何状态变更。"""
+    required = set(required_capabilities)
+    labels = labels or {}
+    return (
+        profile.enabled
+        and required.issubset(profile.capabilities)
+        and all(profile.labels.get(key) == value for key, value in labels.items())
+        and snapshot.available_slots > 0
+        and health.healthy
+    )
+
+
+is_available = is_resource_available

@@ -1,3 +1,16 @@
-"""资源部件的包边界；业务实现将在后续迁移。"""
+"""资源部件的公开入口。"""
 
-__all__: list[str] = []
+from .health import ResourceHealthMonitor
+from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
+from .service import ResourceService
+from .store import InMemoryResourceStore, ResourceStore
+
+__all__ = [
+    "InMemoryResourceStore",
+    "ResourceCandidate",
+    "ResourceHealth",
+    "ResourceHealthMonitor",
+    "ResourceService",
+    "ResourceStore",
+    "VersionedResourceSnapshot",
+]
