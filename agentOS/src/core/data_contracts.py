@@ -3,10 +3,77 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 
-from jsonschema import ValidationError as JSONSchemaValidationError
-from jsonschema.validators import validator_for
+try:
+    from jsonschema import ValidationError as JSONSchemaValidationError
+    from jsonschema.validators import validator_for
+
+    _HAS_JSONSCHEMA = True
+except ModuleNotFoundError:
+    _HAS_JSONSCHEMA = False
+
+    class JSONSchemaValidationError(ValueError):
+        """无 jsonschema 依赖时，保留调用方所需的错误表面。"""
+
+        def __init__(self, message: str, path: Iterable[str | int] = ()):
+            self.message = message
+            self.absolute_path = tuple(path)
+            super().__init__(message)
+
+
+def _matches_json_type(value: Any, expected: str) -> bool:
+    """实现回退验证器所需的 JSON 基础类型判断，bool 不视为整数。"""
+    return {
+        "object": lambda: isinstance(value, dict),
+        "array": lambda: isinstance(value, list),
+        "string": lambda: isinstance(value, str),
+        "number": lambda: isinstance(value, (int, float)) and not isinstance(value, bool),
+        "integer": lambda: isinstance(value, int) and not isinstance(value, bool),
+        "boolean": lambda: isinstance(value, bool),
+        "null": lambda: value is None,
+    }.get(expected, lambda: True)()
+
+
+def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[str | int, ...] = ()) -> None:
+    """验证项目当前合同使用的最小 JSON Schema 子集。
+
+    支持 object/properties/required/type/array/items/enum/nullable，目的仅是让
+    不安装 jsonschema 的运行环境仍可安全运行既有合同校验。
+    # TODO: 若需 oneOf、引用解析、格式校验等完整 JSON Schema 能力，请安装 jsonschema 依赖。
+    """
+    nullable = schema.get("nullable") is True
+    if payload is None and nullable:
+        return
+
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected]
+    expected_types = [item for item in expected_types if isinstance(item, str)]
+    if expected_types and not any(_matches_json_type(payload, item) for item in expected_types):
+        description = " or ".join(expected_types)
+        raise JSONSchemaValidationError(f"{payload!r} is not of type '{description}'", path)
+
+    allowed = schema.get("enum")
+    if isinstance(allowed, list) and payload not in allowed:
+        raise JSONSchemaValidationError(f"{payload!r} is not one of {allowed!r}", path)
+
+    if isinstance(payload, dict):
+        required = schema.get("required", [])
+        if isinstance(required, list):
+            for key in required:
+                if isinstance(key, str) and key not in payload:
+                    raise JSONSchemaValidationError(f"'{key}' is a required property", path)
+        properties = schema.get("properties", {})
+        if isinstance(properties, dict):
+            for key, child_schema in properties.items():
+                if key in payload and isinstance(child_schema, dict):
+                    _validate_minimal_schema(payload[key], child_schema, (*path, key))
+
+    if isinstance(payload, list):
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(payload):
+                _validate_minimal_schema(item, item_schema, (*path, index))
 
 
 class ContextContractError(ValueError):
@@ -21,6 +88,13 @@ class ContextContractError(ValueError):
 
 def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
     if not schema:
+        return
+    if not isinstance(schema, dict):
+        raise ValueError(f"invalid JSON Schema for {label}: schema must be an object")
+    if not _HAS_JSONSCHEMA:
+        # 回退模式只接受当前项目所使用的对象型 schema；详细约束由载荷验证处理。
+        if "properties" in schema and not isinstance(schema["properties"], dict):
+            raise ValueError(f"invalid JSON Schema for {label}: properties must be an object")
         return
     validator = validator_for(schema)
     try:
@@ -37,6 +111,18 @@ def validate_contract_payload(
     direction: str,
 ) -> None:
     if not schema:
+        return
+    if not _HAS_JSONSCHEMA:
+        try:
+            _validate_minimal_schema(payload, schema)
+        except JSONSchemaValidationError as exc:
+            path = ".".join(str(item) for item in exc.absolute_path)
+            raise ContextContractError(
+                step_id=step_id,
+                direction=direction,
+                message=exc.message,
+                path=path,
+            ) from exc
         return
     validator = validator_for(schema)(schema)
     try:
