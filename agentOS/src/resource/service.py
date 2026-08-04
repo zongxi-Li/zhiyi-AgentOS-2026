@@ -1,0 +1,96 @@
+"""面向调度器的资源登记、观测和候选查询服务。"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+from contracts.resource import ResourceProfile, ResourceSnapshot
+
+from .algorithms import health_score, is_resource_available
+from .health import ResourceHealthMonitor
+from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
+from .registry import ResourceRegistry
+from .store import InMemoryResourceStore, ResourceStore
+
+
+class ResourceService:
+    """以单个协调入口向调度器暴露可立即分配的资源候选。"""
+
+    def __init__(
+        self,
+        store: ResourceStore | None = None,
+        health_monitor: ResourceHealthMonitor | None = None,
+        *,
+        heartbeat_timeout: timedelta = timedelta(seconds=60),
+    ) -> None:
+        self.store = store or InMemoryResourceStore()
+        self.registry = ResourceRegistry(self.store)
+        self.health_monitor = health_monitor or ResourceHealthMonitor(
+            heartbeat_timeout=heartbeat_timeout
+        )
+
+    def register(self, profile: ResourceProfile, snapshot: ResourceSnapshot) -> VersionedResourceSnapshot:
+        """登记一个可调度资源及其首个负载快照。"""
+        return self.store.register(profile, snapshot)
+
+    register_resource = register
+
+    def update_snapshot(
+        self, snapshot: ResourceSnapshot, *, expected_version: int | None = None
+    ) -> VersionedResourceSnapshot:
+        """更新动态负载观测；版本冲突交给存储层显式报告。"""
+        return self.store.update_snapshot(snapshot, expected_version=expected_version)
+
+    def snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
+        """读取调度决策所需的最新版本快照。"""
+        return self.store.get_snapshot(resource_id)
+
+    def heartbeat(self, resource_id: str, *, received_at: datetime | None = None) -> ResourceHealth:
+        """记录已登记资源的存活信号，未知资源不会被静默接纳。"""
+        self.registry.get(resource_id)
+        return self.health_monitor.heartbeat(resource_id, received_at=received_at)
+
+    def observe(
+        self,
+        resource_id: str,
+        *,
+        success: bool,
+        latency_ms: float,
+        observed_at: datetime | None = None,
+    ) -> ResourceHealth:
+        """记录执行结果，供后续调度在可靠性和时延上作出更好选择。"""
+        self.registry.get(resource_id)
+        return self.health_monitor.observe(
+            resource_id,
+            success=success,
+            latency_ms=latency_ms,
+            observed_at=observed_at,
+        )
+
+    def candidates(
+        self,
+        required_capabilities: list[str] | tuple[str, ...] | set[str],
+        *,
+        labels: dict[str, str] | None = None,
+        now: datetime | None = None,
+    ) -> list[ResourceCandidate]:
+        """返回具备所需能力、健康且仍有槽位的稳定排序候选集。"""
+        candidates: list[ResourceCandidate] = []
+        for profile in self.registry.all():
+            versioned = self.store.get_snapshot(profile.resource_id)
+            health = self.health_monitor.health(profile.resource_id, now=now)
+            if not is_resource_available(
+                profile, versioned.snapshot, health, required_capabilities, labels
+            ):
+                continue
+            candidates.append(
+                ResourceCandidate(
+                    profile=profile,
+                    snapshot=versioned,
+                    health=health,
+                    score=health_score(health, versioned.snapshot.utilization),
+                )
+            )
+        return sorted(candidates, key=lambda candidate: (-candidate.score, candidate.profile.resource_id))
+
+    get_candidates = candidates
