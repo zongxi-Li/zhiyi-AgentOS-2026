@@ -46,6 +46,17 @@ def test_component_files_exist_and_are_non_empty(component: str, files: tuple[st
         assert target.stat().st_size > 0, f"模块不得为空：{target.relative_to(SOURCE_ROOT)}"
 
 
+@pytest.mark.parametrize("component, files", COMPONENT_FILES.items())
+def test_component_contains_no_unplanned_python_modules(component: str, files: tuple[str, ...]) -> None:
+    """部件目录只能保留设计树中声明的模块，防止旧实现悄悄残留。"""
+    actual = {
+        item.name
+        for item in (SOURCE_ROOT / component).glob("*.py")
+        if item.name != "__init__.py"
+    }
+    assert actual == set(files), f"{component} 的模块与设计树不一致：{actual ^ set(files)}"
+
+
 @pytest.mark.parametrize("package", ADAPTER_PACKAGES)
 def test_adapter_subpackages_have_non_empty_package_contract(package: str) -> None:
     """适配器边界以非空包初始化文件公开，迁移期不隐藏外部依赖。"""
