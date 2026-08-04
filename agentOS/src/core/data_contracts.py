@@ -35,6 +35,23 @@ def _matches_json_type(value: Any, expected: str) -> bool:
     }.get(expected, lambda: True)()
 
 
+_SUPPORTED_MINIMAL_TYPES = frozenset(
+    {"object", "array", "string", "number", "integer", "boolean", "null"}
+)
+
+
+def _schema_nonnegative_integer(schema: Dict[str, Any], keyword: str) -> int | None:
+    """读取长度关键字，并拒绝回退验证器无法安全解释的值。"""
+    if keyword not in schema:
+        return None
+    value = schema[keyword]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise JSONSchemaValidationError(
+            f"schema keyword '{keyword}' must be a non-negative integer"
+        )
+    return value
+
+
 def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[str | int, ...] = ()) -> None:
     """验证项目当前合同使用的最小 JSON Schema 子集。
 
@@ -49,6 +66,14 @@ def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[s
     expected = schema.get("type")
     expected_types = expected if isinstance(expected, list) else [expected]
     expected_types = [item for item in expected_types if isinstance(item, str)]
+    unknown_types = [item for item in expected_types if item not in _SUPPORTED_MINIMAL_TYPES]
+    if unknown_types:
+        raise JSONSchemaValidationError(
+            f"unsupported JSON Schema type {unknown_types[0]!r} in fallback validator",
+            path,
+        )
+    if expected is not None and not expected_types:
+        raise JSONSchemaValidationError("schema keyword 'type' must be a string or string array", path)
     if expected_types and not any(_matches_json_type(payload, item) for item in expected_types):
         description = " or ".join(expected_types)
         raise JSONSchemaValidationError(f"{payload!r} is not of type '{description}'", path)
@@ -56,6 +81,26 @@ def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[s
     allowed = schema.get("enum")
     if isinstance(allowed, list) and payload not in allowed:
         raise JSONSchemaValidationError(f"{payload!r} is not one of {allowed!r}", path)
+
+    min_length = _schema_nonnegative_integer(schema, "minLength")
+    max_length = _schema_nonnegative_integer(schema, "maxLength")
+    if isinstance(payload, str):
+        if min_length is not None and len(payload) < min_length:
+            raise JSONSchemaValidationError(
+                f"{payload!r} is too short", path
+            )
+        if max_length is not None and len(payload) > max_length:
+            raise JSONSchemaValidationError(
+                f"{payload!r} is too long", path
+            )
+
+    min_items = _schema_nonnegative_integer(schema, "minItems")
+    max_items = _schema_nonnegative_integer(schema, "maxItems")
+    if isinstance(payload, list):
+        if min_items is not None and len(payload) < min_items:
+            raise JSONSchemaValidationError(f"{payload!r} has too few items", path)
+        if max_items is not None and len(payload) > max_items:
+            raise JSONSchemaValidationError(f"{payload!r} has too many items", path)
 
     if isinstance(payload, dict):
         required = schema.get("required", [])

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
 
 def _utc_now() -> datetime:
@@ -47,6 +47,14 @@ class ResourceLease(BaseModel):
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt", description="租约创建的 UTC 时间。")
     expires_at: datetime = Field(alias="expiresAt", description="租约失效的 UTC 时间，必须晚于创建时间。")
 
+    @field_validator("created_at", "expires_at")
+    @classmethod
+    def normalize_aware_time(cls, value: datetime) -> datetime:
+        """拒绝歧义的朴素时间，并统一租约边界到 UTC。"""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("lease timestamps must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
     @model_validator(mode="after")
     def expiry_follows_creation(self) -> "ResourceLease":
         """拒绝零时长和逆时序租约。"""
@@ -79,3 +87,15 @@ class SchedulingDecision(BaseModel):
     lease: ResourceLease | None = Field(default=None, description="已分配时产生的资源租约。")
     reason: StrictStr | None = Field(default=None, description="排队或拒绝时的可读原因。")
     decided_at: datetime = Field(default_factory=_utc_now, alias="decidedAt", description="决定产生的 UTC 时间。")
+
+    @model_validator(mode="after")
+    def validate_allocation_fields(self) -> "SchedulingDecision":
+        """确保分配状态与资源、租约字段构成无歧义组合。"""
+        if self.decision == "allocated":
+            if self.resource_id is None or self.lease is None:
+                raise ValueError("allocated decision requires resourceId and lease")
+            if self.lease.resource_id != self.resource_id:
+                raise ValueError("resourceId must match lease.resourceId")
+        elif self.resource_id is not None or self.lease is not None:
+            raise ValueError("queued/rejected decisions must not include allocation fields")
+        return self
