@@ -21,7 +21,11 @@ from contracts.workflow import (
 
 
 class WorkflowProgress(CoreModel):
-    """Snapshot of progress across a task, workflow run, and workflow definition."""
+    """任务、工作流运行与定义汇总出的进度快照。
+
+    总步骤及各状态计数必须来自同一运行视图；``percent`` 可为空表示规划早期尚无可计量
+    执行进度，兼容字段由组装器同步生成。
+    """
 
     task_id: str = Field(alias="taskId")
     run_id: Optional[str] = Field(default=None, alias="runId")
@@ -55,12 +59,11 @@ class WorkflowProgress(CoreModel):
 
 
 class ProgressAssembler:
-    """Pure projection from a WorkflowRun to a user-facing progress snapshot.
+    """把 ``WorkflowRun`` 纯投影为面向用户的进度快照。
 
-    ``WorkflowRun.lifecycle_message`` is an optional base lifecycle description.
-    The projected ``message`` is authoritative for display: an explicit
-    ``phase_message`` wins, active execution/review/recovery phases name the
-    current step, and otherwise the matching base lifecycle message is kept.
+    ``WorkflowRun.lifecycle_message`` 是可选基础生命周期描述。投影 ``message`` 是显示
+    权威值：显式 ``phase_message`` 优先；执行、审核、恢复阶段显示当前步骤；其余场景保留
+    对应基础生命周期消息。该类不读取外部状态，也不修改运行对象。
     """
 
     _ACTIVE_STEP_STATUSES = {
@@ -87,7 +90,7 @@ class ProgressAssembler:
         explicit_phase: WorkflowProgressPhase | str | None = None,
         phase_message: str | None = None,
     ) -> WorkflowProgress:
-        """Build a deterministic snapshot without mutating or querying the run."""
+        """构建确定性进度快照，不查询或修改运行；步骤扫描与聚合复杂度为 ``O(S)``。"""
 
         steps = list(run.steps)
         counts: Counter[StepStatus] = Counter()
@@ -289,7 +292,7 @@ class ProgressAssembler:
 
 
 class ProgressCalculator(ProgressAssembler):
-    """Backward-compatible task/run calculator backed by ProgressAssembler."""
+    """基于 ``ProgressAssembler`` 的兼容任务/运行进度计算器。"""
 
     def calculate(
         self,
@@ -298,6 +301,11 @@ class ProgressCalculator(ProgressAssembler):
         run: WorkflowRun | None = None,
         workflow: WorkflowDefinition | None = None,
     ) -> WorkflowProgress:
+        """生成任务/运行进度快照。
+
+        有运行快照时直接汇总其步骤状态；否则以工作流声明创建理解阶段的初始进度。只读取
+        输入对象，步骤扫描复杂度为 ``O(S)``。
+        """
         if run is not None:
             return self.assemble(run)
 
@@ -351,7 +359,11 @@ from contracts.workflow import (
 
 
 class WorkflowProgress(CoreModel):
-    """Snapshot of progress across a task, workflow run, and workflow definition."""
+    """任务、工作流运行与定义汇总出的进度快照。
+
+    总步骤及各状态计数必须来自同一运行视图；``percent`` 可为空表示规划早期尚无可计量
+    执行进度，兼容字段由组装器同步生成。
+    """
 
     task_id: str = Field(alias="taskId")
     run_id: Optional[str] = Field(default=None, alias="runId")
@@ -385,12 +397,11 @@ class WorkflowProgress(CoreModel):
 
 
 class ProgressAssembler:
-    """Pure projection from a WorkflowRun to a user-facing progress snapshot.
+    """把 ``WorkflowRun`` 纯投影为面向用户的进度快照。
 
-    ``WorkflowRun.lifecycle_message`` is an optional base lifecycle description.
-    The projected ``message`` is authoritative for display: an explicit
-    ``phase_message`` wins, active execution/review/recovery phases name the
-    current step, and otherwise the matching base lifecycle message is kept.
+    ``WorkflowRun.lifecycle_message`` 是可选基础生命周期描述。投影 ``message`` 是显示
+    权威值：显式 ``phase_message`` 优先；执行、审核、恢复阶段显示当前步骤；其余场景保留
+    对应基础生命周期消息。该类不读取外部状态，也不修改运行对象。
     """
 
     _ACTIVE_STEP_STATUSES = {
@@ -417,7 +428,7 @@ class ProgressAssembler:
         explicit_phase: WorkflowProgressPhase | str | None = None,
         phase_message: str | None = None,
     ) -> WorkflowProgress:
-        """Build a deterministic snapshot without mutating or querying the run."""
+        """构建确定性进度快照，不查询或修改运行；步骤扫描与聚合复杂度为 ``O(S)``。"""
 
         steps = list(run.steps)
         counts: Counter[StepStatus] = Counter()
@@ -619,7 +630,7 @@ class ProgressAssembler:
 
 
 class ProgressCalculator(ProgressAssembler):
-    """Backward-compatible task/run calculator backed by ProgressAssembler."""
+    """基于 ``ProgressAssembler`` 的兼容任务/运行进度计算器。"""
 
     def calculate(
         self,
@@ -628,6 +639,11 @@ class ProgressCalculator(ProgressAssembler):
         run: WorkflowRun | None = None,
         workflow: WorkflowDefinition | None = None,
     ) -> WorkflowProgress:
+        """生成任务/运行进度快照。
+
+        有运行快照时直接汇总其步骤状态；否则以工作流声明创建理解阶段的初始进度。只读取
+        输入对象，步骤扫描复杂度为 ``O(S)``。
+        """
         if run is not None:
             return self.assemble(run)
 

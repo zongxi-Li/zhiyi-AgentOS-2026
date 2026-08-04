@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class ACGBuilder:
-    """Build one executable graph using descriptor dependencies and contracts."""
+    """依据能力描述符的依赖与合同构造单个可执行 ACG 图。"""
 
     def __init__(self, capability_catalog: CapabilityCatalog | None = None) -> None:
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
@@ -40,6 +40,11 @@ class ACGBuilder:
         network: CollaborationNetwork,
         variant: "PlanningVariant | None" = None,
     ) -> ACGBlueprint:
+        """从语义画像和已解析绑定构造并校验可执行 ACG。
+
+        输入网络必须已覆盖所需能力；返回的图按能力依赖建立数据与控制边。该方法只创建
+        内存蓝图，不注册、不持久化也不调度；目录无效或绑定为空时抛出 ``ValueError``。
+        """
         self.capability_catalog.validate()
         if not network.bindings:
             raise ValueError("ACG planning produced no capability bindings")

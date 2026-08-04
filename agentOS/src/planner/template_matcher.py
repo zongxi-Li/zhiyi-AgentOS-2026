@@ -22,6 +22,7 @@ WorkflowDefinition = Any
 
 @dataclass
 class TemplateMatch:
+    """模板检索结果；``score`` 在 0 到 1 间，``matched_by`` 说明候选来源。"""
     workflow: WorkflowDefinition
     score: float
     matched_by: str  # "index+similarity" / "index" / "none"
@@ -50,6 +51,11 @@ class TemplateMatcher:
         self.threshold = threshold
 
     def match(self, profile: TaskSemanticProfile) -> TemplateMatch:
+        """按领域筛选模板并选择相似度最高者。
+
+        精确意图候选优先，否则比较同领域模板；遍历顺序稳定，复杂度约为候选数乘文本长度，
+        不修改注册表或画像。
+        """
         domain = profile.domain_hint.strip().lower()
         intent = profile.task_type_hint.strip().lower()
 
@@ -81,6 +87,7 @@ class TemplateMatcher:
         return TemplateMatch(workflow=best, score=round(best_score, 4), matched_by=matched_by)
 
     def is_hit(self, match: TemplateMatch) -> bool:
+        """判断结果是否含模板且分数达到当前阈值，不重新计算相似度。"""
         return match.workflow is not None and match.score >= self.threshold
 
     def _similarity(

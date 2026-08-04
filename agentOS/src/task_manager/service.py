@@ -53,6 +53,11 @@ class TaskManager:
         enabled_plugin_ids: Optional[list[str]] = None,
         allowed_workflow_ids: Optional[tuple[str, ...]] = None,
     ) -> AgentTask:
+        """创建并持久化任务，同时记录创建轨迹。
+
+        ``role_type``/``task_type`` 优先覆盖领域/意图；可选工作流在给定作用域内解析为推荐值。
+        该方法写入任务存储与（若配置）轨迹存储，找不到显式工作流时会抛出 ``KeyError``。
+        """
         task_domain = self._first_nonblank(role_type, domain, default="general")
         task_intent = self._first_nonblank(task_type, intent, default="general")
         workflow = self._select_workflow(
@@ -84,6 +89,7 @@ class TaskManager:
         return task
 
     def get_task(self, task_id: str) -> AgentTask:
+        """按任务标识从存储读取任务；缺失异常由底层存储保持原样抛出。"""
         return self.workflow_store.get_task(task_id)
 
     def list_tasks(
@@ -95,6 +101,7 @@ class TaskManager:
         page: int = 1,
         page_size: int = 20,
     ) -> WorkflowStorePage[AgentTask]:
+        """分页读取任务，可按状态、领域和来源筛选；排序与页码语义由存储实现定义。"""
         return self.workflow_store.list_tasks(
             status=status,
             domain=domain,
@@ -110,6 +117,11 @@ class TaskManager:
         *,
         allowed_workflow_ids: Optional[tuple[str, ...]] = None,
     ) -> WorkflowDefinition:
+        """为任务解析并必要时持久化推荐工作流。
+
+        显式标识优先于已有推荐，且受 ``allowed_workflow_ids`` 限制；仅在推荐改变时写任务，
+        无可用工作流时抛出 ``KeyError``。
+        """
         resolved_task = self._task(task)
         workflow = self._select_workflow(
             resolved_task.domain,
@@ -128,24 +140,35 @@ class TaskManager:
         return workflow
 
     def mark_running(self, task: AgentTask | str) -> AgentTask:
+        """将任务推进到运行中；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.RUNNING)
 
     def mark_waiting_review(self, task: AgentTask | str) -> AgentTask:
+        """将任务推进到等待审核；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.WAITING_REVIEW)
 
     def mark_retrying(self, task: AgentTask | str) -> AgentTask:
+        """将任务推进到重试中；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.RETRYING)
 
     def mark_failed(self, task: AgentTask | str) -> AgentTask:
+        """将任务推进到失败；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.FAILED)
 
     def mark_completed(self, task: AgentTask | str) -> AgentTask:
+        """将任务推进到完成；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.COMPLETED)
 
     def mark_cancelled(self, task: AgentTask | str) -> AgentTask:
+        """将任务推进到取消；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.CANCELLED)
 
     def transition(self, task: AgentTask | str, status: WorkflowStatus | str) -> AgentTask:
+        """执行合法状态迁移并持久化任务。
+
+        成功时更新 ``updated_at`` 并记录状态变更轨迹；失败时保留原任务状态、追加错误轨迹
+        后重新抛出异常。单次状态机校验为 ``O(1)``。
+        """
         resolved_task = self._task(task)
         old_status = resolved_task.status
         target_value = status.value if isinstance(status, WorkflowStatus) else str(status)
@@ -181,6 +204,7 @@ class TaskManager:
         run: WorkflowRun | None = None,
         workflow: Optional[WorkflowDefinition] = None,
     ) -> WorkflowProgress:
+        """计算任务当前进度；优先使用给定运行快照，否则从任务推荐工作流推断初始进度。"""
         resolved_task = self._task(task)
         resolved_workflow = workflow or self._resolve_progress_workflow(resolved_task, run=run)
         return self.progress_calculator.calculate(

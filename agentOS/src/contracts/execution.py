@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
 
 class WorkflowProgressPhase(str, Enum):
-    """Persisted and projected phases of a workflow run lifecycle."""
+    """工作流运行持久化与投影使用的阶段词表；阶段补充而不替代生命周期状态。"""
 
     UNDERSTANDING = "understanding"
     PLANNING = "planning"
@@ -22,7 +22,7 @@ class WorkflowProgressPhase(str, Enum):
 
 
 class StepStatus(str, Enum):
-    """Shared persisted lifecycle for WorkflowStep projections and RuntimeNodes."""
+    """工作流步骤与运行图节点共享的持久化状态；终态不应再被正常执行路径推进。"""
 
     PENDING = "pending"
     RUNNING = "running"

@@ -178,7 +178,11 @@ def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[s
 
 
 class ContextContractError(ValueError):
-    """A step input or output does not satisfy its declared JSON Schema."""
+    """步骤输入或输出未满足声明 JSON Schema 时的结构化错误。
+
+    ``step_id``、``direction`` 与 ``path`` 定位违例边界；错误对象只描述校验结果，
+    不修改载荷或合同。
+    """
 
     def __init__(self, *, step_id: str, direction: str, message: str, path: str = ""):
         self.step_id = step_id
@@ -188,6 +192,11 @@ class ContextContractError(ValueError):
 
 
 def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
+    """校验步骤 JSON Schema 的合法性。
+
+    空模式表示不设约束；优先使用 ``jsonschema``，不可用时使用受限校验器。仅验证
+    模式定义，不修改传入对象；无效时以 ``ValueError`` 标明 ``label``。
+    """
     if not schema:
         return
     if not isinstance(schema, dict):
@@ -212,6 +221,11 @@ def validate_contract_payload(
     step_id: str,
     direction: str,
 ) -> None:
+    """验证载荷是否符合步骤输入或输出合同。
+
+    ``schema`` 为空时直接通过；否则在不修改 ``payload`` 的前提下校验，并把失败转换为
+    带步骤、方向与 JSON 路径信息的 ``ContextContractError``。
+    """
     if not schema:
         return
     if not _HAS_JSONSCHEMA:
@@ -241,10 +255,10 @@ def validate_contract_payload(
 
 
 def apply_contract_defaults(payload: Any, schema: Dict[str, Any]) -> Any:
-    """Copy a payload while applying only explicit JSON Schema defaults.
+    """复制载荷并仅应用 JSON Schema 显式默认值。
 
-    Model output remains untrusted input. This conservative normalizer never
-    coerces types, drops array items, or invents undeclared values.
+    模型输出仍是不可信输入。此保守归一器不会强制转换类型、删除数组项或臆造未声明值；
+    返回深复制结构，不改写 ``payload`` 或 ``schema``，递归复杂度与访问节点数线性相关。
     """
 
     if isinstance(payload, dict):

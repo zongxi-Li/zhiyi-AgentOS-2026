@@ -30,11 +30,13 @@ class StateMachine:
     }
 
     def can_transition(self, current: Enum, target: Enum) -> bool:
+        """判断状态迁移是否被有限状态表允许；查询复杂度 ``O(1)``，同态迁移允许。"""
         if current == target:
             return True
         return target.value in self._transitions.get(current.value, set())
 
     def transition(self, current: StatusT, target: StatusT) -> StatusT:
+        """校验并返回目标状态；非法迁移不修改输入且抛出 ``InvalidStateTransition``。"""
         if not self.can_transition(current, target):
             raise InvalidStateTransition(f"illegal transition: {current.value} -> {target.value}")
         return target

@@ -23,6 +23,7 @@ def _new_id(prefix: str) -> str:
 
 
 class ACGTaskStatus(str, Enum):
+    """ACG 任务的生命周期状态；终态为 ``SUCCESS``、``FAILED`` 与 ``CANCELLED``。"""
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -31,6 +32,7 @@ class ACGTaskStatus(str, Enum):
 
 
 class StepExecutionStatus(str, Enum):
+    """单次步骤执行的状态；重试次数由所属 ``StepExecution`` 的 ``attempt`` 表示。"""
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -38,6 +40,7 @@ class StepExecutionStatus(str, Enum):
 
 
 class AgentInstanceStatus(str, Enum):
+    """任务内智能体实例的状态，不替代步骤或任务本身的状态。"""
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -45,15 +48,22 @@ class AgentInstanceStatus(str, Enum):
 
 
 class CheckpointType(str, Enum):
+    """检查点来源：运行时自动创建或调用方显式请求创建。"""
     AUTO = "auto"
     MANUAL = "manual"
 
 
 class ACGRuntimeModel(BaseModel):
+    """ACG 运行时合同基类；接受字段别名并拒绝未声明字段以固定序列化边界。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class ACGTask(ACGRuntimeModel):
+    """ACG 任务聚合根。
+
+    ``task_id`` 是稳定任务标识，``graph_id`` 指向规划图；时间与 ``current_step_id``
+    随执行推进更新，``metadata`` 只承载可扩展的非核心信息。
+    """
     task_id: str = Field(default_factory=lambda: _new_id("task"), alias="taskId")
     task_name: str = Field(default="", alias="taskName")
     user_query: str = Field(default="", alias="userQuery")
@@ -66,6 +76,11 @@ class ACGTask(ACGRuntimeModel):
 
 
 class StepExecution(ACGRuntimeModel):
+    """步骤的一次可审计执行尝试。
+
+    ``task_id`` 与 ``step_id`` 锚定归属，``attempt`` 区分重试；输入、输出、证据和
+    检查点只记录该尝试的快照，状态时间须与执行状态一致。
+    """
     step_execution_id: str = Field(default_factory=lambda: _new_id("step_exec"), alias="stepExecutionId")
     task_id: str = Field(alias="taskId")
     step_id: str = Field(alias="stepId")
@@ -84,6 +99,11 @@ class StepExecution(ACGRuntimeModel):
 
 
 class AgentInstance(ACGRuntimeModel):
+    """任务内被实例化的智能体运行记录。
+
+    ``agent_id`` 是定义侧标识，``agent_instance_id`` 是本次运行标识；令牌与执行计数
+    为累计观测值，不应作为配额决策的唯一事实来源。
+    """
     agent_instance_id: str = Field(default_factory=lambda: _new_id("agent_instance"), alias="agentInstanceId")
     task_id: str = Field(alias="taskId")
     agent_id: str = Field(alias="agentId")
@@ -97,6 +117,11 @@ class AgentInstance(ACGRuntimeModel):
 
 
 class EvidenceRecord(ACGRuntimeModel):
+    """由步骤执行产出的证据记录。
+
+    ``evidence_id`` 连接图中的证据节点，``producer_execution_id`` 可为空以兼容外部
+    证据；``content`` 与置信度为创建时快照。
+    """
     evidence_record_id: str = Field(default_factory=lambda: _new_id("evidence_record"), alias="evidenceRecordId")
     evidence_id: str = Field(alias="evidenceId")
     task_id: str = Field(alias="taskId")
@@ -108,6 +133,11 @@ class EvidenceRecord(ACGRuntimeModel):
 
 
 class MemorySnapshot(ACGRuntimeModel):
+    """指定任务记忆的版本化快照。
+
+    ``version`` 从 1 开始，由写入方递增；相同 ``snapshot_id`` 的内容在持久化后应
+    视为不可变。
+    """
     snapshot_id: str = Field(default_factory=lambda: _new_id("memory_snapshot"), alias="snapshotId")
     task_id: str = Field(alias="taskId")
     memory_id: str = Field(alias="memoryId")
@@ -118,6 +148,11 @@ class MemorySnapshot(ACGRuntimeModel):
 
 
 class ACGCheckpoint(ACGRuntimeModel):
+    """步骤执行后的可恢复状态快照。
+
+    ``step_execution_id`` 将检查点绑定到单次尝试，``state_data`` 是恢复输入快照；
+    检查点类型仅描述来源，不改变恢复语义。
+    """
     checkpoint_id: str = Field(default_factory=lambda: _new_id("checkpoint"), alias="checkpointId")
     task_id: str = Field(alias="taskId")
     step_execution_id: str = Field(alias="stepExecutionId")

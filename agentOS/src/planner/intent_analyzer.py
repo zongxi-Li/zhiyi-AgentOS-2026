@@ -14,7 +14,11 @@ from .models import CapabilityCandidate, TaskSemanticProfile
 
 
 class IntentLLM(Protocol):
-    def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]: ...
+    """意图解析可选模型适配器协议；实现必须返回符合给定模式的 JSON 对象。"""
+
+    def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """根据提示和输出模式生成 JSON；具体网络调用、重试和费用由实现方负责。"""
+        ...
 
 
 _PROFILE_SCHEMA = {
@@ -41,7 +45,7 @@ _NATIVE_FALLBACK = ["task_understanding", "analysis", "artifact_generation"]
 
 
 class IntentParser:
-    """Select only registered capabilities, using an LLM or deterministic aliases."""
+    """使用模型或确定性别名解析意图，且只选择已注册能力。"""
 
     def __init__(
         self,
@@ -60,6 +64,11 @@ class IntentParser:
         thinking_mode: str | None = None,
         use_llm: bool = True,
     ) -> TaskSemanticProfile:
+        """把用户意图解析为标准语义画像。
+
+        可使用模型补充信息，失败或禁用时回退确定性规则；输出能力均按目录归一，且不修改
+        传入字符串或全局目录。
+        """
         if use_llm and self.llm is not None:
             try:
                 return self._parse_with_llm(intent, domain, task_type, thinking_mode)
@@ -105,6 +114,7 @@ class IntentParser:
         return self._finalize(profile, intent=intent, domain=domain, task_type=task_type)
 
     def build_prompt(self, *, intent: str, domain: str, task_type: str) -> str:
+        """构造供 ``IntentLLM`` 使用的受限 JSON 解析提示，不执行模型调用。"""
         options = "\n".join(
             f"- {item.capability_id}: {item.display_name}；{item.description}"
             for item in self.capability_catalog.available(domain)

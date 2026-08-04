@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 # ACG 的类型词表归属于规划器；执行器只消费已经序列化的图合同。
 class NodeType(str, Enum):
+    """ACG 节点类别；决定节点的序列化模型与下游消费语义。"""
     STEP = "step"
     AGENT = "agent"
     SKILL = "skill"
@@ -23,6 +24,7 @@ class NodeType(str, Enum):
 
 
 class EdgeType(str, Enum):
+    """ACG 有向边类别；只有 ``DEPENDENCY`` 定义执行就绪关系。"""
     DEPENDENCY = "dependency"
     COMMUNICATION = "communication"
     CONTROL_FLOW = "control_flow"
@@ -33,6 +35,7 @@ class EdgeType(str, Enum):
 
 
 class ControlType(str, Enum):
+    """控制节点的结构类型，用于表达起止、分支、循环、并行或共识。"""
     START = "start"
     END = "end"
     IF = "if"
@@ -42,6 +45,7 @@ class ControlType(str, Enum):
 
 
 class ComplexityLevel(str, Enum):
+    """规划阶段估计的任务复杂度分级，不是运行时资源计量。"""
     SIMPLE = "simple"
     MEDIUM = "medium"
     COMPLEX = "complex"
@@ -49,6 +53,7 @@ class ComplexityLevel(str, Enum):
 
 
 class BlueprintStatus(str, Enum):
+    """蓝图节点的规划可用性状态，和执行步骤状态相互独立。"""
     DRAFT = "draft"
     ACTIVE = "active"
     DISABLED = "disabled"
@@ -191,11 +196,13 @@ class StepNode(ACGNodeBase):
     @computed_field(alias="stepId", return_type=str)
     @property
     def step_id(self) -> str:
+        """返回节点标识作为兼容旧合同的 ``stepId`` 视图。"""
         return self.node_id
 
     @computed_field(alias="stepName", return_type=str)
     @property
     def step_name(self) -> str:
+        """返回节点名称作为兼容旧合同的 ``stepName`` 视图。"""
         return self.name
 
 
@@ -215,11 +222,13 @@ class AgentNode(ACGNodeBase):
     @computed_field(alias="agentId", return_type=str)
     @property
     def agent_id(self) -> str:
+        """返回节点标识作为 ``agentId`` 的计算字段。"""
         return self.node_id
 
     @computed_field(alias="agentName", return_type=str)
     @property
     def agent_name(self) -> str:
+        """返回节点名称作为 ``agentName`` 的计算字段。"""
         return self.name
 
 
@@ -236,11 +245,13 @@ class SkillNode(ACGNodeBase):
     @computed_field(alias="skillId", return_type=str)
     @property
     def skill_id(self) -> str:
+        """返回节点标识作为 ``skillId`` 的计算字段。"""
         return self.node_id
 
     @computed_field(alias="skillName", return_type=str)
     @property
     def skill_name(self) -> str:
+        """返回节点名称作为 ``skillName`` 的计算字段。"""
         return self.name
 
 
@@ -256,11 +267,13 @@ class MemoryNode(ACGNodeBase):
     @computed_field(alias="memoryId", return_type=str)
     @property
     def memory_id(self) -> str:
+        """返回节点标识作为 ``memoryId`` 的计算字段。"""
         return self.node_id
 
     @computed_field(alias="memoryName", return_type=str)
     @property
     def memory_name(self) -> str:
+        """返回节点名称作为 ``memoryName`` 的计算字段。"""
         return self.name
 
 
@@ -275,11 +288,13 @@ class EvidenceNode(ACGNodeBase):
     @computed_field(alias="evidenceId", return_type=str)
     @property
     def evidence_id(self) -> str:
+        """返回节点标识作为 ``evidenceId`` 的计算字段。"""
         return self.node_id
 
     @computed_field(alias="evidenceName", return_type=str)
     @property
     def evidence_name(self) -> str:
+        """返回节点名称作为 ``evidenceName`` 的计算字段。"""
         return self.name
 
 
@@ -296,6 +311,7 @@ class ControlNode(ACGNodeBase):
     @computed_field(alias="controlId", return_type=str)
     @property
     def control_id(self) -> str:
+        """返回节点标识作为 ``controlId`` 的计算字段。"""
         return self.node_id
 
 
@@ -429,6 +445,7 @@ from .models import EdgeType
 
 
 class EdgeActivation(str, Enum):
+    """控制流边的运行时激活状态；终止边不得再次参与路由。"""
     INACTIVE = "inactive"
     ACTIVE = "active"
     TERMINATED = "terminated"
@@ -514,37 +531,46 @@ class ACGBlueprint(BaseModel):
     # ------------------------------------------------------------------
     @property
     def node_count(self) -> int:
+        """返回当前节点数，时间复杂度为 ``O(1)``。"""
         return len(self.nodes)
 
     @property
     def edge_count(self) -> int:
+        """返回当前边数，时间复杂度为 ``O(1)``。"""
         return len(self.edges)
 
     def get_node(self, node_id: str) -> ACGNode:
+        """顺序查找节点，时间复杂度 ``O(V)``；不存在时抛出 ``KeyError``。"""
         for node in self.nodes:
             if node.node_id == node_id:
                 return node
         raise KeyError(f"ACG node not found: {node_id}")
 
     def has_node(self, node_id: str) -> bool:
+        """判断节点是否存在，线性扫描当前节点列表，复杂度 ``O(V)``。"""
         return any(node.node_id == node_id for node in self.nodes)
 
     def step_nodes(self) -> List[StepNode]:
+        """按蓝图原始节点顺序返回全部步骤节点，复杂度 ``O(V)``。"""
         return [n for n in self.nodes if n.node_type == NodeType.STEP]  # type: ignore[misc]
 
     def nodes_of_type(self, node_type: NodeType) -> List[ACGNode]:
+        """按原始顺序筛选指定类别节点，复杂度 ``O(V)``。"""
         return [n for n in self.nodes if n.node_type == node_type]
 
     def edges_of_type(self, edge_type: EdgeType) -> List[ACGEdge]:
+        """按原始顺序筛选指定类别边，复杂度 ``O(E)``。"""
         return [e for e in self.edges if e.edge_type == edge_type]
 
     def incoming(self, node_id: str, edge_type: Optional[EdgeType] = None) -> List[ACGEdge]:
+        """返回指向节点的边，可按类别过滤，结果保持边列表顺序，复杂度 ``O(E)``。"""
         return [
             e for e in self.edges
             if e.target_id == node_id and (edge_type is None or e.edge_type == edge_type)
         ]
 
     def outgoing(self, node_id: str, edge_type: Optional[EdgeType] = None) -> List[ACGEdge]:
+        """返回从节点出发的边，可按类别过滤，结果保持边列表顺序，复杂度 ``O(E)``。"""
         return [
             e for e in self.edges
             if e.source_id == node_id and (edge_type is None or e.edge_type == edge_type)
@@ -555,6 +581,7 @@ class ACGBlueprint(BaseModel):
         return [e.source_id for e in self.incoming(node_id, EdgeType.DEPENDENCY)]
 
     def touch(self) -> None:
+        """更新蓝图时间戳及节点/边计数元数据；仅修改当前蓝图对象。"""
         self.updated_at = _utc_now()
         self.metadata["nodeCount"] = self.node_count
         self.metadata["edgeCount"] = self.edge_count
@@ -1102,7 +1129,11 @@ _RISK_LEVEL_ORDER: tuple[PlanningRiskLevel, ...] = (
 
 
 class PlanningCapabilityDescriptor(BaseModel):
-    """Stable planning metadata shared by parsing, routing, and graph building."""
+    """解析、路由和 ACG 构造共享的稳定能力描述。
+
+    标识、别名、依赖和领域提示决定可发现性；输入/输出合同与产物、证据、内存、审核及风险
+    标志决定图构造边界。插件来源字段将贡献锁定到版本化安装包。
+    """
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -1130,7 +1161,7 @@ class PlanningCapabilityDescriptor(BaseModel):
 
 
 class CapabilityCatalog:
-    """Validated, deterministic registry of executable planning capabilities."""
+    """经校验且顺序确定的可执行规划能力注册表。"""
 
     def __init__(self, descriptors: Iterable[PlanningCapabilityDescriptor] = ()) -> None:
         self._descriptors: OrderedDict[str, PlanningCapabilityDescriptor] = OrderedDict()
@@ -1139,6 +1170,10 @@ class CapabilityCatalog:
             self.register(descriptor)
 
     def register(self, descriptor: PlanningCapabilityDescriptor) -> None:
+        """注册一个能力描述符并规范化标识与别名。
+
+        保持插入顺序；重复能力或与其他能力冲突的别名会抛出 ``ValueError``，失败前不写入。
+        """
         capability_id = self._normalize(descriptor.capability_id)
         if not capability_id:
             raise ValueError("capabilityId is required")
@@ -1167,6 +1202,7 @@ class CapabilityCatalog:
             self._aliases[self._normalize(value)] = capability_id
 
     def get(self, capability_id: str) -> PlanningCapabilityDescriptor:
+        """按规范化能力标识获取描述符；未注册时抛出 ``KeyError``。"""
         normalized = self._normalize(capability_id)
         try:
             return self._descriptors[normalized]
@@ -1174,6 +1210,7 @@ class CapabilityCatalog:
             raise KeyError(f"planning capability not registered: {capability_id}") from exc
 
     def resolve(self, value: str) -> PlanningCapabilityDescriptor:
+        """按能力标识或别名解析描述符；别名冲突已在注册阶段禁止。"""
         normalized = self._normalize(value)
         capability_id = self._aliases.get(normalized)
         if capability_id is None:
@@ -1181,6 +1218,7 @@ class CapabilityCatalog:
         return self._descriptors[capability_id]
 
     def available(self, domain_hint: str | None = None) -> tuple[PlanningCapabilityDescriptor, ...]:
+        """返回领域可见描述符的不可变序列，按 ``(priority, capability_id)`` 稳定排序。"""
         domain = self._normalize(domain_hint or "")
         descriptors = [
             descriptor
@@ -1192,7 +1230,7 @@ class CapabilityCatalog:
         return tuple(sorted(descriptors, key=lambda item: (item.priority, item.capability_id)))
 
     def scoped(self, capability_ids: Iterable[str]) -> "CapabilityCatalog":
-        """Build an isolated catalog view without mutating the global catalog."""
+        """构建隔离能力目录视图，不修改全局目录；返回项深拷贝并重新校验依赖。"""
 
         allowed = {self._normalize(item) for item in capability_ids}
         scoped = CapabilityCatalog(
@@ -1204,6 +1242,7 @@ class CapabilityCatalog:
         return scoped
 
     def validate(self) -> None:
+        """验证依赖均已注册且不存在环；深度优先遍历，复杂度 ``O(V+E)``。"""
         for descriptor in self._descriptors.values():
             for dependency in [*descriptor.depends_on, *descriptor.optional_dependencies]:
                 if dependency not in self._descriptors:
@@ -1230,6 +1269,7 @@ class CapabilityCatalog:
             visit(capability_id)
 
     def expand_dependencies(self, capability_ids: Iterable[str]) -> list[str]:
+        """展开必需依赖并返回依赖先于依赖者的去重顺序，复杂度 ``O(V+E)``。"""
         selected: list[str] = []
         visited: set[str] = set()
 
@@ -1252,7 +1292,7 @@ class CapabilityCatalog:
 
 
 def highest_planning_risk_level(values: Iterable[str]) -> PlanningRiskLevel:
-    """Return the highest recognized declarative planning risk level."""
+    """返回输入中已识别声明式规划风险的最高级别；未知值忽略，空集合回退 ``normal``。"""
 
     ranks = {value: index for index, value in enumerate(_RISK_LEVEL_ORDER)}
     normalized = [str(value or "").strip().lower() for value in values]
@@ -1276,6 +1316,7 @@ __all__ = [
 
 
 def build_default_capability_catalog() -> CapabilityCatalog:
+    """创建并校验内置能力目录；每次调用返回独立实例，不共享可变注册状态。"""
     catalog = CapabilityCatalog()
     register_native_capabilities(catalog)
     catalog.validate()
@@ -1577,6 +1618,7 @@ def _output_schema(capability_id: str) -> dict:
 
 
 def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
+    """返回内置通用能力描述符的有序不可变集合，供目录初始化或测试比较。"""
     general = ["general"]
     return (
         PlanningCapabilityDescriptor(
@@ -1696,6 +1738,7 @@ NATIVE_CAPABILITY_IDS = tuple(
 
 
 def register_native_capabilities(catalog: CapabilityCatalog) -> None:
+    """按内置声明顺序注册能力到给定目录；直接修改该目录并沿用其冲突校验。"""
     for descriptor in native_capability_descriptors():
         catalog.register(descriptor)
 
@@ -1716,7 +1759,11 @@ from .models import ComplexityLevel
 
 
 class CapabilityCandidate(BaseModel):
-    """Catalog-normalized semantic candidate with an auditable confidence score."""
+    """按目录归一且携带可审计置信分数的语义能力候选。
+
+    ``score`` 被限制在 0 至 1，``matched_terms`` 和 ``source`` 保存推断依据；模型冻结，
+    防止解析后的候选在路由前发生漂移。
+    """
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
@@ -1754,6 +1801,7 @@ class TaskSemanticProfile(BaseModel):
     raw_intent: str = Field(default="", alias="rawIntent")
 
     def to_summary(self) -> str:
+        """生成紧凑可读的画像摘要；能力按原列表顺序连接，不包含完整合同内容。"""
         caps = ", ".join(self.required_capabilities) or "(none)"
         return f"[{self.domain_hint}/{self.task_type_hint}] {self.primary_goal} | caps={caps}"
 

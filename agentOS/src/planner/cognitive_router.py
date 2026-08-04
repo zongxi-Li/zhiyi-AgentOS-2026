@@ -14,6 +14,7 @@ from .models import TaskSemanticProfile
 
 @dataclass
 class CapabilityBinding:
+    """一个能力到智能体的候选绑定；``score`` 仅用于同次路由的稳定排序。"""
     capability: str
     agent_name: str
     score: float
@@ -22,6 +23,11 @@ class CapabilityBinding:
 
 @dataclass
 class CollaborationNetwork:
+    """能力绑定后的协作网络。
+
+    ``bindings`` 保持所需能力的处理顺序，``estimated_entropy`` 是跨智能体边界估算；
+    未解析能力或超过 ``entropy_budget`` 时调用方应拒绝执行。
+    """
     bindings: List[CapabilityBinding] = field(default_factory=list)
     estimated_entropy: int = 0
     entropy_budget: int = 0
@@ -30,15 +36,17 @@ class CollaborationNetwork:
 
     @property
     def agent_names(self) -> List[str]:
+        """按首次绑定顺序返回去重智能体名称，不修改绑定集合。"""
         return list(dict.fromkeys(binding.agent_name for binding in self.bindings))
 
     @property
     def over_budget(self) -> bool:
+        """在存在正预算且估算熵超限时返回真。"""
         return self.entropy_budget > 0 and self.estimated_entropy > self.entropy_budget
 
 
 class CognitiveRouter:
-    """Bind normalized capabilities with bounded domain fallback and stable ranking."""
+    """在受限领域回退内，以稳定排序绑定已规范化能力和智能体。"""
 
     def __init__(
         self,
@@ -52,6 +60,11 @@ class CognitiveRouter:
         self.entropy_per_edge = entropy_per_edge
 
     def route(self, profile: TaskSemanticProfile, *, domain: str) -> CollaborationNetwork:
+        """为画像中的能力生成确定性协作网络。
+
+        仅在领域可见的目录与已注册智能体中选择，按能力请求顺序处理，并以领域、语义、
+        优先级和注册顺序稳定排序；不改变注册表或画像。
+        """
         network = CollaborationNetwork(entropy_budget=profile.entropy_budget)
         available = {
             item.capability_id for item in self.capability_catalog.available(domain)
@@ -103,7 +116,7 @@ class CognitiveRouter:
         domain: str,
         agents: list[BaseAgent] | None = None,
     ) -> list[CapabilityBinding]:
-        """Return all in-scope compatible bindings in stable preference order."""
+        """返回作用域内兼容绑定，并按领域、语义、优先级、注册顺序稳定降序排列。"""
 
         task_domain = (domain or "").strip().lower()
         aliases = {

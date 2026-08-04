@@ -36,11 +36,16 @@ from task_manager.store import WorkflowRegistry
 
 
 class ACGPlanningError(ValueError):
-    """The planner cannot produce an executable ACG with current capabilities/budgets."""
+    """当前能力可见性或熵预算下无法产出可执行 ACG 时抛出的规划错误。"""
 
 
 @dataclass
 class PlanResult:
+    """一次规划的不可持久化结果。
+
+    蓝图与画像是主产物，模板/变体、随机种子、能力目录版本和选择理由记录决策可复现
+    上下文；``candidate_count`` 至少表示最终参与选择的候选数。
+    """
     blueprint: ACGBlueprint
     profile: TaskSemanticProfile
     strategy: str  # "static_template" | "dynamic_generation"
@@ -60,6 +65,7 @@ class PlanResult:
     notes: list[str] = field(default_factory=list)
 
     def to_decision(self) -> Dict[str, Any]:
+        """将规划结果转换为审计/前端消费的别名键字典，不修改蓝图或画像。"""
         return {
             "strategy": self.strategy,
             "templateId": self.template_id,
@@ -119,6 +125,11 @@ class PlanningEngine:
         planning_seed: int | None = None,
         capability_catalog_revision: str | None = None,
     ) -> PlanResult:
+        """为任务选择模板或动态生成 ACG。
+
+        稳定多样性优先匹配模板；否则绑定能力、生成变体并在可执行候选中选取。种子控制
+        随机选择的复现性，目录或绑定不满足约束时抛出 ``ACGPlanningError``；不持久化结果。
+        """
         diversity = normalize_planning_diversity(planning_diversity)
         resolved_seed = planning_seed
         if diversity != "stable" and resolved_seed is None:
