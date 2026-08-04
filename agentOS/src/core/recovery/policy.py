@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.recovery.events import RuntimeEvent, RuntimeEventType
 from core.recovery.recipes import RecoveryRecipeRegistry
-from core.runtime_graph import RuntimeGraph
+from executor.graph import RuntimeGraph
 
 
 class EventPolicyAction(str, Enum):

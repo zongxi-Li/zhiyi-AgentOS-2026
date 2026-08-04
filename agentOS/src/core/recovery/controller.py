@@ -6,7 +6,7 @@ from core.acg.blueprint import ACGBlueprint
 from core.conditions import BranchDecision
 from core.governance.checkpoint import CheckpointStore
 from core.governance.trace import TraceStore
-from core.execution.projection import refresh_run_execution_projection
+from executor import refresh_run_execution_projection
 from core.models.enums import StepStatus
 from core.models.types import TraceEventType, WorkflowStatus, utc_now
 from core.recovery.errors import PatchConflictError, RuntimeGraphError
@@ -14,7 +14,7 @@ from core.recovery.models import PatchApplyResult, RuntimeGraphPatch
 from core.recovery.models import PatchOperationType
 from core.recovery.validator import PatchValidator
 from core.run_locks import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
-from core.runtime_graph import AppliedPatchRecord, RuntimeGraph
+from executor.graph import AppliedPatchRecord, RuntimeGraph
 from core.workflow.state_machine import StateMachine
 
 

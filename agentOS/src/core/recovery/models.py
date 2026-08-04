@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from core.acg.edges import ACGEdge
 from core.acg.nodes import ACGNode, parse_node
 from core.models.types import utc_now
-from core.runtime_graph import RuntimeGraph, RuntimeNodeStatus
+from executor.graph import RuntimeGraph, RuntimeNodeStatus
 from core.recovery.bindings import ExecutionBinding
 
 

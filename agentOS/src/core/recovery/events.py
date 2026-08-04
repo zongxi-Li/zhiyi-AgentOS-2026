@@ -6,12 +6,12 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
-from core.execution.package import StepExecutionOutcome
+from executor.dispatcher import StepExecutionOutcome
 from core.models.types import TraceEventType
 from core.recovery.constants import MAX_SAME_BINDING_RETRIES
-from core.runtime_graph import RuntimeEvent, RuntimeEventStatus, RuntimeEventType
+from executor.graph import RuntimeEvent, RuntimeEventStatus, RuntimeEventType
 if TYPE_CHECKING:
-    from core.runtime_graph import RuntimeGraph, RuntimeNode
+    from executor.graph import RuntimeGraph, RuntimeNode
 
 
 def stable_hash(*parts: Any, prefix: str = "") -> str:

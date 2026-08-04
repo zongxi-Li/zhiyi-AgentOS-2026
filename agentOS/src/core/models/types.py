@@ -11,7 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.models.enums import StepStatus, WorkflowProgressPhase
-from core.runtime_graph import RuntimeGraph
+from executor.graph import RuntimeGraph
 
 
 def utc_now() -> datetime:

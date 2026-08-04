@@ -21,7 +21,7 @@ from core.recovery.events import RuntimeEvent, stable_hash
 from core.recovery.models import RuntimeGraphPatch, SubgraphInsertionMode
 from core.recovery.policy import EventPolicyAction, EventPolicyDecision
 from core.recovery.recipes import RecoveryRecipeRegistry
-from core.runtime_graph import RuntimeGraph
+from executor.graph import RuntimeGraph
 
 
 class GraphChangeType(str, Enum):
@@ -318,7 +318,9 @@ class RuntimeGraphPatchCompiler:
         proposal: GraphChangeProposal, graph: RuntimeGraph
     ) -> RuntimeGraphPatch:
         control = graph.get_node(str(proposal.control_node_id))
-        control_spec = graph.to_blueprint(effective_only=False).get_node(control.node_id)
+        # 条件定义是恢复侧的规划语义，直接解析运行时保存的原始节点副本，
+        # 不要求 executor 为旧 ACG 公开反向投影 API。
+        control_spec = parse_node(control.spec)
         exclusive = conditional_branch_exclusive_nodes(graph, control_spec)
         skipped = sorted(
             {

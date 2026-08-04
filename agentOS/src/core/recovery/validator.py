@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from core.acg.edges import EdgeActivation
+from core.acg.edges import ACGEdge, EdgeActivation
 from core.acg.enums import ControlType, EdgeType, NodeType
 from core.acg.graph_ops import ACGValidationError, validate_blueprint
 from core.acg.nodes import ControlNode, StepNode, parse_node
@@ -21,7 +21,7 @@ from core.recovery.models import (
     RuntimeGraphPatch,
     SubgraphInsertionMode,
 )
-from core.runtime_graph import RuntimeGraph, RuntimeNode, RuntimeNodeStatus
+from executor.graph import RuntimeGraph, RuntimeNode, RuntimeNodeStatus
 
 
 _IMMUTABLE_TARGET_STATES = {
@@ -79,7 +79,19 @@ class PatchValidator:
 
         self._validate_insertion_connectivity(graph, candidate, patch)
         try:
-            validate_blueprint(candidate.to_blueprint(effective_only=True))
+            # 验证器属于规划/恢复边界，因此在此处把执行器快照重新投影为蓝图；
+            # executor 本身不需要、也不允许导入 ACG 实现。
+            validate_blueprint(
+                ACGBlueprint(
+                    graphId=candidate.graph_id,
+                    version=candidate.source_blueprint_version,
+                    nodes=[parse_node(node.spec) for node in candidate.nodes],
+                    edges=[
+                        ACGEdge.model_validate(edge.model_dump(by_alias=True))
+                        for edge in candidate.effective_edges()
+                    ],
+                )
+            )
         except (ACGValidationError, ValueError, TypeError) as exc:
             raise PatchValidationError("INVALID_RUNTIME_GRAPH", str(exc)) from exc
         candidate.enrich_bindings(agent_registry=self.agent_registry, domain=domain)

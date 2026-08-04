@@ -16,8 +16,7 @@ from core.acg import (
     ACGBlueprint,
     promote_workflow_to_acg,
 )
-from core.execution import ACGWorkflowAdapter, ExecutionAdapterFactory
-from core.execution.projection import refresh_run_execution_projection
+from executor import ACGWorkflowAdapter, ExecutionAdapterFactory, refresh_run_execution_projection
 from core.governance.checkpoint import CheckpointStore, checkpoint_trace_payload
 from core.governance.evaluation import WorkflowEvaluator
 from core.workflow.orchestrator import Orchestrator
@@ -54,7 +53,7 @@ from core.recovery.proposal import (
 )
 from core.recovery.recipes import RecoveryRecipeRegistry
 from core.run_locks import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
-from core.runtime_graph import RuntimeGraph
+from executor.graph import RuntimeGraph
 from core.planning.default_catalog import build_default_capability_catalog
 from core.planning.capabilities import CapabilityCatalog
 from core.planning.variants import (
@@ -702,7 +701,7 @@ class WorkflowRuntime:
                     run=run, event_type=TraceEventType.RUN_FAILED,
                     step_id=node.node_id, observation=run.error,
                 )
-            from core.execution.projection import refresh_run_execution_projection
+            from executor import refresh_run_execution_projection
 
             refresh_run_execution_projection(run)
             self._create_checkpoint(run, run.get_step(decision.step_id))
@@ -1151,7 +1150,7 @@ class WorkflowRuntime:
                         node.attempts[-1].ended_at = utc_now()
                     self.runtime_controller.transition_node_state(node, StepStatus.RETRYING)
 
-            from core.execution.projection import refresh_run_execution_projection
+            from executor import refresh_run_execution_projection
 
             refresh_run_execution_projection(run)
 
@@ -1193,7 +1192,7 @@ class WorkflowRuntime:
                         if node.attempts and node.attempts[-1].status == StepStatus.RUNNING:
                             node.attempts[-1].status = StepStatus.CANCELLED
                             node.attempts[-1].ended_at = utc_now()
-                from core.execution.projection import refresh_run_execution_projection
+                from executor import refresh_run_execution_projection
 
                 refresh_run_execution_projection(run)
             self.task_manager.mark_cancelled(run.task_id)

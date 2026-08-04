@@ -97,8 +97,14 @@ def test_obsolete_top_level_placeholder_modules_are_absent(legacy_file: str) -> 
 def test_migrated_components_are_self_contained() -> None:
     """迁移后的三个部件只能经 contracts 共享资料，不能反向依赖旧 core。"""
     for component in ("memory", "communicator", "executor"):
-        for module in (SOURCE_ROOT / component).glob("*.py"):
+            for module in (SOURCE_ROOT / component).glob("*.py"):
                 assert "core." not in module.read_text(encoding="utf-8"), module
+
+
+def test_legacy_executor_runtime_modules_are_removed() -> None:
+    """执行调度只有 executor 一个真相源，旧 core 路径不能继续存在。"""
+    for legacy_file in ("core/execution", "core/runtime_graph.py"):
+        assert not (SOURCE_ROOT / legacy_file).exists(), legacy_file
 
 
 @pytest.mark.parametrize(
