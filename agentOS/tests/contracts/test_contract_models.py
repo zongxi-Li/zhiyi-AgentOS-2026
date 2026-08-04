@@ -160,3 +160,19 @@ def test_forced_fallback_rejects_declared_bounds_and_unknown_types(monkeypatch, 
     monkeypatch.setattr(data_contracts, "_HAS_JSONSCHEMA", False)
     with pytest.raises(ContextContractError):
         validate_contract_payload(payload, schema, step_id="step-1", direction="input")
+
+
+@pytest.mark.parametrize(
+    ("schema", "payload"),
+    [
+        ({"type": "object", "properties": {"optional": {"type": "unknown"}}}, {}),
+        ({"type": ["string", 7]}, "valid-string"),
+    ],
+)
+def test_forced_fallback_validates_schema_definitions_before_payload(monkeypatch, schema, payload):
+    """即使 optional 属性缺失，回退验证也必须拒绝无效 schema 定义。"""
+    import core.data_contracts as data_contracts
+
+    monkeypatch.setattr(data_contracts, "_HAS_JSONSCHEMA", False)
+    with pytest.raises(ContextContractError):
+        validate_contract_payload(payload, schema, step_id="step-1", direction="input")

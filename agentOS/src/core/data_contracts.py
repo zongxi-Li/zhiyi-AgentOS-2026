@@ -52,6 +52,67 @@ def _schema_nonnegative_integer(schema: Dict[str, Any], keyword: str) -> int | N
     return value
 
 
+def _validate_minimal_schema_definition(
+    schema: Any, path: tuple[str | int, ...] = ()
+) -> None:
+    """递归确认回退验证器将要解释的 schema 定义是完整且受支持的。
+
+    必须在验证载荷前执行：即使可选属性没有出现在载荷中，其 ``type``
+    定义也不能绕过校验并在未来请求中静默失效。
+    """
+    if not isinstance(schema, dict):
+        raise JSONSchemaValidationError("schema must be an object", path)
+
+    if "type" in schema:
+        declared_type = schema["type"]
+        if isinstance(declared_type, str):
+            declared_types = [declared_type]
+        elif isinstance(declared_type, list) and declared_type:
+            declared_types = declared_type
+        else:
+            raise JSONSchemaValidationError(
+                "schema keyword 'type' must be a non-empty string or string array", path
+            )
+        for type_name in declared_types:
+            if not isinstance(type_name, str):
+                raise JSONSchemaValidationError(
+                    "schema keyword 'type' array entries must be strings", path
+                )
+            if type_name not in _SUPPORTED_MINIMAL_TYPES:
+                raise JSONSchemaValidationError(
+                    f"unsupported JSON Schema type {type_name!r} in fallback validator",
+                    path,
+                )
+
+    for keyword in ("minLength", "maxLength", "minItems", "maxItems"):
+        _schema_nonnegative_integer(schema, keyword)
+
+    if "properties" in schema:
+        properties = schema["properties"]
+        if not isinstance(properties, dict):
+            raise JSONSchemaValidationError("schema keyword 'properties' must be an object", path)
+        for property_name, property_schema in properties.items():
+            if not isinstance(property_name, str):
+                raise JSONSchemaValidationError("schema property names must be strings", path)
+            _validate_minimal_schema_definition(property_schema, (*path, property_name))
+
+    if "items" in schema:
+        items = schema["items"]
+        if not isinstance(items, dict):
+            raise JSONSchemaValidationError("schema keyword 'items' must be an object", path)
+        _validate_minimal_schema_definition(items, (*path, "items"))
+
+    if "required" in schema and (
+        not isinstance(schema["required"], list)
+        or not all(isinstance(item, str) for item in schema["required"])
+    ):
+        raise JSONSchemaValidationError("schema keyword 'required' must be a string array", path)
+    if "enum" in schema and not isinstance(schema["enum"], list):
+        raise JSONSchemaValidationError("schema keyword 'enum' must be an array", path)
+    if "nullable" in schema and not isinstance(schema["nullable"], bool):
+        raise JSONSchemaValidationError("schema keyword 'nullable' must be a boolean", path)
+
+
 def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[str | int, ...] = ()) -> None:
     """验证项目当前合同使用的最小 JSON Schema 子集。
 
@@ -66,14 +127,6 @@ def _validate_minimal_schema(payload: Any, schema: Dict[str, Any], path: tuple[s
     expected = schema.get("type")
     expected_types = expected if isinstance(expected, list) else [expected]
     expected_types = [item for item in expected_types if isinstance(item, str)]
-    unknown_types = [item for item in expected_types if item not in _SUPPORTED_MINIMAL_TYPES]
-    if unknown_types:
-        raise JSONSchemaValidationError(
-            f"unsupported JSON Schema type {unknown_types[0]!r} in fallback validator",
-            path,
-        )
-    if expected is not None and not expected_types:
-        raise JSONSchemaValidationError("schema keyword 'type' must be a string or string array", path)
     if expected_types and not any(_matches_json_type(payload, item) for item in expected_types):
         description = " or ".join(expected_types)
         raise JSONSchemaValidationError(f"{payload!r} is not of type '{description}'", path)
@@ -137,9 +190,10 @@ def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
     if not isinstance(schema, dict):
         raise ValueError(f"invalid JSON Schema for {label}: schema must be an object")
     if not _HAS_JSONSCHEMA:
-        # 回退模式只接受当前项目所使用的对象型 schema；详细约束由载荷验证处理。
-        if "properties" in schema and not isinstance(schema["properties"], dict):
-            raise ValueError(f"invalid JSON Schema for {label}: properties must be an object")
+        try:
+            _validate_minimal_schema_definition(schema)
+        except JSONSchemaValidationError as exc:
+            raise ValueError(f"invalid JSON Schema for {label}: {exc.message}") from exc
         return
     validator = validator_for(schema)
     try:
@@ -159,6 +213,7 @@ def validate_contract_payload(
         return
     if not _HAS_JSONSCHEMA:
         try:
+            _validate_minimal_schema_definition(schema)
             _validate_minimal_schema(payload, schema)
         except JSONSchemaValidationError as exc:
             path = ".".join(str(item) for item in exc.absolute_path)
