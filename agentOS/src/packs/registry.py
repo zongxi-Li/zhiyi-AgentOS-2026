@@ -31,7 +31,10 @@ class PackManifest:
     ui_extension_id: str | None = None
 
     def normalized(self) -> dict[str, Any]:
-        """Return formatting- and key-order-independent manifest data."""
+        """返回与格式及键顺序无关的清单数据。
+
+        贡献项去重并排序，供哈希和版本比较使用；返回新字典，不修改冻结清单。
+        """
 
         return {
             "id": self.pack_id,
@@ -50,14 +53,21 @@ class PackManifest:
 
     @property
     def manifest_hash(self) -> str:
+        """返回完整规范化清单的稳定 SHA-256 摘要，用于安装包身份校验。"""
         return _stable_hash(self.normalized())
 
     @property
     def contribution_revision(self) -> str:
+        """返回仅贡献声明的稳定修订摘要，用于检测能力、智能体和工作流漂移。"""
         return _stable_hash(self.normalized()["contributions"])
 
 
 def discover_pack_manifests(packs_dir: Path | None = None) -> tuple[PackManifest, ...]:
+    """发现已启用 Pack 的清单。
+
+    扫描 ``*/manifest.yaml`` 并按路径排序，返回不可变序列；读取或解析错误由清单加载函数
+    抛出，函数不执行 Pack 注册。
+    """
     root = packs_dir or default_packs_dir()
     root = root.resolve()
     manifests = []
@@ -69,6 +79,11 @@ def discover_pack_manifests(packs_dir: Path | None = None) -> tuple[PackManifest
 
 
 def load_pack_manifest(path: Path) -> PackManifest:
+    """加载并校验单个 Pack 清单。
+
+    支持 YAML（缺少依赖时 JSON），要求非空 ``id`` 和对象形 ``contributions``；贡献数组被
+    规范化、去重并排序，格式错误时抛出 ``ValueError``。
+    """
     data = _load_manifest_data(path)
     pack_id = str(data.get("id") or "").strip()
     if not pack_id:
@@ -111,6 +126,12 @@ def register_installed_packs(
     capability_catalog=None,
     packs_dir: Path | None = None,
 ) -> tuple[PackManifest, ...]:
+    """导入并注册已安装且启用的 Pack。
+
+    对每个 Pack 调用 ``register_pack``，随后给新增贡献补齐插件来源字段，并核对实际贡献与
+    清单声明一致。该过程修改传入注册表与 ``sys.path``；缺入口、所需目录或贡献不一致时抛出
+    ``ValueError``。
+    """
     root = (packs_dir or default_packs_dir()).resolve()
     import_root = str(root.parent)
     if import_root not in sys.path:

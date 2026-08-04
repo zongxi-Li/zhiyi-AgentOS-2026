@@ -1,4 +1,4 @@
-"""AgentOS Core 的存储 memory_workflow_store 模块，管理任务和运行记录的持久化边界。"""
+"""运行时配套的内存任务/运行存储，面向开发和测试而非跨部件业务实现。"""
 
 
 from __future__ import annotations
@@ -26,15 +26,21 @@ class MemoryWorkflowStore(WorkflowStore):
         self._terminal_run_statuses: Dict[str, WorkflowStatus] = {}
 
     def save_task(self, task: AgentTask) -> None:
+        """按任务标识保存内存对象；调用方保留传入任务所有权。"""
         self._tasks[task.task_id] = task
 
     def get_task(self, task_id: str) -> AgentTask:
+        """读取任务引用；缺失时抛出带上下文的 ``KeyError``。"""
         try:
             return self._tasks[task_id]
         except KeyError as exc:
             raise KeyError(f"task not found: {task_id}") from exc
 
     def save_run(self, run: WorkflowRun) -> None:
+        """深复制保存运行，并拒绝终态被不同状态或更旧快照覆盖。
+
+        失败到重试是唯一允许的终态回退兼容路径；该内存实现不提供线程同步。
+        """
         existing = self._runs.get(run.run_id)
         terminal_status = self._terminal_run_statuses.get(run.run_id)
         if terminal_status is not None and _reject_terminal_status_overwrite(terminal_status, run.status):
@@ -52,12 +58,14 @@ class MemoryWorkflowStore(WorkflowStore):
         self._runs[run.run_id] = run.model_copy(deep=True)
 
     def get_run(self, run_id: str) -> WorkflowRun:
+        """返回运行的深复制快照，避免调用方绕过存储修改内部状态。"""
         try:
             return self._runs[run_id].model_copy(deep=True)
         except KeyError as exc:
             raise KeyError(f"workflow run not found: {run_id}") from exc
 
     def delete_run(self, run_id: str, *, delete_orphan_task: bool = True) -> WorkflowRunDeleteResult:
+        """删除终态运行，并可清理无剩余运行引用的任务；非终态时抛出专用错误。"""
         try:
             run = self._runs[run_id]
         except KeyError as exc:
@@ -88,6 +96,7 @@ class MemoryWorkflowStore(WorkflowStore):
         page: int = 1,
         page_size: int = 20,
     ) -> WorkflowStorePage[AgentTask]:
+        """筛选并按 ``(created_at, task_id)`` 降序分页返回任务深复制，复杂度 ``O(T)``。"""
         expected_status = status_value(status)
         tasks = [
             task.model_copy(deep=True)
@@ -112,6 +121,11 @@ class MemoryWorkflowStore(WorkflowStore):
         page: int = 1,
         page_size: int = 20,
     ) -> WorkflowStorePage[WorkflowRun]:
+        """筛选并分页返回运行深复制。
+
+        有多状态筛选时等待审核、非终态、终态依次优先，再按更新时间和标识降序，复杂度
+        ``O(R log R)``。
+        """
         expected_status = status_value(status)
         expected_statuses = status_values(statuses)
         runs = [
@@ -137,6 +151,7 @@ class MemoryWorkflowStore(WorkflowStore):
         return paginate_items(runs, page=page, page_size=page_size)
 
     def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[WorkflowRun, ...]:
+        """返回最新优先的未终态运行深复制，数量下限为 1，复杂度 ``O(R log R)``。"""
         terminal = {
             WorkflowStatus.COMPLETED,
             WorkflowStatus.FAILED,
@@ -147,6 +162,7 @@ class MemoryWorkflowStore(WorkflowStore):
         return tuple(runs[: max(1, limit)])
 
     def find_run_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
+        """按幂等键返回创建时间最新的运行深复制；无匹配时返回 ``None``。"""
         matches = [
             run.model_copy(deep=True)
             for run in self._runs.values()

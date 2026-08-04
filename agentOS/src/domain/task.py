@@ -1,4 +1,4 @@
-"""Domain model for a task aggregate."""
+"""运行时配套的任务聚合领域模型，不承担跨部件业务实现。"""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ from uuid import uuid4
 
 
 def utc_now() -> datetime:
+    """返回带 UTC 时区的当前时间，供任务创建与状态更新时间统一使用。"""
     return datetime.now(timezone.utc)
 
 
 def new_id(prefix: str) -> str:
+    """生成带前缀的短 UUID 标识；仅保证随机唯一性，不表达时间排序。"""
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
@@ -30,6 +32,7 @@ def _first_nonblank(preferred: str | None, fallback: str | None, *, default: str
 
 
 class TaskStatus(str, Enum):
+    """任务生命周期状态词表；完成与取消为终态，失败仅可进入重试或取消。"""
     PENDING = "pending"
     PLANNING = "planning"
     RUNNING = "running"
@@ -54,6 +57,11 @@ _TASK_TRANSITIONS: dict[str, set[str]] = {
 
 @dataclass
 class Task:
+    """轻量任务聚合。
+
+    标题不能为空；``role_type``/``task_type`` 优先规范化为领域/意图。状态迁移遵循固定
+    有限状态表，任何状态性修改均更新 ``updated_at``。
+    """
     title: str
     domain: str = "general"
     intent: str = "general"
@@ -82,10 +90,12 @@ class Task:
         self.task_type = self.intent
 
     def assign_workflow(self, workflow_id: str | None) -> None:
+        """绑定或清空推荐工作流，并更新任务修改时间；不验证工作流是否存在。"""
         self.recommended_workflow = (workflow_id or "").strip() or None
         self.updated_at = utc_now()
 
     def transition_to(self, target: TaskStatus | str) -> "Task":
+        """校验后推进任务状态并返回自身；非法迁移抛出 ``ValueError`` 且不修改状态。"""
         target_status = target if isinstance(target, TaskStatus) else TaskStatus(str(target))
         if target_status != self.status and target_status.value not in _TASK_TRANSITIONS.get(self.status.value, set()):
             raise ValueError(f"illegal transition: {self.status.value} -> {target_status.value}")

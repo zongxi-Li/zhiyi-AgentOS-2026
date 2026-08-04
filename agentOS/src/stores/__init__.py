@@ -1,4 +1,4 @@
-"""AgentOS Core 的存储 __init__ 模块，管理任务和运行记录的持久化边界。"""
+"""运行时配套任务/运行存储导出层，不包含跨部件业务实现。"""
 
 
 from stores.memory_workflow_store import MemoryWorkflowStore

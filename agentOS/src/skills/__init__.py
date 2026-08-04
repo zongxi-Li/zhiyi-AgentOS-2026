@@ -1,4 +1,4 @@
-"""AgentOS Core 的技能 __init__ 模块，定义或导出技能抽象能力。"""
+"""运行时配套技能接口与注册导出层，不包含跨部件业务实现。"""
 
 
 from skills.base import BaseSkill, NoOpSkill

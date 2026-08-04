@@ -1,4 +1,4 @@
-"""Domain model for a generic Agent profile."""
+"""运行时配套的通用智能体领域模型，不承担跨部件业务实现。"""
 
 from __future__ import annotations
 
@@ -26,6 +26,11 @@ def _normalize_terms(values: list[str] | tuple[str, ...] | None) -> list[str]:
 
 @dataclass
 class AgentProfile:
+    """轻量智能体画像。
+
+    初始化时规范化名称、领域和权限词表为去重小写值；空名称或领域抛出 ``ValueError``，
+    能力与权限判断均基于该规范化不变量。
+    """
     agent_name: str
     domain: str
     capabilities: list[str] = field(default_factory=list)
@@ -44,13 +49,16 @@ class AgentProfile:
         self.description = (self.description or "").strip()
 
     def supports(self, capability: str) -> bool:
+        """判断规范化能力是否被声明支持；空输入返回 ``False``，时间复杂度 ``O(C)``。"""
         normalized = (capability or "").strip().lower()
         return bool(normalized) and normalized in self.capabilities
 
     def can_use_skill(self, skill_name: str) -> bool:
+        """判断技能是否在白名单内；空输入返回 ``False``，不修改权限集合。"""
         normalized = (skill_name or "").strip().lower()
         return bool(normalized) and normalized in self.allowed_skills
 
     def can_use_tool(self, tool_name: str) -> bool:
+        """判断工具是否在白名单内；空输入返回 ``False``，不修改权限集合。"""
         normalized = (tool_name or "").strip().lower()
         return bool(normalized) and normalized in self.allowed_tools

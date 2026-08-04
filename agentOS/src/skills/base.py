@@ -16,6 +16,7 @@ class BaseSkill(ABC):
 
     @abstractmethod
     async def run(self, request: SkillRequest) -> SkillResult:
+        """执行技能请求并返回结构化结果；实现应遵守请求会话和输入的隔离边界。"""
         raise NotImplementedError
 
 
@@ -26,6 +27,7 @@ class NoOpSkill(BaseSkill):
         super().__init__(name)
 
     async def run(self, request: SkillRequest) -> SkillResult:
+        """原样回显请求文本和动作输入，供测试或空注册表使用；不访问外部资源。"""
         return SkillResult(
             skillName=self.name,
             success=True,

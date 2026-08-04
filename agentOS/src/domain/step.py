@@ -1,4 +1,4 @@
-"""Domain model for a workflow step definition."""
+"""运行时配套的工作流步骤领域模型，不承担跨部件业务实现。"""
 
 from __future__ import annotations
 
@@ -20,6 +20,11 @@ def _normalize_optional_text(value: str | None) -> str | None:
 
 @dataclass
 class StepDefinition:
+    """线性工作流的步骤声明。
+
+    步骤与智能体标识必须非空且规范化；输入复制为独立字典，重试次数必须非负，后继标识
+    为空表示由工作流顺序决定或流程结束。
+    """
     step_id: str
     name: str
     agent_name: str

@@ -1,4 +1,4 @@
-"""AgentOS domain models and invariants."""
+"""运行时配套领域模型的导出层，不包含跨部件业务实现或编排逻辑。"""
 
 from domain.agent import AgentProfile
 from domain.step import StepDefinition

@@ -1,4 +1,4 @@
-"""Domain model for a workflow definition."""
+"""运行时配套的线性工作流领域模型，不承担跨部件业务实现。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,11 @@ def _normalize_optional_text(value: str | None) -> str:
 
 @dataclass
 class WorkflowDefinition:
+    """线性工作流定义。
+
+    工作流、领域、名称与至少一个步骤为必需不变量；步骤标识在同一工作流内必须唯一，
+    违反时初始化抛出 ``ValueError``。
+    """
     workflow_id: str
     name: str
     domain: str
@@ -40,9 +45,11 @@ class WorkflowDefinition:
             seen.add(step.step_id)
 
     def first_step_id(self) -> str | None:
+        """返回声明顺序中第一个步骤标识；兼容空列表时返回 ``None``。"""
         return self.steps[0].step_id if self.steps else None
 
     def get_step(self, step_id: str) -> StepDefinition:
+        """按规范化标识线性查找步骤，复杂度 ``O(S)``；缺失时抛出 ``KeyError``。"""
         normalized = _normalize_identifier(step_id, field_name="step_id")
         for step in self.steps:
             if step.step_id == normalized:
@@ -50,6 +57,7 @@ class WorkflowDefinition:
         raise KeyError(f"workflow step not found: {step_id}")
 
     def next_step_id(self, step_id: str) -> str | None:
+        """返回显式后继或声明顺序后继；``done``/``completed`` 与末步骤均返回 ``None``。"""
         definition = self.get_step(step_id)
         if definition.next_step_id in {"", "done", "completed", None}:
             if definition.next_step_id in {"done", "completed"}:
