@@ -3,3 +3,8 @@
 __all__: list[str] = []
 
 
+"""恢复部件的公共入口。"""
+
+from .service import RecoveryService
+
+__all__ = ["RecoveryService"]

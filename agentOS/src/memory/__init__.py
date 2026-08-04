@@ -4,3 +4,8 @@ __all__: list[str] = []
 
 
 
+"""记忆部件的公共入口。"""
+
+from .service import MemoryService
+
+__all__ = ["MemoryService"]

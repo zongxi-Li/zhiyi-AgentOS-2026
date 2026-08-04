@@ -1,6 +1,4 @@
-"""AgentOS Core 的适配器 __init__ 模块，连接模型、检索和联邦增强等外部能力。"""
-
-
+"""AgentOS 的外部系统适配器公共入口。"""
 
 from adapters.federated_adapter import FederatedAdapter
 from adapters.model_adapter import (
@@ -14,16 +12,24 @@ from adapters.model_adapter import (
     clear_model_service_factory,
     register_model_service_factory,
 )
+from .model import ModelProvider
+from .remote_agent import RemoteAgentClient
+from .storage import BlobStore
+from .tool import ToolProvider
 
 __all__ = [
     "AIService",
+    "BlobStore",
     "FederatedAdapter",
     "ModelAdapter",
+    "ModelProvider",
     "ModelService",
     "ModelServiceFactory",
+    "RemoteAgentClient",
     "StructuredGenerationError",
     "StructuredGenerationResult",
     "StructuredGenerationRuntime",
+    "ToolProvider",
     "clear_model_service_factory",
     "register_model_service_factory",
 ]
