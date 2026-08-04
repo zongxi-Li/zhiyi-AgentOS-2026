@@ -118,6 +118,9 @@ Recommend/agent/models/
 # Claude
 .claude/
 
+# Isolated agent worktrees
+.worktrees/
+
 # Docker build rules are part of the deployment contract
 !.dockerignore
 !**/.dockerignore
