@@ -1,4 +1,4 @@
-"""Workflow progress calculation for tasks and runs."""
+"""定义任务与运行实例的工作流进度计算模型及其输出。"""
 
 from __future__ import annotations
 

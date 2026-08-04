@@ -1,4 +1,4 @@
-"""Seeded, auditable variation of otherwise deterministic ACG plans."""
+"""为原本确定性的 ACG 计划提供可审计的带种子变体。"""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ _CANDIDATE_COUNTS: dict[PlanningDiversity, int] = {
 
 
 def normalize_planning_diversity(value: str | None) -> PlanningDiversity:
+    """规范化计划多样性；仅接受固定档位以确定候选数量和随机策略。"""
     normalized = str(value or "stable").strip().lower()
     if normalized not in _CANDIDATE_COUNTS:
         raise ValueError(
@@ -36,6 +37,7 @@ def normalize_planning_diversity(value: str | None) -> PlanningDiversity:
 
 
 def normalize_planning_seed(value: object | None) -> int | None:
+    """校验可复现的非负整数种子；空值仅允许稳定规划路径使用。"""
     if value in (None, ""):
         return None
     if isinstance(value, bool):
@@ -51,6 +53,7 @@ def normalize_planning_seed(value: object | None) -> int | None:
 
 @dataclass(frozen=True)
 class PlanningVariant:
+    """表示一个由种子候选集确定的规划变体及其可审计输入。"""
     """One deterministic builder input selected from a seeded candidate set."""
 
     variant_id: str
@@ -60,9 +63,11 @@ class PlanningVariant:
     selection_reasons: tuple[str, ...] = ()
 
     def optional_for(self, capability_id: str) -> tuple[str, ...]:
+        """返回指定能力在当前变体中被保留的可选依赖。"""
         return dict(self.optional_dependencies).get(capability_id, ())
 
     def canonical_payload(self) -> dict:
+        """生成稳定序列化载荷，作为变体标识与审计比较的输入。"""
         return {
             "bindings": [
                 {
@@ -81,11 +86,13 @@ class PlanningVariant:
 
 @dataclass
 class PlanningVariantSet:
+    """封装实际产生的变体及请求的候选数量，便于识别去重后的差异。"""
     variants: list[PlanningVariant] = field(default_factory=list)
     requested_count: int = 1
 
 
 class PlanningVariantGenerator:
+    """按能力目录产生合法变体；随机选择只由显式种子决定。"""
     """Generate valid-by-construction alternatives without editing graph objects."""
 
     def __init__(
@@ -105,6 +112,11 @@ class PlanningVariantGenerator:
         diversity: PlanningDiversity,
         seed: int | None,
     ) -> PlanningVariantSet:
+        """生成候选集。
+
+        stable 只生成一个确定性候选；其余档位分别尝试 4 或 8 次加权抽样，
+        以变体标识去重，时间复杂度为 O(候选数 × 所需能力数)。
+        """
         count = _CANDIDATE_COUNTS[diversity]
         if diversity == "stable":
             return PlanningVariantSet(

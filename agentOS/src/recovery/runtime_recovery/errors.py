@@ -1,4 +1,4 @@
-"""Structured errors raised by the controlled runtime-graph kernel."""
+"""定义受控运行时图内核抛出的结构化错误类型。"""
 
 
 class RuntimeGraphError(ValueError):

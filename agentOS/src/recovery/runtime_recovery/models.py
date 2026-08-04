@@ -1,4 +1,4 @@
-"""Typed inputs and results for controlled runtime-graph patching."""
+"""定义受控运行时图补丁的强类型输入、约束与结果。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Versioned, domain-neutral deterministic recovery recipes."""
+"""提供带版本、领域无关且确定性的恢复配方。"""
 
 from __future__ import annotations
 

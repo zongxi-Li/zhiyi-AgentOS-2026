@@ -1,1 +1,1 @@
-"""Governance, trace, checkpoint, review, and evaluation modules."""
+"""公开治理、追踪、检查点、评审与评估子模块的稳定入口。"""

@@ -1,4 +1,4 @@
-"""Compact, versioned workflow checkpoints and their audit references."""
+"""管理紧凑且带版本的工作流检查点及其审计引用。"""
 
 from __future__ import annotations
 

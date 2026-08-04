@@ -1,4 +1,4 @@
-"""Single-writer controller for versioned RuntimeGraph structure changes."""
+"""以单写者约束控制带版本 RuntimeGraph 的结构变更。"""
 
 from __future__ import annotations
 

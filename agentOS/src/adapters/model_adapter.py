@@ -1,7 +1,6 @@
-"""Model adapter contracts for AgentOS.
+"""定义 AgentOS 模型适配器契约与运行时注册边界。
 
-This module deliberately does not load application services. Concrete model
-providers are registered by the application layer.
+本模块刻意不加载应用服务；具体模型提供方必须由应用层注册。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Application-neutral tool runtime registration for AgentOS."""
+"""提供与应用无关的 AgentOS 工具运行时注册和调用边界。"""
 
 from __future__ import annotations
 

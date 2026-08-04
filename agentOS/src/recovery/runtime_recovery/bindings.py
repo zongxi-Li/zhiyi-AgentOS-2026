@@ -1,4 +1,4 @@
-"""Deterministic execution bindings backed only by the AgentRegistry snapshot."""
+"""仅以 AgentRegistry 快照为依据解析确定性的执行绑定。"""
 
 from __future__ import annotations
 

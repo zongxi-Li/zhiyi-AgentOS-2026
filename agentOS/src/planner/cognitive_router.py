@@ -1,4 +1,4 @@
-"""Deterministic capability binding driven only by the shared catalog."""
+"""仅依据共享能力目录执行确定性的能力绑定与协作路由。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Core-owned bootstrap definition and deterministic native execution capability."""
+"""定义核心拥有的启动配置及确定性本地执行能力。"""
 
 from __future__ import annotations
 

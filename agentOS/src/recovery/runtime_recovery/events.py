@@ -1,4 +1,4 @@
-"""Stable runtime event models and pure outcome classification."""
+"""定义稳定的运行时事件模型及纯函数式结果分类。"""
 
 from __future__ import annotations
 

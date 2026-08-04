@@ -1,4 +1,4 @@
-"""Pure validation and candidate construction for bounded runtime patches."""
+"""纯函数式校验有界运行时补丁并构建候选图。"""
 
 from __future__ import annotations
 

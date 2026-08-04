@@ -1,4 +1,4 @@
-"""Controlled runtime-graph change models and services."""
+"""公开受控运行时图变更所需的模型与服务。"""
 
 from recovery.runtime_recovery.controller import RuntimeController
 from recovery.runtime_recovery.bindings import (

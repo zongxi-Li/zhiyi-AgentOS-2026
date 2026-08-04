@@ -1,4 +1,4 @@
-"""Catalog-driven parsing of raw intent into a domain-neutral semantic profile."""
+"""将原始意图按目录解析为领域无关的语义画像。"""
 
 from __future__ import annotations
 

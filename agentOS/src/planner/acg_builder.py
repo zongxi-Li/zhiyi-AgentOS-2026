@@ -1,4 +1,4 @@
-"""Generic ACG construction from catalog descriptors and resolved bindings."""
+"""根据目录描述符和已解析绑定构造通用 ACG 图。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Deterministic runtime event policy decisions."""
+"""根据运行时事件作出确定性策略决策。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Deterministic graph change proposals and bounded patch compilation."""
+"""生成确定性的图变更提案，并将其编译为有界补丁。"""
 
 from __future__ import annotations
 

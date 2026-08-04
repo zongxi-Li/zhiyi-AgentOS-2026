@@ -1,4 +1,4 @@
-"""Structured input/output contract validation shared by ACG and communication."""
+"""定义 ACG 与通信组件共享的结构化输入输出契约校验边界。"""
 
 from __future__ import annotations
 

@@ -25,6 +25,7 @@ class ResultBarrier:
     outcomes: dict[str, StepExecutionOutcome] = field(default_factory=dict)
 
     def record(self, outcome: StepExecutionOutcome) -> bool:
+        """记录预期且尚未出现的结果；拒绝未知或重复尝试以维持一次写入不变量。"""
         if outcome.attempt_id not in self.expected_attempt_ids or outcome.attempt_id in self.outcomes:
             return False
         self.outcomes[outcome.attempt_id] = outcome
@@ -32,6 +33,7 @@ class ResultBarrier:
 
     @property
     def satisfied(self) -> bool:
+        """仅当预期尝试集合是已收集集合的子集时返回真。"""
         return self.expected_attempt_ids <= set(self.outcomes)
 
     def merge(self, graph: RuntimeGraph) -> tuple[list[StepExecutionOutcome], list[StepExecutionOutcome]]:

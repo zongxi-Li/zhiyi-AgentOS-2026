@@ -1,4 +1,4 @@
-"""Shared lifecycle enums for AgentOS core models and projections."""
+"""定义 AgentOS 核心模型及其投影共用的生命周期枚举。"""
 
 from datetime import datetime, timezone
 from enum import Enum

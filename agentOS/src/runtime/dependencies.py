@@ -1,4 +1,4 @@
-"""Per-run visibility snapshots over process-wide installed contributions."""
+"""为进程级已安装贡献创建按运行实例隔离的可见性快照。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Domain-neutral prompt construction for native ACG capability execution."""
+"""为本地 ACG 能力执行构造领域无关的提示词输入。"""
 
 from __future__ import annotations
 
