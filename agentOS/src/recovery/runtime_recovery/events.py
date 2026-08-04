@@ -15,13 +15,14 @@ if TYPE_CHECKING:
 
 
 def stable_hash(*parts: Any, prefix: str = "") -> str:
+    """对可序列化参数生成稳定 SHA-256 摘要并可附加前缀，复杂度为输入长度 O(n)。"""
     encoded = json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     return f"{prefix}{digest}"
 
 
 class RuntimeEventClassifier:
-    """Purely classify outcomes and structured runtimeSignals; never mutate graph state."""
+    """纯函数式分类执行结果和结构化运行信号，绝不修改运行图。"""
 
     classification_version = "1"
     max_same_binding_transient_retries = MAX_SAME_BINDING_RETRIES
@@ -47,6 +48,11 @@ class RuntimeEventClassifier:
         runtime_node: RuntimeNode,
         runtime_graph: RuntimeGraph,
     ) -> list[RuntimeEvent]:
+        """从结果、节点和图生成去重事件列表。
+
+        输入仅被读取，按信号和错误语义构造事件；复杂度为信号数与尝试数 O(n)，
+        不可识别信号被忽略，字段不合法由模型构造阶段抛出校验异常。
+        """
         raw_signals = outcome.runtime_signals
         events: list[RuntimeEvent] = []
         for signal in raw_signals:

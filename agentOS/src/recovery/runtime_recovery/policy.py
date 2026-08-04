@@ -12,6 +12,7 @@ from executor.graph import RuntimeGraph
 
 
 class EventPolicyAction(str, Enum):
+    """运行事件可触发的有限恢复动作，不直接表示图变更细节。"""
     PROPOSE_PATCH = "PROPOSE_PATCH"
     RETRY_EXISTING = "RETRY_EXISTING"
     IGNORE = "IGNORE"
@@ -20,6 +21,7 @@ class EventPolicyAction(str, Enum):
 
 
 class EventPolicyDecision(BaseModel):
+    """保存事件策略选择、目标、优先级与可选配方的只读决策投影。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     action: EventPolicyAction
@@ -32,7 +34,7 @@ class EventPolicyDecision(BaseModel):
 
 
 class RuntimeEventPolicy:
-    """Select only registered recipes; it cannot modify RuntimeGraph."""
+    """仅选择已登记恢复配方并生成决策，不修改 ``RuntimeGraph``。"""
 
     _PRIORITY = {
         RuntimeEventType.BINDING_UNAVAILABLE: 500,
@@ -47,6 +49,7 @@ class RuntimeEventPolicy:
         self.recipe_registry = recipe_registry
 
     def decide(self, event: RuntimeEvent, graph: RuntimeGraph) -> EventPolicyDecision:
+        """按事件类型、原因和已应用作用域选择恢复动作，复杂度为配方匹配成本 O(r)。"""
         target = event.target_node_id
         priority = self._PRIORITY[event.event_type]
         if event.event_type == RuntimeEventType.BINDING_UNAVAILABLE:

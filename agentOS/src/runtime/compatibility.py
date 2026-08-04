@@ -10,8 +10,11 @@ from threading import Lock
 
 
 class RunLock:
-    """封装单个运行实例的短临界区锁，支持同步与异步入口共用互斥语义。"""
-    """Short critical-section lock usable by async and legacy sync entry points."""
+    """封装单个运行实例的短临界区锁，供同步和异步入口共享互斥语义。
+
+    上下文管理器只保护进程内短操作，不是分布式锁；异常退出时仍释放锁，调用方
+    必须避免在临界区内执行网络或长时间 await，以免阻塞同一运行的后续状态写入。
+    """
 
     def __init__(self) -> None:
         self._lock = Lock()
@@ -32,16 +35,18 @@ class RunLock:
 
 
 class RunLockManager:
-    """维护运行实例到锁的进程内映射；同一 run_id 永远复用同一把锁。"""
-    """Own one short-section lock shared by async and legacy sync run paths."""
+    """维护运行实例到锁的进程内映射；同一 ``run_id`` 始终复用同一把锁。"""
 
     def __init__(self) -> None:
         self._locks: dict[str, RunLock] = {}
         self._registry_lock = Lock()
 
     def lock_for(self, run_id: str) -> RunLock:
-        """按规范化 run_id 返回锁；注册表锁保护创建过程，避免并发生成两把锁。"""
-        """Return the process-wide lock associated with ``run_id``."""
+        """按规范化 ``run_id`` 返回锁，并用注册表锁原子地创建缺失条目。
+
+        空标识会抛出 ``ValueError``；返回的锁只在当前进程有效，调用方负责缩短
+        临界区以避免阻塞其他针对同一运行的操作。
+        """
 
         normalized = str(run_id or "").strip()
         if not normalized:

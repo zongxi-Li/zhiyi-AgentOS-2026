@@ -19,7 +19,11 @@ from task_manager.state_machine import StateMachine
 
 
 class RuntimeController:
-    """Initialize, load, and atomically persist runtime graph mutations."""
+    """初始化、加载并原子持久化运行图变更。
+
+    每个运行通过 ``RunLockManager`` 串行化读改写；控制器只在锁内持久化候选副本，
+    图缺失、版本冲突或补丁不合法通过明确异常传播给调用方。
+    """
 
     def __init__(
         self,
@@ -40,13 +44,14 @@ class RuntimeController:
         self.state_machine = StateMachine()
 
     def transition_node_state(self, node, target: StepStatus) -> None:
-        """Apply the shared Step state machine to an authoritative RuntimeNode."""
+        """用共享步骤状态机迁移权威运行节点，并更新时间戳；非法迁移抛出状态机异常。"""
 
         node.status = self.state_machine.transition(node.status, target)
         node.updated_at = utc_now()
 
     @staticmethod
     def refresh_execution_projection(run) -> None:
+        """把运行图状态同步到应用层运行投影；仅更新传入对象，不持久化。"""
         refresh_run_execution_projection(run)
 
     async def initialize_from_blueprint(
@@ -54,7 +59,11 @@ class RuntimeController:
         run_id: str,
         blueprint: ACGBlueprint,
     ) -> RuntimeGraph:
-        """Idempotently persist RuntimeGraph v1 from an immutable blueprint view."""
+        """从不可变蓝图幂等创建并持久化版本一运行图。
+
+        同一 ``run_id`` 在锁内只初始化一次，返回深拷贝；运行不存在或蓝图不合法会
+        由存储和模型明确报错，复杂度为蓝图节点与边数量 O(V+E)。
+        """
 
         async with self.lock_manager.lock_for(run_id):
             run = self.workflow_store.get_run(run_id)
@@ -86,7 +95,7 @@ class RuntimeController:
             return candidate.runtime_graph.model_copy(deep=True)
 
     async def load(self, run_id: str) -> RuntimeGraph:
-        """Load the latest graph, explicitly initializing legacy ACG runs once."""
+        """读取最新运行图；遗留 ACG 运行仅在锁内初始化一次并持久化。"""
 
         async with self.lock_manager.lock_for(run_id):
             run = self.workflow_store.get_run(run_id)
@@ -125,7 +134,7 @@ class RuntimeController:
     async def apply_patch(
         self, run_id: str, patch: RuntimeGraphPatch
     ) -> PatchApplyResult:
-        """Apply one patch under the shared run lock and persist exactly once."""
+        """在共享运行锁内应用单个补丁并至多持久化一次，冲突由结果或异常显式表达。"""
 
         async with self.lock_manager.lock_for(run_id):
             latest = self.workflow_store.get_run(run_id)
@@ -143,7 +152,7 @@ class RuntimeController:
         loaded_run,
         patch: RuntimeGraphPatch,
     ) -> tuple[object, PatchApplyResult]:
-        """Apply to a deep run copy without locking or saving; callers own the barrier lock."""
+        """对深拷贝运行应用补丁但不加锁、不保存；调用方必须持有同一运行的屏障锁。"""
 
         graph = loaded_run.runtime_graph
         if graph is None:
@@ -276,7 +285,7 @@ class RuntimeController:
         )
 
     def create_patch_checkpoint(self, candidate_run, patch: RuntimeGraphPatch):
-        """Create the patch checkpoint after event state/mapping has been finalized."""
+        """在事件状态和映射确定后创建补丁检查点，并把标识回写到补丁记录。"""
 
         graph = candidate_run.runtime_graph
         assert graph is not None

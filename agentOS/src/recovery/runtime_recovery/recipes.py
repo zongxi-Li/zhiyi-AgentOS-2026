@@ -11,6 +11,7 @@ from recovery.runtime_recovery.models import SubgraphInsertionMode
 
 
 class RecoveryNodeTemplate(BaseModel):
+    """描述恢复子图中单个节点的能力、输入输出与执行约束模板。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     logical_name: str = Field(alias="logicalName")
@@ -24,7 +25,7 @@ class RecoveryNodeTemplate(BaseModel):
 
 
 class RecoveryRecipe(BaseModel):
-    """A bounded capability-only template for INSERT_BEFORE_TARGET."""
+    """用于目标节点前插入子图的有界能力型恢复配方。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -44,6 +45,7 @@ class RecoveryRecipe(BaseModel):
     output_mappings: dict[str, Any] = Field(default_factory=dict, alias="outputMappings")
 
     def matches(self, event_type: RuntimeEventType, reason_code: str) -> bool:
+        """判断事件类型和原因码是否命中配方触发器，支持 ``*`` 原因码。"""
         reason_codes = {code.upper() for code in self.trigger_reason_codes}
         return event_type in self.trigger_event_types and (
             "*" in reason_codes or reason_code.upper() in reason_codes
@@ -51,7 +53,7 @@ class RecoveryRecipe(BaseModel):
 
 
 class RecoveryRecipeRegistry:
-    """In-memory registry injected into WorkflowRuntime; it contains no domain routing."""
+    """注入 ``WorkflowRuntime`` 的内存配方注册表，不包含领域路由逻辑。"""
 
     def __init__(self, recipes: list[RecoveryRecipe] | None = None) -> None:
         self._recipes: dict[str, RecoveryRecipe] = {}
@@ -59,12 +61,14 @@ class RecoveryRecipeRegistry:
             self.register(recipe)
 
     def register(self, recipe: RecoveryRecipe) -> None:
+        """深拷贝登记唯一配方版本；重复键抛出 ``ValueError`` 防止静默覆盖。"""
         key = self._key(recipe.recipe_id, recipe.version)
         if key in self._recipes:
             raise ValueError(f"recovery recipe already registered: {key}")
         self._recipes[key] = recipe.model_copy(deep=True)
 
     def get(self, recipe_id: str, version: str | None = None) -> RecoveryRecipe:
+        """返回指定或最高版本配方副本；没有匹配项时抛出 ``KeyError``。"""
         matches = [
             recipe for recipe in self._recipes.values()
             if recipe.recipe_id == recipe_id and (version is None or recipe.version == version)
@@ -74,6 +78,7 @@ class RecoveryRecipeRegistry:
         return sorted(matches, key=lambda item: item.version)[-1].model_copy(deep=True)
 
     def match(self, event_type: RuntimeEventType, reason_code: str) -> RecoveryRecipe | None:
+        """返回稳定排序后的首个匹配配方副本；无匹配时返回 ``None``。"""
         matches = [
             recipe for recipe in self._recipes.values()
             if recipe.matches(event_type, reason_code)
@@ -84,6 +89,7 @@ class RecoveryRecipeRegistry:
 
     @classmethod
     def with_defaults(cls) -> "RecoveryRecipeRegistry":
+        """构造内置证据与合同修复配方注册表，供默认运行时使用。"""
         return cls(
             [
                 RecoveryRecipe(

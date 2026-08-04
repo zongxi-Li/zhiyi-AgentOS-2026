@@ -40,12 +40,14 @@ class RuntimeNodeStatus(str, Enum):
 
 
 class RuntimeNodeActivation(str, Enum):
+    """描述条件分支下节点或边的激活状态，供就绪集过滤使用。"""
     ACTIVE = "active"
     INACTIVE = "inactive"
     TERMINATED = "terminated"
 
 
 class RuntimeEventType(str, Enum):
+    """运行时事件的固定故障分类词表，用于恢复策略而非动态执行代码。"""
     BINDING_UNAVAILABLE = "BINDING_UNAVAILABLE"
     EVIDENCE_MISSING = "EVIDENCE_MISSING"
     INPUT_CONTRACT_VIOLATION = "INPUT_CONTRACT_VIOLATION"
@@ -55,6 +57,7 @@ class RuntimeEventType(str, Enum):
 
 
 class RuntimeEventStatus(str, Enum):
+    """记录运行时事件从待处理到已处理、忽略或拒绝的状态。"""
     PENDING = "PENDING"
     PROCESSED = "PROCESSED"
     IGNORED = "IGNORED"
@@ -77,6 +80,11 @@ class RuntimeEdge(BaseModel):
 
 
 class RuntimeEvent(BaseModel):
+    """绑定一次运行、节点和尝试的可持久化故障或质量事件。
+
+    字段承载分类输入与幂等键，不直接变更图；属性仅从 ``payload`` 读取派生值，
+    由 Pydantic 校验格式并交给恢复流程更新状态。
+    """
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     event_id: str = Field(alias="eventId")
     idempotency_key: str = Field(alias="idempotencyKey")
@@ -96,14 +104,17 @@ class RuntimeEvent(BaseModel):
 
     @property
     def reason_code(self) -> str:
+        """返回规范化原因码，优先采用载荷值并回退到事件类型。"""
         return str(self.payload.get("reasonCode") or self.event_type.value).strip().upper()
 
     @property
     def target_node_id(self) -> str:
+        """返回载荷指定的目标节点；未指定时回退到事件所属节点。"""
         return str(self.payload.get("targetNodeId") or self.runtime_node_id)
 
 
 class RuntimePatchBudget(BaseModel):
+    """限制运行时图补丁数量、规模和重规划深度的可序列化预算。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     max_graph_patches: int = Field(default=3, alias="maxGraphPatches", ge=0)
     max_added_nodes_per_patch: int = Field(default=4, alias="maxAddedNodesPerPatch", ge=0)
@@ -113,6 +124,7 @@ class RuntimePatchBudget(BaseModel):
 
 
 class RuntimeAttempt(BaseModel):
+    """记录一个节点执行尝试的输入、输出、状态与审计上下文。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     attempt_id: str = Field(default_factory=lambda: f"attempt_{uuid4().hex}", alias="attemptId")
     attempt_number: int = Field(alias="attemptNumber", ge=1)
@@ -167,6 +179,7 @@ class RuntimeNode(BaseModel):
 
 
 class AppliedPatchRecord(BaseModel):
+    """保存已应用补丁的哈希、版本和幂等依据，支持安全重放。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     patch_id: str = Field(alias="patchId")
     idempotency_key: str = Field(alias="idempotencyKey")
@@ -205,6 +218,11 @@ class RuntimeGraph(BaseModel):
 
     @classmethod
     def from_blueprint(cls, *, run_id: str, blueprint: Any, agent_registry: Any | None = None, domain: str = "") -> "RuntimeGraph":
+        """从只读蓝图深拷贝构造版本一运行图。
+
+        输入蓝图可为合同对象，输出为执行器拥有的图；条件边初始设为未激活，再
+        填充绑定投影。该方法不持久化也不访问网络，复杂度与节点和边总数 O(V+E)。
+        """
         raw_nodes = list(getattr(blueprint, "nodes", []) or [])
         raw_edges = list(getattr(blueprint, "edges", []) or [])
         graph = cls(runId=run_id, graphId=str(getattr(blueprint, "graph_id", "")),
@@ -220,19 +238,23 @@ class RuntimeGraph(BaseModel):
         return graph
 
     def get_node(self, node_id: str) -> RuntimeNode:
+        """按节点标识返回运行节点；不存在时抛出 ``KeyError``。"""
         for node in self.nodes:
             if node.node_id == node_id:
                 return node
         raise KeyError(f"runtime node not found: {node_id}")
 
     def has_node(self, node_id: str) -> bool:
+        """判断图中是否含有给定节点标识，不修改图状态。"""
         return any(node.node_id == node_id for node in self.nodes)
 
     def effective_edges(self, edge_type: Any | None = None) -> list[RuntimeEdge]:
+        """返回未被补丁替代且可选类型匹配的有效边副本引用。"""
         wanted = getattr(edge_type, "value", edge_type)
         return [edge for edge in self.edges if not edge.metadata.get("supersededByPatchId") and (wanted is None or edge.edge_type == wanted)]
 
     def dependency_sources(self, node_id: str) -> list[str]:
+        """列出给定节点的已激活依赖前驱，并忽略条件跳过的来源。"""
         return [edge.source_id for edge in self.effective_edges() if edge.target_id == node_id
                 and edge.edge_type in {"dependency", "control_flow"} and edge.activation == RuntimeNodeActivation.ACTIVE
                 and self.get_node(edge.source_id).status != RuntimeNodeStatus.SKIPPED_BY_CONDITION]
@@ -288,21 +310,43 @@ class RuntimeGraph(BaseModel):
             if edge.edge_id in declared: edge.activation = RuntimeNodeActivation.ACTIVE if edge.edge_id in selected else RuntimeNodeActivation.TERMINATED
         control.status = RuntimeNodeStatus.COMPLETED; control.updated_at = _utc_now()
 
-    def has_waiting_review(self) -> bool: return any(node.status == RuntimeNodeStatus.WAITING_REVIEW for node in self.nodes)
-    def has_runnable_nodes(self) -> bool: return bool(self.ready_set())
-    def has_running_nodes(self) -> bool: return any(node.status == RuntimeNodeStatus.RUNNING for node in self.nodes)
+    def has_waiting_review(self) -> bool:
+        """判断是否存在等待人工审核的节点，不改变节点状态。"""
+        return any(node.status == RuntimeNodeStatus.WAITING_REVIEW for node in self.nodes)
+
+    def has_runnable_nodes(self) -> bool:
+        """根据当前依赖与激活状态判断是否有可执行步骤。"""
+        return bool(self.ready_set())
+
+    def has_running_nodes(self) -> bool:
+        """判断是否仍有状态为 ``RUNNING`` 的节点。"""
+        return any(node.status == RuntimeNodeStatus.RUNNING for node in self.nodes)
     def all_steps_completed(self) -> bool:
+        """仅当存在步骤且全部完成或被条件跳过时返回真。"""
         steps = [node for node in self.nodes if node.node_type == "step"]
         return bool(steps) and all(node.status in {RuntimeNodeStatus.COMPLETED, RuntimeNodeStatus.SKIPPED_BY_CONDITION} for node in steps)
     def is_terminal(self) -> bool:
+        """判断所有步骤是否处于不可继续执行的终态。"""
         return bool(self.nodes) and all(node.status in {RuntimeNodeStatus.COMPLETED, RuntimeNodeStatus.FAILED, RuntimeNodeStatus.CANCELLED, RuntimeNodeStatus.SKIPPED_BY_CONDITION} for node in self.nodes if node.node_type == "step")
     def branch_decision_for(self, control_node_id: str) -> Any | None:
+        """返回控制节点的首个已记录分支决策；没有记录时返回 ``None``。"""
         return next((item for item in self.branch_decisions if getattr(item, "control_node_id", None) == control_node_id), None)
-    def patch_record_by_id(self, patch_id: str) -> AppliedPatchRecord | None: return next((item for item in self.applied_patches if item.patch_id == patch_id), None)
-    def patch_record_by_idempotency_key(self, key: str) -> AppliedPatchRecord | None: return next((item for item in self.applied_patches if item.idempotency_key == key), None)
-    def runtime_event_by_id(self, event_id: str) -> RuntimeEvent | None: return next((item for item in self.runtime_events if item.event_id == event_id), None)
+    def patch_record_by_id(self, patch_id: str) -> AppliedPatchRecord | None:
+        """按补丁标识查找持久化记录，未命中时返回 ``None``。"""
+        return next((item for item in self.applied_patches if item.patch_id == patch_id), None)
+
+    def patch_record_by_idempotency_key(self, key: str) -> AppliedPatchRecord | None:
+        """按幂等键查找补丁记录，供重复请求安全重放。"""
+        return next((item for item in self.applied_patches if item.idempotency_key == key), None)
+
+    def runtime_event_by_id(self, event_id: str) -> RuntimeEvent | None:
+        """按事件标识返回运行时事件，未命中时返回 ``None``。"""
+        return next((item for item in self.runtime_events if item.event_id == event_id), None)
+
     @staticmethod
-    def recipe_scope(recipe_id: str, target_node_id: str) -> str: return f"{recipe_id}::{target_node_id}"
+    def recipe_scope(recipe_id: str, target_node_id: str) -> str:
+        """生成配方和目标节点组合的稳定作用域键，不读取或修改图。"""
+        return f"{recipe_id}::{target_node_id}"
 
     def enrich_bindings(self, *, agent_registry: Any | None, domain: str) -> None:
         """只保留蓝图中的绑定；候选绑定由 scheduler 以资源合同独立决定。"""
@@ -312,6 +356,7 @@ class RuntimeGraph(BaseModel):
                 node.current_binding = {"assignedAgentId": node.spec.get("assignedAgentId"), "agentName": node.spec.get("agentName"), "capability": node.spec.get("capability")}
 
     def structure_hash(self) -> str:
+        """序列化有效结构并返回稳定哈希，时间复杂度为图序列化大小 O(V+E)。"""
         return _canonical_hash({"graphId": self.graph_id, "graphVersion": self.graph_version,
                                 "nodes": [node.spec for node in self.nodes],
                                 "edges": [edge.model_dump(by_alias=True, mode="json") for edge in self.edges],

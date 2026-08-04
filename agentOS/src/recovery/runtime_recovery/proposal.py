@@ -25,12 +25,14 @@ from executor.graph import RuntimeGraph
 
 
 class GraphChangeType(str, Enum):
+    """恢复策略可提出的图变更类别，编译阶段会映射为受限补丁操作。"""
     ADD_SUBGRAPH = "ADD_SUBGRAPH"
     RETRY_ALTERNATE_BINDING = "RETRY_ALTERNATE_BINDING"
     ACTIVATE_CONDITIONAL_BRANCH = "ACTIVATE_CONDITIONAL_BRANCH"
 
 
 class GraphChangeProposal(BaseModel):
+    """保存尚未写入图的确定性恢复变更建议及其来源事件。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     proposal_id: str = Field(alias="proposalId")
@@ -71,7 +73,7 @@ class GraphChangeProposal(BaseModel):
 
 
 class DeterministicProposalFactory:
-    """Resolve a registered recipe into stable nodes and edges without modifying a graph."""
+    """把已登记配方解析为稳定节点和边建议，不修改传入运行图。"""
 
     def propose(
         self,
@@ -84,6 +86,7 @@ class DeterministicProposalFactory:
         domain: str,
         allowed_agent_ids: list[str] | tuple[str, ...] | None = None,
     ) -> GraphChangeProposal:
+        """把已登记配方展开为稳定建议；只读取配方和图，复杂度随模板规模 O(n)。"""
         if decision.patch_operation == GraphChangeType.RETRY_ALTERNATE_BINDING.value:
             node = graph.get_node(event.runtime_node_id)
             failed_binding_id = str(event.payload.get("failedBindingId") or "")
@@ -198,6 +201,7 @@ class DeterministicProposalFactory:
         evaluation: ConditionalEvaluationResult,
         graph: RuntimeGraph,
     ) -> GraphChangeProposal:
+        """为条件控制节点构造受限建议；输入不合法时抛出 ``ValueError``。"""
         proposal_key = stable_hash(
             graph.run_id,
             evaluation.control_node_id,
@@ -228,9 +232,10 @@ class DeterministicProposalFactory:
 
 
 class RuntimeGraphPatchCompiler:
-    """Compile only ADD_SUBGRAPH/INSERT_BEFORE_TARGET against the latest graph view."""
+    """仅针对最新图视图编译允许的子图插入与条件补丁，不执行持久化。"""
 
     def compile(self, proposal: GraphChangeProposal, graph: RuntimeGraph) -> RuntimeGraphPatch:
+        """把确定性建议编译为对当前图版本绑定的补丁，不修改传入图。"""
         if proposal.change_type == GraphChangeType.ACTIVATE_CONDITIONAL_BRANCH:
             return self._compile_conditional(proposal, graph)
         if proposal.change_type == GraphChangeType.RETRY_ALTERNATE_BINDING:

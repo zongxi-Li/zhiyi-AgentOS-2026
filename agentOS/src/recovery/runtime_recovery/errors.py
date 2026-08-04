@@ -2,7 +2,7 @@
 
 
 class RuntimeGraphError(ValueError):
-    """Base error carrying a stable machine-readable code."""
+    """携带稳定机器可读错误码的运行图基础异常。"""
 
     def __init__(self, code: str, message: str):
         self.code = code
@@ -10,11 +10,11 @@ class RuntimeGraphError(ValueError):
 
 
 class PatchValidationError(RuntimeGraphError):
-    """A patch violates graph, contract, capability, state, or budget rules."""
+    """表示补丁违反图、合同、能力、状态或预算规则。"""
 
 
 class PatchConflictError(RuntimeGraphError):
-    """A patch conflicts with persisted graph version or replay history."""
+    """表示补丁与已持久化图版本或重放历史冲突。"""
 
 
 __all__ = ["PatchConflictError", "PatchValidationError", "RuntimeGraphError"]

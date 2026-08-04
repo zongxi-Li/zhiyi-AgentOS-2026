@@ -25,16 +25,19 @@ def _hash(payload: dict[str, Any]) -> str:
 
 
 class PatchOperationType(str, Enum):
+    """运行图补丁允许的受限操作类型，用于验证与重放。"""
     ADD_SUBGRAPH = "ADD_SUBGRAPH"
     RETRY_ALTERNATE_BINDING = "RETRY_ALTERNATE_BINDING"
     ACTIVATE_CONDITIONAL_BRANCH = "ACTIVATE_CONDITIONAL_BRANCH"
 
 
 class SubgraphInsertionMode(str, Enum):
+    """恢复子图相对目标节点的插入位置枚举。"""
     INSERT_BEFORE_TARGET = "INSERT_BEFORE_TARGET"
 
 
 class PatchBudgetImpact(BaseModel):
+    """量化单个补丁对节点、边和重规划预算的影响。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     added_nodes: int = Field(default=0, alias="addedNodes", ge=0)
@@ -42,7 +45,11 @@ class PatchBudgetImpact(BaseModel):
 
 
 class RuntimeGraphPatch(BaseModel):
-    """A bounded request to insert a subgraph immediately before one target."""
+    """描述对指定运行图版本执行的有界补丁请求。
+
+    模型承载节点、边、来源事件和幂等信息；验证器负责检查图与预算，模型本身不
+    修改运行图。内容和语义哈希可用于检测重放与等价冲突。
+    """
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -134,9 +141,11 @@ class RuntimeGraphPatch(BaseModel):
         return self
 
     def content_hash(self) -> str:
+        """返回包含补丁标识的内容哈希，供精确重放与审计比对。"""
         return _hash(self.model_dump(by_alias=True, mode="json"))
 
     def semantic_hash(self) -> str:
+        """返回忽略请求标识的语义哈希，供等价补丁冲突检测。"""
         payload = self.model_dump(by_alias=True, mode="json")
         for key in (
             "patchId",
@@ -151,7 +160,7 @@ class RuntimeGraphPatch(BaseModel):
 
 
 class PatchApplyResult(BaseModel):
-    """Result of applying or idempotently replaying a persisted patch."""
+    """保存补丁实际应用或幂等重放后的版本、检查点和运行图投影。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

@@ -17,15 +17,18 @@ class DependencyRegistry:
         self._values: dict[str, Any] = {}
 
     def register(self, name: str, value: Any) -> None:
+        """以名称登记应用层依赖；同名值会被显式覆盖，不创建外部客户端。"""
         self._values[name] = value
 
     def require(self, name: str) -> Any:
+        """返回已登记依赖；名称不存在时抛出 ``RuntimeError`` 防止隐式降级。"""
         if name not in self._values:
             raise RuntimeError(f"未注册运行时依赖：{name}")
         return self._values[name]
 
 
 def stable_revision(value) -> str:
+    """把可 JSON 序列化输入规范化为 SHA-256 修订标识，复杂度为序列化长度 O(n)。"""
     canonical = json.dumps(
         value,
         ensure_ascii=False,
@@ -36,7 +39,7 @@ def stable_revision(value) -> str:
 
 
 class PluginScopeError(ValueError):
-    """A requested or restored plugin scope cannot be honored."""
+    """表示请求或恢复的插件可见范围无法被当前运行时兑现。"""
 
     def __init__(self, code: str, detail: str):
         super().__init__(f"{code}: {detail}")
@@ -45,7 +48,7 @@ class PluginScopeError(ValueError):
 
 
 class PluginScopeResolver:
-    """Resolve immutable Run scopes without mutating shared registries."""
+    """构造并验证不可变运行插件范围，不修改共享注册表。"""
 
     def __init__(
         self,
@@ -68,6 +71,7 @@ class PluginScopeResolver:
         domain: str,
         intent: str,
     ) -> tuple[str, ...]:
+        """解析请求插件或工作流默认插件；未知插件抛出 ``PluginScopeError``。"""
         installed = self._installed_plugin_ids()
         if requested is None:
             workflow = None
@@ -92,6 +96,7 @@ class PluginScopeResolver:
         return resolved
 
     def build_scope(self, enabled_plugin_ids: Iterable[str]) -> RunExecutionScope:
+        """从启用插件构建冻结执行范围，复杂度随能力、Agent 和工作流总量线性增长。"""
         enabled = tuple(dict.fromkeys(enabled_plugin_ids))
         enabled_set = set(enabled)
         capabilities = tuple(
@@ -126,6 +131,7 @@ class PluginScopeResolver:
         )
 
     def validate_snapshot(self, scope: RunExecutionScope) -> None:
+        """验证恢复范围仍可用；插件或修订漂移时抛出 ``PluginScopeError``。"""
         current_plugins = self._installed_plugin_ids()
         for expected in scope.plugin_snapshots:
             if expected.plugin_id not in current_plugins:
@@ -147,16 +153,19 @@ class PluginScopeResolver:
             )
 
     def scoped_catalog(self, scope: RunExecutionScope):
+        """返回仅暴露范围内能力的目录投影，不改变全局能力注册表。"""
         return self.capability_catalog.scoped(scope.capability_ids)
 
     def scoped_agents(self, scope: RunExecutionScope):
+        """返回仅暴露冻结 Agent 标识的注册表投影，不写入共享注册表。"""
         return self.agent_registry.scoped(scope.agent_ids)
 
     def scoped_workflows(self, scope: RunExecutionScope):
+        """返回仅允许冻结工作流标识的注册表投影，不更改原始工作流。"""
         return self.workflow_registry.scoped(scope.workflow_ids)
 
     def installed_plugin_projection(self) -> list[dict]:
-        """Return safe read-only metadata for UI plugin selection."""
+        """返回供 UI 选择的只读已安装插件元数据，不泄露运行时可变对象。"""
 
         projections = []
         for manifest in sorted(self.manifests, key=lambda item: item.pack_id):

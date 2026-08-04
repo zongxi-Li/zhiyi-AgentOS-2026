@@ -29,9 +29,15 @@ def summarize(data: Any, *, max_chars: int = 280) -> str:
 
 
 class StepExecutionTimer:
-    """轻量、无外部依赖的节点耗时计时器。"""
+    """记录单个执行步骤自创建起的单调耗时。
+
+    不接受外部输入，``elapsed_ms`` 返回整数毫秒；只读取 ``perf_counter``，
+    不修改执行图或共享状态，因此可在同一线程内安全用于审计计时。
+    """
     def __init__(self) -> None: self._started = perf_counter()
-    def elapsed_ms(self) -> int: return int((perf_counter() - self._started) * 1000)
+    def elapsed_ms(self) -> int:
+        """返回从构造到当前时刻的非负整数毫秒，不重置起始时间。"""
+        return int((perf_counter() - self._started) * 1000)
 
 # 条件分支的完整模型和求值器定义紧随本模块末尾：规划器只声明，执行器才决策。
 """Safe, deterministic condition models and evaluation for runtime IF controls."""
@@ -47,6 +53,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ConditionOperator(str, Enum):
+    """受限条件求值支持的比较算子枚举，不允许表达式或代码执行。"""
     EQUALS = "EQUALS"
     IN = "IN"
     EXISTS = "EXISTS"
@@ -54,7 +61,11 @@ class ConditionOperator(str, Enum):
 
 
 class ConditionSpec(BaseModel):
-    """A bounded lookup and case map; it cannot execute expressions or code."""
+    """描述一次受限 JSON 指针取值与分支边映射。
+
+    输入限定为来源节点、RFC-6901 风格路径、算子和已声明边；模型会拒绝非法
+    路径与值类型。该对象是不可执行的数据合同，求值不会调用动态代码或改变图状态。
+    """
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     source_node_id: str = Field(alias="sourceNodeId", min_length=1)
@@ -81,6 +92,11 @@ class ConditionSpec(BaseModel):
 
 
 class ConditionalEvaluationResult(BaseModel):
+    """保存条件求值的可审计结果。
+
+    记录输入版本、稳定哈希、选择与终止的边以及汇合节点，供图服务一次性应用；
+    本模型本身不修改运行图，并由 Pydantic 在构造时校验字段边界。
+    """
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     control_node_id: str = Field(alias="controlNodeId")
     source_node_id: str = Field(alias="sourceNodeId")
@@ -94,6 +110,11 @@ class ConditionalEvaluationResult(BaseModel):
 
 
 class BranchDecision(BaseModel):
+    """冻结一次条件分支决策及其图版本依据。
+
+    输出包含被选边、被跳过节点和来源事件，供重放与幂等比对；模型冻结，避免
+    决策生成后被调用方原地改写。
+    """
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
     decision_id: str = Field(alias="decisionId")
     control_node_id: str = Field(alias="controlNodeId")
@@ -116,6 +137,11 @@ class BranchDecision(BaseModel):
 def condition_input_hash(
     *, source_node_id: str, output_version: int, json_pointer: str, resolved_value: Any
 ) -> str:
+    """为条件输入生成稳定 SHA-256 哈希。
+
+    输入为来源节点、输出版本、JSON 指针和解析值，输出为十六进制摘要；采用稳定
+    JSON 序列化，时间复杂度为输入序列化长度 O(n)，不读取或修改共享状态。
+    """
     payload = [source_node_id, output_version, json_pointer, resolved_value]
     encoded = json.dumps(
         payload,
@@ -128,13 +154,20 @@ def condition_input_hash(
 
 
 class ConditionEvaluationError(ValueError):
+    """表示条件定义、类型或分支边不合法的带错误码异常。"""
+
     def __init__(self, code: str, message: str):
+        """以机器可读 ``code`` 和面向调用方的 ``message`` 初始化异常。"""
         super().__init__(message)
         self.code = code
 
 
 class ConditionEvaluator:
-    """Pure RFC-6901-style lookup and bounded case selection."""
+    """执行纯 RFC-6901 风格查找及有限分支选择。
+
+    ``evaluate`` 只读取来源输出和图定义，返回可审计结果而不激活任何边；非法
+    指针、类型或未声明边会抛出 ``ConditionEvaluationError``。
+    """
 
     _MISSING = object()
 
@@ -148,6 +181,12 @@ class ConditionEvaluator:
         join_node_id: str,
         branch_edge_ids: list[str],
     ) -> ConditionalEvaluationResult:
+        """按条件规格解析输出并选择一条已声明分支边。
+
+        输入为规格、来源输出、图和控制节点上下文，输出为不可变式结果投影；
+        复杂度为 JSON 路径深度加分支边数 O(p+b)，不修改 ``graph``，错误边界
+        通过 ``ConditionEvaluationError`` 明确给出。
+        """
         source = graph.get_node(condition_spec.source_node_id)
         value = self._resolve_pointer(source_output, condition_spec.json_pointer)
         exists = value is not self._MISSING
@@ -241,7 +280,12 @@ class ConditionEvaluator:
 
 
 def conditional_branch_exclusive_nodes(graph, control_node) -> dict[str, set[str]]:
-    """Return each declared branch's nodes strictly before its explicit join."""
+    """计算每条条件分支在显式汇合点之前独占的节点集合。
+
+    输入图与控制节点只被读取，返回按分支边标识组织的节点集合；深度优先遍历
+    检测未汇合、非法边和分支共享节点并抛出 ``ConditionEvaluationError``。
+    时间复杂度为 O(V+E)。
+    """
 
     edges = {edge.edge_id: edge for edge in graph.edges}
     adjacency: dict[str, list[str]] = {}

@@ -18,11 +18,13 @@ from recovery.runtime_recovery.events import stable_hash
 
 
 class BindingType(str, Enum):
+    """执行绑定粒度：仅 Agent 或 Agent 与模型的组合。"""
     AGENT = "AGENT"
     AGENT_MODEL = "AGENT_MODEL"
 
 
 class ExecutionBinding(BaseModel):
+    """冻结一个候选执行绑定的身份、能力、权限和来源元数据。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     binding_id: str = Field(alias="bindingId")
@@ -43,6 +45,7 @@ class ExecutionBinding(BaseModel):
 
     @classmethod
     def from_agent(cls, agent, *, capability: str, registration_order: int):
+        """从注册 Agent 构建稳定绑定标识；只读取画像，复杂度为技能与工具列表长度 O(n)。"""
         profile = agent.profile
         agent_id = str(profile.agent_id or profile.agent_name)
         model_name = str(profile.model_name or "")
@@ -72,6 +75,7 @@ class ExecutionBinding(BaseModel):
 
 
 class BindingHistoryRecord(BaseModel):
+    """记录节点一次绑定选择及其被替代时间，供恢复审计和重放使用。"""
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     binding_id: str = Field(alias="bindingId")
@@ -84,14 +88,20 @@ class BindingHistoryRecord(BaseModel):
 
 
 class BindingAvailabilityProvider(Protocol):
-    def is_available(self, binding: ExecutionBinding) -> bool: ...
+    """定义检查绑定当前可用性的只读边界。"""
+
+    def is_available(self, binding: ExecutionBinding) -> bool:
+        """返回绑定是否可执行；实现不得修改绑定或运行图。"""
+        ...
 
 
 class RegistryBindingAvailabilityProvider:
+    """通过 Agent 注册表查询绑定可用性，不缓存或修改注册表。"""
     def __init__(self, agent_registry) -> None:
         self.agent_registry = agent_registry
 
     def is_available(self, binding: ExecutionBinding) -> bool:
+        """解析相同领域、名称和能力的 Agent；缺失时返回假而非泄漏 ``KeyError``。"""
         try:
             agent = self.agent_registry.resolve(
                 domain=binding.domain,
@@ -104,7 +114,7 @@ class RegistryBindingAvailabilityProvider:
 
 
 class CandidateResolver:
-    """Resolve all registered, compatible, available bindings in stable order."""
+    """以稳定顺序解析所有已登记、兼容且可用的执行绑定。"""
 
     def __init__(self, agent_registry, availability_provider=None) -> None:
         self.agent_registry = agent_registry
@@ -121,6 +131,11 @@ class CandidateResolver:
         excluded_binding_ids: list[str] | None = None,
         allowed_agent_ids: list[str] | tuple[str, ...] | None = None,
     ) -> list[ExecutionBinding]:
+        """按领域、能力、技能、排除集和允许 Agent 范围筛选候选。
+
+        返回优先级与注册顺序确定的副本列表；不改变注册表，复杂度为 Agent 数量
+        乘以其能力与技能集合大小 O(n)，可用性提供方异常由其实现自行定义。
+        """
         normalized_domain = domain.strip().lower()
         normalized_capability = capability.strip().lower()
         required = {item.strip().lower() for item in (required_skills or []) if item.strip()}
@@ -163,6 +178,7 @@ class CandidateResolver:
         capability: str,
         allowed_agent_ids: list[str] | tuple[str, ...] | None = None,
     ):
+        """返回最佳候选绑定；没有候选时抛出 ``AgentNotFound``。"""
         candidates = self.resolve_candidates(
             domain=domain,
             capability=capability,
@@ -181,6 +197,7 @@ class CandidateResolver:
         binding: ExecutionBinding | dict[str, Any],
         allowed_agent_ids: list[str] | tuple[str, ...] | None = None,
     ) -> bool:
+        """验证给定绑定仍在当前候选集中，输入模型不合法时抛出校验错误。"""
         expected = ExecutionBinding.model_validate(binding)
         candidates = self.resolve_candidates(
             domain=domain,

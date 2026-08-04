@@ -15,19 +15,33 @@ class VersionConflict(ValueError):
 
 
 class ResourceStore(Protocol):
-    """资源服务依赖的最小存储边界，便于后续替换存储介质。"""
+    """资源服务依赖的最小存储边界，便于替换存储介质。
 
-    def register(self, profile: ResourceProfile, snapshot: ResourceSnapshot) -> VersionedResourceSnapshot: ...
+    实现必须返回调用方不可变更内部状态的投影；若支持并发，版本读取、校验和写入
+    必须具有原子语义，未知资源和版本冲突不得被静默吞掉。
+    """
 
-    def get_profile(self, resource_id: str) -> ResourceProfile: ...
+    def register(self, profile: ResourceProfile, snapshot: ResourceSnapshot) -> VersionedResourceSnapshot:
+        """登记匹配画像与首份快照并返回版本投影；重复或标识不一致时抛出 ``ValueError``。"""
+        ...
 
-    def get_snapshot(self, resource_id: str) -> VersionedResourceSnapshot: ...
+    def get_profile(self, resource_id: str) -> ResourceProfile:
+        """读取资源画像副本；未知标识应抛出 ``KeyError``。"""
+        ...
 
-    def list_profiles(self) -> list[ResourceProfile]: ...
+    def get_snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
+        """读取当前版本快照副本；未知标识应抛出 ``KeyError``。"""
+        ...
+
+    def list_profiles(self) -> list[ResourceProfile]:
+        """返回稳定顺序的画像副本列表，不暴露实现内部容器。"""
+        ...
 
     def update_snapshot(
         self, snapshot: ResourceSnapshot, *, expected_version: int | None = None
-    ) -> VersionedResourceSnapshot: ...
+    ) -> VersionedResourceSnapshot:
+        """按可选期望版本原子更新快照；过期版本应抛出 ``VersionConflict``。"""
+        ...
 
 
 class InMemoryResourceStore:

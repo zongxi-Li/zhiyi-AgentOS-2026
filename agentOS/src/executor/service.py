@@ -20,7 +20,9 @@ from .graph import RuntimeAttempt, RuntimeGraph, RuntimeNode, RuntimeNodeStatus,
 
 class SchedulerPort(Protocol):
     """执行器仅认识资源合同，具体 scheduler 仍可作为独立部件替换。"""
-    def decide(self, request: SchedulingRequest) -> SchedulingDecision: ...
+    def decide(self, request: SchedulingRequest) -> SchedulingDecision:
+        """根据资源调度请求返回可审计决定；实现方不得在此接口隐藏执行图写入。"""
+        ...
 
 
 class ExecutorService:
@@ -121,10 +123,12 @@ class ACGExecutor:
         self.runtime = runtime; self.service = ExecutorService(max_parallelism=max_parallelism)
 
     async def run(self, *, task: Any, run: Any, workflow: Any, blueprint: Any) -> Any:
+        """驱动一次已准备 ACG 运行并返回同一应用层运行对象。"""
         # 应用层仍负责存储、trace 与 agent 调用；此适配器只保留跨部件入口。
         return await self._drive(task=task, run=run, workflow=workflow, blueprint=blueprint)
 
     async def resume(self, *, task: Any, run: Any, workflow: Any, blueprint: Any) -> Any:
+        """在恢复后的图状态继续驱动 ACG 运行，不重建既有图。"""
         return await self._drive(task=task, run=run, workflow=workflow, blueprint=blueprint)
 
     async def _drive(self, *, task: Any, run: Any, workflow: Any, blueprint: Any) -> Any:
@@ -146,10 +150,15 @@ class ACGExecutor:
 class ACGWorkflowAdapter:
     """在应用层保留 ACG 启动/审核适配器，不把执行算法放回 core。"""
     def __init__(self, runtime: Any) -> None: self.runtime = runtime
-    def new_executor(self) -> ACGExecutor: return ACGExecutor(self.runtime)
+    def new_executor(self) -> ACGExecutor:
+        """创建绑定当前应用运行时的轻量执行适配器，不共享步骤状态。"""
+        return ACGExecutor(self.runtime)
+
     async def start(self, *, task: Any, run: Any, workflow: Any) -> Any:
+        """委托应用运行时启动 ACG；状态持久化和并发锁仍由运行时负责。"""
         return await self.runtime._start_acg(task=task, run=run, workflow=workflow, executor=self.new_executor())
     async def apply_review(self, decision: Any) -> Any:
+        """委托应用运行时应用审核决定并返回更新后的运行投影。"""
         return await self.runtime._apply_acg_review(decision, executor=self.new_executor())
 
 
@@ -179,6 +188,7 @@ class Orchestrator:
         self.model_runtime: Any = None
 
     def set_model_runtime(self, model_runtime: Any) -> None:
+        """注入应用层拥有的模型运行时；仅替换引用，不启动外部连接。"""
         self.model_runtime = model_runtime
 
     def _capability_descriptor(self, capability: str | None) -> Any:

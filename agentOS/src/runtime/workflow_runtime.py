@@ -93,7 +93,7 @@ _ERROR_UNSET = object()
 
 
 class ReviewConflictError(ValueError):
-    """The reviewed Run or step changed after the client observed it."""
+    """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
 
 
 class WorkflowRuntime:
@@ -161,6 +161,7 @@ class WorkflowRuntime:
 
     @property
     def plugin_scope_resolver(self) -> PluginScopeResolver:
+        """返回当前依赖注册表构造的插件范围解析器，不修改已冻结运行范围。"""
         return PluginScopeResolver(
             capability_catalog=self.capability_catalog,
             agent_registry=self.agent_registry,
@@ -174,12 +175,13 @@ class WorkflowRuntime:
         self._planning_engine = None
 
     def set_model_runtime(self, model_runtime) -> None:
-        """Inject the application-owned structured model runtime into ACG agents."""
+        """将应用层拥有的结构化模型运行时注入 ACG Agent；只替换引用，不创建连接。"""
 
         self.orchestrator.set_model_runtime(model_runtime)
 
     @property
     def planning_engine(self):
+        """延迟构造规划引擎并返回缓存实例；注入 LLM 后会由设置方法失效重建。"""
         if self._planning_engine is None:
             from planner.service import PlanningEngine
 
@@ -192,6 +194,7 @@ class WorkflowRuntime:
         return self._planning_engine
 
     def register_execution_adapter(self, runtime_engine: str, factory: ExecutionAdapterFactory) -> None:
+        """登记非 ACG 运行引擎适配器；空标识或覆盖策略由调用方显式负责。"""
         engine = self._normalize_runtime_engine(runtime_engine)
         if engine == "acg":
             raise ValueError(f"{engine} runtime engine is built into AgentOS Core")
@@ -211,6 +214,7 @@ class WorkflowRuntime:
         workflow_id: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
     ) -> AgentTask:
+        """校验请求、解析插件范围并创建任务；合同或插件异常会向调用方明确传播。"""
         task_domain = (role_type or domain or "general").strip()
         task_intent = (task_type or intent or "general").strip()
         resolved_plugins = self.plugin_scope_resolver.resolve_enabled_plugin_ids(
@@ -241,6 +245,7 @@ class WorkflowRuntime:
         review_mode: str = "auto",
         enabled_plugin_ids: Optional[list[str]] = None,
     ) -> WorkflowRun:
+        """为任务选择工作流并启动运行；持久化和同运行互斥由内部运行锁协调。"""
         _, run = self.prepare_run(
             task_id=task_id,
             workflow_id=workflow_id,
@@ -259,7 +264,7 @@ class WorkflowRuntime:
         idempotency_fingerprint: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
     ) -> tuple[AgentTask, WorkflowRun]:
-        """Persist a queryable run before planning or node execution starts."""
+        """在规划或节点执行前持久化可查询运行；幂等键冲突时抛出 ``ValueError``。"""
 
         if idempotency_key:
             existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
@@ -370,7 +375,7 @@ class WorkflowRuntime:
         return task, run
 
     async def execute_prepared_run(self, run_id: str) -> WorkflowRun:
-        """Execute an already-persisted run while preserving terminal state."""
+        """执行已持久化运行并保持终态不回退；插件范围失效时安全标记失败后继续抛错。"""
 
         run = self.workflow_store.get_run(run_id)
         if run.status in _TERMINAL_RUN_STATUSES:
@@ -716,6 +721,7 @@ class WorkflowRuntime:
             self._transition_run(run, status)
 
     def get_status(self, run_id: str) -> WorkflowRun:
+        """读取指定运行的最新状态投影；不存在时由存储层抛出 ``KeyError``。"""
         return self.workflow_store.get_run(run_id)
 
     async def update_run_lifecycle(
@@ -728,7 +734,7 @@ class WorkflowRuntime:
         error: object = _ERROR_UNSET,
         set_started_at: bool = False,
     ) -> WorkflowRun:
-        """Reload, guard, persist, and return the latest lifecycle snapshot."""
+        """重新读取、校验并持久化生命周期字段，返回最新投影；终态非法迁移会被拒绝。"""
 
         run = self.workflow_store.get_run(run_id)
         return self._set_run_lifecycle(
@@ -800,7 +806,7 @@ class WorkflowRuntime:
         error_code: str,
         error_message: str,
     ) -> WorkflowRun:
-        """Best-effort terminal failure used by managed execution boundaries."""
+        """在受管执行边界尽力收敛为失败终态，并写入有界错误信息和追踪事件。"""
 
         run = self.workflow_store.get_run(run_id)
         if run.status in _TERMINAL_RUN_STATUSES:
@@ -881,7 +887,7 @@ class WorkflowRuntime:
         run.active_step_ids = []
 
     async def close_orphaned_runs(self, *, limit: int = 200) -> list[str]:
-        """Close unfinished runs whose in-process executor was lost on restart."""
+        """关闭重启后失去进程内执行器的未终态运行，返回已关闭标识列表。"""
 
         closed: list[str] = []
         for run in self.workflow_store.list_non_terminal_runs(limit=limit):
@@ -982,14 +988,17 @@ class WorkflowRuntime:
         return (message or type(exc).__name__)[:500]
 
     def resolve_workflow_id(self, workflow_id: str | None) -> str | None:
+        """规范化可选工作流标识；非空值会经注册表校验，不存在时抛出错误。"""
         if not workflow_id:
             return workflow_id
         return self.workflow_registry.get(workflow_id).workflow_id
 
     def list_checkpoints(self, run_id: str) -> list[Checkpoint]:
+        """读取运行关联检查点列表，不改变运行或检查点状态。"""
         return self.checkpoint_store.list(self.workflow_store.get_run(run_id))
 
     def list_reviews(self, run_id: str) -> list[ReviewRecord]:
+        """读取运行审核记录列表，不执行审核决策或状态迁移。"""
         return self.review_manager.list(self.workflow_store.get_run(run_id))
 
     def evaluate_runs(
@@ -1000,6 +1009,7 @@ class WorkflowRuntime:
         workflow_id: str | None = None,
         source: str | None = None,
     ) -> EvaluationRun:
+        """按可选状态、域和来源过滤运行并生成评估汇总，复杂度受存储查询结果规模限制。"""
         workflow_id = self.resolve_workflow_id(workflow_id)
         page = self.workflow_store.list_runs(
             status=status,
@@ -1017,6 +1027,7 @@ class WorkflowRuntime:
         )
 
     async def apply_review(self, decision: ReviewDecision) -> WorkflowRun:
+        """在运行锁内校验并应用审核决定；过期、冲突或终态运行抛出 ``ReviewConflictError``。"""
         async with self.run_lock_manager.lock_for(decision.run_id):
             run = self.workflow_store.get_run(decision.run_id)
             existing = self._find_review_operation(run, decision.operation_id)
@@ -1063,6 +1074,7 @@ class WorkflowRuntime:
         return None
 
     async def resume_from_checkpoint(self, *, run_id: str, checkpoint_id: str) -> WorkflowRun:
+        """从同版本检查点恢复 ACG 运行；范围、图或工作流版本不匹配时明确拒绝。"""
         # Explicitly initialize legacy ACG runs before comparing checkpoint graph
         # versions.  No checkpoint field is copied into the run before this check.
         initial_run = self.workflow_store.get_run(run_id)
@@ -1176,6 +1188,7 @@ class WorkflowRuntime:
         )
 
     def cancel(self, run_id: str) -> WorkflowRun:
+        """在运行锁内取消可继续步骤并持久化终态；已终态的迁移规则由状态机校验。"""
         with self.run_lock_manager.lock_for(run_id):
             latest = self.workflow_store.get_run(run_id)
             run = latest.model_copy(deep=True)
@@ -1385,6 +1398,7 @@ class WorkflowRuntime:
 
 
 def build_default_runtime() -> WorkflowRuntime:
+    """按环境变量装配默认运行时并登记原生与已安装插件；缺少数据库路径时抛出错误。"""
     agent_registry = AgentRegistry()
     workflow_registry = WorkflowRegistry()
 

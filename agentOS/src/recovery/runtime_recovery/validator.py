@@ -31,7 +31,7 @@ _IMMUTABLE_TARGET_STATES = {
 
 
 class PatchValidator:
-    """Validate a patch against a graph copy; never mutate caller-owned objects."""
+    """在图副本上验证补丁，绝不修改调用方持有的对象。"""
 
     def __init__(self, agent_registry) -> None:
         self.agent_registry = agent_registry
@@ -44,7 +44,11 @@ class PatchValidator:
         *,
         domain: str,
     ) -> RuntimeGraph:
-        """Return a validated candidate graph without advancing its version."""
+        """返回经验证的候选图且不推进版本。
+
+        输入图会被深拷贝，验证身份、预算、连通性和能力；任何不满足约束的补丁
+        抛出 ``PatchValidationError``，复杂度取决于图遍历规模 O(V+E)。
+        """
 
         self._validate_identity(graph, patch)
         if patch.operation_type == PatchOperationType.RETRY_ALTERNATE_BINDING:
