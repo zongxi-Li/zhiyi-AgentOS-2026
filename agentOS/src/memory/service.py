@@ -5,6 +5,7 @@ from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord
 from .admission import admitted
 from .algorithms import rerank_memories
 from .retrieval import retrieve
+from .models import WorkingMemory
 from .store import MemoryStore
 
 
@@ -24,3 +25,7 @@ class MemoryService:
     def search(self, query: MemoryQuery) -> list[MemoryRecord]:
         """执行本地元数据检索和稳定重排。"""
         return rerank_memories(retrieve(self._store.values(), query))
+
+    def working_from_run(self, run: object) -> WorkingMemory:
+        """创建运行期工作记忆；该入口不读取或依赖旧 core。"""
+        return WorkingMemory.from_run(run)

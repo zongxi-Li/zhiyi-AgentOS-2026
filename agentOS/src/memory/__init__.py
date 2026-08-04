@@ -6,6 +6,7 @@ __all__: list[str] = []
 
 """记忆部件的公共入口。"""
 
+from .models import WorkingMemory
 from .service import MemoryService
 
-__all__ = ["MemoryService"]
+__all__ = ["MemoryService", "WorkingMemory"]

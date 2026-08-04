@@ -1,5 +1,8 @@
-"""通信部件的共享消息合同。"""
+"""通信部件公开的消息、上下文和血缘模型。"""
 
 from contracts.communication import ContextPackRef, MessageEnvelope
 
-__all__ = ["ContextPackRef", "MessageEnvelope"]
+from .contracts import ContextPack
+from .provenance import DataConsumptionEvent, DataProductionEvent, RuntimeInteraction
+
+__all__ = ["ContextPackRef", "MessageEnvelope", "ContextPack", "DataProductionEvent", "DataConsumptionEvent", "RuntimeInteraction"]

@@ -1,6 +1,12 @@
-"""通信协调部件的包边界；业务实现将在后续迁移。"""
+"""受控低熵通信部件的公共入口。"""
 
-__all__: list[str] = []
+from .algorithms import low_entropy_choice, select_fields
+from .assembler import ContextAssembler
+from .contracts import ContextPack
+from .provenance import ProvenanceLedger
+from .service import CommunicatorService
+
+__all__ = ["CommunicatorService", "ContextAssembler", "ContextPack", "ProvenanceLedger", "low_entropy_choice", "select_fields"]
 """通信部件的公共入口。"""
 
 from .service import CommunicatorService

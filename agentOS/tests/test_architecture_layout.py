@@ -92,3 +92,41 @@ def test_component_publicly_exports_its_service(component: str, service_name: st
 def test_obsolete_top_level_placeholder_modules_are_absent(legacy_file: str) -> None:
     """旧顶层占位模块不得与新的部件边界同时存在。"""
     assert not (SOURCE_ROOT / legacy_file).exists()
+
+
+def test_migrated_components_are_self_contained() -> None:
+    """迁移后的三个部件只能经 contracts 共享资料，不能反向依赖旧 core。"""
+    for component in ("memory", "communicator", "executor"):
+        for module in (SOURCE_ROOT / component).glob("*.py"):
+                assert "core." not in module.read_text(encoding="utf-8"), module
+
+
+@pytest.mark.parametrize(
+    "legacy_file",
+    ("core/communication/__init__.py", "core/communication/contract.py", "core/communication/assembler.py", "core/communication/audit.py"),
+)
+def test_migrated_communication_modules_are_removed(legacy_file: str) -> None:
+    """通信实现已归属 communicator，不能留 core 版本造成双写和双真相。"""
+    assert not (SOURCE_ROOT / legacy_file).exists()
+
+
+def test_runtime_memory_and_low_entropy_context_are_public() -> None:
+    """运行期上下文、字段白名单装配和确定性字段选择均由新部件提供。"""
+    from communicator import ContextAssembler, ContextPack, select_fields
+    from memory import WorkingMemory
+
+    memory = WorkingMemory.from_run({"runId": "run-1", "input": {"topic": "迁移"}})
+    memory.record("step-a", {"answer": 42})
+    pack = ContextAssembler().assemble(
+        run_id="run-1",
+        step_id="step-b",
+        objective="验证",
+        input_spec={"fields": ["answer"]},
+        upstream_outputs={"step-a": {"answer": 42, "verbose": "x" * 300}},
+    )
+
+    assert isinstance(pack, ContextPack)
+    assert memory.observations["step-a"]["answer"] == 42
+    assert pack.data == {"answer": 42}
+    assert pack.tokens_delivered < pack.tokens_available
+    assert select_fields({"brief": "ok", "large": "x" * 400}, ["brief", "large"], 5) == ["brief"]
