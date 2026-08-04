@@ -3,7 +3,7 @@
 from .health import ResourceHealthMonitor
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .service import ResourceService
-from .store import InMemoryResourceStore, ResourceStore
+from .store import InMemoryResourceStore, ResourceStore, VersionConflict
 
 __all__ = [
     "InMemoryResourceStore",
@@ -12,5 +12,6 @@ __all__ = [
     "ResourceHealthMonitor",
     "ResourceService",
     "ResourceStore",
+    "VersionConflict",
     "VersionedResourceSnapshot",
 ]
