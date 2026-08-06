@@ -20,7 +20,7 @@ COMPONENT_FILES = {
     "auditor": ("models.py", "structural.py", "evidence.py", "risk.py", "quality.py", "policy.py", "algorithms.py", "service.py"),
     "recovery": ("models.py", "classifier.py", "checkpoint.py", "planner.py", "validator.py", "algorithms.py", "service.py"),
     "runtime": ("bootstrap.py", "workflow_runtime.py", "dependencies.py", "compatibility.py"),
-    "acg_tools": ("models.py", "serializer.py", "exporter.py", "labels.py", "mermaid.py", "graphviz.py", "service.py"),
+    "tools": ("models.py", "serializer.py", "exporter.py", "labels.py", "mermaid.py", "graphviz.py", "service.py"),
 }
 
 ADAPTER_PACKAGES = ("model", "tool", "storage", "remote_agent")
@@ -33,7 +33,7 @@ SERVICE_EXPORTS = {
     "memory": "MemoryService",
     "auditor": "AuditorService",
     "recovery": "RecoveryService",
-    "acg_tools": "ACGToolsService",
+    "tools": "ACGToolsService",
 }
 
 
