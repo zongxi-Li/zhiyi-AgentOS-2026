@@ -9,24 +9,10 @@ import pytest
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
-COMPONENTS = (
-    "contracts",
-    "task_manager",
-    "planner",
-    "resource",
-    "scheduler",
-    "executor",
-    "communicator",
-    "memory",
-    "auditor",
-    "recovery",
-    "runtime",
-    "acg_tools",
-    "adapters",
-)
-
-# 公共接口的中文说明是跨部件调用时的契约；检索适配器正处于独立迁移中，沿用文件枚举的排除规则。
-PUBLIC_INTERFACE_COMPONENTS = COMPONENTS
+# 注释策略覆盖 ``src`` 中所有仍参与运行的 Python 模块。虽然 agents、domain、
+# packs、skills、stores 是新部件的配套实现，它们仍被运行时导入，不能成为注释盲区。
+# 检索适配器正在由用户独立迁移，避免本次架构收尾改变其迁移中的契约。
+EXCLUDED_RETRIEVAL_NAMES = {"retrieval_adapter.py"}
 
 
 def _has_chinese(text: str) -> bool:
@@ -35,13 +21,11 @@ def _has_chinese(text: str) -> bool:
 
 
 def _source_files() -> list[Path]:
-    """枚举审计范围内文件，并排除用户正在迁移的检索适配器。"""
+    """枚举全部源码模块，并排除用户独立迁移中的检索适配器。"""
     return [
         path
-        for component in COMPONENTS
-        for path in (SOURCE_ROOT / component).rglob("*.py")
-        if component != "adapters"
-        or "retrieval" not in path.relative_to(SOURCE_ROOT / "adapters").parts
+        for path in SOURCE_ROOT.rglob("*.py")
+        if "retrieval" not in path.parts and path.name not in EXCLUDED_RETRIEVAL_NAMES
     ]
 
 
