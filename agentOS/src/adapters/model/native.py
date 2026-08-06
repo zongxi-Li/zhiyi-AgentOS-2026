@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import Any
 
 from adapters.model_adapter import StructuredGenerationError
-from agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
+from support.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from contracts.communication import (
     ContextContractError,
     apply_contract_defaults,
@@ -19,7 +19,7 @@ from adapters.model.native_prompt import (
     NATIVE_CAPABILITY_PROMPT_VERSION,
     NativeCapabilityPromptBuilder,
 )
-from planner.models import NATIVE_CAPABILITY_IDS
+from components.planner.models import NATIVE_CAPABILITY_IDS
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"

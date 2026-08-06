@@ -1,6 +1,6 @@
 import pytest
 
-from agents import AgentRegistry
+from support.agents import AgentRegistry
 from core.acg import (
     ACGBlueprint,
     ACGEdge,
@@ -28,7 +28,7 @@ from core.recovery import (
 )
 from core.run_locks import RunLockManager
 from core.runtime_graph import RuntimeGraph
-from stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def conditional_blueprint() -> ACGBlueprint:

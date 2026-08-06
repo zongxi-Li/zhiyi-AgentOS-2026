@@ -111,6 +111,9 @@ ModelServiceFactory = Callable[[], ModelService]
 
 _model_service_factory: Optional[ModelServiceFactory] = None
 
+# TODO: 在应用装配层提供带生命周期的依赖容器，替换无锁的进程级工厂；这样动态重载
+# 或并发启动时不会出现工厂覆盖、客户端泄漏和首次解析竞争。
+
 
 def register_model_service_factory(factory: ModelServiceFactory) -> None:
     """注册延迟创建 ``ModelService`` 的全局应用层工厂。

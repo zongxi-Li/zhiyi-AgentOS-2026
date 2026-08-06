@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from support.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 from core.models.types import (
     PluginSnapshot,
     RunExecutionScope,
@@ -16,7 +16,7 @@ from core.recovery.bindings import CandidateResolver
 from core.planning.default_catalog import build_default_capability_catalog
 from core.plugin_scope import PluginScopeError, PluginScopeResolver
 from core.workflow.registry import WorkflowRegistry
-from packs.registry import PackManifest
+from support.packs.registry import PackManifest
 
 
 class _PluginAgent(BaseAgent):

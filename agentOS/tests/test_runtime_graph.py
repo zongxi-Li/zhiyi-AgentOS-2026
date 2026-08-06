@@ -1,6 +1,6 @@
 import pytest
 
-from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from support.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 from core.acg import ACGBlueprint, ACGEdge, EdgeType, StepNode
 from core.recovery import (
     PatchValidationError,

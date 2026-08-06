@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 from contracts.resource import ResourceProfile, ResourceSnapshot
-from resource.store import InMemoryResourceStore, VersionConflict
+from components.resource.store import InMemoryResourceStore, VersionConflict
 
 
 def _snapshot(available_slots: int) -> ResourceSnapshot:

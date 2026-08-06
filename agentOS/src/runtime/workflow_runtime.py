@@ -11,20 +11,20 @@ import secrets
 from time import monotonic
 from typing import Mapping, Optional
 
-from agents import AgentRegistry
-from planner.models import (
+from support.agents import AgentRegistry
+from components.planner.models import (
     ACGBlueprint,
     promote_workflow_to_acg,
 )
-from executor import ACGWorkflowAdapter, ExecutionAdapterFactory, refresh_run_execution_projection
-from auditor.governance.checkpoint import CheckpointStore, checkpoint_trace_payload
-from auditor.governance.evaluation import WorkflowEvaluator
-from executor.service import Orchestrator
-from task_manager.store import WorkflowRegistry
-from auditor.governance.review import ReviewManager
-from task_manager.state_machine import StateMachine
-from task_manager.service import TaskManager
-from auditor.governance.trace import TraceStore
+from components.executor import ACGWorkflowAdapter, ExecutionAdapterFactory, refresh_run_execution_projection
+from components.auditor.governance.checkpoint import CheckpointStore, checkpoint_trace_payload
+from components.auditor.governance.evaluation import WorkflowEvaluator
+from components.executor.service import Orchestrator
+from components.task_manager.store import WorkflowRegistry
+from components.auditor.governance.review import ReviewManager
+from components.task_manager.state_machine import StateMachine
+from components.task_manager.service import TaskManager
+from components.auditor.governance.trace import TraceStore
 from contracts.workflow import (
     AgentTask,
     Checkpoint,
@@ -42,31 +42,31 @@ from contracts.workflow import (
     utc_now,
 )
 from contracts.execution import WorkflowProgressPhase
-from recovery.runtime_recovery.controller import RuntimeController
-from recovery.runtime_recovery.errors import RuntimeGraphError
-from recovery.runtime_recovery.events import RuntimeEventClassifier
-from recovery.runtime_recovery.policy import RuntimeEventPolicy
-from recovery.runtime_recovery.proposal import (
+from components.recovery.runtime_recovery.controller import RuntimeController
+from components.recovery.runtime_recovery.errors import RuntimeGraphError
+from components.recovery.runtime_recovery.events import RuntimeEventClassifier
+from components.recovery.runtime_recovery.policy import RuntimeEventPolicy
+from components.recovery.runtime_recovery.proposal import (
     CandidateResolver,
     DeterministicProposalFactory,
     RuntimeGraphPatchCompiler,
 )
-from recovery.runtime_recovery.recipes import RecoveryRecipeRegistry
+from components.recovery.runtime_recovery.recipes import RecoveryRecipeRegistry
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
-from executor.graph import RuntimeGraph
-from planner.models import build_default_capability_catalog
-from planner.models import CapabilityCatalog
-from planner.algorithms import (
+from components.executor.graph import RuntimeGraph
+from components.planner.models import build_default_capability_catalog
+from components.planner.models import CapabilityCatalog
+from components.planner.algorithms import (
     PLANNER_ALGORITHM_VERSION,
     normalize_planning_diversity,
     normalize_planning_seed,
 )
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
-from packs.registry import register_installed_packs
+from support.packs.registry import register_installed_packs
 from adapters.model.native import register_native_runtime
-from stores.memory_workflow_store import MemoryWorkflowStore
-from stores.sqlite_workflow_store import SQLiteWorkflowStore
-from stores.workflow_store import WorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+from support.stores.workflow_store import WorkflowStore
 
 
 logger = logging.getLogger(__name__)

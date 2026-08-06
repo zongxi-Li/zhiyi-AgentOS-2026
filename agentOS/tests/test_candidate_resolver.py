@@ -1,4 +1,4 @@
-from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from support.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 from core.recovery import CandidateResolver, ExecutionBinding
 
 

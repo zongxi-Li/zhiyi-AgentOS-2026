@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from support.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 from core.acg import ControlType, EdgeType, NodeType, validate_blueprint
 from core.planning import (
     ACGBuilder,

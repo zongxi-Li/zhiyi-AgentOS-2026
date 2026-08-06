@@ -2,8 +2,8 @@ import json
 from types import SimpleNamespace
 
 from adapters.tool_adapter import register_tool_runtime_factory
-from agents.base import AgentOutput, AgentProfile, BaseAgent
-from agents.registry import AgentRegistry
+from support.agents.base import AgentOutput, AgentProfile, BaseAgent
+from support.agents.registry import AgentRegistry
 from core.models.types import (
     AgentTask,
     WorkflowDefinition,
@@ -12,7 +12,7 @@ from core.models.types import (
 )
 from core.native import NativeGeneralAgent
 from core.workflow.orchestrator import Orchestrator
-from memory.workflow_memory import WorkflowMemory
+from components.memory.workflow_memory import WorkflowMemory
 
 
 class _RecordingRuntime:

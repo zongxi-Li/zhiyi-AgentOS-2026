@@ -1,6 +1,6 @@
 """资源健康指标的增量计算测试。"""
 
-from resource.health import ResourceHealthMonitor
+from components.resource.health import ResourceHealthMonitor
 
 
 def test_ema_reliability_increases_after_success():

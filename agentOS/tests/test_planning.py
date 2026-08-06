@@ -20,8 +20,8 @@ _AGENT = Path(__file__).resolve().parents[2] / "agent"
 if str(_AGENT) not in sys.path:
     sys.path.insert(0, str(_AGENT))
 
-from agents import AgentRegistry
-from agents.base import AgentOutput, AgentProfile, BaseAgent
+from support.agents import AgentRegistry
+from support.agents.base import AgentOutput, AgentProfile, BaseAgent
 from core.acg import EdgeType, NodeType, validate_blueprint
 from core.acg.enums import ComplexityLevel
 from core.models.types import WorkflowDefinition
@@ -30,7 +30,7 @@ from core.planning.cognitive_router import CognitiveRouter
 from core.planning.template_matcher import TemplateMatcher
 from core.planning.default_catalog import build_default_capability_catalog
 from core.workflow.registry import WorkflowRegistry
-from packs.legal.planning import register_legal_capabilities
+from support.packs.legal.planning import register_legal_capabilities
 
 
 class _Agent(BaseAgent):

@@ -9,6 +9,18 @@ import pytest
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
+COMPONENT_ROOT = SOURCE_ROOT / "components"
+BUSINESS_COMPONENTS = {
+    "task_manager",
+    "planner",
+    "resource",
+    "scheduler",
+    "executor",
+    "communicator",
+    "memory",
+    "auditor",
+    "recovery",
+}
 
 COMPONENT_FILES = {
     "task_manager": ("models.py", "state_machine.py", "service.py", "scheduler.py", "algorithms.py", "store.py"),
@@ -37,11 +49,21 @@ SERVICE_EXPORTS = {
 }
 
 
+def _component_directory(component: str) -> Path:
+    """返回部件在业务层或顶层工具/运行时层中的实际目录。"""
+    return COMPONENT_ROOT / component if component in BUSINESS_COMPONENTS else SOURCE_ROOT / component
+
+
+def _component_module_name(component: str) -> str:
+    """返回用于导入验证的模块全名，避免运行时和工具被错误套入业务层。"""
+    return f"components.{component}" if component in BUSINESS_COMPONENTS else component
+
+
 @pytest.mark.parametrize("component, files", COMPONENT_FILES.items())
 def test_component_files_exist_and_are_non_empty(component: str, files: tuple[str, ...]) -> None:
     """所有目标部件文件都是可读的实质模块，禁止退化为空占位文件。"""
     for filename in files:
-        target = SOURCE_ROOT / component / filename
+        target = _component_directory(component) / filename
         assert target.is_file(), f"缺少目标模块：{target.relative_to(SOURCE_ROOT)}"
         assert target.stat().st_size > 0, f"模块不得为空：{target.relative_to(SOURCE_ROOT)}"
 
@@ -51,7 +73,7 @@ def test_component_contains_no_unplanned_python_modules(component: str, files: t
     """部件目录只能保留设计树中声明的模块，防止旧实现悄悄残留。"""
     actual = {
         item.name
-        for item in (SOURCE_ROOT / component).glob("*.py")
+        for item in _component_directory(component).glob("*.py")
         if item.name != "__init__.py"
     }
     assert actual == set(files), f"{component} 的模块与设计树不一致：{actual ^ set(files)}"
@@ -68,7 +90,7 @@ def test_adapter_subpackages_have_non_empty_package_contract(package: str) -> No
 @pytest.mark.parametrize("component, service_name", SERVICE_EXPORTS.items())
 def test_component_publicly_exports_its_service(component: str, service_name: str) -> None:
     """消费者仅需从部件包导入服务 Facade，而不应依赖内部模块。"""
-    package = import_module(component)
+    package = import_module(_component_module_name(component))
     assert getattr(package, service_name, None) is not None
 
 
@@ -97,7 +119,7 @@ def test_obsolete_top_level_placeholder_modules_are_absent(legacy_file: str) -> 
 def test_migrated_components_are_self_contained() -> None:
     """迁移后的三个部件只能经 contracts 共享资料，不能反向依赖旧 core。"""
     for component in ("memory", "communicator", "executor"):
-            for module in (SOURCE_ROOT / component).glob("*.py"):
+            for module in (COMPONENT_ROOT / component).glob("*.py"):
                 assert "core." not in module.read_text(encoding="utf-8"), module
 
 
@@ -137,8 +159,8 @@ def test_migrated_communication_modules_are_removed(legacy_file: str) -> None:
 
 def test_runtime_memory_and_low_entropy_context_are_public() -> None:
     """运行期上下文、字段白名单装配和确定性字段选择均由新部件提供。"""
-    from communicator import ContextAssembler, ContextPack, select_fields
-    from memory import WorkingMemory
+    from components.communicator import ContextAssembler, ContextPack, select_fields
+    from components.memory import WorkingMemory
 
     memory = WorkingMemory.from_run({"runId": "run-1", "input": {"topic": "迁移"}})
     memory.record("step-a", {"answer": 42})

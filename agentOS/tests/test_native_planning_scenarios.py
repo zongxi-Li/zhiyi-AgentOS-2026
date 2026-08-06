@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 
-from agents import AgentRegistry
+from support.agents import AgentRegistry
 from core.acg import ACGBlueprint, ControlType, EdgeType, NodeType
 from core.models.types import WorkflowStatus
 from core.native import register_native_runtime

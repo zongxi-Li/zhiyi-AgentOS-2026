@@ -19,7 +19,7 @@ from core.workflow.progress import (
 )
 from core.workflow.registry import WorkflowRegistry
 from core.workflow.task_manager import TaskManager
-from stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
 from core.runtime_graph import RuntimeGraph
 
 

@@ -4,7 +4,7 @@ from core.execution.projection import refresh_run_execution_projection
 from core.models.types import AgentTask, StepStatus, WorkflowRun, WorkflowStatus
 from core.runtime import WorkflowRuntime
 from core.runtime_graph import RuntimeAttempt, RuntimeGraph
-from stores.sqlite_workflow_store import SQLiteWorkflowStore
+from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
 class _NullableCodeError(Exception):

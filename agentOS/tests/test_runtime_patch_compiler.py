@@ -1,4 +1,4 @@
-from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from support.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 from core.acg import ACGBlueprint, ACGEdge, EdgeType, StepNode
 from core.models.types import StepStatus
 from core.recovery import (

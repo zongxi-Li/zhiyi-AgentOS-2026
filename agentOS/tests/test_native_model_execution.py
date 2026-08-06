@@ -9,8 +9,8 @@ from adapters.model_adapter import (
     StructuredGenerationError,
     StructuredGenerationResult,
 )
-from agents import AgentRegistry
-from agents.base import AgentRunContext
+from support.agents import AgentRegistry
+from support.agents.base import AgentRunContext
 from core.data_contracts import apply_contract_defaults
 from core.models.types import (
     AgentTask,
@@ -21,7 +21,7 @@ from core.models.types import (
 )
 from core.native import NativeGeneralAgent
 from core.planning.default_catalog import build_default_capability_catalog
-from memory.workflow_memory import WorkflowMemory
+from components.memory.workflow_memory import WorkflowMemory
 from core.workflow.orchestrator import Orchestrator
 
 

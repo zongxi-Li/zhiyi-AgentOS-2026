@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from agents import AgentRegistry
+from support.agents import AgentRegistry
 from core.acg import NodeType, validate_blueprint
 from core.models.types import (
     TraceEventType,
@@ -23,7 +23,7 @@ from core.planning.cognitive_router import CapabilityBinding, CollaborationNetwo
 from core.runtime import WorkflowRuntime, build_default_runtime
 from core.workflow.registry import WorkflowRegistry
 from core.workflow.task_manager import TaskManager
-from stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def _static_workflow(workflow_id: str, *, domain: str = "legal") -> WorkflowDefinition:

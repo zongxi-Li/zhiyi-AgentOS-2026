@@ -4,7 +4,7 @@ from core.models.types import WorkflowDefinition, WorkflowStepDefinition, Workfl
 from core.workflow.registry import WorkflowRegistry
 from core.workflow.state_machine import InvalidStateTransition
 from core.workflow.task_manager import TaskManager
-from stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def _workflow_registry() -> WorkflowRegistry:

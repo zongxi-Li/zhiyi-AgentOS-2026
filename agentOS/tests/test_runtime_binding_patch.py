@@ -1,6 +1,6 @@
 import pytest
 
-from agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from support.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 from core.acg import ACGBlueprint, ACGEdge, StepNode
 from core.governance.checkpoint import CheckpointStore
 from core.governance.trace import TraceStore
@@ -18,7 +18,7 @@ from core.recovery import (
 )
 from core.run_locks import RunLockManager
 from core.runtime_graph import RuntimeAttempt, RuntimeGraph
-from stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 class _Agent(BaseAgent):

@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from contracts.resource import ResourceProfile, ResourceSnapshot
-from resource.service import ResourceService
+from components.resource.service import ResourceService
 
 
 def _snapshot(resource_id: str, slots: int, observed_at: datetime) -> ResourceSnapshot:

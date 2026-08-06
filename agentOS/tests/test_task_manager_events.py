@@ -1,7 +1,7 @@
 import pytest
 
-from agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
-from agents.registry import AgentRegistry
+from support.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
+from support.agents.registry import AgentRegistry
 from core.governance.trace import TraceStore
 from core.models.types import (
     ReviewDecision,
@@ -16,7 +16,7 @@ from core.runtime import WorkflowRuntime
 from core.workflow.registry import WorkflowRegistry
 from core.workflow.state_machine import InvalidStateTransition
 from core.workflow.task_manager import TaskManager
-from stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 class EchoAgent(BaseAgent):
