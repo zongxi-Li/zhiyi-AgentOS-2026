@@ -1,156 +1,182 @@
-# AgentOS 部件化统一设计（目标结构）
+# AgentOS 部件化统一设计（当前实现）
 
 ```text
 AgentOS
 │
 ├─ 设计规则
-│  ├─ 一个业务部件 = 一个文件夹
-│  ├─ 部件内部自包含：contracts / models / service / algorithms / store
-│  ├─ 跨部件仅依赖 src/contracts/；禁止读取其他部件内部状态
-│  ├─ adapters/ 只承载 SQLite、LLM、向量库、远程 Agent 等外部实现
-│  └─ 运行时只负责编排部件，不承载业务算法
+│  ├─ 一个业务部件 = components/ 下的一个文件夹
+│  ├─ 部件内部自包含：models / service / algorithms / store
+│  ├─ 跨部件共享资料应收敛到 src/contracts/；现存内部导入列入迁移 TODO
+│  ├─ runtime/ 只负责装配与编排，不承载领域算法
+│  ├─ adapters/ 只承载外部系统实现与注入协议
+│  ├─ tools/ 只承载 ACG 导出、序列化与绘图
+│  └─ support/ 只承载历史运行时配套；不得新增跨部件合同
 │
-├─ config 运行的配置文件
+├─ config/                              运行配置
 │
+├─ src/
+│  │
+│  ├─ contracts/                        跨部件唯一共享合同
+│  │  ├─ task.py                        Task、约束、生命周期事件
+│  │  ├─ workflow.py                    Blueprint、RuntimeGraph、节点与边
+│  │  ├─ execution.py                   ExecutionPackage、Outcome、执行状态
+│  │  ├─ communication.py               Message、ContextPack、字段/版本契约
+│  │  ├─ memory.py                      MemoryRecord、Query、Policy、WriteBatch
+│  │  ├─ resource.py                    ResourceProfile、Snapshot、Lease、Decision
+│  │  ├─ governance.py                  Trace、Checkpoint、AuditRequest、PolicyDecision
+│  │  └─ recovery.py                    FailureEvent、RecoveryPlan、GraphPatch
+│  │
+│  ├─ components/                       业务部件层
+│  │  │
+│  │  ├─ task_manager/                  任务管理器
+│  │  │  ├─ models.py                   Task、配额、优先级、进度
+│  │  │  ├─ state_machine.py            任务/运行合法状态迁移
+│  │  │  ├─ service.py                  创建、绑定、取消、恢复、进度查询
+│  │  │  ├─ scheduler.py                多任务排队、优先级、并发配额
+│  │  │  ├─ algorithms.py               复杂度评分、排序、配额分配
+│  │  │  └─ store.py                    WorkflowRegistry、任务存储选择
+│  │  │
+│  │  ├─ planner/                       规划器：Task → 静态 ACG Blueprint
+│  │  │  ├─ models.py                   Intent、Capability、Blueprint、变体
+│  │  │  ├─ intent_analyzer.py          LLM/启发式意图理解
+│  │  │  ├─ task_structurer.py          目标、约束、风险、预算结构化
+│  │  │  ├─ cognitive_router.py         能力 → Agent/角色候选路由
+│  │  │  ├─ template_matcher.py         模板评分、相似度、静态优选
+│  │  │  ├─ acg_builder.py              Step/Agent/Memory/Evidence/Control 图构建
+│  │  │  ├─ algorithms.py               依赖展开、熵预算、多样性选择
+│  │  │  └─ service.py                  PlannerService 门面
+│  │  │
+│  │  ├─ resource/                      资源器：画像、健康、版本化快照
+│  │  │  ├─ models.py                   Profile、Snapshot、Metric
+│  │  │  ├─ registry.py                 Agent/模型/工具/知识源注册
+│  │  │  ├─ health.py                   心跳、负载、时延、可靠性 EMA
+│  │  │  ├─ algorithms.py               健康评分、可用性硬过滤
+│  │  │  ├─ store.py                    ResourceStore、乐观版本、进程锁
+│  │  │  └─ service.py                  资源候选与实时快照
+│  │  │
+│  │  ├─ scheduler/                     调度器：Blueprint → ExecutionPackage
+│  │  │  ├─ models.py                   Binding、Request、Decision、Lease
+│  │  │  ├─ binder.py                   抽象能力绑定资源候选
+│  │  │  ├─ scorer.py                   标准化评分、稳定并列决策
+│  │  │  ├─ leases.py                   原子预留、回收、并发槽位
+│  │  │  ├─ package_builder.py          无状态执行包组装
+│  │  │  ├─ algorithms.py               多目标评分、退避、候选切换
+│  │  │  └─ service.py                  调度审计与反馈
+│  │  │
+│  │  ├─ executor/                      执行器：RuntimeGraph 确定性执行
+│  │  │  ├─ graph.py                    图版本、就绪集、条件分支
+│  │  │  ├─ dispatcher.py               并发批次、调用、超时、取消
+│  │  │  ├─ barrier.py                  原子提交、迟到结果拒绝、投影
+│  │  │  ├─ service.py                  执行、续跑、审核后继续
+│  │  │  ├─ algorithms.py               拓扑排序、就绪选择、限流
+│  │  │  └─ fault_injection.py          可控故障注入
+│  │  │
+│  │  ├─ communicator/                  通信器：受控低熵信息流
+│  │  │  ├─ models.py                   Message、ContextPack、Provenance
+│  │  │  ├─ contracts.py                Schema 版本、字段投递规则
+│  │  │  ├─ assembler.py                上游/记忆/证据最小上下文装配
+│  │  │  ├─ compressor.py               裁剪、去重、Token 预算压缩
+│  │  │  ├─ provenance.py               生产/消费/路由血缘与完整性
+│  │  │  ├─ algorithms.py               低熵选择、Token 估算、幂等
+│  │  │  └─ service.py                  投递、确认、异常上报
+│  │  │
+│  │  ├─ memory/                        记忆器：唯一记忆读写入口
+│  │  │  ├─ models.py                   MemoryRecord、Query、Policy、WriteBatch
+│  │  │  ├─ store.py                    进程内 Store 与存储 Interface
+│  │  │  ├─ admission.py                权限、证据、风险、版本、幂等准入
+│  │  │  ├─ retrieval.py                过滤、关键词召回、重排、冲突保留
+│  │  │  ├─ compression.py              Token 预算选择、类型化压缩
+│  │  │  ├─ lifecycle.py                工作/情节/语义记忆生命周期
+│  │  │  ├─ algorithms.py               混合评分、背包式预算选择
+│  │  │  └─ service.py                  ContextPack、原子写入、快照恢复
+│  │  │
+│  │  ├─ auditor/                       审计器：治理判定
+│  │  │  ├─ models.py                   AuditRequest、Finding、PolicyDecision
+│  │  │  ├─ structural.py               图/状态/契约/版本校验
+│  │  │  ├─ evidence.py                 结论—证据—来源—过程校验
+│  │  │  ├─ risk.py                     风险事实、规则、冲突消解
+│  │  │  ├─ quality.py                  完整性、一致性、质量阈值
+│  │  │  ├─ policy.py                   规则版本、自动动作、人工审核
+│  │  │  ├─ algorithms.py               综合评分、优先级、决策合并
+│  │  │  ├─ governance/                Trace、Checkpoint、Review、Evaluation
+│  │  │  └─ service.py                  AuditorService 门面
+│  │  │
+│  │  └─ recovery/                      恢复器：受控自愈与局部重规划
+│  │     ├─ models.py                   FailureEvent、RecoveryPlan、GraphPatch
+│  │     ├─ classifier.py               故障分类与可恢复性
+│  │     ├─ checkpoint.py               进程内检查点 Interface
+│  │     ├─ planner.py                  重试、换资源、补证、审核、补丁决策
+│  │     ├─ validator.py                补丁身份、预算、能力、连通性校验
+│  │     ├─ algorithms.py               最近安全点、动作优先级
+│  │     ├─ runtime_recovery/           补丁、绑定、策略、配方、控制器
+│  │     └─ service.py                  RecoveryService 门面
+│  │
+│  ├─ runtime/                          薄编排层
+│  │  ├─ bootstrap.py                   组件/原生能力/Pack 注册
+│  │  ├─ workflow_runtime.py            Task → Planner → Scheduler → Executor
+│  │  ├─ dependencies.py                依赖注入、插件作用域、生命周期
+│  │  └─ compatibility.py               运行实例进程内锁兼容层
+│  │
+│  ├─ adapters/                         外部 Adapter 层
+│  │  ├─ model/                         原生提示词、模型运行时注册
+│  │  ├─ tool/                          工具运行时协议与注入
+│  │  ├─ storage/                       持久化/对象存储协议与注入
+│  │  ├─ remote_agent/                  HTTP/gRPC Agent 协议与注入
+│  │  ├─ model_adapter.py               文本/结构化模型统一 Adapter
+│  │  ├─ tool_adapter.py                工具运行时工厂
+│  │  ├─ federated_adapter.py           联邦增强失败开放 Adapter
+│  │  └─ retrieval_adapter.py           检索 Adapter 迁移中（引用待同步）
+│  │
+│  ├─ tools/                            ACG 导出与绘图层
+│  │  ├─ models.py                      图模型导出引用
+│  │  ├─ serializer.py                  Canonical JSON 序列化
+│  │  ├─ exporter.py                    稳定 JSON/格式导出
+│  │  ├─ labels.py                      节点/边显示标签映射
+│  │  ├─ mermaid.py                     Mermaid flowchart 文本
+│  │  ├─ graphviz.py                    Graphviz DOT 文本
+│  │  └─ service.py                     ACGToolsService 统一入口
+│  │
+│  ├─ support/                          历史运行时配套层（非新业务合同）
+│  │  ├─ agents/                        BaseAgent、Profile、注册表
+│  │  ├─ domain/                        线性 Task/Workflow 兼容模型
+│  │  ├─ packs/                         Pack Manifest 发现与注册
+│  │  ├─ skills/                        BaseSkill、NoOpSkill、注册表
+│  │  └─ stores/                        Memory/SQLite WorkflowStore Adapter
+│  │
+│  └─ README.md                         源码分层与依赖方向
 │
-├─ src/contracts/                         跨部件唯一共享合同
-│  ├─ task.py                             Task、任务约束、生命周期事件
-│  ├─ workflow.py                         ACG Blueprint、RuntimeGraph、节点与边
-│  ├─ execution.py                        ExecutionPackage、Outcome、执行状态
-│  ├─ communication.py                    Message、ContextPack、字段与版本契约
-│  ├─ memory.py                           MemoryRecord、Query、Policy、WriteBatch
-│  ├─ resource.py                         ResourceProfile、Snapshot、Lease、Decision
-│  ├─ governance.py                       Trace、Checkpoint、AuditRequest、PolicyDecision
-│  └─ recovery.py                         FailureEvent、RecoveryPlan、GraphPatch
-│
-├─ src/task_manager/                      任务管理器
-│  ├─ models.py                           Task、配额、优先级、任务状态
-│  ├─ state_machine.py                    任务/运行合法状态迁移
-│  ├─ service.py                          创建、绑定、取消、恢复、进度查询
-│  ├─ scheduler.py                        多用户/多任务排队、优先级与配额调度
-│  ├─ algorithms.py                       复杂度评分、优先级排序、并发配额分配
-│  └─ store.py                            TaskStore Interface 及 SQLite / Memory Adapter
-│  
-│
-├─ src/planner/                           规划器：Task → 静态 ACG Blueprint
-│  ├─ models.py                           Intent、TaskProfile、Capability、PlanningVariant
-│  ├─ intent_analyzer.py                  LLM / 启发式意图理解
-│  ├─ task_structurer.py                  目标、约束、风险、预算、子任务结构化
-│  ├─ cognitive_router.py                 能力 → Agent/角色候选路由
-│  ├─ template_matcher.py                 模板检索、相似度评分、静态优选
-│  ├─ acg_builder.py                      Step/Agent/Memory/Evidence/Control 图构建
-│  ├─ algorithms.py                       模板评分、能力依赖展开、熵预算、多样性选择
-│  └─ service.py                          输出可审计的 ACG Blueprint
-│  
-│
-├─ src/resource/                          资源器：资源画像与健康状态
-│  ├─ models.py                           ResourceProfile、ResourceSnapshot、ResourceMetric
-│  ├─ registry.py                         注册 Agent/模型/工具/知识源，维护版本与权限
-│  ├─ health.py                           心跳、健康检查、负载/时延/可靠性更新
-│  ├─ algorithms.py                       指数移动平均、健康评分、资源可用性判定
-│  ├─ store.py                            ResourceStore Interface 及持久化 Adapter
-│  └─ service.py                          对调度器提供资源候选与实时快照
-│  
-│
-├─ src/scheduler/                         调度器：Blueprint → Runtime Execution Plan
-│  ├─ models.py                           Binding、SchedulingRequest、Decision、ResourceLease
-│  ├─ binder.py                           将抽象能力绑定到可执行资源候选
-│  ├─ scorer.py                           候选标准化评分与稳定并列决策
-│  ├─ leases.py                           原子预留、超时回收、并发槽位控制
-│  ├─ package_builder.py                  组装无状态 ExecutionPackage
-│  ├─ algorithms.py                       多目标评分、权重归一化、退避与候选切换
-│  └─ service.py                          选优、租约、反馈更新与调度审计
-│  
-│
-├─ src/executor/                          执行器：RuntimeGraph 的确定性执行
-│  ├─ graph.py                            RuntimeGraph、就绪集、图版本、条件分支
-│  ├─ dispatcher.py                       并发批次、Agent 调用、超时与取消
-│  ├─ barrier.py                          原子提交、迟到结果拒绝、状态投影
-│  ├─ service.py                          执行、续跑、人审后继续
-│  ├─ algorithms.py                       拓扑排序、就绪节点选择、并发限流
-│  └─ fault_injection.py                  可控故障注入
-│ 
-│
-├─ src/communicator/                      通信器：受控低熵信息流
-│  ├─ models.py                           Message、MessageEnvelope、ContextPack、ProvenanceEvent
-│  ├─ contracts.py                        Schema 版本校验、适配和字段投递规则
-│  ├─ assembler.py                        从上游、记忆、证据装配最小充分上下文
-│  ├─ compressor.py                       字段裁剪、去重、Token 预算压缩
-│  ├─ provenance.py                       生产/消费/路由血缘与完整性校验
-│  ├─ algorithms.py                       低熵选择、Token 估算、消息重试/幂等
-│  └─ service.py                          投递、确认、异常上报
-│  
-│
-├─ src/memory/                            记忆器：唯一记忆读写入口
-│  ├─ models.py                           六类 MemoryRecord、Query、Policy、ContextRequest、WriteBatch
-│  ├─ store.py                            MemoryStore Interface；Memory / SQLite / Vector Adapter
-│  ├─ admission.py                        权限、证据、风险、版本、幂等准入
-│  ├─ retrieval.py                        过滤、关键词/向量/关系召回、去重、冲突保留、重排
-│  ├─ compression.py                      按 Token 预算选择与类型化压缩
-│  ├─ lifecycle.py                        工作→情节→语义/程序记忆的巩固与过期
-│  ├─ algorithms.py                       混合召回、权威/时效/效用评分、背包式预算选择
-│  └─ service.py                          生成 ContextPack、原子写入、快照恢复
-│ 
-│
-├─ src/auditor/                           审计器：继续传播的治理判定
-│  ├─ models.py                           AuditRequest、Finding、AuditReport、PolicyDecision
-│  ├─ structural.py                       图/状态/契约/版本校验
-│  ├─ evidence.py                         结论—证据—来源—过程一致性校验
-│  ├─ risk.py                             风险事实、规则匹配、冲突消解
-│  ├─ quality.py                          输出完整性、一致性、质量阈值检查
-│  ├─ policy.py                           规则版本、自动动作与人工审核分流
-│  ├─ algorithms.py                       综合评分、规则优先级、决策合并
-│  └─ service.py                          输出 PolicyDecision 与审计事件
-│  
-│
-├─ src/recovery/                          恢复器：受控自愈与局部重规划
-│  ├─ models.py                           FailureEvent、CheckpointRef、RecoveryPlan、GraphPatch
-│  ├─ classifier.py                       统一故障分类与可恢复性判定
-│  ├─ checkpoint.py                       检查点创建、校验、选择与上下文重建
-│  ├─ planner.py                          重试、换资源、补证、审核、局部图补丁决策
-│  ├─ validator.py                        补丁身份、预算、能力、连通性校验
-│  ├─ algorithms.py                       最近安全检查点选择、恢复动作优先级
-│  └─ service.py                          应用恢复计划并重新进入审计闭环
-│  
-│
-├─ src/runtime/                           薄编排器：只连接部件 Interface
-│  ├─ bootstrap.py                        创建部件、注册原生能力和 Pack
-│  ├─ workflow_runtime.py                 Task → Planner → Scheduler → Executor 编排
-│  ├─ dependencies.py                     依赖注入与生命周期
-│  └─ compatibility.py                    旧 core/* API 的过渡 Facade
-│  
-│
-├─ src/adapters/                          外部 Adapter
-│  ├─ model/                              DeepSeek、Qwen、其他模型实现
-│  ├─ tool/                               工具运行时实现
-│  ├─ storage/                            SQLite、Memory、Vector Store 实现
-│  ├─ retrieval/                          Chroma、代码/教育/法律索引实现
-│  └─ remote_agent/                       HTTP/gRPC Agent Adapter
-│
-│
-├─ tools/                                 相关工具
-│  ├─ exporter.py                         ACGBlueprint / RuntimeGraph → 稳定 JSON
-│  ├─ serializer.py                       节点、边、状态、绑定、证据和图版本的序列化
-│  ├─ mermaid.py                          JSON → Mermaid flowchart 文本
-│  ├─ graphviz.py                         JSON → Graphviz DOT 文本
-│  ├─ labels.py                           节点类型、状态、边类型的显示标签与样式映射
-│  └─ service.py                          export_json / render_mermaid / render_dot 统一入口
-│ 
-│ 
 └─ tests/
-   ├─ task_manager/ planner/ resource/ scheduler/ executor/
-   ├─ communicator/ memory/ auditor/ recovery/ runtime/
-   └─ contract/                           合同兼容、跨部件集成、故障与并发场景
+   ├─ resource/                         资源健康、候选、并发版本
+   ├─ contracts/                        合同模型
+   ├─ test_architecture_layout.py       分层、目录、公开门面
+   └─ test_comment_todo_policy.py       中文说明、TODO 边界
 
+依赖方向
+├─ runtime → components → contracts
+├─ runtime → support（仅运行时配套）
+├─ adapters → contracts / support（外部实现注入）
+├─ tools → components.planner / contracts（只读导出）
+└─ components → contracts（目标）；恢复/执行/规划的现存内部导入待收敛
 
 核心算法
 ├─ 任务复杂度：目标长度、文件数、模态、风险、Step 估计、跨域与可选路径加权
 ├─ 规划：模板相似度阈值 → 能力依赖展开 → 熵预算约束 → ACG 构建
-├─ ACG 导出：Canonical JSON 序列化 → 节点/边类型映射 → Mermaid 或 DOT 渲染文本
-├─ 资源调度：硬过滤 → 技能/可靠性/健康/空闲/时延/成本/网络距离加权评分 → 租约
-├─ 执行：拓扑就绪集 → 资源并发限制 → 批次屏障原子提交 → 条件图补丁
-├─ 低熵通信：字段契约过滤 → 去重 → Token 预算压缩 → 消息血缘记录
-├─ 记忆：权限过滤 → 混合召回 → 冲突保留 → 评分重排 → 得分/Token 预算选择
-├─ 审计：结构、证据、风险、质量并行检查 → 规则优先级合并 → PolicyDecision
-└─ 恢复：故障分类 → 最近安全检查点 → 重试/换资源/补证/补丁/审核 → 重新审计
+├─ ACG 导出：Canonical JSON → 节点/边映射 → Mermaid 或 DOT
+├─ 资源调度：硬过滤 → 加权评分 → 租约
+├─ 执行：拓扑就绪集 → 并发限制 → 屏障原子提交 → 条件补丁
+├─ 低熵通信：字段契约 → 去重 → Token 压缩 → 血缘
+├─ 记忆：权限过滤 → 混合召回 → 冲突保留 → 重排 → 预算选择
+├─ 审计：结构/证据/风险/质量 → 规则优先级合并 → PolicyDecision
+└─ 恢复：故障分类 → 安全检查点 → 恢复动作 → 重新审计
+
+TODO 实现边界
+├─ 模型/工具/远程 Agent：真实 SDK、鉴权、超时、重试、限流、熔断、审计
+├─ 存储/检索：SQLite、对象存储、向量库、事务、加密、持久化索引
+├─ 通信：消息总线可靠投递、可溯源模型压缩
+├─ 恢复：检查点 CAS/互斥、持久化、版本校验、加密
+├─ 资源：远程心跳、跨进程资源快照持久化
+├─ 审计：证据存储、组织级策略引擎
+├─ 工具：Graphviz PNG/SVG 二进制渲染
+├─ 合同：完整 JSON Schema（oneOf、引用、格式）
+└─ 架构：support/domain 与 contracts 模型归并；support/stores 下沉；恢复/执行/规划的跨部件内部导入收敛到 contracts 或公开门面
 ```
