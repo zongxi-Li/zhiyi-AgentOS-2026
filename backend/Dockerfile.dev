@@ -3,7 +3,7 @@ FROM ${MAVEN_IMAGE}
 
 WORKDIR /app
 
-RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|https://archive.ubuntu.com/ubuntu/|g; s|http://security.ubuntu.com/ubuntu/|https://security.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends gosu iproute2 netcat-openbsd rsync util-linux \
     && rm -rf /var/lib/apt/lists/* \

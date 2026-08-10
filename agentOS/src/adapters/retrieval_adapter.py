@@ -2,10 +2,10 @@
 
 
 
-from adapters.retrieval.chroma_client import chroma_client, chroma_legal_client
-from adapters.retrieval.code_index_builder import build_code_index, code_index_builder, search_code
-from adapters.retrieval.education_index_builder import education_index_builder
-from adapters.retrieval.legal_index_builder import legal_index_builder
+from retrieval.chroma_client import chroma_client, chroma_legal_client
+from retrieval.code_index_builder import build_code_index, code_index_builder, search_code
+from retrieval.education_index_builder import education_index_builder
+from retrieval.legal_index_builder import legal_index_builder
 
 __all__ = [
     "build_code_index",
