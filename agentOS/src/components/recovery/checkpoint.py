@@ -21,3 +21,5 @@ class CheckpointStore:
     # TODO: 为同一运行的并发保存/读取提供版本化互斥或 CAS 语义，避免恢复流程读取到
     # 部分更新；完成后与持久化 Adapter 共用同一检查点 Interface。
     # TODO: 接入持久化检查点存储，并对快照做版本校验和加密。
+    # TODO(可迁移): 可借鉴 LangGraph checkpoint 的版本、序列化和一致性测试语义；
+    # 不引入其图运行时。代码级复用前须固定上游提交并保留目标子包的 MIT 许可证声明。

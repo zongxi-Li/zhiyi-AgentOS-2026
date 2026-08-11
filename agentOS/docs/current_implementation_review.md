@@ -1,0 +1,41 @@
+# AgentOS 当前实现梳理（2026-08-11）
+
+本文件基于当前工作区源码、`tests/support/` 以及 `references/open-source/` 快照整理。它描述的是现状和下一步边界；不代表所有未提交改动已经验收或可发布。
+
+## 1. 已经可用的实现
+
+| 区域 | 当前实现 | 接入状态 |
+| --- | --- | --- |
+| 工作流主路径 | `runtime/workflow_runtime.py` 已完成任务创建、插件范围解析、运行准备、ACG 规划、执行、失败处理、审核与恢复入口的串联。 | 已接入运行时；当前 ACG 模型来自 `support.acg.models`。 |
+| ACG 规划与执行 | 规划器包含意图解析、能力路由、模板匹配、蓝图构建和规划变体；执行器包含就绪集、条件边、并发批次、屏障提交和运行图投影。 | 已接入主路径。 |
+| 恢复与治理 | 已有检查点、Trace、审核、运行时事件分类、恢复配方与图补丁校验/编译。 | 已接入主路径，但恢复实现直接依赖 executor 内部类型。 |
+| 工作流存储 | `MemoryWorkflowStore` 与 `SQLiteWorkflowStore` 已实现，且已共享父任务存在性约束的回归测试。 | 已接入运行时；完整一致性矩阵尚缺。 |
+| 基础部件 | task manager、resource、scheduler、communicator、memory、auditor 均有模型、服务或纯算法实现。 | 多数是可独立调用的部件；并非都已由主运行时装配。 |
+| 原生模型接入 | `adapters/model/native.py` 与 `adapters/model_adapter.py` 提供应用层注入点和原生运行时登记。 | 可注入；真实供应商 SDK 未接入。 |
+
+当前已验证的最小回归集是 `PYTHONPATH=src pytest -q tests/support`，结果为 **5 passed**。由于工作区存在大量已删除但未提交的历史测试，不能将其视为完整回归覆盖。
+
+## 2. 已建边界，但尚未实现
+
+| 区域 | 已有内容 | 缺失的实现与风险 |
+| --- | --- | --- |
+| 统一能力适配 | `contracts/capability.py` 定义模型、Agent、Skill/工具调用信封；三个 compatibility registry 定义了 Protocol。 | 三个 registry 的 `register` / `resolve` 均为 `NotImplementedError`，且没有注入 `WorkflowRuntime`；外部 SDK、鉴权、重试和健康检查未开始。 |
+| Skills 自进化 | `contracts/evolution.py`、`SkillEvolutionService`、`GraphEvolutionService` 已定义轨迹、候选和提案边界。 | 服务方法全部为显式 TODO；执行器不会产生可供演化消费的标准 `Trajectory`，也没有审核后持久化的版本仓库。 |
+| 持久化与分布式能力 | SQLite 工作流存储、内存检查点/资源/记忆存储已存在。 | 检查点 CAS、持久化、加密，资源跨进程快照，向量检索和可靠消息投递均未实现。 |
+| ACG 共享合同 | `support.acg.models` 是唯一有效来源，并有兼容包导出。 | 该文件同时承载共享模型、校验、升格、能力目录与意图语义；`contracts/acg.py` 尚不存在，造成 support 成为事实上的跨部件合同层。 |
+| 分层依赖 | `contracts/` 已覆盖大部分业务名词。 | planner、recovery、executor 仍存在跨部件内部导入；应先抽出公共合同或公开门面，不能靠继续复制内部类型解决。 |
+
+## 3. 可迁移/借鉴的开源部分
+
+“可迁移”只表示技术上值得评估，不表示可以直接复制。任何代码级复用必须固定上游提交、复核目标子目录许可证和 NOTICE，并在新增文件保留所需声明；不得将外部运行时对象泄漏到 `contracts/` 或替代 AgentOS 的运行时。
+
+| 优先级 | 来源与可借鉴点 | AgentOS 落点 | 采用方式 |
+| --- | --- | --- | --- |
+| P1 | LangGraph：checkpoint 接口、内存/SQLite/Postgres 实现、interrupt/resume 语义；本地快照与许可证均可读取。 | `components/recovery/checkpoint.py`、`components/auditor/governance/checkpoint.py`、`support/stores/` | 优先提炼版本号、CAS、检查点元数据和一致性测试语义；不引入 LangGraph 作为第二图运行时。 |
+| P1 | OpenHands：动作/观察结果、工具调用事件和执行隔离的事件边界；本地 MIT 快照可读。 | `components/executor/dispatcher.py`、`components/auditor/governance/trace.py`、未来 `adapters/tool/` | 先映射为 AgentOS 的 Action/Observation 合同与追加式 Trace；沙箱、权限、取消和配额仍由 Adapter 负责。 |
+| P2 | Mem0：记忆抽取、合并、向量检索和实体关系。 | `components/memory/` 与 storage/retrieval Adapter | 先完成 `MemoryService` 单一写入口和检索 Adapter，再评估算法/代码复用；不可让外部记忆库绕过准入、审计和生命周期。 |
+| P2 | CrewAI：角色—任务—依赖与 Flow 建模。 | `components/planner/`、`components/task_manager/` | 只借鉴建模和测试案例；AgentOS ACG 保持唯一的规划/执行图。 |
+| P2 | Haystack：DocumentStore、Retriever、Reranker 的适配形态。 | `adapters/retrieval_adapter.py`、`components/memory/retrieval.py` | 以检索 Adapter 接入，不接管 AgentOS runtime 或引入第二 Pipeline。 |
+| 仅参考 | AutoGen、AutoGPT：多 Agent 消息拓扑、产品化工作流与扩展体验。 | communicator、tools、产品层 | 当前不列入代码搬运清单；许可证和平台边界需要专项审查。 |
+
+具体待办、依赖与验收标准见仓库根目录的 `TODOS.md`。开源快照和初步许可证筛选见 `docs/open_source_agent_components.md`。

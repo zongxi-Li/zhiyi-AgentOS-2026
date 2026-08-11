@@ -7,9 +7,9 @@ from typing import List, Optional
 
 from support.agents import AgentRegistry
 from support.agents.base import BaseAgent
-from .models import CapabilityCatalog, PlanningCapabilityDescriptor
-from .models import build_default_capability_catalog
-from .models import TaskSemanticProfile
+from support.acg.models import CapabilityCatalog, PlanningCapabilityDescriptor
+from support.acg.models import build_default_capability_catalog
+from support.acg.models import TaskSemanticProfile
 
 
 @dataclass

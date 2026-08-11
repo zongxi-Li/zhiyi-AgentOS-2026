@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from .models import (
+from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
     AgentNode,
@@ -17,10 +17,10 @@ from .models import (
     StepNode,
     validate_blueprint,
 )
-from .models import CapabilityCatalog
+from support.acg.models import CapabilityCatalog
 from .cognitive_router import CollaborationNetwork
-from .models import build_default_capability_catalog
-from .models import TaskSemanticProfile
+from support.acg.models import build_default_capability_catalog
+from support.acg.models import TaskSemanticProfile
 
 if TYPE_CHECKING:
     from .algorithms import PlanningVariant

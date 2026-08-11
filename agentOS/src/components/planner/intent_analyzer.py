@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Protocol
 
-from .models import ComplexityLevel
-from .models import (
+from support.acg.models import ComplexityLevel
+from support.acg.models import (
     CapabilityCatalog,
     highest_planning_risk_level,
 )
-from .models import build_default_capability_catalog
-from .models import CapabilityCandidate, TaskSemanticProfile
+from support.acg.models import build_default_capability_catalog
+from support.acg.models import CapabilityCandidate, TaskSemanticProfile
 
 
 class IntentLLM(Protocol):

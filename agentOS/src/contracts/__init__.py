@@ -67,6 +67,28 @@ def stable_checksum(value: Any) -> str:
 
 
 from .communication import ContextPackRef, MessageEnvelope
+from .capability import (
+    AgentArchitecture,
+    AgentFramework,
+    CapabilityInvocation,
+    CapabilityInvocationResult,
+    CapabilityKind,
+    CapabilityManifest,
+    ModelInvocationRequest,
+    ModelInvocationResponse,
+    ModelProvider,
+    ToolProtocol,
+)
+from .evolution import (
+    EvolutionAction,
+    GraphEvolutionProposal,
+    SkillCandidate,
+    SkillEvolutionProposal,
+    SkillLifecycleState,
+    Trajectory,
+    TrajectoryEvaluation,
+    TrajectoryStep,
+)
 from .execution import ExecutionOutcomeRef, ExecutionPackageRef
 from .governance import AuditFinding, AuditRequest, PolicyDecision
 from .memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
@@ -77,11 +99,16 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 
 
 __all__ = [
-    "AuditFinding", "AuditRequest", "ContextPackRef", "ExecutionOutcomeRef",
-    "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphNodeRef",
-    "GraphPatchRef", "GraphRef", "MemoryPolicy", "MemoryQuery", "MemoryRecord",
-    "MemoryType", "MemoryWriteBatch", "MessageEnvelope", "PolicyDecision",
+    "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
+    "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind",
+    "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
+    "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphEvolutionProposal",
+    "GraphNodeRef", "GraphPatchRef", "GraphRef", "MemoryPolicy", "MemoryQuery",
+    "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
+    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "PolicyDecision",
     "RecoveryPlan", "ResourceLease", "ResourceProfile", "ResourceSnapshot",
-    "SchedulingDecision", "SchedulingRequest", "TaskConstraint", "TaskLifecycleEvent",
-    "stable_checksum", "stable_json_dumps",
+    "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
+    "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
+    "Trajectory", "TrajectoryEvaluation", "TrajectoryStep", "stable_checksum",
+    "stable_json_dumps",
 ]

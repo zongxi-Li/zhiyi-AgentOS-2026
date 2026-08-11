@@ -12,7 +12,7 @@ from time import monotonic
 from typing import Mapping, Optional
 
 from support.agents import AgentRegistry
-from components.planner.models import (
+from support.acg.models import (
     ACGBlueprint,
     promote_workflow_to_acg,
 )
@@ -54,8 +54,8 @@ from components.recovery.runtime_recovery.proposal import (
 from components.recovery.runtime_recovery.recipes import RecoveryRecipeRegistry
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from components.executor.graph import RuntimeGraph
-from components.planner.models import build_default_capability_catalog
-from components.planner.models import CapabilityCatalog
+from support.acg.models import build_default_capability_catalog
+from support.acg.models import CapabilityCatalog
 from components.planner.algorithms import (
     PLANNER_ALGORITHM_VERSION,
     normalize_planning_diversity,
@@ -183,7 +183,7 @@ class WorkflowRuntime:
     def planning_engine(self):
         """延迟构造规划引擎并返回缓存实例；注入 LLM 后会由设置方法失效重建。"""
         if self._planning_engine is None:
-            from planner.service import PlanningEngine
+            from components.planner.service import PlanningEngine
 
             self._planning_engine = PlanningEngine(
                 workflow_registry=self.workflow_registry,
@@ -1233,7 +1233,7 @@ class WorkflowRuntime:
     def _planning_engine_for_run(self, run: WorkflowRun):
         if run.execution_scope is None:
             return self.planning_engine
-        from planner.service import PlanningEngine
+        from components.planner.service import PlanningEngine
 
         return PlanningEngine(
             workflow_registry=self.plugin_scope_resolver.scoped_workflows(

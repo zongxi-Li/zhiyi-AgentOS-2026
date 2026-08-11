@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from components.planner.models import ACGEdge, EdgeActivation
-from components.planner.models import ControlType, EdgeType, NodeType
-from components.planner.models import ACGValidationError, validate_blueprint
-from components.planner.models import ControlNode, StepNode, parse_node
+from support.acg.models import ACGEdge, EdgeActivation
+from support.acg.models import ControlType, EdgeType, NodeType
+from support.acg.models import ACGValidationError, validate_blueprint
+from support.acg.models import ControlNode, StepNode, parse_node
 from components.recovery.runtime_recovery.bindings import CandidateResolver
 from components.executor.algorithms import (
     ConditionEvaluationError,

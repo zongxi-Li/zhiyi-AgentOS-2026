@@ -14,3 +14,6 @@ def retrieve(records: list[MemoryRecord], query: MemoryQuery) -> list[MemoryReco
 
 
 # TODO: 接入向量检索适配器后，根据嵌入相似度和权限过滤执行召回。
+# TODO(可迁移): 可通过 Adapter 借鉴 Mem0 的记忆合并/向量召回及 Haystack 的
+# DocumentStore/Retriever 模式；MemoryService 必须保持唯一读写入口，外部存储不得绕过
+# 准入、权限、审计或生命周期。代码级复用前须复核 Apache-2.0 的 LICENSE、NOTICE 与子依赖。

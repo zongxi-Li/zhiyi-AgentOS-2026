@@ -19,7 +19,7 @@ from adapters.model.native_prompt import (
     NATIVE_CAPABILITY_PROMPT_VERSION,
     NativeCapabilityPromptBuilder,
 )
-from components.planner.models import NATIVE_CAPABILITY_IDS
+from support.acg.models import NATIVE_CAPABILITY_IDS
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"

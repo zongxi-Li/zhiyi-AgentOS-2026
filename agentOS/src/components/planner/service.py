@@ -18,13 +18,13 @@ import secrets
 from typing import Any, Dict, Optional
 
 from support.agents import AgentRegistry
-from .models import ACGBlueprint, promote_workflow_to_acg
+from support.acg.models import ACGBlueprint, promote_workflow_to_acg
 from .acg_builder import ACGBuilder
-from .models import CapabilityCatalog
+from support.acg.models import CapabilityCatalog
 from .cognitive_router import CognitiveRouter
-from .models import build_default_capability_catalog
+from support.acg.models import build_default_capability_catalog
 from .intent_analyzer import IntentLLM, IntentParser
-from .models import TaskSemanticProfile
+from support.acg.models import TaskSemanticProfile
 from .template_matcher import TemplateMatcher
 from .algorithms import (
     PLANNER_ALGORITHM_VERSION,

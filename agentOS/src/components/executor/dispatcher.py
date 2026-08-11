@@ -58,6 +58,9 @@ def dispatch(handler: Callable[..., Any], payload: dict[str, Any]) -> Any:
 
 
 # TODO: 接入远程 Agent HTTP/gRPC 适配器，并传播可审计的超时和取消信号。
+# TODO(可迁移): 参考 OpenHands 的 Action/Observation 和工具事件关联模型，在 AgentOS
+# contracts 中定义调用 ID、时间、取消与 Trace 关联；沙箱、权限和副作用隔离仍由 Adapter 负责，
+# 不嵌入 OpenHands 平台。代码级复用前须锁定上游模块并保留 MIT 许可证声明。
 
 
 __all__ = ["StepExecutionOutcome", "StepExecutionPackage", "dispatch"]

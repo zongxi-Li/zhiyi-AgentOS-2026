@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 
 from contracts.workflow import AgentTask, StepStatus, WorkflowRun, WorkflowStatus
+from support.stores._policy import matches_run, matches_task, reject_terminal_overwrite, run_priority
 from support.stores.workflow_store import (
     WorkflowRunDeleteResult,
     WorkflowRunNotTerminalError,
@@ -71,7 +72,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                         f"workflow run taskId cannot change: {run.run_id}"
                     )
                 existing = WorkflowRun.model_validate(json.loads(row["payload"]))
-                if _reject_terminal_overwrite(existing, run):
+                if reject_terminal_overwrite(existing, run):
                     return
             _validate_obvious_run_state_conflicts(run)
             conn.execute(
@@ -114,7 +115,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         tasks = [
             task
             for task in (AgentTask.model_validate(json.loads(row["payload"])) for row in rows)
-            if _matches_task(task, status=expected_status, domain=domain, source=source)
+            if matches_task(task, status=expected_status, domain=domain, source=source)
         ]
         tasks.sort(key=lambda task: (task.created_at, task.task_id), reverse=True)
         return paginate_items(tasks, page=page, page_size=page_size)
@@ -141,7 +142,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         runs = [
             run
             for run in (WorkflowRun.model_validate(json.loads(row["payload"])) for row in rows)
-            if _matches_run(
+            if matches_run(
                 run,
                 status=expected_status,
                 statuses=expected_statuses,
@@ -155,7 +156,7 @@ class SQLiteWorkflowStore(WorkflowStore):
             )
         ]
         runs.sort(
-            key=lambda run: (_run_priority(run) if expected_statuses else 0, run.updated_at, run.run_id),
+            key=lambda run: (run_priority(run) if expected_statuses else 0, run.updated_at, run.run_id),
             reverse=True,
         )
         return paginate_items(runs, page=page, page_size=page_size)
@@ -327,53 +328,6 @@ class SQLiteWorkflowStore(WorkflowStore):
         }
 
 
-def _matches_task(task: AgentTask, *, status: str | None, domain: str | None, source: str | None) -> bool:
-    if status is not None and task.status.value != status:
-        return False
-    if domain is not None and task.domain != domain:
-        return False
-    if source is not None and task.input.get("source") != source:
-        return False
-    return True
-
-
-def _matches_run(
-    run: WorkflowRun,
-    *,
-    status: str | None,
-    statuses: set[str] | None,
-    domain: str | None,
-    workflow_id: str | None,
-    task_id: str | None,
-    lifecycle_phase: str | None,
-    source: str | None,
-    owner_user_id: str | None,
-    owner_tenant_id: str | None,
-) -> bool:
-    if status is not None and run.status.value != status:
-        return False
-    if statuses is not None and run.status.value not in statuses:
-        return False
-    if domain is not None and run.domain != domain:
-        return False
-    if workflow_id is not None and run.workflow_id != workflow_id:
-        return False
-    if task_id is not None and run.task_id != task_id:
-        return False
-    phase = run.lifecycle_phase.value if run.lifecycle_phase is not None else None
-    if lifecycle_phase is not None and phase != lifecycle_phase:
-        return False
-    if source is not None and run.input.get("source") != source:
-        return False
-    run_owner = str(run.input.get("authenticatedUserId") or "").strip()
-    run_tenant = str(run.input.get("authenticatedTenantId") or "").strip()
-    if owner_user_id is not None and run_owner and run_owner != owner_user_id:
-        return False
-    if owner_tenant_id is not None and run_tenant and run_tenant != owner_tenant_id:
-        return False
-    return True
-
-
 def _validate_obvious_run_state_conflicts(run: WorkflowRun) -> None:
     statuses = {step.status for step in run.steps}
     if run.runtime_graph is not None:
@@ -399,22 +353,3 @@ def _validate_obvious_run_state_conflicts(run: WorkflowRun) -> None:
             )
 
 
-def _run_priority(run: WorkflowRun) -> int:
-    if run.status == WorkflowStatus.WAITING_REVIEW:
-        return 2
-    if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED}:
-        return 1
-    return 0
-
-
-def _reject_terminal_overwrite(existing: WorkflowRun, incoming: WorkflowRun) -> bool:
-    terminal = {
-        WorkflowStatus.COMPLETED,
-        WorkflowStatus.FAILED,
-        WorkflowStatus.CANCELLED,
-    }
-    if existing.status == WorkflowStatus.FAILED and incoming.status == WorkflowStatus.RETRYING:
-        return False
-    if existing.status in terminal and incoming.status != existing.status:
-        return True
-    return existing.status in terminal and incoming.updated_at < existing.updated_at

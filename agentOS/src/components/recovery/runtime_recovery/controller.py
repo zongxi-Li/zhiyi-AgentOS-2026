@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from components.planner.models import ACGBlueprint
+from support.acg.models import ACGBlueprint
 from components.executor.algorithms import BranchDecision
 from components.auditor.governance.checkpoint import CheckpointStore
 from components.auditor.governance.trace import TraceStore

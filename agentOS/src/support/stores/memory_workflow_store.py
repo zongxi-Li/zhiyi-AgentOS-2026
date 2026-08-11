@@ -6,6 +6,13 @@ from __future__ import annotations
 from typing import Dict
 
 from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
+from support.stores._policy import (
+    TERMINAL_RUN_STATUSES,
+    matches_run,
+    matches_task,
+    reject_terminal_overwrite,
+    run_priority,
+)
 from support.stores.workflow_store import (
     WorkflowRunDeleteResult,
     WorkflowRunNotTerminalError,
@@ -41,17 +48,15 @@ class MemoryWorkflowStore(WorkflowStore):
 
         失败到重试是唯一允许的终态回退兼容路径；该内存实现不提供线程同步。
         """
+        if run.task_id not in self._tasks:
+            raise ValueError(f"workflow run task does not exist: {run.task_id}")
         existing = self._runs.get(run.run_id)
         terminal_status = self._terminal_run_statuses.get(run.run_id)
         if terminal_status is not None and _reject_terminal_status_overwrite(terminal_status, run.status):
             return
-        if existing is not None and _reject_terminal_overwrite(existing, run):
+        if existing is not None and reject_terminal_overwrite(existing, run):
             return
-        if run.status in {
-            WorkflowStatus.COMPLETED,
-            WorkflowStatus.FAILED,
-            WorkflowStatus.CANCELLED,
-        }:
+        if run.status in TERMINAL_RUN_STATUSES:
             self._terminal_run_statuses[run.run_id] = run.status
         elif terminal_status == WorkflowStatus.FAILED and run.status == WorkflowStatus.RETRYING:
             self._terminal_run_statuses.pop(run.run_id, None)
@@ -101,7 +106,7 @@ class MemoryWorkflowStore(WorkflowStore):
         tasks = [
             task.model_copy(deep=True)
             for task in self._tasks.values()
-            if _matches_task(task, status=expected_status, domain=domain, source=source)
+            if matches_task(task, status=expected_status, domain=domain, source=source)
         ]
         tasks.sort(key=lambda task: (task.created_at, task.task_id), reverse=True)
         return paginate_items(tasks, page=page, page_size=page_size)
@@ -131,7 +136,7 @@ class MemoryWorkflowStore(WorkflowStore):
         runs = [
             run.model_copy(deep=True)
             for run in self._runs.values()
-            if _matches_run(
+            if matches_run(
                 run,
                 status=expected_status,
                 statuses=expected_statuses,
@@ -145,19 +150,18 @@ class MemoryWorkflowStore(WorkflowStore):
             )
         ]
         runs.sort(
-            key=lambda run: (_run_priority(run) if expected_statuses else 0, run.updated_at, run.run_id),
+            key=lambda run: (run_priority(run) if expected_statuses else 0, run.updated_at, run.run_id),
             reverse=True,
         )
         return paginate_items(runs, page=page, page_size=page_size)
 
     def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[WorkflowRun, ...]:
         """返回最新优先的未终态运行深复制，数量下限为 1，复杂度 ``O(R log R)``。"""
-        terminal = {
-            WorkflowStatus.COMPLETED,
-            WorkflowStatus.FAILED,
-            WorkflowStatus.CANCELLED,
-        }
-        runs = [run.model_copy(deep=True) for run in self._runs.values() if run.status not in terminal]
+        runs = [
+            run.model_copy(deep=True)
+            for run in self._runs.values()
+            if run.status not in TERMINAL_RUN_STATUSES
+        ]
         runs.sort(key=lambda run: (run.updated_at, run.run_id), reverse=True)
         return tuple(runs[: max(1, limit)])
 
@@ -171,74 +175,6 @@ class MemoryWorkflowStore(WorkflowStore):
         if not matches:
             return None
         return max(matches, key=lambda run: (run.created_at, run.run_id))
-
-
-def _matches_task(task: AgentTask, *, status: str | None, domain: str | None, source: str | None) -> bool:
-    if status is not None and task.status.value != status:
-        return False
-    if domain is not None and task.domain != domain:
-        return False
-    if source is not None and task.input.get("source") != source:
-        return False
-    return True
-
-
-def _matches_run(
-    run: WorkflowRun,
-    *,
-    status: str | None,
-    statuses: set[str] | None,
-    domain: str | None,
-    workflow_id: str | None,
-    task_id: str | None,
-    lifecycle_phase: str | None,
-    source: str | None,
-    owner_user_id: str | None,
-    owner_tenant_id: str | None,
-) -> bool:
-    if status is not None and run.status.value != status:
-        return False
-    if statuses is not None and run.status.value not in statuses:
-        return False
-    if domain is not None and run.domain != domain:
-        return False
-    if workflow_id is not None and run.workflow_id != workflow_id:
-        return False
-    if task_id is not None and run.task_id != task_id:
-        return False
-    phase = run.lifecycle_phase.value if run.lifecycle_phase is not None else None
-    if lifecycle_phase is not None and phase != lifecycle_phase:
-        return False
-    if source is not None and run.input.get("source") != source:
-        return False
-    run_owner = str(run.input.get("authenticatedUserId") or "").strip()
-    run_tenant = str(run.input.get("authenticatedTenantId") or "").strip()
-    if owner_user_id is not None and run_owner and run_owner != owner_user_id:
-        return False
-    if owner_tenant_id is not None and run_tenant and run_tenant != owner_tenant_id:
-        return False
-    return True
-
-
-def _run_priority(run: WorkflowRun) -> int:
-    if run.status == WorkflowStatus.WAITING_REVIEW:
-        return 2
-    if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED}:
-        return 1
-    return 0
-
-
-def _reject_terminal_overwrite(existing: WorkflowRun, incoming: WorkflowRun) -> bool:
-    terminal = {
-        WorkflowStatus.COMPLETED,
-        WorkflowStatus.FAILED,
-        WorkflowStatus.CANCELLED,
-    }
-    if existing.status == WorkflowStatus.FAILED and incoming.status == WorkflowStatus.RETRYING:
-        return False
-    if existing.status in terminal and incoming.status != existing.status:
-        return True
-    return existing.status in terminal and incoming.updated_at < existing.updated_at
 
 
 def _reject_terminal_status_overwrite(
