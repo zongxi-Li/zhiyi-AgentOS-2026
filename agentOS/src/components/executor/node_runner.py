@@ -141,6 +141,12 @@ class ACGNodeRunner:
             step_id=step_id,
             query=step.name or step_id,
         )
+        # 每个 Step 创建独立的受限工具视图，使并行节点的事件缓冲区彼此隔离；
+        # 视图只能继承既有授权集合，不能在节点内扩大权限。
+        step_tool_runtime = self.tool_runtime
+        if self.tool_runtime is not None and hasattr(self.tool_runtime, "scoped"):
+            allowed = getattr(self.tool_runtime, "allowed_tools", ())
+            step_tool_runtime = self.tool_runtime.scoped(allowed)
         agent_context = AgentRunContext(
             task=self.task,
             run=self.run,
@@ -148,7 +154,7 @@ class ACGNodeRunner:
             step=step,
             memory=memories,
             contextPack=pack,
-            toolRuntime=self.tool_runtime,
+            toolRuntime=step_tool_runtime,
             modelRuntime=self.model_runtime,
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
         )
@@ -158,7 +164,7 @@ class ACGNodeRunner:
             else await agent.run(agent_context)
         )
         tool_events = list(output.tool_executions)
-        runtime_events = getattr(self.tool_runtime, "events", None)
+        runtime_events = getattr(step_tool_runtime, "events", None)
         if isinstance(runtime_events, list):
             tool_events.extend(runtime_events)
         payload = dict(output.output)

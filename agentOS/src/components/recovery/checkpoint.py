@@ -37,6 +37,10 @@ class ExecutionInterrupt(Exception):
         super().__init__(prompt)
 
 
+class CheckpointConflictError(RuntimeError):
+    """检查点版本冲突，表示调用方正在使用已经过期的状态快照。"""
+
+
 class ExecutionResumeCommand(BaseModel):
     """AgentOS 对外恢复命令，不暴露 LangGraph ``Command`` 类型。"""
 
@@ -60,16 +64,52 @@ class ACGCheckpointStore:
         self._connection = sqlite3.connect(self.db_path)
         self._connection.execute("""CREATE TABLE IF NOT EXISTS acg_execution_checkpoints (
             thread_id TEXT NOT NULL, checkpoint_id TEXT NOT NULL, state_json TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (thread_id, checkpoint_id))""")
+        columns = {
+            str(row[1])
+            for row in self._connection.execute("PRAGMA table_info(acg_execution_checkpoints)")
+        }
+        if "version" not in columns:
+            self._connection.execute(
+                "ALTER TABLE acg_execution_checkpoints ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+            )
         self._connection.commit()
 
-    def save(self, *, run_id: str, checkpoint_id: str | None = None, state: dict[str, Any]) -> str:
-        """保存一个 JSON 状态快照；未指定标识时生成新的检查点标识。"""
+    def save(
+        self,
+        *,
+        run_id: str,
+        checkpoint_id: str | None = None,
+        state: dict[str, Any],
+        expected_version: int | None = None,
+    ) -> str:
+        """保存 JSON 状态快照，并按运行维度执行可选的版本 CAS。"""
         identifier = checkpoint_id or f"acgckpt_{uuid4().hex}"
         payload = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-        self._connection.execute("INSERT OR REPLACE INTO acg_execution_checkpoints(thread_id, checkpoint_id, state_json) VALUES (?, ?, ?)", (run_id, identifier, payload))
-        self._connection.commit()
+        try:
+            # 写锁覆盖“读取当前版本→比较→写入”整个过程，保证多个 Runtime 进程
+            # 同时恢复同一 run 时，旧状态不能越过 CAS 检查覆盖新状态。
+            self._connection.execute("BEGIN IMMEDIATE")
+            current_row = self._connection.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM acg_execution_checkpoints WHERE thread_id = ?",
+                (run_id,),
+            ).fetchone()
+            current_version = int(current_row[0] or 0)
+            if expected_version is not None and expected_version != current_version:
+                raise CheckpointConflictError(
+                    f"checkpoint version {expected_version} does not match current version {current_version}"
+                )
+            next_version = current_version + 1
+            self._connection.execute(
+                "INSERT OR REPLACE INTO acg_execution_checkpoints(thread_id, checkpoint_id, state_json, version) VALUES (?, ?, ?, ?)",
+                (run_id, identifier, payload, next_version),
+            )
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
         return identifier
 
     def load(self, *, run_id: str, checkpoint_id: str) -> dict[str, Any] | None:
@@ -80,16 +120,34 @@ class ACGCheckpointStore:
     def load_latest(self, *, run_id: str) -> tuple[str, dict[str, Any]]:
         """读取一个 run/thread 最近写入的检查点，用于进程重启后的续跑。"""
         row = self._connection.execute(
-            "SELECT checkpoint_id, state_json FROM acg_execution_checkpoints WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1",
+            "SELECT checkpoint_id, state_json FROM acg_execution_checkpoints WHERE thread_id = ? ORDER BY version DESC LIMIT 1",
             (run_id,),
         ).fetchone()
         if row is None:
             raise KeyError(f"no checkpoint found for run {run_id}")
         return str(row[0]), json.loads(row[1])
 
+    def version(self, *, run_id: str, checkpoint_id: str) -> int:
+        """读取检查点版本；不存在时明确报告缺失。"""
+        row = self._connection.execute(
+            "SELECT version FROM acg_execution_checkpoints WHERE thread_id = ? AND checkpoint_id = ?",
+            (run_id, checkpoint_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"checkpoint does not exist for run {run_id}: {checkpoint_id}")
+        return int(row[0])
+
+    def latest_version(self, *, run_id: str) -> int:
+        """读取某个运行当前最新检查点版本；尚无检查点时返回零。"""
+        row = self._connection.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM acg_execution_checkpoints WHERE thread_id = ?",
+            (run_id,),
+        ).fetchone()
+        return int(row[0] or 0)
+
     def close(self) -> None:
         """关闭当前 SQLite 连接；仓库实例关闭后不得继续读写。"""
         self._connection.close()
 
 
-__all__ = ["ACGCheckpointStore", "ExecutionInterrupt", "ExecutionResumeCommand"]
+__all__ = ["ACGCheckpointStore", "CheckpointConflictError", "ExecutionInterrupt", "ExecutionResumeCommand"]

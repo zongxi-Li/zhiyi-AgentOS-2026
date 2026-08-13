@@ -47,3 +47,16 @@ def test_audited_tool_runtime_records_safe_metadata_for_allowed_tool() -> None:
     assert result == {"ok": True}
     assert delegate.calls == [("search", {"query": "private input"})]
     assert runtime.events == [{"type": "tool_called", "tool": "search"}]
+
+
+def test_scoped_tool_runtime_has_independent_event_buffer() -> None:
+    """并行节点创建的受限视图不能共享工具事件缓冲区。"""
+    runtime = AuditedToolRuntime(delegate=_RecordingToolRuntime(), allowed_tools=["search"])
+    left = runtime.scoped(["search"])
+    right = runtime.scoped(["search"])
+
+    asyncio.run(left.execute("search", {"query": "left"}))
+
+    assert left.events == [{"type": "tool_called", "tool": "search"}]
+    assert right.events == []
+    assert runtime.events == []

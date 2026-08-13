@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from components.recovery.checkpoint import ACGCheckpointStore, ExecutionResumeCommand
+import pytest
+
+from components.recovery.checkpoint import (
+    ACGCheckpointStore,
+    CheckpointConflictError,
+    ExecutionResumeCommand,
+)
 
 
 def test_checkpoint_store_survives_reopen_and_isolates_runs(tmp_path) -> None:
@@ -34,4 +40,18 @@ def test_checkpoint_store_returns_latest_checkpoint_for_a_run(tmp_path) -> None:
 
     assert checkpoint_id == "second"
     assert state == {"completedStepIds": ["one", "two"]}
+    store.close()
+
+
+def test_checkpoint_store_rejects_stale_compare_and_set_version(tmp_path) -> None:
+    """并发写入使用版本 CAS，旧版本不得覆盖较新的执行状态。"""
+    store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    first = store.save(run_id="run-a", state={"completedStepIds": ["one"]})
+    assert store.version(run_id="run-a", checkpoint_id=first) == 1
+
+    second = store.save(run_id="run-a", state={"completedStepIds": ["one", "two"]}, expected_version=1)
+    assert store.version(run_id="run-a", checkpoint_id=second) == 2
+
+    with pytest.raises(CheckpointConflictError, match="version"):
+        store.save(run_id="run-a", state={"completedStepIds": ["stale"]}, expected_version=1)
     store.close()

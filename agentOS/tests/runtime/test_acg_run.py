@@ -76,6 +76,10 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     assert result.runtime_graph is None
     assert result.output["outputRef"].startswith("output:")
     assert "title" not in result.execution_state
+    latest_id, latest_state = runtime.checkpoint_store.load_latest(run_id=result.run_id)
+    assert latest_id == result.execution_state["checkpointId"]
+    assert latest_state["checkpointId"] == latest_id
+    assert latest_state["completedStepIds"] == ["extract", "summarize"]
 
 
 def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
@@ -132,6 +136,24 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
 
     assert result.status is WorkflowStatus.COMPLETED
     assert result.completed_step_ids == ["review", "deliver"]
+
+
+def test_execute_prepared_run_does_not_restart_waiting_review_run() -> None:
+    """等待审核的运行重复调用执行入口时必须保持暂停，不得重跑节点。"""
+    runtime = _runtime()
+    runtime.workflow_registry.register(WorkflowDefinition(
+        workflowId="acg-wait", name="wait", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="review", name="review", agentName="runner", reviewRequired=True)],
+    ))
+    task = runtime.create_task("wait", workflow_id="acg-wait")
+    _, run = runtime.prepare_run(task.task_id)
+    paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    repeated = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    assert paused.status is WorkflowStatus.WAITING_REVIEW
+    assert repeated.status is WorkflowStatus.WAITING_REVIEW
+    assert repeated.execution_state["checkpointId"] == paused.execution_state["checkpointId"]
 
 
 def test_runtime_projects_model_metadata_without_generated_content() -> None:

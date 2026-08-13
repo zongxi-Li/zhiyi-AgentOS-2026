@@ -10,6 +10,7 @@ import os
 import secrets
 from time import monotonic
 from typing import Callable, Mapping, Optional
+from uuid import uuid4
 
 from service.agents import AgentRegistry
 from support.acg.models import (
@@ -400,6 +401,8 @@ class WorkflowRuntime:
 
         run = self.workflow_store.get_run(run_id)
         if self._normalize_runtime_engine(run.runtime_engine) == "acg":
+            if run.status == WorkflowStatus.WAITING_REVIEW:
+                return run
             return await self._execute_acg(run)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
@@ -507,11 +510,7 @@ class WorkflowRuntime:
             return run
         except ExecutionInterrupt as interrupt:
             self._persist_acg_state(run, execution_state)
-            checkpoint_id = self.checkpoint_store.save(
-                run_id=run.run_id,
-                state=execution_state.model_dump(by_alias=True, mode="json"),
-            )
-            execution_state.checkpoint_id = checkpoint_id
+            checkpoint_id = self._save_acg_checkpoint(run, execution_state)
             self._persist_acg_state(run, execution_state)
             review_step_id = str(interrupt.payload.get("stepId") or execution_state.current_step_id or "")
             if review_step_id:
@@ -629,6 +628,14 @@ class WorkflowRuntime:
             run.current_step_id = step_id
             run.completed_step_ids = list(state.completed_step_ids)
             run.active_step_ids = list(state.active_step_ids)
+        elif event_type == "superstep_completed":
+            checkpoint_id = self._save_acg_checkpoint(run, state)
+            state.checkpoint_id = checkpoint_id
+            run.execution_state["checkpointId"] = checkpoint_id
+            self.trace_store.append_execution_event(
+                run,
+                {"type": "checkpoint_created", "checkpointId": checkpoint_id},
+            )
         # 条件控制节点由图在超步边界内部推进，不会产生独立的节点事件。这里根据
         # 已持久化的 skippedStepIds 补齐 WorkflowRun 的可见步骤状态，供查询、
         # 审计和取消逻辑一致地区分“未执行”与“条件明确跳过”。
@@ -637,7 +644,8 @@ class WorkflowRuntime:
             if step.status == StepStatus.PENDING:
                 step.status = StepStatus.SKIPPED_BY_CONDITION
                 step.completed_at = utc_now()
-        self.trace_store.append_execution_event(run, event)
+        if event_type != "superstep_completed":
+            self.trace_store.append_execution_event(run, event)
         for model_call in event.get("modelInvocations", []):
             self.trace_store.append(
                 run,
@@ -654,7 +662,7 @@ class WorkflowRuntime:
                 observation="Tool invocation metadata projected",
                 payload=dict(tool_call),
             )
-        self._persist_acg_state(run, state)
+            self._persist_acg_state(run, state)
 
     def _persist_acg_state(self, run: WorkflowRun, state: ACGExecutionState) -> None:
         """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""
@@ -663,6 +671,18 @@ class WorkflowRuntime:
         run.completed_step_ids = list(state.completed_step_ids)
         run.active_step_ids = list(state.active_step_ids)
         self.workflow_store.save_run(run)
+
+    def _save_acg_checkpoint(self, run: WorkflowRun, state: ACGExecutionState) -> str:
+        """按运行当前 checkpoint 版本保存下一份引用型状态。"""
+        expected_version = self.checkpoint_store.latest_version(run_id=run.run_id)
+        checkpoint_id = f"acgckpt_{uuid4().hex}"
+        state.checkpoint_id = checkpoint_id
+        return self.checkpoint_store.save(
+            run_id=run.run_id,
+            checkpoint_id=checkpoint_id,
+            state=state.model_dump(by_alias=True, mode="json"),
+            expected_version=expected_version,
+        )
 
     @staticmethod
     def _acg_output(state: ACGExecutionState) -> dict[str, str]:

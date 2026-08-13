@@ -297,6 +297,10 @@ class ACGExecutionGraph:
                     raise ExecutionInterrupt("execution requires review", state.review_payload)
             state.active_step_ids = []
             self._advance_controls(state, route_values)
+            yield {
+                "type": "superstep_completed",
+                "stepIds": list(ready),
+            }
         state.current_step_id = None
 
     def _validate_acyclic(self) -> None:
