@@ -204,6 +204,7 @@ class ACGNodeRunner:
                 evidenceRefs=[f"trace:{step_id}"],
             ),
             severity_counts=severity_counts,
+            memory_access=memory_access,
         )
         if decision.outcome == "deny":
             return {

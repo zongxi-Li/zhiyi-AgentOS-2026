@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from components.auditor.algorithms import audit_score
 from contracts.governance import AuditRequest, PolicyDecision
 
@@ -19,6 +21,7 @@ class ExecutionAuditService:
         *,
         request: AuditRequest,
         severity_counts: dict[str, int],
+        memory_access: dict[str, Any] | None = None,
     ) -> PolicyDecision:
         """对一个引用化节点结果执行风险门控。
 
@@ -27,7 +30,16 @@ class ExecutionAuditService:
         不会包含审计目标正文或 ContextPack 内容。
         """
         score = audit_score(severity_counts)
-        if max(0, severity_counts.get("critical", 0)) > 0:
+        memory_violation = self._memory_access_violation(memory_access)
+        policy_refs = ["execution-risk.v1"]
+        metadata: dict[str, Any] = {"auditScore": score}
+        if memory_access is not None:
+            policy_refs.append("memory-access.v1")
+            metadata["memoryAccessCompliant"] = memory_violation is None
+        if memory_violation is not None:
+            outcome = "deny"
+            metadata["memoryAccessViolation"] = memory_violation
+        elif max(0, severity_counts.get("critical", 0)) > 0:
             outcome = "deny"
         elif max(0, severity_counts.get("high", 0)) > 0:
             outcome = "review"
@@ -37,10 +49,48 @@ class ExecutionAuditService:
             decisionId=f"decision:{request.request_id}",
             subjectRef=request.subject_ref,
             outcome=outcome,
-            policyRefs=["execution-risk.v1"],
+            policyRefs=policy_refs,
             rationale=f"audit score={score}",
-            metadata={"auditScore": score},
+            metadata=metadata,
         )
+
+    @staticmethod
+    def _memory_access_violation(memory_access: dict[str, Any] | None) -> str | None:
+        """校验步骤策略统计的基本不变量，不读取也不记录任何记忆正文。"""
+        if memory_access is None:
+            return None
+        read = memory_access.get("read")
+        write = memory_access.get("write")
+        read_count = memory_access.get("readCount")
+        written = memory_access.get("written")
+        tokens_used = memory_access.get("tokensUsed")
+        limit = memory_access.get("limit")
+        token_budget = memory_access.get("tokenBudget")
+        if not all(isinstance(item, bool) for item in (read, write, written)):
+            return "memory access flags must be booleans"
+        if not isinstance(read_count, int) or isinstance(read_count, bool) or read_count < 0:
+            return "memory read count must be a non-negative integer"
+        if not isinstance(tokens_used, int) or isinstance(tokens_used, bool) or tokens_used < 0:
+            return "memory tokens used must be a non-negative integer"
+        if limit is None:
+            limit = 10
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            return "memory limit must be an integer between 1 and 100"
+        if token_budget is not None and (
+            not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget < 0
+        ):
+            return "memory token budget must be a non-negative integer or null"
+        if not read and read_count:
+            return "read disabled but records were injected"
+        if not read and tokens_used:
+            return "read disabled but memory tokens were used"
+        if not write and written:
+            return "write disabled but memory was persisted"
+        if read_count > limit:
+            return "memory read count exceeds declared limit"
+        if token_budget is not None and tokens_used > token_budget:
+            return "memory tokens used exceeds declared budget"
+        return None
 
 
 __all__ = ["ExecutionAuditService"]

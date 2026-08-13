@@ -47,3 +47,48 @@ def test_execution_audit_allows_unknown_severity_without_evidence_leakage() -> N
 
     assert decision.outcome == "allow"
     assert decision.metadata == {"auditScore": 0}
+
+
+def test_execution_audit_denies_inconsistent_memory_access_claim() -> None:
+    """声明不读取记忆却上报读取数量时，审计必须阻断节点产物提交。"""
+    decision = ExecutionAuditService().assess_node(
+        request=_request(),
+        severity_counts={},
+        memory_access={
+            "policyId": "no-read",
+            "read": False,
+            "readCount": 1,
+            "write": False,
+            "written": False,
+            "tokensUsed": 0,
+        },
+    )
+
+    assert decision.outcome == "deny"
+    assert decision.policy_refs == ["execution-risk.v1", "memory-access.v1"]
+    assert decision.metadata == {
+        "auditScore": 0,
+        "memoryAccessCompliant": False,
+        "memoryAccessViolation": "read disabled but records were injected",
+    }
+
+
+def test_execution_audit_denies_memory_access_over_declared_budget() -> None:
+    """条数或内容量超过步骤声明上限时，审计必须拒绝而不是信任调用方。"""
+    decision = ExecutionAuditService().assess_node(
+        request=_request(),
+        severity_counts={},
+        memory_access={
+            "policyId": "bounded",
+            "read": True,
+            "readCount": 2,
+            "write": False,
+            "written": False,
+            "limit": 1,
+            "tokenBudget": 10,
+            "tokensUsed": 11,
+        },
+    )
+
+    assert decision.outcome == "deny"
+    assert decision.metadata["memoryAccessViolation"] == "memory read count exceeds declared limit"
