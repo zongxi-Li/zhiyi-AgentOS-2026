@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from components.communicator import CommunicatorService
 from components.communicator.provenance import ProvenanceLedger
 
 
@@ -27,3 +28,16 @@ def test_ledger_trace_projection_excludes_payload_body() -> None:
     assert events[1]["payload"]["consumedFields"] == ["title"]
     assert "AgentOS secret" not in str(events)
     assert "title" not in str(events[0]["payload"].get("checksum", ""))
+
+
+def test_service_drains_provenance_events_by_step_ownership() -> None:
+    """并行步骤交错记账时，每个节点只能领取归属自己的生产或消费事件。"""
+    service = CommunicatorService(run_id="run-1", task_id="task-1")
+    service.record_production("left", {"left": "secret-left"})
+    service.record_production("right", {"right": "secret-right"})
+
+    left_events = service.drain_provenance_events(step_id="left")
+    right_events = service.drain_provenance_events(step_id="right")
+
+    assert [item["payload"]["producerStepId"] for item in left_events] == ["left"]
+    assert [item["payload"]["producerStepId"] for item in right_events] == ["right"]

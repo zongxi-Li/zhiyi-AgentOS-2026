@@ -26,7 +26,9 @@ class CommunicatorService:
     def __init__(self, *, run_id: str = "", task_id: str = "") -> None:
         """服务拥有一份按运行隔离的血缘账本，不向旧运行时索取状态。"""
         self._assembler = ContextAssembler(ProvenanceLedger(run_id=run_id, task_id=task_id))
-        self._trace_cursor = 0
+        # 事件按步骤归属领取，而非使用全局游标。并行步骤在 Agent 调用期间会交错
+        # 记账；全局游标会把先完成节点之外的事件错误投影到当前节点 Trace。
+        self._drained_event_ids: set[str] = set()
 
     def compose(self, message_id: str, topic: str, sender: str, payload: dict[str, object], recipient: str | None = None) -> MessageEnvelope:
         """把消息标识、主题、发送方和载荷封装为 ``MessageEnvelope``。
@@ -104,11 +106,32 @@ class CommunicatorService:
         """
         return self._assembler.ledger
 
-    def drain_provenance_events(self) -> list[dict[str, Any]]:
-        """取得本节点新增的安全血缘投影，并前移游标避免后续节点重复写 Trace。"""
+    def drain_provenance_events(self, *, step_id: str | None = None) -> list[dict[str, Any]]:
+        """领取尚未投影且归属当前步骤的安全血缘事件。
+
+        ``step_id`` 存在时，生产事件按生产者归属，消费与交互事件按消费者归属；
+        这样并行节点即使交错执行也不会互相吞掉 Trace。省略它仅为兼容旧调用，
+        会领取所有尚未投影的事件。
+        """
         events = self.provenance.trace_events()
-        new_events = events[self._trace_cursor:]
-        self._trace_cursor = len(events)
-        return new_events
+        owned: list[dict[str, Any]] = []
+        for event in events:
+            payload = event["payload"]
+            event_id = payload["eventId"]
+            if event_id in self._drained_event_ids:
+                continue
+            if step_id is not None and not self._belongs_to_step(event, step_id):
+                continue
+            self._drained_event_ids.add(event_id)
+            owned.append(event)
+        return owned
+
+    @staticmethod
+    def _belongs_to_step(event: dict[str, Any], step_id: str) -> bool:
+        """判断安全投影是否归属步骤；只查看投影元数据，不读取正文。"""
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return False
+        return payload.get("producerStepId") == step_id or payload.get("consumerStepId") == step_id
 
     # TODO: 注入消息总线客户端，以支持 HTTP、队列或 WebSocket 的可靠投递。
