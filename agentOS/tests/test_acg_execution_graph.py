@@ -448,6 +448,29 @@ def test_execution_graph_whitelists_memory_access_trace_fields() -> None:
     assert observed == [{"policyId": "safe", "read": True, "readCount": 1}]
 
 
+def test_node_runner_rejects_explicit_empty_memory_type_whitelist() -> None:
+    """显式空白名单不能被解释为允许全部记忆类型，避免策略配置放大权限。"""
+    agent = _RecordingAgent()
+    runner = ACGNodeRunner(
+        task=AgentTask(taskId="task-1", title="test"),
+        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+        steps={"one": WorkflowStep(
+            stepId="one",
+            name="one",
+            agentName="agent",
+            input={"memoryPolicy": {"allowedTypes": []}},
+        )},
+        agents={"one": agent},
+        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        memory=MemoryService(),
+        value_store=InMemoryExecutionValueStore(),
+    )
+
+    with pytest.raises(ValueError, match="allowedTypes must not be empty"):
+        asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+
 class _HighRiskAgent(_RecordingAgent):
     """模拟声明高风险的节点结果，验证审计决定驱动图中断。"""
 

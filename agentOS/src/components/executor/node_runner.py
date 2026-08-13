@@ -299,9 +299,12 @@ class ACGNodeRunner:
             raw = {}
         if not isinstance(raw, dict):
             raise ValueError("memoryPolicy must be an object")
+        has_allowed_types = "allowedTypes" in raw
         allowed_raw = raw.get("allowedTypes", [])
         if not isinstance(allowed_raw, list):
             raise ValueError("memoryPolicy.allowedTypes must be a list")
+        if has_allowed_types and not allowed_raw:
+            raise ValueError("memoryPolicy.allowedTypes must not be empty when declared")
         try:
             allowed_types = [MemoryType(str(item)) for item in allowed_raw]
         except ValueError as exc:
