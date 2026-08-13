@@ -52,6 +52,25 @@ class ACGChannelError(ValueError):
     """同一 Pregel 轮次对一个单值状态通道进行了非法的并发写入。"""
 
 
+class ACGSuperstepError(RuntimeError):
+    """一个超步内发生节点异常后，携带失败与已取消步骤标识。"""
+
+    def __init__(
+        self,
+        *,
+        failed_step_ids: tuple[str, ...],
+        cancelled_step_ids: tuple[str, ...],
+        cause: BaseException,
+    ) -> None:
+        self.failed_step_ids = failed_step_ids
+        self.cancelled_step_ids = cancelled_step_ids
+        self.cause = cause
+        super().__init__(
+            "ACG superstep failed: "
+            f"failed={','.join(failed_step_ids)}, cancelled={','.join(cancelled_step_ids)}"
+        )
+
+
 class ACGStateChannel:
     """执行状态字段通道的最小抽象。
 
@@ -259,7 +278,39 @@ class ACGExecutionGraph:
             yield {"type": "nodes_scheduled", "stepIds": list(ready)}
             state.active_step_ids = list(ready)
             state.current_step_id = ready[0] if len(ready) == 1 else None
-            results = await asyncio.gather(*(execute(step_id, state) for step_id in ready))
+            tasks = {
+                step_id: asyncio.create_task(execute(step_id, state), name=f"acg:{state.run_id}:{step_id}")
+                for step_id in ready
+            }
+            done, pending = await asyncio.wait(tasks.values(), return_when=asyncio.FIRST_EXCEPTION)
+            failures = [
+                step_id
+                for step_id, task in tasks.items()
+                if task.done() and not task.cancelled() and task.exception() is not None
+            ]
+            if failures:
+                # 整个超步是原子提交边界：即使某个兄弟任务恰好先返回，它的结果也
+                # 不能被提交。因此除失败节点外的所有兄弟均投影为 cancelled，未完成
+                # 的任务再实际发送取消信号，避免调度时序影响最终状态。
+                cancelled = [step_id for step_id in ready if step_id not in failures]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                state.active_step_ids = []
+                cause = tasks[failures[0]].exception()
+                assert cause is not None
+                yield {
+                    "type": "superstep_failed",
+                    "failedStepIds": failures,
+                    "cancelledStepIds": cancelled,
+                }
+                raise ACGSuperstepError(
+                    failed_step_ids=tuple(failures),
+                    cancelled_step_ids=tuple(cancelled),
+                    cause=cause,
+                ) from cause
+            results = [tasks[step_id].result() for step_id in ready]
             for step_id, result in zip(ready, results):
                 # 严重风险由审计器给出 deny。此时节点结果不能进入 State，也不能产生
                 # outputRef、memoryRef 或下游调度条件；Runtime 会将该异常收敛为失败。
@@ -314,4 +365,4 @@ class ACGExecutionGraph:
             remaining -= roots
 
 
-__all__ = ["ACGChannelError", "ACGConditionalRoute", "ACGExecutionGraph", "ACGExecutionState", "ACGLastValueChannel", "ACGNodeSpec", "ACGStateChannel"]
+__all__ = ["ACGChannelError", "ACGConditionalRoute", "ACGExecutionGraph", "ACGExecutionState", "ACGLastValueChannel", "ACGNodeSpec", "ACGStateChannel", "ACGSuperstepError"]

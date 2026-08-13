@@ -12,7 +12,7 @@ from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.executor.graph import ACGExecutionState
 from components.task_manager.store import WorkflowRegistry
-from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
+from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -186,6 +186,85 @@ def test_runtime_projects_model_metadata_without_generated_content() -> None:
 
     model_events = [event for event in result.trace if event.event_type.value == "model_called"]
     assert model_events[0].payload == {"provider": "local", "model": "unit", "usage": {"tokens": 2}}
+
+
+def test_runtime_persists_completed_node_without_tool_calls_before_run_end() -> None:
+    """没有工具调用时，节点完成事件也必须立即写回 WorkflowStore。"""
+    runtime = _runtime()
+    task = runtime.create_task("persist", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    state = ACGExecutionState(runId=run.run_id, completedStepIds=["extract"])
+
+    runtime._project_acg_event(
+        run,
+        state,
+        {"type": "node_completed", "stepId": "extract", "outputSummary": "done"},
+    )
+
+    persisted = runtime.workflow_store.get_run(run.run_id)
+    assert persisted.get_step("extract").status is StepStatus.COMPLETED
+
+
+def test_runtime_marks_parallel_failed_and_cancelled_steps_before_run_failure() -> None:
+    """并行超步失败时，失败与取消节点必须在最终 run 失败前留下准确状态。"""
+    runtime = _runtime()
+    task = runtime.create_task("parallel", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    run.steps[1].step_id = "cancelled"
+    run.steps[0].step_id = "failed"
+    run.current_step_id = "failed"
+    run.steps[0].status = StepStatus.RUNNING
+    run.steps[1].status = StepStatus.RUNNING
+    runtime.workflow_store.save_run(run)
+
+    runtime._project_acg_event(
+        run,
+        ACGExecutionState(runId=run.run_id),
+        {"type": "superstep_failed", "failedStepIds": ["failed"], "cancelledStepIds": ["cancelled"]},
+    )
+
+    persisted = runtime.workflow_store.get_run(run.run_id)
+    assert persisted.get_step("failed").status is StepStatus.FAILED
+    assert persisted.get_step("cancelled").status is StepStatus.CANCELLED
+
+
+def test_runtime_projects_real_parallel_failure_and_sibling_cancellation() -> None:
+    """真实并行 Agent 失败时，Runtime 必须保存失败和取消节点状态。"""
+    class ParallelAgent(BaseAgent):
+        async def run(self, context):
+            if context.step.step_id == "fail":
+                raise RuntimeError("planned failure")
+            await asyncio.sleep(30)
+            return AgentOutput(output={"answer": "late"})
+
+    agents = AgentRegistry()
+    agents.register(ParallelAgent(AgentProfile(agentId="parallel", agentName="parallel", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="parallel-run", name="parallel", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="placeholder", name="placeholder", agentName="parallel")],
+    ))
+    runtime = WorkflowRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
+    blueprint = ACGBlueprint(
+        graphId="parallel-graph",
+        nodes=[
+            StepNode(nodeId="fail", agentName="parallel"),
+            StepNode(nodeId="slow", agentName="parallel"),
+        ],
+    )
+    task = runtime.create_task(
+        "parallel", workflow_id="parallel-run",
+        input={"acgBlueprint": blueprint.model_dump(by_alias=True, mode="json")},
+    )
+    _, run = runtime.prepare_run(task.task_id)
+
+    with pytest.raises(RuntimeError, match="ACG superstep failed"):
+        asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    persisted = runtime.workflow_store.get_run(run.run_id)
+    assert persisted.status is WorkflowStatus.FAILED
+    assert persisted.get_step("fail").status is StepStatus.FAILED
+    assert persisted.get_step("slow").status is StepStatus.CANCELLED
 
 
 def test_runtime_rejects_checkpoint_from_different_graph_version(tmp_path) -> None:

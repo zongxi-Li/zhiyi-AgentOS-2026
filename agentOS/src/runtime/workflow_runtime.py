@@ -645,6 +645,18 @@ class WorkflowRuntime:
                 run,
                 {"type": "checkpoint_created", "checkpointId": checkpoint_id},
             )
+        elif event_type == "superstep_failed":
+            for step_id in event.get("failedStepIds", []):
+                step = run.get_step(str(step_id))
+                if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
+                    self._transition_step(step, StepStatus.FAILED)
+                    step.error = "ACG superstep node failed"
+            for step_id in event.get("cancelledStepIds", []):
+                step = run.get_step(str(step_id))
+                if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
+                    self._transition_step(step, StepStatus.CANCELLED)
+                    step.error = "ACG superstep cancelled after sibling failure"
+            run.active_step_ids = []
         # 条件控制节点由图在超步边界内部推进，不会产生独立的节点事件。这里根据
         # 已持久化的 skippedStepIds 补齐 WorkflowRun 的可见步骤状态，供查询、
         # 审计和取消逻辑一致地区分“未执行”与“条件明确跳过”。
@@ -653,8 +665,19 @@ class WorkflowRuntime:
             if step.status == StepStatus.PENDING:
                 step.status = StepStatus.SKIPPED_BY_CONDITION
                 step.completed_at = utc_now()
-        if event_type != "superstep_completed":
+        if event_type not in {"superstep_completed", "superstep_failed"}:
             self.trace_store.append_execution_event(run, event)
+        if event_type == "superstep_failed":
+            self.trace_store.append(
+                run,
+                TraceEventType.STEP_FAILED,
+                step_id=(event.get("failedStepIds") or [None])[0],
+                observation="ACG parallel superstep failed",
+                payload={
+                    "failedStepIds": list(event.get("failedStepIds") or []),
+                    "cancelledStepIds": list(event.get("cancelledStepIds") or []),
+                },
+            )
         for model_call in event.get("modelInvocations", []):
             self.trace_store.append(
                 run,
@@ -671,7 +694,9 @@ class WorkflowRuntime:
                 observation="Tool invocation metadata projected",
                 payload=dict(tool_call),
             )
-            self._persist_acg_state(run, state)
+        # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
+        # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
+        self._persist_acg_state(run, state)
 
     def _persist_acg_state(self, run: WorkflowRun, state: ACGExecutionState) -> None:
         """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""

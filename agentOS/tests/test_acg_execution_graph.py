@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from components.executor.compiler import ACGGraphCompiler, UnsupportedCommunicationModeError
-from components.executor.graph import ACGExecutionGraph, ACGExecutionState
+from components.executor.graph import ACGExecutionGraph, ACGExecutionState, ACGSuperstepError
 from components.executor.state_graph import ACGStateGraph
 from components.executor.node_runner import ACGNodeRunner, EntropyBudgetExceededError
 from components.executor.value_store import InMemoryExecutionValueStore
@@ -51,6 +51,32 @@ def test_execution_graph_exposes_parallel_ready_set() -> None:
     graph = ACGExecutionGraph(nodes=("left", "right", "join"), edges=(("left", "join"), ("right", "join")))
 
     assert graph.ready_steps(ACGExecutionState(runId="run-1")) == ("left", "right")
+
+
+def test_parallel_failure_cancels_unfinished_sibling_tasks() -> None:
+    """同一超步任一节点失败时，图必须取消并等待未完成的兄弟任务。"""
+    graph = ACGExecutionGraph(nodes=("fail", "slow"))
+    state = ACGExecutionState(runId="run-1")
+    cancelled: list[str] = []
+
+    async def execute(step_id, _state):
+        if step_id == "fail":
+            await asyncio.sleep(0)
+            raise ValueError("expected failure")
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(step_id)
+            raise
+
+    with pytest.raises(ACGSuperstepError) as captured:
+        asyncio.run(graph.run(state, execute))
+
+    assert captured.value.failed_step_ids == ("fail",)
+    assert captured.value.cancelled_step_ids == ("slow",)
+    assert cancelled == ["slow"]
+    assert state.completed_step_ids == []
+    assert state.active_step_ids == []
 
 
 def test_compiler_rejects_unimplemented_communication_modes() -> None:
