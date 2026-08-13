@@ -24,6 +24,7 @@ from components.task_manager.state_machine import StateMachine
 from components.task_manager.service import TaskManager
 from components.auditor.governance.trace import TraceStore
 from components.communicator import CommunicatorService
+from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor import (
     ACGExecutionState,
     ACGGraphCompiler,
@@ -117,6 +118,7 @@ class WorkflowRuntime:
         checkpoint_store: Optional[object] = None,
         execution_value_store: ExecutionValueStore | None = None,
         memory_store: object | None = None,
+        provenance_store: SQLiteProvenanceStore | None = None,
         tool_runtime: object | None = None,
         review_manager: Optional[ReviewManager] = None,
         evaluator: Optional[WorkflowEvaluator] = None,
@@ -143,6 +145,11 @@ class WorkflowRuntime:
         )
         self.memory_store = memory_store or SQLiteMemoryStore(
             db_path=os.getenv("AGENTOS_EXECUTION_MEMORY_DB", "data/execution_memory.sqlite3")
+        )
+        # 血缘账本与 checkpoint、正文仓库分文件保存。每次构建节点运行器前都会先
+        # 重建并验证同 run 哈希链；损坏账本不会被静默绕过。
+        self.provenance_store = provenance_store or SQLiteProvenanceStore(
+            db_path=os.getenv("AGENTOS_PROVENANCE_DB", "data/provenance.sqlite3")
         )
         self.tool_runtime = tool_runtime
         self.review_manager = review_manager or ReviewManager(self.trace_store)
@@ -602,7 +609,14 @@ class WorkflowRuntime:
             workflow=workflow,
             steps=steps,
             agents=agents,
-            communicator=CommunicatorService(run_id=run.run_id, task_id=task.task_id),
+            communicator=CommunicatorService(
+                run_id=run.run_id,
+                task_id=task.task_id,
+                ledger=self.provenance_store.load_ledger(
+                    run_id=run.run_id,
+                    task_id=task.task_id,
+                ),
+            ),
             memory=MemoryService(store=self.memory_store),
             entropy_budget=(int(run.input["entropyBudget"]) if run.input.get("entropyBudget") is not None else None),
             value_store=self.execution_value_store,

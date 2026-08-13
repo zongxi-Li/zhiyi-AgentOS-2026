@@ -9,6 +9,7 @@ import pytest
 from runtime.workflow_runtime import WorkflowRuntime
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
+from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.executor.graph import ACGExecutionState
 from components.task_manager.store import WorkflowRegistry
@@ -136,6 +137,109 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
 
     assert result.status is WorkflowStatus.COMPLETED
     assert result.completed_step_ids == ["review", "deliver"]
+
+
+def test_runtime_restores_persistent_provenance_before_review_resume(tmp_path) -> None:
+    """审核恢复重建 Runtime 时，血缘账本必须先通过校验并从原链继续追加。"""
+    agents = AgentRegistry()
+    agents.register(_RunAgent(AgentProfile(agentName="runner", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="acg-provenance-review", name="review", domain="general", runtimeEngine="acg",
+        steps=[
+            WorkflowStepDefinition(stepId="review", name="review", agentName="runner", reviewRequired=True),
+            WorkflowStepDefinition(stepId="deliver", name="deliver", agentName="runner"),
+        ],
+    ))
+    store = MemoryWorkflowStore()
+    first = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
+        provenance_store=SQLiteProvenanceStore(db_path=tmp_path / "provenance.sqlite3"),
+    )
+    task = first.create_task("review", workflow_id="acg-provenance-review")
+    _, run = first.prepare_run(task.task_id)
+    paused = asyncio.run(first.execute_prepared_run(run.run_id))
+
+    recreated = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
+        provenance_store=SQLiteProvenanceStore(db_path=tmp_path / "provenance.sqlite3"),
+    )
+
+    result = asyncio.run(recreated.apply_review(ReviewDecision(
+        runId=run.run_id,
+        stepId="review",
+        decision=ReviewDecisionType.APPROVED,
+    )))
+
+    ledger = recreated.provenance_store.load_ledger(run_id=run.run_id, task_id=task.task_id)
+    assert result.status is WorkflowStatus.COMPLETED
+    assert ledger.verify_integrity() is True
+    assert len(ledger.productions) == 2
+
+
+def test_runtime_refuses_review_resume_when_provenance_chain_is_tampered(tmp_path) -> None:
+    """恢复前发现血缘链损坏时必须拒绝，不能继续执行或追加伪造事件。"""
+    agents = AgentRegistry()
+    agents.register(_RunAgent(AgentProfile(agentName="runner", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="acg-provenance-tampered", name="review", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="review", name="review", agentName="runner", reviewRequired=True)],
+    ))
+    store = MemoryWorkflowStore()
+    provenance_path = tmp_path / "provenance.sqlite3"
+    runtime = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
+        provenance_store=SQLiteProvenanceStore(db_path=provenance_path),
+    )
+    task = runtime.create_task("review", workflow_id="acg-provenance-tampered")
+    _, run = runtime.prepare_run(task.task_id)
+    paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    runtime.provenance_store.close()
+
+    import sqlite3
+    connection = sqlite3.connect(provenance_path)
+    connection.execute(
+        "UPDATE acg_provenance_events SET event_json = replace(event_json, 'eventHash', 'tamperedHash') WHERE run_id = ?",
+        (run.run_id,),
+    )
+    connection.commit()
+    connection.close()
+
+    recreated = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
+        provenance_store=SQLiteProvenanceStore(db_path=provenance_path),
+    )
+
+    with pytest.raises(ValueError, match="provenance"):
+        asyncio.run(recreated.apply_review(ReviewDecision(
+            runId=run.run_id,
+            stepId="review",
+            decision=ReviewDecisionType.APPROVED,
+        )))
+
+    assert paused.status is WorkflowStatus.WAITING_REVIEW
+    assert store.get_run(run.run_id).status is WorkflowStatus.WAITING_REVIEW
 
 
 def test_execute_prepared_run_does_not_restart_waiting_review_run() -> None:

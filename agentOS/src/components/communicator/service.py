@@ -23,9 +23,18 @@ class CommunicatorService:
     可靠传输、持久化及跨协程同步仍是应用层适配器的职责。
     """
 
-    def __init__(self, *, run_id: str = "", task_id: str = "") -> None:
-        """服务拥有一份按运行隔离的血缘账本，不向旧运行时索取状态。"""
-        self._assembler = ContextAssembler(ProvenanceLedger(run_id=run_id, task_id=task_id))
+    def __init__(
+        self,
+        *,
+        run_id: str = "",
+        task_id: str = "",
+        ledger: ProvenanceLedger | None = None,
+    ) -> None:
+        """服务使用 run 隔离账本；注入账本时先确认其归属，避免恢复串线。"""
+        active_ledger = ledger or ProvenanceLedger(run_id=run_id, task_id=task_id)
+        if active_ledger.run_id != run_id or active_ledger.task_id != task_id:
+            raise ValueError("provenance ledger ownership does not match communicator run")
+        self._assembler = ContextAssembler(active_ledger)
         # 事件按步骤归属领取，而非使用全局游标。并行步骤在 Agent 调用期间会交错
         # 记账；全局游标会把先完成节点之外的事件错误投影到当前节点 Trace。
         self._drained_event_ids: set[str] = set()

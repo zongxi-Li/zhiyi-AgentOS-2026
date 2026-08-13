@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -83,22 +84,39 @@ class RuntimeInteraction(_Event):
     saving_ratio: float = Field(default=0.0, alias="savingRatio")
 
 
+class ProvenanceIntegrityError(ValueError):
+    """持久化血缘事件无法通过哈希链或运行归属校验时抛出。"""
+
+
 class ProvenanceLedger:
     """按运行隔离地维护生产、消费和交互事件的哈希链账本。
 
     每次记录都会以前一事件哈希封存当前事件；实例仅保存内存状态且没有锁，
     多线程写入、持久化和跨进程完整性由调用方或外部存储负责。
     """
-    def __init__(self, *, run_id: str = "", task_id: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        run_id: str = "",
+        task_id: str = "",
+        event_sink: Callable[[_Event], None] | None = None,
+    ) -> None:
         self.run_id, self.task_id, self._seq, self._tail_hash = run_id, task_id, 0, ""
         self.productions: list[DataProductionEvent] = []
         self.consumptions: list[DataConsumptionEvent] = []
         self.interactions: list[RuntimeInteraction] = []
+        self._event_sink = event_sink
 
     def _seal(self, event: _Event) -> None:
         event.previous_hash = self._tail_hash
-        event.event_hash = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"eventHash"}))
+        event.event_hash = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"event_hash"}))
         self._tail_hash = event.event_hash
+
+    def _append(self, event: _Event, destination: list[_Event]) -> None:
+        """先持久化已封存事件，再更新内存账本，避免内存状态伪装为已落盘。"""
+        if self._event_sink is not None:
+            self._event_sink(event)
+        destination.append(event)
 
     def _next_id(self, prefix: str) -> str:
         self._seq += 1
@@ -111,7 +129,7 @@ class ProvenanceLedger:
         输出不被修改。序列化规模为 n 时复杂度 O(n)，并发追加需调用方同步。
         """
         event = DataProductionEvent(eventId=self._next_id("prod"), runId=self.run_id, taskId=self.task_id, producerStepId=step_id, agentName=agent_name, attempt=attempt, checksum=provenance_checksum(output), fieldNames=sorted(output), tokenSize=token_size, evidenceRefs=list(dict.fromkeys(evidence_refs or [])))
-        self._seal(event); self.productions.append(event)
+        self._seal(event); self._append(event, self.productions)
         return event
 
     def record_consumption(self, step_id: str, producer_step_ids: list[str], consumed_fields: list[str], *, fields_by_producer: dict[str, list[str]], data: dict[str, Any], tokens_delivered: int, tokens_available: int, saving_ratio: float, contract_status: str = "valid") -> DataConsumptionEvent:
@@ -123,7 +141,7 @@ class ProvenanceLedger:
         producer_ids = list(dict.fromkeys(producer_step_ids))
         latest = {event.producer_step_id: event.event_id for event in self.productions}
         event = DataConsumptionEvent(eventId=self._next_id("cons"), runId=self.run_id, taskId=self.task_id, consumerStepId=step_id, producerStepIds=producer_ids, producerEventIds=[latest[source] for source in producer_ids if source in latest], fieldsByProducer=fields_by_producer, consumedFields=sorted(set(consumed_fields)), tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio, checksum=provenance_checksum(data), contractStatus=contract_status)
-        self._seal(event); self.consumptions.append(event)
+        self._seal(event); self._append(event, self.consumptions)
         return event
 
     def record_interaction(self, *, producer_step_ids: list[str], consumer_step_id: str, fields_by_producer: dict[str, list[str]], evidence_refs: list[str], tokens_delivered: int, tokens_available: int, saving_ratio: float) -> RuntimeInteraction:
@@ -134,7 +152,7 @@ class ProvenanceLedger:
         """
         event_id = self._next_id("int")
         event = RuntimeInteraction(eventId=event_id, interactionId=event_id, runId=self.run_id, taskId=self.task_id, producerStepIds=list(dict.fromkeys(producer_step_ids)), consumerStepId=consumer_step_id, fieldsByProducer=fields_by_producer, evidenceRefs=list(dict.fromkeys(evidence_refs)), tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio)
-        self._seal(event); self.interactions.append(event)
+        self._seal(event); self._append(event, self.interactions)
         return event
 
     def verify_integrity(self) -> bool:
@@ -146,11 +164,57 @@ class ProvenanceLedger:
         previous = ""
         events = sorted([*self.productions, *self.consumptions, *self.interactions], key=self._event_sequence)
         for event in events:
-            expected = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"eventHash"}))
+            expected = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"event_hash"}))
             if event.previous_hash != previous or event.event_hash != expected:
                 return False
             previous = event.event_hash
         return True
+
+    @classmethod
+    def from_events(
+        cls,
+        *,
+        run_id: str,
+        task_id: str,
+        events: Iterable[dict[str, Any]],
+        event_sink: Callable[[_Event], None] | None = None,
+    ) -> "ProvenanceLedger":
+        """从安全持久 JSON 重建账本，并在交给调用方前验证链条和归属。"""
+        ledger = cls(run_id=run_id, task_id=task_id, event_sink=event_sink)
+        parsed: list[_Event] = []
+        for payload in events:
+            try:
+                event_id = str(payload.get("eventId") or "")
+                if event_id.startswith("prod_"):
+                    event: _Event = DataProductionEvent.model_validate(payload)
+                elif event_id.startswith("cons_"):
+                    event = DataConsumptionEvent.model_validate(payload)
+                elif event_id.startswith("int_"):
+                    event = RuntimeInteraction.model_validate(payload)
+                else:
+                    raise ProvenanceIntegrityError(f"unknown provenance event id: {event_id}")
+            except ProvenanceIntegrityError:
+                raise
+            except Exception as exc:
+                raise ProvenanceIntegrityError("provenance persisted event is malformed") from exc
+            if event.run_id != run_id or event.task_id != task_id:
+                raise ProvenanceIntegrityError("provenance event run or task ownership does not match")
+            parsed.append(event)
+        ordered = sorted(parsed, key=cls._event_sequence)
+        if len({event.event_id for event in ordered}) != len(ordered):
+            raise ProvenanceIntegrityError("provenance event identifiers are duplicated")
+        for event in ordered:
+            if isinstance(event, DataProductionEvent):
+                ledger.productions.append(event)
+            elif isinstance(event, DataConsumptionEvent):
+                ledger.consumptions.append(event)
+            else:
+                ledger.interactions.append(event)
+        ledger._seq = cls._event_sequence(ordered[-1]) if ordered else 0
+        ledger._tail_hash = ordered[-1].event_hash if ordered else ""
+        if not ledger.verify_integrity():
+            raise ProvenanceIntegrityError("provenance integrity verification failed")
+        return ledger
 
     def trace_events(self) -> list[dict[str, Any]]:
         """将账本事件投影为不含正文的持久 Trace 载荷。"""
@@ -212,4 +276,4 @@ class ProvenanceLedger:
         return {"eventType": event_type, "payload": payload}
 
 
-__all__ = ["provenance_checksum", "DataProductionEvent", "DataConsumptionEvent", "RuntimeInteraction", "ProvenanceLedger"]
+__all__ = ["provenance_checksum", "DataProductionEvent", "DataConsumptionEvent", "RuntimeInteraction", "ProvenanceIntegrityError", "ProvenanceLedger"]
