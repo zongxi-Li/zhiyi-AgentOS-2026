@@ -451,13 +451,71 @@ def test_node_runner_obeys_step_memory_policy_and_returns_safe_access_metadata()
         "readCount": 0,
         "write": False,
         "written": False,
-        "allowedTypes": [],
+        "readTypes": [],
+        "writeType": None,
         "limit": 10,
         "tokenBudget": None,
         "tokensUsed": 0,
         "requireAudit": False,
     }
     assert "must-not-inject" not in str(result["memoryAccess"])
+
+
+def test_node_runner_separates_memory_read_types_from_write_type() -> None:
+    """读取范围与输出写入类别必须独立执行，避免一个白名单同时承担两种语义。"""
+    agent = _RecordingAgent()
+    memory = MemoryService()
+    memory.remember(
+        MemoryRecord(
+            memoryId="memory:run-1:semantic",
+            memoryType=MemoryType.SEMANTIC,
+            content={"fact": "visible"},
+            scope="run-1",
+        )
+    )
+    memory.remember(
+        MemoryRecord(
+            memoryId="memory:run-1:episodic",
+            memoryType=MemoryType.EPISODIC,
+            content={"fact": "hidden"},
+            scope="run-1",
+        )
+    )
+    runner = ACGNodeRunner(
+        task=AgentTask(taskId="task-1", title="test"),
+        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+        steps={"one": WorkflowStep(
+            stepId="one",
+            name="one",
+            agentName="agent",
+            input={"memoryPolicy": {
+                "policyId": "separate-types",
+                "read": True,
+                "readTypes": ["semantic"],
+                "write": True,
+                "writeType": "procedural",
+            }},
+            outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )},
+        agents={"one": agent},
+        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        memory=memory,
+        value_store=InMemoryExecutionValueStore(),
+    )
+
+    result = asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+    assert [record.memory_id for record in agent.context.memory] == ["memory:run-1:semantic"]
+    assert result["memoryAccess"]["readTypes"] == ["semantic"]
+    assert result["memoryAccess"]["writeType"] == "procedural"
+    persisted = memory.recall_for_step(
+        run_id="run-1",
+        step_id="later",
+        query="accepted",
+        memory_types=[MemoryType.PROCEDURAL],
+    )
+    assert [record.memory_id for record in persisted] == ["memory:run-1:one"]
 
 
 def test_execution_graph_whitelists_memory_access_trace_fields() -> None:

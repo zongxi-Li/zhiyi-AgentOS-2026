@@ -161,7 +161,7 @@ class ACGNodeRunner:
                 run_id=state.run_id,
                 step_id=step_id,
                 query=step.name or step_id,
-                memory_types=memory_policy["allowedTypes"] or None,
+                memory_types=memory_policy["readTypes"] or None,
                 limit=memory_policy["limit"],
                 token_budget=memory_policy["tokenBudget"],
             )
@@ -174,7 +174,12 @@ class ACGNodeRunner:
             "readCount": len(memories),
             "write": memory_policy["write"],
             "written": False,
-            "allowedTypes": [item.value for item in memory_policy["allowedTypes"]],
+            "readTypes": [item.value for item in memory_policy["readTypes"]],
+            "writeType": (
+                memory_policy["writeType"].value
+                if memory_policy["writeType"] is not None
+                else None
+            ),
             "limit": memory_policy["limit"],
             "tokenBudget": memory_policy["tokenBudget"],
             "tokensUsed": sum(estimate_tokens(record.content) for record in memories),
@@ -242,6 +247,7 @@ class ACGNodeRunner:
                 run_id=state.run_id,
                 step_id=step_id,
                 output=controlled,
+                memory_type=memory_policy["writeType"],
                 policy=write_policy,
             )
             if memory_policy["write"]
@@ -324,29 +330,57 @@ class ACGNodeRunner:
         """解析已冻结的步骤记忆策略，并拒绝无法审计的错误声明。
 
         策略存放在 ``WorkflowStep.input.memoryPolicy``，因为它是 ACG Blueprint
-        元数据同步到本次运行后的私有边界。缺失策略保持旧版本的“可读可写、十条”
-        行为；不会因升级而改变历史蓝图的执行结果。
+        元数据同步到本次运行后的私有边界。新格式明确用 ``readTypes`` 表示可读取的
+        类别、用 ``writeType`` 表示输出写入类别，避免一个字段承担相反方向的权限。
+        缺失策略与旧 ``allowedTypes`` 格式仅作兼容输入，解析结果始终是新格式。
         """
         raw = step_input.get("memoryPolicy") if isinstance(step_input, dict) else None
         if raw is None:
             raw = {}
         if not isinstance(raw, dict):
             raise ValueError("memoryPolicy must be an object")
-        has_allowed_types = "allowedTypes" in raw
-        allowed_raw = raw.get("allowedTypes", [])
-        if not isinstance(allowed_raw, list):
-            raise ValueError("memoryPolicy.allowedTypes must be a list")
-        if has_allowed_types and not allowed_raw:
-            raise ValueError("memoryPolicy.allowedTypes must not be empty when declared")
-        try:
-            allowed_types = [MemoryType(str(item)) for item in allowed_raw]
-        except ValueError as exc:
-            raise ValueError("memoryPolicy.allowedTypes contains an unsupported memory type") from exc
         read = raw.get("read", True)
         write = raw.get("write", True)
         require_audit = raw.get("requireAudit", False)
         if not all(isinstance(item, bool) for item in (read, write, require_audit)):
             raise ValueError("memoryPolicy read, write and requireAudit must be booleans")
+        uses_new_types = "readTypes" in raw or "writeType" in raw
+        if uses_new_types and "allowedTypes" in raw:
+            raise ValueError("memoryPolicy cannot mix allowedTypes with readTypes or writeType")
+        if uses_new_types:
+            read_raw = raw.get("readTypes", [])
+            if not isinstance(read_raw, list):
+                raise ValueError("memoryPolicy.readTypes must be a list")
+            if read and not read_raw:
+                raise ValueError("memoryPolicy.readTypes must not be empty when read is enabled")
+            if write and raw.get("writeType") is None:
+                raise ValueError("memoryPolicy.writeType is required when write is enabled")
+            if not write and raw.get("writeType") is not None:
+                raise ValueError("memoryPolicy.writeType requires write to be enabled")
+            write_raw = raw.get("writeType")
+        else:
+            has_allowed_types = "allowedTypes" in raw
+            read_raw = raw.get("allowedTypes", [])
+            if not isinstance(read_raw, list):
+                raise ValueError("memoryPolicy.allowedTypes must be a list")
+            if has_allowed_types and not read_raw:
+                raise ValueError("memoryPolicy.allowedTypes must not be empty when declared")
+            # 旧策略的写入行为固定为 episodic；保留它，避免历史 Blueprint 改变结果。
+            write_raw = MemoryType.EPISODIC if write else None
+        try:
+            read_types = [
+                item if isinstance(item, MemoryType) else MemoryType(str(item))
+                for item in read_raw
+            ]
+            write_type = (
+                write_raw
+                if isinstance(write_raw, MemoryType)
+                else MemoryType(str(write_raw))
+                if write_raw is not None
+                else None
+            )
+        except ValueError as exc:
+            raise ValueError("memoryPolicy readTypes or writeType contains an unsupported memory type") from exc
         limit = raw.get("limit", 10)
         token_budget = raw.get("tokenBudget")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
@@ -362,7 +396,8 @@ class ACGNodeRunner:
             "policyId": policy_id,
             "read": read,
             "write": write,
-            "allowedTypes": allowed_types,
+            "readTypes": read_types,
+            "writeType": write_type,
             "limit": limit,
             "tokenBudget": token_budget,
             "requireAudit": require_audit,
@@ -370,13 +405,13 @@ class ACGNodeRunner:
 
     @staticmethod
     def _write_memory_policy(policy: Mapping[str, Any]) -> MemoryPolicy | None:
-        """把步骤白名单收敛成 MemoryService 可执行的写入准入策略。"""
-        allowed_types = list(policy["allowedTypes"])
-        if not allowed_types:
+        """把步骤的单一写入类别收敛成 MemoryService 可执行的准入策略。"""
+        write_type = policy["writeType"]
+        if write_type is None:
             return None
         return MemoryPolicy(
             policyId=str(policy["policyId"]),
-            allowedTypes=allowed_types,
+            allowedTypes=[write_type],
             requireAudit=bool(policy["requireAudit"]),
         )
 

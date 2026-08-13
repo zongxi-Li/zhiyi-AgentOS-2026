@@ -105,6 +105,22 @@ def test_remember_step_output_returns_none_when_policy_rejects_write() -> None:
     assert memory.recall_for_step(run_id="run-a", step_id="analysis", query="safe") == []
 
 
+def test_remember_step_output_uses_declared_write_type() -> None:
+    """步骤策略指定语义记忆时，输出不得仍被固定写成情节记忆。"""
+    memory = MemoryService()
+
+    record = memory.remember_step_output(
+        run_id="run-a",
+        step_id="analysis",
+        output={"answer": "safe"},
+        memory_type=MemoryType.SEMANTIC,
+        policy=MemoryPolicy(policyId="semantic", allowedTypes=[MemoryType.SEMANTIC]),
+    )
+
+    assert record is not None
+    assert record.memory_type is MemoryType.SEMANTIC
+
+
 def test_sqlite_memory_store_survives_reopen_for_same_run(tmp_path) -> None:
     """进程重建后，当前 run 的情节记忆必须仍可按范围召回。"""
     db_path = tmp_path / "memory.sqlite3"

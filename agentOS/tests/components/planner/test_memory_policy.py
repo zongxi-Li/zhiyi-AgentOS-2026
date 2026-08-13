@@ -48,8 +48,9 @@ def test_builder_derives_memory_write_policy_from_capability() -> None:
     assert policies["analyze"] == {
         "policyId": "capability:analyze:v1",
         "read": True,
+        "readTypes": ["episodic"],
         "write": False,
-        "allowedTypes": ["episodic"],
+        "writeType": None,
         "limit": 10,
         "tokenBudget": None,
         "requireAudit": False,

@@ -498,8 +498,9 @@ def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
                     "memoryPolicy": {
                         "policyId": "extract-v1",
                         "read": False,
+                        "readTypes": ["episodic"],
                         "write": True,
-                        "allowedTypes": ["episodic"],
+                        "writeType": "episodic",
                         "limit": 3,
                         "tokenBudget": 120,
                         "requireAudit": True,
@@ -514,12 +515,62 @@ def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
     assert run.steps[0].input["memoryPolicy"] == {
         "policyId": "extract-v1",
         "read": False,
+        "readTypes": ["episodic"],
         "write": True,
-        "allowedTypes": ["episodic"],
+        "writeType": "episodic",
         "limit": 3,
         "tokenBudget": 120,
         "requireAudit": True,
     }
+
+
+def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> None:
+    """新策略若声明写入却缺少 writeType，必须在准备运行时就阻断。"""
+    runtime = _runtime()
+    task = runtime.create_task("invalid memory policy", workflow_id="acg-run")
+    invalid = ACGBlueprint(
+        graphId="invalid-memory-policy",
+        nodes=[
+            StepNode(
+                nodeId="extract",
+                name="extract",
+                agentName="runner",
+                metadata={"memoryPolicy": {"read": True, "readTypes": ["episodic"], "write": True}},
+            )
+        ],
+    )
+    runtime._build_acg_blueprint = lambda *_args, **_kwargs: invalid
+
+    with pytest.raises(ValueError, match="writeType is required"):
+        runtime.prepare_run(task.task_id)
+
+    assert runtime.workflow_store.list_runs().total == 0
+
+
+def test_prepare_run_rejects_null_write_type_when_memory_write_is_enabled() -> None:
+    """writeType 显式为 null 仍等同缺失，不能让写入在节点期才失败。"""
+    runtime = _runtime()
+    task = runtime.create_task("null memory write type", workflow_id="acg-run")
+    invalid = ACGBlueprint(
+        graphId="null-memory-policy",
+        nodes=[
+            StepNode(
+                nodeId="extract",
+                name="extract",
+                agentName="runner",
+                metadata={"memoryPolicy": {
+                    "read": True,
+                    "readTypes": ["episodic"],
+                    "write": True,
+                    "writeType": None,
+                }},
+            )
+        ],
+    )
+    runtime._build_acg_blueprint = lambda *_args, **_kwargs: invalid
+
+    with pytest.raises(ValueError, match="writeType is required"):
+        runtime.prepare_run(task.task_id)
 
 
 def test_runtime_marks_unselected_acg_branch_skipped() -> None:

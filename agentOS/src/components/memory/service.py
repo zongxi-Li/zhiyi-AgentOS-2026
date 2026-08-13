@@ -93,17 +93,19 @@ class MemoryService:
         run_id: str,
         step_id: str,
         output: dict[str, object],
+        memory_type: MemoryType = MemoryType.EPISODIC,
         policy: MemoryPolicy | None = None,
     ) -> MemoryRecord | None:
-        """把已通过输出合同的受控字段写为当前 run 的情节记忆。
+        """把已通过输出合同的受控字段写为当前 run 的指定类型记忆。
 
         调用方必须在调用前完成输出 schema 校验与字段白名单裁剪；该服务只接收
-        ``controlled`` 结果，绝不从 Agent 原始响应或 WorkflowRun 回填正文。若准入
-        策略拒绝情节记忆，则返回 ``None``，让运行器不生成虚假的 memoryRef。
+        ``controlled`` 结果，绝不从 Agent 原始响应或 WorkflowRun 回填正文。
+        ``memory_type`` 由已冻结的步骤策略指定，默认情节记忆只用于兼容旧调用；若
+        准入策略拒绝该类型，则返回 ``None``，让运行器不生成虚假的 memoryRef。
         """
         record = MemoryRecord(
             memoryId=f"memory:{run_id}:{step_id}",
-            memoryType=MemoryType.EPISODIC,
+            memoryType=memory_type,
             content=deepcopy(dict(output)),
             scope=run_id,
             tags=["execution", step_id],

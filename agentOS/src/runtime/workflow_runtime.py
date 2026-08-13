@@ -935,7 +935,23 @@ class WorkflowRuntime:
             if memory_policy is not None:
                 if not isinstance(memory_policy, dict):
                     raise ValueError(f"ACG step {node.node_id} memoryPolicy must be an object")
-                node_input["memoryPolicy"] = dict(memory_policy)
+                # 在 prepare_run 冻结前立即校验并标准化策略。这样错误配置不会等到
+                # 节点已经调用 Agent 后才暴露；保存到运行的快照始终采用读写分离格式。
+                normalized = ACGNodeRunner._memory_policy({"memoryPolicy": memory_policy})
+                node_input["memoryPolicy"] = {
+                    "policyId": normalized["policyId"],
+                    "read": normalized["read"],
+                    "readTypes": [item.value for item in normalized["readTypes"]],
+                    "write": normalized["write"],
+                    "writeType": (
+                        normalized["writeType"].value
+                        if normalized["writeType"] is not None
+                        else None
+                    ),
+                    "limit": normalized["limit"],
+                    "tokenBudget": normalized["tokenBudget"],
+                    "requireAudit": normalized["requireAudit"],
+                }
             step = existing.get(node.node_id)
             if step is None:
                 step = WorkflowStep(
