@@ -1,4 +1,11 @@
-"""AgentOS Core 的 trace 模块，提供运行时控制、状态、Trace、审核或治理能力。"""
+"""AgentOS 的 Trace 投影与导出服务。
+
+融合执行事件的投影语义改写自 LangGraph 1.2.10，upstream commit
+``d56666f7fbf0d380ad84cdf0cbe5aa48ab0cc086``，来源模块
+``libs/langgraph/langgraph/pregel``。本实现只把紧凑的 AgentOS 事件字典映射为
+既有 ``TraceEvent``，不会向合同层暴露 LangGraph chunk、callback 或对象；版权归
+LangChain, Inc.，完整 MIT 文本见 ``docs/THIRD_PARTY_NOTICES.md``。
+"""
 
 
 from typing import Any, Dict, List, Optional
@@ -42,6 +49,36 @@ class TraceStore:
         )
         run.trace.append(event)
         return event
+
+    def append_execution_event(self, run: WorkflowRun, event: Dict[str, Any]) -> TraceEvent:
+        """将融合执行器事件投影到既有 AgentOS Trace 词表。
+
+        执行底座只能发送紧凑字典。本方法刻意拒绝未知事件，确保上游实现内部的
+        chunk、callback 或对象不会穿透到审计合同，也避免未定义事件被静默记错。
+        """
+        event_type = str(event.get("type") or "")
+        projection = {
+            "nodes_scheduled": TraceEventType.STEP_SCHEDULED,
+            "node_started": TraceEventType.STEP_STARTED,
+            "node_completed": TraceEventType.STEP_SUCCEEDED,
+            "interrupted": TraceEventType.REVIEW_REQUIRED,
+            "checkpoint_created": TraceEventType.CHECKPOINT_CREATED,
+        }.get(event_type)
+        if projection is None:
+            raise ValueError(f"unsupported execution event: {event_type}")
+        payload = {
+            key: value
+            for key, value in event.items()
+            if key not in {"type", "stepId", "agentName"}
+        }
+        return self.append(
+            run=run,
+            event_type=projection,
+            step_id=event.get("stepId"),
+            agent_name=event.get("agentName"),
+            observation=event_type.replace("_", " "),
+            payload=payload,
+        )
 
     def append_task(
         self,

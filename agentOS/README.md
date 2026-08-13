@@ -1,6 +1,4 @@
-# AgentOS 部件化统一设计（当前实现）
-
-当前实现状态、未接入边界与可迁移开源组件见 `../docs/current_implementation_review.md`；可验收的后续工作见仓库根目录 `../TODOS.md`。
+# AgentOS 部件化统一设计
 
 ```text
 AgentOS
@@ -129,6 +127,9 @@ AgentOS
 │  │  ├─ federated_adapter.py           联邦增强失败开放 Adapter
 │  │  └─ retrieval_adapter.py           检索 Adapter 迁移中（引用待同步）
 │  │
+│  ├─ service/                          运行期服务层
+│  │  └─ agents/                        Agent 基础模型、调用上下文、注册表与运行范围
+│  │
 │  ├─ tools/                            ACG 导出与绘图层
 │  │  ├─ models.py                      图模型导出引用
 │  │  ├─ serializer.py                  Canonical JSON 序列化
@@ -139,7 +140,6 @@ AgentOS
 │  │  └─ service.py                     ACGToolsService 统一入口
 │  │
 │  ├─ support/                          历史运行时配套层（非新业务合同）
-│  │  ├─ agents/                        BaseAgent、Profile、注册表
 │  │  ├─ domain/                        线性 Task/Workflow 兼容模型
 │  │  ├─ packs/                         Pack Manifest 发现与注册
 │  │  ├─ skills/                        BaseSkill、NoOpSkill、注册表
@@ -155,8 +155,8 @@ AgentOS
 
 依赖方向
 ├─ runtime → components → contracts
-├─ runtime → support（仅运行时配套）
-├─ adapters → contracts / support（外部实现注入）
+├─ runtime → components / service / support（运行时装配与历史兼容）
+├─ adapters → contracts / service / support（外部实现注入）
 ├─ tools → components.planner / contracts（只读导出）
 └─ components → contracts（目标）；恢复/执行/规划的现存内部导入待收敛
 

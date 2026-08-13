@@ -1,6 +1,7 @@
 """审计部件的公共 Facade。"""
 
 from .algorithms import audit_score
+from .execution_audit import ExecutionAuditService
 from .risk import classify_risk
 
 
@@ -19,5 +20,9 @@ class AuditorService:
         """
         score = audit_score(severity_counts)
         return {"score": score, "severity": classify_risk(score)}
+
+    def execution_audit(self) -> ExecutionAuditService:
+        """返回无状态节点审计器，供执行服务在不共享运行状态下按需调用。"""
+        return ExecutionAuditService()
 
     # TODO: 接入证据存储和策略引擎后，验证引用存在性与组织级规则。

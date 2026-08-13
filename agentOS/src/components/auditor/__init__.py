@@ -4,5 +4,6 @@ __all__: list[str] = []
 """审计部件的公共入口。"""
 
 from .service import AuditorService
+from .execution_audit import ExecutionAuditService
 
-__all__ = ["AuditorService"]
+__all__ = ["AuditorService", "ExecutionAuditService"]

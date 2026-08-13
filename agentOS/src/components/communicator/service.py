@@ -1,11 +1,19 @@
 """通信部件的公共 Facade。"""
 
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TYPE_CHECKING
+
 from contracts.communication import MessageEnvelope
 
 from .assembler import ContextAssembler, assemble
 from .contracts import ContextPack
 from .compressor import compress_text
 from .provenance import ProvenanceLedger
+
+if TYPE_CHECKING:
+    from components.executor.value_store import ExecutionValueStore
 
 
 class CommunicatorService:
@@ -42,6 +50,41 @@ class CommunicatorService:
         消费/交互事件；参数不满足装配器约定时错误直接上抛，不作隐式全量透传。
         """
         return self._assembler.assemble(**kwargs)  # type: ignore[arg-type]
+
+    def assemble_execution_context(
+        self,
+        *,
+        run_id: str,
+        step_id: str,
+        input_spec: Mapping[str, Any],
+        upstream_refs: Mapping[str, str],
+        value_store: "ExecutionValueStore",
+        token_budget: int | None = None,
+        task_id: str = "",
+        objective: str = "",
+        step_goal: str = "",
+    ) -> ContextPack:
+        """按输出引用读取上游受控数据并装配严格合同 ContextPack。
+
+        这里是执行器取得上游正文的唯一入口。每次读取都携带当前 ``run_id``，由
+        ``ExecutionValueStore`` 拒绝跨运行引用；随后仍交由既有装配器执行字段白名单、
+        必填字段和 Token 预算计算。因此既不会从 State 恢复正文，也不会因便捷而全量
+        透传 Agent 输出。
+        """
+        upstream_outputs = {
+            source_step_id: value_store.get_output(run_id=run_id, output_ref=output_ref)
+            for source_step_id, output_ref in upstream_refs.items()
+        }
+        return self.assemble_context(
+            run_id=run_id,
+            task_id=task_id,
+            step_id=step_id,
+            input_spec=input_spec,
+            upstream_outputs=upstream_outputs,
+            objective=objective,
+            step_goal=step_goal,
+            token_budget=token_budget,
+        )
 
     def record_production(self, step_id: str, output: dict[str, object], **kwargs: object) -> None:
         """为 ``step_id`` 的输出登记字段、Token 与证据血缘。

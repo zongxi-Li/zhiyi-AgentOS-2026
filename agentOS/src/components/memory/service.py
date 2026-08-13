@@ -1,6 +1,9 @@
 """记忆部件的公共 Facade。"""
 
-from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord
+from copy import deepcopy
+from datetime import datetime, timezone
+
+from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType
 
 from .admission import admitted
 from .algorithms import rerank_memories
@@ -37,6 +40,59 @@ class MemoryService:
         和排序，即 O(n log n)，底层存储读取异常会直接上抛。
         """
         return rerank_memories(retrieve(self._store.values(), query))
+
+    def recall_for_step(
+        self,
+        *,
+        run_id: str,
+        step_id: str,
+        query: str,
+        memory_types: list[MemoryType] | None = None,
+        limit: int = 10,
+    ) -> list[MemoryRecord]:
+        """为一个执行步骤召回仅属于当前 run 且尚未过期的记忆。
+
+        ``run_id`` 被固定为查询 scope，因而调用者不能以“无 scope”的检索间接得到
+        其它运行内容。``step_id`` 目前作为明确的调用边界保留，后续会接入步骤级
+        权限、审计与检索策略；它不参与跨 run 的回退匹配。
+        """
+        records = self.search(
+            MemoryQuery(
+                query=query,
+                scope=run_id,
+                memoryTypes=memory_types or [],
+                limit=limit,
+            )
+        )
+        now = datetime.now(timezone.utc)
+        return [
+            record
+            for record in records
+            if record.expires_at is None or record.expires_at > now
+        ]
+
+    def remember_step_output(
+        self,
+        *,
+        run_id: str,
+        step_id: str,
+        output: dict[str, object],
+        policy: MemoryPolicy | None = None,
+    ) -> MemoryRecord | None:
+        """把已通过输出合同的受控字段写为当前 run 的情节记忆。
+
+        调用方必须在调用前完成输出 schema 校验与字段白名单裁剪；该服务只接收
+        ``controlled`` 结果，绝不从 Agent 原始响应或 WorkflowRun 回填正文。若准入
+        策略拒绝情节记忆，则返回 ``None``，让运行器不生成虚假的 memoryRef。
+        """
+        record = MemoryRecord(
+            memoryId=f"memory:{run_id}:{step_id}",
+            memoryType=MemoryType.EPISODIC,
+            content=deepcopy(dict(output)),
+            scope=run_id,
+            tags=["execution", step_id],
+        )
+        return record if self.remember(record, policy) else None
 
     def working_from_run(self, run: object) -> WorkingMemory:
         """从运行投影创建一份仅含已完成观察的 ``WorkingMemory``。

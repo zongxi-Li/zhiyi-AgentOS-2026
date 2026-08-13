@@ -1,0 +1,251 @@
+"""AgentOS 单节点固定执行管线。
+
+每个图节点必须按同一顺序运行：装配 ContextPack → 受限记忆检索 → 熵预算与输入合同
+校验 → Agent/Tool Adapter 调用 → 输出合同与字段白名单校验 → 受控记忆/血缘登记 →
+返回摘要和引用。图 State 只接收最后一步的引用，真实输入输出始终留在 AgentOS 服务边界。
+
+第三方来源：LangGraph 1.2.10，commit d56666f7fbf0d380ad84cdf0cbe5aa48ab0cc086；
+来源模块 ``libs/langgraph/langgraph/pregel``、``graph/state.py``。该实现改写为调用
+AgentOS 通信、记忆、Adapter 与审计边界，不暴露 LangGraph 对象；完整 MIT 许可证见
+``docs/THIRD_PARTY_NOTICES.md``。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from components.communicator import CommunicatorService
+from components.communicator.contracts import ContextPack, estimate_tokens
+from components.auditor.execution_audit import ExecutionAuditService
+from components.memory import MemoryService
+from adapters.agent_invocation import AgentInvocationAdapter
+from contracts.communication import validate_contract_payload
+from contracts.governance import AuditRequest
+from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from service.agents.base import BaseAgent, AgentRunContext
+
+from .graph import ACGExecutionState
+from .value_store import ExecutionValueStore, InMemoryExecutionValueStore
+
+
+class EntropyBudgetExceededError(ValueError):
+    """跨步骤上下文的估算熵超过运行允许的预算，Adapter 尚未被调用。"""
+
+
+class ACGNodeRunner:
+    """执行固定节点管线，并仅返回可安全写入执行 State 的摘要和引用。"""
+
+    def __init__(
+        self,
+        *,
+        task: AgentTask,
+        run: WorkflowRun,
+        workflow: WorkflowDefinition,
+        steps: Mapping[str, WorkflowStep],
+        agents: Mapping[str, BaseAgent],
+        communicator: CommunicatorService,
+        memory: MemoryService,
+        entropy_budget: int | None = None,
+        value_store: ExecutionValueStore | None = None,
+        communication_modes: Mapping[str, str] | None = None,
+        upstream_step_ids: Mapping[str, tuple[str, ...]] | None = None,
+        execution_audit: ExecutionAuditService | None = None,
+        agent_invoker: AgentInvocationAdapter | None = None,
+        model_runtime: object | None = None,
+        capability_descriptors: Mapping[str, object] | None = None,
+        tool_runtime: object | None = None,
+    ) -> None:
+        """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
+        self.task = task
+        self.run = run
+        self.workflow = workflow
+        self.steps = dict(steps)
+        self.agents = dict(agents)
+        self.communicator = communicator
+        self.memory = memory
+        self.entropy_budget = entropy_budget
+        # 显式依赖受控仓库，而不是由运行器拼接伪引用。这样节点产物的归属、读取校验
+        # 与不可变副本语义集中在唯一服务边界中，State 只会接触返回的字符串引用。
+        self.value_store = value_store or InMemoryExecutionValueStore()
+        self.communication_modes = dict(communication_modes or {})
+        self.upstream_step_ids = {
+            node_id: tuple(source_ids)
+            for node_id, source_ids in (upstream_step_ids or {}).items()
+        }
+        self.execution_audit = execution_audit or ExecutionAuditService()
+        self.agent_invoker = agent_invoker
+        self.model_runtime = model_runtime
+        self.capability_descriptors = dict(capability_descriptors or {})
+        self.tool_runtime = tool_runtime
+
+    @classmethod
+    def minimal(cls, *, agent: BaseAgent, entropy_budget: int | None = None) -> "ACGNodeRunner":
+        """构造测试用最小节点运行器，生产运行时应显式注入全部运行范围。"""
+        task = AgentTask(taskId="task", title="ACG node")
+        run = WorkflowRun(taskId=task.task_id, workflowId="workflow", domain="general", runtimeEngine="acg")
+        workflow = WorkflowDefinition(workflowId="workflow", name="workflow", domain="general", intent="general", runtimeEngine="acg")
+        step = WorkflowStep(stepId="one", name="one", agentName=agent.profile.agent_name)
+        return cls(task=task, run=run, workflow=workflow, steps={"one": step}, agents={"one": agent}, communicator=CommunicatorService(run_id=run.run_id, task_id=task.task_id), memory=MemoryService(), entropy_budget=entropy_budget)
+
+    async def __call__(self, step_id: str, state: ACGExecutionState) -> dict[str, Any]:
+        """执行一个 Step，并返回 Pregel 轮次可消费的受控结果。
+
+        ``routeValue`` 是条件控制节点在同轮读取的短生命周期值；执行图只会使用它来
+        选择已声明分支，不会把它写入 ``ACGExecutionState`` 或 checkpoint。
+        """
+        step = self.steps[step_id]
+        agent = self.agents[step_id]
+        # State 只有摘要/引用。上游完整 slot 值必须由通信服务根据 outputRef 从受控
+        # 仓库读取；运行器不能从摘要推断数据，也不能旁路仓库获取全量 Agent 输出。
+        estimated_entropy = sum(estimate_tokens(summary) for summary in state.output_summaries.values())
+        if self.entropy_budget is not None and estimated_entropy > self.entropy_budget:
+            raise EntropyBudgetExceededError(
+                f"step {step_id} estimated entropy {estimated_entropy} exceeds budget {self.entropy_budget}"
+            )
+        mode = self.communication_modes.get(step_id, "STRICT_CONTRACT")
+        if mode == "EVENT":
+            # EVENT 是纯通知：只把 outputRef 转为证据引用，绝不调用仓库读取其正文。
+            # 上游列表由编译后的依赖图注入，避免无关步骤的事件引用被额外暴露。
+            source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
+            pack = ContextPack(
+                runId=state.run_id,
+                stepId=step_id,
+                objective=self.workflow.description,
+                stepGoal=step.name,
+                evidenceRefs=[
+                    f"event:{state.output_refs[source_id]}"
+                    for source_id in source_ids
+                    if source_id in state.output_refs
+                ],
+                sourceStepIds=list(source_ids),
+            )
+        else:
+            pack = self.communicator.assemble_execution_context(
+                run_id=state.run_id,
+                task_id=self.task.task_id,
+                step_id=step_id,
+                input_spec=step.input,
+                upstream_refs=state.output_refs,
+                value_store=self.value_store,
+                objective=self.workflow.description,
+                step_goal=step.name,
+                token_budget=self.entropy_budget,
+            )
+        if pack.contract_status != "valid":
+            raise ValueError(f"input contract is incomplete for {step_id}: {', '.join(pack.missing_fields)}")
+        input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
+        validate_contract_payload(pack.data, input_schema, step_id=step_id, direction="input")
+        memories = self.memory.recall_for_step(
+            run_id=state.run_id,
+            step_id=step_id,
+            query=step.name or step_id,
+        )
+        agent_context = AgentRunContext(
+            task=self.task,
+            run=self.run,
+            workflow=self.workflow,
+            step=step,
+            memory=memories,
+            contextPack=pack,
+            toolRuntime=self.tool_runtime,
+            modelRuntime=self.model_runtime,
+            capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
+        )
+        output = (
+            await self.agent_invoker.invoke(context=agent_context)
+            if self.agent_invoker is not None
+            else await agent.run(agent_context)
+        )
+        tool_events = list(output.tool_executions)
+        runtime_events = getattr(self.tool_runtime, "events", None)
+        if isinstance(runtime_events, list):
+            tool_events.extend(runtime_events)
+        payload = dict(output.output)
+        validate_contract_payload(payload, step.output_spec, step_id=step_id, direction="output")
+        allowed = set((step.output_spec.get("properties") or {}).keys()) if step.output_spec else set(payload)
+        controlled = {key: value for key, value in payload.items() if key in allowed}
+        risk_level = (output.risk_level or "").lower()
+        severity_counts = {risk_level: 1} if risk_level else {}
+        decision = self.execution_audit.assess_node(
+            request=AuditRequest(
+                requestId=f"audit:{state.run_id}:{step_id}",
+                # 审计发生在持久化前，使用一次性待定引用，避免 deny 结果落入
+                # 输出仓库或记忆仓库；allow/review 后再生成正式引用。
+                subjectRef=f"pending:{state.run_id}:{step_id}",
+                auditType="node_output",
+                evidenceRefs=[f"trace:{step_id}"],
+            ),
+            severity_counts=severity_counts,
+        )
+        if decision.outcome == "deny":
+            return {
+                "outputSummary": output.summary or f"denied:{step_id}",
+                "reviewRequired": False,
+                "auditDecisionRef": decision.decision_id,
+                "auditOutcome": decision.outcome,
+                "modelInvocations": self._safe_model_invocations(output.model_invocations),
+            }
+
+        self.communicator.record_production(step_id, controlled, agent_name=agent.profile.agent_name)
+        memory_record = self.memory.remember_step_output(
+            run_id=state.run_id,
+            step_id=step_id,
+            output=controlled,
+        )
+        output_ref = self.value_store.put_output(
+            run_id=state.run_id,
+            step_id=step_id,
+            payload=controlled,
+        )
+        return {
+            "outputSummary": output.summary or f"completed:{step_id}",
+            "contextRef": self.value_store.put_context_pack(
+                run_id=state.run_id,
+                step_id=step_id,
+                payload=pack.model_dump(by_alias=True, mode="json"),
+            ),
+            "memoryRef": memory_record.memory_id if memory_record is not None else "memory:none",
+            "traceRef": f"trace:{step_id}",
+            "outputRef": output_ref,
+            # 审计器只给出可重放的治理事实；Pregel 图在提交节点结果后决定是否中断，
+            # 因此审计部件不会越权修改 WorkflowRun 或驱动图状态。
+            "reviewRequired": decision.outcome == "review",
+            "auditDecisionRef": decision.decision_id,
+            "auditOutcome": decision.outcome,
+            # 模型审计只保留已由 Agent 输出的调用元数据白名单，绝不回写 prompt、
+            # 生成正文或供应商对象。Trace 投影层可直接消费该紧凑列表。
+            "modelInvocations": self._safe_model_invocations(output.model_invocations),
+            "toolCalls": self._safe_tool_calls(tool_events),
+            # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
+            "routeValue": controlled,
+        }
+
+    @staticmethod
+    def _safe_model_invocations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """裁剪模型调用审计字段，避免 prompt、响应正文或任意扩展载荷进入 Trace。"""
+        allowed = {"provider", "model", "latencyMs", "promptVersion", "usage"}
+        return [
+            {key: value for key, value in record.items() if key in allowed}
+            for record in records
+            if isinstance(record, dict)
+        ]
+
+    @staticmethod
+    def _safe_tool_calls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """裁剪工具调用审计字段，禁止参数正文进入执行事件。"""
+        allowed = {"tool", "name", "status", "latencyMs", "errorCode"}
+        result: list[dict[str, Any]] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            safe = {key: value for key, value in record.items() if key in allowed}
+            identity = tuple(sorted((key, repr(value)) for key, value in safe.items()))
+            if identity not in seen:
+                seen.add(identity)
+                result.append(safe)
+        return result
+
+
+__all__ = ["ACGNodeRunner", "EntropyBudgetExceededError"]

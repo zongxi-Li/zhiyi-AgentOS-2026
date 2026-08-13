@@ -1,371 +1,313 @@
-"""执行器拥有的运行图模型与确定性图算法。
+"""AgentOS 融合后的 StateGraph / Pregel 执行核心。
 
-本模块只保存可序列化的运行时快照。规划器交付的节点、边可以是合同对象或
-字典；执行器在边界处复制它们，因此不会反向依赖 ``core`` 的 ACG 实现。
+本模块将 LangGraph 1.2.10 的 StateGraph、channel 与 Pregel 超步调度思想改写为
+AgentOS 内部实现。它只负责图的编译产物执行、状态通道、并行就绪集、条件路由、
+审核中断及事件流；ACG 规划、通信、记忆、Agent/Tool 适配和审计仍属于各自部件。
+
+执行状态坚持“只存引用”：完整 slot 输入、模型输出和记忆正文不进入本状态，也不会
+进入 SQLite checkpoint。条件路由所需的受控输出仅在当前 Pregel 轮次短暂使用。
+
+第三方来源：LangGraph 1.2.10，commit d56666f7fbf0d380ad84cdf0cbe5aa48ab0cc086；
+来源模块 ``graph/state.py``、``channels/base.py``、``channels/last_value.py``、
+``pregel``。改写说明与完整 MIT 许可证见 ``docs/THIRD_PARTY_NOTICES.md``。
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Iterable
-from uuid import uuid4
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+class ACGExecutionState(BaseModel):
+    """可检查点化的引用型执行状态。
 
-
-def _canonical_hash(payload: Any) -> str:
-    """用稳定 JSON 表示图结构，供持久化与重放比对。"""
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-class RuntimeNodeStatus(str, Enum):
-    """执行节点的最小状态词表，不泄漏旧运行时枚举。"""
-
-    PENDING = "pending"
-    RUNNING = "running"
-    WAITING_REVIEW = "waiting_review"
-    RETRYING = "retrying"
-    FAILED = "failed"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    SKIPPED_BY_CONDITION = "skipped_by_condition"
-
-
-class RuntimeNodeActivation(str, Enum):
-    """描述条件分支下节点或边的激活状态，供就绪集过滤使用。"""
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    TERMINATED = "terminated"
-
-
-class RuntimeEventType(str, Enum):
-    """运行时事件的固定故障分类词表，用于恢复策略而非动态执行代码。"""
-    BINDING_UNAVAILABLE = "BINDING_UNAVAILABLE"
-    EVIDENCE_MISSING = "EVIDENCE_MISSING"
-    INPUT_CONTRACT_VIOLATION = "INPUT_CONTRACT_VIOLATION"
-    OUTPUT_CONTRACT_VIOLATION = "OUTPUT_CONTRACT_VIOLATION"
-    LOW_CONFIDENCE = "LOW_CONFIDENCE"
-    STEP_EXECUTION_FAILED = "STEP_EXECUTION_FAILED"
-
-
-class RuntimeEventStatus(str, Enum):
-    """记录运行时事件从待处理到已处理、忽略或拒绝的状态。"""
-    PENDING = "PENDING"
-    PROCESSED = "PROCESSED"
-    IGNORED = "IGNORED"
-    REJECTED = "REJECTED"
-
-
-class RuntimeEdge(BaseModel):
-    """执行图边的自包含表示；边类型保持字符串以兼容规划合同。"""
-
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-
-    edge_id: str = Field(alias="edgeId")
-    source_id: str = Field(alias="sourceId")
-    target_id: str = Field(alias="targetId")
-    edge_type: str = Field(default="dependency", alias="edgeType")
-    condition: str = ""
-    activation: RuntimeNodeActivation = RuntimeNodeActivation.ACTIVE
-    data_fields: list[str] = Field(default_factory=list, alias="dataFields")
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class RuntimeEvent(BaseModel):
-    """绑定一次运行、节点和尝试的可持久化故障或质量事件。
-
-    字段承载分类输入与幂等键，不直接变更图；属性仅从 ``payload`` 读取派生值，
-    由 Pydantic 校验格式并交给恢复流程更新状态。
+    每个字段都是恢复执行所需的最小投影：已完成/活跃/跳过步骤、摘要以及各服务返回
+    的引用。真实数据只能由 CommunicatorService、MemoryService 或输出存储按引用读取，
+    以避免执行器绕过字段白名单、权限和审计边界。
     """
+
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
-    event_id: str = Field(alias="eventId")
-    idempotency_key: str = Field(alias="idempotencyKey")
     run_id: str = Field(alias="runId")
-    graph_id: str = Field(alias="graphId")
-    graph_version: int = Field(alias="graphVersion", ge=1)
-    event_type: RuntimeEventType = Field(alias="eventType")
-    runtime_node_id: str = Field(alias="runtimeNodeId")
-    attempt_id: str = Field(alias="attemptId")
-    binding_id: str = Field(default="", alias="bindingId")
-    source_trace_event_id: str | None = Field(default=None, alias="sourceTraceEventId")
-    payload: dict[str, Any] = Field(default_factory=dict)
-    classification_version: str = Field(default="1", alias="classificationVersion")
-    created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
-    status: RuntimeEventStatus = RuntimeEventStatus.PENDING
-    status_reason: str = Field(default="", alias="statusReason")
-
-    @property
-    def reason_code(self) -> str:
-        """返回规范化原因码，优先采用载荷值并回退到事件类型。"""
-        return str(self.payload.get("reasonCode") or self.event_type.value).strip().upper()
-
-    @property
-    def target_node_id(self) -> str:
-        """返回载荷指定的目标节点；未指定时回退到事件所属节点。"""
-        return str(self.payload.get("targetNodeId") or self.runtime_node_id)
-
-
-class RuntimePatchBudget(BaseModel):
-    """限制运行时图补丁数量、规模和重规划深度的可序列化预算。"""
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-    max_graph_patches: int = Field(default=3, alias="maxGraphPatches", ge=0)
-    max_added_nodes_per_patch: int = Field(default=4, alias="maxAddedNodesPerPatch", ge=0)
-    max_total_runtime_nodes: int = Field(default=20, alias="maxTotalRuntimeNodes", ge=1)
-    max_replan_depth: int = Field(default=2, alias="maxReplanDepth", ge=0)
-    current_replan_depth: int = Field(default=0, alias="currentReplanDepth", ge=0)
-
-
-class RuntimeAttempt(BaseModel):
-    """记录一个节点执行尝试的输入、输出、状态与审计上下文。"""
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-    attempt_id: str = Field(default_factory=lambda: f"attempt_{uuid4().hex}", alias="attemptId")
-    attempt_number: int = Field(alias="attemptNumber", ge=1)
-    graph_version: int = Field(alias="graphVersion", ge=1)
-    binding_id: str = Field(default="", alias="bindingId")
-    agent_name: str = Field(default="", alias="agentName")
-    model_name: str = Field(default="", alias="modelName")
-    status: RuntimeNodeStatus = RuntimeNodeStatus.RUNNING
-    started_at: datetime = Field(default_factory=_utc_now, alias="startedAt")
-    ended_at: datetime | None = Field(default=None, alias="endedAt")
-    resolved_input: dict[str, Any] = Field(default_factory=dict, alias="resolvedInput")
-    output: dict[str, Any] = Field(default_factory=dict)
-    error: str | None = None
-    trace_context: dict[str, Any] = Field(default_factory=dict, alias="traceContext")
-    logical_completion_accepted: bool = Field(default=True, alias="logicalCompletionAccepted")
-    runtime_event_ids: list[str] = Field(default_factory=list, alias="runtimeEventIds")
-
-
-class RuntimeNode(BaseModel):
-    """节点定义的副本及其唯一可变执行状态。"""
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-    node_id: str = Field(alias="nodeId")
-    node_type: str = Field(alias="nodeType")
-    spec: dict[str, Any] = Field(default_factory=dict)
-    status: RuntimeNodeStatus = RuntimeNodeStatus.PENDING
-    activation: RuntimeNodeActivation = RuntimeNodeActivation.ACTIVE
-    current_binding: dict[str, Any] | None = Field(default=None, alias="currentBinding")
-    binding_candidates: list[dict[str, Any]] = Field(default_factory=list, alias="bindingCandidates")
-    binding_history: list[dict[str, Any]] = Field(default_factory=list, alias="bindingHistory")
-    binding_switch_count: int = Field(default=0, alias="bindingSwitchCount", ge=0)
-    attempts: list[RuntimeAttempt] = Field(default_factory=list)
-    output: dict[str, Any] = Field(default_factory=dict)
-    output_version: int = Field(default=0, alias="outputVersion", ge=0)
-    error: str | None = None
-    source_patch_id: str | None = Field(default=None, alias="sourcePatchId")
-    created_graph_version: int = Field(default=1, alias="createdGraphVersion", ge=1)
-    updated_at: datetime = Field(default_factory=_utc_now, alias="updatedAt")
-
-    @classmethod
-    def from_acg_node(cls, node: Any, *, graph_version: int, source_patch_id: str | None = None) -> "RuntimeNode":
-        """接收任意规划节点，深拷贝为执行器拥有的普通字典。"""
-        raw = node.model_dump(by_alias=True, mode="json") if hasattr(node, "model_dump") else dict(node)
-        node_id = str(raw.get("nodeId") or raw.get("node_id"))
-        node_type = str(raw.get("nodeType") or raw.get("node_type") or "step")
-        binding = {
-            "assignedAgentId": raw.get("assignedAgentId"), "agentName": raw.get("agentName"),
-            "capability": raw.get("capability"), "skillIds": list(raw.get("skillIds") or []),
-        } if node_type == "step" else None
-        return cls(nodeId=node_id, nodeType=node_type, spec=raw, currentBinding=binding,
-                   sourcePatchId=source_patch_id, createdGraphVersion=graph_version)
-
-
-class AppliedPatchRecord(BaseModel):
-    """保存已应用补丁的哈希、版本和幂等依据，支持安全重放。"""
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-    patch_id: str = Field(alias="patchId")
-    idempotency_key: str = Field(alias="idempotencyKey")
-    content_hash: str = Field(alias="contentHash")
-    semantic_hash: str = Field(alias="semanticHash")
-    operation_type: str = Field(alias="operationType")
-    base_graph_version: int = Field(alias="baseGraphVersion")
-    result_graph_version: int = Field(alias="resultGraphVersion")
-    source_event_id: str = Field(alias="sourceEventId")
+    graph_id: str | None = Field(default=None, alias="graphId")
+    current_step_id: str | None = Field(default=None, alias="currentStepId")
+    completed_step_ids: list[str] = Field(default_factory=list, alias="completedStepIds")
+    active_step_ids: list[str] = Field(default_factory=list, alias="activeStepIds")
+    skipped_step_ids: list[str] = Field(default_factory=list, alias="skippedStepIds")
+    output_summaries: dict[str, str] = Field(default_factory=dict, alias="outputSummaries")
+    # 节点输出正文位于 ExecutionValueStore；State 只保存该仓库生成的 outputRef，
+    # 使 checkpoint 能重启调度而不会携带 slot 数据、模型响应或其它敏感正文。
+    output_refs: dict[str, str] = Field(default_factory=dict, alias="outputRefs")
+    context_refs: dict[str, str] = Field(default_factory=dict, alias="contextRefs")
+    memory_refs: dict[str, str] = Field(default_factory=dict, alias="memoryRefs")
+    trace_refs: dict[str, str] = Field(default_factory=dict, alias="traceRefs")
     checkpoint_id: str | None = Field(default=None, alias="checkpointId")
-    applied_at: datetime = Field(default_factory=_utc_now, alias="appliedAt")
+    review_payload: dict[str, Any] | None = Field(default=None, alias="reviewPayload")
 
 
-class RuntimeGraph(BaseModel):
-    """单次运行的权威、可版本化执行图。"""
+class ACGChannelError(ValueError):
+    """同一 Pregel 轮次对一个单值状态通道进行了非法的并发写入。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-    run_id: str = Field(alias="runId")
-    graph_id: str = Field(alias="graphId")
-    source_blueprint_version: int = Field(alias="sourceBlueprintVersion", ge=1)
-    graph_version: int = Field(default=1, alias="graphVersion", ge=1)
-    nodes: list[RuntimeNode] = Field(default_factory=list)
-    edges: list[RuntimeEdge] = Field(default_factory=list)
-    processed_event_ids: list[str] = Field(default_factory=list, alias="processedEventIds")
-    runtime_events: list[RuntimeEvent] = Field(default_factory=list, alias="runtimeEvents")
-    pending_runtime_event_ids: list[str] = Field(default_factory=list, alias="pendingRuntimeEventIds")
-    event_to_patch: dict[str, str] = Field(default_factory=dict, alias="eventToPatch")
-    applied_recipe_scopes: list[str] = Field(default_factory=list, alias="appliedRecipeScopes")
-    applied_patch_ids: list[str] = Field(default_factory=list, alias="appliedPatchIds")
-    applied_patch_idempotency_keys: list[str] = Field(default_factory=list, alias="appliedPatchIdempotencyKeys")
-    applied_patches: list[AppliedPatchRecord] = Field(default_factory=list, alias="appliedPatches")
-    branch_decisions: list[Any] = Field(default_factory=list, alias="branchDecisions")
-    patch_budget: RuntimePatchBudget = Field(default_factory=RuntimePatchBudget, alias="patchBudget")
-    created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
-    updated_at: datetime = Field(default_factory=_utc_now, alias="updatedAt")
 
-    @classmethod
-    def from_blueprint(cls, *, run_id: str, blueprint: Any, agent_registry: Any | None = None, domain: str = "") -> "RuntimeGraph":
-        """从只读蓝图深拷贝构造版本一运行图。
+class ACGStateChannel:
+    """执行状态字段通道的最小抽象。
 
-        输入蓝图可为合同对象，输出为执行器拥有的图；条件边初始设为未激活，再
-        填充绑定投影。该方法不持久化也不访问网络，复杂度与节点和边总数 O(V+E)。
-        """
-        raw_nodes = list(getattr(blueprint, "nodes", []) or [])
-        raw_edges = list(getattr(blueprint, "edges", []) or [])
-        graph = cls(runId=run_id, graphId=str(getattr(blueprint, "graph_id", "")),
-                    sourceBlueprintVersion=int(getattr(blueprint, "version", 1)),
-                    nodes=[RuntimeNode.from_acg_node(node, graph_version=1) for node in raw_nodes],
-                    edges=[RuntimeEdge.model_validate(edge.model_dump(by_alias=True) if hasattr(edge, "model_dump") else edge) for edge in raw_edges])
-        for node in graph.nodes:
-            if node.node_type == "control" and str(node.spec.get("controlType") or "") == "if":
-                for edge in graph.edges:
-                    if edge.edge_id in set(node.spec.get("branchEdgeIds") or []):
-                        edge.activation = RuntimeNodeActivation.INACTIVE
-        graph.enrich_bindings(agent_registry=agent_registry, domain=domain)
-        return graph
+    通道在一个 Pregel 超步结束时统一接收该轮所有任务的更新。不同通道可以定义不同
+    聚合语义；当前首期使用 ``ACGLastValueChannel``，即单字段每轮只能有一个写入者。
+    """
 
-    def get_node(self, node_id: str) -> RuntimeNode:
-        """按节点标识返回运行节点；不存在时抛出 ``KeyError``。"""
-        for node in self.nodes:
-            if node.node_id == node_id:
-                return node
-        raise KeyError(f"runtime node not found: {node_id}")
+    def __init__(self, key: str) -> None:
+        self.key = key
 
-    def has_node(self, node_id: str) -> bool:
-        """判断图中是否含有给定节点标识，不修改图状态。"""
-        return any(node.node_id == node_id for node in self.nodes)
+    def update(self, values: Sequence[Any]) -> bool:
+        raise NotImplementedError
 
-    def effective_edges(self, edge_type: Any | None = None) -> list[RuntimeEdge]:
-        """返回未被补丁替代且可选类型匹配的有效边副本引用。"""
-        wanted = getattr(edge_type, "value", edge_type)
-        return [edge for edge in self.edges if not edge.metadata.get("supersededByPatchId") and (wanted is None or edge.edge_type == wanted)]
+    def get(self) -> Any:
+        raise NotImplementedError
 
-    def dependency_sources(self, node_id: str) -> list[str]:
-        """列出给定节点的已激活依赖前驱，并忽略条件跳过的来源。"""
-        return [edge.source_id for edge in self.effective_edges() if edge.target_id == node_id
-                and edge.edge_type in {"dependency", "control_flow"} and edge.activation == RuntimeNodeActivation.ACTIVE
-                and self.get_node(edge.source_id).status != RuntimeNodeStatus.SKIPPED_BY_CONDITION]
 
-    def ready_set(self) -> list[RuntimeNode]:
-        """计算就绪集：仅活跃 step、所有有效前驱成功，并稳定排序。"""
-        ready: list[RuntimeNode] = []
-        for node in self.nodes:
-            if node.node_type != "step" or node.activation != RuntimeNodeActivation.ACTIVE or node.status not in {RuntimeNodeStatus.PENDING, RuntimeNodeStatus.RETRYING}:
+class ACGLastValueChannel(ACGStateChannel):
+    """最后值通道：一个 Pregel 轮次最多接收一次更新。
+
+    这是 LangGraph ``LastValue`` 语义的改名实现。它将并行分支对同一状态键的竞争
+    明确暴露为错误，而不是依赖不稳定的完成顺序覆盖数据。
+    """
+
+    _missing = object()
+
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.value: Any = self._missing
+
+    def update(self, values: Sequence[Any]) -> bool:
+        if not values:
+            return False
+        if len(values) != 1:
+            raise ACGChannelError(f"At key '{self.key}': can receive only one value per Pregel round")
+        self.value = values[0]
+        return True
+
+    def get(self) -> Any:
+        if self.value is self._missing:
+            raise LookupError(f"channel {self.key} is empty")
+        return self.value
+
+
+@dataclass(frozen=True)
+class ACGNodeSpec:
+    """编译后仅由执行器消费的 Step/控制节点描述。
+
+    ACG Blueprint 仍是规划权威；本对象只是把蓝图中的通信模式、审核点和条件控制
+    降为调度期可直接读取的不可变元数据，绝不泄漏到 ``contracts/``。
+    """
+
+    node_id: str
+    kind: Literal["step", "control"] = "step"
+    communication_mode: Literal["STRICT_CONTRACT", "EVENT"] = "STRICT_CONTRACT"
+    review_required: bool = False
+    condition: "ACGConditionalRoute | None" = None
+
+
+@dataclass(frozen=True)
+class ACGConditionalRoute:
+    """从 ACG ``IF`` 控制节点编译出的受限条件路由。
+
+    ``json_pointer`` 只读取本轮节点的受控输出；不执行任意 Python 表达式。结果仅为
+    一个已声明的目标节点，未被选择的兄弟分支会在状态中标记为跳过。
+    """
+
+    source_step_id: str
+    json_pointer: str
+    operator: str
+    targets_by_case: dict[str, str]
+    default_target: str | None = None
+
+    def select(self, source_value: dict[str, Any]) -> str | None:
+        """按受限操作符求值并返回一个目标节点；无匹配时使用默认目标。"""
+        value: Any = source_value
+        for segment in (item for item in self.json_pointer.split("/") if item):
+            if not isinstance(value, dict) or segment not in value:
+                value = None
+                break
+            value = value[segment]
+        if self.operator == "BOOLEAN":
+            key = "true" if bool(value) else "false"
+        elif self.operator == "EXISTS":
+            key = "true" if value is not None else "false"
+        elif self.operator == "IN":
+            key = str(value)
+        else:
+            key = str(value)
+        return self.targets_by_case.get(key, self.default_target)
+
+
+NodeRunner = Callable[[str, ACGExecutionState], Awaitable[dict[str, Any]]]
+
+
+class ACGExecutionGraph:
+    """编译完成的 AgentOS 执行图，采用 Pregel 的“轮次屏障”调度。
+
+    一个超步中所有 ready Step 并发运行；只有全体结果返回后，才统一提交摘要/引用并
+    计算下一批 ready 节点。这个屏障保证并行分支不因完成时序不同而改变依赖可见性。
+    控制节点没有 Agent 调用：它们在超步间推进，用于条件分支、并行汇合和起止屏障。
+    """
+
+    def __init__(
+        self,
+        *,
+        nodes: tuple[str, ...],
+        edges: tuple[tuple[str, str], ...] = (),
+        node_specs: dict[str, ACGNodeSpec] | None = None,
+    ) -> None:
+        self.nodes = tuple(dict.fromkeys(nodes))
+        self.edges = tuple(edges)
+        self.node_specs = node_specs or {node_id: ACGNodeSpec(node_id=node_id) for node_id in self.nodes}
+        known = set(self.nodes)
+        if set(self.node_specs) != known or any(source not in known or target not in known for source, target in self.edges):
+            raise ValueError("graph nodes and edges must be declared consistently")
+        self._validate_acyclic()
+
+    def ready_steps(self, state: ACGExecutionState) -> tuple[str, ...]:
+        """返回当前超步可并发执行的 Step，排除控制节点和未选择的分支。"""
+        completed = set(state.completed_step_ids)
+        inactive = set(state.active_step_ids) | set(state.skipped_step_ids)
+        ready: list[str] = []
+        for node_id in self.nodes:
+            spec = self.node_specs[node_id]
+            if node_id in completed or node_id in inactive or spec.kind != "step":
                 continue
-            incoming = [edge for edge in self.effective_edges() if edge.target_id == node.node_id and edge.edge_type in {"dependency", "control_flow"}]
-            if any(edge.activation == RuntimeNodeActivation.INACTIVE for edge in incoming):
-                continue
-            if all(self.get_node(source).status == RuntimeNodeStatus.COMPLETED for source in self.dependency_sources(node.node_id)):
-                ready.append(node)
-        return sorted(ready, key=lambda item: (-int(item.spec.get("priority", 0)), item.node_id))
+            predecessors = {source for source, target in self.edges if target == node_id}
+            if predecessors <= completed:
+                ready.append(node_id)
+        return tuple(ready)
 
-    def topological_order(self) -> list[str]:
-        """对有效依赖边进行 Kahn 排序；环路用 ValueError 明确拒绝。"""
-        node_ids = {node.node_id for node in self.nodes}
-        parents = {node_id: set() for node_id in node_ids}
-        children = {node_id: set() for node_id in node_ids}
-        for edge in self.effective_edges():
-            if edge.edge_type in {"dependency", "control_flow"} and edge.activation == RuntimeNodeActivation.ACTIVE:
-                parents[edge.target_id].add(edge.source_id); children[edge.source_id].add(edge.target_id)
-        queue = sorted(node_id for node_id, sources in parents.items() if not sources)
-        ordered: list[str] = []
-        while queue:
-            current = queue.pop(0); ordered.append(current)
-            for target in sorted(children[current]):
-                parents[target].remove(current)
-                if not parents[target]: queue.append(target)
-            queue.sort()
-        if len(ordered) != len(node_ids): raise ValueError("runtime graph contains a dependency cycle")
-        return ordered
+    def select_routes(self, control_id: str, source_value: dict[str, Any]) -> tuple[str, ...]:
+        """供调试和编译测试读取某个条件控制节点的目标分支。"""
+        route = self.node_specs[control_id].condition
+        if route is None:
+            return ()
+        target = route.select(source_value)
+        return (target,) if target else ()
 
-    def resolve_ready_control_nodes(self) -> bool:
-        """无条件控制节点在依赖完成后自动结束；IF 必须由条件决策显式激活。"""
-        changed = False
-        for node in self.nodes:
-            if node.node_type == "control" and node.status == RuntimeNodeStatus.PENDING and str(node.spec.get("controlType") or "") != "if":
-                if all(self.get_node(source).status == RuntimeNodeStatus.COMPLETED for source in self.dependency_sources(node.node_id)):
-                    node.status = RuntimeNodeStatus.COMPLETED; node.updated_at = _utc_now(); changed = True
-        return changed
+    def _advance_controls(
+        self,
+        state: ACGExecutionState,
+        route_values: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """推进满足前驱条件的控制节点，并根据路由结果标记跳过分支。"""
+        completed = set(state.completed_step_ids)
+        skipped = set(state.skipped_step_ids)
+        changed = True
+        while changed:
+            changed = False
+            for control_id, spec in self.node_specs.items():
+                if spec.kind != "control" or control_id in completed:
+                    continue
+                predecessors = {source for source, target in self.edges if target == control_id}
+                effective_predecessors = predecessors - skipped
+                if not effective_predecessors <= completed:
+                    continue
+                if spec.condition is not None:
+                    value = (route_values or {}).get(spec.condition.source_step_id, {})
+                    target = spec.condition.select(value)
+                    if target is not None:
+                        branch_targets = {target_id for source, target_id in self.edges if source == control_id}
+                        skipped.update(branch_targets - {target})
+                state.completed_step_ids.append(control_id)
+                completed.add(control_id)
+                changed = True
+        state.skipped_step_ids = [node_id for node_id in self.nodes if node_id in skipped]
 
-    def activate_condition(self, control_node_id: str, selected_edge_ids: Iterable[str]) -> None:
-        """一次条件决策只能按排序后的 edge id 激活，避免分支选择依赖遍历顺序。"""
-        selected = set(selected_edge_ids)
-        control = self.get_node(control_node_id)
-        declared = set(control.spec.get("branchEdgeIds") or [])
-        if not selected <= declared: raise ValueError("selected conditional edge is not declared by control node")
-        for edge in self.edges:
-            if edge.edge_id in declared: edge.activation = RuntimeNodeActivation.ACTIVE if edge.edge_id in selected else RuntimeNodeActivation.TERMINATED
-        control.status = RuntimeNodeStatus.COMPLETED; control.updated_at = _utc_now()
+    async def run(self, state: ACGExecutionState, execute: NodeRunner) -> ACGExecutionState:
+        """执行至完成或审核中断；调用方应持久化每个流事件对应的状态。"""
+        async for _ in self.astream(state, execute):
+            pass
+        return state
 
-    def has_waiting_review(self) -> bool:
-        """判断是否存在等待人工审核的节点，不改变节点状态。"""
-        return any(node.status == RuntimeNodeStatus.WAITING_REVIEW for node in self.nodes)
+    async def resume(self, state: ACGExecutionState, command: Any, execute: NodeRunner) -> ACGExecutionState:
+        """消费同 runId 的审核恢复命令，并从已持久化的状态继续而不重跑审核步骤。"""
+        command_run_id = getattr(command, "run_id", None)
+        if command_run_id != state.run_id:
+            raise ValueError("resume command runId does not match execution state")
+        if state.review_payload is None:
+            raise ValueError("execution state is not waiting for review")
+        state.review_payload = None
+        return await self.run(state, execute)
 
-    def has_runnable_nodes(self) -> bool:
-        """根据当前依赖与激活状态判断是否有可执行步骤。"""
-        return bool(self.ready_set())
+    async def astream_after_resume(self, state: ACGExecutionState, command: Any, execute: NodeRunner):
+        """消费恢复命令后继续产生事件流，避免 Runtime 需要绕过图的审核语义。"""
+        command_run_id = getattr(command, "run_id", None)
+        if command_run_id != state.run_id:
+            raise ValueError("resume command runId does not match execution state")
+        if state.review_payload is None:
+            raise ValueError("execution state is not waiting for review")
+        state.review_payload = None
+        async for event in self.astream(state, execute):
+            yield event
 
-    def has_running_nodes(self) -> bool:
-        """判断是否仍有状态为 ``RUNNING`` 的节点。"""
-        return any(node.status == RuntimeNodeStatus.RUNNING for node in self.nodes)
-    def all_steps_completed(self) -> bool:
-        """仅当存在步骤且全部完成或被条件跳过时返回真。"""
-        steps = [node for node in self.nodes if node.node_type == "step"]
-        return bool(steps) and all(node.status in {RuntimeNodeStatus.COMPLETED, RuntimeNodeStatus.SKIPPED_BY_CONDITION} for node in steps)
-    def is_terminal(self) -> bool:
-        """判断所有步骤是否处于不可继续执行的终态。"""
-        return bool(self.nodes) and all(node.status in {RuntimeNodeStatus.COMPLETED, RuntimeNodeStatus.FAILED, RuntimeNodeStatus.CANCELLED, RuntimeNodeStatus.SKIPPED_BY_CONDITION} for node in self.nodes if node.node_type == "step")
-    def branch_decision_for(self, control_node_id: str) -> Any | None:
-        """返回控制节点的首个已记录分支决策；没有记录时返回 ``None``。"""
-        return next((item for item in self.branch_decisions if getattr(item, "control_node_id", None) == control_node_id), None)
-    def patch_record_by_id(self, patch_id: str) -> AppliedPatchRecord | None:
-        """按补丁标识查找持久化记录，未命中时返回 ``None``。"""
-        return next((item for item in self.applied_patches if item.patch_id == patch_id), None)
+    async def astream(self, state: ACGExecutionState, execute: NodeRunner):
+        """产生 AgentOS 事件字典，供 runtime/auditor 投影为既有 TraceEvent。"""
+        route_values: dict[str, dict[str, Any]] = {}
+        self._advance_controls(state, route_values)
+        while len(set(state.completed_step_ids) | set(state.skipped_step_ids)) < len(self.nodes):
+            ready = self.ready_steps(state)
+            if not ready:
+                raise RuntimeError("execution graph has no schedulable step nodes")
+            yield {"type": "nodes_scheduled", "stepIds": list(ready)}
+            state.active_step_ids = list(ready)
+            state.current_step_id = ready[0] if len(ready) == 1 else None
+            results = await asyncio.gather(*(execute(step_id, state) for step_id in ready))
+            for step_id, result in zip(ready, results):
+                # 严重风险由审计器给出 deny。此时节点结果不能进入 State，也不能产生
+                # outputRef、memoryRef 或下游调度条件；Runtime 会将该异常收敛为失败。
+                if result.get("auditOutcome") == "deny":
+                    raise RuntimeError(
+                        f"execution denied at {step_id}: {result.get('auditDecisionRef') or 'policy decision'}"
+                    )
+                if isinstance(result.get("routeValue"), dict):
+                    route_values[step_id] = dict(result["routeValue"])
+                if result.get("outputSummary") is not None:
+                    state.output_summaries[step_id] = str(result["outputSummary"])
+                if result.get("outputRef") is not None:
+                    state.output_refs[step_id] = str(result["outputRef"])
+                for key, destination in (("contextRef", state.context_refs), ("memoryRef", state.memory_refs), ("traceRef", state.trace_refs)):
+                    if result.get(key) is not None:
+                        destination[step_id] = str(result[key])
+                state.completed_step_ids.append(step_id)
+                yield {
+                    "type": "node_completed",
+                    "stepId": step_id,
+                    "outputSummary": state.output_summaries.get(step_id, ""),
+                    "modelInvocations": list(result.get("modelInvocations") or []),
+                    "toolCalls": list(result.get("toolCalls") or []),
+                }
+                if self.node_specs[step_id].review_required or result.get("reviewRequired"):
+                    review_payload = {
+                        "stepId": step_id,
+                        "traceRef": state.trace_refs.get(step_id),
+                    }
+                    if result.get("auditDecisionRef") is not None:
+                        review_payload["auditDecisionRef"] = str(result["auditDecisionRef"])
+                    state.review_payload = review_payload
+                    from components.recovery.checkpoint import ExecutionInterrupt
 
-    def patch_record_by_idempotency_key(self, key: str) -> AppliedPatchRecord | None:
-        """按幂等键查找补丁记录，供重复请求安全重放。"""
-        return next((item for item in self.applied_patches if item.idempotency_key == key), None)
+                    raise ExecutionInterrupt("execution requires review", state.review_payload)
+            state.active_step_ids = []
+            self._advance_controls(state, route_values)
+        state.current_step_id = None
 
-    def runtime_event_by_id(self, event_id: str) -> RuntimeEvent | None:
-        """按事件标识返回运行时事件，未命中时返回 ``None``。"""
-        return next((item for item in self.runtime_events if item.event_id == event_id), None)
-
-    @staticmethod
-    def recipe_scope(recipe_id: str, target_node_id: str) -> str:
-        """生成配方和目标节点组合的稳定作用域键，不读取或修改图。"""
-        return f"{recipe_id}::{target_node_id}"
-
-    def enrich_bindings(self, *, agent_registry: Any | None, domain: str) -> None:
-        """只保留蓝图中的绑定；候选绑定由 scheduler 以资源合同独立决定。"""
-        del agent_registry, domain
-        for node in self.nodes:
-            if node.node_type == "step" and node.current_binding is None:
-                node.current_binding = {"assignedAgentId": node.spec.get("assignedAgentId"), "agentName": node.spec.get("agentName"), "capability": node.spec.get("capability")}
-
-    def structure_hash(self) -> str:
-        """序列化有效结构并返回稳定哈希，时间复杂度为图序列化大小 O(V+E)。"""
-        return _canonical_hash({"graphId": self.graph_id, "graphVersion": self.graph_version,
-                                "nodes": [node.spec for node in self.nodes],
-                                "edges": [edge.model_dump(by_alias=True, mode="json") for edge in self.edges],
-                                "appliedPatchIds": self.applied_patch_ids})
+    def _validate_acyclic(self) -> None:
+        """在图构造时拒绝依赖环，避免运行期出现没有 ready 节点的死锁。"""
+        remaining = set(self.nodes)
+        predecessors = {node: {source for source, target in self.edges if target == node} for node in self.nodes}
+        while remaining:
+            roots = {node for node in remaining if not (predecessors[node] & remaining)}
+            if not roots:
+                raise ValueError("execution graph contains a cycle")
+            remaining -= roots
 
 
-def ready_set(dependencies: dict[str, set[str]], completed: set[str]) -> list[str]:
-    """兼容简单依赖映射的纯就绪集算法，输出稳定。"""
-    return sorted(node for node, required in dependencies.items() if node not in completed and required <= completed)
-
-
-__all__ = ["AppliedPatchRecord", "RuntimeAttempt", "RuntimeEdge", "RuntimeEvent", "RuntimeEventStatus", "RuntimeEventType", "RuntimeGraph", "RuntimeNode", "RuntimeNodeActivation", "RuntimeNodeStatus", "RuntimePatchBudget", "ready_set"]
+__all__ = ["ACGChannelError", "ACGConditionalRoute", "ACGExecutionGraph", "ACGExecutionState", "ACGLastValueChannel", "ACGNodeSpec", "ACGStateChannel"]

@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import Any
 
 from adapters.model_adapter import StructuredGenerationError
-from support.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
+from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from contracts.communication import (
     ContextContractError,
     apply_contract_defaults,

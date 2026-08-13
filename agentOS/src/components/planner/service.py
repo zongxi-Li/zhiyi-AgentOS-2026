@@ -17,7 +17,7 @@ import random
 import secrets
 from typing import Any, Dict, Optional
 
-from support.agents import AgentRegistry
+from service.agents import AgentRegistry
 from support.acg.models import ACGBlueprint, promote_workflow_to_acg
 from .acg_builder import ACGBuilder
 from support.acg.models import CapabilityCatalog

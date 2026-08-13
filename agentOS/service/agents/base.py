@@ -1,20 +1,18 @@
-"""AgentOS Core 的智能体基础接口，定义 AgentProfile、AgentOutput、运行上下文和 BaseAgent。"""
-
+"""Agent 运行服务的基础模型与调用接口。"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional
+
 from pydantic import BaseModel, ConfigDict, Field
+
 from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
 
 
 class AgentProfile(BaseModel):
-    """运行时配套的智能体注册描述，而非跨部件业务实现。
+    """Agent 的注册描述，定义领域、能力、权限与插件来源。"""
 
-    名称、领域和能力决定解析候选；允许的技能/工具及风险级别限定调用边界，插件来源字段
-    将实例绑定到安装包贡献版本。
-    """
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     agent_name: str = Field(alias="agentName")
@@ -35,11 +33,8 @@ class AgentProfile(BaseModel):
 
 
 class AgentOutput(BaseModel):
-    """智能体一次调用的可序列化输出。
+    """Agent 的结构化调用结果；运行时仅将其受控字段写入执行值仓库。"""
 
-    ``output`` 为主结果，摘要、风险、来源、工具执行、证据和模型调用记录为审计辅助信息；
-    模型允许未知字段以兼容插件演进。
-    """
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     output: Dict[str, Any] = Field(default_factory=dict)
@@ -48,17 +43,12 @@ class AgentOutput(BaseModel):
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     tool_executions: List[Dict[str, Any]] = Field(default_factory=list, alias="toolExecutions")
     evidence_refs: List[str] = Field(default_factory=list, alias="evidenceRefs")
-    model_invocations: List[Dict[str, Any]] = Field(
-        default_factory=list, alias="modelInvocations"
-    )
+    model_invocations: List[Dict[str, Any]] = Field(default_factory=list, alias="modelInvocations")
 
 
 class AgentRunContext(BaseModel):
-    """传给智能体的单步运行上下文。
+    """单个 ACG 节点传给 Agent 的受控上下文。"""
 
-    任务、运行、工作流和步骤是本次调用的事实快照；内存及工具/模型运行时为注入依赖，
-    调用方负责其生命周期与并发安全。
-    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     task: AgentTask
@@ -69,22 +59,20 @@ class AgentRunContext(BaseModel):
     context_pack: Optional[Any] = Field(default=None, alias="contextPack")
     tool_runtime: Optional[Any] = Field(default=None, alias="toolRuntime")
     model_runtime: Optional[Any] = Field(default=None, alias="modelRuntime")
-    capability_descriptor: Optional[Any] = Field(
-        default=None, alias="capabilityDescriptor"
-    )
+    capability_descriptor: Optional[Any] = Field(default=None, alias="capabilityDescriptor")
 
 
 class BaseAgent(ABC):
-    """所有应用层 Pack 智能体的统一接口。"""
+    """应用层 Agent 的统一异步接口。"""
 
     def __init__(self, profile: AgentProfile):
         self.profile = profile
 
     @abstractmethod
     async def run(self, context: AgentRunContext) -> AgentOutput:
-        """执行当前步骤并返回结构化输出；实现应只通过 ``context`` 的注入依赖产生副作用。"""
+        """执行一个已经完成合同装配的节点，并返回结构化产物。"""
         raise NotImplementedError
 
     async def review(self, context: AgentRunContext) -> AgentOutput:
-        """审核步骤输出；默认复用 ``run``，专用智能体可覆盖为无副作用的审核逻辑。"""
+        """默认审核行为复用正常执行；专用审核 Agent 可以覆盖。"""
         return await self.run(context)

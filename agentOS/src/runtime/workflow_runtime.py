@@ -9,22 +9,37 @@ import logging
 import os
 import secrets
 from time import monotonic
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
-from support.agents import AgentRegistry
+from service.agents import AgentRegistry
 from support.acg.models import (
     ACGBlueprint,
     promote_workflow_to_acg,
 )
-from components.executor import ACGWorkflowAdapter, ExecutionAdapterFactory, refresh_run_execution_projection
-from components.auditor.governance.checkpoint import CheckpointStore, checkpoint_trace_payload
 from components.auditor.governance.evaluation import WorkflowEvaluator
-from components.executor.service import Orchestrator
 from components.task_manager.store import WorkflowRegistry
 from components.auditor.governance.review import ReviewManager
 from components.task_manager.state_machine import StateMachine
 from components.task_manager.service import TaskManager
 from components.auditor.governance.trace import TraceStore
+from components.communicator import CommunicatorService
+from components.executor import (
+    ACGExecutionState,
+    ACGGraphCompiler,
+    ACGNodeRunner,
+    ExecutionValueStore,
+    SQLiteExecutionValueStore,
+)
+from components.memory import MemoryService
+from components.memory.store import SQLiteMemoryStore
+from components.recovery.checkpoint import (
+    ACGCheckpointStore,
+    ExecutionInterrupt,
+    ExecutionResumeCommand,
+)
+from adapters.agent_invocation import AgentInvocationAdapter
+from adapters.audited_tool_runtime import AuditedToolRuntime
+from adapters.tool_adapter import configured_tool_runtime
 from contracts.workflow import (
     AgentTask,
     Checkpoint,
@@ -42,18 +57,8 @@ from contracts.workflow import (
     utc_now,
 )
 from contracts.execution import WorkflowProgressPhase
-from components.recovery.runtime_recovery.controller import RuntimeController
-from components.recovery.runtime_recovery.errors import RuntimeGraphError
-from components.recovery.runtime_recovery.events import RuntimeEventClassifier
-from components.recovery.runtime_recovery.policy import RuntimeEventPolicy
-from components.recovery.runtime_recovery.proposal import (
-    CandidateResolver,
-    DeterministicProposalFactory,
-    RuntimeGraphPatchCompiler,
-)
-from components.recovery.runtime_recovery.recipes import RecoveryRecipeRegistry
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
-from components.executor.graph import RuntimeGraph
+from runtime.execution_migration import ExecutionEngineMigratingError
 from support.acg.models import build_default_capability_catalog
 from support.acg.models import CapabilityCatalog
 from components.planner.algorithms import (
@@ -90,6 +95,7 @@ _LIFECYCLE_MESSAGES = {
 }
 
 _ERROR_UNSET = object()
+ExecutionAdapterFactory = Callable[..., object]
 
 
 class ReviewConflictError(ValueError):
@@ -106,13 +112,16 @@ class WorkflowRuntime:
         workflow_registry: Optional[WorkflowRegistry] = None,
         workflow_store: Optional[WorkflowStore] = None,
         trace_store: Optional[TraceStore] = None,
-        checkpoint_store: Optional[CheckpointStore] = None,
+        checkpoint_store: Optional[object] = None,
+        execution_value_store: ExecutionValueStore | None = None,
+        memory_store: object | None = None,
+        tool_runtime: object | None = None,
         review_manager: Optional[ReviewManager] = None,
         evaluator: Optional[WorkflowEvaluator] = None,
         task_manager: Optional[TaskManager] = None,
         execution_adapter_factories: Optional[Mapping[str, ExecutionAdapterFactory]] = None,
         run_lock_manager: Optional[RunLockManager] = None,
-        recovery_recipe_registry: Optional[RecoveryRecipeRegistry] = None,
+        recovery_recipe_registry: Optional[object] = None,
         capability_catalog: CapabilityCatalog | None = None,
         plugin_manifests: tuple = (),
     ):
@@ -122,11 +131,20 @@ class WorkflowRuntime:
         self.plugin_manifests = tuple(plugin_manifests)
         self.workflow_store = workflow_store or MemoryWorkflowStore()
         self.trace_store = trace_store or TraceStore()
-        self.checkpoint_store = checkpoint_store or CheckpointStore()
+        # 融合 ACG 使用独立 SQLite 检查点与正文引用仓库。检查点只保存 State 引用；
+        # 输出和 ContextPack 正文保存在另一文件，进程重启后仍可安全地继续审核流程。
+        self.checkpoint_store = checkpoint_store or ACGCheckpointStore()
+        self.execution_value_store = execution_value_store or SQLiteExecutionValueStore(
+            db_path=os.getenv("AGENTOS_EXECUTION_VALUE_DB", "data/execution_values.sqlite3")
+        )
+        self.memory_store = memory_store or SQLiteMemoryStore(
+            db_path=os.getenv("AGENTOS_EXECUTION_MEMORY_DB", "data/execution_memory.sqlite3")
+        )
+        self.tool_runtime = tool_runtime
         self.review_manager = review_manager or ReviewManager(self.trace_store)
         self.evaluator = evaluator or WorkflowEvaluator()
         self.state_machine = StateMachine()
-        self.orchestrator = Orchestrator(self.agent_registry, self.capability_catalog)
+        self._model_runtime = None
         self.task_manager = task_manager or TaskManager(
             workflow_store=self.workflow_store,
             workflow_registry=self.workflow_registry,
@@ -134,21 +152,7 @@ class WorkflowRuntime:
             trace_store=self.trace_store,
         )
         self.run_lock_manager = run_lock_manager or GLOBAL_RUN_LOCK_MANAGER
-        self.runtime_controller = RuntimeController(
-            workflow_store=self.workflow_store,
-            agent_registry=self.agent_registry,
-            checkpoint_store=self.checkpoint_store,
-            trace_store=self.trace_store,
-            lock_manager=self.run_lock_manager,
-        )
-        self.recovery_recipe_registry = (
-            recovery_recipe_registry or RecoveryRecipeRegistry.with_defaults()
-        )
-        self.runtime_event_classifier = RuntimeEventClassifier()
-        self.runtime_event_policy = RuntimeEventPolicy(self.recovery_recipe_registry)
-        self.candidate_resolver = CandidateResolver(self.agent_registry)
-        self.proposal_factory = DeterministicProposalFactory()
-        self.patch_compiler = RuntimeGraphPatchCompiler()
+        self.recovery_recipe_registry = recovery_recipe_registry
         self._runtime_adapters: dict[str, object] = {}
         self.execution_adapter_factories: dict[str, ExecutionAdapterFactory] = {
             self._normalize_runtime_engine(engine): factory
@@ -177,7 +181,7 @@ class WorkflowRuntime:
     def set_model_runtime(self, model_runtime) -> None:
         """将应用层拥有的结构化模型运行时注入 ACG Agent；只替换引用，不创建连接。"""
 
-        self.orchestrator.set_model_runtime(model_runtime)
+        self._model_runtime = model_runtime
 
     @property
     def planning_engine(self):
@@ -330,6 +334,7 @@ class WorkflowRuntime:
             executionScope=scope,
             legacyPluginScope=False,
             executionState={
+                **({"engineMigration": "langgraph_pending"} if is_acg else {}),
                 "pluginScopeResolution": (
                     "legacy_compatibility" if requested_plugins is None else "explicit"
                 ),
@@ -342,6 +347,22 @@ class WorkflowRuntime:
                 "plannerAlgorithmVersion": PLANNER_ALGORITHM_VERSION,
             },
         )
+        if is_acg:
+            blueprint = self._build_acg_blueprint(task, run, workflow)
+            self._validate_blueprint_agents(
+                blueprint,
+                domain=workflow.domain or task.domain,
+                scope=scope,
+            )
+            self._sync_run_steps_to_acg(run, blueprint)
+            run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
+            run.execution_state.update(
+                {
+                    "workflowVersion": workflow.version,
+                    "graphId": blueprint.graph_id,
+                    "sourceBlueprintVersion": blueprint.version,
+                }
+            )
         self.trace_store.append(
             run=run,
             event_type=TraceEventType.TASK_STATUS_CHANGED,
@@ -378,6 +399,8 @@ class WorkflowRuntime:
         """执行已持久化运行并保持终态不回退；插件范围失效时安全标记失败后继续抛错。"""
 
         run = self.workflow_store.get_run(run_id)
+        if self._normalize_runtime_engine(run.runtime_engine) == "acg":
+            return await self._execute_acg(run)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
 
@@ -401,31 +424,8 @@ class WorkflowRuntime:
         )
         try:
             self.task_manager.mark_running(task)
-            logger.info(
-                "run_execution_started",
-                extra={
-                    "taskId": task.task_id,
-                    "runId": run.run_id,
-                    "workflowId": workflow.workflow_id,
-                    "phase": run.lifecycle_phase.value,
-                },
-            )
             adapter = self._workflow_adapter(workflow)
-            result = await adapter.start(task=task, run=run, workflow=workflow)
-            persisted = self.workflow_store.get_run(result.run_id)
-            if persisted.status in _TERMINAL_RUN_STATUSES and persisted.status != result.status:
-                result = persisted
-            logger.info(
-                "run_execution_completed",
-                extra={
-                    "taskId": task.task_id,
-                    "runId": result.run_id,
-                    "workflowId": workflow.workflow_id,
-                    "phase": result.lifecycle_phase.value if result.lifecycle_phase else None,
-                    "elapsedMs": int((monotonic() - started) * 1000),
-                },
-            )
-            return result
+            return await adapter.start(task=task, run=run, workflow=workflow)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -436,81 +436,242 @@ class WorkflowRuntime:
             )
             logger.exception(
                 "run_execution_failed",
-                extra={
-                    "taskId": task.task_id,
-                    "runId": run.run_id,
-                    "workflowId": workflow.workflow_id,
-                    "phase": WorkflowProgressPhase.FAILED.value,
-                    "elapsedMs": int((monotonic() - started) * 1000),
-                    "errorType": type(exc).__name__,
-                },
+                extra={"taskId": run.task_id, "runId": run.run_id, "elapsedMs": int((monotonic() - started) * 1000)},
             )
             raise
 
-    async def _start_acg(
+    async def _execute_acg(
         self,
-        *,
-        task: AgentTask,
         run: WorkflowRun,
-        workflow: WorkflowDefinition,
-        executor,
+        *,
+        state: ACGExecutionState | None = None,
+        command: ExecutionResumeCommand | None = None,
     ) -> WorkflowRun:
-        """ACG 执行路径入口：构建蓝图并交给就绪集调度执行器。"""
-        self.trace_store.append(
-            run=run,
-            event_type=TraceEventType.TASK_CREATED,
-            observation=f"Task created: {task.title}",
-            payload=task.model_dump(by_alias=True, mode="json"),
-        )
-        planning_started = monotonic()
-        logger.info(
-            "run_planning_started",
-            extra={"taskId": task.task_id, "runId": run.run_id, "workflowId": workflow.workflow_id},
-        )
-        blueprint = await asyncio.to_thread(self._build_acg_blueprint, task, run, workflow)
-        run = self._set_run_lifecycle(
-            run,
-            phase=WorkflowProgressPhase.GRAPH_BUILDING,
-            message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.GRAPH_BUILDING],
-        )
+        """执行或续跑融合 ACG，并把图状态投影为既有运行合同。
+
+        图、值仓库和检查点均只传递引用型状态。此方法是 Runtime 唯一的 ACG 接线点：
+        通信、记忆、审计、Agent 适配由 ``ACGNodeRunner`` 组合，WorkflowRun 只保存
+        生命周期、步骤状态、摘要和引用，绝不写入 Agent 的完整输出正文。
+        """
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
-        logger.info(
-            "run_planning_completed",
-            extra={
-                "taskId": task.task_id,
-                "runId": run.run_id,
-                "workflowId": workflow.workflow_id,
-                "phase": run.lifecycle_phase.value,
-                "elapsedMs": int((monotonic() - planning_started) * 1000),
-            },
+        task = self.task_manager.get_task(run.task_id)
+        workflow = self._workflow_for_run(run)
+        blueprint_data = run.acg_blueprint
+        if not isinstance(blueprint_data, dict):
+            raise ExecutionEngineMigratingError(run.run_id)
+        blueprint = ACGBlueprint.model_validate(blueprint_data)
+        graph = ACGGraphCompiler().compile(blueprint)
+        execution_state = state or ACGExecutionState(
+            runId=run.run_id,
+            graphId=blueprint.graph_id,
         )
-        self._validate_blueprint_agents(
-            blueprint,
-            domain=workflow.domain or task.domain,
-            scope=run.execution_scope,
+        if execution_state.run_id != run.run_id:
+            raise ValueError("execution state runId does not match workflow run")
+        self._validate_acg_resume_identity(
+            run=run,
+            workflow=workflow,
+            blueprint=blueprint,
+            state=execution_state,
         )
-        run.execution_state["workflowVersion"] = workflow.version
+        runner = self._build_acg_runner(task=task, run=run, workflow=workflow, graph=graph)
+        run.execution_state["engineMigration"] = "langgraph_fused_v1"
         run.execution_state["graphId"] = blueprint.graph_id
-        run.execution_state["sourceBlueprintVersion"] = blueprint.version
-        run.execution_state["graphVersion"] = 1
-        thinking_mode = str(run.input.get("thinkingMode") or "").strip()
-        if thinking_mode:
-            run.execution_state["thinkingMode"] = thinking_mode
-        self._sync_run_steps_to_acg(run, blueprint)
-        run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
-        run.updated_at = utc_now()
-        self.workflow_store.save_run(run)
-        await self.runtime_controller.initialize_from_blueprint(run.run_id, blueprint)
-        run = self.workflow_store.get_run(run.run_id)
         run = self._set_run_lifecycle(
             run,
+            status=WorkflowStatus.RUNNING,
             phase=WorkflowProgressPhase.EXECUTING,
             message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.EXECUTING],
+            set_started_at=True,
         )
-        if run.status in _TERMINAL_RUN_STATUSES:
+        self.task_manager.mark_running(task)
+        try:
+            stream = (
+                graph.astream(execution_state, runner)
+                if command is None
+                else graph.astream_after_resume(execution_state, command, runner)
+            )
+            async for event in stream:
+                self._project_acg_event(run, execution_state, event)
+            self._persist_acg_state(run, execution_state)
+            run.output = self._acg_output(execution_state)
+            run = self._set_run_lifecycle(
+                run,
+                status=WorkflowStatus.COMPLETED,
+                phase=WorkflowProgressPhase.COMPLETED,
+                message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.COMPLETED],
+            )
+            self.task_manager.mark_completed(task)
+            self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
+            self.workflow_store.save_run(run)
             return run
-        return await executor.run(task=task, run=run, workflow=workflow, blueprint=blueprint)
+        except ExecutionInterrupt as interrupt:
+            self._persist_acg_state(run, execution_state)
+            checkpoint_id = self.checkpoint_store.save(
+                run_id=run.run_id,
+                state=execution_state.model_dump(by_alias=True, mode="json"),
+            )
+            execution_state.checkpoint_id = checkpoint_id
+            self._persist_acg_state(run, execution_state)
+            review_step_id = str(interrupt.payload.get("stepId") or execution_state.current_step_id or "")
+            if review_step_id:
+                step = run.get_step(review_step_id)
+                step.status = StepStatus.WAITING_REVIEW
+                run.current_step_id = review_step_id
+            self.trace_store.append_execution_event(run, {"type": "interrupted", **interrupt.payload})
+            self.trace_store.append_execution_event(run, {"type": "checkpoint_created", "checkpointId": checkpoint_id})
+            run = self._set_run_lifecycle(
+                run,
+                status=WorkflowStatus.WAITING_REVIEW,
+                phase=WorkflowProgressPhase.REVIEW,
+                message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.REVIEW],
+            )
+            self.task_manager.mark_waiting_review(task)
+            self.workflow_store.save_run(run)
+            return run
+        except Exception as exc:
+            await self.fail_run_safely(
+                run.run_id,
+                error_code="acg_execution_failed",
+                error_message=self._safe_error_message(exc),
+            )
+            raise
+
+    @staticmethod
+    def _validate_acg_resume_identity(
+        *,
+        run: WorkflowRun,
+        workflow: WorkflowDefinition,
+        blueprint: ACGBlueprint,
+        state: ACGExecutionState,
+    ) -> None:
+        """恢复前校验运行、蓝图、工作流和 checkpoint 的版本身份。"""
+        expected_graph_id = str(run.execution_state.get("graphId") or blueprint.graph_id)
+        if state.graph_id != expected_graph_id:
+            raise ValueError(
+                f"checkpoint graphId {state.graph_id!r} does not match run graphId {expected_graph_id!r}"
+            )
+        source_blueprint_version = run.execution_state.get("sourceBlueprintVersion")
+        if source_blueprint_version is not None and int(blueprint.version) != int(source_blueprint_version):
+            raise ValueError(
+                "checkpoint sourceBlueprintVersion does not match persisted blueprint version"
+            )
+        workflow_version = run.execution_state.get("workflowVersion")
+        if workflow_version is not None and str(workflow.version) != str(workflow_version):
+            raise ValueError("checkpoint workflowVersion does not match persisted workflow version")
+
+    def _build_acg_runner(self, *, task: AgentTask, run: WorkflowRun, workflow: WorkflowDefinition, graph) -> ACGNodeRunner:
+        """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
+        steps = {step.step_id: step for step in run.steps}
+        allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
+        agents = {
+            step_id: self.agent_registry.resolve(
+                workflow.domain,
+                agent_name=step.agent_name,
+                capability=step.capability,
+                allowed_agent_ids=allowed_agent_ids,
+            )
+            for step_id, step in steps.items()
+        }
+        upstream_step_ids = {
+            node_id: tuple(source for source, target in graph.edges if target == node_id)
+            for node_id in steps
+        }
+        allowed_tools = {
+            tool_name
+            for agent in agents.values()
+            for tool_name in agent.profile.allowed_tools
+        }
+        delegate = self.tool_runtime or configured_tool_runtime()
+        scoped_tools = (
+            AuditedToolRuntime(delegate=delegate, allowed_tools=allowed_tools)
+            if delegate is not None
+            else None
+        )
+        return ACGNodeRunner(
+            task=task,
+            run=run,
+            workflow=workflow,
+            steps=steps,
+            agents=agents,
+            communicator=CommunicatorService(run_id=run.run_id, task_id=task.task_id),
+            memory=MemoryService(store=self.memory_store),
+            entropy_budget=(int(run.input["entropyBudget"]) if run.input.get("entropyBudget") is not None else None),
+            value_store=self.execution_value_store,
+            communication_modes={node_id: spec.communication_mode for node_id, spec in graph.node_specs.items() if spec.kind == "step"},
+            upstream_step_ids=upstream_step_ids,
+            model_runtime=self._model_runtime,
+            capability_descriptors={
+                step.capability: self.capability_catalog.get(step.capability)
+                for step in steps.values()
+                if step.capability
+            },
+            tool_runtime=scoped_tools,
+            agent_invoker=AgentInvocationAdapter(
+                registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
+            ),
+        )
+
+    def _project_acg_event(self, run: WorkflowRun, state: ACGExecutionState, event: dict) -> None:
+        """投影单个图事件与步骤状态；事件正文只含步骤标识、摘要或引用。"""
+        event_type = event.get("type")
+        if event_type == "nodes_scheduled":
+            for step_id in event.get("stepIds", []):
+                step = run.get_step(str(step_id))
+                step.status = StepStatus.RUNNING
+                step.started_at = step.started_at or utc_now()
+            run.active_step_ids = list(event.get("stepIds", []))
+        elif event_type == "node_completed":
+            step_id = str(event.get("stepId"))
+            step = run.get_step(step_id)
+            step.status = StepStatus.COMPLETED
+            step.completed_at = utc_now()
+            run.current_step_id = step_id
+            run.completed_step_ids = list(state.completed_step_ids)
+            run.active_step_ids = list(state.active_step_ids)
+        # 条件控制节点由图在超步边界内部推进，不会产生独立的节点事件。这里根据
+        # 已持久化的 skippedStepIds 补齐 WorkflowRun 的可见步骤状态，供查询、
+        # 审计和取消逻辑一致地区分“未执行”与“条件明确跳过”。
+        for step_id in state.skipped_step_ids:
+            step = run.get_step(step_id)
+            if step.status == StepStatus.PENDING:
+                step.status = StepStatus.SKIPPED_BY_CONDITION
+                step.completed_at = utc_now()
+        self.trace_store.append_execution_event(run, event)
+        for model_call in event.get("modelInvocations", []):
+            self.trace_store.append(
+                run,
+                TraceEventType.MODEL_CALLED,
+                step_id=event.get("stepId"),
+                observation="Model invocation metadata projected",
+                payload=dict(model_call),
+            )
+        for tool_call in event.get("toolCalls", []):
+            self.trace_store.append(
+                run,
+                TraceEventType.TOOL_CALLED,
+                step_id=event.get("stepId"),
+                observation="Tool invocation metadata projected",
+                payload=dict(tool_call),
+            )
+        self._persist_acg_state(run, state)
+
+    def _persist_acg_state(self, run: WorkflowRun, state: ACGExecutionState) -> None:
+        """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""
+        state_data = state.model_dump(by_alias=True, mode="json")
+        run.execution_state.update(state_data)
+        run.completed_step_ids = list(state.completed_step_ids)
+        run.active_step_ids = list(state.active_step_ids)
+        self.workflow_store.save_run(run)
+
+    @staticmethod
+    def _acg_output(state: ACGExecutionState) -> dict[str, str]:
+        """选择最后完成步骤的输出引用作为运行最终产物，不复制真实输出正文。"""
+        if not state.completed_step_ids:
+            return {}
+        final_step_id = state.completed_step_ids[-1]
+        output_ref = state.output_refs.get(final_step_id)
+        return {"outputRef": output_ref} if output_ref else {}
 
     def _validate_blueprint_agents(
         self,
@@ -664,58 +825,6 @@ class WorkflowRuntime:
         if run.current_step_id not in step_ids:
             run.current_step_id = synced[0].step_id if synced else None
 
-    async def _apply_acg_review(self, decision: ReviewDecision, *, executor) -> WorkflowRun:
-        if decision.decision == ReviewDecisionType.CANCELLED:
-            return self.cancel(decision.run_id)
-        should_resume = False
-        async with self.run_lock_manager.lock_for(decision.run_id):
-            latest = self.workflow_store.get_run(decision.run_id)
-            run = latest.model_copy(deep=True)
-            task = self.task_manager.get_task(run.task_id)
-            workflow = self._workflow_for_run(run)
-            graph = run.runtime_graph
-            if graph is None:
-                raise RuntimeGraphError("RUNTIME_GRAPH_MISSING", "review requires RuntimeGraph")
-            node = graph.get_node(decision.step_id)
-            if node.status != StepStatus.WAITING_REVIEW:
-                raise ReviewConflictError("runtime node is no longer waiting for review")
-            self.review_manager.record(run, decision)
-
-            if decision.decision == ReviewDecisionType.APPROVED:
-                self.runtime_controller.transition_node_state(node, StepStatus.COMPLETED)
-                if node.attempts:
-                    node.attempts[-1].status = StepStatus.COMPLETED
-                    node.attempts[-1].ended_at = utc_now()
-                self._transition_run(run, WorkflowStatus.RUNNING)
-                self.task_manager.mark_running(task)
-                should_resume = True
-            elif decision.decision == ReviewDecisionType.RERUN:
-                self.runtime_controller.transition_node_state(node, StepStatus.RETRYING)
-                self._transition_run(run, WorkflowStatus.RETRYING)
-                self.task_manager.mark_retrying(task)
-                should_resume = True
-            elif decision.decision == ReviewDecisionType.NEED_MORE_INFO:
-                run.error = decision.comment or "Reviewer requested more information."
-                self.task_manager.mark_waiting_review(task)
-            else:
-                self.runtime_controller.transition_node_state(node, StepStatus.FAILED)
-                self._transition_run(run, WorkflowStatus.FAILED)
-                run.error = decision.comment or "Review rejected workflow step."
-                self.task_manager.mark_failed(task)
-                self.trace_store.append(
-                    run=run, event_type=TraceEventType.RUN_FAILED,
-                    step_id=node.node_id, observation=run.error,
-                )
-            from executor import refresh_run_execution_projection
-
-            refresh_run_execution_projection(run)
-            self._create_checkpoint(run, run.get_step(decision.step_id))
-            self.workflow_store.save_run(run)
-        if not should_resume:
-            return run
-        blueprint = ACGBlueprint.model_validate(run.acg_blueprint) if run.acg_blueprint else promote_workflow_to_acg(workflow, task_id=task.task_id)
-        return await executor.resume(task=task, run=run, workflow=workflow, blueprint=blueprint)
-
     def _transition_run_if_needed(self, run: WorkflowRun, status: WorkflowStatus) -> None:
         if run.status != status:
             self._transition_run(run, status)
@@ -849,32 +958,9 @@ class WorkflowRuntime:
     ) -> None:
         """Close active nodes before a failed Run is validated and persisted."""
 
-        ended_at = utc_now()
         active_statuses = {StepStatus.RUNNING, StepStatus.RETRYING}
         current_step_id = run.current_step_id if include_current_pending else None
-        if run.runtime_graph is not None:
-            for node in run.runtime_graph.nodes:
-                should_fail_node = node.status in active_statuses or bool(
-                    current_step_id
-                    and node.node_id == current_step_id
-                    and node.status == StepStatus.PENDING
-                )
-                if should_fail_node:
-                    node.status = StepStatus.FAILED
-                    node.error = error_message
-                    node.updated_at = ended_at
-                if (
-                    node.status == StepStatus.FAILED
-                    and node.attempts
-                    and node.attempts[-1].status in active_statuses
-                ):
-                    attempt = node.attempts[-1]
-                    attempt.status = StepStatus.FAILED
-                    attempt.error = error_message
-                    attempt.ended_at = ended_at
-            refresh_run_execution_projection(run)
-            return
-
+        ended_at = utc_now()
         for step in run.steps:
             if step.status in active_statuses or (
                 current_step_id
@@ -924,24 +1010,12 @@ class WorkflowRuntime:
         waiting_ids = {
             step.step_id for step in run.steps if step.status == StepStatus.WAITING_REVIEW
         }
-        if run.runtime_graph is not None:
-            waiting_ids.update(
-                node.node_id
-                for node in run.runtime_graph.nodes
-                if node.status == StepStatus.WAITING_REVIEW
-            )
         if not waiting_ids and run.current_step_id:
             waiting_ids.add(run.current_step_id)
         for step in run.steps:
             if step.step_id in waiting_ids and step.status != StepStatus.WAITING_REVIEW:
                 step.status = StepStatus.WAITING_REVIEW
                 changed = True
-        if run.runtime_graph is not None:
-            for node in run.runtime_graph.nodes:
-                if node.node_id in waiting_ids and node.status != StepStatus.WAITING_REVIEW:
-                    node.status = StepStatus.WAITING_REVIEW
-                    node.updated_at = utc_now()
-                    changed = True
         if run.lifecycle_phase != WorkflowProgressPhase.REVIEW:
             run.lifecycle_phase = WorkflowProgressPhase.REVIEW
             changed = True
@@ -995,7 +1069,7 @@ class WorkflowRuntime:
 
     def list_checkpoints(self, run_id: str) -> list[Checkpoint]:
         """读取运行关联检查点列表，不改变运行或检查点状态。"""
-        return self.checkpoint_store.list(self.workflow_store.get_run(run_id))
+        return list(self.workflow_store.get_run(run_id).checkpoints)
 
     def list_reviews(self, run_id: str) -> list[ReviewRecord]:
         """读取运行审核记录列表，不执行审核决策或状态迁移。"""
@@ -1028,6 +1102,9 @@ class WorkflowRuntime:
 
     async def apply_review(self, decision: ReviewDecision) -> WorkflowRun:
         """在运行锁内校验并应用审核决定；过期、冲突或终态运行抛出 ``ReviewConflictError``。"""
+        initial_run = self.workflow_store.get_run(decision.run_id)
+        if self._normalize_runtime_engine(initial_run.runtime_engine) == "acg":
+            return await self._apply_acg_review(decision)
         async with self.run_lock_manager.lock_for(decision.run_id):
             run = self.workflow_store.get_run(decision.run_id)
             existing = self._find_review_operation(run, decision.operation_id)
@@ -1061,6 +1138,55 @@ class WorkflowRuntime:
         adapter = self._workflow_adapter(workflow)
         return await adapter.apply_review(decision)
 
+    async def _apply_acg_review(self, decision: ReviewDecision) -> WorkflowRun:
+        """校验审核决定并从同一 run 的 SQLite 检查点恢复融合 ACG。"""
+        async with self.run_lock_manager.lock_for(decision.run_id):
+            run = self.workflow_store.get_run(decision.run_id)
+            existing = self._find_review_operation(run, decision.operation_id)
+            if existing is not None:
+                if existing.get("stepId") == decision.step_id and existing.get("decision") == decision.decision.value:
+                    return run
+                raise ReviewConflictError("review operation id was already used for a different decision")
+            if run.status != WorkflowStatus.WAITING_REVIEW:
+                raise ReviewConflictError("workflow run is no longer waiting for review")
+            step = run.get_step(decision.step_id)
+            if step.status != StepStatus.WAITING_REVIEW:
+                raise ReviewConflictError("workflow step is no longer waiting for review")
+            checkpoint_id = str(run.execution_state.get("checkpointId") or "")
+            checkpoint_data = self.checkpoint_store.load(run_id=run.run_id, checkpoint_id=checkpoint_id)
+            if checkpoint_data is None:
+                raise ValueError("review checkpoint does not exist for this run")
+            if decision.decision is not ReviewDecisionType.APPROVED:
+                self._transition_step(step, StepStatus.FAILED)
+                run.error = {"code": "review_rejected", "message": decision.comment[:500]}
+                self.trace_store.append(
+                    run,
+                    TraceEventType.REVIEW_DECIDED,
+                    step_id=step.step_id,
+                    observation="ACG review rejected",
+                    payload={"decision": decision.decision.value, "operationId": decision.operation_id},
+                )
+                run = self._set_run_lifecycle(run, status=WorkflowStatus.FAILED, phase=WorkflowProgressPhase.FAILED)
+                self.task_manager.mark_failed(run.task_id)
+                self.workflow_store.save_run(run)
+                return run
+            self.trace_store.append(
+                run,
+                event_type=TraceEventType.REVIEW_DECIDED,
+                step_id=step.step_id,
+                observation="ACG review approved",
+                payload={"decision": decision.decision.value, "operationId": decision.operation_id},
+            )
+            restored = ACGExecutionState.model_validate(checkpoint_data)
+        return await self._execute_acg(
+            run,
+            state=restored,
+            command=ExecutionResumeCommand(
+                runId=run.run_id,
+                payload={"decision": decision.decision.value, "operationId": decision.operation_id},
+            ),
+        )
+
     @staticmethod
     def _find_review_operation(run: WorkflowRun, operation_id: str | None) -> dict | None:
         if not operation_id:
@@ -1075,117 +1201,18 @@ class WorkflowRuntime:
 
     async def resume_from_checkpoint(self, *, run_id: str, checkpoint_id: str) -> WorkflowRun:
         """从同版本检查点恢复 ACG 运行；范围、图或工作流版本不匹配时明确拒绝。"""
-        # Explicitly initialize legacy ACG runs before comparing checkpoint graph
-        # versions.  No checkpoint field is copied into the run before this check.
         initial_run = self.workflow_store.get_run(run_id)
-        initial_workflow = self._workflow_for_run(initial_run)
-        if initial_run.runtime_engine != "acg" or initial_workflow.effective_runtime_engine != "acg":
-            raise ValueError("Only acg workflow runs can be resumed from checkpoints")
-        await self.runtime_controller.load(run_id)
-        async with self.run_lock_manager.lock_for(run_id):
-            run = self.workflow_store.get_run(run_id)
-            task = self.task_manager.get_task(run.task_id)
-            workflow = self._workflow_for_run(run)
-            checkpoint = self.checkpoint_store.find(run, checkpoint_id)
-            snapshot = checkpoint.state_snapshot or {}
-            snapshot_scope = snapshot.get("executionScope")
-            if snapshot_scope is None:
-                raise PluginScopeError(
-                    "CHECKPOINT_PLUGIN_SNAPSHOT_MISSING",
-                    checkpoint.checkpoint_id,
-                )
-            restored_scope = RunExecutionScope.model_validate(snapshot_scope)
-            if run.execution_scope != restored_scope:
-                raise PluginScopeError(
-                    "CHECKPOINT_PLUGIN_SCOPE_CONFLICT",
-                    checkpoint.checkpoint_id,
-                )
-            self.plugin_scope_resolver.validate_snapshot(restored_scope)
-            snapshot_workflow_version = snapshot.get("workflowVersion")
-            if snapshot_workflow_version and snapshot_workflow_version != workflow.version:
-                raise ValueError(
-                    f"Checkpoint workflow version mismatch: {snapshot_workflow_version} != {workflow.version}"
-                )
-
-            current_graph = run.runtime_graph
-            assert current_graph is not None
-            raw_checkpoint_graph = snapshot.get("runtimeGraph")
-            if isinstance(raw_checkpoint_graph, dict):
-                checkpoint_graph = RuntimeGraph.model_validate(raw_checkpoint_graph)
-            else:
-                legacy_blueprint_data = snapshot.get("acgBlueprint") or run.acg_blueprint
-                if not legacy_blueprint_data:
-                    raise RuntimeGraphError(
-                        "CHECKPOINT_RUNTIME_GRAPH_MISSING",
-                        "legacy checkpoint has neither RuntimeGraph nor ACG blueprint",
-                    )
-                checkpoint_graph = RuntimeGraph.from_blueprint(
-                    run_id=run_id,
-                    blueprint=ACGBlueprint.model_validate(legacy_blueprint_data),
-                    agent_registry=self.agent_registry,
-                    domain=run.domain,
-                )
-            if checkpoint_graph.graph_id != current_graph.graph_id:
-                raise RuntimeGraphError(
-                    "CHECKPOINT_GRAPH_ID_CONFLICT",
-                    f"checkpoint {checkpoint_graph.graph_id} != current {current_graph.graph_id}",
-                )
-            if checkpoint_graph.graph_version != current_graph.graph_version:
-                relation = "older" if checkpoint_graph.graph_version < current_graph.graph_version else "newer"
-                raise RuntimeGraphError(
-                    "CHECKPOINT_GRAPH_VERSION_CONFLICT",
-                    f"checkpoint graphVersion {checkpoint_graph.graph_version} is {relation} than current "
-                    f"graphVersion {current_graph.graph_version}",
-                )
-
-            if "provenance" in snapshot:
-                run.provenance = snapshot["provenance"]
-            if isinstance(snapshot.get("executionState"), dict):
-                run.execution_state = dict(snapshot["executionState"])
-            run.runtime_graph = checkpoint_graph.model_copy(deep=True)
-            run.execution_state["graphId"] = checkpoint_graph.graph_id
-            run.execution_state["graphVersion"] = checkpoint_graph.graph_version
-            run.execution_state["sourceBlueprintVersion"] = checkpoint_graph.source_blueprint_version
-            if "output" in snapshot:
-                run.output = dict(snapshot["output"] or {})
-            blueprint = (
-                ACGBlueprint.model_validate(run.acg_blueprint)
-                if run.acg_blueprint
-                else promote_workflow_to_acg(workflow, task_id=task.task_id)
+        if self._normalize_runtime_engine(initial_run.runtime_engine) == "acg":
+            checkpoint_data = self.checkpoint_store.load(run_id=run_id, checkpoint_id=checkpoint_id)
+            if checkpoint_data is None:
+                raise ValueError("checkpoint does not exist for this run")
+            state = ACGExecutionState.model_validate(checkpoint_data)
+            return await self._execute_acg(
+                initial_run,
+                state=state,
+                command=ExecutionResumeCommand(runId=run_id),
             )
-
-            for node in run.runtime_graph.nodes:
-                if node.status in {StepStatus.RUNNING, StepStatus.FAILED}:
-                    if node.status == StepStatus.RUNNING and node.attempts:
-                        node.attempts[-1].status = StepStatus.FAILED
-                        node.attempts[-1].error = "interrupted by checkpoint recovery"
-                        node.attempts[-1].ended_at = utc_now()
-                    self.runtime_controller.transition_node_state(node, StepStatus.RETRYING)
-
-            from executor import refresh_run_execution_projection
-
-            refresh_run_execution_projection(run)
-
-            self._transition_run(run, WorkflowStatus.RETRYING)
-            run.error = None
-            run.recovery_count += 1
-            self.task_manager.mark_retrying(task)
-            self.trace_store.append(
-                run=run,
-                event_type=TraceEventType.RUN_RECOVERED,
-                step_id=checkpoint.step_id,
-                observation=f"Recovered from checkpoint: {checkpoint.checkpoint_id}",
-                payload=checkpoint_trace_payload(checkpoint),
-            )
-            self.workflow_store.save_run(run)
-        adapter = self._workflow_adapter(workflow)
-        assert isinstance(adapter, ACGWorkflowAdapter)
-        return await adapter.new_executor().resume(
-            task=task,
-            run=run,
-            workflow=workflow,
-            blueprint=blueprint,
-        )
+        raise ValueError("Checkpoint resume is only available for the ACG execution engine")
 
     def cancel(self, run_id: str) -> WorkflowRun:
         """在运行锁内取消可继续步骤并持久化终态；已终态的迁移规则由状态机校验。"""
@@ -1193,21 +1220,6 @@ class WorkflowRuntime:
             latest = self.workflow_store.get_run(run_id)
             run = latest.model_copy(deep=True)
             self._transition_run(run, WorkflowStatus.CANCELLED)
-            if run.runtime_graph is not None:
-                for node in run.runtime_graph.nodes:
-                    if node.status in {
-                        StepStatus.PENDING,
-                        StepStatus.RUNNING,
-                        StepStatus.RETRYING,
-                        StepStatus.WAITING_REVIEW,
-                    }:
-                        self.runtime_controller.transition_node_state(node, StepStatus.CANCELLED)
-                        if node.attempts and node.attempts[-1].status == StepStatus.RUNNING:
-                            node.attempts[-1].status = StepStatus.CANCELLED
-                            node.attempts[-1].ended_at = utc_now()
-                from executor import refresh_run_execution_projection
-
-                refresh_run_execution_projection(run)
             self.task_manager.mark_cancelled(run.task_id)
             self.trace_store.append(
                 run=run,
@@ -1269,7 +1281,7 @@ class WorkflowRuntime:
         adapter = self._runtime_adapters.get(adapter_key)
         if adapter is None:
             if runtime_engine == "acg":
-                adapter = ACGWorkflowAdapter(self)
+                raise ExecutionEngineMigratingError()
             else:
                 factory = self.execution_adapter_factories.get(runtime_engine)
                 if factory is None:
@@ -1358,43 +1370,6 @@ class WorkflowRuntime:
             step.started_at = step.started_at or utc_now()
         if status == StepStatus.COMPLETED:
             step.completed_at = step.completed_at or utc_now()
-
-    def _complete_run(self, task: AgentTask, run: WorkflowRun) -> None:
-        self._transition_run(run, WorkflowStatus.COMPLETED)
-        if run.status != WorkflowStatus.COMPLETED:
-            return
-        if run.recovery_count:
-            run.lifecycle_message = f"ACG 工作流执行完成（含 {run.recovery_count} 次降级恢复）"
-        run.current_step_id = None
-        run.output = self.orchestrator.compose_final_output(run)
-        self.task_manager.mark_completed(task)
-        self.trace_store.append(
-            run=run,
-            event_type=TraceEventType.RUN_COMPLETED,
-            observation="Workflow completed.",
-            payload=run.output,
-        )
-
-    def _create_checkpoint(
-        self,
-        run: WorkflowRun,
-        step: WorkflowStep,
-        *,
-        step_ids: list[str] | None = None,
-    ) -> Checkpoint:
-        checkpoint = self.checkpoint_store.create(
-            run,
-            step.step_id,
-            step_ids=step_ids,
-        )
-        self.trace_store.append(
-            run=run,
-            event_type=TraceEventType.CHECKPOINT_CREATED,
-            step_id=step.step_id,
-            observation=f"Checkpoint created: {checkpoint.checkpoint_id}",
-            payload=checkpoint_trace_payload(checkpoint),
-        )
-        return checkpoint
 
 
 def build_default_runtime() -> WorkflowRuntime:
