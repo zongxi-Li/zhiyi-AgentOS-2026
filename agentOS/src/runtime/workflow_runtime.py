@@ -33,6 +33,7 @@ from components.executor import (
 )
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
+from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
     ExecutionInterrupt,
@@ -124,11 +125,13 @@ class WorkflowRuntime:
         run_lock_manager: Optional[RunLockManager] = None,
         recovery_recipe_registry: Optional[object] = None,
         capability_catalog: CapabilityCatalog | None = None,
+        resource_directory: ResourceDirectory | None = None,
         plugin_manifests: tuple = (),
     ):
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
+        self.resource_directory = resource_directory or ResourceDirectory()
         self.plugin_manifests = tuple(plugin_manifests)
         self.workflow_store = workflow_store or MemoryWorkflowStore()
         self.trace_store = trace_store or TraceStore()
@@ -356,6 +359,11 @@ class WorkflowRuntime:
                 scope=scope,
             )
             self._sync_run_steps_to_acg(run, blueprint)
+            self._register_and_freeze_resources(
+                run=run,
+                workflow=workflow,
+                scope=scope,
+            )
             run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
             run.execution_state.update(
                 {
@@ -563,14 +571,15 @@ class WorkflowRuntime:
         """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
         steps = {step.step_id: step for step in run.steps}
         allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
+        bindings = run.execution_state.get("resourceBindings")
+        if not isinstance(bindings, dict):
+            raise ValueError("ACG run has no frozen resource bindings")
         agents = {
-            step_id: self.agent_registry.resolve(
-                workflow.domain,
-                agent_name=step.agent_name,
-                capability=step.capability,
+            step_id: self.agent_registry.resolve_by_id(
+                str(bindings[step_id]),
                 allowed_agent_ids=allowed_agent_ids,
             )
-            for step_id, step in steps.items()
+            for step_id in steps
         }
         upstream_step_ids = {
             node_id: tuple(source for source, target in graph.edges if target == node_id)
@@ -713,6 +722,30 @@ class WorkflowRuntime:
                 missing.append(step.agent_name or step.node_id)
         if missing:
             raise ValueError("ACG references unregistered Agents: " + ", ".join(sorted(set(missing))))
+
+    def _register_and_freeze_resources(
+        self,
+        *,
+        run: WorkflowRun,
+        workflow: WorkflowDefinition,
+        scope: RunExecutionScope,
+    ) -> None:
+        """登记当前可见 Agent，并将每个 ACG Step 选择结果冻结到运行状态。"""
+        for agent in self.agent_registry.all():
+            self.resource_directory.register_agent(agent.profile)
+        bindings: dict[str, str] = {}
+        for step in run.steps:
+            try:
+                selected = self.resource_directory.resolve_agent(
+                    domain=workflow.domain,
+                    agent_name=step.agent_name,
+                    capability=step.capability,
+                    allowed_agent_ids=scope.agent_ids,
+                )
+            except ResourceNotFoundError as exc:
+                raise ValueError(f"ACG step has no eligible resource: {step.step_id}") from exc
+            bindings[step.step_id] = selected.agent_id
+        run.execution_state["resourceBindings"] = bindings
 
     def _build_acg_blueprint(
         self,

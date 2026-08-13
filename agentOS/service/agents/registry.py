@@ -56,6 +56,22 @@ class AgentRegistry:
             f"agent not registered: domain={domain}, agentName={agent_name}, capability={capability}"
         )
 
+    def resolve_by_id(
+        self,
+        agent_id: str,
+        *,
+        allowed_agent_ids: Iterable[str] | None = None,
+    ) -> BaseAgent:
+        """按稳定 Agent 标识解析实例，并保持冻结 scope 的访问限制。"""
+        normalized_id = str(agent_id).strip()
+        allowed = set(allowed_agent_ids) if allowed_agent_ids is not None else None
+        if allowed is not None and normalized_id not in allowed:
+            raise AgentNotFound(f"agent is outside the execution scope: {normalized_id}")
+        for agent in self._agents.values():
+            if self.agent_id(agent) == normalized_id:
+                return agent
+        raise AgentNotFound(f"agent id is not registered: {normalized_id}")
+
     def all(self) -> Iterable[BaseAgent]:
         """按登记顺序返回当前 Agent 快照。"""
         return tuple(self._agents.values())
@@ -88,3 +104,7 @@ class ScopedAgentRegistry:
     def resolve(self, domain: str, agent_name: Optional[str] = None, capability: Optional[str] = None) -> BaseAgent:
         """仅从冻结范围内解析 Agent；越界候选与缺失候选都明确失败。"""
         return self._registry.resolve(domain, agent_name, capability, allowed_agent_ids=self._agent_ids)
+
+    def resolve_by_id(self, agent_id: str) -> BaseAgent:
+        """只按当前冻结 scope 内的稳定 Agent 标识解析实例。"""
+        return self._registry.resolve_by_id(agent_id, allowed_agent_ids=self._agent_ids)
