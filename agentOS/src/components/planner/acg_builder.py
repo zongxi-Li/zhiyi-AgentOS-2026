@@ -157,6 +157,18 @@ class ACGBuilder:
                     "producesArtifact": descriptor.produces_artifact,
                     "requiresEvidence": descriptor.requires_evidence,
                     "writesMemory": descriptor.writes_memory,
+                    # 能力目录只表达“是否值得沉淀”；这里将其降为固定的首期策略，
+                    # 供 Runtime 冻结到 WorkflowStep。使用上限指可注入 Agent 上下文
+                    # 的记忆条数与内容量，不是模型调用次数或费用额度。
+                    "memoryPolicy": {
+                        "policyId": f"capability:{descriptor.capability_id}:v1",
+                        "read": True,
+                        "write": descriptor.writes_memory,
+                        "allowedTypes": ["episodic"],
+                        "limit": 10,
+                        "tokenBudget": None,
+                        "requireAudit": descriptor.writes_memory,
+                    },
                     "routerScore": binding.score,
                 },
             )

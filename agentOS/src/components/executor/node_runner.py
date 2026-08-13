@@ -22,6 +22,7 @@ from components.memory import MemoryService
 from adapters.agent_invocation import AgentInvocationAdapter
 from contracts.communication import validate_contract_payload
 from contracts.governance import AuditRequest
+from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
 from service.agents.base import BaseAgent, AgentRunContext
 
@@ -136,11 +137,31 @@ class ACGNodeRunner:
             raise ValueError(f"input contract is incomplete for {step_id}: {', '.join(pack.missing_fields)}")
         input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
         validate_contract_payload(pack.data, input_schema, step_id=step_id, direction="input")
-        memories = self.memory.recall_for_step(
-            run_id=state.run_id,
-            step_id=step_id,
-            query=step.name or step_id,
+        memory_policy = self._memory_policy(step.input)
+        memories = (
+            self.memory.recall_for_step(
+                run_id=state.run_id,
+                step_id=step_id,
+                query=step.name or step_id,
+                memory_types=memory_policy["allowedTypes"] or None,
+                limit=memory_policy["limit"],
+                token_budget=memory_policy["tokenBudget"],
+            )
+            if memory_policy["read"]
+            else []
         )
+        memory_access = {
+            "policyId": memory_policy["policyId"],
+            "read": memory_policy["read"],
+            "readCount": len(memories),
+            "write": memory_policy["write"],
+            "written": False,
+            "allowedTypes": [item.value for item in memory_policy["allowedTypes"]],
+            "limit": memory_policy["limit"],
+            "tokenBudget": memory_policy["tokenBudget"],
+            "tokensUsed": sum(estimate_tokens(record.content) for record in memories),
+            "requireAudit": memory_policy["requireAudit"],
+        }
         # 每个 Step 创建独立的受限工具视图，使并行节点的事件缓冲区彼此隔离；
         # 视图只能继承既有授权集合，不能在节点内扩大权限。
         step_tool_runtime = self.tool_runtime
@@ -191,14 +212,22 @@ class ACGNodeRunner:
                 "auditDecisionRef": decision.decision_id,
                 "auditOutcome": decision.outcome,
                 "modelInvocations": self._safe_model_invocations(output.model_invocations),
+                "memoryAccess": memory_access,
             }
 
         self.communicator.record_production(step_id, controlled, agent_name=agent.profile.agent_name)
-        memory_record = self.memory.remember_step_output(
-            run_id=state.run_id,
-            step_id=step_id,
-            output=controlled,
+        write_policy = self._write_memory_policy(memory_policy)
+        memory_record = (
+            self.memory.remember_step_output(
+                run_id=state.run_id,
+                step_id=step_id,
+                output=controlled,
+                policy=write_policy,
+            )
+            if memory_policy["write"]
+            else None
         )
+        memory_access["written"] = memory_record is not None
         output_ref = self.value_store.put_output(
             run_id=state.run_id,
             step_id=step_id,
@@ -224,6 +253,8 @@ class ACGNodeRunner:
             "modelInvocations": self._safe_model_invocations(output.model_invocations),
             "toolCalls": self._safe_tool_calls(tool_events),
             "provenanceEvents": self.communicator.drain_provenance_events(),
+            # 仅含策略、条数和预算统计；记忆正文始终留在 MemoryService/Store 中。
+            "memoryAccess": memory_access,
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
         }
@@ -253,6 +284,64 @@ class ACGNodeRunner:
                 seen.add(identity)
                 result.append(safe)
         return result
+
+    @staticmethod
+    def _memory_policy(step_input: object) -> dict[str, Any]:
+        """解析已冻结的步骤记忆策略，并拒绝无法审计的错误声明。
+
+        策略存放在 ``WorkflowStep.input.memoryPolicy``，因为它是 ACG Blueprint
+        元数据同步到本次运行后的私有边界。缺失策略保持旧版本的“可读可写、十条”
+        行为；不会因升级而改变历史蓝图的执行结果。
+        """
+        raw = step_input.get("memoryPolicy") if isinstance(step_input, dict) else None
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("memoryPolicy must be an object")
+        allowed_raw = raw.get("allowedTypes", [])
+        if not isinstance(allowed_raw, list):
+            raise ValueError("memoryPolicy.allowedTypes must be a list")
+        try:
+            allowed_types = [MemoryType(str(item)) for item in allowed_raw]
+        except ValueError as exc:
+            raise ValueError("memoryPolicy.allowedTypes contains an unsupported memory type") from exc
+        read = raw.get("read", True)
+        write = raw.get("write", True)
+        require_audit = raw.get("requireAudit", False)
+        if not all(isinstance(item, bool) for item in (read, write, require_audit)):
+            raise ValueError("memoryPolicy read, write and requireAudit must be booleans")
+        limit = raw.get("limit", 10)
+        token_budget = raw.get("tokenBudget")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("memoryPolicy.limit must be an integer between 1 and 100")
+        if token_budget is not None and (
+            not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget < 0
+        ):
+            raise ValueError("memoryPolicy.tokenBudget must be a non-negative integer or null")
+        policy_id = raw.get("policyId", "default")
+        if not isinstance(policy_id, str) or not policy_id:
+            raise ValueError("memoryPolicy.policyId must be a non-empty string")
+        return {
+            "policyId": policy_id,
+            "read": read,
+            "write": write,
+            "allowedTypes": allowed_types,
+            "limit": limit,
+            "tokenBudget": token_budget,
+            "requireAudit": require_audit,
+        }
+
+    @staticmethod
+    def _write_memory_policy(policy: Mapping[str, Any]) -> MemoryPolicy | None:
+        """把步骤白名单收敛成 MemoryService 可执行的写入准入策略。"""
+        allowed_types = list(policy["allowedTypes"])
+        if not allowed_types:
+            return None
+        return MemoryPolicy(
+            policyId=str(policy["policyId"]),
+            allowedTypes=allowed_types,
+            requireAudit=bool(policy["requireAudit"]),
+        )
 
 
 __all__ = ["ACGNodeRunner", "EntropyBudgetExceededError"]

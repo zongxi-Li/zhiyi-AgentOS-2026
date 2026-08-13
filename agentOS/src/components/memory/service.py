@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType
+from components.communicator.contracts import estimate_tokens
 
 from .admission import admitted
 from .algorithms import rerank_memories
@@ -49,12 +50,14 @@ class MemoryService:
         query: str,
         memory_types: list[MemoryType] | None = None,
         limit: int = 10,
+        token_budget: int | None = None,
     ) -> list[MemoryRecord]:
         """为一个执行步骤召回仅属于当前 run 且尚未过期的记忆。
 
         ``run_id`` 被固定为查询 scope，因而调用者不能以“无 scope”的检索间接得到
-        其它运行内容。``step_id`` 目前作为明确的调用边界保留，后续会接入步骤级
-        权限、审计与检索策略；它不参与跨 run 的回退匹配。
+        其它运行内容。``step_id`` 是明确的调用边界；类别、数量和 Token 预算都由
+        节点已冻结的记忆策略传入。预算只会丢弃放不下的完整记录，绝不截断正文或
+        放宽限制；负数预算属于无效策略并立即拒绝。
         """
         records = self.search(
             MemoryQuery(
@@ -65,11 +68,24 @@ class MemoryService:
             )
         )
         now = datetime.now(timezone.utc)
-        return [
+        live_records = [
             record
             for record in records
             if record.expires_at is None or record.expires_at > now
         ]
+        if token_budget is None:
+            return live_records
+        if token_budget < 0:
+            raise ValueError("memory token_budget must be non-negative")
+        selected: list[MemoryRecord] = []
+        used_tokens = 0
+        for record in live_records:
+            record_tokens = estimate_tokens(record.content)
+            if used_tokens + record_tokens > token_budget:
+                continue
+            selected.append(record)
+            used_tokens += record_tokens
+        return selected
 
     def remember_step_output(
         self,

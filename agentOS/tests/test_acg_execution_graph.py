@@ -374,6 +374,80 @@ def test_node_runner_recalls_and_persists_run_scoped_controlled_memory() -> None
     assert any(record.memory_id == "memory:run-1:one" and record.content == {"answer": "accepted"} for record in persisted)
 
 
+def test_node_runner_obeys_step_memory_policy_and_returns_safe_access_metadata() -> None:
+    """步骤可禁止读写记忆，执行结果只能暴露策略统计而不能含记忆正文。"""
+    agent = _RecordingAgent()
+    memory = MemoryService()
+    memory.remember(
+        MemoryRecord(
+            memoryId="memory:run-1:known",
+            memoryType=MemoryType.EPISODIC,
+            content={"fact": "must-not-inject"},
+            scope="run-1",
+        )
+    )
+    runner = ACGNodeRunner(
+        task=AgentTask(taskId="task-1", title="test"),
+        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+        steps={"one": WorkflowStep(
+            stepId="one",
+            name="one",
+            agentName="agent",
+            input={"memoryPolicy": {"read": False, "write": False, "policyId": "no-memory"}},
+            outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )},
+        agents={"one": agent},
+        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        memory=memory,
+        value_store=InMemoryExecutionValueStore(),
+    )
+
+    result = asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+    assert agent.context.memory == []
+    assert result["memoryRef"] == "memory:none"
+    assert result["memoryAccess"] == {
+        "policyId": "no-memory",
+        "read": False,
+        "readCount": 0,
+        "write": False,
+        "written": False,
+        "allowedTypes": [],
+        "limit": 10,
+        "tokenBudget": None,
+        "tokensUsed": 0,
+        "requireAudit": False,
+    }
+    assert "must-not-inject" not in str(result["memoryAccess"])
+
+
+def test_execution_graph_whitelists_memory_access_trace_fields() -> None:
+    """图层必须再次裁剪记忆审计载荷，不能信任外部节点运行器传入的扩展字段。"""
+    graph = ACGExecutionGraph(nodes=("one",))
+    observed: list[dict[str, object]] = []
+
+    async def execute(_step_id, _state):
+        return {
+            "outputSummary": "done",
+            "memoryAccess": {
+                "policyId": "safe",
+                "read": True,
+                "readCount": 1,
+                "memoryBody": {"fact": "must-not-trace"},
+            },
+        }
+
+    async def collect() -> None:
+        async for event in graph.astream(ACGExecutionState(runId="run-1"), execute):
+            if event["type"] == "node_completed":
+                observed.append(event["memoryAccess"])
+
+    asyncio.run(collect())
+
+    assert observed == [{"policyId": "safe", "read": True, "readCount": 1}]
+
+
 class _HighRiskAgent(_RecordingAgent):
     """模拟声明高风险的节点结果，验证审计决定驱动图中断。"""
 

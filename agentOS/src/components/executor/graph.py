@@ -328,6 +328,7 @@ class ACGExecutionGraph:
                     if result.get(key) is not None:
                         destination[step_id] = str(result[key])
                 state.completed_step_ids.append(step_id)
+                memory_access = self._safe_memory_access(result.get("memoryAccess"))
                 yield {
                     "type": "node_completed",
                     "stepId": step_id,
@@ -335,6 +336,7 @@ class ACGExecutionGraph:
                     "modelInvocations": list(result.get("modelInvocations") or []),
                     "toolCalls": list(result.get("toolCalls") or []),
                     "provenanceEvents": list(result.get("provenanceEvents") or []),
+                    "memoryAccess": memory_access,
                 }
                 if self.node_specs[step_id].review_required or result.get("reviewRequired"):
                     review_payload = {
@@ -364,6 +366,25 @@ class ACGExecutionGraph:
             if not roots:
                 raise ValueError("execution graph contains a cycle")
             remaining -= roots
+
+    @staticmethod
+    def _safe_memory_access(value: object) -> dict[str, Any]:
+        """白名单化节点记忆审计元数据，禁止正文或任意扩展字段进入 Trace。"""
+        if not isinstance(value, dict):
+            return {}
+        allowed = {
+            "policyId",
+            "read",
+            "readCount",
+            "write",
+            "written",
+            "allowedTypes",
+            "limit",
+            "tokenBudget",
+            "tokensUsed",
+            "requireAudit",
+        }
+        return {key: item for key, item in value.items() if key in allowed}
 
 
 __all__ = ["ACGChannelError", "ACGConditionalRoute", "ACGExecutionGraph", "ACGExecutionState", "ACGLastValueChannel", "ACGNodeSpec", "ACGStateChannel", "ACGSuperstepError"]

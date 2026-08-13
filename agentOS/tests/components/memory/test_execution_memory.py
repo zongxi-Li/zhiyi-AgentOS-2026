@@ -9,11 +9,17 @@ from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryRecord, MemoryType
 
 
-def _record(*, run_id: str, memory_id: str, expires_at: datetime | None = None) -> MemoryRecord:
+def _record(
+    *,
+    run_id: str,
+    memory_id: str,
+    memory_type: MemoryType = MemoryType.EPISODIC,
+    expires_at: datetime | None = None,
+) -> MemoryRecord:
     """构造测试用 run-scoped 情节记忆。"""
     return MemoryRecord(
         memoryId=memory_id,
-        memoryType=MemoryType.EPISODIC,
+        memoryType=memory_type,
         content={"fact": memory_id},
         scope=run_id,
         expiresAt=expires_at,
@@ -40,6 +46,31 @@ def test_recall_for_step_filters_expired_records() -> None:
     records = memory.recall_for_step(run_id="run-a", step_id="analysis", query="fact")
 
     assert [item.memory_id for item in records] == ["live"]
+
+
+def test_recall_for_step_applies_type_limit_and_token_budget() -> None:
+    """步骤策略必须先限定类别和数量，再保证召回正文不超过 Token 预算。"""
+    memory = MemoryService()
+    memory.remember(_record(run_id="run-a", memory_id="episodic-large"))
+    memory.remember(
+        _record(
+            run_id="run-a",
+            memory_id="semantic-small",
+            memory_type=MemoryType.SEMANTIC,
+        )
+    )
+    memory.remember(_record(run_id="run-a", memory_id="episodic-small"))
+
+    records = memory.recall_for_step(
+        run_id="run-a",
+        step_id="analysis",
+        query="fact",
+        memory_types=[MemoryType.EPISODIC],
+        limit=1,
+        token_budget=10,
+    )
+
+    assert [item.memory_id for item in records] == ["episodic-large"]
 
 
 def test_remember_step_output_writes_controlled_episodic_memory() -> None:

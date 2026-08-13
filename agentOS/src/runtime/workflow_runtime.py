@@ -694,6 +694,15 @@ class WorkflowRuntime:
                 observation="Tool invocation metadata projected",
                 payload=dict(tool_call),
             )
+        memory_access = event.get("memoryAccess")
+        if isinstance(memory_access, dict):
+            self.trace_store.append(
+                run,
+                TraceEventType.DATA_CONSUMED,
+                step_id=event.get("stepId"),
+                observation="Step memory policy applied",
+                payload=dict(memory_access),
+            )
         for provenance_event in event.get("provenanceEvents", []):
             if not isinstance(provenance_event, dict):
                 continue
@@ -890,6 +899,14 @@ class WorkflowRuntime:
         existing = {step.step_id: step for step in run.steps}
         synced: list[WorkflowStep] = []
         for node in blueprint.step_nodes():
+            # Blueprint 是规划期唯一真源。这里把记忆策略复制到本次运行步骤，后续
+            # 即使蓝图对象被修改，也不能反向改变已创建 run 的读取、写入和预算边界。
+            node_input = dict(node.input_spec)
+            memory_policy = node.metadata.get("memoryPolicy")
+            if memory_policy is not None:
+                if not isinstance(memory_policy, dict):
+                    raise ValueError(f"ACG step {node.node_id} memoryPolicy must be an object")
+                node_input["memoryPolicy"] = dict(memory_policy)
             step = existing.get(node.node_id)
             if step is None:
                 step = WorkflowStep(
@@ -897,7 +914,7 @@ class WorkflowRuntime:
                     name=node.name or node.node_id,
                     agentName=node.agent_name or node.node_id,
                     capability=node.capability,
-                    input=dict(node.input_spec),
+                    input=node_input,
                     outputSpec=dict(node.output_spec),
                     reviewRequired=node.review_required,
                     maxRetries=node.retry_limit,
@@ -908,7 +925,7 @@ class WorkflowRuntime:
                 step.name = node.name or step.name
                 step.agent_name = node.agent_name or step.agent_name
                 step.capability = node.capability
-                step.input = dict(node.input_spec)
+                step.input = node_input
                 step.output_spec = dict(node.output_spec)
                 step.requires_review = node.review_required
                 step.max_retries = node.retry_limit

@@ -12,7 +12,7 @@ from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.executor.graph import ACGExecutionState
 from components.task_manager.store import WorkflowRegistry
-from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
+from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, WorkflowRun, WorkflowStepDefinition, WorkflowStatus
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -331,6 +331,68 @@ def test_runtime_projects_safe_communication_provenance_trace() -> None:
     assert any(event.payload.get("consumedFields") == ["title"] for event in events)
     assert "AgentOS" not in str([event.payload for event in events])
     assert "hidden" not in str([event.payload for event in events])
+
+
+def test_runtime_projects_memory_policy_access_without_memory_body() -> None:
+    """运行 Trace 要记录步骤记忆策略的执行事实，但不能复制任何记忆正文。"""
+    runtime = _runtime()
+    task = runtime.create_task("memory trace", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    events = [
+        event for event in result.trace
+        if event.observation == "Step memory policy applied"
+    ]
+    assert len(events) == 2
+    assert all(event.payload["read"] is True for event in events)
+    assert all(event.payload["written"] is True for event in events)
+    assert "AgentOS" not in str([event.payload for event in events])
+
+
+def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
+    """Blueprint 的记忆策略必须复制到本次运行步骤，避免执行期重新读取可变蓝图。"""
+    runtime = _runtime()
+    run = WorkflowRun(
+        taskId="task-1",
+        workflowId="acg-run",
+        domain="general",
+        runtimeEngine="acg",
+    )
+    blueprint = ACGBlueprint(
+        graphId="memory-policy",
+        nodes=[
+            StepNode(
+                nodeId="extract",
+                name="extract",
+                agentName="runner",
+                metadata={
+                    "memoryPolicy": {
+                        "policyId": "extract-v1",
+                        "read": False,
+                        "write": True,
+                        "allowedTypes": ["episodic"],
+                        "limit": 3,
+                        "tokenBudget": 120,
+                        "requireAudit": True,
+                    }
+                },
+            )
+        ],
+    )
+
+    runtime._sync_run_steps_to_acg(run, blueprint)
+
+    assert run.steps[0].input["memoryPolicy"] == {
+        "policyId": "extract-v1",
+        "read": False,
+        "write": True,
+        "allowedTypes": ["episodic"],
+        "limit": 3,
+        "tokenBudget": 120,
+        "requireAudit": True,
+    }
 
 
 def test_runtime_marks_unselected_acg_branch_skipped() -> None:
