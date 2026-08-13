@@ -60,6 +60,9 @@ class AgentRunContext(BaseModel):
     tool_runtime: Optional[Any] = Field(default=None, alias="toolRuntime")
     model_runtime: Optional[Any] = Field(default=None, alias="modelRuntime")
     capability_descriptor: Optional[Any] = Field(default=None, alias="capabilityDescriptor")
+    # 由 ACG 节点提交边界生成的稳定幂等标识。Agent、模型和工具适配器可把它透传给
+    # 具有外部副作用的供应商；它不包含用户正文、工具参数或模型响应。
+    commit_id: Optional[str] = Field(default=None, alias="commitId")
 
 
 class BaseAgent(ABC):

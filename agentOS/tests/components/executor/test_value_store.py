@@ -79,3 +79,61 @@ def test_sqlite_value_store_survives_reopen_and_keeps_run_isolation(tmp_path) ->
     with pytest.raises(ExecutionValueAccessError, match="run-a"):
         reopened.get_output(run_id="run-b", output_ref=output_ref)
     reopened.close()
+
+
+def test_sqlite_value_store_persists_node_commit_without_output_body(tmp_path) -> None:
+    """节点提交记录重启后仍可读取，但只能保存引用和安全元数据。"""
+    db_path = tmp_path / "values.sqlite3"
+    first = SQLiteExecutionValueStore(db_path=db_path)
+    first.prepare_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+    )
+    first.complete_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+        payload={"commitId": "commit:run-a:extract:0", "outputRef": "output:run-a:extract:1"},
+    )
+    first.close()
+
+    reopened = SQLiteExecutionValueStore(db_path=db_path)
+
+    assert reopened.get_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+    ) == {
+        "commitId": "commit:run-a:extract:0",
+        "stage": "committed",
+        "outputRef": "output:run-a:extract:1",
+    }
+    reopened.close()
+
+
+def test_node_commit_transitions_from_prepared_to_committed_once() -> None:
+    """提交日志先登记可重试的 prepared，再仅允许一次完成为 committed。"""
+    store = InMemoryExecutionValueStore()
+
+    first = store.prepare_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+    )
+    repeated = store.prepare_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+    )
+    store.complete_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+        payload={"outputRef": "output:run-a:extract:1"},
+    )
+
+    assert first == {"commitId": "commit:run-a:extract:0", "stage": "prepared"}
+    assert repeated == first
+    assert store.get_node_commit(
+        run_id="run-a",
+        commit_id="commit:run-a:extract:0",
+    ) == {
+        "commitId": "commit:run-a:extract:0",
+        "stage": "committed",
+        "outputRef": "output:run-a:extract:1",
+    }

@@ -50,3 +50,12 @@ def test_agent_invoker_calls_agent_visible_in_frozen_scope() -> None:
     result = asyncio.run(invoker.invoke(context=_context("allowed-agent")))
 
     assert result.output == {"answer": "allowed-agent"}
+
+
+def test_agent_context_accepts_stable_commit_identifier() -> None:
+    """执行器必须向 Agent 传递本次步骤尝试的稳定幂等标识。"""
+    context = _context("allowed-agent").model_copy(
+        update={"commit_id": "commit:run-1:one:0"}
+    )
+
+    assert context.commit_id == "commit:run-1:one:0"

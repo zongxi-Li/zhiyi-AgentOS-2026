@@ -280,6 +280,20 @@ class _RecordingAgent(BaseAgent):
         return AgentOutput(output={"answer": "accepted", "ignored": "not stored"}, summary="accepted")
 
 
+class _CountingAgent(_RecordingAgent):
+    """记录实际 Agent 调用次数，用于验证节点提交恢复不会重复执行。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+        self.commit_ids: list[str | None] = []
+
+    async def run(self, context):
+        self.calls += 1
+        self.commit_ids.append(context.commit_id)
+        return await super().run(context)
+
+
 def test_node_runner_uses_contract_context_memory_and_returns_references_only() -> None:
     agent = _RecordingAgent()
     memory = MemoryService()
@@ -307,6 +321,30 @@ def test_node_runner_uses_contract_context_memory_and_returns_references_only() 
     assert result["memoryRef"] == "memory:run-1:one"
     assert result["routeValue"] == {"answer": "accepted"}
     assert "output" not in result
+
+
+def test_node_runner_reuses_completed_commit_without_reinvoking_agent() -> None:
+    """同一运行步骤在提交后被重复调度时，必须复用引用而不能再次调用 Agent。"""
+    agent = _CountingAgent()
+    runner = ACGNodeRunner.minimal(agent=agent)
+    state = ACGExecutionState(runId="run-1")
+
+    first = asyncio.run(runner("one", state))
+    second = asyncio.run(runner("one", state))
+
+    assert agent.calls == 1
+    assert first["commitId"] == "commit:run-1:one:0"
+    assert agent.commit_ids == [first["commitId"]]
+    assert second["commitId"] == first["commitId"]
+    assert second["outputRef"] == first["outputRef"]
+    assert second["contextRef"] == first["contextRef"]
+    assert second["routeValue"] == first["routeValue"]
+    committed = runner.value_store.get_node_commit(
+        run_id="run-1",
+        commit_id=first["commitId"],
+    )
+    assert committed is not None
+    assert "routeValue" not in committed
 
 
 def test_node_runner_rejects_entropy_over_budget_before_agent_call() -> None:
@@ -585,7 +623,7 @@ def test_node_runner_injects_scoped_tool_runtime_and_safe_model_metadata() -> No
 
 
 def test_node_runner_returns_incremental_safe_provenance_events() -> None:
-    """节点结果应附带本次通信新增的安全血缘事件，且不重复历史事件。"""
+    """同一提交重放应复用原血缘事件，交由 Runtime 保证不会重复写 Trace。"""
     agent = _RecordingAgent()
     runner = ACGNodeRunner.minimal(agent=agent)
 
@@ -596,5 +634,5 @@ def test_node_runner_returns_incremental_safe_provenance_events() -> None:
     assert second["provenanceEvents"]
     first_ids = {event["payload"]["eventId"] for event in first["provenanceEvents"]}
     second_ids = {event["payload"]["eventId"] for event in second["provenanceEvents"]}
-    assert first_ids.isdisjoint(second_ids)
+    assert first_ids == second_ids
     assert "accepted" not in str(first["provenanceEvents"])

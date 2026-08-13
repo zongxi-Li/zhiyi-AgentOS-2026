@@ -623,6 +623,12 @@ class WorkflowRuntime:
     def _project_acg_event(self, run: WorkflowRun, state: ACGExecutionState, event: dict) -> None:
         """投影单个图事件与步骤状态；事件正文只含步骤标识、摘要或引用。"""
         event_type = event.get("type")
+        commit_id = event.get("commitId")
+        if event_type == "node_completed" and isinstance(commit_id, str) and self._is_projected_commit(run, commit_id):
+            # Trace 已经确认过该提交，说明上次在状态保存前中断。重放时不能再次追加
+            # 步骤成功、记忆访问或通信血缘事件；图状态本身由当前 checkpoint 继续推进。
+            self._persist_acg_state(run, state)
+            return
         if event_type == "nodes_scheduled":
             for step_id in event.get("stepIds", []):
                 step = run.get_step(str(step_id))
@@ -724,6 +730,15 @@ class WorkflowRuntime:
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
         self._persist_acg_state(run, state)
+
+    @staticmethod
+    def _is_projected_commit(run: WorkflowRun, commit_id: str) -> bool:
+        """通过既有步骤完成 Trace 判断提交是否已被投影，不额外保存正文状态。"""
+        return any(
+            event.event_type == TraceEventType.STEP_SUCCEEDED
+            and event.payload.get("commitId") == commit_id
+            for event in run.trace
+        )
 
     def _persist_acg_state(self, run: WorkflowRun, state: ACGExecutionState) -> None:
         """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""

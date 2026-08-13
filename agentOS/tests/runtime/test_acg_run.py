@@ -351,6 +351,29 @@ def test_runtime_projects_memory_policy_access_without_memory_body() -> None:
     assert "AgentOS" not in str([event.payload for event in events])
 
 
+def test_runtime_does_not_duplicate_trace_for_replayed_node_commit() -> None:
+    """崩溃恢复重放同一节点提交时，Trace 只能保留一次提交记录。"""
+    runtime = _runtime()
+    task = runtime.create_task("commit replay", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    state = ACGExecutionState(runId=run.run_id)
+    event = {
+        "type": "node_completed",
+        "stepId": "extract",
+        "outputSummary": "safe summary",
+        "commitId": "commit:run-1:extract:0",
+        "memoryAccess": {"policyId": "default", "read": True, "readCount": 0, "write": True, "written": True, "limit": 10, "tokensUsed": 0},
+        "provenanceEvents": [{"eventType": "data_produced", "payload": {"eventId": "prod_000001", "fieldNames": ["title"]}}],
+    }
+
+    runtime._project_acg_event(run, state, event)
+    runtime._project_acg_event(run, state, event)
+
+    assert len([item for item in run.trace if item.event_type.value == "step_succeeded"]) == 1
+    assert len([item for item in run.trace if item.observation == "Step memory policy applied"]) == 1
+    assert len([item for item in run.trace if item.event_type.value == "data_produced"]) == 1
+
+
 def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
     """Blueprint 的记忆策略必须复制到本次运行步骤，避免执行期重新读取可变蓝图。"""
     runtime = _runtime()

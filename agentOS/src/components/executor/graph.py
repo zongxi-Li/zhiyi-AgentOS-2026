@@ -332,6 +332,7 @@ class ACGExecutionGraph:
                 yield {
                     "type": "node_completed",
                     "stepId": step_id,
+                    "commitId": result.get("commitId"),
                     "outputSummary": state.output_summaries.get(step_id, ""),
                     "modelInvocations": list(result.get("modelInvocations") or []),
                     "toolCalls": list(result.get("toolCalls") or []),

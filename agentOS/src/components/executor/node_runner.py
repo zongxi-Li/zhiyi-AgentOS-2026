@@ -97,6 +97,24 @@ class ACGNodeRunner:
         """
         step = self.steps[step_id]
         agent = self.agents[step_id]
+        commit_id = self._commit_id(state.run_id, step_id, step.attempt)
+        committed = self.value_store.get_node_commit(run_id=state.run_id, commit_id=commit_id)
+        if committed is not None and committed.get("stage") == "committed":
+            # 重启恢复或投影中断后再次调度同一步骤时，提交记录是唯一真源。它只返回
+            # 已保存的安全引用与元数据，不能重新调用 Agent、重复写记忆或制造新 Trace。
+            replayed = dict(committed)
+            output_ref = replayed.get("outputRef")
+            if isinstance(output_ref, str):
+                # 条件值不允许进入提交记录或 checkpoint。需要路由时仅在本轮从已受控的
+                # 输出引用短暂读取，之后仍由图层消费而不会持久化到执行状态。
+                replayed["routeValue"] = self.value_store.get_output(
+                    run_id=state.run_id,
+                    output_ref=output_ref,
+                )
+            return replayed
+        # 先持久化 prepared，再进入 Agent/Tool 适配边界。若中断发生在外部调用期间，
+        # 恢复会传递同一 commitId，外部实现可据此幂等重试；不会误认为已完成。
+        self.value_store.prepare_node_commit(run_id=state.run_id, commit_id=commit_id)
         # State 只有摘要/引用。上游完整 slot 值必须由通信服务根据 outputRef 从受控
         # 仓库读取；运行器不能从摘要推断数据，也不能旁路仓库获取全量 Agent 输出。
         estimated_entropy = sum(estimate_tokens(summary) for summary in state.output_summaries.values())
@@ -178,6 +196,7 @@ class ACGNodeRunner:
             toolRuntime=step_tool_runtime,
             modelRuntime=self.model_runtime,
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
+            commitId=commit_id,
         )
         output = (
             await self.agent_invoker.invoke(context=agent_context)
@@ -234,7 +253,8 @@ class ACGNodeRunner:
             step_id=step_id,
             payload=controlled,
         )
-        return {
+        result = {
+            "commitId": commit_id,
             "outputSummary": output.summary or f"completed:{step_id}",
             "contextRef": self.value_store.put_context_pack(
                 run_id=state.run_id,
@@ -259,6 +279,19 @@ class ACGNodeRunner:
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
         }
+        # 在图状态投影之前固化不可变提交边界。若后续 Runtime 在 Trace 或 checkpoint
+        # 之间中断，恢复后将复用这份记录，而不是再次执行 Agent 或重复产生副作用。
+        commit_record = {
+            key: value
+            for key, value in result.items()
+            if key != "routeValue"
+        }
+        self.value_store.complete_node_commit(
+            run_id=state.run_id,
+            commit_id=commit_id,
+            payload=commit_record,
+        )
+        return result
 
     @staticmethod
     def _safe_model_invocations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -346,6 +379,11 @@ class ACGNodeRunner:
             allowedTypes=allowed_types,
             requireAudit=bool(policy["requireAudit"]),
         )
+
+    @staticmethod
+    def _commit_id(run_id: str, step_id: str, attempt: int) -> str:
+        """生成步骤尝试的稳定提交标识；重试次数变化才会开启新的副作用边界。"""
+        return f"commit:{run_id}:{step_id}:{max(0, attempt)}"
 
 
 __all__ = ["ACGNodeRunner", "EntropyBudgetExceededError"]

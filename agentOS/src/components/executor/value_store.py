@@ -57,6 +57,15 @@ class ExecutionValueStore(Protocol):
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按当前 run 读取 ContextPack 正文；跨 run 与缺失引用必须失败。"""
 
+    def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
+        """登记可安全重试的节点准备态，并返回当前不可变记录。"""
+
+    def complete_node_commit(self, *, run_id: str, commit_id: str, payload: dict[str, Any]) -> None:
+        """把准备态提交完成为仅含引用和审计元数据的不可变记录。"""
+
+    def get_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any] | None:
+        """读取同一 run 的节点提交记录；不存在返回 ``None``。"""
+
 
 class InMemoryExecutionValueStore:
     """面向单进程运行期的引用仓库，严格实现 ``ExecutionValueStore`` 语义。"""
@@ -65,6 +74,7 @@ class InMemoryExecutionValueStore:
         """分别保存节点输出与 ContextPack，避免引用类别互相误读。"""
         self._outputs: dict[str, tuple[str, dict[str, Any]]] = {}
         self._context_packs: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._node_commits: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
         """深拷贝已校验输出，防止 Agent 或调用者之后修改原对象。"""
@@ -85,6 +95,43 @@ class InMemoryExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """读取 ContextPack 的受控副本，不允许跨 run 访问。"""
         return self._get(self._context_packs, run_id=run_id, reference=context_ref)
+
+    def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
+        """创建或复用准备态；该状态表示可携带同一 idempotency key 安全重试。"""
+        current = self._node_commits.get(commit_id)
+        if current is None:
+            payload = {"commitId": commit_id, "stage": "prepared"}
+            self._node_commits[commit_id] = (run_id, payload)
+            return deepcopy(payload)
+        owner_run_id, current_payload = current
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
+        return deepcopy(current_payload)
+
+    def complete_node_commit(self, *, run_id: str, commit_id: str, payload: dict[str, Any]) -> None:
+        """将准备态升级为完成态；重复完成只接受完全相同的安全结果。"""
+        current = self._node_commits.get(commit_id)
+        if current is None:
+            raise ValueError(f"node commit is not prepared: {commit_id}")
+        owner_run_id, current_payload = current
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
+        committed = {"commitId": commit_id, "stage": "committed", **deepcopy(dict(payload))}
+        if current_payload.get("stage") == "prepared":
+            self._node_commits[commit_id] = (run_id, committed)
+            return
+        if current_payload != committed:
+            raise ValueError(f"node commit already exists with different payload: {commit_id}")
+
+    def get_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any] | None:
+        """读取不可变提交记录；跨 run 请求按执行值越权处理。"""
+        record = self._node_commits.get(commit_id)
+        if record is None:
+            return None
+        owner_run_id, payload = record
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
+        return deepcopy(payload)
 
     @staticmethod
     def _new_reference(kind: str, run_id: str, step_id: str) -> str:
@@ -129,6 +176,21 @@ class SQLiteExecutionValueStore:
                 payload_json TEXT NOT NULL
             )"""
         )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS acg_node_commits (
+                commit_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                stage TEXT NOT NULL DEFAULT 'prepared'
+            )"""
+        )
+        columns = {
+            str(row[1]) for row in self._connection.execute("PRAGMA table_info(acg_node_commits)")
+        }
+        if "stage" not in columns:
+            self._connection.execute(
+                "ALTER TABLE acg_node_commits ADD COLUMN stage TEXT NOT NULL DEFAULT 'prepared'"
+            )
         self._connection.commit()
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
@@ -146,6 +208,73 @@ class SQLiteExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按 run 隔离读取 ContextPack 正文，禁止跨运行回退。"""
         return self._get("context", run_id=run_id, reference=context_ref)
+
+    def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
+        """在 SQLite 中原子创建或读取准备态，进程重启后仍使用同一提交标识。"""
+        prepared = {"commitId": commit_id, "stage": "prepared"}
+        encoded = json.dumps(prepared, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT run_id, payload_json FROM acg_node_commits WHERE commit_id = ?",
+                (commit_id,),
+            ).fetchone()
+            if row is None:
+                self._connection.execute(
+                    "INSERT INTO acg_node_commits(commit_id, run_id, payload_json, stage) VALUES (?, ?, ?, 'prepared')",
+                    (commit_id, run_id, encoded),
+                )
+                result = prepared
+            else:
+                owner_run_id, existing = str(row[0]), str(row[1])
+                if owner_run_id != run_id:
+                    raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
+                result = json.loads(existing)
+            self._connection.commit()
+            return deepcopy(result)
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def complete_node_commit(self, *, run_id: str, commit_id: str, payload: dict[str, Any]) -> None:
+        """仅允许将已准备的提交一次性升级为完成态，防止重放改写结果。"""
+        committed = {"commitId": commit_id, "stage": "committed", **deepcopy(dict(payload))}
+        encoded = json.dumps(committed, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT run_id, payload_json, stage FROM acg_node_commits WHERE commit_id = ?",
+                (commit_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"node commit is not prepared: {commit_id}")
+            owner_run_id, existing, stage = str(row[0]), str(row[1]), str(row[2])
+            if owner_run_id != run_id:
+                raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
+            if stage == "prepared":
+                self._connection.execute(
+                    "UPDATE acg_node_commits SET payload_json = ?, stage = 'committed' WHERE commit_id = ?",
+                    (encoded, commit_id),
+                )
+            elif existing != encoded:
+                raise ValueError(f"node commit already exists with different payload: {commit_id}")
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def get_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any] | None:
+        """读取 run 内提交记录；提交载荷仅含引用和审计元数据。"""
+        row = self._connection.execute(
+            "SELECT run_id, payload_json FROM acg_node_commits WHERE commit_id = ?",
+            (commit_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        owner_run_id, payload_json = str(row[0]), str(row[1])
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
+        return deepcopy(json.loads(payload_json))
 
     def close(self) -> None:
         """关闭当前 SQLite 连接；运行时退出时由装配层负责调用。"""
