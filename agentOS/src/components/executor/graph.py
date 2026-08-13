@@ -334,6 +334,7 @@ class ACGExecutionGraph:
                     "outputSummary": state.output_summaries.get(step_id, ""),
                     "modelInvocations": list(result.get("modelInvocations") or []),
                     "toolCalls": list(result.get("toolCalls") or []),
+                    "provenanceEvents": list(result.get("provenanceEvents") or []),
                 }
                 if self.node_specs[step_id].review_required or result.get("reviewRequired"):
                     review_payload = {

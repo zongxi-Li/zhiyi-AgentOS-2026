@@ -694,6 +694,24 @@ class WorkflowRuntime:
                 observation="Tool invocation metadata projected",
                 payload=dict(tool_call),
             )
+        for provenance_event in event.get("provenanceEvents", []):
+            if not isinstance(provenance_event, dict):
+                continue
+            event_name = provenance_event.get("eventType")
+            trace_type = {
+                "data_produced": TraceEventType.DATA_PRODUCED,
+                "data_consumed": TraceEventType.DATA_CONSUMED,
+            }.get(event_name)
+            payload = provenance_event.get("payload")
+            if trace_type is None or not isinstance(payload, dict):
+                continue
+            self.trace_store.append(
+                run,
+                trace_type,
+                step_id=event.get("stepId"),
+                observation="Communication provenance projected",
+                payload=dict(payload),
+            )
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
         self._persist_acg_state(run, state)

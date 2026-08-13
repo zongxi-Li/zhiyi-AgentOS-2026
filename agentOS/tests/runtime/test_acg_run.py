@@ -314,6 +314,25 @@ def test_runtime_projects_safe_tool_call_metadata() -> None:
     assert tool_events[0].payload == {"tool": "lookup", "status": "success"}
 
 
+def test_runtime_projects_safe_communication_provenance_trace() -> None:
+    """运行 Trace 应持久化通信血缘元数据，但不得复制节点输出正文。"""
+    runtime = _runtime()
+    task = runtime.create_task("provenance", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    events = [
+        event for event in result.trace
+        if event.event_type.value in {"data_produced", "data_consumed"}
+    ]
+    assert events
+    assert any(event.payload.get("fieldNames") == ["title"] for event in events)
+    assert any(event.payload.get("consumedFields") == ["title"] for event in events)
+    assert "AgentOS" not in str([event.payload for event in events])
+    assert "hidden" not in str([event.payload for event in events])
+
+
 def test_runtime_marks_unselected_acg_branch_skipped() -> None:
     """Runtime 投影应把条件未选分支明确标为 skipped_by_condition。"""
     agents = AgentRegistry()

@@ -26,6 +26,7 @@ class CommunicatorService:
     def __init__(self, *, run_id: str = "", task_id: str = "") -> None:
         """服务拥有一份按运行隔离的血缘账本，不向旧运行时索取状态。"""
         self._assembler = ContextAssembler(ProvenanceLedger(run_id=run_id, task_id=task_id))
+        self._trace_cursor = 0
 
     def compose(self, message_id: str, topic: str, sender: str, payload: dict[str, object], recipient: str | None = None) -> MessageEnvelope:
         """把消息标识、主题、发送方和载荷封装为 ``MessageEnvelope``。
@@ -102,5 +103,12 @@ class CommunicatorService:
         破坏链式不变量；并发读取与写入须由调用方协调。
         """
         return self._assembler.ledger
+
+    def drain_provenance_events(self) -> list[dict[str, Any]]:
+        """取得本节点新增的安全血缘投影，并前移游标避免后续节点重复写 Trace。"""
+        events = self.provenance.trace_events()
+        new_events = events[self._trace_cursor:]
+        self._trace_cursor = len(events)
+        return new_events
 
     # TODO: 注入消息总线客户端，以支持 HTTP、队列或 WebSocket 的可靠投递。

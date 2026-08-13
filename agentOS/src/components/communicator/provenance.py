@@ -144,13 +144,72 @@ class ProvenanceLedger:
         不修复损坏数据。设事件数为 n、总编码大小为 m，复杂度 O(n log n + m)。
         """
         previous = ""
-        events = sorted([*self.productions, *self.consumptions, *self.interactions], key=lambda item: item.event_id)
+        events = sorted([*self.productions, *self.consumptions, *self.interactions], key=self._event_sequence)
         for event in events:
             expected = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"eventHash"}))
             if event.previous_hash != previous or event.event_hash != expected:
                 return False
             previous = event.event_hash
         return True
+
+    def trace_events(self) -> list[dict[str, Any]]:
+        """将账本事件投影为不含正文的持久 Trace 载荷。"""
+        events = sorted(
+            [*self.productions, *self.consumptions, *self.interactions],
+            key=self._event_sequence,
+        )
+        return [self._trace_event(event) for event in events]
+
+    @staticmethod
+    def _event_sequence(event: _Event) -> int:
+        """按账本分配的全局序号排序，不能按 prod/cons 前缀字典序排序。"""
+        return int(event.event_id.rsplit("_", 1)[-1])
+
+    @staticmethod
+    def _trace_event(event: _Event) -> dict[str, Any]:
+        """抽取审计需要的血缘元数据，禁止将 data/content 等正文进入投影。"""
+        if isinstance(event, DataProductionEvent):
+            payload = {
+                "eventId": event.event_id,
+                "producerStepId": event.producer_step_id,
+                "fieldNames": list(event.field_names),
+                "checksum": event.checksum,
+                "tokenSize": event.token_size,
+                "evidenceRefs": list(event.evidence_refs),
+                "eventHash": event.event_hash,
+            }
+            event_type = "data_produced"
+        elif isinstance(event, DataConsumptionEvent):
+            payload = {
+                "eventId": event.event_id,
+                "consumerStepId": event.consumer_step_id,
+                "producerStepIds": list(event.producer_step_ids),
+                "producerEventIds": list(event.producer_event_ids),
+                "fieldsByProducer": dict(event.fields_by_producer),
+                "consumedFields": list(event.consumed_fields),
+                "tokensDelivered": event.tokens_delivered,
+                "tokensAvailable": event.tokens_available,
+                "savingRatio": event.saving_ratio,
+                "checksum": event.checksum,
+                "contractStatus": event.contract_status,
+                "eventHash": event.event_hash,
+            }
+            event_type = "data_consumed"
+        else:
+            payload = {
+                "eventId": event.event_id,
+                "interactionId": event.interaction_id,
+                "producerStepIds": list(event.producer_step_ids),
+                "consumerStepId": event.consumer_step_id,
+                "fieldsByProducer": dict(event.fields_by_producer),
+                "evidenceRefs": list(event.evidence_refs),
+                "tokensDelivered": event.tokens_delivered,
+                "tokensAvailable": event.tokens_available,
+                "savingRatio": event.saving_ratio,
+                "eventHash": event.event_hash,
+            }
+            event_type = "data_consumed"
+        return {"eventType": event_type, "payload": payload}
 
 
 __all__ = ["provenance_checksum", "DataProductionEvent", "DataConsumptionEvent", "RuntimeInteraction", "ProvenanceLedger"]

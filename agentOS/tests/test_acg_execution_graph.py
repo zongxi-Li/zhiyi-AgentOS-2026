@@ -485,3 +485,19 @@ def test_node_runner_injects_scoped_tool_runtime_and_safe_model_metadata() -> No
 
     assert agent.context.tool_runtime is not None
     assert result["modelInvocations"] == [{"provider": "local", "model": "test", "usage": {"tokens": 3}}]
+
+
+def test_node_runner_returns_incremental_safe_provenance_events() -> None:
+    """节点结果应附带本次通信新增的安全血缘事件，且不重复历史事件。"""
+    agent = _RecordingAgent()
+    runner = ACGNodeRunner.minimal(agent=agent)
+
+    first = asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+    second = asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+    assert first["provenanceEvents"]
+    assert second["provenanceEvents"]
+    first_ids = {event["payload"]["eventId"] for event in first["provenanceEvents"]}
+    second_ids = {event["payload"]["eventId"] for event in second["provenanceEvents"]}
+    assert first_ids.isdisjoint(second_ids)
+    assert "accepted" not in str(first["provenanceEvents"])

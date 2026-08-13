@@ -223,6 +223,7 @@ class ACGNodeRunner:
             # 生成正文或供应商对象。Trace 投影层可直接消费该紧凑列表。
             "modelInvocations": self._safe_model_invocations(output.model_invocations),
             "toolCalls": self._safe_tool_calls(tool_events),
+            "provenanceEvents": self.communicator.drain_provenance_events(),
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
         }
