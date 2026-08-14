@@ -24,6 +24,24 @@ def test_value_store_rejects_cross_run_reference() -> None:
         store.get_output(run_id="run-b", output_ref=output_ref)
 
 
+def test_value_store_rejects_reference_owned_by_another_step() -> None:
+    """同一运行内也必须核验步骤归属，不能把上游输出伪装成当前步骤产物。"""
+    store = InMemoryExecutionValueStore()
+    output_ref = store.put_output(
+        run_id="run-a",
+        step_id="extract",
+        payload={"title": "safe"},
+    )
+
+    with pytest.raises(ExecutionValueAccessError, match="belongs to step extract"):
+        store.assert_reference(
+            kind="output",
+            run_id="run-a",
+            step_id="summarize",
+            reference=output_ref,
+        )
+
+
 def test_value_store_returns_defensive_output_copy() -> None:
     """读取出的嵌套数据被调用方修改后，仓库中原始受控产物必须保持不变。"""
     store = InMemoryExecutionValueStore()
@@ -78,6 +96,28 @@ def test_sqlite_value_store_survives_reopen_and_keeps_run_isolation(tmp_path) ->
     assert reopened.get_output(run_id="run-a", output_ref=output_ref) == {"title": "persisted"}
     with pytest.raises(ExecutionValueAccessError, match="run-a"):
         reopened.get_output(run_id="run-b", output_ref=output_ref)
+    reopened.close()
+
+
+def test_sqlite_value_store_keeps_step_ownership_after_reopen(tmp_path) -> None:
+    """持久化引用重启后也必须保留其来源步骤，不能只校验 runId。"""
+    db_path = tmp_path / "values.sqlite3"
+    first = SQLiteExecutionValueStore(db_path=db_path)
+    output_ref = first.put_output(
+        run_id="run-a",
+        step_id="extract",
+        payload={"title": "persisted"},
+    )
+    first.close()
+
+    reopened = SQLiteExecutionValueStore(db_path=db_path)
+    with pytest.raises(ExecutionValueAccessError, match="belongs to step extract"):
+        reopened.assert_reference(
+            kind="output",
+            run_id="run-a",
+            step_id="summarize",
+            reference=output_ref,
+        )
     reopened.close()
 
 

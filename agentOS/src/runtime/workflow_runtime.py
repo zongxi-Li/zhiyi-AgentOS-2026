@@ -492,6 +492,7 @@ class WorkflowRuntime:
             blueprint=blueprint,
             state=execution_state,
         )
+        self._validate_acg_state_references(run=run, state=execution_state)
         runner = self._build_acg_runner(task=task, run=run, workflow=workflow, graph=graph)
         run.execution_state["engineMigration"] = "langgraph_fused_v1"
         run.execution_state["graphId"] = blueprint.graph_id
@@ -573,6 +574,27 @@ class WorkflowRuntime:
         workflow_version = run.execution_state.get("workflowVersion")
         if workflow_version is not None and str(workflow.version) != str(workflow_version):
             raise ValueError("checkpoint workflowVersion does not match persisted workflow version")
+
+    def _validate_acg_state_references(self, *, run: WorkflowRun, state: ACGExecutionState) -> None:
+        """在恢复前重验检查点的引用归属，且不读取任何输出或上下文正文。
+
+        State 字典的键就是产生引用的步骤标识。若键、runId 或引用类别被篡改，必须在
+        改变运行生命周期、创建 Agent 或追加血缘事件之前停止，避免恢复路径成为越权入口。
+        """
+        for step_id, output_ref in state.output_refs.items():
+            self.execution_value_store.assert_reference(
+                kind="output", run_id=run.run_id, step_id=step_id, reference=output_ref
+            )
+        for step_id, context_ref in state.context_refs.items():
+            self.execution_value_store.assert_reference(
+                kind="context", run_id=run.run_id, step_id=step_id, reference=context_ref
+            )
+        for step_id, memory_ref in state.memory_refs.items():
+            if memory_ref != "memory:none" and memory_ref != f"memory:{run.run_id}:{step_id}":
+                raise ValueError(f"memory reference {memory_ref} does not belong to run step {step_id}")
+        for step_id, trace_ref in state.trace_refs.items():
+            if trace_ref != f"trace:{step_id}":
+                raise ValueError(f"trace reference {trace_ref} does not belong to step {step_id}")
 
     def _build_acg_runner(self, *, task: AgentTask, run: WorkflowRun, workflow: WorkflowDefinition, graph) -> ACGNodeRunner:
         """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""

@@ -103,6 +103,11 @@ class ACGNodeRunner:
             # 重启恢复或投影中断后再次调度同一步骤时，提交记录是唯一真源。它只返回
             # 已保存的安全引用与元数据，不能重新调用 Agent、重复写记忆或制造新 Trace。
             replayed = dict(committed)
+            self._validate_committed_references(
+                run_id=state.run_id,
+                step_id=step_id,
+                payload=replayed,
+            )
             output_ref = replayed.get("outputRef")
             if isinstance(output_ref, str):
                 # 条件值不允许进入提交记录或 checkpoint。需要路由时仅在本轮从已受控的
@@ -230,6 +235,8 @@ class ACGNodeRunner:
             severity_counts=severity_counts,
             memory_access=memory_access,
         )
+        if memory_policy["requireAudit"]:
+            self._require_audit_decision(decision)
         if decision.outcome == "deny":
             return {
                 "outputSummary": output.summary or f"denied:{step_id}",
@@ -414,6 +421,33 @@ class ACGNodeRunner:
             allowedTypes=[write_type],
             requireAudit=bool(policy["requireAudit"]),
         )
+
+    def _validate_committed_references(
+        self,
+        *,
+        run_id: str,
+        step_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """重放提交前重验其正文引用，防止损坏记录把其他步骤的数据带回图状态。"""
+        output_ref = payload.get("outputRef")
+        if isinstance(output_ref, str):
+            self.value_store.assert_reference(
+                kind="output", run_id=run_id, step_id=step_id, reference=output_ref
+            )
+        context_ref = payload.get("contextRef")
+        if isinstance(context_ref, str):
+            self.value_store.assert_reference(
+                kind="context", run_id=run_id, step_id=step_id, reference=context_ref
+            )
+
+    @staticmethod
+    def _require_audit_decision(decision: object) -> None:
+        """记忆策略要求审计时，只接受含稳定标识和受支持结果的审计决定。"""
+        decision_id = getattr(decision, "decision_id", None)
+        outcome = getattr(decision, "outcome", None)
+        if not isinstance(decision_id, str) or not decision_id or outcome not in {"allow", "review", "deny"}:
+            raise ValueError("audit decision is required before memory write")
 
     @staticmethod
     def _commit_id(run_id: str, step_id: str, attempt: int) -> str:

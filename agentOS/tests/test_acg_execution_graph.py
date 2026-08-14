@@ -650,6 +650,48 @@ def test_deny_result_is_not_persisted_to_value_store_or_memory() -> None:
     assert memory.search(MemoryQuery(query="one", scope="run-1")) == []
 
 
+def test_node_runner_requires_auditable_decision_before_required_memory_write() -> None:
+    """策略要求审计时，审计器未给出有效决定不得写入输出、记忆或血缘。"""
+    class MissingAudit:
+        def assess_node(self, **_kwargs):
+            return None
+
+    agent = _RecordingAgent()
+    value_store = InMemoryExecutionValueStore()
+    memory = MemoryService()
+    runner = ACGNodeRunner(
+        task=AgentTask(taskId="task-1", title="test"),
+        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+        steps={"one": WorkflowStep(
+            stepId="one",
+            name="one",
+            agentName="agent",
+            input={"memoryPolicy": {
+                "read": False,
+                "write": True,
+                "writeType": "episodic",
+                "requireAudit": True,
+            }},
+            outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )},
+        agents={"one": agent},
+        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        memory=memory,
+        value_store=value_store,
+        execution_audit=MissingAudit(),
+    )
+
+    with pytest.raises(ValueError, match="audit decision is required"):
+        asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+    assert memory.search(MemoryQuery(query="one", scope="run-1")) == []
+    assert value_store.get_node_commit(run_id="run-1", commit_id="commit:run-1:one:0") == {
+        "commitId": "commit:run-1:one:0",
+        "stage": "prepared",
+    }
+
+
 def test_node_runner_injects_scoped_tool_runtime_and_safe_model_metadata() -> None:
     """节点只能拿到受限工具，返回结果只投影安全的模型调用元数据。"""
     class ToolAgent(_RecordingAgent):

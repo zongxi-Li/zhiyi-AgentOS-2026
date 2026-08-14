@@ -27,16 +27,19 @@ class ExecutionValueAccessError(ValueError):
         reference: str,
         owner_run_id: str | None = None,
         requested_run_id: str | None = None,
+        message: str | None = None,
     ) -> None:
         """保留归属信息，使调用方能区分越权和引用丢失而不暴露数据正文。"""
-        if owner_run_id is None:
-            message = f"execution value reference does not exist: {reference}"
+        if message is not None:
+            resolved_message = message
+        elif owner_run_id is None:
+            resolved_message = f"execution value reference does not exist: {reference}"
         else:
-            message = (
+            resolved_message = (
                 f"execution value reference {reference} belongs to run {owner_run_id}, "
                 f"not requested run {requested_run_id}"
             )
-        super().__init__(message)
+        super().__init__(resolved_message)
         self.reference = reference
         self.owner_run_id = owner_run_id
         self.requested_run_id = requested_run_id
@@ -57,6 +60,9 @@ class ExecutionValueStore(Protocol):
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按当前 run 读取 ContextPack 正文；跨 run 与缺失引用必须失败。"""
 
+    def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
+        """确认引用类别、运行和来源步骤均与执行状态声明一致，不读取正文。"""
+
     def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
         """登记可安全重试的节点准备态，并返回当前不可变记录。"""
 
@@ -72,14 +78,14 @@ class InMemoryExecutionValueStore:
 
     def __init__(self) -> None:
         """分别保存节点输出与 ContextPack，避免引用类别互相误读。"""
-        self._outputs: dict[str, tuple[str, dict[str, Any]]] = {}
-        self._context_packs: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._outputs: dict[str, tuple[str, str, dict[str, Any]]] = {}
+        self._context_packs: dict[str, tuple[str, str, dict[str, Any]]] = {}
         self._node_commits: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
         """深拷贝已校验输出，防止 Agent 或调用者之后修改原对象。"""
         reference = self._new_reference("output", run_id, step_id)
-        self._outputs[reference] = (run_id, deepcopy(dict(payload)))
+        self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)))
         return reference
 
     def get_output(self, *, run_id: str, output_ref: str) -> dict[str, Any]:
@@ -89,12 +95,17 @@ class InMemoryExecutionValueStore:
     def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
         """深拷贝已装配上下文，使 checkpoint 外的正文仍受服务边界保护。"""
         reference = self._new_reference("context", run_id, step_id)
-        self._context_packs[reference] = (run_id, deepcopy(dict(payload)))
+        self._context_packs[reference] = (run_id, step_id, deepcopy(dict(payload)))
         return reference
 
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """读取 ContextPack 的受控副本，不允许跨 run 访问。"""
         return self._get(self._context_packs, run_id=run_id, reference=context_ref)
+
+    def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
+        """在不返回正文的前提下验证引用的类型、运行与产生步骤。"""
+        records = self._records_for_kind(kind)
+        self._assert(records, run_id=run_id, step_id=step_id, reference=reference)
 
     def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
         """创建或复用准备态；该状态表示可携带同一 idempotency key 安全重试。"""
@@ -140,7 +151,7 @@ class InMemoryExecutionValueStore:
 
     @staticmethod
     def _get(
-        records: Mapping[str, tuple[str, dict[str, Any]]],
+        records: Mapping[str, tuple[str, str, dict[str, Any]]],
         *,
         run_id: str,
         reference: str,
@@ -149,10 +160,37 @@ class InMemoryExecutionValueStore:
         record = records.get(reference)
         if record is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, payload = record
+        owner_run_id, _owner_step_id, payload = record
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, owner_run_id, run_id)
         return deepcopy(payload)
+
+    def _records_for_kind(self, kind: str) -> Mapping[str, tuple[str, str, dict[str, Any]]]:
+        if kind == "output":
+            return self._outputs
+        if kind == "context":
+            return self._context_packs
+        raise ValueError(f"unsupported execution reference kind: {kind}")
+
+    @staticmethod
+    def _assert(
+        records: Mapping[str, tuple[str, str, dict[str, Any]]],
+        *,
+        run_id: str,
+        step_id: str,
+        reference: str,
+    ) -> None:
+        record = records.get(reference)
+        if record is None:
+            raise ExecutionValueAccessError(reference)
+        owner_run_id, owner_step_id, _payload = record
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(reference, owner_run_id, run_id)
+        if owner_step_id != step_id:
+            raise ExecutionValueAccessError(
+                reference,
+                message=f"execution value reference {reference} belongs to step {owner_step_id}, not declared step {step_id}",
+            )
 
 
 class SQLiteExecutionValueStore:
@@ -172,10 +210,18 @@ class SQLiteExecutionValueStore:
             """CREATE TABLE IF NOT EXISTS execution_values (
                 reference TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL DEFAULT '',
                 kind TEXT NOT NULL,
                 payload_json TEXT NOT NULL
             )"""
         )
+        value_columns = {
+            str(row[1]) for row in self._connection.execute("PRAGMA table_info(execution_values)")
+        }
+        if "step_id" not in value_columns:
+            self._connection.execute(
+                "ALTER TABLE execution_values ADD COLUMN step_id TEXT NOT NULL DEFAULT ''"
+            )
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS acg_node_commits (
                 commit_id TEXT PRIMARY KEY,
@@ -208,6 +254,25 @@ class SQLiteExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按 run 隔离读取 ContextPack 正文，禁止跨运行回退。"""
         return self._get("context", run_id=run_id, reference=context_ref)
+
+    def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
+        """验证持久引用的类型、运行和产生步骤，不读取或返回其正文。"""
+        row = self._connection.execute(
+            "SELECT run_id, step_id, kind FROM execution_values WHERE reference = ?",
+            (reference,),
+        ).fetchone()
+        if row is None:
+            raise ExecutionValueAccessError(reference)
+        owner_run_id, owner_step_id, actual_kind = (str(value) for value in row)
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(reference, owner_run_id, run_id)
+        if actual_kind != kind:
+            raise ExecutionValueAccessError(reference)
+        if owner_step_id != step_id:
+            raise ExecutionValueAccessError(
+                reference,
+                message=f"execution value reference {reference} belongs to step {owner_step_id}, not declared step {step_id}",
+            )
 
     def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
         """在 SQLite 中原子创建或读取准备态，进程重启后仍使用同一提交标识。"""
@@ -284,8 +349,8 @@ class SQLiteExecutionValueStore:
         reference = self._new_reference(kind, run_id, step_id)
         encoded = json.dumps(deepcopy(dict(payload)), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         self._connection.execute(
-            "INSERT INTO execution_values(reference, run_id, kind, payload_json) VALUES (?, ?, ?, ?)",
-            (reference, run_id, kind, encoded),
+            "INSERT INTO execution_values(reference, run_id, step_id, kind, payload_json) VALUES (?, ?, ?, ?, ?)",
+            (reference, run_id, step_id, kind, encoded),
         )
         self._connection.commit()
         return reference

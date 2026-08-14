@@ -388,6 +388,60 @@ def test_runtime_rejects_checkpoint_from_different_graph_version(tmp_path) -> No
     assert runtime.workflow_store.get_run(run.run_id).status is not WorkflowStatus.RUNNING
 
 
+def test_runtime_rejects_checkpoint_output_reference_from_another_run(tmp_path) -> None:
+    """恢复前必须拒绝跨运行输出引用，且不能把原运行误标记为执行中。"""
+    runtime = _runtime()
+    runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    task = runtime.create_task("foreign reference", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    foreign_ref = runtime.execution_value_store.put_output(
+        run_id="run-foreign",
+        step_id="extract",
+        payload={"title": "foreign"},
+    )
+    checkpoint_id = runtime.checkpoint_store.save(
+        run_id=run.run_id,
+        state=ACGExecutionState(
+            runId=run.run_id,
+            graphId=run.execution_state["graphId"],
+            outputRefs={"extract": foreign_ref},
+            reviewPayload={"stepId": "extract"},
+        ).model_dump(by_alias=True, mode="json"),
+    )
+
+    with pytest.raises(ValueError, match="belongs to run run-foreign"):
+        asyncio.run(runtime.resume_from_checkpoint(run_id=run.run_id, checkpoint_id=checkpoint_id))
+
+    assert runtime.get_status(run.run_id).status is WorkflowStatus.PENDING
+
+
+def test_runtime_rejects_checkpoint_output_reference_from_another_step(tmp_path) -> None:
+    """检查点把输出引用挂到错误步骤时也必须拒绝，避免 run 内数据串位。"""
+    runtime = _runtime()
+    runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    task = runtime.create_task("wrong step reference", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    output_ref = runtime.execution_value_store.put_output(
+        run_id=run.run_id,
+        step_id="extract",
+        payload={"title": "safe"},
+    )
+    checkpoint_id = runtime.checkpoint_store.save(
+        run_id=run.run_id,
+        state=ACGExecutionState(
+            runId=run.run_id,
+            graphId=run.execution_state["graphId"],
+            outputRefs={"summarize": output_ref},
+            reviewPayload={"stepId": "summarize"},
+        ).model_dump(by_alias=True, mode="json"),
+    )
+
+    with pytest.raises(ValueError, match="belongs to step extract"):
+        asyncio.run(runtime.resume_from_checkpoint(run_id=run.run_id, checkpoint_id=checkpoint_id))
+
+    assert runtime.get_status(run.run_id).status is WorkflowStatus.PENDING
+
+
 def test_runtime_projects_safe_tool_call_metadata() -> None:
     """工具 Trace 只记录名称等元数据，不记录参数正文。"""
     class ToolAgent(_RunAgent):
