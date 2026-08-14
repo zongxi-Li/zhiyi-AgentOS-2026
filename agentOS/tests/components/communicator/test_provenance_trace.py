@@ -55,3 +55,31 @@ def test_ledger_rejects_event_reference_owned_by_another_step() -> None:
         ledger.assert_event_owner(event_id=event.event_id, step_id="summarize")
     with pytest.raises(ProvenanceIntegrityError, match="does not exist"):
         ledger.assert_event_owner(event_id="prod_999999", step_id="extract")
+
+
+def test_ledger_reuses_same_commit_production_without_appending_event() -> None:
+    """节点在提交前异常重试时，同一 commitId 的血缘只能保留一条不可变事件。"""
+    ledger = ProvenanceLedger(run_id="run-1", task_id="task-1")
+
+    first = ledger.record_production(
+        "extract",
+        {"title": "safe"},
+        1,
+        operation_id="commit:run-1:extract:0",
+    )
+    repeated = ledger.record_production(
+        "extract",
+        {"title": "safe"},
+        1,
+        operation_id="commit:run-1:extract:0",
+    )
+
+    assert repeated.event_id == first.event_id
+    assert len(ledger.productions) == 1
+    with pytest.raises(ProvenanceIntegrityError, match="different payload"):
+        ledger.record_production(
+            "extract",
+            {"title": "changed"},
+            1,
+            operation_id="commit:run-1:extract:0",
+        )

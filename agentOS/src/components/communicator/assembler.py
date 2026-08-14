@@ -29,7 +29,7 @@ class ContextAssembler:
     def __init__(self, ledger: ProvenanceLedger | None = None) -> None:
         self.ledger = ledger or ProvenanceLedger()
 
-    def assemble(self, *, run_id: str, step_id: str | None = None, input_spec: Mapping[str, Any] | None = None, upstream_outputs: Mapping[str, Mapping[str, Any]], objective: str = "", step_goal: str = "", task_id: str = "", attempt_id: str = "", binding_id: str = "", graph_version: int = 0, token_budget: int | None = None, step_node: object | None = None, **_: Any) -> ContextPack:
+    def assemble(self, *, run_id: str, step_id: str | None = None, input_spec: Mapping[str, Any] | None = None, upstream_outputs: Mapping[str, Mapping[str, Any]], objective: str = "", step_goal: str = "", task_id: str = "", attempt_id: str = "", binding_id: str = "", graph_version: int = 0, token_budget: int | None = None, step_node: object | None = None, operation_id: str = "", **_: Any) -> ContextPack:
         """从上游输出装配满足 ``input_spec`` 的最小充分 ``ContextPack``。
 
         只投递白名单字段并按预算选择，缺少必填字段会使返回包标记为 invalid；
@@ -64,17 +64,21 @@ class ContextAssembler:
         required = (spec.get("schema") or {}).get("required", []) if isinstance(spec.get("schema"), Mapping) else []
         missing = [str(field) for field in required if field not in data]
         pack = ContextPack(runId=run_id, stepId=step_id or "", objective=objective, stepGoal=step_goal, data=data, sourceData=source_data, evidenceRefs=evidence_refs, missingFields=missing, contractStatus="invalid" if missing else "valid", tokensDelivered=delivered, tokensAvailable=available, savingRatio=ratio, sourceStepIds=source_ids, graphVersion=graph_version, attemptId=attempt_id, bindingId=binding_id, inputRevision=input_revision(data))
-        self.ledger.record_consumption(pack.step_id, source_ids, list(data), fields_by_producer=fields_by_producer, data=data, tokens_delivered=delivered, tokens_available=available, saving_ratio=ratio, contract_status=pack.contract_status)
-        self.ledger.record_interaction(producer_step_ids=source_ids, consumer_step_id=pack.step_id, fields_by_producer=fields_by_producer, evidence_refs=evidence_refs, tokens_delivered=delivered, tokens_available=available, saving_ratio=ratio)
+        # 一个节点提交会产生两类不同事实：字段消费与上下文交互。它们各自从同一
+        # commitId 派生角色键，重试时能分别复用，又不会被误判为彼此冲突的重复事件。
+        consumption_operation = f"{operation_id}:consume" if operation_id else ""
+        interaction_operation = f"{operation_id}:interact" if operation_id else ""
+        self.ledger.record_consumption(pack.step_id, source_ids, list(data), fields_by_producer=fields_by_producer, data=data, tokens_delivered=delivered, tokens_available=available, saving_ratio=ratio, contract_status=pack.contract_status, operation_id=consumption_operation)
+        self.ledger.record_interaction(producer_step_ids=source_ids, consumer_step_id=pack.step_id, fields_by_producer=fields_by_producer, evidence_refs=evidence_refs, tokens_delivered=delivered, tokens_available=available, saving_ratio=ratio, operation_id=interaction_operation)
         return pack
 
-    def record_production(self, step_id: str, output: dict[str, Any], *, agent_name: str = "", attempt: int = 1) -> None:
+    def record_production(self, step_id: str, output: dict[str, Any], *, agent_name: str = "", attempt: int = 1, operation_id: str = "") -> None:
         """把步骤 ``output`` 的字段、Token 与证据血缘登记到当前账本。
 
         该方法不复制或变更输出，仅追加一条生产事件；证据从约定字段中提取。
         账本错误会直接上抛，处理复杂度取决于输出序列化与字段数，为 O(n)。
         """
-        self.ledger.record_production(step_id, output, estimate_tokens(output), agent_name=agent_name, attempt=attempt, evidence_refs=self._collect_evidence([step_id], {step_id: output}))
+        self.ledger.record_production(step_id, output, estimate_tokens(output), agent_name=agent_name, attempt=attempt, evidence_refs=self._collect_evidence([step_id], {step_id: output}), operation_id=operation_id)
 
     @staticmethod
     def _collect_evidence(source_ids: list[str], outputs: Mapping[str, Mapping[str, Any]]) -> list[str]:

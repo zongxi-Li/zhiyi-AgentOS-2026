@@ -123,8 +123,21 @@ class MemoryService:
         ``memory_type`` 由已冻结的步骤策略指定，默认情节记忆只用于兼容旧调用；若
         准入策略拒绝该类型，则返回 ``None``，让运行器不生成虚假的 memoryRef。
         """
+        memory_id = f"memory:{run_id}:{step_id}"
+        existing = self._store.get(memory_id)
+        if existing is not None:
+            if (
+                existing.memory_type == memory_type
+                and existing.content == dict(output)
+                and existing.scope == run_id
+                and existing.tags == ["execution", step_id]
+            ):
+                return existing if admitted(existing, policy) else None
+            raise ValueError(
+                f"execution memory {memory_id} already exists with different output"
+            )
         record = MemoryRecord(
-            memoryId=f"memory:{run_id}:{step_id}",
+            memoryId=memory_id,
             memoryType=memory_type,
             content=deepcopy(dict(output)),
             scope=run_id,

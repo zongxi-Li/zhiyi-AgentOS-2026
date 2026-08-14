@@ -67,3 +67,28 @@ def test_execution_context_marks_missing_required_slot_invalid() -> None:
 
     assert pack.contract_status == "invalid"
     assert pack.missing_fields == ["abstract"]
+
+
+def test_execution_context_reuses_consumption_and_interaction_for_same_commit() -> None:
+    """同一节点提交重试时，消费和交互各自保留一条，不能互相冲突或重复追加。"""
+    store = InMemoryExecutionValueStore()
+    source_ref = store.put_output(
+        run_id="run-1",
+        step_id="extract",
+        payload={"title": "safe"},
+    )
+    service = CommunicatorService(run_id="run-1", task_id="task-1")
+
+    for _ in range(2):
+        service.assemble_execution_context(
+            run_id="run-1",
+            task_id="task-1",
+            step_id="summarize",
+            input_spec={"from": {"extract": ["title"]}},
+            upstream_refs={"extract": source_ref},
+            value_store=store,
+            operation_id="commit:run-1:summarize:0",
+        )
+
+    assert len(service.provenance.consumptions) == 1
+    assert len(service.provenance.interactions) == 1

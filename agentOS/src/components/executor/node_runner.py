@@ -160,6 +160,7 @@ class ACGNodeRunner:
                 objective=self.workflow.description,
                 step_goal=step.name,
                 token_budget=self.entropy_budget,
+                operation_id=commit_id,
             )
         if pack.contract_status != "valid":
             raise ValueError(f"input contract is incomplete for {step_id}: {', '.join(pack.missing_fields)}")
@@ -258,7 +259,12 @@ class ACGNodeRunner:
                 "memoryAccess": memory_access,
             }
 
-        self.communicator.record_production(step_id, controlled, agent_name=agent.profile.agent_name)
+        self.communicator.record_production(
+            step_id,
+            controlled,
+            agent_name=agent.profile.agent_name,
+            operation_id=commit_id,
+        )
         output_ref = self.value_store.put_output(
             run_id=state.run_id,
             step_id=step_id,

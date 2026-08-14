@@ -75,6 +75,7 @@ class CommunicatorService:
         task_id: str = "",
         objective: str = "",
         step_goal: str = "",
+        operation_id: str = "",
     ) -> ContextPack:
         """按输出引用读取上游受控数据并装配严格合同 ContextPack。
 
@@ -96,6 +97,7 @@ class CommunicatorService:
             objective=objective,
             step_goal=step_goal,
             token_budget=token_budget,
+            operation_id=operation_id,
         )
 
     def record_production(self, step_id: str, output: dict[str, object], **kwargs: object) -> None:

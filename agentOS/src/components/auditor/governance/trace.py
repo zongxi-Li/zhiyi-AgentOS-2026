@@ -38,7 +38,36 @@ class TraceStore:
         ``duration_ms`` 会截断为非负整数，空载荷规范化为空字典；返回追加的
         ``TraceEvent``。列表追加是唯一副作用，合同构造或并发冲突错误不被吞没。
         """
-        event = TraceEvent(
+        event = self.build_event(
+            run,
+            event_type=event_type,
+            observation=observation,
+            step_id=step_id,
+            agent_name=agent_name,
+            payload=payload,
+            duration_ms=duration_ms,
+        )
+        run.trace.append(event)
+        return event
+
+    def build_event(
+        self,
+        run: WorkflowRun,
+        *,
+        event_type: TraceEventType,
+        observation: str = "",
+        step_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        duration_ms: int = 0,
+    ) -> TraceEvent:
+        """构造一条尚未写入运行的 Trace 事件。
+
+        节点完成会同时产生成功、模型、工具、记忆和血缘等审计事实。先构造全部
+        合同，再由 :meth:`append_batch` 一次追加，避免其中一条构造失败时留下半批
+        Trace 而被恢复逻辑误认作已经投影完成。
+        """
+        return TraceEvent(
             runId=run.run_id,
             stepId=step_id,
             agentName=agent_name,
@@ -47,8 +76,16 @@ class TraceStore:
             payload=payload or {},
             durationMs=max(0, int(duration_ms)),
         )
-        run.trace.append(event)
-        return event
+
+    def append_batch(self, run: WorkflowRun, events: List[TraceEvent]) -> List[TraceEvent]:
+        """整体追加已经验证的 Trace 事件，返回独立列表。
+
+        调用方必须先完成全部事件构造；Python 列表的单次 ``extend`` 是这里的最小
+        批次边界。该方法不做去重，节点恢复的去重仍由提交标识在 Runtime 层决定。
+        """
+        batch = list(events)
+        run.trace.extend(batch)
+        return batch
 
     def append_execution_event(self, run: WorkflowRun, event: Dict[str, Any]) -> TraceEvent:
         """将融合执行器事件投影到既有 AgentOS Trace 词表。
@@ -56,6 +93,12 @@ class TraceStore:
         执行底座只能发送紧凑字典。本方法刻意拒绝未知事件，确保上游实现内部的
         chunk、callback 或对象不会穿透到审计合同，也避免未定义事件被静默记错。
         """
+        trace = self.build_execution_event(run, event)
+        run.trace.append(trace)
+        return trace
+
+    def build_execution_event(self, run: WorkflowRun, event: Dict[str, Any]) -> TraceEvent:
+        """将紧凑执行事件构造成尚未追加的 Trace 合同。"""
         event_type = str(event.get("type") or "")
         projection = {
             "nodes_scheduled": TraceEventType.STEP_SCHEDULED,
@@ -71,8 +114,8 @@ class TraceStore:
             for key, value in event.items()
             if key not in {"type", "stepId", "agentName"}
         }
-        return self.append(
-            run=run,
+        return self.build_event(
+            run,
             event_type=projection,
             step_id=event.get("stepId"),
             agent_name=event.get("agentName"),

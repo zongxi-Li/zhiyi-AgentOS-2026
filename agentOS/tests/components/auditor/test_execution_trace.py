@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from components.auditor.governance.trace import TraceStore
-from contracts.workflow import WorkflowRun
+from contracts.workflow import TraceEventType, WorkflowRun
 
 
 def test_trace_projects_scheduled_nodes_without_exposing_engine_objects() -> None:
@@ -17,3 +17,25 @@ def test_trace_projects_scheduled_nodes_without_exposing_engine_objects() -> Non
 
     assert event.event_type.value == "step_scheduled"
     assert event.payload == {"stepIds": ["left", "right"]}
+
+
+def test_trace_store_appends_prebuilt_node_trace_as_one_batch() -> None:
+    """节点的多个审计事实应先构造再整体写入，避免半批 Trace 被恢复标记误认完成。"""
+    store = TraceStore()
+    run = WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")
+    success = store.build_execution_event(
+        run,
+        {"type": "node_completed", "stepId": "extract", "commitId": "commit:run-1:extract:0"},
+    )
+    memory = store.build_event(
+        run,
+        event_type=TraceEventType.DATA_CONSUMED,
+        step_id="extract",
+        observation="Step memory policy applied",
+        payload={"written": True},
+    )
+
+    stored = store.append_batch(run, [success, memory])
+
+    assert [event.event_type.value for event in stored] == ["step_succeeded", "data_consumed"]
+    assert run.trace == stored

@@ -31,6 +31,9 @@ class _Event(BaseModel):
     event_id: str = Field(alias="eventId")
     run_id: str = Field(default="", alias="runId")
     task_id: str = Field(default="", alias="taskId")
+    # operationId 绑定节点提交。为空表示普通非执行期记账；非空时同一账本只接受
+    # 一份语义完全相同的事件，用于进程在节点提交前中断后的安全重试。
+    operation_id: str = Field(default="", alias="operationId")
     previous_hash: str = Field(default="", alias="previousHash")
     event_hash: str = Field(default="", alias="eventHash")
     created_at: datetime = Field(default_factory=_now, alias="createdAt")
@@ -109,7 +112,7 @@ class ProvenanceLedger:
 
     def _seal(self, event: _Event) -> None:
         event.previous_hash = self._tail_hash
-        event.event_hash = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"event_hash"}))
+        event.event_hash = provenance_checksum(self._hashed_payload(event))
         self._tail_hash = event.event_hash
 
     def _append(self, event: _Event, destination: list[_Event]) -> None:
@@ -122,17 +125,61 @@ class ProvenanceLedger:
         self._seq += 1
         return f"{prefix}_{self._seq:06d}"
 
-    def record_production(self, step_id: str, output: dict[str, Any], token_size: int, *, agent_name: str = "", attempt: int = 1, evidence_refs: list[str] | None = None) -> DataProductionEvent:
+    def _operation_event(self, operation_id: str) -> _Event | None:
+        """读取同一提交已经封存的事件；空操作标识不启用执行期幂等规则。"""
+        if not operation_id:
+            return None
+        return next(
+            (
+                event
+                for event in [*self.productions, *self.consumptions, *self.interactions]
+                if event.operation_id == operation_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _hashed_payload(event: _Event) -> dict[str, Any]:
+        """生成事件哈希输入，并兼容未声明 operationId 的历史账本。
+
+        旧版本创建的 JSON 没有 ``operationId``。Pydantic 读取它时会补上默认空值，
+        若直接重新序列化就会改变历史哈希。因此只有新事件显式设置过该字段时才
+        将其参与摘要；新旧账本可以在同一恢复链中继续验证和追加。
+        """
+        payload = event.model_dump(by_alias=True, mode="json", exclude={"event_hash"})
+        if not event.operation_id and "operation_id" not in event.model_fields_set:
+            payload.pop("operationId", None)
+        return payload
+
+    def record_production(self, step_id: str, output: dict[str, Any], token_size: int, *, agent_name: str = "", attempt: int = 1, evidence_refs: list[str] | None = None, operation_id: str = "") -> DataProductionEvent:
         """记录 ``step_id`` 产生的输出字段并返回已封存的生产事件。
 
         输出校验和、字段名和证据引用被写入事件，再追加到 ``productions``；输入
         输出不被修改。序列化规模为 n 时复杂度 O(n)，并发追加需调用方同步。
         """
-        event = DataProductionEvent(eventId=self._next_id("prod"), runId=self.run_id, taskId=self.task_id, producerStepId=step_id, agentName=agent_name, attempt=attempt, checksum=provenance_checksum(output), fieldNames=sorted(output), tokenSize=token_size, evidenceRefs=list(dict.fromkeys(evidence_refs or [])))
+        checksum = provenance_checksum(output)
+        normalized_evidence = list(dict.fromkeys(evidence_refs or []))
+        existing = self._operation_event(operation_id)
+        if existing is not None:
+            if (
+                isinstance(existing, DataProductionEvent)
+                and existing.producer_step_id == step_id
+                and existing.agent_name == agent_name
+                and existing.attempt == attempt
+                and existing.checksum == checksum
+                and existing.field_names == sorted(output)
+                and existing.token_size == token_size
+                and existing.evidence_refs == normalized_evidence
+            ):
+                return existing
+            raise ProvenanceIntegrityError(
+                f"provenance operation {operation_id} already exists with different payload"
+            )
+        event = DataProductionEvent(eventId=self._next_id("prod"), runId=self.run_id, taskId=self.task_id, operationId=operation_id, producerStepId=step_id, agentName=agent_name, attempt=attempt, checksum=checksum, fieldNames=sorted(output), tokenSize=token_size, evidenceRefs=normalized_evidence)
         self._seal(event); self._append(event, self.productions)
         return event
 
-    def record_consumption(self, step_id: str, producer_step_ids: list[str], consumed_fields: list[str], *, fields_by_producer: dict[str, list[str]], data: dict[str, Any], tokens_delivered: int, tokens_available: int, saving_ratio: float, contract_status: str = "valid") -> DataConsumptionEvent:
+    def record_consumption(self, step_id: str, producer_step_ids: list[str], consumed_fields: list[str], *, fields_by_producer: dict[str, list[str]], data: dict[str, Any], tokens_delivered: int, tokens_available: int, saving_ratio: float, contract_status: str = "valid", operation_id: str = "") -> DataConsumptionEvent:
         """记录消费者取得字段的来源、内容摘要和预算统计。
 
         生产步骤与字段会去重，并关联当前已知的最新生产事件；返回封存后追加的
@@ -140,18 +187,58 @@ class ProvenanceLedger:
         """
         producer_ids = list(dict.fromkeys(producer_step_ids))
         latest = {event.producer_step_id: event.event_id for event in self.productions}
-        event = DataConsumptionEvent(eventId=self._next_id("cons"), runId=self.run_id, taskId=self.task_id, consumerStepId=step_id, producerStepIds=producer_ids, producerEventIds=[latest[source] for source in producer_ids if source in latest], fieldsByProducer=fields_by_producer, consumedFields=sorted(set(consumed_fields)), tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio, checksum=provenance_checksum(data), contractStatus=contract_status)
+        producer_event_ids = [latest[source] for source in producer_ids if source in latest]
+        normalized_fields = sorted(set(consumed_fields))
+        checksum = provenance_checksum(data)
+        existing = self._operation_event(operation_id)
+        if existing is not None:
+            if (
+                isinstance(existing, DataConsumptionEvent)
+                and existing.consumer_step_id == step_id
+                and existing.producer_step_ids == producer_ids
+                and existing.producer_event_ids == producer_event_ids
+                and existing.fields_by_producer == fields_by_producer
+                and existing.consumed_fields == normalized_fields
+                and existing.tokens_delivered == tokens_delivered
+                and existing.tokens_available == tokens_available
+                and existing.saving_ratio == saving_ratio
+                and existing.checksum == checksum
+                and existing.contract_status == contract_status
+            ):
+                return existing
+            raise ProvenanceIntegrityError(
+                f"provenance operation {operation_id} already exists with different payload"
+            )
+        event = DataConsumptionEvent(eventId=self._next_id("cons"), runId=self.run_id, taskId=self.task_id, operationId=operation_id, consumerStepId=step_id, producerStepIds=producer_ids, producerEventIds=producer_event_ids, fieldsByProducer=fields_by_producer, consumedFields=normalized_fields, tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio, checksum=checksum, contractStatus=contract_status)
         self._seal(event); self._append(event, self.consumptions)
         return event
 
-    def record_interaction(self, *, producer_step_ids: list[str], consumer_step_id: str, fields_by_producer: dict[str, list[str]], evidence_refs: list[str], tokens_delivered: int, tokens_available: int, saving_ratio: float) -> RuntimeInteraction:
+    def record_interaction(self, *, producer_step_ids: list[str], consumer_step_id: str, fields_by_producer: dict[str, list[str]], evidence_refs: list[str], tokens_delivered: int, tokens_available: int, saving_ratio: float, operation_id: str = "") -> RuntimeInteraction:
         """记录一次生产者到消费者的上下文交互并返回封存事件。
 
         生产者和证据引用会去重，返回事件追加到 ``interactions``；该记录不执行
         真实消息投递或证据验证。处理复杂度 O(p + e)，并发调用由调用方同步。
         """
+        normalized_producers = list(dict.fromkeys(producer_step_ids))
+        normalized_evidence = list(dict.fromkeys(evidence_refs))
+        existing = self._operation_event(operation_id)
+        if existing is not None:
+            if (
+                isinstance(existing, RuntimeInteraction)
+                and existing.producer_step_ids == normalized_producers
+                and existing.consumer_step_id == consumer_step_id
+                and existing.fields_by_producer == fields_by_producer
+                and existing.evidence_refs == normalized_evidence
+                and existing.tokens_delivered == tokens_delivered
+                and existing.tokens_available == tokens_available
+                and existing.saving_ratio == saving_ratio
+            ):
+                return existing
+            raise ProvenanceIntegrityError(
+                f"provenance operation {operation_id} already exists with different payload"
+            )
         event_id = self._next_id("int")
-        event = RuntimeInteraction(eventId=event_id, interactionId=event_id, runId=self.run_id, taskId=self.task_id, producerStepIds=list(dict.fromkeys(producer_step_ids)), consumerStepId=consumer_step_id, fieldsByProducer=fields_by_producer, evidenceRefs=list(dict.fromkeys(evidence_refs)), tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio)
+        event = RuntimeInteraction(eventId=event_id, interactionId=event_id, runId=self.run_id, taskId=self.task_id, operationId=operation_id, producerStepIds=normalized_producers, consumerStepId=consumer_step_id, fieldsByProducer=fields_by_producer, evidenceRefs=normalized_evidence, tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio)
         self._seal(event); self._append(event, self.interactions)
         return event
 
@@ -164,7 +251,7 @@ class ProvenanceLedger:
         previous = ""
         events = sorted([*self.productions, *self.consumptions, *self.interactions], key=self._event_sequence)
         for event in events:
-            expected = provenance_checksum(event.model_dump(by_alias=True, mode="json", exclude={"event_hash"}))
+            expected = provenance_checksum(self._hashed_payload(event))
             if event.previous_hash != previous or event.event_hash != expected:
                 return False
             previous = event.event_hash

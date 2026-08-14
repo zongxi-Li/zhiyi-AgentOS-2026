@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from components.communicator.provenance import ProvenanceIntegrityError, ProvenanceLedger
+from components.communicator.provenance import ProvenanceIntegrityError, ProvenanceLedger, provenance_checksum
 from components.communicator.provenance_store import SQLiteProvenanceStore
 
 
@@ -58,3 +58,31 @@ def test_provenance_store_rejects_tampered_persisted_event(tmp_path) -> None:
     with pytest.raises(ProvenanceIntegrityError, match="integrity"):
         reopened.load_ledger(run_id="run-a", task_id="task-a")
     reopened.close()
+
+
+def test_ledger_restores_legacy_event_without_operation_id() -> None:
+    """升级后的账本必须按旧字段重算历史事件哈希，不能因新增幂等字段拒绝续跑。"""
+    legacy = {
+        "eventId": "prod_000001",
+        "runId": "run-a",
+        "taskId": "task-a",
+        "previousHash": "",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "producerStepId": "extract",
+        "agentName": "runner",
+        "attempt": 1,
+        "checksum": "output-checksum",
+        "fieldNames": ["title"],
+        "tokenSize": 1,
+        "evidenceRefs": [],
+    }
+    legacy["eventHash"] = provenance_checksum(legacy)
+
+    restored = ProvenanceLedger.from_events(
+        run_id="run-a",
+        task_id="task-a",
+        events=[legacy],
+    )
+
+    assert restored.verify_integrity() is True
+    assert restored.productions[0].operation_id == ""

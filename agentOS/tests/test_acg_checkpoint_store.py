@@ -55,3 +55,22 @@ def test_checkpoint_store_rejects_stale_compare_and_set_version(tmp_path) -> Non
     with pytest.raises(CheckpointConflictError, match="version"):
         store.save(run_id="run-a", state={"completedStepIds": ["stale"]}, expected_version=1)
     store.close()
+
+
+def test_checkpoint_store_reuses_identical_checkpoint_without_new_version(tmp_path) -> None:
+    """同一逻辑检查点重复保存必须复用原版本，恢复重试不能无限制造快照。"""
+    store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    state = {"runId": "run-a", "completedStepIds": ["one"]}
+
+    first = store.save(run_id="run-a", checkpoint_id="acgckpt_stable", state=state)
+    repeated = store.save(
+        run_id="run-a",
+        checkpoint_id="acgckpt_stable",
+        state=state,
+        expected_version=1,
+    )
+
+    assert repeated == first
+    assert store.version(run_id="run-a", checkpoint_id=first) == 1
+    assert store.latest_version(run_id="run-a") == 1
+    store.close()

@@ -101,6 +101,17 @@ class ACGCheckpointStore:
                 raise CheckpointConflictError(
                     f"checkpoint version {expected_version} does not match current version {current_version}"
                 )
+            existing = self._connection.execute(
+                "SELECT state_json FROM acg_execution_checkpoints WHERE thread_id = ? AND checkpoint_id = ?",
+                (run_id, identifier),
+            ).fetchone()
+            if existing is not None:
+                if str(existing[0]) != payload:
+                    raise CheckpointConflictError(
+                        f"checkpoint id already exists with different state: {identifier}"
+                    )
+                self._connection.commit()
+                return identifier
             next_version = current_version + 1
             self._connection.execute(
                 "INSERT OR REPLACE INTO acg_execution_checkpoints(thread_id, checkpoint_id, state_json, version) VALUES (?, ?, ?, ?)",

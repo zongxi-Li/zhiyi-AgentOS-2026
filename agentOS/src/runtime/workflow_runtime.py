@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+import hashlib
+import json
 import logging
 import os
 import secrets
@@ -54,6 +56,7 @@ from contracts.workflow import (
     ReviewDecisionType,
     ReviewRecord,
     StepStatus,
+    TraceEvent,
     TraceEventType,
     WorkflowDefinition,
     WorkflowRun,
@@ -723,6 +726,7 @@ class WorkflowRuntime:
         """投影单个图事件与步骤状态；事件正文只含步骤标识、摘要或引用。"""
         event_type = event.get("type")
         commit_id = event.get("commitId")
+        node_trace_batch: list[TraceEvent] = []
         if event_type == "node_completed" and isinstance(commit_id, str) and self._is_projected_commit(run, commit_id):
             # Trace 已经确认过该提交，说明上次在状态保存前中断。重放时不能再次追加
             # 步骤成功、记忆访问或通信血缘事件；图状态本身由当前 checkpoint 继续推进。
@@ -771,7 +775,10 @@ class WorkflowRuntime:
                 step.status = StepStatus.SKIPPED_BY_CONDITION
                 step.completed_at = utc_now()
         if event_type not in {"superstep_completed", "superstep_failed"}:
-            self.trace_store.append_execution_event(run, event)
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_execution_event(run, event))
+            else:
+                self.trace_store.append_execution_event(run, event)
         if event_type == "superstep_failed":
             self.trace_store.append(
                 run,
@@ -784,30 +791,57 @@ class WorkflowRuntime:
                 },
             )
         for model_call in event.get("modelInvocations", []):
-            self.trace_store.append(
-                run,
-                TraceEventType.MODEL_CALLED,
-                step_id=event.get("stepId"),
-                observation="Model invocation metadata projected",
-                payload=dict(model_call),
-            )
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_event(
+                    run,
+                    event_type=TraceEventType.MODEL_CALLED,
+                    step_id=event.get("stepId"),
+                    observation="Model invocation metadata projected",
+                    payload=dict(model_call),
+                ))
+            else:
+                self.trace_store.append(
+                    run,
+                    TraceEventType.MODEL_CALLED,
+                    step_id=event.get("stepId"),
+                    observation="Model invocation metadata projected",
+                    payload=dict(model_call),
+                )
         for tool_call in event.get("toolCalls", []):
-            self.trace_store.append(
-                run,
-                TraceEventType.TOOL_CALLED,
-                step_id=event.get("stepId"),
-                observation="Tool invocation metadata projected",
-                payload=dict(tool_call),
-            )
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_event(
+                    run,
+                    event_type=TraceEventType.TOOL_CALLED,
+                    step_id=event.get("stepId"),
+                    observation="Tool invocation metadata projected",
+                    payload=dict(tool_call),
+                ))
+            else:
+                self.trace_store.append(
+                    run,
+                    TraceEventType.TOOL_CALLED,
+                    step_id=event.get("stepId"),
+                    observation="Tool invocation metadata projected",
+                    payload=dict(tool_call),
+                )
         memory_access = event.get("memoryAccess")
         if isinstance(memory_access, dict):
-            self.trace_store.append(
-                run,
-                TraceEventType.DATA_CONSUMED,
-                step_id=event.get("stepId"),
-                observation="Step memory policy applied",
-                payload=dict(memory_access),
-            )
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_event(
+                    run,
+                    event_type=TraceEventType.DATA_CONSUMED,
+                    step_id=event.get("stepId"),
+                    observation="Step memory policy applied",
+                    payload=dict(memory_access),
+                ))
+            else:
+                self.trace_store.append(
+                    run,
+                    TraceEventType.DATA_CONSUMED,
+                    step_id=event.get("stepId"),
+                    observation="Step memory policy applied",
+                    payload=dict(memory_access),
+                )
         for provenance_event in event.get("provenanceEvents", []):
             if not isinstance(provenance_event, dict):
                 continue
@@ -819,13 +853,24 @@ class WorkflowRuntime:
             payload = provenance_event.get("payload")
             if trace_type is None or not isinstance(payload, dict):
                 continue
-            self.trace_store.append(
-                run,
-                trace_type,
-                step_id=event.get("stepId"),
-                observation="Communication provenance projected",
-                payload=dict(payload),
-            )
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_event(
+                    run,
+                    event_type=trace_type,
+                    step_id=event.get("stepId"),
+                    observation="Communication provenance projected",
+                    payload=dict(payload),
+                ))
+            else:
+                self.trace_store.append(
+                    run,
+                    trace_type,
+                    step_id=event.get("stepId"),
+                    observation="Communication provenance projected",
+                    payload=dict(payload),
+                )
+        if node_trace_batch:
+            self.trace_store.append_batch(run, node_trace_batch)
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
         self._persist_acg_state(run, state)
@@ -850,7 +895,13 @@ class WorkflowRuntime:
     def _save_acg_checkpoint(self, run: WorkflowRun, state: ACGExecutionState) -> str:
         """按运行当前 checkpoint 版本保存下一份引用型状态。"""
         expected_version = self.checkpoint_store.latest_version(run_id=run.run_id)
-        checkpoint_id = f"acgckpt_{uuid4().hex}"
+        # 检查点标识来自不含既有 checkpointId 的状态摘要。同一超步在“保存成功、
+        # 投影 Trace 前中断”后会生成完全相同的标识，底层仓库因此能复用旧快照和
+        # 版本；状态真正推进时摘要才变化，绝不会覆盖历史检查点。
+        checkpoint_data = state.model_dump(by_alias=True, mode="json")
+        checkpoint_data["checkpointId"] = None
+        encoded = json.dumps(checkpoint_data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        checkpoint_id = f"acgckpt_{hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:24]}"
         state.checkpoint_id = checkpoint_id
         return self.checkpoint_store.save(
             run_id=run.run_id,

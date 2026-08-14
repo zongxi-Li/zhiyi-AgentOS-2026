@@ -142,6 +142,31 @@ def test_assert_step_ref_rejects_missing_or_misattributed_execution_memory() -> 
         memory.assert_step_ref(run_id="run-a", step_id="summarize", memory_ref=record.memory_id)
 
 
+def test_remember_step_output_reuses_same_commit_memory_and_rejects_changed_output() -> None:
+    """节点提交前重试只能复用同一记忆；内容变化必须失败而不能静默覆盖。"""
+    memory = MemoryService()
+
+    first = memory.remember_step_output(
+        run_id="run-a",
+        step_id="extract",
+        output={"title": "safe"},
+    )
+    repeated = memory.remember_step_output(
+        run_id="run-a",
+        step_id="extract",
+        output={"title": "safe"},
+    )
+
+    assert first is not None
+    assert repeated is first
+    with pytest.raises(ValueError, match="different output"):
+        memory.remember_step_output(
+            run_id="run-a",
+            step_id="extract",
+            output={"title": "changed"},
+        )
+
+
 def test_sqlite_memory_store_survives_reopen_for_same_run(tmp_path) -> None:
     """进程重建后，当前 run 的情节记忆必须仍可按范围召回。"""
     db_path = tmp_path / "memory.sqlite3"
