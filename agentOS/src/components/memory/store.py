@@ -25,6 +25,14 @@ class MemoryStore:
         """
         self._records[record.memory_id] = record
 
+    def get(self, memory_id: str) -> MemoryRecord | None:
+        """按标识读取一条记忆记录，不存在时返回 ``None``。
+
+        恢复校验只需要记录的标识、范围和来源标签；返回原对象是为了保持本仓库与
+        ``values`` 相同的引用语义。该方法不执行检索、过期判断或策略准入。
+        """
+        return self._records.get(memory_id)
+
     def values(self) -> list[MemoryRecord]:
         """返回当前记录引用构成的新列表。
 
@@ -65,6 +73,16 @@ class SQLiteMemoryStore:
             (record.memory_id, payload),
         )
         self._connection.commit()
+
+    def get(self, memory_id: str) -> MemoryRecord | None:
+        """按主键重建一条记忆合同，不读取同一运行的其它记录。"""
+        row = self._connection.execute(
+            "SELECT record_json FROM execution_memory WHERE memory_id = ?",
+            (memory_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return MemoryRecord.model_validate(json.loads(str(row[0])))
 
     def values(self) -> list[MemoryRecord]:
         """读取全部合同记录，由 MemoryService 继续执行范围、过期与排序控制。"""

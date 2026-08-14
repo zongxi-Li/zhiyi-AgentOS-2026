@@ -604,6 +604,76 @@ def test_runtime_rejects_checkpoint_output_reference_from_another_step(tmp_path)
     assert runtime.get_status(run.run_id).status is WorkflowStatus.PENDING
 
 
+def test_runtime_rejects_checkpoint_memory_reference_from_another_step(tmp_path) -> None:
+    """恢复时 memoryRef 不能只凭字符串格式通过，必须匹配真实的来源步骤。"""
+    runtime = _runtime()
+    runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    task = runtime.create_task("wrong memory step", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    record = MemoryService(store=runtime.memory_store).remember_step_output(
+        run_id=run.run_id,
+        step_id="extract",
+        output={"title": "safe"},
+    )
+    assert record is not None
+    checkpoint_id = runtime.checkpoint_store.save(
+        run_id=run.run_id,
+        state=ACGExecutionState(
+            runId=run.run_id,
+            graphId=run.execution_state["graphId"],
+            memoryRefs={"summarize": record.memory_id},
+        ).model_dump(by_alias=True, mode="json"),
+    )
+
+    with pytest.raises(ValueError, match="belongs to step extract"):
+        asyncio.run(runtime.resume_from_checkpoint(run_id=run.run_id, checkpoint_id=checkpoint_id))
+
+    assert runtime.get_status(run.run_id).status is WorkflowStatus.PENDING
+
+
+def test_runtime_rejects_checkpoint_trace_without_real_step_trace(tmp_path) -> None:
+    """恢复的 traceRef 必须能在同一运行的该步骤 Trace 中找到，不能接受伪造字符串。"""
+    runtime = _runtime()
+    runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    task = runtime.create_task("forged trace", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    checkpoint_id = runtime.checkpoint_store.save(
+        run_id=run.run_id,
+        state=ACGExecutionState(
+            runId=run.run_id,
+            graphId=run.execution_state["graphId"],
+            traceRefs={"extract": "trace:extract"},
+        ).model_dump(by_alias=True, mode="json"),
+    )
+
+    with pytest.raises(ValueError, match="trace reference trace:extract"):
+        asyncio.run(runtime.resume_from_checkpoint(run_id=run.run_id, checkpoint_id=checkpoint_id))
+
+    assert runtime.get_status(run.run_id).status is WorkflowStatus.PENDING
+
+
+def test_runtime_rejects_checkpoint_provenance_and_unknown_step_keys(tmp_path) -> None:
+    """伪造血缘 ID 或 Blueprint 外步骤键都必须在恢复调度前被拒绝。"""
+    runtime = _runtime()
+    runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
+    task = runtime.create_task("forged provenance", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+    checkpoint_id = runtime.checkpoint_store.save(
+        run_id=run.run_id,
+        state=ACGExecutionState(
+            runId=run.run_id,
+            graphId=run.execution_state["graphId"],
+            memoryRefs={"outside": "memory:none"},
+            provenanceRefs={"extract": ["prod_999999"]},
+        ).model_dump(by_alias=True, mode="json"),
+    )
+
+    with pytest.raises(ValueError, match="unknown ACG step outside"):
+        asyncio.run(runtime.resume_from_checkpoint(run_id=run.run_id, checkpoint_id=checkpoint_id))
+
+    assert runtime.get_status(run.run_id).status is WorkflowStatus.PENDING
+
+
 def test_runtime_projects_safe_tool_call_metadata() -> None:
     """工具 Trace 只记录名称等元数据，不记录参数正文。"""
     class ToolAgent(_RunAgent):

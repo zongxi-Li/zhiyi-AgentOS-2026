@@ -48,6 +48,26 @@ def test_execution_graph_runs_ready_steps_then_dependents() -> None:
     assert "fullOutput" not in result.model_dump(by_alias=True)
 
 
+def test_execution_graph_projects_only_provenance_event_ids_into_state() -> None:
+    """图状态只保留节点归属的事件 ID，不能把通信 Trace 或正文写进 checkpoint。"""
+    graph = ACGExecutionGraph(nodes=("extract",))
+    state = ACGExecutionState(runId="run-1")
+
+    async def execute(_step_id: str, _state: ACGExecutionState) -> dict:
+        return {
+            "outputSummary": "done",
+            "provenanceEvents": [
+                {"eventType": "data_produced", "payload": {"eventId": "prod_000001", "fieldNames": ["title"]}},
+                {"eventType": "data_produced", "payload": {"eventId": "prod_000001", "fieldNames": ["title"]}},
+            ],
+        }
+
+    result = asyncio.run(graph.run(state, execute))
+
+    assert result.provenance_refs == {"extract": ["prod_000001"]}
+    assert "fieldNames" not in str(result.model_dump(by_alias=True))
+
+
 def test_execution_graph_exposes_parallel_ready_set() -> None:
     graph = ACGExecutionGraph(nodes=("left", "right", "join"), edges=(("left", "join"), ("right", "join")))
 

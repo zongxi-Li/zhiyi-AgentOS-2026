@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from components.communicator import CommunicatorService
-from components.communicator.provenance import ProvenanceLedger
+from components.communicator.provenance import ProvenanceIntegrityError, ProvenanceLedger
 
 
 def test_ledger_trace_projection_excludes_payload_body() -> None:
@@ -41,3 +43,15 @@ def test_service_drains_provenance_events_by_step_ownership() -> None:
 
     assert [item["payload"]["producerStepId"] for item in left_events] == ["left"]
     assert [item["payload"]["producerStepId"] for item in right_events] == ["right"]
+
+
+def test_ledger_rejects_event_reference_owned_by_another_step() -> None:
+    """恢复的 provenanceRefs 只能指向当前步骤生产或消费的真实账本事件。"""
+    ledger = ProvenanceLedger(run_id="run-1", task_id="task-1")
+    event = ledger.record_production("extract", {"title": "safe"}, 1)
+
+    ledger.assert_event_owner(event_id=event.event_id, step_id="extract")
+    with pytest.raises(ProvenanceIntegrityError, match="does not belong to step summarize"):
+        ledger.assert_event_owner(event_id=event.event_id, step_id="summarize")
+    with pytest.raises(ProvenanceIntegrityError, match="does not exist"):
+        ledger.assert_event_owner(event_id="prod_999999", step_id="extract")

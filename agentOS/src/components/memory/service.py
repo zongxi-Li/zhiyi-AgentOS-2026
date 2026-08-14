@@ -87,6 +87,26 @@ class MemoryService:
             used_tokens += record_tokens
         return selected
 
+    def assert_step_ref(self, *, run_id: str, step_id: str, memory_ref: str) -> None:
+        """确认 ``memory_ref`` 指向当前运行和当前来源步骤的真实执行记忆。
+
+        检查点中的引用可被外部篡改，因此不能仅根据固定 ID 格式推导归属。这里仅
+        读取记忆合同的元数据：``scope`` 绑定 run，``execution`` 标签后的步骤标识
+        绑定来源步骤；不会读取或返回记忆正文。
+        """
+        record = self._store.get(memory_ref)
+        if record is None:
+            raise ValueError(f"memory reference {memory_ref} does not exist")
+        if record.scope != run_id:
+            raise ValueError(
+                f"memory reference {memory_ref} belongs to run {record.scope}, not run {run_id}"
+            )
+        source_step_id = record.tags[1] if len(record.tags) >= 2 and record.tags[0] == "execution" else ""
+        if source_step_id != step_id:
+            raise ValueError(
+                f"memory reference {memory_ref} belongs to step {source_step_id or 'unknown'}, not {step_id}"
+            )
+
     def remember_step_output(
         self,
         *,

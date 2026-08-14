@@ -170,6 +170,32 @@ class ProvenanceLedger:
             previous = event.event_hash
         return True
 
+    def assert_event_owner(self, *, event_id: str, step_id: str) -> None:
+        """确认事件存在且由 ``step_id`` 生产或消费。
+
+        本方法只用于恢复前校验 State 中的 ``provenanceRefs``。账本由存储层重建时
+        已确认 runId、taskId 和哈希链，此处再把事件与步骤绑定，避免攻击者把同一
+        运行内另一个步骤的事件挂到当前步骤上。
+        """
+        event = next(
+            (
+                item
+                for item in [*self.productions, *self.consumptions, *self.interactions]
+                if item.event_id == event_id
+            ),
+            None,
+        )
+        if event is None:
+            raise ProvenanceIntegrityError(f"provenance event {event_id} does not exist")
+        if isinstance(event, DataProductionEvent):
+            owned = event.producer_step_id == step_id
+        else:
+            owned = event.consumer_step_id == step_id
+        if not owned:
+            raise ProvenanceIntegrityError(
+                f"provenance event {event_id} does not belong to step {step_id}"
+            )
+
     @classmethod
     def from_events(
         cls,

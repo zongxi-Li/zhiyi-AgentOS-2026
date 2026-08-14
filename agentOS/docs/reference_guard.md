@@ -10,7 +10,17 @@
 - `runId` 与当前运行一致；
 - 产生该引用的 `stepId` 与 State 字典中的步骤键一致。
 
-`memoryRef` 必须是当前运行、当前步骤的固定记忆标识；`traceRef` 必须是该步骤对应的 Trace 标识。任一项不匹配都会在创建 Agent、修改运行状态或追加血缘事件前终止恢复。
+`memoryRef` 会按标识读取真实的 `MemoryRecord`，确认其 `scope` 等于当前 `runId`，并确认
+`tags=["execution", stepId]` 中的来源步骤与 State 键一致。它不读取、复制或返回记忆正文。
+
+`traceRef` 除了必须符合当前步骤的固定标识外，还必须能在同一 `WorkflowRun.trace` 找到该步骤
+已经提交的 `step_succeeded` 事件。单独伪造 `trace:步骤标识` 不能通过恢复。
+
+`provenanceRefs` 是 `stepId -> eventId[]` 的纯引用映射。恢复时运行时从独立 SQLite 账本重新
+加载并验证哈希链，再逐项确认事件存在且由该步骤生产或消费；它不会把通信正文或 Trace 载荷
+写入检查点。任何 State 引用字典出现 Blueprint 外的步骤键也会被拒绝。
+
+任一项不匹配都会在创建 Agent、修改运行状态或追加新的血缘事件前终止恢复。
 
 ## 审计写入门槛
 

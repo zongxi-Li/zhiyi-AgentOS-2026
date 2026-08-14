@@ -44,6 +44,9 @@ class ACGExecutionState(BaseModel):
     context_refs: dict[str, str] = Field(default_factory=dict, alias="contextRefs")
     memory_refs: dict[str, str] = Field(default_factory=dict, alias="memoryRefs")
     trace_refs: dict[str, str] = Field(default_factory=dict, alias="traceRefs")
+    # 通信正文与安全 Trace 均不进入 State；这里只保留已被账本封存的事件标识，
+    # 恢复时 Runtime 会重新加载哈希链并检查该事件属于同一 run、task 与步骤。
+    provenance_refs: dict[str, list[str]] = Field(default_factory=dict, alias="provenanceRefs")
     checkpoint_id: str | None = Field(default=None, alias="checkpointId")
     review_payload: dict[str, Any] | None = Field(default=None, alias="reviewPayload")
 
@@ -327,6 +330,20 @@ class ACGExecutionGraph:
                 for key, destination in (("contextRef", state.context_refs), ("memoryRef", state.memory_refs), ("traceRef", state.trace_refs)):
                     if result.get(key) is not None:
                         destination[step_id] = str(result[key])
+                provenance_ids: list[str] = []
+                for provenance_event in result.get("provenanceEvents") or []:
+                    if not isinstance(provenance_event, dict):
+                        continue
+                    payload = provenance_event.get("payload")
+                    event_id = payload.get("eventId") if isinstance(payload, dict) else None
+                    if isinstance(event_id, str) and event_id:
+                        provenance_ids.append(event_id)
+                if provenance_ids:
+                    # 节点提交可能在进程中断后被重放。保留首次顺序并去重，确保同一
+                    # 血缘事件不会因重放膨胀 checkpoint，也不会影响账本中的真实事件。
+                    state.provenance_refs[step_id] = list(
+                        dict.fromkeys([*state.provenance_refs.get(step_id, []), *provenance_ids])
+                    )
                 state.completed_step_ids.append(step_id)
                 memory_access = self._safe_memory_access(result.get("memoryAccess"))
                 yield {

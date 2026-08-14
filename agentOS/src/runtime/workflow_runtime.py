@@ -25,6 +25,7 @@ from components.task_manager.service import TaskManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
 from components.communicator import CommunicatorService
+from components.communicator.provenance import ProvenanceLedger
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor import (
     ACGExecutionState,
@@ -500,8 +501,9 @@ class WorkflowRuntime:
             blueprint=blueprint,
             state=execution_state,
         )
-        self._validate_acg_state_references(run=run, state=execution_state)
-        runner = self._build_acg_runner(task=task, run=run, workflow=workflow, graph=graph)
+        ledger = self.provenance_store.load_ledger(run_id=run.run_id, task_id=task.task_id)
+        self._validate_acg_state_references(run=run, state=execution_state, ledger=ledger)
+        runner = self._build_acg_runner(task=task, run=run, workflow=workflow, graph=graph, ledger=ledger)
         run.execution_state["engineMigration"] = "langgraph_fused_v1"
         run.execution_state["graphId"] = blueprint.graph_id
         run = self._set_run_lifecycle(
@@ -583,12 +585,31 @@ class WorkflowRuntime:
         if workflow_version is not None and str(workflow.version) != str(workflow_version):
             raise ValueError("checkpoint workflowVersion does not match persisted workflow version")
 
-    def _validate_acg_state_references(self, *, run: WorkflowRun, state: ACGExecutionState) -> None:
+    def _validate_acg_state_references(
+        self,
+        *,
+        run: WorkflowRun,
+        state: ACGExecutionState,
+        ledger: ProvenanceLedger | None = None,
+    ) -> None:
         """在恢复前重验检查点的引用归属，且不读取任何输出或上下文正文。
 
         State 字典的键就是产生引用的步骤标识。若键、runId 或引用类别被篡改，必须在
         改变运行生命周期、创建 Agent 或追加血缘事件之前停止，避免恢复路径成为越权入口。
         """
+        valid_step_ids = {step.step_id for step in run.steps}
+        reference_maps = {
+            "output summaries": state.output_summaries,
+            "output": state.output_refs,
+            "context": state.context_refs,
+            "memory": state.memory_refs,
+            "trace": state.trace_refs,
+            "provenance": state.provenance_refs,
+        }
+        for reference_name, references in reference_maps.items():
+            for step_id in references:
+                if step_id not in valid_step_ids:
+                    raise ValueError(f"unknown ACG step {step_id} in {reference_name} references")
         for step_id, output_ref in state.output_refs.items():
             self.execution_value_store.assert_reference(
                 kind="output", run_id=run.run_id, step_id=step_id, reference=output_ref
@@ -598,11 +619,27 @@ class WorkflowRuntime:
                 kind="context", run_id=run.run_id, step_id=step_id, reference=context_ref
             )
         for step_id, memory_ref in state.memory_refs.items():
-            if memory_ref != "memory:none" and memory_ref != f"memory:{run.run_id}:{step_id}":
-                raise ValueError(f"memory reference {memory_ref} does not belong to run step {step_id}")
+            if memory_ref != "memory:none":
+                MemoryService(store=self.memory_store).assert_step_ref(
+                    run_id=run.run_id,
+                    step_id=step_id,
+                    memory_ref=memory_ref,
+                )
         for step_id, trace_ref in state.trace_refs.items():
             if trace_ref != f"trace:{step_id}":
                 raise ValueError(f"trace reference {trace_ref} does not belong to step {step_id}")
+            if not any(
+                event.event_type == TraceEventType.STEP_SUCCEEDED and event.step_id == step_id
+                for event in run.trace
+            ):
+                raise ValueError(f"trace reference {trace_ref} has no completed trace for step {step_id}")
+        active_ledger = ledger or self.provenance_store.load_ledger(
+            run_id=run.run_id,
+            task_id=run.task_id,
+        )
+        for step_id, event_ids in state.provenance_refs.items():
+            for event_id in event_ids:
+                active_ledger.assert_event_owner(event_id=event_id, step_id=step_id)
         review_payload = state.review_payload
         if isinstance(review_payload, dict):
             decision_ref = review_payload.get("auditDecisionRef")
@@ -616,7 +653,15 @@ class WorkflowRuntime:
                     outcomes={outcome},
                 )
 
-    def _build_acg_runner(self, *, task: AgentTask, run: WorkflowRun, workflow: WorkflowDefinition, graph) -> ACGNodeRunner:
+    def _build_acg_runner(
+        self,
+        *,
+        task: AgentTask,
+        run: WorkflowRun,
+        workflow: WorkflowDefinition,
+        graph,
+        ledger: ProvenanceLedger,
+    ) -> ACGNodeRunner:
         """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
         steps = {step.step_id: step for step in run.steps}
         allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
@@ -654,10 +699,7 @@ class WorkflowRuntime:
             communicator=CommunicatorService(
                 run_id=run.run_id,
                 task_id=task.task_id,
-                ledger=self.provenance_store.load_ledger(
-                    run_id=run.run_id,
-                    task_id=task.task_id,
-                ),
+                ledger=ledger,
             ),
             memory=MemoryService(store=self.memory_store),
             entropy_budget=(int(run.input["entropyBudget"]) if run.input.get("entropyBudget") is not None else None),

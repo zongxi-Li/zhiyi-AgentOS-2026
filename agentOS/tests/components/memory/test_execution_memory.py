@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryRecord, MemoryType
@@ -119,6 +121,25 @@ def test_remember_step_output_uses_declared_write_type() -> None:
 
     assert record is not None
     assert record.memory_type is MemoryType.SEMANTIC
+
+
+def test_assert_step_ref_rejects_missing_or_misattributed_execution_memory() -> None:
+    """恢复时 memoryRef 必须对应真实记录，且记录的运行与来源步骤都要一致。"""
+    memory = MemoryService()
+    record = memory.remember_step_output(
+        run_id="run-a",
+        step_id="extract",
+        output={"title": "safe"},
+    )
+
+    assert record is not None
+    memory.assert_step_ref(run_id="run-a", step_id="extract", memory_ref=record.memory_id)
+    with pytest.raises(ValueError, match="does not exist"):
+        memory.assert_step_ref(run_id="run-a", step_id="extract", memory_ref="memory:run-a:missing")
+    with pytest.raises(ValueError, match="belongs to run run-a"):
+        memory.assert_step_ref(run_id="run-b", step_id="extract", memory_ref=record.memory_id)
+    with pytest.raises(ValueError, match="belongs to step extract"):
+        memory.assert_step_ref(run_id="run-a", step_id="summarize", memory_ref=record.memory_id)
 
 
 def test_sqlite_memory_store_survives_reopen_for_same_run(tmp_path) -> None:
