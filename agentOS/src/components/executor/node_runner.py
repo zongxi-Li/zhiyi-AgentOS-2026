@@ -18,6 +18,7 @@ from typing import Any
 from components.communicator import CommunicatorService
 from components.communicator.contracts import ContextPack, estimate_tokens
 from components.auditor.execution_audit import ExecutionAuditService
+from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService
 from adapters.agent_invocation import AgentInvocationAdapter
 from contracts.communication import validate_contract_payload
@@ -52,6 +53,7 @@ class ACGNodeRunner:
         communication_modes: Mapping[str, str] | None = None,
         upstream_step_ids: Mapping[str, tuple[str, ...]] | None = None,
         execution_audit: ExecutionAuditService | None = None,
+        decision_store: DecisionStore | None = None,
         agent_invoker: AgentInvocationAdapter | None = None,
         model_runtime: object | None = None,
         capability_descriptors: Mapping[str, object] | None = None,
@@ -75,6 +77,9 @@ class ACGNodeRunner:
             for node_id, source_ids in (upstream_step_ids or {}).items()
         }
         self.execution_audit = execution_audit or ExecutionAuditService()
+        # 审计决定必须先于输出、记忆和提交记录落入独立真源。最小运行器使用内存
+        # 实现；WorkflowRuntime 会注入可跨进程恢复的 SQLite 实现。
+        self.decision_store = decision_store or InMemoryDecisionStore()
         self.agent_invoker = agent_invoker
         self.model_runtime = model_runtime
         self.capability_descriptors = dict(capability_descriptors or {})
@@ -235,53 +240,66 @@ class ACGNodeRunner:
             severity_counts=severity_counts,
             memory_access=memory_access,
         )
-        if memory_policy["requireAudit"]:
-            self._require_audit_decision(decision)
-        if decision.outcome == "deny":
+        self._require_audit_decision(decision)
+        self.decision_store.save(run_id=state.run_id, step_id=step_id, decision=decision)
+        persisted_decision = self.decision_store.assert_decision(
+            run_id=state.run_id,
+            step_id=step_id,
+            decision_ref=decision.decision_id,
+            outcomes={decision.outcome},
+        )
+        if persisted_decision.outcome == "deny":
             return {
                 "outputSummary": output.summary or f"denied:{step_id}",
                 "reviewRequired": False,
-                "auditDecisionRef": decision.decision_id,
-                "auditOutcome": decision.outcome,
+                "auditDecisionRef": persisted_decision.decision_id,
+                "auditOutcome": persisted_decision.outcome,
                 "modelInvocations": self._safe_model_invocations(output.model_invocations),
                 "memoryAccess": memory_access,
             }
 
         self.communicator.record_production(step_id, controlled, agent_name=agent.profile.agent_name)
-        write_policy = self._write_memory_policy(memory_policy)
-        memory_record = (
-            self.memory.remember_step_output(
-                run_id=state.run_id,
-                step_id=step_id,
-                output=controlled,
-                memory_type=memory_policy["writeType"],
-                policy=write_policy,
-            )
-            if memory_policy["write"]
-            else None
-        )
-        memory_access["written"] = memory_record is not None
         output_ref = self.value_store.put_output(
             run_id=state.run_id,
             step_id=step_id,
             payload=controlled,
         )
+        context_ref = self.value_store.put_context_pack(
+            run_id=state.run_id,
+            step_id=step_id,
+            payload=pack.model_dump(by_alias=True, mode="json"),
+        )
+        memory_record = None
+        pending_memory: dict[str, str] | None = None
+        if persisted_decision.outcome == "allow" and memory_policy["write"]:
+            memory_record = self.memory.remember_step_output(
+                run_id=state.run_id,
+                step_id=step_id,
+                output=controlled,
+                memory_type=memory_policy["writeType"],
+                policy=self._write_memory_policy(memory_policy),
+            )
+        elif persisted_decision.outcome == "review" and memory_policy["write"]:
+            # 需要人工复核的内容只留下可校验输出引用和策略意图。正文仍在值仓库，
+            # 批准前不进入正式 MemoryStore，也不产生可被下游读取的 memoryRef。
+            pending_memory = {
+                "outputRef": output_ref,
+                "policyId": str(memory_policy["policyId"]),
+                "writeType": memory_policy["writeType"].value,
+                "auditDecisionRef": persisted_decision.decision_id,
+            }
+        memory_access["written"] = memory_record is not None
         result = {
             "commitId": commit_id,
             "outputSummary": output.summary or f"completed:{step_id}",
-            "contextRef": self.value_store.put_context_pack(
-                run_id=state.run_id,
-                step_id=step_id,
-                payload=pack.model_dump(by_alias=True, mode="json"),
-            ),
-            "memoryRef": memory_record.memory_id if memory_record is not None else "memory:none",
+            "contextRef": context_ref,
             "traceRef": f"trace:{step_id}",
             "outputRef": output_ref,
             # 审计器只给出可重放的治理事实；Pregel 图在提交节点结果后决定是否中断，
             # 因此审计部件不会越权修改 WorkflowRun 或驱动图状态。
-            "reviewRequired": decision.outcome == "review",
-            "auditDecisionRef": decision.decision_id,
-            "auditOutcome": decision.outcome,
+            "reviewRequired": persisted_decision.outcome == "review",
+            "auditDecisionRef": persisted_decision.decision_id,
+            "auditOutcome": persisted_decision.outcome,
             # 模型审计只保留已由 Agent 输出的调用元数据白名单，绝不回写 prompt、
             # 生成正文或供应商对象。Trace 投影层可直接消费该紧凑列表。
             "modelInvocations": self._safe_model_invocations(output.model_invocations),
@@ -292,6 +310,10 @@ class ACGNodeRunner:
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
         }
+        if persisted_decision.outcome != "review":
+            result["memoryRef"] = memory_record.memory_id if memory_record is not None else "memory:none"
+        if pending_memory is not None:
+            result["pendingMemory"] = pending_memory
         # 在图状态投影之前固化不可变提交边界。若后续 Runtime 在 Trace 或 checkpoint
         # 之间中断，恢复后将复用这份记录，而不是再次执行 Agent 或重复产生副作用。
         commit_record = {
@@ -439,6 +461,15 @@ class ACGNodeRunner:
         if isinstance(context_ref, str):
             self.value_store.assert_reference(
                 kind="context", run_id=run_id, step_id=step_id, reference=context_ref
+            )
+        decision_ref = payload.get("auditDecisionRef")
+        outcome = payload.get("auditOutcome")
+        if isinstance(decision_ref, str) and isinstance(outcome, str):
+            self.decision_store.assert_decision(
+                run_id=run_id,
+                step_id=step_id,
+                decision_ref=decision_ref,
+                outcomes={outcome},
             )
 
     @staticmethod

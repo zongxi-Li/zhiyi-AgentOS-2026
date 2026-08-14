@@ -23,6 +23,7 @@ from components.auditor.governance.review import ReviewManager
 from components.task_manager.state_machine import StateMachine
 from components.task_manager.service import TaskManager
 from components.auditor.governance.trace import TraceStore
+from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
 from components.communicator import CommunicatorService
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor import (
@@ -34,6 +35,7 @@ from components.executor import (
 )
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
+from contracts.memory import MemoryPolicy, MemoryType
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
@@ -119,6 +121,7 @@ class WorkflowRuntime:
         execution_value_store: ExecutionValueStore | None = None,
         memory_store: object | None = None,
         provenance_store: SQLiteProvenanceStore | None = None,
+        decision_store: DecisionStore | None = None,
         tool_runtime: object | None = None,
         review_manager: Optional[ReviewManager] = None,
         evaluator: Optional[WorkflowEvaluator] = None,
@@ -150,6 +153,11 @@ class WorkflowRuntime:
         # 重建并验证同 run 哈希链；损坏账本不会被静默绕过。
         self.provenance_store = provenance_store or SQLiteProvenanceStore(
             db_path=os.getenv("AGENTOS_PROVENANCE_DB", "data/provenance.sqlite3")
+        )
+        # 审计决定独立于 Trace、checkpoint 和输出正文保存。恢复时引用必须从这里
+        # 重新验证 run/step 归属，不能信任检查点或节点提交中的字符串。
+        self.decision_store = decision_store or SQLiteDecisionStore(
+            db_path=os.getenv("AGENTOS_AUDIT_DB", "data/audit_decisions.sqlite3")
         )
         self.tool_runtime = tool_runtime
         self.review_manager = review_manager or ReviewManager(self.trace_store)
@@ -595,6 +603,18 @@ class WorkflowRuntime:
         for step_id, trace_ref in state.trace_refs.items():
             if trace_ref != f"trace:{step_id}":
                 raise ValueError(f"trace reference {trace_ref} does not belong to step {step_id}")
+        review_payload = state.review_payload
+        if isinstance(review_payload, dict):
+            decision_ref = review_payload.get("auditDecisionRef")
+            outcome = review_payload.get("auditOutcome")
+            review_step_id = review_payload.get("stepId")
+            if isinstance(decision_ref, str) and isinstance(outcome, str) and isinstance(review_step_id, str):
+                self.decision_store.assert_decision(
+                    run_id=run.run_id,
+                    step_id=review_step_id,
+                    decision_ref=decision_ref,
+                    outcomes={outcome},
+                )
 
     def _build_acg_runner(self, *, task: AgentTask, run: WorkflowRun, workflow: WorkflowDefinition, graph) -> ACGNodeRunner:
         """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
@@ -654,6 +674,7 @@ class WorkflowRuntime:
             agent_invoker=AgentInvocationAdapter(
                 registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
             ),
+            decision_store=self.decision_store,
         )
 
     def _project_acg_event(self, run: WorkflowRun, state: ACGExecutionState, event: dict) -> None:
@@ -1336,6 +1357,10 @@ class WorkflowRuntime:
             checkpoint_data = self.checkpoint_store.load(run_id=run.run_id, checkpoint_id=checkpoint_id)
             if checkpoint_data is None:
                 raise ValueError("review checkpoint does not exist for this run")
+            restored = ACGExecutionState.model_validate(checkpoint_data)
+            # 拒绝路径也必须验证 checkpoint 中的审计引用。否则攻击者可借由“直接
+            # 拒绝”绕过归属检查，留下无法解释的审核记录或伪造的待写入意图。
+            self._validate_acg_state_references(run=run, state=restored)
             if decision.decision is not ReviewDecisionType.APPROVED:
                 self._transition_step(step, StepStatus.FAILED)
                 run.error = {"code": "review_rejected", "message": decision.comment[:500]}
@@ -1344,12 +1369,19 @@ class WorkflowRuntime:
                     TraceEventType.REVIEW_DECIDED,
                     step_id=step.step_id,
                     observation="ACG review rejected",
-                    payload={"decision": decision.decision.value, "operationId": decision.operation_id},
+                    payload={
+                        "decision": decision.decision.value,
+                        "operationId": decision.operation_id,
+                        "deferredMemoryDiscarded": isinstance(
+                            (restored.review_payload or {}).get("pendingMemory"), dict
+                        ),
+                    },
                 )
                 run = self._set_run_lifecycle(run, status=WorkflowStatus.FAILED, phase=WorkflowProgressPhase.FAILED)
                 self.task_manager.mark_failed(run.task_id)
                 self.workflow_store.save_run(run)
                 return run
+            self._commit_deferred_memory(run=run, step=step, state=restored)
             self.trace_store.append(
                 run,
                 event_type=TraceEventType.REVIEW_DECIDED,
@@ -1357,7 +1389,6 @@ class WorkflowRuntime:
                 observation="ACG review approved",
                 payload={"decision": decision.decision.value, "operationId": decision.operation_id},
             )
-            restored = ACGExecutionState.model_validate(checkpoint_data)
         return await self._execute_acg(
             run,
             state=restored,
@@ -1365,6 +1396,78 @@ class WorkflowRuntime:
                 runId=run.run_id,
                 payload={"decision": decision.decision.value, "operationId": decision.operation_id},
             ),
+        )
+
+    def _commit_deferred_memory(
+        self,
+        *,
+        run: WorkflowRun,
+        step: WorkflowStep,
+        state: ACGExecutionState,
+    ) -> None:
+        """在人工批准后按待写入意图落入正式记忆，不读取检查点中的正文。
+
+        待写入意图来自节点提交和审核检查点，只允许引用、策略标识与审计决定。真正
+        输出仍必须通过 ``ExecutionValueStore`` 按 run/step 重新读取，避免人工审核
+        路径意外成为把正文写回 State 或绕过输出合同的后门。
+        """
+        review_payload = state.review_payload or {}
+        pending = review_payload.get("pendingMemory")
+        if pending is None:
+            return
+        if not isinstance(pending, dict):
+            raise ValueError("review pendingMemory must be an object")
+        output_ref = pending.get("outputRef")
+        policy_id = pending.get("policyId")
+        write_type = pending.get("writeType")
+        decision_ref = pending.get("auditDecisionRef")
+        if not all(isinstance(value, str) and value for value in (output_ref, policy_id, write_type, decision_ref)):
+            raise ValueError("review pendingMemory is incomplete")
+        if review_payload.get("auditDecisionRef") != decision_ref:
+            raise ValueError("review pendingMemory audit decision does not match review payload")
+        self.decision_store.assert_decision(
+            run_id=run.run_id,
+            step_id=step.step_id,
+            decision_ref=decision_ref,
+            outcomes={"review"},
+        )
+        policy = ACGNodeRunner._memory_policy(step.input)
+        if not policy["write"]:
+            raise ValueError("review pendingMemory exists while step memory write is disabled")
+        if policy["policyId"] != policy_id or policy["writeType"].value != write_type:
+            raise ValueError("review pendingMemory does not match frozen memory policy")
+        self.execution_value_store.assert_reference(
+            kind="output",
+            run_id=run.run_id,
+            step_id=step.step_id,
+            reference=output_ref,
+        )
+        output = self.execution_value_store.get_output(run_id=run.run_id, output_ref=output_ref)
+        record = MemoryService(store=self.memory_store).remember_step_output(
+            run_id=run.run_id,
+            step_id=step.step_id,
+            output=output,
+            memory_type=MemoryType(write_type),
+            policy=MemoryPolicy(
+                policyId=policy_id,
+                allowedTypes=[MemoryType(write_type)],
+                requireAudit=bool(policy["requireAudit"]),
+            ),
+        )
+        if record is None:
+            raise ValueError("review deferred memory was rejected by frozen policy")
+        state.memory_refs[step.step_id] = record.memory_id
+        self.trace_store.append(
+            run,
+            TraceEventType.DATA_CONSUMED,
+            step_id=step.step_id,
+            observation="Deferred memory committed after review approval",
+            payload={
+                "policyId": policy_id,
+                "writeType": write_type,
+                "written": True,
+                "auditDecisionRef": decision_ref,
+            },
         )
 
     @staticmethod

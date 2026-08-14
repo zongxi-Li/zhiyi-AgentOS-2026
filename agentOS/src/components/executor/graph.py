@@ -346,6 +346,13 @@ class ACGExecutionGraph:
                     }
                     if result.get("auditDecisionRef") is not None:
                         review_payload["auditDecisionRef"] = str(result["auditDecisionRef"])
+                    if result.get("auditOutcome") is not None:
+                        review_payload["auditOutcome"] = str(result["auditOutcome"])
+                    pending_memory = result.get("pendingMemory")
+                    if isinstance(pending_memory, dict):
+                        # 待写意图只能携带 outputRef、策略与审计引用；正文仍在独立
+                        # 值仓库，人工批准前绝不进入 MemoryStore 或执行 State 主字段。
+                        review_payload["pendingMemory"] = dict(pending_memory)
                     state.review_payload = review_payload
                     from components.recovery.checkpoint import ExecutionInterrupt
 

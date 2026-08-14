@@ -8,9 +8,12 @@ import pytest
 
 from runtime.workflow_runtime import WorkflowRuntime
 from components.executor.value_store import SQLiteExecutionValueStore
+from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
+from contracts.memory import MemoryQuery
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.recovery.checkpoint import ACGCheckpointStore
+from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
 from components.task_manager.store import WorkflowRegistry
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, WorkflowRun, WorkflowStepDefinition, WorkflowStatus
@@ -27,6 +30,17 @@ class _RunAgent(BaseAgent):
         if context.step.step_id == "extract":
             return AgentOutput(output={"title": "AgentOS", "secret": "hidden"}, summary="extracted")
         return AgentOutput(output={"summary": context.context_pack.data.get("title", "reviewed")}, summary="summarized")
+
+
+class _ReviewAgent(BaseAgent):
+    """稳定返回高风险结果，用于验证人工审核前后的记忆隔离。"""
+
+    async def run(self, _context):
+        return AgentOutput(
+            output={"summary": "needs-human-review"},
+            summary="needs-human-review",
+            riskLevel="high",
+        )
 
 
 def _runtime() -> WorkflowRuntime:
@@ -137,6 +151,154 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
 
     assert result.status is WorkflowStatus.COMPLETED
     assert result.completed_step_ids == ["review", "deliver"]
+
+
+def test_review_approval_commits_deferred_memory_after_recreation(tmp_path) -> None:
+    """高风险节点暂停时不写记忆，重建 Runtime 后批准才从受控 outputRef 写入。"""
+    agents = AgentRegistry()
+    agents.register(_ReviewAgent(AgentProfile(agentName="reviewer", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="audit-review", name="audit review", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(
+            stepId="review", name="review", agentName="reviewer",
+            outputSpec={"type": "object", "properties": {"summary": {"type": "string"}}},
+        )],
+    ))
+    store = MemoryWorkflowStore()
+    checkpoint_db = tmp_path / "checkpoints.sqlite3"
+    value_db = tmp_path / "values.sqlite3"
+    memory_db = tmp_path / "memory.sqlite3"
+    decision_db = tmp_path / "decisions.sqlite3"
+    first = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=checkpoint_db),
+        execution_value_store=SQLiteExecutionValueStore(db_path=value_db),
+        memory_store=SQLiteMemoryStore(db_path=memory_db),
+        decision_store=SQLiteDecisionStore(db_path=decision_db),
+    )
+    task = first.create_task("review", workflow_id="audit-review")
+    _, run = first.prepare_run(task.task_id)
+
+    paused = asyncio.run(first.execute_prepared_run(run.run_id))
+
+    assert paused.status is WorkflowStatus.WAITING_REVIEW
+    assert MemoryService(store=SQLiteMemoryStore(db_path=memory_db)).search(
+        MemoryQuery(query="review", scope=run.run_id)
+    ) == []
+
+    recreated = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=checkpoint_db),
+        execution_value_store=SQLiteExecutionValueStore(db_path=value_db),
+        memory_store=SQLiteMemoryStore(db_path=memory_db),
+        decision_store=SQLiteDecisionStore(db_path=decision_db),
+    )
+    completed = asyncio.run(recreated.apply_review(ReviewDecision(
+        runId=run.run_id,
+        stepId="review",
+        decision=ReviewDecisionType.APPROVED,
+        operationId="approve-deferred-memory",
+    )))
+
+    records = MemoryService(store=SQLiteMemoryStore(db_path=memory_db)).search(
+        MemoryQuery(query="review", scope=run.run_id)
+    )
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert [record.memory_id for record in records] == [f"memory:{run.run_id}:review"]
+    assert records[0].content == {"summary": "needs-human-review"}
+
+
+def test_review_rejection_discards_deferred_memory(tmp_path) -> None:
+    """人工拒绝高风险输出时，待写意图不得变成正式记忆。"""
+    agents = AgentRegistry()
+    agents.register(_ReviewAgent(AgentProfile(agentName="reviewer", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="audit-reject", name="audit reject", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="review", name="review", agentName="reviewer")],
+    ))
+    memory_db = tmp_path / "memory.sqlite3"
+    runtime = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=MemoryWorkflowStore(),
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=memory_db),
+        decision_store=SQLiteDecisionStore(db_path=tmp_path / "decisions.sqlite3"),
+    )
+    task = runtime.create_task("reject", workflow_id="audit-reject")
+    _, run = runtime.prepare_run(task.task_id)
+    asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    rejected = asyncio.run(runtime.apply_review(ReviewDecision(
+        runId=run.run_id,
+        stepId="review",
+        decision=ReviewDecisionType.REJECTED,
+        operationId="reject-deferred-memory",
+    )))
+
+    assert rejected.status is WorkflowStatus.FAILED
+    assert MemoryService(store=SQLiteMemoryStore(db_path=memory_db)).search(
+        MemoryQuery(query="review", scope=run.run_id)
+    ) == []
+
+
+def test_review_resume_rejects_tampered_audit_decision_ownership(tmp_path) -> None:
+    """审核恢复必须从独立决定仓库校验 run/step，篡改归属时不可继续。"""
+    agents = AgentRegistry()
+    agents.register(_ReviewAgent(AgentProfile(agentName="reviewer", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="audit-tampered", name="audit tampered", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="review", name="review", agentName="reviewer")],
+    ))
+    store = MemoryWorkflowStore()
+    decision_db = tmp_path / "decisions.sqlite3"
+    runtime = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
+        decision_store=SQLiteDecisionStore(db_path=decision_db),
+    )
+    task = runtime.create_task("tampered", workflow_id="audit-tampered")
+    _, run = runtime.prepare_run(task.task_id)
+    paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    runtime.decision_store.close()
+
+    import sqlite3
+    connection = sqlite3.connect(decision_db)
+    connection.execute("UPDATE acg_audit_decisions SET run_id = 'run-foreign'")
+    connection.commit()
+    connection.close()
+
+    recreated = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=store,
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=SQLiteExecutionValueStore(db_path=tmp_path / "values.sqlite3"),
+        memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
+        decision_store=SQLiteDecisionStore(db_path=decision_db),
+    )
+
+    with pytest.raises(ValueError, match="belongs to run run-foreign"):
+        asyncio.run(recreated.apply_review(ReviewDecision(
+            runId=run.run_id,
+            stepId="review",
+            decision=ReviewDecisionType.APPROVED,
+        )))
+
+    assert paused.status is WorkflowStatus.WAITING_REVIEW
+    assert store.get_run(run.run_id).status is WorkflowStatus.WAITING_REVIEW
 
 
 def test_runtime_restores_persistent_provenance_before_review_resume(tmp_path) -> None:

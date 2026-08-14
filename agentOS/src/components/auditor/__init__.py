@@ -5,5 +5,13 @@ __all__: list[str] = []
 
 from .service import AuditorService
 from .execution_audit import ExecutionAuditService
+from .decision_store import DecisionAccessError, DecisionStore, InMemoryDecisionStore, SQLiteDecisionStore
 
-__all__ = ["AuditorService", "ExecutionAuditService"]
+__all__ = [
+    "AuditorService",
+    "DecisionAccessError",
+    "DecisionStore",
+    "ExecutionAuditService",
+    "InMemoryDecisionStore",
+    "SQLiteDecisionStore",
+]

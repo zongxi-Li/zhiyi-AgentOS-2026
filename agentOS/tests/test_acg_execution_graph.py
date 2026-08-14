@@ -12,6 +12,7 @@ from components.executor.state_graph import ACGStateGraph
 from components.executor.node_runner import ACGNodeRunner, EntropyBudgetExceededError
 from components.executor.value_store import InMemoryExecutionValueStore
 from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCommand
+from components.auditor import InMemoryDecisionStore
 from components.auditor.governance.trace import TraceStore
 from contracts.memory import MemoryQuery, MemoryRecord, MemoryType
 from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
@@ -600,6 +601,53 @@ def test_node_runner_projects_high_risk_output_to_review_interrupt() -> None:
 
     with pytest.raises(ExecutionInterrupt):
         asyncio.run(graph.run(ACGExecutionState(runId="run-1"), runner))
+
+
+def test_review_decision_defers_memory_write_until_human_approval() -> None:
+    """审计要求人工复核时，只能保存受控 outputRef 和待写意图，不能先写正式记忆。"""
+    decision_store = InMemoryDecisionStore()
+    memory = MemoryService()
+    runner = ACGNodeRunner(
+        task=AgentTask(taskId="task-1", title="test"),
+        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+        steps={"one": WorkflowStep(
+            stepId="one",
+            name="one",
+            agentName="agent",
+            input={"memoryPolicy": {
+                "read": False,
+                "write": True,
+                "writeType": "episodic",
+                "requireAudit": True,
+            }},
+            outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )},
+        agents={"one": _HighRiskAgent()},
+        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        memory=memory,
+        value_store=InMemoryExecutionValueStore(),
+        decision_store=decision_store,
+    )
+
+    result = asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+    assert result["auditOutcome"] == "review"
+    assert "memoryRef" not in result
+    assert result["memoryAccess"]["written"] is False
+    assert result["pendingMemory"] == {
+        "outputRef": result["outputRef"],
+        "policyId": "default",
+        "writeType": "episodic",
+        "auditDecisionRef": result["auditDecisionRef"],
+    }
+    assert memory.search(MemoryQuery(query="one", scope="run-1")) == []
+    assert decision_store.assert_decision(
+        run_id="run-1",
+        step_id="one",
+        decision_ref=result["auditDecisionRef"],
+        outcomes={"review"},
+    ).outcome == "review"
 
 
 def test_deny_decision_stops_graph_without_committing_node_result() -> None:
