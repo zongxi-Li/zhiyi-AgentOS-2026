@@ -1,0 +1,131 @@
+# 运行时加固设计
+
+## 目标
+
+把 ACG 从“本地引用型执行可恢复”推进到“外部副作用受控、孤儿可回收、故障可演练、
+协作通信可扩展”的阶段。执行器仍是唯一调度器，AgentOS contracts 仍是唯一公开边界；
+不得引入外部编排器、LangGraph 包或供应商 SDK 类型。
+
+本设计按四个相互独立的增量实施，且每个增量都能单独测试和提交：
+
+1. 外部副作用适配层；
+2. 孤儿引用清理；
+3. 五阶段故障恢复演练；
+4. BLACKBOARD 与 DEBATE 通信演进。
+
+## 1. 外部副作用适配层
+
+### 方案选择
+
+采用协议包装器，而不是把超时、重试和限流分散写入 Native Agent：
+
+- `StructuredGenerationRuntime` 由模型保护包装器实现同一协议；
+- `ToolRuntime` 由工具保护包装器实现同一协议；
+- `AuditedToolRuntime` 保持授权和安全 Trace 职责，并把调用继续委托给保护包装器；
+- `AgentRunContext.commitId` 是所有外部调用的稳定幂等键。
+
+不选择在 `NativeGeneralAgent` 内手写重试：那会遗漏未来 Agent，且会使不同 Agent 的
+退避、限流和错误码不一致。也不选择在 `ACGNodeRunner` 内处理供应商异常：运行器不应
+认识具体模型、工具协议或远端错误。
+
+### 行为
+
+- 超时使用 `asyncio.wait_for`，超时后抛机器可读错误；
+- 只对明确可重试的超时、暂时不可用、限流错误重试；合同错误、权限错误和取消立即失败；
+- 限流使用按包装器实例隔离的异步并发闸门与最小调用间隔，不使用进程级无锁全局状态；
+- 每次模型生成传递 `commitId` 作为附加运行元数据；每次工具调用传递同名关键字；
+- 错误映射不携带 prompt、模型响应或工具参数，只包含稳定 `code`、操作类别、尝试次数和
+  是否可重试；
+- 适配器可以保证本地不重复调度；远端 exactly-once 依赖供应商或工具真正接受 `commitId`。
+
+### 验收
+
+测试覆盖超时、一次临时失败后的成功、不可重试错误、并发上限、模型和工具均收到同一
+`commitId`，以及安全 Trace 不包含请求正文。
+
+## 2. 孤儿引用清理
+
+### 判定
+
+输出与 ContextPack 记录只有在以下任一位置被引用时才受保护：
+
+- 已完成节点提交中的 `outputRef`、`contextRef`；
+- `WorkflowRun.executionState` 与对应 checkpoint State；
+- 审核等待中的 `reviewPayload.pendingMemory.outputRef`。
+
+未命中的值记录称为孤儿。清理器只操作 `ExecutionValueStore` 的输出与 ContextPack
+记录；不删除节点提交、审计决定、血缘账本、正式记忆或 checkpoint，因为它们分别是
+恢复、审计和完整性真源。
+
+### 行为
+
+- SQLite 值仓库提供只返回引用与归属元数据的列举、按引用批量删除和计数接口；
+- Runtime 收集当前 run 的保护引用集合后调用清理器；
+- 仅清理由 `created_at` 早于保留阈值的记录，默认阈值由显式参数传入，不能默认立即删除；
+- 清理结果产生一条不含正文的 Trace 审计统计：扫描数、受保护数、删除数和保留阈值；
+- InMemory store 保持同样合同，支持故障测试。
+
+### 验收
+
+测试确认已提交输出、审核待写输出、checkpoint 输出不会删除；未提交孤儿在阈值到期后
+删除；跨 run 清理不会误删其它运行；Trace 中不包含正文。
+
+## 3. 故障恢复演练
+
+新增测试专用、显式注入的故障钩子，不向生产合同暴露“故障模式”。每个阶段各执行一次：
+
+1. 输出与 ContextPack 写入后；
+2. 血缘事件持久化后；
+3. 记忆写入后；
+4. 节点 Trace 批次投影后；
+5. checkpoint 保存后。
+
+每个演练均使用独立 SQLite 文件，模拟 Runtime 重建后从原 run/commit 继续。断言：
+
+- Agent/Tool 的 `commitId` 不变；
+- 血缘、记忆和 Trace 不重复；
+- checkpoint 不额外递增版本；
+- 未提交正文只能作为可回收孤儿存在，不会进入 State 或下游；
+- 运行最终状态、输出引用和审计决定连续。
+
+## 4. 通信演进
+
+### BLACKBOARD
+
+第一期将其定义为“受权限控制的工作记忆引用”，不是共享 Python 字典：
+
+- Blueprint 必须声明 topic、读写权限、字段白名单、Token 预算和保留范围；
+- 节点写入只生成 `blackboardRef`，正文保存在独立受控仓库；
+- 下游读取按 topic、runId、步骤授权和字段白名单过滤；
+- 每次读写产生血缘与 Trace，但 State/checkpoint 只保存引用；
+- 审计、审核和恢复沿用现有 commit / reference guard 规则。
+
+### DEBATE
+
+第一期只编译为“受治理子图”，不支持任意循环对话：
+
+- Blueprint 显式声明参与者、最大轮数、输入主题、聚合步骤和审核点；
+- 每轮是普通、可 checkpoint 的 ACG 节点，轮次状态只保存引用；
+- 聚合结果必须经过输出合同和审计；高风险或轮数耗尽时强制 `ExecutionInterrupt`；
+- 未实现前仍在编译期拒绝，禁止降级为 STRICT_CONTRACT 或 BLACKBOARD。
+
+### 验收
+
+BLACKBOARD 测试覆盖权限拒绝、字段裁剪、重启续跑和跨 run 隔离。DEBATE 测试覆盖最大
+轮数、审核中断、拒绝未治理拓扑，以及聚合输出的引用完整性。
+
+## 删除标准
+
+本轮仅删除同时满足以下条件的文件或符号：
+
+1. `src/`、`service/`、`tests/`、`docs/` 均没有静态引用；
+2. 不属于已声明但尚未实施的 Adapter、通信、记忆、演化或治理边界；
+3. 删除后完整测试、导入边界检查和 `git diff --check` 通过。
+
+当前扫描未发现满足全部条件的生产文件；`src/support/stores/_policy.py` 已被两个
+WorkflowStore 导入，不能删除。历史计划文档属于迁移审计记录，保留。
+
+## 实施顺序
+
+先完成第 1 至第 3 项，形成真实外部副作用和恢复保证；随后单独实现 BLACKBOARD；
+DEBATE 最后实施，并且必须建立在 BLACKBOARD、审核和子图限制已通过回归的基础上。
