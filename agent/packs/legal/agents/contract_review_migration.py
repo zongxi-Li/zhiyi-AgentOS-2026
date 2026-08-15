@@ -21,12 +21,15 @@ def _contract_text(context) -> str:
 
 def _observation(context, *step_ids: str) -> Dict[str, Any]:
     """Read an upstream artifact by stable public step ID or its former ACG demo ID."""
-    observations = context.memory.observations
-    for step_id in step_ids:
-        value = observations.get(step_id)
-        if isinstance(value, dict):
-            return value
-    return {}
+    observations = getattr(context.memory, "observations", None)
+    if isinstance(observations, dict):
+        for step_id in step_ids:
+            value = observations.get(step_id)
+            if isinstance(value, dict):
+                return value
+    pack = getattr(context, "context_pack", None)
+    data = getattr(pack, "data", None)
+    return dict(data) if isinstance(data, dict) else {}
 
 
 def _thinking_mode(context) -> str | None:
@@ -421,7 +424,6 @@ class RiskDetectAgent(BaseAgent):
         return AgentOutput(
             output=output,
             summary=f"Detected {len(risks)} contract risk item(s).",
-            riskLevel=None if risk_level == "unknown" else risk_level,
         )
 
 
@@ -444,7 +446,8 @@ class LegalEvidenceMatchAgent(BaseAgent):
         evidences: List[Dict[str, Any]] = []
         recovered_evidences: List[Dict[str, Any]] = []
         errors: List[str] = []
-        for observation in context.memory.observations.values():
+        context_data = _observation(context)
+        for observation in (context_data,):
             if not isinstance(observation, dict):
                 continue
             recovery_error = str(observation.get("retrieval_error") or "").strip()
@@ -456,11 +459,12 @@ class LegalEvidenceMatchAgent(BaseAgent):
                     item for item in recovered if isinstance(item, dict)
                 )
         unmatched_risk_ids: List[str] = []
-        retriever = LegalEvidenceRetriever()
+        retriever = await asyncio.to_thread(LegalEvidenceRetriever)
         for risk in risks:
             risk_id = str(risk.get("id") or "")
             try:
-                results = retriever.retrieve(
+                results = await asyncio.to_thread(
+                    retriever.retrieve,
                     risk=risk,
                     contract_type=str(parsed.get("contract_type") or ""),
                     top_k=2,
@@ -624,7 +628,7 @@ class HumanReviewGateAgent(BaseAgent):
             "risks": risk_output.get("risks", []),
             "suggested_decision": "manual_review_required",
         }
-        return AgentOutput(output=output, summary="Human review gate prepared.", riskLevel="high")
+        return AgentOutput(output=output, summary="Human review gate prepared.")
 
 
 class ReportGenerateAgent(BaseAgent):
@@ -640,16 +644,17 @@ class ReportGenerateAgent(BaseAgent):
         )
 
     async def run(self, context):
-        observations = context.memory.observations
+        context_data = _observation(context)
+        observations = {"context": context_data}
         parsed = _observation(context, "parse_contract", "contract_parse")
         clause_output = _observation(context, "clause_classify", "classify_clauses")
         clauses = clause_output.get("clauses", [])
-        risks = observations.get("risk_detect", {}).get("risks", [])
+        risks = context_data.get("risks", [])
         # The concrete risk items are the source of truth for the final report.
         # Recomputing here prevents a stale/model-supplied summary from disagreeing
         # with the visible list and producing an unsafe signing conclusion.
         risk_summary = _risk_counts(risks)
-        evidences = observations.get("legal_evidence_match", {}).get("evidences", [])
+        evidences = context_data.get("evidences", [])
         revision_output = _observation(context, "suggestion_generate", "revision_suggest")
         revisions = revision_output.get("revision_suggestions", [])
         manual_review_focus = revision_output.get("manual_review_focus", [])
@@ -790,8 +795,7 @@ class ContractFinalReviewAgent(BaseAgent):
         )
 
     async def run(self, context):
-        report_output = context.memory.observations.get("report_generate", {})
-        report_markdown = report_output.get("report_markdown", "")
+        report_markdown = _observation(context).get("report_markdown", "")
         final_answer = str(report_markdown or "").strip()
         return AgentOutput(
             output={

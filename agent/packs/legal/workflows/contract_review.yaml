@@ -34,7 +34,28 @@
       "name": "合同文本解析",
       "agentName": "contract_parse",
       "capability": "contract_parse",
-      "outputSpec": { "type": "object", "required": ["contract_summary", "contract_type", "parties"] },
+      "outputSpec": {
+        "type": "object",
+        "required": ["contract_summary", "contract_type", "parties"],
+        "properties": {
+          "contract_summary": { "type": "string" },
+          "contract_title": { "type": "string" },
+          "contract_type": { "type": "string" },
+          "parties": { "type": "array" },
+          "key_dates": { "type": "array" },
+          "amounts": { "type": "array" },
+          "obligations": { "type": "array" },
+          "scope": { "type": "string" },
+          "payment_terms": { "type": "string" },
+          "acceptance_terms": { "type": "string" },
+          "ip_terms": { "type": "string" },
+          "dispute_resolution": { "type": "string" },
+          "original_preview": { "type": "string" },
+          "missing_fields": { "type": "array" },
+          "analysis_status": { "type": "string" },
+          "_llm": { "type": "object" }
+        }
+      },
       "nextStepId": "classify_clauses"
     },
     {
@@ -46,7 +67,14 @@
         "from": { "parse_contract": ["contract_type", "scope", "payment_terms", "acceptance_terms", "ip_terms", "dispute_resolution"] },
         "schema": { "type": "object", "required": ["contract_type"] }
       },
-      "outputSpec": { "type": "object", "required": ["clauses"] },
+      "outputSpec": {
+        "type": "object",
+        "required": ["clauses"],
+        "properties": {
+          "clauses": { "type": "array" },
+          "clause_count": { "type": "integer" }
+        }
+      },
       "nextStepId": "risk_detect"
     },
     {
@@ -61,7 +89,18 @@
         },
         "schema": { "type": "object", "required": ["clauses"] }
       },
-      "outputSpec": { "type": "object", "required": ["risks", "risk_level", "risk_score"] },
+      "outputSpec": {
+        "type": "object",
+        "required": ["risks", "risk_level", "risk_score"],
+        "properties": {
+          "risks": { "type": "array" },
+          "risk_summary": { "type": "object" },
+          "risk_level": { "type": "string" },
+          "risk_score": { "type": ["number", "null"] },
+          "analysis_status": { "type": "string" },
+          "_llm": { "type": "object" }
+        }
+      },
       "nextStepId": "legal_evidence_match"
     },
     {
@@ -76,7 +115,17 @@
         },
         "schema": { "type": "object", "required": ["risks"] }
       },
-      "outputSpec": { "type": "object", "required": ["evidences", "citations"] },
+      "outputSpec": {
+        "type": "object",
+        "required": ["evidences", "citations"],
+        "properties": {
+          "evidences": { "type": "array" },
+          "citations": { "type": "array" },
+          "evidence_refs": { "type": "array" },
+          "retrieval": { "type": "object" },
+          "runtimeSignals": { "type": "array" }
+        }
+      },
       "nextStepId": "suggestion_generate"
     },
     {
@@ -91,7 +140,15 @@
         },
         "schema": { "type": "object", "required": ["risks", "evidences"] }
       },
-      "outputSpec": { "type": "object", "required": ["revision_suggestions", "manual_review_focus"] },
+      "outputSpec": {
+        "type": "object",
+        "required": ["revision_suggestions", "manual_review_focus"],
+        "properties": {
+          "revision_suggestions": { "type": "array" },
+          "risk_level": { "type": "string" },
+          "manual_review_focus": { "type": "array" }
+        }
+      },
       "nextStepId": "human_review"
     },
     {
@@ -106,7 +163,17 @@
         },
         "schema": { "type": "object", "required": ["risks", "manual_review_focus"] }
       },
-      "outputSpec": { "type": "object", "required": ["review_status", "review_focus"] },
+      "outputSpec": {
+        "type": "object",
+        "required": ["review_status", "review_focus"],
+        "properties": {
+          "review_status": { "type": "string" },
+          "reviewer": { "type": ["string", "null"] },
+          "review_focus": { "type": "array" },
+          "risks": { "type": "array" },
+          "suggested_decision": { "type": "string" }
+        }
+      },
       "reviewRequired": true,
       "nextStepId": "report_generate"
     },
@@ -126,7 +193,16 @@
         },
         "schema": { "type": "object", "required": ["contract_type", "risks", "evidences", "revision_suggestions"] }
       },
-      "outputSpec": { "type": "object", "required": ["report_markdown"] }
+      "outputSpec": {
+        "type": "object",
+        "required": ["report_markdown"],
+        "properties": {
+          "final_answer": { "type": "string" },
+          "report_markdown": { "type": "string" },
+          "_llm": { "type": "object" },
+          "report": { "type": "object" }
+        }
+      }
     }
   ]
 }

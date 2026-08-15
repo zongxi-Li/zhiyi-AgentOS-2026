@@ -670,6 +670,41 @@ def test_review_decision_defers_memory_write_until_human_approval() -> None:
     ).outcome == "review"
 
 
+def test_blueprint_review_gate_defers_memory_when_output_audit_allows() -> None:
+    """A declared review gate must defer memory even for an audit-allowed output."""
+    memory = MemoryService()
+    runner = ACGNodeRunner(
+        task=AgentTask(taskId="task-1", title="test"),
+        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+        steps={"one": WorkflowStep(
+            stepId="one",
+            name="one",
+            agentName="agent",
+            reviewRequired=True,
+            input={"memoryPolicy": {
+                "read": False,
+                "write": True,
+                "writeType": "episodic",
+                "requireAudit": True,
+            }},
+            outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )},
+        agents={"one": _RecordingAgent()},
+        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        memory=memory,
+        value_store=InMemoryExecutionValueStore(),
+    )
+
+    result = asyncio.run(runner("one", ACGExecutionState(runId="run-1")))
+
+    assert result["auditOutcome"] == "allow"
+    assert result["reviewRequired"] is True
+    assert "memoryRef" not in result
+    assert result["pendingMemory"]["outputRef"] == result["outputRef"]
+    assert memory.search(MemoryQuery(query="one", scope="run-1")) == []
+
+
 def test_deny_decision_stops_graph_without_committing_node_result() -> None:
     """严重风险决定必须终止图，不能写入 State 或调度其下游节点。"""
     graph = ACGExecutionGraph(nodes=("danger", "deliver"), edges=(("danger", "deliver"),))

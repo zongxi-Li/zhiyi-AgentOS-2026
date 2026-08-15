@@ -56,8 +56,8 @@
 | Governance | 人工审核 | 部分 | `core/governance/review.py`、C4 UI | ReviewManager + persisted decision | REPLACED | Runtime 是唯一审核状态真源 | 冲突、重复批准、重启恢复 |
 | Governance | Provenance / hash chain | 无 | C4 lineage fields | SQLiteProvenanceStore；`9b3c2a7`、`57d68fe` | REPLACED | 使用独立账本并启动时验证 | 篡改检测、并行事件隔离、不重复 |
 | Governance | 引用所有权验证 | 无 | C4 引用检查不完整 | `dd48f0b`、value/memory/provenance/decision stores | REPLACED | 所有解引用校验 run/step/tenant scope | 跨 run 引用注入拒绝 |
-| Product | Python Application wiring | 部分 | `agent/app/api/agentos_core.py`、`execution/runtime.py` 依赖 `agentos.core` | WorkflowRuntime 注入点已存在，应用仍是旧导入 | MIGRATE | 新建应用 wiring，注入模型/工具/store/pack | 生产代码无 `agentos.core`；集成 smoke |
-| Product | Legal Contract Review | 部分 | Legal prompts/RAG/pack 与端到端 API | wkn native legal workflow 与 runtime primitives | MIGRATE | 先建唯一黄金纵切并补重启审核测试 | Phase 4 两条固定场景 |
+| Product | Python Application wiring | 部分 | `agent/app/api/agentos_core.py`、`execution/runtime.py` 依赖 `agentos.core` | `app.execution.wiring` 完整注入六个存储、模型、工具和 Pack | MIGRATED | Phase 3 已切到唯一 WorkflowRuntime；生产代码旧导入为零 | `test_wkn_application_wiring.py` + kernel regression |
+| Product | Legal Contract Review | 部分 | Legal prompts/RAG/pack 与端到端 API | wkn ACG + Legal Pack 非线性 Blueprint + 引用式输出 | MIGRATED | Phase 4 已完成并行、条件、审核重启、工具、记忆、血缘黄金纵切 | `test_legal_wkn_vertical_slice.py` |
 | Product | General/Native、Programmer、Education、Writer packs | 部分 | C4 domain profiles/workflows/UI | wkn support packs 不等同产品接线 | MIGRATE | 按固定顺序逐 pack 迁移 | 每 pack profile/capability/workflow/tool/memory/output 集成测试 |
 | Product | HTTP API | 部分 | C4 `/agentos` API 投影旧 RuntimeGraph/正文 | wkn Runtime 无冻结产品 API | MIGRATE | Runtime/P0 稳定后以 ADR 冻结引用式 API | state/output 分离、鉴权、错误脱敏 |
 | Product | Spring Gateway | 无 | backend AgentOS controller/service | 无内核实现（正确边界） | MIGRATE | 仅 auth/authz/scope/DTO/proxy/error mapping | 后端无状态机/checkpoint/recovery 逻辑 |

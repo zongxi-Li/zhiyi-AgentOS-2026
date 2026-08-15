@@ -249,6 +249,7 @@ class ACGNodeRunner:
             decision_ref=decision.decision_id,
             outcomes={decision.outcome},
         )
+        requires_review = step.requires_review or persisted_decision.outcome == "review"
         if persisted_decision.outcome == "deny":
             return {
                 "outputSummary": output.summary or f"denied:{step_id}",
@@ -277,7 +278,7 @@ class ACGNodeRunner:
         )
         memory_record = None
         pending_memory: dict[str, str] | None = None
-        if persisted_decision.outcome == "allow" and memory_policy["write"]:
+        if persisted_decision.outcome == "allow" and not requires_review and memory_policy["write"]:
             memory_record = self.memory.remember_step_output(
                 run_id=state.run_id,
                 step_id=step_id,
@@ -285,7 +286,7 @@ class ACGNodeRunner:
                 memory_type=memory_policy["writeType"],
                 policy=self._write_memory_policy(memory_policy),
             )
-        elif persisted_decision.outcome == "review" and memory_policy["write"]:
+        elif requires_review and memory_policy["write"]:
             # 需要人工复核的内容只留下可校验输出引用和策略意图。正文仍在值仓库，
             # 批准前不进入正式 MemoryStore，也不产生可被下游读取的 memoryRef。
             pending_memory = {
@@ -303,7 +304,7 @@ class ACGNodeRunner:
             "outputRef": output_ref,
             # 审计器只给出可重放的治理事实；Pregel 图在提交节点结果后决定是否中断，
             # 因此审计部件不会越权修改 WorkflowRun 或驱动图状态。
-            "reviewRequired": persisted_decision.outcome == "review",
+            "reviewRequired": requires_review,
             "auditDecisionRef": persisted_decision.decision_id,
             "auditOutcome": persisted_decision.outcome,
             # 模型审计只保留已由 Agent 输出的调用元数据白名单，绝不回写 prompt、
@@ -316,7 +317,7 @@ class ACGNodeRunner:
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
         }
-        if persisted_decision.outcome != "review":
+        if not requires_review:
             result["memoryRef"] = memory_record.memory_id if memory_record is not None else "memory:none"
         if pending_memory is not None:
             result["pendingMemory"] = pending_memory

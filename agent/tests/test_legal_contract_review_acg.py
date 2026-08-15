@@ -3,10 +3,10 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentos.agents import AgentRegistry
-from agentos.core.models.types import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
-from agentos.core.runtime import WorkflowRuntime
-from agentos.core.workflow.registry import WorkflowRegistry
+from service.agents import AgentRegistry
+from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
+from runtime import WorkflowRuntime
+from components.task_manager.store import WorkflowRegistry
 from app.api.agentos_core import create_router
 from app.execution.runtime import configure_runtime
 from app.llm.config import LLMConfig

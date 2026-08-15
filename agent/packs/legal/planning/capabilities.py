@@ -173,6 +173,10 @@ def legal_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
     return tuple(
         descriptor.model_copy(
             update={
+                "aliases": list(dict.fromkeys([
+                    *descriptor.aliases,
+                    LEGAL_CAPABILITY_RUNTIME_IDS[descriptor.capability_id],
+                ])),
                 "source": "plugin",
                 "plugin_id": LEGAL_PLUGIN_ID,
                 "plugin_version": LEGAL_PLUGIN_VERSION,

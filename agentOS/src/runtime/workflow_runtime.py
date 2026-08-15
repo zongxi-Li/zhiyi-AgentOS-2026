@@ -711,7 +711,7 @@ class WorkflowRuntime:
             upstream_step_ids=upstream_step_ids,
             model_runtime=self._model_runtime,
             capability_descriptors={
-                step.capability: self.capability_catalog.get(step.capability)
+                step.capability: self.capability_catalog.resolve(step.capability)
                 for step in steps.values()
                 if step.capability
             },
@@ -1465,6 +1465,8 @@ class WorkflowRuntime:
                     payload={
                         "decision": decision.decision.value,
                         "operationId": decision.operation_id,
+                        "reviewer": decision.reviewer,
+                        "comment": decision.comment,
                         "deferredMemoryDiscarded": isinstance(
                             (restored.review_payload or {}).get("pendingMemory"), dict
                         ),
@@ -1475,12 +1477,21 @@ class WorkflowRuntime:
                 self.workflow_store.save_run(run)
                 return run
             self._commit_deferred_memory(run=run, step=step, state=restored)
+            # The node result was committed before the interrupt; approval
+            # resolves the review projection and must not leave a stale
+            # WAITING_REVIEW step in an otherwise completed persisted run.
+            self._transition_step(step, StepStatus.COMPLETED)
             self.trace_store.append(
                 run,
                 event_type=TraceEventType.REVIEW_DECIDED,
                 step_id=step.step_id,
                 observation="ACG review approved",
-                payload={"decision": decision.decision.value, "operationId": decision.operation_id},
+                payload={
+                    "decision": decision.decision.value,
+                    "operationId": decision.operation_id,
+                    "reviewer": decision.reviewer,
+                    "comment": decision.comment,
+                },
             )
         return await self._execute_acg(
             run,
@@ -1518,11 +1529,16 @@ class WorkflowRuntime:
             raise ValueError("review pendingMemory is incomplete")
         if review_payload.get("auditDecisionRef") != decision_ref:
             raise ValueError("review pendingMemory audit decision does not match review payload")
+        allowed_audit_outcomes = {"review"}
+        if step.requires_review:
+            # A Blueprint-declared review gate is authoritative even when the
+            # generic output-risk audit independently returns ``allow``.
+            allowed_audit_outcomes.add("allow")
         self.decision_store.assert_decision(
             run_id=run.run_id,
             step_id=step.step_id,
             decision_ref=decision_ref,
-            outcomes={"review"},
+            outcomes=allowed_audit_outcomes,
         )
         policy = ACGNodeRunner._memory_policy(step.input)
         if not policy["write"]:

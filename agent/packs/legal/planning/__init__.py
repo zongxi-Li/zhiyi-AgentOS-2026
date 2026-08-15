@@ -9,6 +9,7 @@ from packs.legal.planning.capabilities import (
     legal_capability_descriptors,
 )
 from packs.legal.planning.registration import register_legal_capabilities
+from packs.legal.planning.contract_review_blueprint import build_contract_review_blueprint
 
 __all__ = [
     "LEGAL_CAPABILITY_IDS",
@@ -18,4 +19,5 @@ __all__ = [
     "LEGAL_PLUGIN_VERSION",
     "legal_capability_descriptors",
     "register_legal_capabilities",
+    "build_contract_review_blueprint",
 ]
