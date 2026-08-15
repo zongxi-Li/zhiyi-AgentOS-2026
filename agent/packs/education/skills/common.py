@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agentos.adapters.retrieval_adapter import education_index_builder
-from agentos.packs.registry import pack_path
+from adapters.retrieval_adapter import education_index_builder
+from support.packs.registry import pack_path
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class TeacherSkillHelper:
             return cls._chroma_client
 
         try:
-            from agentos.adapters.retrieval.chroma_client import chroma_client
+            from adapters.retrieval_adapter import chroma_client
 
             cls._chroma_client = chroma_client
         except Exception as exc:

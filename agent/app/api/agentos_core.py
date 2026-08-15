@@ -11,12 +11,12 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentos.core.execution import RunExecutionCoordinator
-from agentos.core.models.types import ReviewDecision, ReviewDecisionType, WorkflowRun, WorkflowStatus
-from agentos.core.plugin_scope import PluginScopeError
-from agentos.core.runtime import ReviewConflictError, WorkflowRuntime
-from agentos.core.workflow.progress import ProgressAssembler
-from agentos.stores.workflow_store import WorkflowRunNotTerminalError
+from app.execution.coordinator import RunExecutionCoordinator
+from components.task_manager.scheduler import ProgressAssembler
+from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowRun, WorkflowStatus
+from runtime.dependencies import PluginScopeError
+from runtime.workflow_runtime import ReviewConflictError, WorkflowRuntime
+from support.stores.workflow_store import WorkflowRunNotTerminalError
 from app.execution.runtime import build_default_runtime
 from app.llm.gateway import get_llm_gateway
 from app.llm.schemas import CHAT_ROUTE_DECISION_SCHEMA

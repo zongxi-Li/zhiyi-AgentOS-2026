@@ -7,12 +7,12 @@ import logging
 import statistics
 from typing import Any, Dict, List
 
-from agentos.adapters.federated_adapter import FederatedAdapter
-from agentos.adapters.retrieval_adapter import education_index_builder
-from agentos.core.models.types import SkillRequest, SkillResult
-from agentos.skills.base import BaseSkill
+from adapters.federated_adapter import FederatedAdapter
+from adapters.retrieval_adapter import education_index_builder
+from contracts.workflow import SkillRequest, SkillResult
+from support.skills.base import BaseSkill
 from packs.education.skills.common import TeacherSkillHelper
-from agentos.adapters.model_adapter import AIService
+from adapters.model_adapter import AIService
 
 logger = logging.getLogger(__name__)
 

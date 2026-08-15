@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentos.adapters.model_adapter import register_model_service_factory
+from adapters.model_adapter import register_model_service_factory
 from app.services.aiservice import AIService as AppAIService
 
 

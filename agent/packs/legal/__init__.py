@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from agentos.core.workflow.registry import WorkflowRegistry
+from components.task_manager.store import WorkflowRegistry
 from packs.legal.agents.case_intake import CaseIntakeAgent
 from packs.legal.agents.contract_review_migration import (
     ClauseClassifyAgent,

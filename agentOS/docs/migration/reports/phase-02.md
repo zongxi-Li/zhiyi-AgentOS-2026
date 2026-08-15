@@ -10,7 +10,7 @@ Phase 2：以 wkn-master 完整替换 C4 AgentOS tracked tree。
 
 ## Result SHA
 
-`c81f8babc55e6518d6ae306187fcb5ccc77a6a1a`（`02 refactor(agentos): replace C4 kernel with wkn master`）。
+`82914e4dd8c6179fff91b2b441f00e4293a1ea49`（由提交 02 完成树替换，由提交 03 完成 cwd/import 基线修复）。
 
 ## Changed
 
@@ -37,7 +37,6 @@ git ls-files 'agentOS/src/agentos/**'
 ## Known Gaps
 
 - 工作目录中可能残留被 `.gitignore` 忽略的历史 `__pycache__`，不属于 tracked/生产 tree；Python 不会把缺少源文件的 `__pycache__` 当成可导入的旧包。交付清洁环境不会包含这些缓存。
-- 根目录 pytest 的 cwd-sensitive 测试修复尚未进入本提交。
 - Application、API、Spring、前端和 Docker 仍引用旧合同，符合断层切换阶段预期。
 
 ## Architecture Deviations
@@ -46,4 +45,4 @@ wkn tree 之外只保留迁移审计文档；这是计划要求的证据目录�
 
 ## Next Phase
 
-Phase 3 前置基线修复：使根目录标准 pytest 命令稳定通过并显式加入 `agentOS/` import root。
+Phase 3：迁移 Python Application wiring。

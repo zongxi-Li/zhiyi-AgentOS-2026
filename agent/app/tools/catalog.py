@@ -294,7 +294,7 @@ class ReadOnlyToolCatalog:
         )
 
     async def _ensure_code_index(self):
-        from agentos.adapters.retrieval.code_index_builder import code_index_builder
+        from app.rag.code_index_builder import code_index_builder
 
         root = settings.TOOL_CODEBASE_ROOT.strip() or None
         base_root = Path(root).resolve() if root else code_index_builder._normalize_path(None)

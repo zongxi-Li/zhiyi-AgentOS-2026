@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentos.agents.base import AgentProfile, BaseAgent
+from service.agents.base import AgentProfile, BaseAgent
 from packs.legal.agents.contract_review_migration import (
     ClauseClassifyAgent,
     ContractParseAgent,

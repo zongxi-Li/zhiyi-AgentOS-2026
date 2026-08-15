@@ -1,9 +1,9 @@
 """法律 Pack 的技能实现，提供案情、法条、证据、风险和文书相关原子能力。"""
 
 
-from agentos.adapters.retrieval_adapter import legal_index_builder
-from agentos.core.models.types import SkillRequest, SkillResult
-from agentos.skills.base import BaseSkill
+from adapters.retrieval_adapter import legal_index_builder
+from contracts.workflow import SkillRequest, SkillResult
+from support.skills.base import BaseSkill
 
 
 class StatuteRetrievalSkill(BaseSkill):

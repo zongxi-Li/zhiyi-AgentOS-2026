@@ -1,6 +1,6 @@
 """Register the application read-only tool runtime with AgentOS Core."""
 
-from agentos.adapters.tool_adapter import register_tool_runtime_factory
+from adapters.tool_adapter import register_tool_runtime_factory
 from app.tools import get_tool_runtime
 
 

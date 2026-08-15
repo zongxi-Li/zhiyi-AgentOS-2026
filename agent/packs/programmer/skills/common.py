@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-from agentos.packs.registry import pack_path
+from support.packs.registry import pack_path
 
 PROGRAMMER_PROMPT_DIR = pack_path("programmer", "prompts")
 

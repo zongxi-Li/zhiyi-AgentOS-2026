@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentos.core.planning import PlanningCapabilityDescriptor
+from support.acg.models import PlanningCapabilityDescriptor
 
 
 LEGAL_PLUGIN_ID = "kinlin.legal"

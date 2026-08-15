@@ -3,9 +3,9 @@
 
 from typing import Any, Dict, List
 
-from agentos.adapters.federated_adapter import FederatedAdapter
-from agentos.core.models.types import SkillRequest, SkillResult
-from agentos.skills.base import BaseSkill
+from adapters.federated_adapter import FederatedAdapter
+from contracts.workflow import SkillRequest, SkillResult
+from support.skills.base import BaseSkill
 
 
 class RiskAssessmentSkill(BaseSkill):

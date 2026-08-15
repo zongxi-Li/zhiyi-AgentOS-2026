@@ -1,7 +1,7 @@
 """教育 Pack 的智能体实现，负责教学工作流中的专业步骤执行。"""
 
 
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 
 
 def _infer_subject(topic: str, explicit: str) -> str:

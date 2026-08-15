@@ -5,9 +5,9 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from agentos.adapters.retrieval_adapter import build_code_index, search_code
-from agentos.core.models.types import SkillRequest, SkillResult
-from agentos.skills.base import BaseSkill
+from adapters.retrieval_adapter import build_code_index, search_code
+from contracts.workflow import SkillRequest, SkillResult
+from support.skills.base import BaseSkill
 from packs.programmer.skills.common import ProgrammerSkillHelper
 
 logger = logging.getLogger(__name__)

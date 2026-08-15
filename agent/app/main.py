@@ -18,6 +18,7 @@ from app.paths import APP_DATA_DIR
 from app.services.aiservice import AIService
 from app.integrations.model_adapter import configure_model_adapter
 from app.integrations.tool_adapter import configure_tool_adapter
+from app.execution import close_runtime
 from app.tools import get_tool_runtime
 from app.config import settings
 from app.security.internal_auth import (
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await agentos_core.coordinator.shutdown()
+        close_runtime(agentos_core.runtime)
     
         # 关闭时执行 - 简化日志输出
         from app.llm.provider_conversation import close_configured_provider_conversation_store

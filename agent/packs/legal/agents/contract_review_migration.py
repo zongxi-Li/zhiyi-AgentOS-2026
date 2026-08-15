@@ -5,8 +5,8 @@ import json
 import re
 from typing import Any, Callable, Dict, List
 
-from agentos.adapters.tool_adapter import network_tools_enabled
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
+from app.execution.tool_calls import network_tools_enabled
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from app.llm.gateway import get_llm_gateway
 from app.llm.prompts import render_parse_contract_prompt, render_report_generate_prompt, render_risk_detect_prompt
 from app.llm.schemas import PARSE_CONTRACT_SCHEMA, REPORT_GENERATE_SCHEMA, RISK_DETECT_SCHEMA

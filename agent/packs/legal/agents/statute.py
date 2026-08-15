@@ -2,10 +2,10 @@
 
 import hashlib
 
-from agentos.adapters.tool_adapter import network_tools_enabled
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
-from agentos.core.models.types import utc_now
-from agentos.core.tool_execution import execute_read_only_tool
+from app.execution.tool_calls import network_tools_enabled
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from contracts.workflow import utc_now
+from app.execution.tool_calls import execute_read_only_tool
 from packs.legal.agents.common import case_text
 
 

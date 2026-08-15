@@ -7,10 +7,10 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from agentos.core.models.types import SkillRequest, SkillResult
-from agentos.skills.base import BaseSkill
-from agentos.adapters.model_adapter import AIService
-from agentos.packs.registry import pack_path
+from contracts.workflow import SkillRequest, SkillResult
+from support.skills.base import BaseSkill
+from adapters.model_adapter import AIService
+from support.packs.registry import pack_path
 
 logger = logging.getLogger(__name__)
 

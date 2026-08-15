@@ -33,6 +33,7 @@ def _schema_value(schema, field_name="value"):
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AGENTOS_SRC = PROJECT_ROOT / "agentOS" / "src"
+AGENTOS_ROOT = PROJECT_ROOT / "agentOS"
 AGENT_APP_ROOT = PROJECT_ROOT / "agent"
 TEST_TEMP_ROOT = PROJECT_ROOT / ".tmp-tests"
 TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -47,8 +48,23 @@ _TEST_WORKFLOW_DIR.mkdir(parents=True)
 os.environ["AGENTOS_WORKFLOW_DB_PATH"] = str(
     _TEST_WORKFLOW_DIR / "workflows.sqlite3"
 )
+os.environ["AGENTOS_LANGGRAPH_CHECKPOINT_DB"] = str(
+    _TEST_WORKFLOW_DIR / "langgraph_checkpoints.sqlite3"
+)
+os.environ["AGENTOS_EXECUTION_VALUE_DB"] = str(
+    _TEST_WORKFLOW_DIR / "execution_values.sqlite3"
+)
+os.environ["AGENTOS_EXECUTION_MEMORY_DB"] = str(
+    _TEST_WORKFLOW_DIR / "execution_memory.sqlite3"
+)
+os.environ["AGENTOS_PROVENANCE_DB"] = str(
+    _TEST_WORKFLOW_DIR / "provenance.sqlite3"
+)
+os.environ["AGENTOS_AUDIT_DB"] = str(
+    _TEST_WORKFLOW_DIR / "audit_decisions.sqlite3"
+)
 
-for path in (PROJECT_ROOT, AGENT_APP_ROOT, AGENTOS_SRC):
+for path in (PROJECT_ROOT, AGENT_APP_ROOT, AGENTOS_ROOT, AGENTOS_SRC):
     value = str(path)
     if value not in sys.path:
         sys.path.insert(0, value)
@@ -233,7 +249,7 @@ def _force_mock_llm(monkeypatch):
     """
     monkeypatch.setenv("AGENTOS_LLM_PROVIDER", "mock")
     from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
-    from agentos.adapters.tool_adapter import (
+    from adapters.tool_adapter import (
         clear_tool_runtime_factory,
         register_tool_runtime_factory,
     )

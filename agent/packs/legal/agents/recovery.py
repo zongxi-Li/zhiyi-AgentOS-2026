@@ -5,10 +5,9 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from agentos.adapters.tool_adapter import network_tools_enabled
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
-from agentos.core.recovery.contract_adapter import prepare_contract_repair
-from agentos.core.tool_execution import execute_read_only_tool
+from app.execution.tool_calls import network_tools_enabled
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from app.execution.tool_calls import execute_read_only_tool
 from app.rag.legal_evidence_schema import normalize_evidence
 
 
@@ -224,10 +223,9 @@ class LegalContractAdapterAgent(BaseAgent):
         )
 
     async def run(self, context) -> AgentOutput:
-        repair = prepare_contract_repair(context)
-        return AgentOutput(
-            output=repair,
-            summary="Prepared the latest legal payload for contract retry.",
+        raise RuntimeError(
+            "CONTRACT_REPAIR_MIGRATION_PENDING: the C4 repair algorithm must be "
+            "reimplemented in components.recovery before this binding is enabled"
         )
 
 
