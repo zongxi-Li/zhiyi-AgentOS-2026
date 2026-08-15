@@ -15,25 +15,17 @@
     <div v-else class="checkpoint-list">
       <article v-for="checkpoint in checkpoints" :key="checkpoint.checkpointId" class="checkpoint-item">
         <div>
-          <strong>{{ checkpoint.stepId }}</strong>
+          <strong>版本 {{ checkpoint.version }}</strong>
           <span>{{ checkpoint.checkpointId }}</span>
-          <time>{{ formatTime(checkpoint.createdAt) }}</time>
         </div>
-        <button
-          type="button"
-          :disabled="!checkpoint.canResume"
-          @click="$emit('resume', checkpoint.checkpointId)"
-        >
-          <el-icon><Refresh /></el-icon>
-          恢复
-        </button>
+        <span>{{ checkpoint.canResume ? '可通过审核继续' : '只读' }}</span>
       </article>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Clock, Refresh } from '@element-plus/icons-vue'
+import { Clock } from '@element-plus/icons-vue'
 import type { Checkpoint } from '@/services/api/workflow'
 
 defineProps<{
@@ -41,14 +33,6 @@ defineProps<{
   loading?: boolean
 }>()
 
-defineEmits<{
-  resume: [checkpointId: string]
-}>()
-
-const formatTime = (value?: string) => {
-  if (!value) return '时间未知'
-  return new Date(value).toLocaleString()
-}
 </script>
 
 <style scoped>

@@ -16,10 +16,12 @@ vi.mock('@/services/api/workflow', async (importOriginal) => {
 })
 
 const acceptedResponse = {
-  accepted: true,
-  acgTaskId: 'run_chat_1',
-  task: { taskId: 'task_chat_1', status: 'pending' },
-  run: { runId: 'run_chat_1', workflowId: 'legal_case_analysis_v1', status: 'pending' }
+  runId: 'run_chat_1',
+  taskId: 'task_chat_1',
+  workflowId: 'legal_case_analysis_v1',
+  domain: 'legal',
+  status: 'pending' as const,
+  steps: []
 }
 
 describe('chat workflow binding', () => {

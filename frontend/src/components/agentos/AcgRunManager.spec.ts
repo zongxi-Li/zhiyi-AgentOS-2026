@@ -210,31 +210,4 @@ describe('AcgRunManager', () => {
     wrapper.unmount()
   })
 
-  it('only confirms and deletes terminal runs', async () => {
-    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
-    const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
-    await flushPromises()
-
-    expect(wrapper.find('.status-active .acg-run-delete').exists()).toBe(false)
-    expect(wrapper.find('.status-review .acg-run-delete').exists()).toBe(false)
-    vi.mocked(workflowApi.listRuns).mockResolvedValue({
-      items: [run({}), run({ runId: 'run_review_1', status: 'waiting_review', phase: 'review' })],
-      total: 2,
-      page: 1,
-      pageSize: 100
-    })
-    await wrapper.find('.status-completed .acg-run-delete').trigger('click')
-    await flushPromises()
-
-    expect(confirm).toHaveBeenCalledWith(
-      '该操作将永久删除本次运行的步骤、动态历史和执行结果，无法恢复。',
-      '删除运行记录？',
-      expect.objectContaining({ confirmButtonText: '永久删除' })
-    )
-    expect(workflowApi.deleteRun).toHaveBeenCalledWith('run_done_1')
-    expect(wrapper.emitted('deleted')?.[0]).toEqual(['run_done_1'])
-    expect(wrapper.find('.status-completed').exists()).toBe(false)
-    confirm.mockRestore()
-    wrapper.unmount()
-  })
 })

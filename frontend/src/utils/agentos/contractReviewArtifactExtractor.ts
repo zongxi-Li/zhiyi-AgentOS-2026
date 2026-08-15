@@ -1,4 +1,4 @@
-import type { WorkflowRun, WorkflowStep } from '@/services/api/workflow'
+import type { AcgDeliverable } from '@/services/api/workflow'
 
 type AnyRecord = Record<string, any>
 
@@ -62,33 +62,26 @@ const asString = (value: unknown): string => {
   return typeof value === 'string' ? value : ''
 }
 
-const stepOutput = (steps: WorkflowStep[] | undefined, stepId: string): AnyRecord => {
-  return asRecord(steps?.find(step => step.stepId === stepId)?.output)
+const stepOutput = (deliverables: AcgDeliverable[] | undefined, stepId: string): AnyRecord => {
+  return asRecord(deliverables?.find(item => item.stepId === stepId)?.output)
 }
 
-export const extractContractReviewArtifacts = (run: WorkflowRun | null): ContractReviewArtifacts => {
-  const artifacts = asRecord(run?.output?.artifacts)
+export const extractContractReviewArtifacts = (deliverables: AcgDeliverable[] = []): ContractReviewArtifacts => {
   const riskDetect = {
-    ...stepOutput(run?.steps, 'risk_detect'),
-    ...asRecord(artifacts.risk_detect)
+    ...stepOutput(deliverables, 'risk_detect')
   }
   const evidenceMatch = {
-    ...stepOutput(run?.steps, 'legal_evidence_match'),
-    ...asRecord(artifacts.legal_evidence_match)
+    ...stepOutput(deliverables, 'legal_evidence_match')
   }
   const revisionSuggest = {
-    ...stepOutput(run?.steps, 'revision_suggest'),
-    ...stepOutput(run?.steps, 'suggestion_generate'),
-    ...asRecord(artifacts.revision_suggest),
-    ...asRecord(artifacts.suggestion_generate)
+    ...stepOutput(deliverables, 'revision_suggest'),
+    ...stepOutput(deliverables, 'suggestion_generate')
   }
   const humanReview = {
-    ...stepOutput(run?.steps, 'human_review'),
-    ...asRecord(artifacts.human_review)
+    ...stepOutput(deliverables, 'human_review')
   }
   const reportGenerate = {
-    ...stepOutput(run?.steps, 'report_generate'),
-    ...asRecord(artifacts.report_generate)
+    ...stepOutput(deliverables, 'report_generate')
   }
   const report = asRecord(reportGenerate.report)
 

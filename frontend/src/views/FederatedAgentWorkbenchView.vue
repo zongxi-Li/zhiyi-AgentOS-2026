@@ -595,7 +595,7 @@ function updateWorkbenchFromRun(run: WorkflowRun) {
   flowSteps.value = run.steps.map((step, index) => ({
     no: String(index + 1).padStart(2, '0'),
     title: step.name || step.stepId,
-    desc: step.error || step.capability || step.agentName,
+    desc: step.outputSummary || step.capability || step.agentName,
     state: toFlowState(step.status)
   }))
 
@@ -611,28 +611,10 @@ function updateWorkbenchFromRun(run: WorkflowRun) {
     ? Math.round((completedCount / run.steps.length) * 100)
     : 0
 
-  reasoningItems.value = run.trace.slice(-5).map(event => ({
-    title: event.eventType,
-    desc: event.observation || event.agentName || event.stepId || ''
+  reasoningItems.value = run.steps.filter(step => step.outputSummary).slice(-5).map(step => ({
+    title: step.name,
+    desc: step.outputSummary || ''
   }))
-  timelineItems.value = run.trace.slice(-6).map(event => ({
-    time: event.createdAt ? new Date(event.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) : '',
-    title: event.eventType,
-    desc: event.observation || ''
-  }))
-
-  const finalAnswer = run.output?.final_answer
-  if (finalAnswer) {
-    documentPreview.value = String(finalAnswer).split('\n').filter(line => line.trim())
-  } else {
-    const stepSummaries = run.steps
-      .map(step => step.output?.summary || step.output?.case_summary || step.output?.risk_summary || step.output?.legal_basis)
-      .filter(Boolean)
-      .map(String)
-    if (stepSummaries.length > 0) {
-      documentPreview.value = stepSummaries
-    }
-  }
 }
 
 async function runApiMode() {
@@ -657,10 +639,10 @@ async function runApiMode() {
     ])
 
     if (workflowRes.status === 'fulfilled') {
-      updateWorkbenchFromRun(workflowRes.value.run)
+      updateWorkbenchFromRun(workflowRes.value)
       ElMessage.success('Workflow 已发起')
     } else {
-      ElMessage.warning('Workflow 发起失败，请检查 AgentOS Core 服务')
+      ElMessage.warning('Workflow 发起失败，请检查 AgentOS v2 服务')
     }
 
     if (modelStatusRes.status === 'fulfilled' && modelStatusRes.value?.success) {

@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from agentos.adapters.model_adapter import StructuredGenerationError
+from adapters.model_adapter import StructuredGenerationError
 from app.execution.model_runtime import GatewayStructuredGenerationRuntime
 
 

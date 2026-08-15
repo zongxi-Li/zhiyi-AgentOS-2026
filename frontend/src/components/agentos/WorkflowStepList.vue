@@ -29,7 +29,7 @@
           <span v-if="step.retryCount">重试 {{ step.retryCount }} 次</span>
           <span v-if="step.durationMs">{{ step.durationMs }}ms</span>
         </div>
-        <p v-if="step.error" class="step-error">{{ step.error }}</p>
+        <p v-if="step.outputSummary" class="step-summary">{{ step.outputSummary }}</p>
       </article>
     </div>
   </section>

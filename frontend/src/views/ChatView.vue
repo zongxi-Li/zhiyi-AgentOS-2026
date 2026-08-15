@@ -295,12 +295,6 @@
               :sync-error="workflowProgressState.syncError.value"
               variant="compact"
             />
-            <DynamicRunSummaryCard
-              v-if="!isLawyerMode"
-              :progress="workflowProgressState.progress.value"
-              :run="activeWorkflowRun"
-              :view="activeAcgView"
-            />
           </div>
 
           <p v-if="workflowStartError" class="chat-workflow-error" role="alert">
@@ -454,14 +448,6 @@
               :step-states="activeAcgView?.stepStates"
               collapsible
               @collapse="setWorkflowPanelOpen(false)"
-            />
-            <RuntimeChangeTimeline
-              v-if="activeAcgView"
-              class="chat-runtime-timeline"
-              :runtime-events="activeAcgView.runtimeEvents"
-              :applied-patches="activeAcgView.appliedPatches"
-              :branch-decisions="activeAcgView.branchDecisions"
-              :step-states="activeAcgView.stepStates"
             />
             <div v-if="isLoadingWorkflowResult && !activeAcgView" class="workflow-acg-loading">正在加载动态拓扑…</div>
           </section>
@@ -936,8 +922,6 @@ import RelationGraph from '@/components/agent/RelationGraph.vue'
 import RoleTemplateSwitchDialog from '@/components/RoleTemplateSwitchDialog.vue'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import DynamicRunSummaryCard from '@/components/agentos/DynamicRunSummaryCard.vue'
-import RuntimeChangeTimeline from '@/components/agentos/RuntimeChangeTimeline.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AcgRunInspector from '@/components/agentos/AcgRunInspector.vue'
 import ContractReviewReportMessage from '@/components/agentos/ContractReviewReportMessage.vue'
@@ -947,7 +931,6 @@ import ContractReportPreview from '@/components/agentos/ContractReportPreview.vu
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
 import {
   agentosApi,
-  type AcgBlueprint,
   type AcgDeliverable,
   type AcgFinalArtifact,
   type AcgView,
@@ -960,7 +943,6 @@ import { fileApi } from '@/services/api/file'
 import { useChatStore, type ChatWorkflowBinding } from '@/stores/chat'
 import { useRoleStore } from '@/stores/role'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
-import { runtimeProjectionChanged } from '@/utils/runtimePresentation'
 import { extractContractReviewArtifacts } from '@/utils/agentos/contractReviewArtifactExtractor'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
@@ -1140,69 +1122,8 @@ const workflowResultCache = new Map<string, WorkflowResultCacheEntry>()
 let composerResizeObserver: ResizeObserver | undefined
 const agentPanelContentRef = ref<HTMLElement | null>(null)
 
-const workflowRunBlueprint = computed<AcgBlueprint | null>(() => {
-  const run = activeWorkflowRun.value
-  if (!run?.steps?.length) return null
-
-  const agentIds = new Map<string, string>()
-  run.steps.forEach(step => {
-    const name = step.agentName || 'Agent'
-    if (!agentIds.has(name)) agentIds.set(name, `agent:${name}`)
-  })
-
-  const nodes: AcgBlueprint['nodes'] = [
-    { nodeId: 'workflow:start', nodeType: 'control', name: 'START', controlType: 'start' },
-    ...run.steps.map(step => ({
-      nodeId: step.stepId,
-      nodeType: 'step' as const,
-      name: step.name || step.stepId,
-      agentName: step.agentName,
-      capability: step.capability,
-      metadata: { status: step.status }
-    })),
-    ...Array.from(agentIds.entries()).map(([name, nodeId]) => ({
-      nodeId,
-      nodeType: 'agent' as const,
-      name
-    }))
-  ]
-
-  const edges: AcgBlueprint['edges'] = []
-  run.steps.forEach((step, index) => {
-    edges.push({
-      edgeId: `flow:${index}`,
-      sourceId: index === 0 ? 'workflow:start' : run.steps[index - 1].stepId,
-      targetId: step.stepId,
-      edgeType: 'dependency'
-    })
-    const agentId = agentIds.get(step.agentName || 'Agent')
-    if (agentId) {
-      edges.push({
-        edgeId: `exec:${step.stepId}`,
-        sourceId: agentId,
-        targetId: step.stepId,
-        edgeType: 'execution'
-      })
-    }
-  })
-
-  return {
-    graphId: `workflow:${run.runId}`,
-    taskId: run.taskId,
-    objective: run.workflowId,
-    nodes,
-    edges,
-    metadata: { source: 'workflow-run' }
-  }
-})
-
-const displayAcgBlueprint = computed(() => activeAcgView.value?.acgBlueprint || workflowRunBlueprint.value)
-const displayCompletedStepIds = computed(() => {
-  if (activeAcgView.value?.acgBlueprint) return activeAcgView.value.completedStepIds
-  return activeWorkflowRun.value?.steps
-    .filter(step => step.status === 'completed')
-    .map(step => step.stepId) || []
-})
+const displayAcgBlueprint = computed(() => activeAcgView.value?.acgBlueprint || null)
+const displayCompletedStepIds = computed(() => activeAcgView.value?.completedStepIds || [])
 const contextNodes = computed(() => displayAcgBlueprint.value?.nodes || [])
 const contextEdges = computed(() => displayAcgBlueprint.value?.edges || [])
 const contextStepNodes = computed(() => contextNodes.value.filter(node => node.nodeType === 'step'))
@@ -1211,85 +1132,28 @@ const contextObjective = computed(() => {
 })
 const historyText = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
 const workflowHistoryInput = computed(() => {
-  const input = activeWorkflowRun.value?.input || {}
-  const chatContext = Array.isArray(input.chatContext) ? input.chatContext : []
-  const contextInput = [...chatContext]
-    .reverse()
-    .find(item => item && typeof item === 'object' && item.role === 'user')
-  return historyText(input.userIntent)
-    || historyText(input.taskGoal)
-    || historyText(input.prompt)
-    || historyText(input.requirement)
-    || historyText(input.text)
-    || historyText(input.query)
-    || historyText(contextInput?.content)
-    || historyText(activeWorkflowRun.value?.title)
-    || '该运行未保存可展示的任务原文。'
+  return historyText(activeWorkflowRun.value?.title) || '任务原文不属于运行状态，请从原会话查看。'
 })
 const workflowHistoryTitle = computed(() => {
   const run = activeWorkflowRun.value
   if (!run) return 'Agent 历史任务'
   return resolveAcgTaskTitle({
     title: workflowHistoryInput.value,
-    workflowId: run.workflowId,
-    input: run.input
+    workflowId: run.workflowId
   })
 })
 const workflowHistoryStepOutputs = computed<AcgDeliverable[]>(() => {
   const projected = activeAcgView.value?.stepOutputs?.length
     ? activeAcgView.value.stepOutputs
     : activeAcgView.value?.deliverables
-  if (projected?.length) return projected
-  return (activeWorkflowRun.value?.steps || [])
-    .filter(step => step.output && Object.keys(step.output).length > 0)
-    .map(step => ({
-      stepId: step.stepId,
-      name: step.name,
-      status: step.status,
-      output: step.output || {}
-    }))
+  return projected || []
 })
 const workflowHistoryFinalArtifacts = computed<AcgFinalArtifact[]>(() => {
-  const run = activeWorkflowRun.value
-  const runArtifacts = (run?.steps || []).flatMap(step => {
-    const candidate = step.output?.artifact
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return []
-    const content = historyText(candidate.content)
-    if (!content) return []
-    return [{
-      artifactId: String(candidate.artifactId || `artifact_${run?.runId}_${step.stepId}`),
-      type: String(candidate.type || 'report'),
-      title: String(candidate.title || step.name),
-      mediaType: String(candidate.mediaType || 'text/markdown'),
-      content,
-      structuredData: candidate.structuredData && typeof candidate.structuredData === 'object'
-        ? candidate.structuredData as Record<string, any>
-        : {},
-      stepId: step.stepId
-    }]
-  })
-  // Run artifacts retain structuredData; the ACG projection may expose only a
-  // legacy Markdown artifact, so prefer the richer canonical run payload.
-  return runArtifacts.length ? runArtifacts : (activeAcgView.value?.finalArtifacts || [])
+  return activeAcgView.value?.finalArtifacts || []
 })
 const workflowHistoryFinalReport = computed(() => {
   if (historyText(activeAcgView.value?.finalReport)) return activeAcgView.value?.finalReport || null
-  let report: string | null = null
-  for (const step of activeWorkflowRun.value?.steps || []) {
-    const output = step.output || {}
-    const candidate = historyText(output.final_answer)
-      || historyText(output.report_markdown)
-      || historyText(output.final_report)
-      || historyText(output.report)
-    if (candidate) report = candidate
-  }
-  if (report) return report
-  const output = activeWorkflowRun.value?.output || {}
-  return historyText(output.final_answer)
-    || historyText(output.report_markdown)
-    || historyText(output.final_report)
-    || historyText(output.report)
-    || null
+  return null
 })
 const activeWorkflowStatus = computed(() => (
   workflowProgressState.progress.value?.status
@@ -1668,11 +1532,6 @@ function handleWorkflowProgressChanged(current: WorkflowProgress, previous: Work
   }
   syncWorkflowMessageStatus(current.runId, current.status)
 
-  if (runtimeProjectionChanged(current, previous) && !['completed', 'failed', 'cancelled'].includes(current.status)) {
-    void loadActiveAcgView(current.runId, true)
-    return
-  }
-
   const phaseChanged = previous?.phase !== current.phase
   if (current.phase === 'review' && phaseChanged) {
     void loadActiveAcgView(current.runId)
@@ -1835,7 +1694,7 @@ const latestWriterMessage = computed(() => {
     .find(msg => msg.role === 'assistant' && msg.agentMode === 'writer')
 })
 
-const activeContractReviewArtifacts = computed(() => extractContractReviewArtifacts(activeWorkflowRun.value))
+const activeContractReviewArtifacts = computed(() => extractContractReviewArtifacts(workflowHistoryStepOutputs.value))
 const workflowHistoryMessageTime = computed(() => {
   const raw = activeWorkflowRun.value?.updatedAt || activeWorkflowRun.value?.createdAt
   const value = raw ? new Date(raw) : new Date()

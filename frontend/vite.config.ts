@@ -58,7 +58,8 @@ export default defineConfig(({ mode }) => {
               '/api/role-fusion',
               '/api/alerts',
               '/api/feedback',
-              '/api/federated-models'
+              '/api/federated-models',
+              '/api/agentos/v2'
             ]
 
             // 检查是否需要保留/api前缀

@@ -93,7 +93,7 @@
         </div>
       </div>
       <section class="plugin-selector" aria-label="专业能力扩展">
-        <header><div><strong>专业能力扩展（单选）</strong><small>Native Core 始终启用；每个 Run 最多叠加一个专业能力包</small></div><span v-if="pluginsLoading">正在读取...</span></header>
+        <header><div><strong>专业能力扩展（单选）</strong><small>Native Core 始终启用；每个 Run 最多叠加一个专业能力包</small></div></header>
         <div class="plugin-options">
           <button type="button" class="plugin-card native-card" :class="{ selected: !draft.enabledPluginIds.length }" :aria-pressed="!draft.enabledPluginIds.length" :disabled="scopeLocked" @click="clearPlugins">
             <strong>Native Core · 始终启用</strong><small>{{ draft.enabledPluginIds.length ? '作为专业能力包的运行基础' : '当前仅使用通用规划、分析与交付能力' }}</small><code>不叠加专业能力包</code>
@@ -163,35 +163,10 @@
       aria-label="ACG 运行概览"
     >
     <section v-if="activeRunId" class="run-scope">
-      <header><strong>本次 Run 的能力范围（已冻结）</strong><el-tag effect="plain" type="info">只读</el-tag></header>
-      <p v-if="activeRun?.legacyPluginScope" class="scope-warning">该运行创建于插件快照功能之前，未伪造插件版本。</p>
-      <p v-else-if="missingSnapshotPlugins.length" class="scope-warning">原插件当前不可用：{{ missingSnapshotPlugins.join('、') }}。历史图和输出仍可查看，不能扩大 Scope 后继续执行。</p>
+      <header><strong>运行状态来自 WorkflowRuntime</strong><el-tag effect="plain" type="info">引用式只读</el-tag></header>
       <div class="snapshot-list">
-        <span v-if="!activeRun?.pluginSnapshot?.length">Native only</span>
-        <span v-for="snapshot in activeRun?.pluginSnapshot || []" :key="snapshot.pluginId"><b>{{ snapshot.pluginId }}</b> v{{ snapshot.version }}</span>
-        <code v-if="activeRun?.capabilityCatalogRevision">Catalog {{ activeRun.capabilityCatalogRevision.slice(0, 12) }}</code>
-        <code v-if="activeRun?.planningDiversity && activeRun.planningDiversity !== 'stable'">
-          {{ activeRun.planningDiversity === 'balanced' ? '均衡规划' : '探索规划' }} · Seed {{ activeRun.planningSeed }} · 候选 {{ activeRun.planningCandidateCount || 1 }} 选 1
-        </code>
-      </div>
-      <div v-if="planningSelectionReasons.length" class="planning-selection-reasons">
-        <strong>本次规划选择依据</strong>
-        <span v-for="reason in planningSelectionReasons.slice(0, 4)" :key="reason">{{ reason }}</span>
-      </div>
-      <div v-if="planningDiagnostics" class="planning-diagnostics">
-        <div class="planning-diagnostic-tags">
-          <el-tag :type="planningDiagnostics.intentParseSource === 'llm' ? 'success' : 'warning'" effect="plain">
-            {{ planningDiagnostics.intentParseSource === 'llm' ? 'LLM 语义解析' : '规则降级' }}
-          </el-tag>
-          <el-tag type="info" effect="plain">
-            {{ planningDiagnostics.effectiveStrategy === 'static_template' ? '模板复用' : '动态生成' }}
-          </el-tag>
-          <span v-if="planningDiagnostics.materialContext?.included">
-            材料 {{ planningDiagnostics.materialContext.selectedCharacters.toLocaleString('zh-CN') }}/{{ planningDiagnostics.materialContext.totalCharacters.toLocaleString('zh-CN') }} 字
-            <template v-if="planningDiagnostics.materialContext.truncated">（已截取规划片段）</template>
-          </span>
-        </div>
-        <p v-if="planningFallbackMessage" class="planning-fallback-warning">{{ planningFallbackMessage }}</p>
+        <span>{{ activePluginSummary }}</span>
+        <code v-if="activeRun?.executionState?.checkpointId">Checkpoint {{ activeRun.executionState.checkpointId }}</code>
       </div>
     </section>
 
@@ -200,13 +175,6 @@
       :progress="progressTracker.progress.value"
       :loading="isSubmitting || progressTracker.isLoading.value"
       :sync-error="progressTracker.syncError.value"
-    />
-    <DynamicRunSummaryCard
-      v-if="activeRunId"
-      class="run-summary-card"
-      :progress="progressTracker.progress.value"
-      :run="activeRun"
-      :view="acgView"
     />
     </section>
 
@@ -292,12 +260,6 @@
           @export-csv="exportAudit('csv')"
         />
         </div>
-        <RuntimeChangeTimeline
-          :runtime-events="acgView.runtimeEvents"
-          :applied-patches="acgView.appliedPatches"
-          :branch-decisions="acgView.branchDecisions"
-          :step-states="acgView.stepStates"
-        />
       </aside>
     </div>
 
@@ -315,10 +277,7 @@ import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
   workflowApi,
-  type AcgDeliverable,
-  type AcgFinalArtifact,
   type AcgView,
-  type InstalledPlugin,
   type WorkflowRun,
   type WorkflowProgress
 } from '@/services/api/workflow'
@@ -326,14 +285,11 @@ import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import AcgLowEntropyMetrics from '@/components/agentos/AcgLowEntropyMetrics.vue'
 import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import DynamicRunSummaryCard from '@/components/agentos/DynamicRunSummaryCard.vue'
-import RuntimeChangeTimeline from '@/components/agentos/RuntimeChangeTimeline.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
-import { graphVersionChanged, runtimeProjectionChanged } from '@/utils/runtimePresentation'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
-import { fileApi, type TaskMaterial } from '@/services/api/file'
+import { fileApi } from '@/services/api/file'
 import { buildAcgAuditCsv, buildAcgAuditExport } from '@/utils/acgAuditExport'
 import { isWorkflowReviewPending } from '@/utils/workflowReviewState'
 import { resolveAcgTaskTitle, resolveAcgTaskTitleAutoUpdate } from '@/utils/acgTaskTitle'
@@ -383,8 +339,7 @@ const taskMaterialLength = computed(() => {
   const legalDraft = draft.pluginData['kinlin.legal']
   const candidates = [
     contractText.value,
-    typeof legalDraft?.contractText === 'string' ? legalDraft.contractText : '',
-    typeof activeRun.value?.input?.contractText === 'string' ? activeRun.value.input.contractText : ''
+    typeof legalDraft?.contractText === 'string' ? legalDraft.contractText : ''
   ]
   return (candidates.find(value => value.trim()) || '').length
 })
@@ -396,15 +351,16 @@ const route = useRoute()
 const router = useRouter()
 const workflowRunsStore = useWorkflowRunsStore()
 const activeRunId = ref('')
-const installedPlugins = ref<InstalledPlugin[]>([])
-const pluginsLoading = ref(false)
+const installedPlugins = computed(() => pluginUiExtensions.all().map(extension => ({
+  pluginId: extension.pluginId,
+  displayName: extension.displayName,
+  description: '随前端扩展与应用 Pack 一同部署',
+  version: 'workspace',
+  available: true
+})))
 const scopeLocked = computed(() => Boolean(activeRunId.value))
 const draftExtensions = computed(() => pluginUiExtensions.resolve(draft.enabledPluginIds))
-const activePluginIds = computed(() => (
-  activeRun.value?.resolvedEnabledPluginIds
-  || activeRun.value?.enabledPluginIds
-  || draft.enabledPluginIds
-))
+const activePluginIds = computed(() => draft.enabledPluginIds)
 const activeExtensions = computed(() => pluginUiExtensions.resolve(activePluginIds.value))
 const artifactRenderers = computed(() => activeExtensions.value
   .filter(item => item.artifactRenderer)
@@ -412,12 +368,6 @@ const artifactRenderers = computed(() => activeExtensions.value
 const activePluginSummary = computed(() => activePluginIds.value.length
   ? activePluginIds.value.join('、')
   : 'Native only')
-const missingSnapshotPlugins = computed(() => {
-  const available = new Set(installedPlugins.value.filter(item => item.available).map(item => item.pluginId))
-  return (activeRun.value?.pluginSnapshot || [])
-    .map(item => item.pluginId)
-    .filter(pluginId => !available.has(pluginId))
-})
 const inputPanelExpanded = ref(true)
 const inputPanelCompact = ref(false)
 const sidePanelCollapsed = ref(false)
@@ -445,7 +395,7 @@ watch(isCompletedRun, completed => {
 }, { immediate: true })
 const contractFileInput = ref<HTMLInputElement | null>(null)
 const uploadDragging = ref(false)
-type SelectedMaterial = Omit<TaskMaterial, 'extractedText'> & { extractedText?: string }
+type SelectedMaterial = { originalFilename: string; size: number; textLength: number; extractedText: string }
 const selectedContractFile = ref<SelectedMaterial | null>(null)
 const uploadState = ref<'idle' | 'uploading' | 'parsing' | 'ready' | 'error'>('idle')
 const uploadError = ref('')
@@ -502,18 +452,6 @@ const clearPlugins = () => {
   draft.reviewMode = 'auto'
 }
 
-const loadInstalledPlugins = async () => {
-  pluginsLoading.value = true
-  try {
-    installedPlugins.value = await workflowApi.listInstalledPlugins()
-  } catch {
-    installedPlugins.value = []
-    ElMessage.warning('专业能力包列表暂时无法加载，仍可使用 Native 能力')
-  } finally {
-    pluginsLoading.value = false
-  }
-}
-
 const progressTracker = useWorkflowProgress({
   intervalMs: 2000,
   onProgressChanged: value => workflowRunsStore.updateObservedState(
@@ -558,18 +496,20 @@ const processContractFile = async (file: File) => {
     loading.upload = true
     uploadState.value = 'uploading'
     uploadError.value = ''
-    const previous = selectedContractFile.value
-    const result = await fileApi.uploadTaskMaterial(file, () => { uploadState.value = 'parsing' })
-    const extractedText = (result.extractedText || '').trim()
+    uploadState.value = 'parsing'
+    const result = await fileApi.extractDocumentText(file)
+    const extractedText = (result.text || result.content || '').trim()
     if (!extractedText) throw new Error('未能从文件中提取到文本，请确认文档包含可复制文字')
 
     contractText.value = extractedText
-    draft.materialIds = [result.materialId]
-    selectedContractFile.value = { ...result, extractedText }
-    uploadState.value = 'ready'
-    if (previous?.state === 'ready' && previous.materialId !== result.materialId) {
-      void fileApi.deleteTaskMaterial(previous.materialId).catch(() => undefined)
+    draft.materialIds = []
+    selectedContractFile.value = {
+      originalFilename: result.filename || file.name,
+      size: file.size,
+      textLength: extractedText.length,
+      extractedText
     }
+    uploadState.value = 'ready'
     ElMessage.success(`已载入任务文件：${file.name}`)
   } catch (error: any) {
     const message = materialErrorMessage(error)
@@ -596,9 +536,6 @@ const handleContractDrop = (event: DragEvent) => {
 
 const clearContractFile = () => {
   const selected = selectedContractFile.value
-  if (selected?.state === 'ready') {
-    void fileApi.deleteTaskMaterial(selected.materialId).catch(() => undefined)
-  }
   if (selected?.extractedText && contractText.value === selected.extractedText) contractText.value = ''
   draft.materialIds = []
   selectedContractFile.value = null
@@ -611,11 +548,6 @@ const materialErrorMessage = (error: any): string => {
   const data = error?.response?.data
   const detail = typeof data?.detail === 'string' ? data.detail : data?.detail?.message
   return data?.message || detail || error?.message || '任务文件上传失败'
-}
-
-const sha256Text = async (value: string): Promise<string> => {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 const statusLabel = computed(() => {
@@ -676,85 +608,6 @@ const scheduleBatches = computed(() => {
   }
   return Array.from(batches.values()).sort((a, b) => a.round - b.round)
 })
-
-const hasStepOutput = (output?: Record<string, any>) => {
-  return !!output && Object.keys(output).length > 0
-}
-
-const deliverablesFromRun = (run: WorkflowRun): AcgDeliverable[] => {
-  return (run.steps || [])
-    .filter((step) => hasStepOutput(step.output))
-    .map((step) => ({
-      stepId: step.stepId,
-      name: step.name,
-      status: step.status,
-      output: step.output || {}
-    }))
-}
-
-const asMarkdown = (value: unknown): string | null => {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null
-}
-
-const finalReportFromRun = (run: WorkflowRun): string | null => {
-  let finalReport: string | null = null
-  for (const step of run.steps || []) {
-    const output = step.output || {}
-    const markdown = asMarkdown(output.final_answer) || asMarkdown(output.report_markdown) || asMarkdown(output.report) || asMarkdown(output.final_report)
-    if (markdown) finalReport = markdown
-  }
-
-  if (finalReport) return finalReport
-
-  const runOutput = run.output || {}
-  const direct = asMarkdown(runOutput.final_answer) || asMarkdown(runOutput.report_markdown) || asMarkdown(runOutput.report) || asMarkdown(runOutput.final_report)
-  if (direct) return direct
-
-  const artifacts = runOutput.artifacts
-  if (artifacts && typeof artifacts === 'object') {
-    for (const artifact of Object.values(artifacts as Record<string, any>)) {
-      if (!artifact || typeof artifact !== 'object') continue
-      const markdown = asMarkdown(artifact.final_answer) || asMarkdown(artifact.report_markdown) || asMarkdown(artifact.report) || asMarkdown(artifact.final_report)
-      if (markdown) finalReport = markdown
-    }
-  }
-
-  return finalReport
-}
-
-const finalArtifactsFromRun = (run: WorkflowRun): AcgFinalArtifact[] => {
-  const artifacts: AcgFinalArtifact[] = []
-  for (const step of run.steps || []) {
-    const candidate = step.output?.artifact
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
-    const content = asMarkdown(candidate.content)
-    if (!content) continue
-    artifacts.push({
-      artifactId: String(candidate.artifactId || `artifact_${run.runId}_${step.stepId}`),
-      type: String(candidate.type || 'report'),
-      title: String(candidate.title || step.name),
-      mediaType: String(candidate.mediaType || 'text/markdown'),
-      content,
-      structuredData: candidate.structuredData && typeof candidate.structuredData === 'object'
-        ? candidate.structuredData as Record<string, any>
-        : {},
-      stepId: step.stepId
-    })
-  }
-  return artifacts
-}
-
-const hydrateAcgView = (view: AcgView, run: WorkflowRun): AcgView => {
-  const fallbackOutputs = deliverablesFromRun(run)
-  const fallbackFinalArtifacts = finalArtifactsFromRun(run)
-  return {
-    ...view,
-    deliverables: view.deliverables.length ? view.deliverables : fallbackOutputs,
-    stepOutputs: view.stepOutputs?.length ? view.stepOutputs : fallbackOutputs,
-    finalArtifacts: view.finalArtifacts?.length ? view.finalArtifacts : fallbackFinalArtifacts,
-    finalReport: view.finalReport || finalReportFromRun(run)
-  }
-}
 
 const ACTIVE_TOPOLOGY_PHASES = new Set(['executing', 'recovery', 'review'])
 const TOPOLOGY_REFRESH_MS = 8000
@@ -900,30 +753,9 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
     }
 
     const run = runResult.value
-    acgView.value = hydrateAcgView(view, run)
+    acgView.value = view
     activeRun.value = run
-    if (run.planningDiversity) draft.planningDiversity = run.planningDiversity
-    draft.planningSeed = run.planningSeed ?? null
-    draft.webSearchEnabled = run.input?.webSearchEnabled !== false
-    draft.enabledPluginIds = [...(run.resolvedEnabledPluginIds || run.enabledPluginIds || [])]
-    draft.pluginData = (
-      run.input?.pluginData && typeof run.input.pluginData === 'object'
-        ? JSON.parse(JSON.stringify(run.input.pluginData)) as Record<string, Record<string, unknown>>
-        : {}
-    )
     taskName.value = resolveAcgTaskTitle(run)
-    if (typeof run.input?.materialText === 'string') contractText.value = run.input.materialText
-    for (const extension of draftExtensions.value) {
-      const current = draft.pluginData[extension.pluginId] || {}
-      draft.pluginData[extension.pluginId] = extension.hydratePluginData?.(run.input || {}, current) || current
-    }
-    if (typeof run.input?.userIntent === 'string') userIntent.value = run.input.userIntent
-    const material = Array.isArray(run.input?.sourceMaterials) ? run.input.sourceMaterials[0] : null
-    if (material?.materialId) {
-      selectedContractFile.value = { ...material, state: 'bound' }
-      uploadState.value = 'ready'
-      uploadError.value = ''
-    }
     loadedRunId.value = runId
     lastTopologyRefreshAt = Date.now()
     lastTopologyUpdatedAt = progressTracker.progress.value?.updatedAt ?? null
@@ -996,12 +828,6 @@ watch(
     } else if (stateChanged && (value.status === 'waiting_review' || ['review', 'completed', 'cancelled'].includes(value.phase))) {
       scheduleInputCollapse(0)
     }
-    if (graphVersionChanged(value, previous) && !['completed', 'failed', 'cancelled'].includes(value.status)) {
-      clearTopologyTimer()
-      void refreshAcgForRun(value.runId, true)
-      return
-    }
-    if (runtimeProjectionChanged(value, previous)) scheduleTopologyRefresh(value)
     if (isWorkflowReviewPending(value, activeRun.value) && !isWorkflowReviewPending(previous, activeRun.value)) {
       clearTopologyTimer()
       void refreshAcgForRun(value.runId, true)
@@ -1015,21 +841,6 @@ watch(() => progressTracker.syncError.value, error => {
   if (error === '该运行记录不存在或当前账户无权访问' && activeRunId.value) {
     void removeMissingAcgRun(activeRunId.value)
   }
-})
-const planningSelectionReasons = computed<string[]>(() => {
-  const reasons = activeRun.value?.executionState?.planningSelectionReasons
-  return Array.isArray(reasons) ? reasons.filter(item => typeof item === 'string') : []
-})
-const planningDiagnostics = computed(() => activeRun.value?.executionState?.planningDiagnostics || null)
-const planningFallbackMessage = computed(() => {
-  const reason = planningDiagnostics.value?.intentFallbackReason
-  if (!reason) return ''
-  return ({
-    llm_unavailable: '规划模型当前不可用，本次已使用确定性规则生成执行图。',
-    llm_timeout: '规划模型响应超时，本次已使用确定性规则生成执行图。',
-    llm_invalid_response: '规划模型返回格式无效，本次已使用确定性规则生成执行图。',
-    llm_no_registered_capability: '规划模型未选择可执行能力，本次已使用确定性规则生成执行图。'
-  } as Record<string, string>)[reason] || '本次规划已降级为确定性规则。'
 })
 
 watch(inputPanelExpanded, value => {
@@ -1163,9 +974,6 @@ const startRun = async () => {
     }
   }
   isSubmitting.value = true
-  const retryTaskId = ['rerun', 'retry'].includes(mainAction.value.action)
-    ? activeRun.value?.taskId
-    : undefined
   startError.value = null
   submitController?.abort()
   submitController = new AbortController()
@@ -1176,7 +984,6 @@ const startRun = async () => {
   try {
     const clientRequestId = createClientRequestId()
     const request = buildWorkbenchStartRequest(draft, draftExtensions.value, clientRequestId)
-    if (retryTaskId) request.taskId = retryTaskId
     const requestInput: Record<string, unknown> = {
       ...request.input,
       taskName: taskName.value.trim(),
@@ -1184,32 +991,22 @@ const startRun = async () => {
       lowEntropyOptions: [...lowEntropyOptions.value]
     }
     request.input = requestInput
-    if (selectedContractFile.value) {
-      const workingTextSha256 = await sha256Text(contractText.value)
-      requestInput.sourceMaterials = [{
-        materialId: selectedContractFile.value.materialId,
-        purpose: 'task_material',
-        edited: workingTextSha256 !== selectedContractFile.value.extractedTextSha256,
-        workingTextSha256
-      }]
-    }
     const res = await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
-    if (selectedContractFile.value) selectedContractFile.value.state = 'bound'
-    activeRunId.value = res.run.runId
+    activeRunId.value = res.runId
     scheduleInputCollapse()
     advancedSettingsExpanded.value = false
     workflowRunsStore.register({
-      runId: res.run.runId,
-      taskId: res.task.taskId,
-      workflowId: res.run.workflowId || request.workflowId || 'native_acg_runtime_v1',
+      runId: res.runId,
+      taskId: res.taskId,
+      workflowId: res.workflowId || request.workflowId || 'native_acg_runtime_v1',
       source: 'acg',
-      status: res.run.status,
-      phase: res.run.lifecyclePhase
+      status: res.status,
+      phase: res.lifecyclePhase || undefined
     })
     window.dispatchEvent(new Event('acg-runs-refresh'))
-    terminalNotificationRunId = res.run.runId
-    void progressTracker.start(res.run.runId, { fresh: true })
-    await router.replace({ query: { ...route.query, runId: res.run.runId } })
+    terminalNotificationRunId = res.runId
+    void progressTracker.start(res.runId, { fresh: true })
+    await router.replace({ query: { ...route.query, runId: res.runId } })
   } catch (error: unknown) {
     if (axios.isCancel(error)) return
     startError.value = startErrorMessage(error)
@@ -1252,7 +1049,6 @@ const startErrorMessage = (error: unknown): string => {
 
 onMounted(() => {
   window.addEventListener('acg-new-task', enterNewAcgDraft)
-  void loadInstalledPlugins()
 })
 
 onBeforeUnmount(() => {

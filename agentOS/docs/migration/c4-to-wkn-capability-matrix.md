@@ -61,11 +61,11 @@
 | Product | General/Native、Programmer、Education、Writer packs | 部分 | C4 domain profiles/workflows/UI | wkn Runtime + Pack capability contribution + 声明式 workflow contract | MIGRATED | Phase 6 按固定顺序完成四个 Pack，旧 memory observation 改为 ContextPack | `test_wkn_domain_packs.py`：profile/capability/workflow/tool/memory/output |
 | Product | HTTP API | 部分 | C4 `/agentos` API 投影旧 RuntimeGraph/正文 | wkn Runtime 无冻结产品 API | MIGRATED | ADR-001 冻结 `/ai/agentos/v2` 引用式投影；Run/Graph/Output/Trace/Provenance/Checkpoint/Review 分离，输出按 run 所有权解引用 | `test_agentos_v2_api.py`：正文隔离、引用归属、Trace 脱敏、幂等/冲突 |
 | Product | Spring Gateway | 无 | C4 controller 解析 progress 并暴露 RuntimeGraph/动态计数 | `/api/agentos/v2` 仅代理 Python 引用式资源；可信身份由 WebClient filter 重建 | MIGRATED | 删除旧 DTO/三前缀路由，只保留校验、scope、HTTP 代理和脱敏错误映射 | `AgentOsGatewayControllerTest`、`AgentOsGatewayServiceTest`；生产代码无状态机/checkpoint/recovery 逻辑 |
-| Product | ACG 工作台、拓扑、Trace、Provenance、Review、成果 | 无 | C4 frontend stores/views/tests；`d2e4c11` | wkn 不含产品 UI 数据适配 | MIGRATE | 保留交互，重写模型/store/derived state | 浏览器 E2E 全链；不伪造缺失字段 |
-| Product | 历史列表与运行历史 | 部分 | C4 API/frontend history | wkn WorkflowStore 提供新运行数据 | MIGRATE | 只展示新 runtime 数据 | 分页、scope、重启后查询 |
+| Product | ACG 工作台、拓扑、Trace、Provenance、Review、成果 | 无 | C4 frontend stores/views/tests；`d2e4c11` | wkn 不含产品 UI 数据适配 | MIGRATED | Phase 9 保留工作台交互并改用 v2 Run/Graph/Trace/Provenance/Review；成果只由 owned `outputRef` 解引用，缺失投影不补零值 | `agentos.spec.ts`、工作台/Chat/Console/Review/Artifact 组件回归；生产构建 |
+| Product | 历史列表与运行历史 | 部分 | C4 API/frontend history | wkn WorkflowStore 提供新运行数据 | MIGRATED | Phase 9 只展示新 Runtime 的 Run summary/detail，旧 Run 正文与删除接口不再投影 | 前端完整 116 tests；Run list/detail API 测试 |
 | Product | Docker 日常开发 | 部分 | compose 仅挂载 `agentOS/src`，ai-service 现有导入失配 | wkn 需要 repo/agentOS/src 三层 path | MIGRATE | 完整挂载 agent/agentOS，使用新 volume 和六个 DB 变量 | 五服务 healthy、源码热更新 smoke |
 | Product | C4 历史运行/checkpoint/database | 部分 | C4 stores 与现有 volume | 与 wkn 引用式存储不兼容 | DROP | 旧 volume 仅备份；不转换、不加载、不删除 | 新 runtime 不读取旧 DB；备份仍存在 |
-| Product | C4 RuntimeGraph DTO / `step.output` / legacy counters | 无 | C4 API 与前端旧数据模型 | wkn state 为引用式 | DROP | 对应能力迁移后删除表示层兼容 | 全仓生产代码扫描无旧字段依赖 |
+| Product | C4 RuntimeGraph DTO / `step.output` / legacy counters | 无 | C4 API 与前端旧数据模型 | wkn state 为引用式 | DROP | Phase 9 删除旧 Python `/core` 路由、RuntimeGraph/patch/counter 组件与前端兼容投影 | 生产代码扫描无旧路径、旧 DTO 或正文依赖；DebugTraceCard 的同名字段属于独立 Chat trace 模型 |
 | Hardening | 外部超时/重试/限流、commitId 外传、孤儿 GC、五阶段故障注入、BLACKBOARD、DEBATE | 无 | 非本轮 C4 必需基线 | `3f6c536` 仅设计文档 | DEFER | 单独 Phase 11 milestone，禁止混入主迁移 | 本轮报告明确未宣称完成 |
 
 ## 汇总

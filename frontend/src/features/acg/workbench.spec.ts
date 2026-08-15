@@ -13,8 +13,7 @@ describe('ACG workbench request builder', () => {
 
     expect(request).toMatchObject({
       domain: 'general', intent: 'general', workflowId: undefined,
-      enabledPluginIds: [], reviewMode: 'auto', clientRequestId: 'request-native',
-      planningDiversity: 'stable', planningSeed: undefined
+      enabledPluginIds: [], reviewMode: 'auto', clientRequestId: 'request-native'
     })
     expect(request.input.source).toBe('acg')
     expect(request.input.webSearchEnabled).toBe(true)
@@ -31,8 +30,8 @@ describe('ACG workbench request builder', () => {
 
     const request = buildWorkbenchStartRequest(draft, [], 'request-random')
 
-    expect(request.planningDiversity).toBe('exploratory')
-    expect(request.planningSeed).toBe(284731)
+    expect(request.input.planningDiversity).toBe('exploratory')
+    expect(request.input.planningSeed).toBe(284731)
     expect(request.enabledPluginIds).toEqual([])
   })
 

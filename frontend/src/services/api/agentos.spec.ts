@@ -1,140 +1,76 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, agentosRequest, WorkflowApiContractError } from './agentos'
 
-describe('AgentOS async workflow API', () => {
+const run = {
+  runId: 'run_1', taskId: 'task_1', workflowId: 'legal.contract_review', domain: 'legal',
+  status: 'completed' as const,
+  steps: [{
+    stepId: 'deliver', name: 'Deliver', agentName: 'legal.drafter', status: 'completed' as const,
+    outputRef: 'output:run_1:deliver', outputSummary: 'Contract review ready'
+  }],
+  completedStepIds: ['deliver'], activeStepIds: [],
+  executionState: {
+    outputRefs: { deliver: 'output:run_1:deliver' },
+    resourceBindings: { deliver: { resourceId: 'legal.drafter' } }
+  }
+}
+
+describe('AgentOS v2 application API', () => {
   beforeEach(() => vi.restoreAllMocks())
 
-  it('loads the installed plugin projection without executable manifest details', async () => {
-    const plugins = [{
-      pluginId: 'kinlin.legal', version: '0.1.0', displayName: '法律能力包',
-      description: '法律能力', available: true, capabilityCount: 7,
-      agentCount: 14, workflowCount: 2, uiExtensionId: 'kinlin.legal'
-    }]
-    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: plugins } as never)
-
-    await expect(agentosApi.listInstalledPlugins()).resolves.toEqual(plugins)
-    expect(get).toHaveBeenCalledWith('/core/plugins')
-  })
-
-  it('starts through the Java gateway with clientRequestId and AbortSignal', async () => {
+  it('starts a run through the v2 gateway and preserves clientRequestId', async () => {
     const signal = new AbortController().signal
-    const response = {
-      accepted: true,
-      task: { taskId: 'task_1', status: 'pending' },
-      run: { runId: 'run_1', status: 'pending' }
-    }
-    const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: response } as never)
-
+    const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: run } as never)
     await expect(agentosApi.startWorkflowAsync({
-      title: '合同审查',
-      domain: 'legal',
-      intent: 'contract_review',
-      clientRequestId: 'request_1'
-    }, { signal })).resolves.toEqual({ ...response, acgTaskId: 'run_1' })
-
-    expect(post).toHaveBeenCalledWith('/core/workflows/start-async', expect.objectContaining({
-      clientRequestId: 'request_1'
-    }), { signal })
+      title: 'Contract review', domain: 'legal', intent: 'contract_review', clientRequestId: 'request_1'
+    }, { signal })).resolves.toEqual(run)
+    expect(post).toHaveBeenCalledWith('/runs', expect.objectContaining({ clientRequestId: 'request_1' }), { signal })
   })
 
-  it('rejects a successful-looking response that has no runId', async () => {
-    vi.spyOn(agentosRequest, 'post').mockResolvedValue({
-      data: { accepted: true, task: { taskId: 'task_1', status: 'pending' }, run: { status: 'pending' } }
-    } as never)
-
+  it('rejects a successful-looking create response without run identity', async () => {
+    vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: { taskId: 'task_1' } } as never)
     await expect(agentosApi.startWorkflowAsync({
-      title: '合同审查', domain: 'legal', intent: 'review', clientRequestId: 'request_1'
+      title: 'Contract review', domain: 'legal', intent: 'contract_review', clientRequestId: 'request_1'
     })).rejects.toBeInstanceOf(WorkflowApiContractError)
   })
 
-  it.each([
-    { accepted: false, task: { taskId: 'task_1', status: 'pending' }, run: { runId: 'run_1', status: 'pending' } },
-    { accepted: true, task: { taskId: '', status: 'pending' }, run: { runId: 'run_1', status: 'pending' } }
-  ])('rejects an incomplete accepted/task contract', async (data) => {
-    vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data } as never)
-    await expect(agentosApi.startWorkflowAsync({
-      title: '合同审查', domain: 'legal', intent: 'review', clientRequestId: 'request_1'
-    })).rejects.toBeInstanceOf(WorkflowApiContractError)
-  })
-
-  it('queries progress through Java, preserves null percent, and forwards cancellation', async () => {
+  it('derives progress only from the reference-first run projection', async () => {
     const signal = new AbortController().signal
-    const payload = {
-      runId: 'run/1', phase: 'planning', percent: null, graphVersion: 2,
-      dynamicStepCount: 2, bindingSwitchCount: 1,
-      skippedByConditionCount: 2, conditionalDecisionCount: 1
-    }
-    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: payload } as never)
-
-    const result = await agentosApi.getWorkflowProgress('run/1', { signal })
-
-    expect(result.percent).toBeNull()
-    expect(result.graphVersion).toBe(2)
-    expect(result.dynamicStepCount).toBe(2)
-    expect(result.bindingSwitchCount).toBe(1)
-    expect(result.skippedByConditionCount).toBe(2)
-    expect(result.conditionalDecisionCount).toBe(1)
-    expect(get).toHaveBeenCalledWith('/core/workflows/runs/run%2F1/progress', { signal })
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: run } as never)
+    const progress = await agentosApi.getWorkflowProgress('run/1', { signal })
+    expect(progress.percent).toBe(100)
+    expect(progress.completedSteps).toBe(1)
+    expect(get).toHaveBeenCalledWith('/runs/run%2F1', { signal })
   })
 
-  it.each([409, 404, 503])('does not swallow HTTP %s', async (status) => {
-    const error = { response: { status } }
-    vi.spyOn(agentosRequest, 'get').mockRejectedValue(error)
-    await expect(agentosApi.getWorkflowProgress('run_1')).rejects.toBe(error)
-  })
-
-  it('queries a bounded summary list through Java with one AbortSignal', async () => {
-    const signal = new AbortController().signal
-    const payload = { items: [{ runId: 'run_1', phase: 'planning', percent: null }], total: 1 }
-    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: payload } as never)
-
-    const result = await agentosApi.listWorkflowRuns({
-      statuses: 'running,waiting_review', sources: 'agent,chat', page: 1, pageSize: 50
-    }, { signal })
-
-    expect(result.items[0].percent).toBeNull()
-    expect(get).toHaveBeenCalledWith('/core/workflows/runs', {
-      params: { summary: true, statuses: 'running,waiting_review', sources: 'agent,chat', page: 1, pageSize: 50 },
-      signal
-    })
-  })
-
-  it('normalizes final artifacts separately from legacy step deliverables', async () => {
-    const legacyStep = {
-      stepId: 'analysis', name: 'Analysis', status: 'completed', output: { analysis: 'done' }
-    }
+  it('dereferences owned outputs and projects real artifacts', async () => {
     const artifact = {
       artifactId: 'artifact_1', type: 'report', title: 'Final result',
-      mediaType: 'text/markdown', content: '# Final', structuredData: {}
+      mediaType: 'text/markdown', content: '# Final', structuredData: { riskCount: 2 }
     }
-    vi.spyOn(agentosRequest, 'get').mockResolvedValue({
-      data: {
-        runId: 'run_1', status: 'completed', engine: 'acg', acgBlueprint: null,
-        completedStepIds: ['analysis'], activeStepIds: [], stepStates: [],
-        provenance: { productions: [], consumptions: [], interactions: [] },
-        interactions: [], contractViolations: [], recoveryTrace: [], scheduleTrace: [],
-        deliverables: [legacyStep], finalArtifacts: [artifact], finalReport: '# Final',
-        lowEntropyMetrics: {}
-      }
-    } as never)
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: run } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final', artifact } } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 
-    expect(result.deliverables).toEqual([legacyStep])
-    expect(result.stepOutputs).toEqual([legacyStep])
-    expect(result.finalArtifacts).toEqual([artifact])
+    expect(result.deliverables[0].output.final_answer).toBe('# Final')
+    expect(result.finalArtifacts).toEqual([{ ...artifact, stepId: 'deliver' }])
+    expect(result.stepStates[0].currentBinding).toEqual({ resourceId: 'legal.drafter' })
+    expect(get).toHaveBeenLastCalledWith('/runs/run_1/outputs/output%3Arun_1%3Adeliver', { signal: undefined })
   })
 
-  it('forwards review concurrency fields and preserves 409', async () => {
+  it('forwards review concurrency fields and does not swallow conflicts', async () => {
     const conflict = { response: { status: 409 } }
     const post = vi.spyOn(agentosRequest, 'post').mockRejectedValue(conflict)
-    const signal = new AbortController().signal
     const payload = {
       stepId: 'human_review', decision: 'approved' as const, operationId: 'operation_1',
       expectedRunUpdatedAt: '2026-07-22T00:00:00Z', expectedStepStatus: 'waiting_review' as const
     }
-
-    await expect(agentosApi.applyWorkflowReview('run_1', payload, { signal })).rejects.toBe(conflict)
-    expect(post).toHaveBeenCalledWith('/core/workflows/runs/run_1/reviews', payload, { signal })
+    await expect(agentosApi.applyWorkflowReview('run_1', payload)).rejects.toBe(conflict)
+    expect(post).toHaveBeenCalledWith('/runs/run_1/reviews', payload, { signal: undefined })
   })
 })

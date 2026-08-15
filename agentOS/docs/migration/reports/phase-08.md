@@ -10,7 +10,7 @@ Phase 8：将 Spring 收束为 AgentOS v2 的鉴权、作用域、DTO 校验、H
 
 ## Result SHA
 
-由提交 `09 refactor(backend): migrate Spring AgentOS gateway` 固化；确切 SHA 在 Phase 9 报告提交时回填。
+`a56a9979f84891fe3ae69912ee45eee90f78965e`
 
 ## Changed
 

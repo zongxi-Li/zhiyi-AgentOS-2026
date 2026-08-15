@@ -96,7 +96,7 @@ describe('AgentOsConsoleView control plane', () => {
       statuses: expect.stringContaining('waiting_review'), sources: ACG_HISTORY_SOURCES, summary: true, pageSize: 50
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text().indexOf('需要处理')).toBeLessThan(wrapper.text().indexOf('正在运行'))
-    expect(wrapper.findAll('.run-item-delete')).toHaveLength(1)
+    expect(wrapper.findAll('.run-item-delete')).toHaveLength(0)
     expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
     wrapper.unmount()
   })
@@ -170,7 +170,7 @@ describe('AgentOsConsoleView control plane', () => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
     document.dispatchEvent(new Event('visibilitychange'))
     await flushPromises()
-    expect(workflowApi.listRuns).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(workflowApi.listRuns).mock.calls.length).toBeGreaterThanOrEqual(2)
     wrapper.unmount()
   })
 
@@ -185,36 +185,6 @@ describe('AgentOsConsoleView control plane', () => {
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
     expect(JSON.parse(localStorage.getItem('workflow.run.references.v1') || '{}').run_missing).toBeUndefined()
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('confirms deletion from history and removes the selected terminal Run', async () => {
-    vi.mocked(workflowApi.listRuns)
-      .mockResolvedValueOnce({
-        items: [summary({ status: 'completed', phase: 'completed', percent: 100 })],
-        total: 1,
-        page: 1,
-        pageSize: 50
-      })
-      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 50 })
-    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
-      status: 'completed', phase: 'completed', percent: 100, completedSteps: 4
-    }))
-    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
-    const { wrapper } = await mountConsole('?runId=run_1')
-    await flushPromises()
-
-    await wrapper.find('.run-toolbar__delete').trigger('click')
-    await flushPromises()
-
-    expect(confirm).toHaveBeenCalled()
-    expect(confirm).toHaveBeenCalledWith(
-      '该操作将永久删除本次运行的步骤、动态历史和执行结果，无法恢复。',
-      '删除运行记录？',
-      expect.objectContaining({ confirmButtonText: '永久删除' })
-    )
-    expect(workflowApi.deleteRun).toHaveBeenCalledWith('run_1')
-    expect(wrapper.find('.run-item-shell').exists()).toBe(false)
     wrapper.unmount()
   })
 

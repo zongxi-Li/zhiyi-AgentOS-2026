@@ -215,16 +215,6 @@
                       </span>
                       <el-icon class="chat-project-arrow" aria-hidden="true"><ArrowRight /></el-icon>
                     </button>
-                    <button
-                      v-if="isAgentRunDeletable(run)"
-                      class="chat-project-delete"
-                      type="button"
-                      :aria-label="`删除 Agent 记录：${agentRunTitle(run)}`"
-                      title="删除 Agent 记录"
-                      @click="deleteSidebarAgentRun(run)"
-                    >
-                      <el-icon><Delete /></el-icon>
-                    </button>
                   </div>
                 </div>
                 <div v-else-if="workspaceMode === 'chat' && visibleRecentConversations.length" class="chat-project-list" role="list" aria-label="对话记录">
@@ -750,31 +740,9 @@ const agentRunState = (run: WorkflowRunSummary) => {
   return '运行中'
 }
 
-const isAgentRunDeletable = (run: WorkflowRunSummary) =>
-  ['completed', 'failed', 'cancelled'].includes(run.status)
-
 const openAgentRun = async (run: WorkflowRunSummary) => {
   chatStore.clearMessages()
   await router.push({ path: '/chat', query: { workspace: 'agent', runId: run.runId } })
-}
-
-const deleteSidebarAgentRun = async (run: WorkflowRunSummary) => {
-  try {
-    await ElMessageBox.confirm(
-      `确定删除 Agent 任务“${agentRunTitle(run)}”吗？其运行过程与结果将无法恢复。`,
-      '删除 Agent 记录',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
-    )
-    await workflowApi.deleteRun(run.runId)
-    recentAgentRuns.value = recentAgentRuns.value.filter(item => item.runId !== run.runId)
-    workflowRunsStore.removeReference(run.runId)
-    if (route.query.runId === run.runId) await startNewChat()
-    ElMessage.success('Agent 记录已删除')
-  } catch (error: any) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error?.message || '删除 Agent 记录失败')
-    }
-  }
 }
 
 const openConversation = async (conversation: Conversation) => {

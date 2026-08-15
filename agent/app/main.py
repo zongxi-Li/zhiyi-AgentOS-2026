@@ -13,12 +13,12 @@ import uvicorn
 import logging
 
 from fastapi.exceptions import RequestValidationError
-from app.api import chat, tts, agentos_core, agentos_v2
+from app.api import chat, tts, agentos_v2
 from app.paths import APP_DATA_DIR
 from app.services.aiservice import AIService
 from app.integrations.model_adapter import configure_model_adapter
 from app.integrations.tool_adapter import configure_tool_adapter
-from app.execution import close_runtime
+from app.execution import RunExecutionCoordinator, build_default_runtime, close_runtime
 from app.tools import get_tool_runtime
 from app.config import settings
 from app.security.internal_auth import (
@@ -35,6 +35,8 @@ from app.middleware.errorhandler import (
 logger = setup_logger(level=logging.INFO)
 configure_model_adapter()
 configure_tool_adapter()
+runtime = build_default_runtime()
+coordinator = RunExecutionCoordinator(runtime)
 
 # 生命周期事件处理器
 @asynccontextmanager
@@ -47,12 +49,12 @@ async def lifespan(app: FastAPI):
         logger.info("Read-only tool runtime ready: %s", warmup)
     except Exception as exc:
         logger.warning("Read-only tool runtime warmup failed: %s", type(exc).__name__)
-    await agentos_core.coordinator.startup()
+    await coordinator.startup()
     try:
         yield
     finally:
-        await agentos_core.coordinator.shutdown()
-        close_runtime(agentos_core.runtime)
+        await coordinator.shutdown()
+        close_runtime(runtime)
     
         # 关闭时执行 - 简化日志输出
         from app.llm.provider_conversation import close_configured_provider_conversation_store
@@ -89,9 +91,8 @@ ai_service = AIService()
 # 注册路由
 app.include_router(chat.router, prefix="/ai", tags=["AI"])
 app.include_router(tts.router, prefix="/ai", tags=["TTS"])
-app.include_router(agentos_core.router, prefix="/ai", tags=["AgentOSCore"])
 app.include_router(
-    agentos_v2.create_router(agentos_core.runtime, agentos_core.coordinator),
+    agentos_v2.create_router(runtime, coordinator),
     prefix="/ai",
     tags=["AgentOS v2"],
 )
@@ -179,8 +180,6 @@ async def readiness_check():
         probe.write_text("ready", encoding="utf-8")
         probe.unlink()
         checks["dataDirectory"] = True
-        from app.api.agentos_core import runtime
-
         checks["packsRegistered"] = bool(runtime.workflow_registry.all())
         runtime.workflow_store.list_runs(page=1, page_size=1)
         checks["workflowStore"] = True

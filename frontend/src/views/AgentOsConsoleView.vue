@@ -75,24 +75,11 @@
                 <span v-else class="run-mini-progress indeterminate" aria-hidden="true"><span></span></span>
                 <span class="run-item__metrics">
                   <span>{{ run.totalSteps > 0 ? `${run.completedSteps}/${run.totalSteps} 步` : '规模计算中' }}</span>
-                  <span v-if="run.recoveryCount">恢复 {{ run.recoveryCount }}</span>
-                  <span v-if="run.degradationCount">含 {{ run.degradationCount }} 次降级交付</span>
                   <span v-if="run.source === 'chat'">来自 Chat</span>
                   <span v-else-if="run.source === 'acg'">来自 ACG</span>
                   <span v-else-if="run.source === 'legacy_agent_chat'">来自主对话</span>
                   <span v-else-if="run.source === 'agent'">来自 Agent</span>
                 </span>
-              </button>
-              <button
-                v-if="canDeleteRun(run)"
-                class="run-item-delete"
-                type="button"
-                title="删除运行记录"
-                :aria-label="`删除运行：${run.runId}`"
-                :disabled="deletingRunId === run.runId"
-                @click="deleteRun(run.runId)"
-              >
-                <el-icon><DeleteIcon /></el-icon>
               </button>
             </div>
           </section>
@@ -132,17 +119,6 @@
             <nav aria-label="运行页面导航">
               <button type="button" @click="openAcg">进入 ACG</button>
               <button v-if="selectedReference?.conversationId" type="button" @click="openChat">返回 Chat</button>
-              <button
-                v-if="selectedCanDelete"
-                class="run-toolbar__delete"
-                type="button"
-                :disabled="Boolean(deletingRunId)"
-                title="删除当前运行记录"
-                @click="deleteRun(selectedRunId)"
-              >
-                <el-icon><DeleteIcon /></el-icon>
-                删除
-              </button>
               <button type="button" :disabled="detailLoading" @click="toggleDetails">
                 {{ detailExpanded ? '收起详情' : '加载详情' }}
               </button>
@@ -154,11 +130,6 @@
             :loading="progressTracker.isLoading.value"
             :sync-error="progressTracker.syncError.value"
           />
-          <DynamicRunSummaryCard
-            :progress="progressTracker.progress.value"
-            :run="selectedRun"
-            :view="selectedAcgView"
-          />
 
           <p v-if="runError" class="error-message" role="alert">{{ runError }}</p>
 
@@ -166,8 +137,6 @@
             <div><dt>Workflow</dt><dd>{{ progressTracker.progress.value.workflowId }}</dd></div>
             <div><dt>当前步骤</dt><dd>{{ progressTracker.progress.value.currentStepId || '准备中' }}</dd></div>
             <div><dt>活动节点</dt><dd>{{ progressTracker.progress.value.activeStepIds.length }}</dd></div>
-            <div><dt>恢复次数</dt><dd>{{ progressTracker.progress.value.recoveryCount }}</dd></div>
-            <div><dt>降级交付</dt><dd>{{ progressTracker.progress.value.degradationCount ?? 0 }}</dd></div>
             <div><dt>开始时间</dt><dd>{{ formatTime(progressTracker.progress.value.startedAt) }}</dd></div>
             <div><dt>更新时间</dt><dd>{{ formatTime(progressTracker.progress.value.updatedAt) }}</dd></div>
           </dl>
@@ -175,7 +144,6 @@
           <template v-if="detailExpanded">
             <WorkflowRunPanel
               :run="selectedRun"
-              :metrics="null"
               :loading="detailLoading"
               @refresh="refreshSelectedDetail"
               @export-trace="exportTrace"
@@ -187,7 +155,6 @@
             <CheckpointPanel
               :checkpoints="checkpoints"
               :loading="detailLoading"
-              @resume="resumeFromCheckpoint"
             />
             <TraceEventTimeline
               :events="traceEvents"
@@ -228,17 +195,9 @@
             <span>节点 {{ selectedAcgView.stepStates.length }}</span>
             <span>交付物 {{ selectedAcgView.deliverables.length }}</span>
             <span>恢复 {{ selectedAcgView.lowEntropyMetrics.recoveryCount }}</span>
-            <span v-if="selectedAcgView.lowEntropyMetrics.degradationCount">含 {{ selectedAcgView.lowEntropyMetrics.degradationCount }} 次降级交付</span>
           </div>
           <p v-else>终态、人工审核或展开详情时才读取完整 ACG，不参与列表轮询。</p>
         </section>
-        <RuntimeChangeTimeline
-          v-if="selectedAcgView"
-          :runtime-events="selectedAcgView.runtimeEvents"
-          :applied-patches="selectedAcgView.appliedPatches"
-          :branch-decisions="selectedAcgView.branchDecisions"
-          :step-states="selectedAcgView.stepStates"
-        />
       </aside>
     </section>
   </main>
@@ -247,14 +206,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
-import { Delete as DeleteIcon, Monitor, Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { Monitor, Refresh, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import CheckpointPanel from '@/components/agentos/CheckpointPanel.vue'
 import TraceEventTimeline from '@/components/agentos/TraceEventTimeline.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import DynamicRunSummaryCard from '@/components/agentos/DynamicRunSummaryCard.vue'
-import RuntimeChangeTimeline from '@/components/agentos/RuntimeChangeTimeline.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import WorkflowRunPanel from '@/components/agentos/WorkflowRunPanel.vue'
 import WorkflowStepList from '@/components/agentos/WorkflowStepList.vue'
@@ -272,7 +229,6 @@ import {
 } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { isWorkflowReviewPending } from '@/utils/workflowReviewState'
-import { runtimeProjectionChanged } from '@/utils/runtimePresentation'
 import {
   ACG_HISTORY_ROLE_OPTIONS,
   ACG_HISTORY_ROLE_CHANGE_EVENT,
@@ -314,7 +270,6 @@ const rightPanelWidth = ref(Number(localStorage.getItem(CONSOLE_RIGHT_WIDTH_KEY)
 const listLoading = ref(false)
 const detailLoading = ref(false)
 const detailExpanded = ref(false)
-const deletingRunId = ref('')
 const listError = ref('')
 const runError = ref('')
 const consoleLayoutStyle = computed(() => ({
@@ -430,12 +385,6 @@ const runGroups = computed(() => [
 const totalPages = computed(() => Math.max(1, Math.ceil(totalRuns.value / PAGE_SIZE)))
 const selectedReference = computed(() => workflowRunsStore.getReference(selectedRunId.value))
 const selectedSummary = computed(() => runs.value.find(run => run.runId === selectedRunId.value))
-const selectedCanDelete = computed(() => {
-  const status = selectedSummary.value?.status || progressTracker.progress.value?.status || selectedRun.value?.status
-  return Boolean(status && TERMINAL.has(status))
-})
-
-const canDeleteRun = (run: WorkflowRunSummary) => TERMINAL.has(run.status)
 
 const listParams = () => {
   const query = filters.query.trim()
@@ -624,9 +573,6 @@ function handleProgressChanged(current: WorkflowProgress, previous: WorkflowProg
   workflowRunsStore.updateObservedState(current.runId, current.status, current.phase, current.updatedAt)
   const index = runs.value.findIndex(item => item.runId === current.runId)
   if (index >= 0) runs.value[index] = { ...runs.value[index], ...current }
-  if (runtimeProjectionChanged(current, previous) && !TERMINAL.has(current.status)) {
-    void loadSelectedDetail({ acg: true })
-  }
   if (isWorkflowReviewPending(current) && !isWorkflowReviewPending(previous) && !reviewDetailsLoaded.has(current.runId)) {
     void loadSelectedDetail({ review: true })
   }
@@ -658,20 +604,6 @@ const handleReviewConflict = async () => {
   await loadSelectedDetail({ review: true })
 }
 
-const resumeFromCheckpoint = async (checkpointId: string) => {
-  if (!selectedRunId.value || detailLoading.value) return
-  detailLoading.value = true
-  try {
-    await workflowApi.resumeFromCheckpoint(selectedRunId.value, checkpointId)
-    await progressTracker.refresh()
-    await loadSelectedDetail({ full: true, acg: true, review: true })
-  } catch {
-    runError.value = '恢复请求未能完成'
-  } finally {
-    detailLoading.value = false
-  }
-}
-
 const exportTrace = async () => {
   if (!selectedRunId.value) return
   const markdown = await workflowApi.exportTraceMarkdown(selectedRunId.value)
@@ -686,53 +618,6 @@ const exportTrace = async () => {
 const refreshAll = async () => {
   await loadRuns(true)
   if (selectedRunId.value) await progressTracker.refresh()
-}
-const deleteRun = async (runId: string) => {
-  const summary = runs.value.find(run => run.runId === runId)
-  if (summary && !canDeleteRun(summary)) {
-    ElMessage.warning('运行中的任务需先取消后才能删除')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      '该操作将永久删除本次运行的步骤、动态历史和执行结果，无法恢复。',
-      '删除运行记录？',
-      {
-        confirmButtonText: '永久删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-        distinguishCancelAndClose: true
-      }
-    )
-    deletingRunId.value = runId
-    const wasSelected = selectedRunId.value === runId
-    const nextRunId = runs.value.find(run => run.runId !== runId)?.runId || ''
-    await workflowApi.deleteRun(runId)
-    terminalDetailsLoaded.delete(runId)
-    reviewDetailsLoaded.delete(runId)
-    terminalDetailCache.delete(runId)
-    workflowRunsStore.removeReference(runId)
-    runs.value = runs.value.filter(run => run.runId !== runId)
-    totalRuns.value = Math.max(0, totalRuns.value - 1)
-    if (wasSelected) {
-      progressTracker.reset()
-      clearSelectedDetails()
-      selectedRunId.value = ''
-      const query = { ...route.query }
-      delete query.runId
-      await router.replace({ query })
-      if (nextRunId) await activateRun(nextRunId, true)
-    }
-    window.dispatchEvent(new Event('acg-runs-refresh'))
-    ElMessage.success('ACG 运行记录已删除')
-    await loadRuns(true)
-  } catch (error: unknown) {
-    if (error === 'cancel' || error === 'close') return
-    const data = (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data
-    ElMessage.error(data?.message || data?.detail || '删除失败，请稍后重试')
-  } finally {
-    deletingRunId.value = ''
-  }
 }
 const openAcg = () => void router.push({ path: '/agentos/acg', query: { runId: selectedRunId.value } })
 const openChat = () => {

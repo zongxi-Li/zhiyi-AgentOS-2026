@@ -815,18 +815,18 @@ export const useChatStore = defineStore('chat', () => {
       }
     })
 
-    const acgTaskId = response.acgTaskId || response.run.runId
+    const acgTaskId = response.runId
     const binding: ChatWorkflowBinding = {
       conversationId: options.conversationId,
       messageId: String(userMessage.id),
-      taskId: response.task.taskId,
+      taskId: response.taskId,
       acgTaskId,
       runId: acgTaskId,
-      workflowId: response.run.workflowId || options.workflowId,
+      workflowId: response.workflowId || options.workflowId,
       source,
       clientRequestId: options.clientRequestId,
       createdAt: new Date().toISOString(),
-      status: response.run.status
+      status: response.status
     }
     addWorkflowBinding(binding)
 

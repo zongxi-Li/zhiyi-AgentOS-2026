@@ -58,12 +58,12 @@
             <dd>{{ runningSteps }} 运行 · {{ waitingSteps }} 待审</dd>
           </div>
           <div>
-            <dt>运行变化</dt>
-            <dd>{{ dynamicStepCount }} 新增 · {{ bindingSwitchCount }} 切换</dd>
+            <dt>条件执行</dt>
+            <dd>{{ skippedSteps }} 跳过</dd>
           </div>
           <div>
-            <dt>恢复 / 异常</dt>
-            <dd :class="{ danger: recoveryCount > 0 || failedSteps > 0 }">{{ recoveryCount }} / {{ failedSteps }}</dd>
+            <dt>完成 / 异常</dt>
+            <dd :class="{ danger: failedSteps > 0 }">{{ completedSteps }} / {{ failedSteps }}</dd>
           </div>
         </dl>
       </section>
@@ -160,13 +160,11 @@ const completedSteps = computed(() => props.progress?.completedSteps ?? props.vi
 const runningSteps = computed(() => props.progress?.runningSteps ?? props.run?.steps?.filter(step => step.status === 'running').length ?? 0)
 const waitingSteps = computed(() => props.progress?.waitingReviewSteps ?? props.run?.steps?.filter(step => step.status === 'waiting_review').length ?? 0)
 const failedSteps = computed(() => props.progress?.failedSteps ?? props.run?.steps?.filter(step => step.status === 'failed').length ?? 0)
-const recoveryCount = computed(() => props.view?.lowEntropyMetrics?.recoveryCount ?? props.progress?.recoveryCount ?? props.run?.recoveryCount ?? 0)
 const progressMessage = computed(() => props.progress?.message || props.run?.title || props.blueprint?.objective || (props.loading ? '正在同步运行数据…' : props.statusLabel))
 const activeStepLabel = computed(() => props.progress?.currentStepId || props.run?.currentStepId || props.view?.activeStepIds?.[0] || '')
 const nodeCount = computed(() => props.blueprint?.nodes?.length ?? 0)
 const edgeCount = computed(() => props.blueprint?.edges?.length ?? 0)
-const dynamicStepCount = computed(() => props.view?.dynamicStepCount ?? props.progress?.dynamicStepCount ?? props.run?.dynamicStepCount ?? 0)
-const bindingSwitchCount = computed(() => props.view?.bindingSwitchCount ?? props.progress?.bindingSwitchCount ?? props.run?.bindingSwitchCount ?? 0)
+const skippedSteps = computed(() => props.run?.skippedStepIds?.length ?? 0)
 const savingRatio = computed(() => props.view?.lowEntropyMetrics?.effectiveSavingRatio ?? props.view?.lowEntropyMetrics?.averageSavingRatio ?? 0)
 const savingPercent = computed(() => `${(savingRatio.value * 100).toFixed(1)}%`)
 const tokensSaved = computed(() => props.view?.lowEntropyMetrics?.tokensSaved ?? 0)

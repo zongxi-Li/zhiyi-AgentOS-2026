@@ -12,7 +12,6 @@ import {
   type RuntimeInteraction,
   type AcgStepState,
   type Checkpoint,
-  type EvaluationRun,
   type PageResponse,
   type ReviewRecord,
   type ReviewRequest,
@@ -23,9 +22,6 @@ import {
   type WorkflowProgress,
   type WorkflowProgressPhase,
   type WorkflowRunSummary,
-  type PlanningDiagnostics,
-  type PlanningMaterialDiagnostics,
-  type WorkflowRunDeleteResponse,
   type ReviewDecision,
   type StepStatus,
   type TraceEvent,
@@ -34,7 +30,6 @@ import {
   type WorkflowStep,
   type WorkflowStatus,
   type WorkflowTraceExport,
-  type InstalledPlugin
 } from './agentos'
 
 export type {
@@ -50,7 +45,6 @@ export type {
   RuntimeInteraction,
   AcgStepState,
   Checkpoint,
-  EvaluationRun,
   PageResponse,
   ReviewRecord,
   ReviewRequest,
@@ -61,9 +55,6 @@ export type {
   WorkflowProgress,
   WorkflowProgressPhase,
   WorkflowRunSummary,
-  PlanningDiagnostics,
-  PlanningMaterialDiagnostics,
-  WorkflowRunDeleteResponse,
   ReviewDecision,
   StepStatus,
   TraceEvent,
@@ -72,14 +63,9 @@ export type {
   WorkflowStep,
   WorkflowStatus,
   WorkflowTraceExport,
-  InstalledPlugin
 }
 
 export const workflowApi = {
-  listInstalledPlugins(): Promise<InstalledPlugin[]> {
-    return agentosApi.listInstalledPlugins()
-  },
-
   startWorkflow(payload: WorkflowStartRequest): Promise<WorkflowStartResponse> {
     return agentosApi.startWorkflow(payload)
   },
@@ -109,13 +95,6 @@ export const workflowApi = {
     return agentosApi.getWorkflowRun(runId, options)
   },
 
-  deleteRun(
-    runId: string,
-    options: { signal?: AbortSignal } = {}
-  ): Promise<WorkflowRunDeleteResponse> {
-    return agentosApi.deleteWorkflowRun(runId, options)
-  },
-
   getTrace(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowTraceExport> {
     return agentosApi.getWorkflowTrace(runId, options)
   },
@@ -134,14 +113,6 @@ export const workflowApi = {
 
   submitReview(runId: string, payload: ReviewRequest, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     return agentosApi.applyWorkflowReview(runId, payload, options)
-  },
-
-  resumeFromCheckpoint(runId: string, checkpointId: string): Promise<WorkflowRun> {
-    return agentosApi.resumeWorkflow(runId, checkpointId)
-  },
-
-  getMetrics(params: Pick<WorkflowRunQuery, 'status' | 'domain' | 'workflowId' | 'source'> = {}): Promise<EvaluationRun> {
-    return agentosApi.getWorkflowMetrics(params)
   },
 
   getAcgView(runId: string, options: { signal?: AbortSignal } = {}): Promise<AcgView> {

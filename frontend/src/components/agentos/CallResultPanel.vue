@@ -153,17 +153,16 @@ const handleDetailsToggle = (id: string, event: Event) => {
 }
 
 const stepToResult = (step: WorkflowStep): CallResultItem | null => {
-  const hasOutput = step.output && Object.keys(step.output).length > 0
-  if (!hasOutput && !step.error) return null
+  if (!step.outputRef && !step.outputSummary) return null
 
   return {
     id: `step:${step.stepId}`,
     title: step.name || step.stepId,
     kind: step.capability || 'step',
-    summary: step.error || summarize(step.output),
-    hasDetails: hasOutput,
-    detailSource: hasOutput ? step.output : undefined,
-    detailSize: hasOutput ? estimateDetailsSize(step.output) : 0,
+    summary: step.outputSummary || step.outputRef || '',
+    hasDetails: false,
+    detailSource: undefined,
+    detailSize: 0,
     agentName: step.agentName,
     status: step.status,
     durationMs: step.durationMs,

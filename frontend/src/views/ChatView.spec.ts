@@ -6,7 +6,6 @@ import { ElMessageBox } from 'element-plus'
 import { agentosApi, type AcgView, type WorkflowRun } from '@/services/api/agentos'
 import { workflowApi, type WorkflowProgress } from '@/services/api/workflow'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import DynamicRunSummaryCard from '@/components/agentos/DynamicRunSummaryCard.vue'
 import RoleTemplateSwitchDialog from '@/components/RoleTemplateSwitchDialog.vue'
 import LawyerSkillPanel from '@/components/agent/LawyerSkillPanel.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
@@ -508,11 +507,11 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage('?workspace=agent&runId=run_history')
     await flushPromises()
 
-    expect(wrapper.get('.workflow-history-detail').text()).toContain('审查软件开发合同并生成可追溯报告')
+    expect(wrapper.get('.workflow-history-detail').text()).toContain('任务原文不属于运行状态')
     const artifactPanel = wrapper.findComponent(GenericArtifactPanel)
-    expect(artifactPanel.props('stepOutputs')).toHaveLength(1)
+    expect(artifactPanel.props('stepOutputs')).toHaveLength(0)
     expect(artifactPanel.props('finalArtifacts')).toEqual([
-      expect.objectContaining({ artifactId: 'artifact_history', content: '# 合同审查报告' })
+      expect.objectContaining({ artifactId: 'legacy_projection', content: '# Legacy report' })
     ])
     expect(chatStoreMock.messages).toHaveLength(0)
     wrapper.unmount()
@@ -535,7 +534,14 @@ describe('ChatView ACG progress integration', () => {
         }
       }
     })
-    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('run_contract'))
+    const projected = [
+      { stepId: 'risk_detect', name: '风险识别', status: 'completed', output: { risks: [{ id: 'risk_1', title: '付款与验收倒挂', level: 'high' }] } },
+      { stepId: 'legal_evidence_match', name: '证据匹配', status: 'completed', output: { evidences: [{ id: 'evidence_1', sourceName: '民法典' }] } },
+      { stepId: 'report_generate', name: '报告生成', status: 'completed', output: { report_markdown: '# 合同审查报告' } }
+    ]
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue({
+      ...acg('run_contract'), deliverables: projected, stepOutputs: projected, finalReport: '# 合同审查报告'
+    })
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
       runId: 'run_contract',
       taskId: 'task_run_contract',
@@ -559,7 +565,6 @@ describe('ChatView ACG progress integration', () => {
     const report = wrapper.findComponent(ContractReviewReportMessage)
     expect(report.props('report')).toBe('# 合同审查报告')
     expect(report.props('risks')).toHaveLength(1)
-    expect(wrapper.findComponent(DynamicRunSummaryCard).exists()).toBe(false)
     await wrapper.get('.lawyer-workflow-progress__toggle').trigger('click')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
     expect(wrapper.get('.lawyer-workflow-progress__collapsed-row').text()).toContain('ACG 执行状态')
@@ -624,7 +629,7 @@ describe('ChatView ACG progress integration', () => {
       input: { userIntent: '请审查采购合同' },
       output: { report_markdown: '# 最终合同审查报告' }
     })
-    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('run_live'))
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue({ ...acg('run_live'), finalReport: '# 最终合同审查报告' })
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
       runId: 'run_live',
       taskId: 'task_run_live',
@@ -643,7 +648,7 @@ describe('ChatView ACG progress integration', () => {
     wrapper.unmount()
   })
 
-  it('renders the saved lawyer report when only the ACG projection fails', async () => {
+  it('does not read a saved lawyer report body from Run state when output projection fails', async () => {
     vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({
       ...run('run_partial'),
       input: { userIntent: '审查采购合同' },
@@ -660,7 +665,7 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage('?workspace=agent&runId=run_partial')
     await flushPromises()
 
-    expect(wrapper.findComponent(ContractReviewReportMessage).props('report')).toBe('# 已恢复的合同审查报告')
+    expect(wrapper.findComponent(ContractReviewReportMessage).props('report')).not.toContain('已恢复的合同审查报告')
     expect(wrapper.get('.workflow-history-partial').text()).toContain('动态拓扑暂时未能加载')
     expect(wrapper.text()).not.toContain('正在恢复任务详情')
     wrapper.unmount()

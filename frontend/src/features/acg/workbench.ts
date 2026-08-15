@@ -98,6 +98,8 @@ export const buildWorkbenchStartRequest = (
     usePlanner: true,
     webSearchEnabled: draft.webSearchEnabled,
     thinkingMode: draft.thinkingMode,
+    planningDiversity: draft.planningDiversity,
+    ...(draft.planningSeed === null ? {} : { planningSeed: draft.planningSeed }),
     pluginData: clonePluginData(draft.pluginData)
   }
 
@@ -124,8 +126,6 @@ export const buildWorkbenchStartRequest = (
     reviewMode,
     input,
     clientRequestId,
-    planningDiversity: draft.planningDiversity,
-    planningSeed: draft.planningSeed ?? undefined,
     enabledPluginIds: [...draft.enabledPluginIds]
   }
 }
