@@ -65,6 +65,23 @@ def build_contract_review_blueprint(
     evidence_input = deepcopy(definitions["legal_evidence_match"].input)
     evidence_from = evidence_input.setdefault("from", {})
     evidence_from["statute_retrieve"] = ["legal_basis", "sources", "evidence_refs"]
+    evidence_input["memoryPolicy"] = {
+        "policyId": "legal-evidence-v1",
+        "read": False,
+        "write": True,
+        "writeType": "evidence",
+        "requireAudit": True,
+    }
+
+    retrieval_input = {
+        "memoryPolicy": {
+            "policyId": "legal-source-evidence-v1",
+            "read": False,
+            "write": True,
+            "writeType": "evidence",
+            "requireAudit": True,
+        }
+    }
 
     report_input = deepcopy(definitions["report_generate"].input)
     report_input.setdefault("from", {})["auto_review"] = ["review_status", "review_focus"]
@@ -82,6 +99,7 @@ def build_contract_review_blueprint(
             # vertical slice; it is selected by its frozen agent identity and
             # is not advertised as a planner capability.
             capability=None,
+            inputSpec=retrieval_input,
             outputSpec={
                 "type": "object",
                 "required": ["legal_basis", "sources", "evidence_refs"],

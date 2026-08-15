@@ -29,26 +29,26 @@
 | Execution | skip semantics | 无 | C4 条件补丁测试 | `skippedStepIds`、`StepStatus.SKIPPED` | REPLACED | 采用 wkn skip 投影 | 未选路径标记 skipped 且不调用 agent |
 | Execution | 引用式 execution state | 无 | C4 后期压缩 checkpoint 仍混有旧 DTO | `ACGExecutionState`、`ExecutionValueStore` | REPLACED | 仅保存 output/context/memory/trace/provenance refs | state/checkpoint 正文泄漏扫描 |
 | Execution | 稳定 commitId / committed replay | 无 | C4 无同等提交协议 | `ACGNodeRunner`；`58ca7be` | REPLACED | 使用 `commit:{run}:{step}:{attempt}` | 重启后 commitId 稳定且不重复调用 |
-| Execution | graph version | 无 | `RuntimeGraph.version`、动态补丁预算 | wkn checkpoint version/CAS，不等价于业务图版本 | MIGRATE | 在 contracts 增加不可变 graph revision，并由 patch 原子递增 | stale graph patch 冲突、重放版本一致 |
-| Execution | 动态图修改 | 无 | `runtime_graph.py`；`test_runtime_dynamic_execution.py`；`0eade86` | 仅静态编译与 `GraphPatchRef` 边界 | MIGRATE | 在 contracts 定义 patch，在 components/executor 实现验证和应用 | 执行中安全增加/替换节点并保持 DAG |
+| Execution | graph version | 无 | `RuntimeGraph.version`、动态补丁预算 | `ACGExecutionState.graphVersion` + `GraphPatchService` + checkpoint CAS | MIGRATED | Phase 5 已增加不可变 graph revision，并由安全屏障内的 patch 原子递增 | `test_graph_patch.py`：stale version 冲突、重放版本一致 |
+| Execution | 动态图修改 | 无 | `runtime_graph.py`；`test_runtime_dynamic_execution.py`；`0eade86` | `components/executor/graph_patch.py` 在审核屏障验证并产生新 Blueprint revision | MIGRATED | Phase 5 以不可变副本应用节点/边增删，不恢复 RuntimeGraph | 插入新节点、DAG 校验、恢复后执行新拓扑 |
 | Binding | 候选过滤 | 部分 | planning/recovery bindings | `ResourceDirectory`、`PluginScopeResolver` | REPLACED | 使用资源目录和冻结 scope | capability/security/scope 不匹配被过滤 |
 | Binding | 冻结资源绑定 | 无 | C4 binding snapshot | `RunExecutionScope`、`test_resource_binding.py` | REPLACED | run 启动时冻结资源引用 | 注册表改变不影响已启动 run |
 | Binding | 健康过滤 | 部分 | C4 alternate binding policy | `components/resource/health.py` | REPLACED | 使用 wkn health snapshot | unhealthy 资源不入候选集 |
-| Binding | alternate binding | 无 | `core/recovery/bindings.py`；`test_alternate_binding_policy.py`；`3c6626a` | resource 选择存在，失败后切换闭环缺失 | MIGRATE | recovery planner 产出受预算约束的重绑定动作 | 主绑定失败后一次可审计切换、预算耗尽终止 |
+| Binding | alternate binding | 无 | `core/recovery/bindings.py`；`test_alternate_binding_policy.py`；`3c6626a` | `ResourceDirectory.resolve_agent_candidates` + `WorkflowRuntime.rebind_step` | MIGRATED | Phase 5 只允许在持久审核屏障、冻结 scope 内对未执行节点切换一次 | `test_graph_patch.py`：可审计切换、冻结 agentId 生效、预算耗尽终止 |
 | Recovery | 节点 retry | 部分 | recovery policy/controller | `components/recovery`、prepared retry；`69cee8b` | REPLACED | 使用 wkn prepared commit 恢复规则 | prepared 节点重试，committed 节点只重放 |
 | Recovery | checkpoint resume | 部分 | C4 governance checkpoint | `ACGCheckpointStore`、`ExecutionResumeCommand` | REPLACED | 使用独立 SQLite checkpoint | 重建 Runtime 后从同一版本恢复 |
 | Recovery | checkpoint CAS / run 隔离 | 无 | C4 旧 store 不具备等价保证 | `components/recovery/checkpoint.py`；checkpoint tests | REPLACED | 保留 expected_version CAS | stale writer 冲突、跨 run 不可读 |
-| Recovery | contract repair | 无 | `core/recovery/contract_adapter.py`；`399224f` | recovery contract 有边界，无完整无损修复链 | MIGRATE | contracts 定义 repair decision，components/recovery 实现无损适配 | 不虚构数据、修复前后证据可追踪 |
-| Recovery | recovery recipe | 无 | `core/recovery/recipes.py`；`test_recovery_recipes.py` | runtime 仅保留 registry 注入点 | MIGRATE | 在 components/recovery 实现 registry 与验证器 | recipe 匹配、预算、幂等与拒绝路径 |
-| Recovery | GraphPatch | 无 | `core/recovery/models.py/proposal.py`；patch compiler tests | `GraphPatchRef` 仅引用边界 | MIGRATE | 复用动态图库，patch 正文存 ExecutionValueStore | patch 引用归属验证、CAS、DAG 校验 |
+| Recovery | contract repair | 无 | `core/recovery/contract_adapter.py`；`399224f` | `components/recovery/contract_repair.py` 使用 wkn communication contract | MIGRATED | Phase 5 仅允许唯一数组包裹与显式 schema default，不做语义补造 | `test_contract_repair.py`：无损哈希、默认值、缺失必填拒绝 |
+| Recovery | recovery recipe | 无 | `core/recovery/recipes.py`；`test_recovery_recipes.py` | `contracts.RecoveryRecipe` + `components/recovery/recipes.py` | MIGRATED | Phase 5 提供 capability-only registry、稳定匹配和每 run 应用预算输入 | `test_recipes.py`：匹配、复制隔离、预算耗尽拒绝 |
+| Recovery | GraphPatch | 无 | `core/recovery/models.py/proposal.py`；patch compiler tests | `GraphPatch/Result` + `GraphPatchService` + `ExecutionValueStore` | MIGRATED | Phase 5 将 patch 正文存独立值仓库，State/checkpoint 只留引用 | `test_graph_patch.py`：引用归属、幂等、CAS、DAG 与 resume |
 | Recovery | review interrupt/resume | 部分 | C4 review/checkpoint API | `ReviewManager`、`ExecutionInterrupt`；`57d68fe` | REPLACED | 采用 wkn 持久决定与 resume | WAITING_REVIEW→restart→approve→complete |
 | Tool | 工具授权 | 部分 | `core/tool_execution.py`；`test_acg_tool_policy.py`；`d35e423` | `adapters/audited_tool_runtime.py` | REPLACED | 应用工具注册表接入 AuditedToolRuntime | 未授权/越权参数拒绝并审计 |
 | Tool | offline policy / bounded execution | 无 | `test_acg_tool_policy.py` | AuditedToolRuntime policy | REPLACED | 保留显式 offline 与调用边界 | offline 禁止网络工具；超范围调用失败 |
 | Tool | tool event / audit | 部分 | C4 runtime events | AuditedToolRuntime + Decision/Trace stores | REPLACED | 工具事件写引用和审计元数据 | 成功/拒绝/失败均可追踪且无正文泄漏 |
-| Tool | 真实联网检索链 | 无 | `8107ed7`；`agent/app/tools`、RAG integration | 仅内核工具 adapter，无产品联网 wiring | MIGRATE | 应用层实现网络工具并经审计 runtime 注入 | 真实/fixture 检索、授权、离线降级、引用输出 |
+| Tool | 真实联网检索链 | 无 | `8107ed7`；`agent/app/tools`、RAG integration | Application `AgentsToolRuntime`/Tavily catalog 经 `AuditedToolRuntime` 注入 | MIGRATED | Phase 5 保留真实 provider 并验证只读授权、离线拒绝、安全事件和 citation 输出 | `test_wkn_network_tool_chain.py` + Legal tool vertical slice |
 | Memory | working memory | 部分 | C4 context/runtime state | `components/memory`、SQLiteMemoryStore | REPLACED | 使用 wkn MemoryService | run/step 所有权隔离与预算 |
 | Memory | episodic / semantic | 部分 | C4 memory modules | `MemoryType` 白名单；`e1424dd` | REPLACED | 使用 wkn 类型与 admission | 类型白名单、跨 run 访问门禁 |
-| Memory | evidence memory | 部分 | Legal RAG/evidence 与 C4 memory | wkn provenance + memory reference 能表达，应用未接通 | MIGRATE | Legal pack 将证据作为受控 ref 写入 | evidence ref 可追溯、无正文进入 state |
+| Memory | evidence memory | 部分 | Legal RAG/evidence 与 C4 memory | Legal retrieval/matching 节点使用 `MemoryType.EVIDENCE`，State 仅留 `memoryRef` | MIGRATED | Phase 5 在 Legal Blueprint 声明审计型 evidence 写策略 | Legal golden test 验证 evidence 类型、引用归属和 State 无正文 |
 | Memory | memory policy / token budget | 无 | C4 planning/context budget | `contracts/memory.py`、planner memory policy tests | REPLACED | step policy 驱动读取/写入 | token 上限、禁止类型、审计事件 |
 | Memory | 审核前延迟正式写入 | 无 | C4 review flow 部分实现 | `57d68fe` review-memory isolation | REPLACED | 采用 wkn pending/admission 语义 | approve 前无正式记忆，拒绝不落库 |
 | Governance | Trace | 部分 | C4 trace/event DTO | `TraceStore`、execution trace tests | REPLACED | 使用 wkn Trace 类型与存储 | 生命周期与节点事件完整、不重复 |

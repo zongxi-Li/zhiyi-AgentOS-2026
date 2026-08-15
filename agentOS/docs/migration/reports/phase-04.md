@@ -10,7 +10,7 @@ Phase 4：在唯一 wkn `WorkflowRuntime` 上恢复 Legal Contract Review 的真
 
 ## Result SHA
 
-由提交 `05 feat(agentos): restore legal vertical slice` 固化；确切 SHA 在下一阶段报告提交时回填。
+`9e0a22d7eaff05361ac8f4fa8c7594bc5d69487d`
 
 ## Changed
 

@@ -43,6 +43,24 @@ def test_directory_selects_healthy_scoped_agent_by_priority() -> None:
     assert selected.agent_id == "low"
 
 
+def test_directory_returns_stable_alternates_after_scope_health_and_exclusion_filters() -> None:
+    directory = ResourceDirectory()
+    directory.register_agent(_profile("current", priority=20))
+    directory.register_agent(_profile("alternate-b", priority=5))
+    directory.register_agent(_profile("alternate-a", priority=5))
+    directory.register_agent(_profile("unhealthy", priority=10))
+    directory.set_health("unhealthy", healthy=False)
+
+    candidates = directory.resolve_agent_candidates(
+        domain="general",
+        capability="analyse",
+        allowed_agent_ids=["current", "alternate-a", "alternate-b", "unhealthy"],
+        excluded_agent_ids=["current"],
+    )
+
+    assert [item.agent_id for item in candidates] == ["alternate-a", "alternate-b"]
+
+
 def test_directory_prefers_exact_name_before_capability_fallback() -> None:
     """指定名称时不得被优先级更高的同能力资源替换。"""
     directory = ResourceDirectory()

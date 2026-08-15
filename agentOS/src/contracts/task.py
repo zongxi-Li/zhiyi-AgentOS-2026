@@ -1,7 +1,7 @@
-"""ACG 动态规划层的数据合同。
+"""Serializable contracts used by ACG planning.
 
-这些模型仅定义可序列化结构；调度、持久化和恢复行为仍由既有 RuntimeGraph
-与 WorkflowRun 负责。
+Scheduling, persistence, and recovery remain responsibilities of the single
+execution graph and ``WorkflowRuntime``; this module defines data shapes only.
 """
 
 from __future__ import annotations

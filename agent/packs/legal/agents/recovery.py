@@ -9,6 +9,7 @@ from app.execution.tool_calls import network_tools_enabled
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from app.execution.tool_calls import execute_read_only_tool
 from app.rag.legal_evidence_schema import normalize_evidence
+from components.recovery.contract_repair import repair_payload
 
 
 def _observation_values(context) -> list[dict[str, Any]]:
@@ -223,9 +224,21 @@ class LegalContractAdapterAgent(BaseAgent):
         )
 
     async def run(self, context) -> AgentOutput:
-        raise RuntimeError(
-            "CONTRACT_REPAIR_MIGRATION_PENDING: the C4 repair algorithm must be "
-            "reimplemented in components.recovery before this binding is enabled"
+        data = context.context_pack.data if context.context_pack is not None else {}
+        payload = data.get("payload")
+        schema = data.get("schema")
+        if not isinstance(schema, dict):
+            return AgentOutput(
+                output={
+                    "adapter_status": "unrepairable",
+                    "adapter_issues": ["contract repair requires a schema object"],
+                },
+                summary="Contract repair could not run because its schema is unavailable.",
+            )
+        decision = repair_payload(payload, schema)
+        return AgentOutput(
+            output=decision,
+            summary=f"Contract repair decision: {decision['adapter_status']}.",
         )
 
 
