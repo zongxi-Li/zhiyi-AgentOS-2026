@@ -116,6 +116,10 @@ class TraceEventType(str, Enum):
     STEP_FAILED = "step_failed"
     RUN_FAILED = "run_failed"
     RUN_RECOVERED = "run_recovered"
+    # Persisted migration runs and the Milan trace UI already expose this
+    # audit-only terminal event. Keep it readable even though it never drives
+    # runtime state transitions.
+    RUN_DEGRADED = "run_degraded"
     RUN_COMPLETED = "run_completed"
     RUN_CANCELLED = "run_cancelled"
     STOCHASTIC_PLANNING_FALLBACK = "stochastic_planning_fallback"

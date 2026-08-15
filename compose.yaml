@@ -71,9 +71,15 @@ services:
     environment:
       KINLIN_DEPLOYMENT_ID: ${KINLIN_DEPLOYMENT_ID}
       ENVIRONMENT: ${KINLIN_ENVIRONMENT:-production}
-      AGENTOS_PACKS_DIR: /app/packs
-      AGENTOS_DATA_DIR: /app/data
+      PYTHONPATH: /app:/app/agent:/app/agentOS:/app/agentOS/src
+      AGENTOS_PACKS_DIR: /app/agent/packs
+      AGENTOS_DATA_DIR: /app/data/agentos
       AGENTOS_WORKFLOW_DB_PATH: /app/data/agentos/workflows.sqlite3
+      AGENTOS_LANGGRAPH_CHECKPOINT_DB: /app/data/agentos/langgraph_checkpoints.sqlite3
+      AGENTOS_EXECUTION_VALUE_DB: /app/data/agentos/execution_values.sqlite3
+      AGENTOS_EXECUTION_MEMORY_DB: /app/data/agentos/execution_memory.sqlite3
+      AGENTOS_PROVENANCE_DB: /app/data/agentos/provenance.sqlite3
+      AGENTOS_AUDIT_DB: /app/data/agentos/audit_decisions.sqlite3
       AGENTOS_SQLITE_BUSY_TIMEOUT_MS: ${AGENTOS_SQLITE_BUSY_TIMEOUT_MS:-5000}
       UVICORN_WORKERS: "1"
       AI_INTERNAL_TOKEN_FILE: /run/kinlin-secrets/ai_internal_token

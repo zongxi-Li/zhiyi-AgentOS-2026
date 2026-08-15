@@ -9,17 +9,13 @@ services:
       SSE_TEST_MODE: ${KINLIN_SSE_TEST_MODE:-false}
       SSE_HEARTBEAT_INTERVAL: ${SSE_HEARTBEAT_INTERVAL:-15}
     volumes:
-      - ./agent/app:/app/app
-      - ./agent/packs:/app/packs
-      - ./agent/knowledge:/app/knowledge
-      - ./agent/requirements.lock:/app/requirements.lock:ro
-      - ./agent/requirements.tools.lock:/app/requirements.tools.lock:ro
-      - ./agentOS/src:/app/agentOS/src
+      - ./agent:/app/agent
+      - ./agentOS:/app/agentOS
       - ./backend/src:/app/workspace/backend/src:ro
       - ./frontend/src:/app/workspace/frontend/src:ro
       - ./agent/app:/app/workspace/agent/app:ro
       - ./agent/packs:/app/workspace/agent/packs:ro
-      - ./agentOS/src:/app/workspace/agentOS/src:ro
+      - ./agentOS:/app/workspace/agentOS:ro
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--reload"]
   backend:
     build:

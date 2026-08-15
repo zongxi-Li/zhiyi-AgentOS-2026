@@ -11,7 +11,7 @@ import subprocess
 import shutil
 from pathlib import Path
 
-from scripts.infra.common import compose_command, run, validate_deployment_id, verify_volume_labels, volume_names, write_checksums, write_json
+from scripts.infra.common import AGENTOS_KERNEL_BACKUP_ID, compose_command, run, validate_deployment_id, verify_volume_labels, volume_names, write_checksums, write_json
 
 
 def compose(deployment_id: str, *args: str, capture: bool = True):
@@ -157,7 +157,8 @@ done'''
     redis_size = int(next(line.split("=", 1)[1] for line in redis_lines if line.startswith("dbsize=")))
     redis_samples = sum(line.startswith("sample_read_ok ") for line in redis_lines)
     manifest = {
-        "formatVersion": "1.1",
+        "formatVersion": "1.2",
+        "agentosKernel": AGENTOS_KERNEL_BACKUP_ID,
         "deploymentId": deployment_id,
         "createdAt": timestamp,
         "database": args.database,

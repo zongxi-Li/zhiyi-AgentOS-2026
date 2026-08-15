@@ -7,6 +7,7 @@ def test_deployment_id_is_embedded_in_every_volume():
     volumes = volume_names("kinlin-test-001")
     assert volumes
     assert all(name.startswith("kinlin-test-001_") for name in volumes.values())
+    assert volumes["agentos_data_v11"] == "kinlin-test-001_agentos_data_v11"
 
 
 @pytest.mark.parametrize("value", ["", "PROD", "a", "kinlin_prod", "0.0.0.0"])

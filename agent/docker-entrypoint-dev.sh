@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-base_manifest=/app/requirements.lock
-tools_manifest=/app/requirements.tools.lock
+base_manifest=/app/agent/requirements.lock
+tools_manifest=/app/agent/requirements.tools.lock
 venv=/opt/kinlin-venv
 expected=$(cat "$base_manifest" "$tools_manifest" | sha256sum | cut -d ' ' -f 1)
 actual=$(cat "$venv/.kinlin-requirements.sha256" 2>/dev/null || true)

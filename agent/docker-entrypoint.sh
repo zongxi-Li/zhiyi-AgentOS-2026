@@ -31,6 +31,7 @@ if su-exec 10001:10001 test -r "$target/ai_internal_token" 2>/dev/null; then
   exit 78
 fi
 
+install -d -m 0750 -o 10002 -g 10002 /app/data/agentos
 marker=/app/data/.kinlin-deployment-id
 if test -f "$marker" && test "$(cat "$marker")" != "${KINLIN_DEPLOYMENT_ID:?}"; then
   echo "AgentOS volume belongs to a different deployment" >&2

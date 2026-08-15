@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 DEPLOYMENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,31}$")
+AGENTOS_KERNEL_BACKUP_ID = "wkn-master-e42f7b2"
 VOLUME_SUFFIXES = ("postgres_data_v11", "redis_data_v11", "agentos_data_v11", "backend_uploads_v11", "ai_cache_v11")
 
 

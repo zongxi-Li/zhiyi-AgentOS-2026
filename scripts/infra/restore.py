@@ -10,7 +10,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from scripts.infra.common import compose_command, run, validate_deployment_id, verify_checksums, verify_volume_labels, volume_names
+from scripts.infra.common import AGENTOS_KERNEL_BACKUP_ID, compose_command, run, validate_deployment_id, verify_checksums, verify_volume_labels, volume_names
 
 
 IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
@@ -96,6 +96,8 @@ def main() -> int:
     secrets = Path(args.secrets_dir).resolve()
     verify_checksums(backup)
     manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("formatVersion") != "1.2" or manifest.get("agentosKernel") != AGENTOS_KERNEL_BACKUP_ID:
+        raise SystemExit("backup does not match the current WKN AgentOS v1.2 format")
     target = validate_deployment_id(args.target_deployment_id)
     source = validate_deployment_id(manifest["deploymentId"])
     if target == source:

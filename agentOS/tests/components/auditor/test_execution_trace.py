@@ -6,6 +6,10 @@ from components.auditor.governance.trace import TraceStore
 from contracts.workflow import TraceEventType, WorkflowRun
 
 
+def test_persisted_degraded_run_event_remains_readable() -> None:
+    assert TraceEventType("run_degraded") is TraceEventType.RUN_DEGRADED
+
+
 def test_trace_projects_scheduled_nodes_without_exposing_engine_objects() -> None:
     """调度事件只保留步骤标识等紧凑字段，Trace 合同不承载执行器内部对象。"""
     run = WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")

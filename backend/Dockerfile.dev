@@ -14,8 +14,9 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|https://archive.ubuntu.com/ubunt
     && chown -R 10001:10001 /app /run/kinlin-secrets
 
 COPY pom.xml .
-RUN mvn -B -ntp -DskipTests dependency:go-offline \
-    && mv /root/.m2 /opt/kinlin-m2 \
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp -DskipTests dependency:go-offline \
+    && cp -a /root/.m2 /opt/kinlin-m2 \
     && chown -R 10001:10001 /opt/kinlin-m2
 
 COPY src ./src
