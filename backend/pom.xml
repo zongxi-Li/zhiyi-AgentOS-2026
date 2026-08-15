@@ -13,10 +13,10 @@
     </parent>
 
     <groupId>com.kinlin</groupId>
-    <artifactId>federal-hub-backend</artifactId>
+    <artifactId>kinlin-backend</artifactId>
     <version>1.0.0</version>
-    <name>联邦智枢 Backend</name>
-    <description>联邦智枢 - 多角色智能体系统 Backend Service</description>
+    <name>知弈 AgentOS Backend</name>
+    <description>知弈 AgentOS - 面向下一代 AI Agent 基础设施的多 Agent 任务闭环系统 Backend Service</description>
 
     <properties>
         <java.version>17</java.version>

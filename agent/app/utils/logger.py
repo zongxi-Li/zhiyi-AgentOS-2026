@@ -79,11 +79,11 @@ def configure_logging(*, json_format: bool, level: int = logging.INFO) -> None:
     _configured_mode = mode
 
 
-def setup_logger(name: str = "federal_hub", log_file: str = "", level: int = logging.INFO):
+def setup_logger(name: str = "kinlin-ai-service", log_file: str = "", level: int = logging.INFO):
     if _configured_mode is None:
         configure_logging(json_format=False, level=level)
     return logging.getLogger(name)
 
 
 def get_logger(name: str | None = None):
-    return logging.getLogger(f"federal_hub.{name}" if name else "federal_hub")
+    return logging.getLogger(f"kinlin-ai-service.{name}" if name else "kinlin-ai-service")

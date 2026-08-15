@@ -333,7 +333,7 @@ docker compose -f compose.yaml -f compose.dev.yaml -f compose.windows.yaml --env
 docker ps --format "table {{.Names}}\t{{.Ports}}"
 ```
 
-期望看到 `federal-hub-ai-service-prod` 或当前 compose 项目的 `ai-service` 映射到 `0.0.0.0:8000->8000/tcp`。
+期望看到当前 Compose 项目的 `ai-service` 容器映射到 `0.0.0.0:8000->8000/tcp`；容器名称由 `KINLIN_DEPLOYMENT_ID` 动态生成。
 
 如果 TUI 设置了自定义 `AGENTOS_API_URL`，先清掉或改回：
 

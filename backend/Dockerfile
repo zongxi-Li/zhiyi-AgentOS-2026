@@ -32,7 +32,7 @@ RUN apt-get update \
     && mkdir -p /app/data/uploads /run/kinlin-secrets \
     && chown -R 10001:10001 /app /run/kinlin-secrets
 
-COPY --from=build /workspace/target/federal-hub-backend-*.jar /app/app.jar
+COPY --from=build /workspace/target/kinlin-backend-*.jar /app/app.jar
 COPY docker-entrypoint.sh /usr/local/bin/kinlin-entrypoint
 RUN chmod 0755 /usr/local/bin/kinlin-entrypoint
 

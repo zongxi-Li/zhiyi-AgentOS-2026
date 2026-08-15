@@ -37,7 +37,7 @@ public class HealthController {
     public ResponseEntity<Map<String, Object>> health() {
         Map<String, Object> response = new HashMap<>();
         response.put("status", "UP");
-        response.put("service", "federal-hub-backend");
+        response.put("service", "kinlin-backend");
         response.put("version", "1.0.0");
         return ResponseEntity.ok(response);
     }

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 联邦智枢 部署脚本
+# 知弈 AgentOS 部署脚本
 # 使用方法: ./deploy.sh [environment]
 # environment: dev, prod (默认: dev)
 
@@ -16,7 +16,7 @@ if [ "$ENVIRONMENT" = prod ]; then
 fi
 
 echo "=========================================="
-echo "联邦智枢 部署脚本"
+echo "知弈 AgentOS 部署脚本"
 echo "环境: $ENVIRONMENT"
 echo "项目目录: $PROJECT_DIR"
 echo "=========================================="

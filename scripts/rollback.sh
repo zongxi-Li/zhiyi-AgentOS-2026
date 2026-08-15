@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 联邦智枢 回滚脚本
+# 知弈 AgentOS 回滚脚本
 # 使用方法: ./rollback.sh [environment] [version]
 # environment: dev, prod (默认: dev)
 # version: 回滚到的版本标签（可选）
@@ -22,7 +22,7 @@ else
 fi
 
 echo "=========================================="
-echo "联邦智枢 回滚脚本"
+echo "知弈 AgentOS 回滚脚本"
 echo "环境: $ENVIRONMENT"
 echo "版本: $VERSION"
 echo "=========================================="
