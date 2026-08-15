@@ -2,261 +2,101 @@ package com.kinlin.ai.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.kinlin.ai.config.AgentProperties;
-import com.kinlin.ai.dto.agentos.WorkflowProgressResponse;
-import com.kinlin.ai.dto.agentos.AsyncWorkflowStartResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.BodyInserters;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
-/** AgentOS 网关服务 — 通过 WebClient 将请求代理转发到 Python AgentOS 后端 */
+/** Stateless transport and error-mapping boundary for AgentOS v2. */
 @Slf4j
 @Service
 public class AgentOsGatewayService {
 
-    private static final ParameterizedTypeReference<Map<String, Object>> MAP_BODY =
-            new ParameterizedTypeReference<>() {
-            };
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
-            .findAndRegisterModules()
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
     public static final String INTERNAL_HTTP_STATUS_KEY = "_httpStatus";
 
     private final WebClient webClient;
-    private final AgentProperties agentProperties;
-    private final int timeoutMs;
+    private final AgentProperties properties;
 
-    public AgentOsGatewayService(WebClient.Builder webClientBuilder, AgentProperties agentProperties,
-                                 @Value("${ai.service.url:http://localhost:8000}") String aiServiceUrl) {
+    public AgentOsGatewayService(
+            WebClient.Builder webClientBuilder,
+            AgentProperties properties,
+            @Value("${ai.service.url:http://localhost:8000}") String aiServiceUrl
+    ) {
         this.webClient = webClientBuilder.baseUrl(aiServiceUrl).build();
-        this.agentProperties = agentProperties;
-        this.timeoutMs = agentProperties.getTimeoutMs();
+        this.properties = properties;
     }
 
     public Map<String, Object> get(String path) {
-        return get(path, timeoutMs);
-    }
-
-    public Map<String, Object> getProgress(String path) {
-        return get(path, agentProperties.getProgressTimeoutMs());
-    }
-
-    private Map<String, Object> get(String path, int requestTimeoutMs) {
-        if (!agentProperties.isEnabled()) {
-            return disabledResponse(path);
+        if (!properties.isEnabled()) {
+            return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
+                    "AgentOS gateway is disabled.");
         }
         try {
-            return webClient.get()
-                    .uri(path)
-                    .retrieve()
-                    .bodyToMono(MAP_BODY)
-                    .timeout(Duration.ofMillis(requestTimeoutMs))
-                    .onErrorResume(e -> toErrorResponse(e, path))
+            return webClient.get().uri(path)
+                    .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
+                    .timeout(Duration.ofMillis(properties.getTimeoutMs()))
+                    .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
                     .block();
-        } catch (Exception e) {
-            return errorResponse(e, path);
+        } catch (Exception failure) {
+            return unavailable(path, failure);
         }
     }
 
     public Map<String, Object> post(String path, Object body) {
-        if (!agentProperties.isEnabled()) {
-            return disabledResponse(path);
+        if (!properties.isEnabled()) {
+            return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
+                    "AgentOS gateway is disabled.");
         }
         try {
-            return webClient.post()
-                    .uri(path)
-                    .bodyValue(body != null ? body : new HashMap<>())
-                    .retrieve()
-                    .bodyToMono(MAP_BODY)
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .onErrorResume(e -> toErrorResponse(e, path))
+            return webClient.post().uri(path).bodyValue(body == null ? Map.of() : body)
+                    .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
+                    .timeout(Duration.ofMillis(properties.getTimeoutMs()))
+                    .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
                     .block();
-        } catch (Exception e) {
-            return errorResponse(e, path);
+        } catch (Exception failure) {
+            return unavailable(path, failure);
         }
     }
 
-    public String getText(String path) {
-        if (!agentProperties.isEnabled()) {
-            return "AgentOS gateway is disabled by configuration. path=" + path;
-        }
-        try {
-            return webClient.get()
-                    .uri(path)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .onErrorResume(e -> Mono.just(errorText(e, path)))
-                    .block();
-        } catch (Exception e) {
-            return errorText(e, path);
-        }
-    }
-
-    private Mono<Map<String, Object>> toErrorResponse(Throwable throwable, String path) {
-        Exception ex = throwable instanceof Exception ? (Exception) throwable : new Exception(throwable.getMessage(), throwable);
-        return Mono.just(errorResponse(ex, path));
-    }
-
-    private Map<String, Object> disabledResponse(String path) {
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", false);
-        response.put("message", "AgentOS gateway is disabled by configuration.");
-        response.put("error", "agent.disabled");
-        response.put(INTERNAL_HTTP_STATUS_KEY, HttpStatus.SERVICE_UNAVAILABLE.value());
-        return response;
-    }
-
-    private Map<String, Object> errorResponse(Exception e, String path) {
-        log.error("AgentOS gateway request failed. path={}, type={}", path, e.getClass().getSimpleName());
-        if (e instanceof WebClientResponseException webClientError) {
-            return upstreamErrorResponse(webClientError, path);
-        }
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", false);
-        response.put("message", "AgentOS gateway unavailable.");
-        response.put("error", "AGENTOS_UPSTREAM_UNAVAILABLE");
-        response.put(INTERNAL_HTTP_STATUS_KEY, HttpStatus.SERVICE_UNAVAILABLE.value());
-        return response;
-    }
-
-    private Map<String, Object> upstreamErrorResponse(WebClientResponseException e, String path) {
-        int upstreamStatus = e.getStatusCode().value();
-        int gatewayStatus = e.getStatusCode().is4xxClientError()
-                ? upstreamStatus
-                : HttpStatus.BAD_GATEWAY.value();
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", false);
-        response.put("message", e.getStatusCode().is4xxClientError()
-                ? safeUpstreamMessage(e.getResponseBodyAsString(), upstreamStatus)
-                : "AgentOS service returned an error");
-        response.put("error", e.getStatusCode().is4xxClientError()
-                ? "AGENTOS_UPSTREAM_CLIENT_ERROR"
-                : "AGENTOS_UPSTREAM_ERROR");
-        response.put("upstreamStatus", upstreamStatus);
-        response.put(INTERNAL_HTTP_STATUS_KEY, gatewayStatus);
-        return response;
-    }
-
-    /** Rebuild multipart bodies after servlet parsing so the upstream always receives a real file part. */
-    public Map<String, Object> postMaterial(String path, MultipartFile file) {
-        if (!agentProperties.isEnabled()) {
-            return disabledResponse(path);
-        }
-        try {
-            MultipartBodyBuilder parts = new MultipartBodyBuilder();
-            ByteArrayResource resource = new ByteArrayResource(file.getBytes()) {
-                @Override
-                public String getFilename() {
-                    return file.getOriginalFilename() == null ? "upload" : file.getOriginalFilename();
-                }
-            };
-            MediaType partType;
-            try {
-                partType = file.getContentType() == null
-                        ? MediaType.APPLICATION_OCTET_STREAM
-                        : MediaType.parseMediaType(file.getContentType());
-            } catch (IllegalArgumentException ignored) {
-                partType = MediaType.APPLICATION_OCTET_STREAM;
+    private Mono<Map<String, Object>> mapResponse(int upstreamStatus, Mono<String> responseBody) {
+        return responseBody.defaultIfEmpty("").map(body -> {
+            if (upstreamStatus >= 200 && upstreamStatus < 300) {
+                Map<String, Object> parsed = parseObject(body);
+                parsed.put(INTERNAL_HTTP_STATUS_KEY, upstreamStatus);
+                return parsed;
             }
-            parts.part("file", resource).filename(resource.getFilename()).contentType(partType);
-            return webClient.post()
-                    .uri(path)
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(BodyInserters.fromMultipartData(parts.build()))
-                    .exchangeToMono(response -> response.bodyToMono(MAP_BODY)
-                            .defaultIfEmpty(new HashMap<>())
-                            .map(payload -> withHttpStatus(payload, response.statusCode().value())))
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .onErrorResume(e -> toErrorResponse(e, path))
-                    .block();
-        } catch (Exception e) {
-            return errorResponse(e, path);
-        }
+            if (upstreamStatus >= 400 && upstreamStatus < 500) {
+                return error(upstreamStatus, "AGENTOS_REQUEST_REJECTED", safeMessage(body, upstreamStatus));
+            }
+            return error(HttpStatus.BAD_GATEWAY.value(), "AGENTOS_UPSTREAM_ERROR",
+                    "AgentOS service returned an error.");
+        });
     }
 
-    public Map<String, Object> delete(String path) {
-        if (!agentProperties.isEnabled()) {
-            return disabledResponse(path);
-        }
-        try {
-            return webClient.delete()
-                    .uri(path)
-                    .exchangeToMono(response -> response.bodyToMono(MAP_BODY)
-                            .defaultIfEmpty(new HashMap<>())
-                            .map(payload -> withHttpStatus(payload, response.statusCode().value())))
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .onErrorResume(e -> toErrorResponse(e, path))
-                    .block();
-        } catch (Exception e) {
-            return errorResponse(e, path);
-        }
+    private Map<String, Object> unavailable(String path, Throwable failure) {
+        log.error("AgentOS gateway unavailable. path={}, type={}", path, failure.getClass().getSimpleName());
+        return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_UPSTREAM_UNAVAILABLE",
+                "AgentOS gateway unavailable.");
     }
 
-    /** Preserve upstream status for the fast asynchronous workflow preparation call. */
-    public Map<String, Object> postAsyncStart(String path, Object body) {
-        if (!agentProperties.isEnabled()) {
-            return disabledResponse(path);
-        }
-        try {
-            return webClient.post()
-                    .uri(path)
-                    .bodyValue(body != null ? body : new HashMap<>())
-                    .exchangeToMono(response -> response.bodyToMono(MAP_BODY)
-                            .defaultIfEmpty(new HashMap<>())
-                            .map(payload -> withHttpStatus(payload, response.statusCode().value())))
-                    .timeout(Duration.ofMillis(agentProperties.getAsyncStartTimeoutMs()))
-                    .onErrorResume(e -> toErrorResponse(e, path))
-                    .block();
-        } catch (Exception e) {
-            return errorResponse(e, path);
-        }
+    private Map<String, Object> error(int status, String code, String message) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("error", code);
+        result.put("message", message);
+        result.put(INTERNAL_HTTP_STATUS_KEY, status);
+        return result;
     }
 
-    public WorkflowProgressResponse parseWorkflowProgress(Map<String, Object> body) {
-        try {
-            return OBJECT_MAPPER.convertValue(body, WorkflowProgressResponse.class);
-        } catch (IllegalArgumentException exception) {
-            log.warn("AgentOS progress response validation failed. type={}",
-                    exception.getClass().getSimpleName());
-            throw new IllegalStateException("AgentOS returned an invalid progress response", exception);
-        }
-    }
-
-    public AsyncWorkflowStartResponse parseAsyncWorkflowStart(Map<String, Object> body) {
-        try {
-            return OBJECT_MAPPER.convertValue(body, AsyncWorkflowStartResponse.class);
-        } catch (IllegalArgumentException exception) {
-            log.warn("AgentOS async start response validation failed. type={}",
-                    exception.getClass().getSimpleName());
-            throw new IllegalStateException("AgentOS returned an invalid async start response", exception);
-        }
-    }
-
-    private Map<String, Object> withHttpStatus(Map<String, Object> payload, int status) {
-        Map<String, Object> response = new HashMap<>(payload == null ? Map.of() : payload);
-        response.put(INTERNAL_HTTP_STATUS_KEY, status);
-        return response;
-    }
-
-    private String safeUpstreamMessage(String body, int status) {
-        Map<String, Object> parsed = parseJsonObject(body);
+    private String safeMessage(String body, int status) {
+        Map<String, Object> parsed = parseObject(body);
         for (String key : java.util.List.of("message", "detail", "error")) {
             Object value = parsed.get(key);
             if (value instanceof String text && !text.isBlank()) {
@@ -264,56 +104,17 @@ public class AgentOsGatewayService {
                 return sanitized.substring(0, Math.min(sanitized.length(), 300));
             }
         }
-        return "AgentOS request was rejected (HTTP " + status + ")";
+        return "AgentOS request was rejected (HTTP " + status + ").";
     }
 
-    private Map<String, Object> parseJsonObject(String text) {
-        if (text == null || text.isBlank()) {
+    private Map<String, Object> parseObject(String body) {
+        if (body == null || body.isBlank()) {
             return new HashMap<>();
         }
         try {
-            return OBJECT_MAPPER.readValue(text, new TypeReference<>() {
-            });
+            return new HashMap<>(OBJECT_MAPPER.readValue(body, new TypeReference<Map<String, Object>>() { }));
         } catch (Exception ignored) {
-            Map<String, Object> response = new HashMap<>();
-            return response;
+            return new HashMap<>();
         }
-    }
-
-    public ResponseEntity<String> getTextResponse(String path) {
-        if (!agentProperties.isEnabled()) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body("AgentOS gateway is disabled by configuration. path=" + path);
-        }
-        try {
-            return webClient.get()
-                    .uri(path)
-                    .retrieve()
-                    .toEntity(String.class)
-                    .timeout(Duration.ofMillis(timeoutMs))
-                    .onErrorResume(e -> Mono.just(errorTextResponse(e, path)))
-                    .block();
-        } catch (Exception e) {
-            return errorTextResponse(e, path);
-        }
-    }
-
-    private String errorText(Throwable e, String path) {
-        return errorTextResponse(e, path).getBody();
-    }
-
-    private ResponseEntity<String> errorTextResponse(Throwable e, String path) {
-        log.error("AgentOS gateway text request failed. path={}, type={}", path, e.getClass().getSimpleName());
-        if (e instanceof WebClientResponseException webClientError) {
-            int status = webClientError.getStatusCode().is4xxClientError()
-                    ? webClientError.getStatusCode().value()
-                    : HttpStatus.BAD_GATEWAY.value();
-            String message = webClientError.getStatusCode().is4xxClientError()
-                    ? safeUpstreamMessage(webClientError.getResponseBodyAsString(), webClientError.getStatusCode().value())
-                    : "AgentOS service returned an error";
-            return ResponseEntity.status(status).body(message);
-        }
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body("AgentOS gateway unavailable.");
     }
 }

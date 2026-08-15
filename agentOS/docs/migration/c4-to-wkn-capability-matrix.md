@@ -60,7 +60,7 @@
 | Product | Legal Contract Review | 部分 | Legal prompts/RAG/pack 与端到端 API | wkn ACG + Legal Pack 非线性 Blueprint + 引用式输出 | MIGRATED | Phase 4 已完成并行、条件、审核重启、工具、记忆、血缘黄金纵切 | `test_legal_wkn_vertical_slice.py` |
 | Product | General/Native、Programmer、Education、Writer packs | 部分 | C4 domain profiles/workflows/UI | wkn Runtime + Pack capability contribution + 声明式 workflow contract | MIGRATED | Phase 6 按固定顺序完成四个 Pack，旧 memory observation 改为 ContextPack | `test_wkn_domain_packs.py`：profile/capability/workflow/tool/memory/output |
 | Product | HTTP API | 部分 | C4 `/agentos` API 投影旧 RuntimeGraph/正文 | wkn Runtime 无冻结产品 API | MIGRATED | ADR-001 冻结 `/ai/agentos/v2` 引用式投影；Run/Graph/Output/Trace/Provenance/Checkpoint/Review 分离，输出按 run 所有权解引用 | `test_agentos_v2_api.py`：正文隔离、引用归属、Trace 脱敏、幂等/冲突 |
-| Product | Spring Gateway | 无 | backend AgentOS controller/service | 无内核实现（正确边界） | MIGRATE | 仅 auth/authz/scope/DTO/proxy/error mapping | 后端无状态机/checkpoint/recovery 逻辑 |
+| Product | Spring Gateway | 无 | C4 controller 解析 progress 并暴露 RuntimeGraph/动态计数 | `/api/agentos/v2` 仅代理 Python 引用式资源；可信身份由 WebClient filter 重建 | MIGRATED | 删除旧 DTO/三前缀路由，只保留校验、scope、HTTP 代理和脱敏错误映射 | `AgentOsGatewayControllerTest`、`AgentOsGatewayServiceTest`；生产代码无状态机/checkpoint/recovery 逻辑 |
 | Product | ACG 工作台、拓扑、Trace、Provenance、Review、成果 | 无 | C4 frontend stores/views/tests；`d2e4c11` | wkn 不含产品 UI 数据适配 | MIGRATE | 保留交互，重写模型/store/derived state | 浏览器 E2E 全链；不伪造缺失字段 |
 | Product | 历史列表与运行历史 | 部分 | C4 API/frontend history | wkn WorkflowStore 提供新运行数据 | MIGRATE | 只展示新 runtime 数据 | 分页、scope、重启后查询 |
 | Product | Docker 日常开发 | 部分 | compose 仅挂载 `agentOS/src`，ai-service 现有导入失配 | wkn 需要 repo/agentOS/src 三层 path | MIGRATE | 完整挂载 agent/agentOS，使用新 volume 和六个 DB 变量 | 五服务 healthy、源码热更新 smoke |
