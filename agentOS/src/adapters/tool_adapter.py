@@ -8,8 +8,8 @@ from typing import Any, Callable, Iterable, Protocol
 class ToolRuntime(Protocol):
     """定义 Pack 使用工具运行时所需的最小能力。
 
-    具体实现负责权限、实际工具调用和审计；协议仅传递可序列化参数，不承诺
-    幂等、事务、重试或跨协程并发安全。
+    具体实现负责权限、实际工具调用和审计；协议仅传递可序列化参数。调用方可传入
+    ``commit_id`` 作为稳定幂等标识，超时、重试和并发保护由包装器统一提供。
     """
 
     def scoped(self, allowed_tools: Iterable[str]) -> "ToolRuntime":

@@ -17,9 +17,18 @@ class StructuredGenerationError(RuntimeError):
     词或模型响应，避免把敏感输入带出运行时边界。
     """
 
-    def __init__(self, code: str, message: str):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        attempts: int = 1,
+        retryable: bool = False,
+    ):
         super().__init__(message)
         self.code = code
+        self.attempts = attempts
+        self.retryable = retryable
 
 
 class StructuredGenerationResult(BaseModel):
@@ -77,12 +86,14 @@ class StructuredGenerationRuntime(Protocol):
         timeout_seconds: float = 120.0,
         max_output_tokens: int = 4096,
         prompt_version: str = "native-capability.v1",
+        commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """在给定 Schema、预算和超时内生成并解析一个 JSON 结果。
 
         成功返回不含原始响应的 ``StructuredGenerationResult``；超时、不可用、
         JSON 无效或合同不符应抛出 ``StructuredGenerationError``。实现必须遵守
-        调用者的资源参数或明确拒绝，重试与并发策略不由协议规定。
+        调用者的资源参数或明确拒绝。``commit_id`` 是节点尝试的稳定幂等标识，
+        需要原样透传给支持幂等的提供方；重试与并发策略由保护包装器统一实现。
         """
         ...
 

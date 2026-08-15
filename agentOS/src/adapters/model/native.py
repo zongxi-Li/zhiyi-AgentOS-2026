@@ -173,6 +173,7 @@ class NativeGeneralAgent(BaseAgent):
                 timeout_seconds=timeout_seconds,
                 max_output_tokens=max_output_tokens,
                 prompt_version=NATIVE_CAPABILITY_PROMPT_VERSION,
+                commit_id=context.commit_id,
             )
         except StructuredGenerationError as exc:
             thinking_enabled = thinking_mode.strip().lower() not in {
@@ -194,6 +195,7 @@ class NativeGeneralAgent(BaseAgent):
                     prompt_version=(
                         f"{NATIVE_CAPABILITY_PROMPT_VERSION}.thinking-finalization1"
                     ),
+                    commit_id=context.commit_id,
                 )
             elif exc.code != "MODEL_OUTPUT_INVALID_JSON":
                 raise
@@ -209,6 +211,7 @@ class NativeGeneralAgent(BaseAgent):
                     timeout_seconds=timeout_seconds,
                     max_output_tokens=max_output_tokens,
                     prompt_version=f"{NATIVE_CAPABILITY_PROMPT_VERSION}.json-repair1",
+                    commit_id=context.commit_id,
                 )
         generation_audit = generated.audit_record()
         if thinking_fallback_reason:
@@ -249,6 +252,7 @@ class NativeGeneralAgent(BaseAgent):
                 timeout_seconds=timeout_seconds,
                 max_output_tokens=max_output_tokens,
                 prompt_version=f"{NATIVE_CAPABILITY_PROMPT_VERSION}.repair1",
+                commit_id=context.commit_id,
             )
             invocations.append(repaired.audit_record())
             output = apply_contract_defaults(dict(repaired.data), generation_schema)

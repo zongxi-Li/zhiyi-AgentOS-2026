@@ -12,11 +12,15 @@ from adapters.model_adapter import (
     clear_model_service_factory,
     register_model_service_factory,
 )
+from adapters.guarded_model import GuardedModelRuntime
+from adapters.guarded_tool import GuardedToolRuntime, ToolInvocationError
 from .model import ModelProvider
 
 __all__ = [
     "AIService",
     "FederatedAdapter",
+    "GuardedModelRuntime",
+    "GuardedToolRuntime",
     "ModelAdapter",
     "ModelProvider",
     "ModelService",
@@ -24,6 +28,7 @@ __all__ = [
     "StructuredGenerationError",
     "StructuredGenerationResult",
     "StructuredGenerationRuntime",
+    "ToolInvocationError",
     "clear_model_service_factory",
     "register_model_service_factory",
 ]
