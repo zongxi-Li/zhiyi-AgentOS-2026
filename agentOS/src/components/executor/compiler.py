@@ -98,13 +98,23 @@ class ACGGraphCompiler:
         rules: list[CommunicationRule] = []
         step_budgets: dict[str, int] = {}
         channel_budgets: dict[str, int] = {}
-        for source_id, target_id in edges:
+        communication_channels: dict[tuple[str, str], list[str] | None] = {
+            (source_id, target_id): None for source_id, target_id in edges
+        }
+        for edge in blueprint.edges_of_type(EdgeType.COMMUNICATION):
+            communication_channels[(edge.source_id, edge.target_id)] = list(edge.data_fields)
+
+        for (source_id, target_id), edge_fields in communication_channels.items():
             source = steps.get(source_id)
             target = steps.get(target_id)
             if source is None or target is None:
                 continue
             from_map = target.input_spec.get("from") if isinstance(target.input_spec, dict) else None
-            declared_fields = from_map.get(source_id, []) if isinstance(from_map, dict) else []
+            declared_fields = (
+                edge_fields
+                if edge_fields
+                else (from_map.get(source_id, []) if isinstance(from_map, dict) else [])
+            )
             if not isinstance(declared_fields, list):
                 raise ValueError(f"communication fields for {source_id}->{target_id} must be a list")
             # 无精确 slot 声明时，以生产步骤的公开输出合同字段作为读取上界；这不是

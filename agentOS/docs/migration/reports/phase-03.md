@@ -10,7 +10,7 @@ Phase 3：由 Application 完整装配唯一 wkn WorkflowRuntime，并移除生�
 
 ## Result SHA
 
-由提交 `04 refactor(agent): migrate application runtime wiring` 固化；确切 SHA 在下一阶段报告提交时回填。
+`2675c5f46fbbaac39607d4a180a7256b4a02392f`
 
 ## Changed
 

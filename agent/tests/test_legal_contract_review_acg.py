@@ -3,15 +3,15 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentos.agents import AgentRegistry
-from agentos.core.models.types import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
-from agentos.core.runtime import WorkflowRuntime
-from agentos.core.workflow.registry import WorkflowRegistry
-from agent.app.api.agentos_core import create_router
-from agent.app.execution.runtime import configure_runtime
-from agent.app.llm.config import LLMConfig
-from agent.app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
-from agent.packs.legal import register_pack as register_legal_pack
+from service.agents import AgentRegistry
+from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
+from runtime import WorkflowRuntime
+from components.task_manager.store import WorkflowRegistry
+from app.api.agentos_core import create_router
+from app.execution.runtime import configure_runtime
+from app.llm.config import LLMConfig
+from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
+from packs.legal import register_pack as register_legal_pack
 
 
 def _runtime() -> WorkflowRuntime:
@@ -26,12 +26,21 @@ def _runtime() -> WorkflowRuntime:
     return configure_runtime(runtime)
 
 
-async def _start(runtime: WorkflowRuntime):
+async def _start(
+    runtime: WorkflowRuntime,
+    *,
+    web_search_enabled: bool = True,
+    contract_text: str = "甲方委托乙方开发 CRM，签署后付款 30%，上线后付款 70%。",
+):
     task = runtime.create_task(
         title="合同审查",
         domain="legal",
         intent="contract_review",
-        input={"source": "test", "contractText": "甲方委托乙方开发 CRM，签署后付款 30%，上线后付款 70%。"},
+        input={
+            "source": "test",
+            "contractText": contract_text,
+            "webSearchEnabled": web_search_enabled,
+        },
     )
     return await runtime.start(task.task_id, workflow_id="legal_contract_review_v1", review_mode="human_in_loop")
 
@@ -49,9 +58,14 @@ def test_canonical_contract_review_runs_on_acg_and_waits_for_review():
         assert artifacts["parse_contract"]["contract_type"]
         assert artifacts["risk_detect"]["risks"]
         assert artifacts["legal_evidence_match"]["evidences"]
+        assert any(
+            item.get("sourceType") == "web"
+            for item in artifacts["legal_evidence_match"]["evidences"]
+        )
         assert "suggestion_generate" in artifacts
         assert "report_generate" not in artifacts
         assert run.acg_blueprint is not None
+        assert run.runtime_graph.graph_version >= 2
         assert runtime.list_checkpoints(run.run_id)
 
     runtime = _runtime()
@@ -88,6 +102,13 @@ def test_acg_contract_review_approve_reject_and_need_more_info():
         assert "审核意见：通过" in report
         assert artifacts["risk_detect"]["risks"]
         assert artifacts["legal_evidence_match"]["evidences"]
+        report_output = artifacts["report_generate"]
+        expected_summary = {"high": 0, "medium": 0, "low": 0}
+        for risk in report_output["report"]["riskItems"]:
+            level = str(risk.get("level") or "medium").lower()
+            if level in expected_summary:
+                expected_summary[level] += 1
+        assert report_output["report"]["riskSummary"] == expected_summary
 
     asyncio.run(run_test())
 
@@ -101,6 +122,37 @@ class _InvalidJSONProvider:
 
     def generate_json(self, prompt: str, schema: dict, **kwargs):
         return {"invalid": True}
+
+
+class _EmptyRiskProvider(_InvalidJSONProvider):
+    provider_name = "empty-risk"
+    model = "empty-risk"
+
+    def generate_json(self, prompt: str, schema: dict, **kwargs):
+        from app.llm.schemas import compact_schema_name
+
+        schema_name = compact_schema_name(schema)
+        if schema_name == "parse_contract":
+            return {
+                "summary": "软件开发服务合同",
+                "contract_title": "软件开发服务合同",
+                "parties": [
+                    {"name": "甲方", "role": "委托方"},
+                    {"name": "乙方", "role": "开发方"},
+                ],
+                "contract_type": "软件开发服务合同",
+                "key_dates": [],
+                "amounts": [],
+                "obligations": [],
+                "scope": "软件开发",
+                "payment_terms": "",
+                "acceptance_terms": "",
+                "ip_terms": "",
+                "dispute_resolution": "",
+            }
+        if schema_name == "risk_detect":
+            return {"risks": []}
+        return super().generate_json(prompt, schema, **kwargs)
 
 
 def test_acg_contract_review_invalid_llm_json_fails_closed_without_invented_results():
@@ -142,8 +194,29 @@ def test_acg_contract_review_invalid_llm_json_fails_closed_without_invented_resu
         set_llm_gateway_for_tests(None)
 
 
+def test_acg_contract_review_repairs_valid_but_empty_risk_output_from_explicit_clauses():
+    text = (
+        "软件开发服务合同。尾款不与最终验收合格挂钩。"
+        "未提出书面异议即视为全部验收合格。"
+        "业务数据可用于模型训练并向第三方披露。"
+    )
+    set_llm_gateway_for_tests(LLMGateway(provider=_EmptyRiskProvider()))
+    try:
+        waiting = asyncio.run(
+            _start(_runtime(), web_search_enabled=False, contract_text=text)
+        )
+    finally:
+        set_llm_gateway_for_tests(None)
+
+    risk_output = waiting.output["artifacts"]["risk_detect"]
+    assert len(risk_output["risks"]) == 3
+    assert all(item["detectionSource"] == "explicit_clause_rule" for item in risk_output["risks"])
+    assert risk_output["_llm"]["source"] == "llm+deterministic_guard"
+    assert risk_output["_llm"]["empty_output_repaired"] is True
+
+
 def test_acg_contract_review_partial_retrieval_does_not_fabricate_evidence(monkeypatch):
-    from agent.packs.legal.agents import contract_review_migration as migration
+    from packs.legal.agents import contract_review_migration as migration
 
     class _PartialFailureRetriever:
         def __init__(self):
@@ -166,7 +239,7 @@ def test_acg_contract_review_partial_retrieval_does_not_fabricate_evidence(monke
 
     class _TwoRiskProvider(_InvalidJSONProvider):
         def generate_json(self, prompt: str, schema: dict, **kwargs):
-            from agent.app.llm.schemas import compact_schema_name
+            from app.llm.schemas import compact_schema_name
 
             if compact_schema_name(schema) != "risk_detect":
                 return super().generate_json(prompt, schema, **kwargs)
@@ -189,16 +262,25 @@ def test_acg_contract_review_partial_retrieval_does_not_fabricate_evidence(monke
     monkeypatch.setattr(migration, "LegalEvidenceRetriever", _PartialFailureRetriever)
     set_llm_gateway_for_tests(LLMGateway(provider=_TwoRiskProvider()))
     try:
-        run = asyncio.run(_start(_runtime()))
+        run = asyncio.run(_start(_runtime(), web_search_enabled=False))
     finally:
         set_llm_gateway_for_tests(None)
 
     evidence_output = run.output["artifacts"]["legal_evidence_match"]
-    assert [item.get("riskId") for item in evidence_output["evidences"]] == ["risk-test-1"]
-    assert evidence_output["retrieval"]["status"] == "incomplete"
-    assert evidence_output["retrieval"]["unmatched_risk_ids"] == ["risk-test-2"]
+    assert [item.get("riskId") for item in evidence_output["evidences"]] == [
+        "risk-test-1",
+        "risk-test-2",
+    ]
+    assert evidence_output["retrieval"]["status"] == "complete"
+    assert evidence_output["retrieval"]["unmatched_risk_ids"] == []
     assert len(evidence_output["retrieval"]["errors"]) == 1
     assert all(item.get("sourceType") != "mock" for item in evidence_output["evidences"])
+    recovered = next(
+        item for item in evidence_output["evidences"] if item.get("riskId") == "risk-test-2"
+    )
+    assert recovered["sourceType"] == "task-input"
+    assert recovered["metadata"]["authoritativeSourceMissing"] is True
+    assert run.runtime_graph.graph_version >= 2
 
 
 def test_acg_contract_review_api_trace_checkpoint_and_metrics():
@@ -241,7 +323,7 @@ def test_llm_config_reads_provider_key_from_secret_file(monkeypatch, tmp_path):
     assert config.base_url == "https://api.deepseek.com/v1"
 
 
-def test_force_dynamic_contract_review_builds_executable_data_dependencies():
+def test_dynamic_contract_review_builds_executable_data_dependencies():
     async def run_test():
         runtime = _runtime()
         task = runtime.create_task(
@@ -255,17 +337,28 @@ def test_force_dynamic_contract_review_builds_executable_data_dependencies():
                     "检索证据依据，生成修改建议、人工审核要点和最终报告。"
                 ),
                 "usePlanner": True,
-                "forceDynamicPlanning": True,
+                "planningMode": "dynamic",
                 "thinkingMode": "disabled",
             },
         )
         run = await runtime.start(
             task.task_id,
-            workflow_id="legal_contract_review_v1",
             review_mode="auto",
         )
 
-        assert run.status == WorkflowStatus.COMPLETED
+        assert run.status == WorkflowStatus.COMPLETED, {
+            "error": run.error,
+            "nodes": [
+                (node.node_id, node.status.value, node.error)
+                for node in run.runtime_graph.nodes
+                if node.node_type.value == "step"
+            ],
+            "planned": run.execution_state.get("selectedBindings"),
+            "events": [
+                (event.event_type.value, event.status.value, event.status_reason)
+                for event in run.runtime_graph.runtime_events
+            ],
+        }
         assert run.steps
         artifacts = run.output["artifacts"]
         assert artifacts["risk_detect"]["risks"]
@@ -275,7 +368,21 @@ def test_force_dynamic_contract_review_builds_executable_data_dependencies():
         assert report_artifact["_llm"]["source"] == "deterministic"
         assert report_artifact["_llm"]["latency_ms"] == 0
         assert "条款分类摘要" in report_artifact["report_markdown"]
+        assert "主体信息：已识别" in report_artifact["report_markdown"]
+        assert "未生成条款分类" not in report_artifact["report_markdown"]
         assert "签署前处理结论" in report_artifact["report_markdown"]
+        risk_items = report_artifact["report"]["riskItems"]
+        expected_summary = {
+            level: sum(
+                str(risk.get("level") or "medium").lower() == level
+                for risk in risk_items
+            )
+            for level in ("high", "medium", "low")
+        }
+        assert report_artifact["report"]["riskSummary"] == expected_summary
+        assert f"- 高风险：{expected_summary['high']}" in report_artifact["report_markdown"]
+        if expected_summary["high"]:
+            assert "完成修改并经专业人员复核前不建议签署" in report_artifact["report_markdown"]
         blueprint = run.acg_blueprint
         assert blueprint is not None
         nodes = blueprint["nodes"]
@@ -289,7 +396,9 @@ def test_force_dynamic_contract_review_builds_executable_data_dependencies():
         )
         assert run.runtime_graph is not None
         runtime_steps = [
-            node for node in run.runtime_graph.nodes if node.node_type.value == "step"
+            node
+            for node in run.runtime_graph.nodes
+            if node.node_type.value == "step" and node.created_graph_version == 1
         ]
         assert all(node.current_binding.get("allowedSkills") for node in runtime_steps)
         review_node = next(node for node in nodes if node["nodeId"] == "human_review")
@@ -314,7 +423,66 @@ def test_force_dynamic_contract_review_builds_executable_data_dependencies():
     asyncio.run(run_test())
 
 
-def test_force_dynamic_review_preserves_deep_thinking_until_report():
+def test_dynamic_contract_review_prefers_complete_task_goal_over_ui_summary():
+    async def run_test():
+        runtime = _runtime()
+        task = runtime.create_task(
+            title="Complete legal review",
+            domain="legal",
+            intent="contract_review_acg",
+            input={
+                "contractText": "Party A commissions Party B to develop a software system.",
+                "userIntent": "risk_detect legal_evidence_match revision_suggest",
+                "taskGoal": "识别合同风险、核验法律依据并生成修改建议",
+                "constraints": ["必须进行条款分类和人工审核"],
+                "expectedArtifacts": ["最终合同审查报告"],
+                "usePlanner": True,
+                "planningMode": "dynamic",
+                "thinkingMode": "disabled",
+                "planningDiversity": "balanced",
+                "planningSeed": 3720774559611499,
+            },
+        )
+
+        run = await runtime.start(
+            task.task_id,
+            review_mode="auto",
+        )
+
+        assert run.status == WorkflowStatus.COMPLETED
+        assert len(
+            [
+                node
+                for node in run.runtime_graph.nodes
+                if node.node_type.value == "step" and node.created_graph_version == 1
+            ]
+        ) == 7, run.execution_state.get("selectedCapabilities")
+        assert len(run.completed_step_ids) >= 7
+        assert "report_generate" in run.output["artifacts"]
+        assert run.output["artifacts"]["report_generate"]["report_markdown"]
+        assert "人工审核" in run.execution_state["selectedCapabilities"]
+        assert "报告生成" in run.execution_state["selectedCapabilities"]
+        assert all(
+            binding["agentName"] != "legal_workflow_fallback"
+            for binding in run.execution_state["selectedBindings"]
+        )
+        assert {
+            binding["capabilityId"]: binding["agentName"]
+            for binding in run.execution_state["selectedBindings"]
+        } == {
+            "文本解析": "contract_parse",
+            "条款分类": "clause_classify",
+            "风险识别": "risk_detect",
+            "证据检索": "legal_evidence_match",
+            "修改建议": "revision_suggest",
+            "人工审核": "human_review",
+            "报告生成": "report_generate",
+        }
+
+    asyncio.run(run_test())
+
+
+def test_dynamic_review_preserves_deep_thinking_until_report():
     async def run_test():
         runtime = _runtime()
         task = runtime.create_task(
@@ -325,14 +493,13 @@ def test_force_dynamic_review_preserves_deep_thinking_until_report():
                 "contractText": "甲方委托乙方开发跨境数据处理系统，并约定分阶段付款与验收。",
                 "userIntent": "解析合同、分类条款、识别风险、匹配依据、提出建议、人工审核并生成报告。",
                 "usePlanner": True,
-                "forceDynamicPlanning": True,
+                "planningMode": "dynamic",
                 "thinkingMode": "deep",
             },
         )
 
         waiting = await runtime.start(
             task.task_id,
-            workflow_id="legal_contract_review_v1",
             review_mode="human_in_loop",
         )
         assert waiting.status == WorkflowStatus.WAITING_REVIEW

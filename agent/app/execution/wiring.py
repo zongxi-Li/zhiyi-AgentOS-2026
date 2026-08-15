@@ -96,6 +96,7 @@ def build_default_runtime(
 def close_runtime(runtime: WorkflowRuntime) -> None:
     """Close resources created by this composition root without changing workflow state."""
     resources = (
+        runtime.workflow_store,
         runtime.checkpoint_store,
         runtime.execution_value_store,
         runtime.memory_store,
