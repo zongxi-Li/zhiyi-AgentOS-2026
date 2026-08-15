@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from agent.app.llm.contracts import (
+from app.llm.contracts import (
     ProviderConversationState,
     ProviderProtocolMessage,
     ProviderRawResult,

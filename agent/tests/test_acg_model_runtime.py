@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from agentos.adapters.model_adapter import StructuredGenerationError
-from agent.app.execution.model_runtime import GatewayStructuredGenerationRuntime
+from adapters.model_adapter import StructuredGenerationError
+from app.execution.model_runtime import GatewayStructuredGenerationRuntime
 
 
 class _Gateway:
@@ -18,9 +18,11 @@ class _Gateway:
         self.delay = delay
         self.active = 0
         self.max_active = 0
+        self.kwargs = []
         self._lock = Lock()
 
     def generate_json(self, prompt, schema, **kwargs):
+        self.kwargs.append(dict(kwargs))
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -117,3 +119,21 @@ def test_structured_runtime_classifies_truncated_json(monkeypatch):
         )
 
     assert raised.value.code == "MODEL_OUTPUT_INVALID_JSON"
+
+
+def test_structured_runtime_propagates_stable_commit_id(monkeypatch):
+    gateway = _Gateway()
+    monkeypatch.setattr(
+        "app.execution.model_runtime.get_llm_gateway", lambda: gateway
+    )
+    runtime = GatewayStructuredGenerationRuntime(max_concurrency=1)
+
+    asyncio.run(
+        runtime.generate_json(
+            prompt="task",
+            schema={"type": "object", "required": ["answer"]},
+            commit_id="commit:run:step:0",
+        )
+    )
+
+    assert gateway.kwargs[0]["commit_id"] == "commit:run:step:0"

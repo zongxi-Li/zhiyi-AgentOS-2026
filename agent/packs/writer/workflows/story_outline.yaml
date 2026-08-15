@@ -11,7 +11,25 @@
       "stepId": "outline_generate",
       "name": "Outline Generate",
       "agentName": "outline_generate",
-      "capability": "outline_generate"
+      "capability": "outline_generate",
+      "input": {
+        "memoryPolicy": {
+          "policyId": "writer-story-outline-v1",
+          "read": false,
+          "write": true,
+          "writeType": "episodic",
+          "requireAudit": true
+        }
+      },
+      "outputSpec": {
+        "type": "object",
+        "required": ["outline", "outline_markdown", "final_answer"],
+        "properties": {
+          "outline": {"type": "object"},
+          "outline_markdown": {"type": "string"},
+          "final_answer": {"type": "string"}
+        }
+      }
     }
   ]
 }

@@ -1,22 +1,22 @@
 import sys
 from types import SimpleNamespace
 
-from agent.app.llm.capabilities import (
+from app.llm.capabilities import (
     adapt_chat_completion_parameters,
     normalize_model_request,
     normalize_thinking_mode,
     provider_model_capabilities,
 )
-from agent.app.llm.contracts import (
+from app.llm.contracts import (
     LLMInvocationResult,
     LLMUsage,
     ModelInvocationAudit,
     ProviderRawResult,
     ThinkingMode,
 )
-from agent.app.llm.config import LLMConfig
-from agent.app.llm.providers.openai_compatible_provider import OpenAICompatibleProvider
-from agent.app.ai_engine.deepseekadapter import DeepSeekAdapter
+from app.llm.config import LLMConfig
+from app.llm.providers.openai_compatible_provider import OpenAICompatibleProvider
+from app.ai_engine.deepseekadapter import DeepSeekAdapter
 
 
 def test_legacy_thinking_values_map_to_three_internal_modes():
@@ -141,6 +141,18 @@ def test_openai_compatible_provider_uses_one_explicit_request_budget(monkeypatch
 def test_llm_config_default_budget_supports_deep_report_generation(monkeypatch):
     monkeypatch.delenv("AGENTOS_LLM_TIMEOUT_SECONDS", raising=False)
     assert LLMConfig.from_env().timeout_seconds == 120
+
+
+def test_openai_provider_maps_commit_id_to_idempotency_header():
+    provider = object.__new__(OpenAICompatibleProvider)
+    provider.model = "deepseek-v4-flash"
+    provider.base_url = "https://api.example.test/v1"
+    provider.default_thinking_mode = ThinkingMode.DISABLED
+
+    parameters = provider._adapt_parameters({"commit_id": "commit:run:step:0"})
+
+    assert parameters["extra_headers"]["Idempotency-Key"] == "commit:run:step:0"
+    assert "commit_id" not in parameters
 
 
 def test_legacy_deepseek_adapter_uses_v4_and_preserves_non_thinking_default():

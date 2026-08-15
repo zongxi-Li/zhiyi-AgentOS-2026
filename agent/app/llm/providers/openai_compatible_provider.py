@@ -4,8 +4,8 @@ import json
 import re
 from typing import Any, Dict
 
-from agent.app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
-from agent.app.llm.contracts import ProviderRawResult, ProviderToolCall
+from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
+from app.llm.contracts import ProviderRawResult, ProviderToolCall
 
 
 class LLMProviderError(RuntimeError):
@@ -84,18 +84,24 @@ class OpenAICompatibleProvider:
 
     def _adapt_parameters(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         thinking_mode = kwargs.get("thinking_mode", kwargs.get("reasoning_effort", self.default_thinking_mode))
+        commit_id = kwargs.get("commit_id")
         parameters = {
             key: value
             for key, value in kwargs.items()
-            if key not in {"thinking_mode", "reasoning_effort"} and value is not None
+            if key not in {"thinking_mode", "reasoning_effort", "commit_id"} and value is not None
         }
         parameters.setdefault("temperature", 0.1)
-        return adapt_chat_completion_parameters(
+        adapted = adapt_chat_completion_parameters(
             model=self.model,
             base_url=self.base_url,
             thinking_mode=thinking_mode,
             parameters=parameters,
         ).parameters
+        if isinstance(commit_id, str) and commit_id:
+            extra_headers = dict(adapted.get("extra_headers") or {})
+            extra_headers.setdefault("Idempotency-Key", commit_id)
+            adapted["extra_headers"] = extra_headers
+        return adapted
 
     @staticmethod
     def _json_system_prompt(schema: Dict[str, Any]) -> str:

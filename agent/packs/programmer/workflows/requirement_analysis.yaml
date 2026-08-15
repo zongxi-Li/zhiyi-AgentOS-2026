@@ -12,6 +12,23 @@
       "name": "Requirement Analysis",
       "agentName": "requirement_analysis",
       "capability": "requirement_analysis",
+      "input": {
+        "memoryPolicy": {
+          "policyId": "programmer-requirement-v1",
+          "read": false,
+          "write": true,
+          "writeType": "episodic",
+          "requireAudit": true
+        }
+      },
+      "outputSpec": {
+        "type": "object",
+        "required": ["technical_spec", "final_answer"],
+        "properties": {
+          "technical_spec": {"type": "object"},
+          "final_answer": {"type": "string"}
+        }
+      },
       "nextStepId": "codebase_semantic_search"
     },
     {
@@ -19,6 +36,29 @@
       "name": "Codebase Semantic Search",
       "agentName": "codebase_search",
       "capability": "codebase_semantic_search",
+      "input": {
+        "from": {"requirement_analysis": ["technical_spec"]},
+        "memoryPolicy": {
+          "policyId": "programmer-code-evidence-v1",
+          "read": false,
+          "write": true,
+          "writeType": "evidence",
+          "requireAudit": true
+        }
+      },
+      "outputSpec": {
+        "type": "object",
+        "required": ["query", "hits", "index_status", "sources", "evidence_refs"],
+        "properties": {
+          "query": {"type": "string"},
+          "top_k": {"type": "integer"},
+          "hits": {"type": "array"},
+          "index_status": {"type": "object"},
+          "source_query": {"type": "string"},
+          "sources": {"type": "array"},
+          "evidence_refs": {"type": "array"}
+        }
+      },
       "nextStepId": "code_generation"
     },
     {
@@ -26,13 +66,58 @@
       "name": "Code Generation",
       "agentName": "code_generation",
       "capability": "code_generation",
+      "input": {
+        "from": {
+          "requirement_analysis": ["technical_spec"],
+          "codebase_semantic_search": ["hits", "evidence_refs"]
+        },
+        "memoryPolicy": {
+          "policyId": "programmer-code-v1",
+          "read": false,
+          "write": true,
+          "writeType": "procedural",
+          "requireAudit": true
+        }
+      },
+      "outputSpec": {
+        "type": "object",
+        "required": ["target_language", "code", "explanation", "suggested_tests", "context_refs"],
+        "properties": {
+          "target_language": {"type": "string"},
+          "code": {"type": "string"},
+          "explanation": {"type": "string"},
+          "suggested_tests": {"type": "array"},
+          "context_refs": {"type": "array"}
+        }
+      },
       "nextStepId": "diagram_generation"
     },
     {
       "stepId": "diagram_generation",
       "name": "Diagram Generation",
       "agentName": "diagram_generation",
-      "capability": "diagram_generation"
+      "capability": "diagram_generation",
+      "input": {
+        "from": {"code_generation": ["target_language", "context_refs"]},
+        "memoryPolicy": {
+          "policyId": "programmer-diagram-v1",
+          "read": false,
+          "write": true,
+          "writeType": "procedural",
+          "requireAudit": true
+        }
+      },
+      "outputSpec": {
+        "type": "object",
+        "required": ["title", "diagram_type", "mermaid_code", "sequence_mermaid_code"],
+        "properties": {
+          "title": {"type": "string"},
+          "diagram_type": {"type": "string"},
+          "mermaid_code": {"type": "string"},
+          "sequence_mermaid_code": {"type": "string"},
+          "source_query": {"type": "string"}
+        }
+      }
     }
   ]
 }

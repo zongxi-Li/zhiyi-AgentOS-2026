@@ -48,6 +48,7 @@ class GatewayStructuredGenerationRuntime:
         timeout_seconds: float = 120.0,
         max_output_tokens: int = 4096,
         prompt_version: str = "native-capability.v1",
+        commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         gateway = get_llm_gateway()
         if gateway.provider_name in {"", "mock", "unavailable"}:
@@ -64,6 +65,7 @@ class GatewayStructuredGenerationRuntime:
                 schema,
                 thinking_mode=thinking_mode,
                 max_tokens=max_output_tokens,
+                commit_id=commit_id,
             )
 
         try:

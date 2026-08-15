@@ -155,7 +155,8 @@ class CodeGenerationAgent(BaseAgent):
         )
 
     async def run(self, context):
-        search_payload = context.memory.observations.get("codebase_semantic_search", {})
+        context_data = context.context_pack.data if context.context_pack is not None else {}
+        search_payload = context_data if isinstance(context_data, dict) else {}
         context_refs = [
             {"file_path": item.get("file_path"), "score": item.get("score")}
             for item in search_payload.get("hits", [])[:3]
