@@ -13,7 +13,7 @@ import uvicorn
 import logging
 
 from fastapi.exceptions import RequestValidationError
-from app.api import chat, tts, agentos_core
+from app.api import chat, tts, agentos_core, agentos_v2
 from app.paths import APP_DATA_DIR
 from app.services.aiservice import AIService
 from app.integrations.model_adapter import configure_model_adapter
@@ -90,6 +90,11 @@ ai_service = AIService()
 app.include_router(chat.router, prefix="/ai", tags=["AI"])
 app.include_router(tts.router, prefix="/ai", tags=["TTS"])
 app.include_router(agentos_core.router, prefix="/ai", tags=["AgentOSCore"])
+app.include_router(
+    agentos_v2.create_router(agentos_core.runtime, agentos_core.coordinator),
+    prefix="/ai",
+    tags=["AgentOS v2"],
+)
 if settings.SSE_TEST_MODE:
     from app.api import sse_test
     app.include_router(sse_test.router, prefix="/ai", tags=["SSETest"])
