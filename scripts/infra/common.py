@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 DEPLOYMENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,31}$")
-VOLUME_SUFFIXES = ("postgres_data_v11", "redis_data_v11", "agentos_data_v11", "backend_uploads_v11", "ai_cache_v11")
+VOLUME_SUFFIXES = ("postgres_data_v11", "redis_data_v11", "agentos_wkn_data_v1", "backend_uploads_v11", "ai_cache_v11")
 
 
 def compose_command(*args: str) -> list[str]:

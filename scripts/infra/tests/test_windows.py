@@ -131,7 +131,10 @@ def test_windows_development_uses_locked_dependencies_and_complete_frontend_moun
     ai_dockerfile = (ROOT / "agent" / "Dockerfile.dev").read_text(encoding="utf-8")
     ai_entrypoint = (ROOT / "agent" / "docker-entrypoint-dev.sh").read_text(encoding="utf-8")
 
-    assert "requirements.lock:/app/requirements.lock:ro" in compose
+    assert "./agent:/app/agent" in compose
+    assert "./agentOS:/app/agentOS" in compose
+    assert "base_manifest=/app/agent/requirements.lock" in ai_entrypoint
+    assert "tools_manifest=/app/agent/requirements.tools.lock" in ai_entrypoint
     assert "--require-hashes --only-binary=:all:" in ai_dockerfile
     assert "--require-hashes --only-binary=:all:" in ai_entrypoint
     for filename in ("index.html", "vite.config.ts", "tsconfig.json", "tsconfig.node.json"):

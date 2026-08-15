@@ -96,6 +96,8 @@ def main() -> int:
     secrets = Path(args.secrets_dir).resolve()
     verify_checksums(backup)
     manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("formatVersion") != "1.2" or manifest.get("agentosKernel") != "wkn-3f6c536":
+        raise SystemExit("backup is not a wkn AgentOS v1.2 backup; C4 data restore is intentionally unsupported")
     target = validate_deployment_id(args.target_deployment_id)
     source = validate_deployment_id(manifest["deploymentId"])
     if target == source:
@@ -119,16 +121,16 @@ def main() -> int:
     verify_volume_labels(target, targets)
 
     restore_archive(targets["backend_uploads_v11"], backup, "backend-uploads.tar.gz")
-    restore_archive(targets["agentos_data_v11"], backup, "agentos-data.tar.gz")
+    restore_archive(targets["agentos_wkn_data_v1"], backup, "agentos-data.tar.gz")
     restore_archive(targets["ai_cache_v11"], backup, "ai-cache.tar.gz")
     write_deployment_marker(targets["backend_uploads_v11"], target)
-    write_deployment_marker(targets["agentos_data_v11"], target)
+    write_deployment_marker(targets["agentos_wkn_data_v1"], target)
     write_deployment_marker(targets["ai_cache_v11"], target)
     # Replace the archived live database files with the standalone SQLite
     # backup produced by sqlite3_backup(), and discard stale WAL sidecars.
     python_helper = os.environ.get("IMAGE_AI_SERVICE", os.environ.get("KINLIN_AI_IMAGE", "kinlin-ai-service:dev"))
     run([
-        "docker", "run", "--rm", "--entrypoint", "python", "-v", f'{targets["agentos_data_v11"]}:/data',
+        "docker", "run", "--rm", "--entrypoint", "python", "-v", f'{targets["agentos_wkn_data_v1"]}:/data',
         "-v", f"{backup}:/backup:ro", python_helper, "-c",
         "import pathlib,shutil; d=pathlib.Path('/data/agentos'); d.mkdir(parents=True,exist_ok=True); shutil.copyfile('/backup/agentos-workflows.sqlite3',d/'workflows.sqlite3'); (d/'workflows.sqlite3').chmod(0o640); [(p.unlink()) for p in (d/'workflows.sqlite3-wal',d/'workflows.sqlite3-shm') if p.exists()]",
     ])
@@ -188,7 +190,7 @@ SQL'''
         raise SystemExit(f"Redis sample count mismatch: expected={manifest['redisSampleReadCount']} actual={restored_samples}")
 
     sqlite_check = run([
-        "docker", "run", "--rm", "--entrypoint", "python", "-v", f'{targets["agentos_data_v11"]}:/data:ro', python_helper,
+        "docker", "run", "--rm", "--entrypoint", "python", "-v", f'{targets["agentos_wkn_data_v1"]}:/data:ro', python_helper,
         "-c", "import sqlite3,json; c=sqlite3.connect('file:/data/agentos/workflows.sqlite3?mode=ro&immutable=1',uri=True); print(json.dumps({'integrity':c.execute('pragma integrity_check').fetchone()[0],'tasks':c.execute('select count(*) from tasks').fetchone()[0],'runs':c.execute('select count(*) from runs').fetchone()[0]}))",
     ]).stdout.strip()
 

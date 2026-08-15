@@ -143,13 +143,13 @@ done'''
     compose(deployment_id, "cp", "redis:/data/dump.rdb", str(output / "redis-dump.rdb"), capture=False)
 
     archive_volume(volumes["backend_uploads_v11"], output, "backend-uploads.tar.gz")
-    archive_volume(volumes["agentos_data_v11"], output, "agentos-data.tar.gz")
+    archive_volume(volumes["agentos_wkn_data_v1"], output, "agentos-data.tar.gz")
     archive_volume(volumes["ai_cache_v11"], output, "ai-cache.tar.gz")
     # The application is stopped before this point.  The backup helper needs a
     # writable source mount so SQLite can create/refresh WAL shared-memory state
     # while its online backup API takes the consistent snapshot.
     python_helper = os.environ.get("IMAGE_AI_SERVICE", os.environ.get("KINLIN_AI_IMAGE", "kinlin-ai-service:dev"))
-    run(["docker", "run", "--rm", "--entrypoint", "python", "-v", f'{volumes["agentos_data_v11"]}:/data', "-v", f"{output.resolve()}:/backup", python_helper, "-c", "import sqlite3,json,pathlib; s=sqlite3.connect('file:/data/agentos/workflows.sqlite3?mode=rw',uri=True); d=sqlite3.connect('/backup/agentos-workflows.sqlite3'); s.backup(d); ok=d.execute('pragma integrity_check').fetchone()[0]; counts={'integrity':ok,'tasks':d.execute('select count(*) from tasks').fetchone()[0],'runs':d.execute('select count(*) from runs').fetchone()[0]}; pathlib.Path('/backup/agentos-sqlite-verification.json').write_text(json.dumps(counts)); d.close(); s.close()"], capture=False)
+    run(["docker", "run", "--rm", "--entrypoint", "python", "-v", f'{volumes["agentos_wkn_data_v1"]}:/data', "-v", f"{output.resolve()}:/backup", python_helper, "-c", "import sqlite3,json,pathlib; s=sqlite3.connect('file:/data/agentos/workflows.sqlite3?mode=rw',uri=True); d=sqlite3.connect('/backup/agentos-workflows.sqlite3'); s.backup(d); ok=d.execute('pragma integrity_check').fetchone()[0]; counts={'integrity':ok,'tasks':d.execute('select count(*) from tasks').fetchone()[0],'runs':d.execute('select count(*) from runs').fetchone()[0]}; pathlib.Path('/backup/agentos-sqlite-verification.json').write_text(json.dumps(counts)); d.close(); s.close()"], capture=False)
 
     shutil.copy2(schema_report_path, output / "schema-audit.json")
     images = image_inventory(deployment_id)
@@ -157,7 +157,8 @@ done'''
     redis_size = int(next(line.split("=", 1)[1] for line in redis_lines if line.startswith("dbsize=")))
     redis_samples = sum(line.startswith("sample_read_ok ") for line in redis_lines)
     manifest = {
-        "formatVersion": "1.1",
+        "formatVersion": "1.2",
+        "agentosKernel": "wkn-3f6c536",
         "deploymentId": deployment_id,
         "createdAt": timestamp,
         "database": args.database,

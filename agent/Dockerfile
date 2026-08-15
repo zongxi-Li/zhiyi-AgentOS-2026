@@ -28,8 +28,8 @@ LABEL org.opencontainers.image.title="Kinlin AI Service" \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/agentOS/src:/app \
-    AGENTOS_PACKS_DIR=/app/packs \
+    PYTHONPATH=/app:/app/agent:/app/agentOS:/app/agentOS/src \
+    AGENTOS_PACKS_DIR=/app/agent/packs \
     VIRTUAL_ENV=/opt/kinlin-venv \
     PATH=/opt/kinlin-venv/bin:$PATH
 
@@ -44,19 +44,13 @@ RUN apt-get update \
     && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin kinlin
 
 COPY --from=build /opt/kinlin-venv /opt/kinlin-venv
-COPY agent/requirements.lock ./requirements.lock
-COPY agent/requirements.tools.lock ./requirements.tools.lock
-
-COPY agent/app ./app
-COPY agent/packs ./packs
-COPY agent/knowledge ./knowledge
-COPY agent/agentos.py ./agentos.py
-COPY agentOS/src ./agentOS/src
+COPY agent ./agent
+COPY agentOS ./agentOS
 COPY backend/src ./workspace/backend/src
 COPY frontend/src ./workspace/frontend/src
 COPY agent/app ./workspace/agent/app
 COPY agent/packs ./workspace/agent/packs
-COPY agentOS/src ./workspace/agentOS/src
+COPY agentOS ./workspace/agentOS
 
 RUN mkdir -p /app/data /app/logs /app/.cache /run/kinlin-secrets \
     && chown -R 10002:10002 /app /run/kinlin-secrets

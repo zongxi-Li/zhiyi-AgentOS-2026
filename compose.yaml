@@ -70,9 +70,15 @@ services:
     environment:
       KINLIN_DEPLOYMENT_ID: ${KINLIN_DEPLOYMENT_ID}
       ENVIRONMENT: ${KINLIN_ENVIRONMENT:-production}
-      AGENTOS_PACKS_DIR: /app/packs
-      AGENTOS_DATA_DIR: /app/data
+      PYTHONPATH: /app:/app/agent:/app/agentOS:/app/agentOS/src
+      AGENTOS_PACKS_DIR: /app/agent/packs
+      AGENTOS_DATA_DIR: /app/data/agentos
       AGENTOS_WORKFLOW_DB_PATH: /app/data/agentos/workflows.sqlite3
+      AGENTOS_LANGGRAPH_CHECKPOINT_DB: /app/data/agentos/langgraph_checkpoints.sqlite3
+      AGENTOS_EXECUTION_VALUE_DB: /app/data/agentos/execution_values.sqlite3
+      AGENTOS_EXECUTION_MEMORY_DB: /app/data/agentos/execution_memory.sqlite3
+      AGENTOS_PROVENANCE_DB: /app/data/agentos/provenance.sqlite3
+      AGENTOS_AUDIT_DB: /app/data/agentos/audit_decisions.sqlite3
       AGENTOS_SQLITE_BUSY_TIMEOUT_MS: ${AGENTOS_SQLITE_BUSY_TIMEOUT_MS:-5000}
       AGENTOS_PLANNING_ENTROPY_SIMPLE: ${AGENTOS_PLANNING_ENTROPY_SIMPLE:-2048}
       AGENTOS_PLANNING_ENTROPY_MEDIUM: ${AGENTOS_PLANNING_ENTROPY_MEDIUM:-4096}
@@ -215,7 +221,7 @@ volumes:
     name: ${KINLIN_DEPLOYMENT_ID}_redis_data_v11
     labels: {com.kinlin.deployment-id: "${KINLIN_DEPLOYMENT_ID}"}
   agentos-data:
-    name: ${KINLIN_DEPLOYMENT_ID}_agentos_data_v11
+    name: ${KINLIN_DEPLOYMENT_ID}_agentos_wkn_data_v1
     labels: {com.kinlin.deployment-id: "${KINLIN_DEPLOYMENT_ID}"}
   backend-uploads:
     name: ${KINLIN_DEPLOYMENT_ID}_backend_uploads_v11
