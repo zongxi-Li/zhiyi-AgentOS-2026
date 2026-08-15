@@ -10,7 +10,7 @@ Phase 7：以真实 `WorkflowRuntime` 为唯一真源，冻结引用优先的 Ap
 
 ## Result SHA
 
-由提交 `08 feat(api): establish AgentOS application API` 固化；确切 SHA 在 Phase 8 报告提交时回填。
+`1bee526d6624d945d9aff618cb16eb0cd7b2c773`
 
 ## Changed
 

@@ -1,0 +1,31 @@
+package com.kinlin.ai.dto.agentos;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+import java.util.List;
+import java.util.Map;
+
+/** Validated transport DTO; workflow state remains owned by Python. */
+public record AgentOsRunCreateRequest(
+        @NotBlank @Size(max = 500) String title,
+        String domain,
+        String intent,
+        String workflowId,
+        String reviewMode,
+        Map<String, Object> input,
+        String securityLevel,
+        String priority,
+        List<String> enabledPluginIds,
+        @Size(max = 200) String clientRequestId
+) {
+    public AgentOsRunCreateRequest {
+        domain = domain == null ? "general" : domain;
+        intent = intent == null ? "general" : intent;
+        reviewMode = reviewMode == null ? "auto" : reviewMode;
+        input = input == null ? Map.of() : Map.copyOf(input);
+        securityLevel = securityLevel == null ? "internal" : securityLevel;
+        priority = priority == null ? "normal" : priority;
+        enabledPluginIds = enabledPluginIds == null ? null : List.copyOf(enabledPluginIds);
+    }
+}
