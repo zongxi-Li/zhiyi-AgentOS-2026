@@ -1,0 +1,495 @@
+"""AgentOS 单节点固定执行管线。
+
+每个图节点必须按同一顺序运行：装配 ContextPack → 受限记忆检索 → 熵预算与输入合同
+校验 → Agent/Tool Adapter 调用 → 输出合同与字段白名单校验 → 受控记忆/血缘登记 →
+返回摘要和引用。图 State 只接收最后一步的引用，真实输入输出始终留在 AgentOS 服务边界。
+
+第三方来源：LangGraph 1.2.10，commit d56666f7fbf0d380ad84cdf0cbe5aa48ab0cc086；
+来源模块 ``libs/langgraph/langgraph/pregel``、``graph/state.py``。该实现改写为调用
+AgentOS 通信、记忆、Adapter 与审计边界，不暴露 LangGraph 对象；完整 MIT 许可证见
+``docs/THIRD_PARTY_NOTICES.md``。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from components.communicator import CommunicatorService
+from components.communicator.contracts import ContextPack, estimate_tokens
+from components.auditor.execution_audit import ExecutionAuditService
+from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
+from components.memory import MemoryService
+from adapters.agent_invocation import AgentInvocationAdapter
+from contracts.communication import validate_contract_payload
+from contracts.governance import AuditRequest
+from contracts.memory import MemoryPolicy, MemoryType
+from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from service.agents.base import BaseAgent, AgentRunContext
+
+from .graph import ACGExecutionState
+from .value_store import ExecutionValueStore, InMemoryExecutionValueStore
+
+
+class EntropyBudgetExceededError(ValueError):
+    """跨步骤上下文的估算熵超过运行允许的预算，Adapter 尚未被调用。"""
+
+
+class ACGNodeRunner:
+    """执行固定节点管线，并仅返回可安全写入执行 State 的摘要和引用。"""
+
+    def __init__(
+        self,
+        *,
+        task: AgentTask,
+        run: WorkflowRun,
+        workflow: WorkflowDefinition,
+        steps: Mapping[str, WorkflowStep],
+        agents: Mapping[str, BaseAgent],
+        communicator: CommunicatorService,
+        memory: MemoryService,
+        entropy_budget: int | None = None,
+        value_store: ExecutionValueStore | None = None,
+        communication_modes: Mapping[str, str] | None = None,
+        upstream_step_ids: Mapping[str, tuple[str, ...]] | None = None,
+        execution_audit: ExecutionAuditService | None = None,
+        decision_store: DecisionStore | None = None,
+        agent_invoker: AgentInvocationAdapter | None = None,
+        model_runtime: object | None = None,
+        capability_descriptors: Mapping[str, object] | None = None,
+        tool_runtime: object | None = None,
+    ) -> None:
+        """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
+        self.task = task
+        self.run = run
+        self.workflow = workflow
+        self.steps = dict(steps)
+        self.agents = dict(agents)
+        self.communicator = communicator
+        self.memory = memory
+        self.entropy_budget = entropy_budget
+        # 显式依赖受控仓库，而不是由运行器拼接伪引用。这样节点产物的归属、读取校验
+        # 与不可变副本语义集中在唯一服务边界中，State 只会接触返回的字符串引用。
+        self.value_store = value_store or InMemoryExecutionValueStore()
+        self.communication_modes = dict(communication_modes or {})
+        self.upstream_step_ids = {
+            node_id: tuple(source_ids)
+            for node_id, source_ids in (upstream_step_ids or {}).items()
+        }
+        self.execution_audit = execution_audit or ExecutionAuditService()
+        # 审计决定必须先于输出、记忆和提交记录落入独立真源。最小运行器使用内存
+        # 实现；WorkflowRuntime 会注入可跨进程恢复的 SQLite 实现。
+        self.decision_store = decision_store or InMemoryDecisionStore()
+        self.agent_invoker = agent_invoker
+        self.model_runtime = model_runtime
+        self.capability_descriptors = dict(capability_descriptors or {})
+        self.tool_runtime = tool_runtime
+
+    @classmethod
+    def minimal(cls, *, agent: BaseAgent, entropy_budget: int | None = None) -> "ACGNodeRunner":
+        """构造测试用最小节点运行器，生产运行时应显式注入全部运行范围。"""
+        task = AgentTask(taskId="task", title="ACG node")
+        run = WorkflowRun(taskId=task.task_id, workflowId="workflow", domain="general", runtimeEngine="acg")
+        workflow = WorkflowDefinition(workflowId="workflow", name="workflow", domain="general", intent="general", runtimeEngine="acg")
+        step = WorkflowStep(stepId="one", name="one", agentName=agent.profile.agent_name)
+        return cls(task=task, run=run, workflow=workflow, steps={"one": step}, agents={"one": agent}, communicator=CommunicatorService(run_id=run.run_id, task_id=task.task_id), memory=MemoryService(), entropy_budget=entropy_budget)
+
+    async def __call__(self, step_id: str, state: ACGExecutionState) -> dict[str, Any]:
+        """执行一个 Step，并返回 Pregel 轮次可消费的受控结果。
+
+        ``routeValue`` 是条件控制节点在同轮读取的短生命周期值；执行图只会使用它来
+        选择已声明分支，不会把它写入 ``ACGExecutionState`` 或 checkpoint。
+        """
+        step = self.steps[step_id]
+        agent = self.agents[step_id]
+        commit_id = self._commit_id(state.run_id, step_id, step.attempt)
+        committed = self.value_store.get_node_commit(run_id=state.run_id, commit_id=commit_id)
+        if committed is not None and committed.get("stage") == "committed":
+            # 重启恢复或投影中断后再次调度同一步骤时，提交记录是唯一真源。它只返回
+            # 已保存的安全引用与元数据，不能重新调用 Agent、重复写记忆或制造新 Trace。
+            replayed = dict(committed)
+            self._validate_committed_references(
+                run_id=state.run_id,
+                step_id=step_id,
+                payload=replayed,
+            )
+            output_ref = replayed.get("outputRef")
+            if isinstance(output_ref, str):
+                # 条件值不允许进入提交记录或 checkpoint。需要路由时仅在本轮从已受控的
+                # 输出引用短暂读取，之后仍由图层消费而不会持久化到执行状态。
+                replayed["routeValue"] = self.value_store.get_output(
+                    run_id=state.run_id,
+                    output_ref=output_ref,
+                )
+            return replayed
+        # 先持久化 prepared，再进入 Agent/Tool 适配边界。若中断发生在外部调用期间，
+        # 恢复会传递同一 commitId，外部实现可据此幂等重试；不会误认为已完成。
+        self.value_store.prepare_node_commit(run_id=state.run_id, commit_id=commit_id)
+        # State 只有摘要/引用。上游完整 slot 值必须由通信服务根据 outputRef 从受控
+        # 仓库读取；运行器不能从摘要推断数据，也不能旁路仓库获取全量 Agent 输出。
+        estimated_entropy = sum(estimate_tokens(summary) for summary in state.output_summaries.values())
+        if self.entropy_budget is not None and estimated_entropy > self.entropy_budget:
+            raise EntropyBudgetExceededError(
+                f"step {step_id} estimated entropy {estimated_entropy} exceeds budget {self.entropy_budget}"
+            )
+        mode = self.communication_modes.get(step_id, "STRICT_CONTRACT")
+        if mode == "EVENT":
+            # EVENT 是纯通知：只把 outputRef 转为证据引用，绝不调用仓库读取其正文。
+            # 上游列表由编译后的依赖图注入，避免无关步骤的事件引用被额外暴露。
+            source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
+            pack = ContextPack(
+                runId=state.run_id,
+                stepId=step_id,
+                objective=self.workflow.description,
+                stepGoal=step.name,
+                evidenceRefs=[
+                    f"event:{state.output_refs[source_id]}"
+                    for source_id in source_ids
+                    if source_id in state.output_refs
+                ],
+                sourceStepIds=list(source_ids),
+            )
+        else:
+            pack = self.communicator.assemble_execution_context(
+                run_id=state.run_id,
+                task_id=self.task.task_id,
+                step_id=step_id,
+                input_spec=step.input,
+                upstream_refs=state.output_refs,
+                value_store=self.value_store,
+                objective=self.workflow.description,
+                step_goal=step.name,
+                token_budget=self.entropy_budget,
+                operation_id=commit_id,
+            )
+        if pack.contract_status != "valid":
+            raise ValueError(f"input contract is incomplete for {step_id}: {', '.join(pack.missing_fields)}")
+        input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
+        validate_contract_payload(pack.data, input_schema, step_id=step_id, direction="input")
+        memory_policy = self._memory_policy(step.input)
+        memories = (
+            self.memory.recall_for_step(
+                run_id=state.run_id,
+                step_id=step_id,
+                query=step.name or step_id,
+                memory_types=memory_policy["readTypes"] or None,
+                limit=memory_policy["limit"],
+                token_budget=memory_policy["tokenBudget"],
+            )
+            if memory_policy["read"]
+            else []
+        )
+        memory_access = {
+            "policyId": memory_policy["policyId"],
+            "read": memory_policy["read"],
+            "readCount": len(memories),
+            "write": memory_policy["write"],
+            "written": False,
+            "readTypes": [item.value for item in memory_policy["readTypes"]],
+            "writeType": (
+                memory_policy["writeType"].value
+                if memory_policy["writeType"] is not None
+                else None
+            ),
+            "limit": memory_policy["limit"],
+            "tokenBudget": memory_policy["tokenBudget"],
+            "tokensUsed": sum(estimate_tokens(record.content) for record in memories),
+            "requireAudit": memory_policy["requireAudit"],
+        }
+        # 每个 Step 创建独立的受限工具视图，使并行节点的事件缓冲区彼此隔离；
+        # 视图只能继承既有授权集合，不能在节点内扩大权限。
+        step_tool_runtime = self.tool_runtime
+        if self.tool_runtime is not None and hasattr(self.tool_runtime, "scoped"):
+            allowed = getattr(self.tool_runtime, "allowed_tools", ())
+            step_tool_runtime = self.tool_runtime.scoped(allowed)
+        agent_context = AgentRunContext(
+            task=self.task,
+            run=self.run,
+            workflow=self.workflow,
+            step=step,
+            memory=memories,
+            contextPack=pack,
+            toolRuntime=step_tool_runtime,
+            modelRuntime=self.model_runtime,
+            capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
+            commitId=commit_id,
+        )
+        output = (
+            await self.agent_invoker.invoke(context=agent_context)
+            if self.agent_invoker is not None
+            else await agent.run(agent_context)
+        )
+        tool_events = list(output.tool_executions)
+        runtime_events = getattr(step_tool_runtime, "events", None)
+        if isinstance(runtime_events, list):
+            tool_events.extend(runtime_events)
+        payload = dict(output.output)
+        validate_contract_payload(payload, step.output_spec, step_id=step_id, direction="output")
+        allowed = set((step.output_spec.get("properties") or {}).keys()) if step.output_spec else set(payload)
+        controlled = {key: value for key, value in payload.items() if key in allowed}
+        risk_level = (output.risk_level or "").lower()
+        severity_counts = {risk_level: 1} if risk_level else {}
+        decision = self.execution_audit.assess_node(
+            request=AuditRequest(
+                requestId=f"audit:{state.run_id}:{step_id}",
+                # 审计发生在持久化前，使用一次性待定引用，避免 deny 结果落入
+                # 输出仓库或记忆仓库；allow/review 后再生成正式引用。
+                subjectRef=f"pending:{state.run_id}:{step_id}",
+                auditType="node_output",
+                evidenceRefs=[f"trace:{step_id}"],
+            ),
+            severity_counts=severity_counts,
+            memory_access=memory_access,
+        )
+        self._require_audit_decision(decision)
+        self.decision_store.save(run_id=state.run_id, step_id=step_id, decision=decision)
+        persisted_decision = self.decision_store.assert_decision(
+            run_id=state.run_id,
+            step_id=step_id,
+            decision_ref=decision.decision_id,
+            outcomes={decision.outcome},
+        )
+        if persisted_decision.outcome == "deny":
+            return {
+                "outputSummary": output.summary or f"denied:{step_id}",
+                "reviewRequired": False,
+                "auditDecisionRef": persisted_decision.decision_id,
+                "auditOutcome": persisted_decision.outcome,
+                "modelInvocations": self._safe_model_invocations(output.model_invocations),
+                "memoryAccess": memory_access,
+            }
+
+        self.communicator.record_production(
+            step_id,
+            controlled,
+            agent_name=agent.profile.agent_name,
+            operation_id=commit_id,
+        )
+        output_ref = self.value_store.put_output(
+            run_id=state.run_id,
+            step_id=step_id,
+            payload=controlled,
+        )
+        context_ref = self.value_store.put_context_pack(
+            run_id=state.run_id,
+            step_id=step_id,
+            payload=pack.model_dump(by_alias=True, mode="json"),
+        )
+        memory_record = None
+        pending_memory: dict[str, str] | None = None
+        if persisted_decision.outcome == "allow" and memory_policy["write"]:
+            memory_record = self.memory.remember_step_output(
+                run_id=state.run_id,
+                step_id=step_id,
+                output=controlled,
+                memory_type=memory_policy["writeType"],
+                policy=self._write_memory_policy(memory_policy),
+            )
+        elif persisted_decision.outcome == "review" and memory_policy["write"]:
+            # 需要人工复核的内容只留下可校验输出引用和策略意图。正文仍在值仓库，
+            # 批准前不进入正式 MemoryStore，也不产生可被下游读取的 memoryRef。
+            pending_memory = {
+                "outputRef": output_ref,
+                "policyId": str(memory_policy["policyId"]),
+                "writeType": memory_policy["writeType"].value,
+                "auditDecisionRef": persisted_decision.decision_id,
+            }
+        memory_access["written"] = memory_record is not None
+        result = {
+            "commitId": commit_id,
+            "outputSummary": output.summary or f"completed:{step_id}",
+            "contextRef": context_ref,
+            "traceRef": f"trace:{step_id}",
+            "outputRef": output_ref,
+            # 审计器只给出可重放的治理事实；Pregel 图在提交节点结果后决定是否中断，
+            # 因此审计部件不会越权修改 WorkflowRun 或驱动图状态。
+            "reviewRequired": persisted_decision.outcome == "review",
+            "auditDecisionRef": persisted_decision.decision_id,
+            "auditOutcome": persisted_decision.outcome,
+            # 模型审计只保留已由 Agent 输出的调用元数据白名单，绝不回写 prompt、
+            # 生成正文或供应商对象。Trace 投影层可直接消费该紧凑列表。
+            "modelInvocations": self._safe_model_invocations(output.model_invocations),
+            "toolCalls": self._safe_tool_calls(tool_events),
+            "provenanceEvents": self.communicator.drain_provenance_events(step_id=step_id),
+            # 仅含策略、条数和预算统计；记忆正文始终留在 MemoryService/Store 中。
+            "memoryAccess": memory_access,
+            # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
+            "routeValue": controlled,
+        }
+        if persisted_decision.outcome != "review":
+            result["memoryRef"] = memory_record.memory_id if memory_record is not None else "memory:none"
+        if pending_memory is not None:
+            result["pendingMemory"] = pending_memory
+        # 在图状态投影之前固化不可变提交边界。若后续 Runtime 在 Trace 或 checkpoint
+        # 之间中断，恢复后将复用这份记录，而不是再次执行 Agent 或重复产生副作用。
+        commit_record = {
+            key: value
+            for key, value in result.items()
+            if key != "routeValue"
+        }
+        self.value_store.complete_node_commit(
+            run_id=state.run_id,
+            commit_id=commit_id,
+            payload=commit_record,
+        )
+        return result
+
+    @staticmethod
+    def _safe_model_invocations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """裁剪模型调用审计字段，避免 prompt、响应正文或任意扩展载荷进入 Trace。"""
+        allowed = {"provider", "model", "latencyMs", "promptVersion", "usage"}
+        return [
+            {key: value for key, value in record.items() if key in allowed}
+            for record in records
+            if isinstance(record, dict)
+        ]
+
+    @staticmethod
+    def _safe_tool_calls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """裁剪工具调用审计字段，禁止参数正文进入执行事件。"""
+        allowed = {"tool", "name", "status", "latencyMs", "errorCode"}
+        result: list[dict[str, Any]] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            safe = {key: value for key, value in record.items() if key in allowed}
+            identity = tuple(sorted((key, repr(value)) for key, value in safe.items()))
+            if identity not in seen:
+                seen.add(identity)
+                result.append(safe)
+        return result
+
+    @staticmethod
+    def _memory_policy(step_input: object) -> dict[str, Any]:
+        """解析已冻结的步骤记忆策略，并拒绝无法审计的错误声明。
+
+        策略存放在 ``WorkflowStep.input.memoryPolicy``，因为它是 ACG Blueprint
+        元数据同步到本次运行后的私有边界。新格式明确用 ``readTypes`` 表示可读取的
+        类别、用 ``writeType`` 表示输出写入类别，避免一个字段承担相反方向的权限。
+        缺失策略与旧 ``allowedTypes`` 格式仅作兼容输入，解析结果始终是新格式。
+        """
+        raw = step_input.get("memoryPolicy") if isinstance(step_input, dict) else None
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("memoryPolicy must be an object")
+        read = raw.get("read", True)
+        write = raw.get("write", True)
+        require_audit = raw.get("requireAudit", False)
+        if not all(isinstance(item, bool) for item in (read, write, require_audit)):
+            raise ValueError("memoryPolicy read, write and requireAudit must be booleans")
+        uses_new_types = "readTypes" in raw or "writeType" in raw
+        if uses_new_types and "allowedTypes" in raw:
+            raise ValueError("memoryPolicy cannot mix allowedTypes with readTypes or writeType")
+        if uses_new_types:
+            read_raw = raw.get("readTypes", [])
+            if not isinstance(read_raw, list):
+                raise ValueError("memoryPolicy.readTypes must be a list")
+            if read and not read_raw:
+                raise ValueError("memoryPolicy.readTypes must not be empty when read is enabled")
+            if write and raw.get("writeType") is None:
+                raise ValueError("memoryPolicy.writeType is required when write is enabled")
+            if not write and raw.get("writeType") is not None:
+                raise ValueError("memoryPolicy.writeType requires write to be enabled")
+            write_raw = raw.get("writeType")
+        else:
+            has_allowed_types = "allowedTypes" in raw
+            read_raw = raw.get("allowedTypes", [])
+            if not isinstance(read_raw, list):
+                raise ValueError("memoryPolicy.allowedTypes must be a list")
+            if has_allowed_types and not read_raw:
+                raise ValueError("memoryPolicy.allowedTypes must not be empty when declared")
+            # 旧策略的写入行为固定为 episodic；保留它，避免历史 Blueprint 改变结果。
+            write_raw = MemoryType.EPISODIC if write else None
+        try:
+            read_types = [
+                item if isinstance(item, MemoryType) else MemoryType(str(item))
+                for item in read_raw
+            ]
+            write_type = (
+                write_raw
+                if isinstance(write_raw, MemoryType)
+                else MemoryType(str(write_raw))
+                if write_raw is not None
+                else None
+            )
+        except ValueError as exc:
+            raise ValueError("memoryPolicy readTypes or writeType contains an unsupported memory type") from exc
+        limit = raw.get("limit", 10)
+        token_budget = raw.get("tokenBudget")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("memoryPolicy.limit must be an integer between 1 and 100")
+        if token_budget is not None and (
+            not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget < 0
+        ):
+            raise ValueError("memoryPolicy.tokenBudget must be a non-negative integer or null")
+        policy_id = raw.get("policyId", "default")
+        if not isinstance(policy_id, str) or not policy_id:
+            raise ValueError("memoryPolicy.policyId must be a non-empty string")
+        return {
+            "policyId": policy_id,
+            "read": read,
+            "write": write,
+            "readTypes": read_types,
+            "writeType": write_type,
+            "limit": limit,
+            "tokenBudget": token_budget,
+            "requireAudit": require_audit,
+        }
+
+    @staticmethod
+    def _write_memory_policy(policy: Mapping[str, Any]) -> MemoryPolicy | None:
+        """把步骤的单一写入类别收敛成 MemoryService 可执行的准入策略。"""
+        write_type = policy["writeType"]
+        if write_type is None:
+            return None
+        return MemoryPolicy(
+            policyId=str(policy["policyId"]),
+            allowedTypes=[write_type],
+            requireAudit=bool(policy["requireAudit"]),
+        )
+
+    def _validate_committed_references(
+        self,
+        *,
+        run_id: str,
+        step_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """重放提交前重验其正文引用，防止损坏记录把其他步骤的数据带回图状态。"""
+        output_ref = payload.get("outputRef")
+        if isinstance(output_ref, str):
+            self.value_store.assert_reference(
+                kind="output", run_id=run_id, step_id=step_id, reference=output_ref
+            )
+        context_ref = payload.get("contextRef")
+        if isinstance(context_ref, str):
+            self.value_store.assert_reference(
+                kind="context", run_id=run_id, step_id=step_id, reference=context_ref
+            )
+        decision_ref = payload.get("auditDecisionRef")
+        outcome = payload.get("auditOutcome")
+        if isinstance(decision_ref, str) and isinstance(outcome, str):
+            self.decision_store.assert_decision(
+                run_id=run_id,
+                step_id=step_id,
+                decision_ref=decision_ref,
+                outcomes={outcome},
+            )
+
+    @staticmethod
+    def _require_audit_decision(decision: object) -> None:
+        """记忆策略要求审计时，只接受含稳定标识和受支持结果的审计决定。"""
+        decision_id = getattr(decision, "decision_id", None)
+        outcome = getattr(decision, "outcome", None)
+        if not isinstance(decision_id, str) or not decision_id or outcome not in {"allow", "review", "deny"}:
+            raise ValueError("audit decision is required before memory write")
+
+    @staticmethod
+    def _commit_id(run_id: str, step_id: str, attempt: int) -> str:
+        """生成步骤尝试的稳定提交标识；重试次数变化才会开启新的副作用边界。"""
+        return f"commit:{run_id}:{step_id}:{max(0, attempt)}"
+
+
+__all__ = ["ACGNodeRunner", "EntropyBudgetExceededError"]
