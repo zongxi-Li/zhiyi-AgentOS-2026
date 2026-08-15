@@ -10,7 +10,7 @@ Phase 0：共同祖先能力审计。
 
 ## Result SHA
 
-由提交 `01 audit: freeze migration capability matrix` 固化；确切提交 SHA 将在下一阶段报告提交时回填（Git 提交无法在自身内容中包含自身哈希）。
+`559edc5497b5be901e053c4873887c9c2d3e7036`（`01 audit: freeze migration capability matrix`）。
 
 ## Changed
 

@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 
+AGENTOS_ROOT = Path(__file__).resolve().parents[2]
+
+
 def test_step_node_uses_the_exported_node_type() -> None:
     from support.acg.models import NodeType, StepNode
 
@@ -22,7 +25,7 @@ def test_acg_package_has_an_explicit_public_blueprint_export() -> None:
 
 
 def test_runtime_references_the_real_acg_package() -> None:
-    runtime_source = Path("src/runtime/workflow_runtime.py").read_text(encoding="utf-8")
+    runtime_source = (AGENTOS_ROOT / "src/runtime/workflow_runtime.py").read_text(encoding="utf-8")
 
     assert "from ACG.models" not in runtime_source
     assert "from support.acg.models" in runtime_source
