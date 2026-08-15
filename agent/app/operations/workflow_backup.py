@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from agentos.stores.sqlite_workflow_store import SQLiteWorkflowStore
+from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
 def sha256(path: Path) -> str:

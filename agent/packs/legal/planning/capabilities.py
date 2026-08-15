@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
-from agentos.core.planning import PlanningCapabilityDescriptor
+from support.acg.models import PlanningCapabilityDescriptor
 
 
 LEGAL_PLUGIN_ID = "kinlin.legal"
 LEGAL_PLUGIN_VERSION = "0.1.0"
+
+LEGAL_CAPABILITY_RUNTIME_IDS = {
+    "文本解析": "contract_parse",
+    "条款分类": "clause_classify",
+    "风险识别": "risk_detect",
+    "证据检索": "legal_evidence_match",
+    "修改建议": "revision_suggest",
+    "人工审核": "human_review_gate",
+    "报告生成": "report_generate",
+}
+
+LEGAL_CAPABILITY_AGENT_NAMES = {
+    "文本解析": "contract_parse",
+    "条款分类": "clause_classify",
+    "风险识别": "risk_detect",
+    "证据检索": "legal_evidence_match",
+    "修改建议": "revision_suggest",
+    "人工审核": "human_review",
+    "报告生成": "report_generate",
+}
 
 
 def _schema(*required: str) -> dict:
@@ -149,6 +169,10 @@ def legal_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
     return tuple(
         descriptor.model_copy(
             update={
+                "aliases": list(dict.fromkeys([
+                    *descriptor.aliases,
+                    LEGAL_CAPABILITY_RUNTIME_IDS[descriptor.capability_id],
+                ])),
                 "source": "plugin",
                 "plugin_id": LEGAL_PLUGIN_ID,
                 "plugin_version": LEGAL_PLUGIN_VERSION,
@@ -166,6 +190,8 @@ LEGAL_CAPABILITY_IDS = tuple(
 
 __all__ = [
     "LEGAL_CAPABILITY_IDS",
+    "LEGAL_CAPABILITY_AGENT_NAMES",
+    "LEGAL_CAPABILITY_RUNTIME_IDS",
     "LEGAL_PLUGIN_ID",
     "LEGAL_PLUGIN_VERSION",
     "legal_capability_descriptors",

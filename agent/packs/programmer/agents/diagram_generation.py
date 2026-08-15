@@ -1,7 +1,7 @@
 """程序员 Pack 的智能体实现，负责需求分析、代码检索、代码生成和图表生成步骤。"""
 
 
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 
 
 ARCHITECTURE_MERMAID = """flowchart LR

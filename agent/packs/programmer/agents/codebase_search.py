@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 
 
 class CodebaseSearchAgent(BaseAgent):

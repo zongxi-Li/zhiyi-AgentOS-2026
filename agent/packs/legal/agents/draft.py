@@ -1,7 +1,7 @@
 """法律 Pack 的智能体实现，负责法律工作流中的专业步骤执行。"""
 
 
-from agentos.agents.base import AgentOutput, AgentProfile, BaseAgent
+from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 
 
 class DraftAgent(BaseAgent):

@@ -5,10 +5,10 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from agentos.core.models.types import SkillRequest, SkillResult
-from agentos.skills.base import BaseSkill
-from agent.packs.writer.skills.common import WriterSkillHelper
-from agentos.adapters.model_adapter import AIService
+from contracts.workflow import SkillRequest, SkillResult
+from support.skills.base import BaseSkill
+from packs.writer.skills.common import WriterSkillHelper
+from adapters.model_adapter import AIService
 
 logger = logging.getLogger(__name__)
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from agentos.core.planning import CapabilityCatalog
-from agent.packs.legal.planning.capabilities import (
+from support.acg.models import CapabilityCatalog
+from packs.legal.planning.capabilities import (
     LEGAL_CAPABILITY_IDS,
     legal_capability_descriptors,
 )

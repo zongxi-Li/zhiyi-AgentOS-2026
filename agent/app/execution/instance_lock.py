@@ -42,3 +42,15 @@ def acquire_workflow_instance_lock(db_path: str) -> IO[str]:
     handle.flush()
     _LOCK_HANDLE = handle
     return handle
+
+
+def release_workflow_instance_lock() -> None:
+    """Release the application-owned process lock during an orderly shutdown."""
+    global _LOCK_HANDLE
+    handle = _LOCK_HANDLE
+    _LOCK_HANDLE = None
+    if handle is not None:
+        handle.close()
+
+
+__all__ = ["acquire_workflow_instance_lock", "release_workflow_instance_lock"]

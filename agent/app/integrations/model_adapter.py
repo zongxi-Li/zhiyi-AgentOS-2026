@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from agentos.adapters.model_adapter import register_model_service_factory
-from agent.app.services.aiservice import AIService as AppAIService
+from adapters.model_adapter import register_model_service_factory
+from app.services.aiservice import AIService as AppAIService
 
 
 def build_app_ai_service() -> AppAIService:

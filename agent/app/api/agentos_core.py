@@ -11,18 +11,18 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentos.core.execution import RunExecutionCoordinator
-from agentos.core.models.types import ReviewDecision, ReviewDecisionType, WorkflowRun, WorkflowStatus
-from agentos.core.plugin_scope import PluginScopeError
-from agentos.core.runtime import ReviewConflictError, WorkflowRuntime
-from agentos.core.workflow.progress import ProgressAssembler
-from agentos.stores.workflow_store import WorkflowRunNotTerminalError
-from agent.app.execution.runtime import build_default_runtime
-from agent.app.llm.gateway import get_llm_gateway
-from agent.app.llm.schemas import CHAT_ROUTE_DECISION_SCHEMA
-from agent.app.security.internal_auth import current_trusted_user
-from agent.app.observability.context import execution_context
-from agent.app.services.taskmaterialservice import (
+from app.execution.coordinator import RunExecutionCoordinator
+from components.task_manager.scheduler import ProgressAssembler
+from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowRun, WorkflowStatus
+from runtime.dependencies import PluginScopeError
+from runtime.workflow_runtime import ReviewConflictError, WorkflowRuntime
+from support.stores.workflow_store import WorkflowRunNotTerminalError
+from app.execution.runtime import build_default_runtime
+from app.llm.gateway import get_llm_gateway
+from app.llm.schemas import CHAT_ROUTE_DECISION_SCHEMA
+from app.security.internal_auth import current_trusted_user
+from app.observability.context import execution_context
+from app.services.taskmaterialservice import (
     MaterialError,
     extract_material,
     task_material_store,
@@ -114,6 +114,7 @@ class WorkflowStartRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     title: str
+    task_id: Optional[str] = None
     domain: str = "general"
     intent: str = "general"
     role_type: Optional[str] = None
@@ -151,6 +152,8 @@ class WorkflowStartRequest(BaseModel):
                 data["task_type"] = data["taskType"]
             if "clientRequestId" in data and "client_request_id" not in data:
                 data["client_request_id"] = data["clientRequestId"]
+            if "taskId" in data and "task_id" not in data:
+                data["task_id"] = data["taskId"]
         return data
 
 
@@ -385,6 +388,7 @@ def _workflow_start_idempotency_key(client_request_id: str | None) -> str | None
 
 def _workflow_start_fingerprint(request: WorkflowStartRequest) -> str:
     critical = {
+        "taskId": request.task_id,
         "title": request.title,
         "domain": request.domain,
         "intent": request.intent,
@@ -426,20 +430,49 @@ async def _create_task_and_submit(
         if existing.status.value not in {"completed", "failed", "cancelled"}:
             await coordinator.submit(existing.run_id)
         latest = runtime.workflow_store.get_run(existing.run_id)
-        return {"accepted": True, "task": _to_json(task), "run": _to_json(latest)}
+        return {
+            "accepted": True,
+            "acgTaskId": latest.run_id,
+            "task": _to_json(task),
+            "run": _to_json(latest),
+        }
 
-    task = runtime.create_task(
-        title=request.title,
-        domain=request.domain,
-        intent=request.intent,
-        input=_input_with_authenticated_actor(request.input),
-        security_level=request.security_level,
-        priority=request.priority,
-        role_type=request.role_type,
-        task_type=request.task_type,
-        workflow_id=request.workflow_id,
-        enabled_plugin_ids=request.enabled_plugin_ids,
-    )
+    if request.task_id:
+        task = runtime.task_manager.get_task(request.task_id)
+        # A retry is another execution of the same task. Refresh its mutable
+        # configuration, but preserve taskId and createdAt as its identity.
+        owner_user_id = str(task.input.get("authenticatedUserId") or "").strip()
+        owner_tenant_id = str(task.input.get("authenticatedTenantId") or "").strip()
+        actor = current_trusted_user()
+        if owner_user_id and (
+            actor is None
+            or actor.user_id != owner_user_id
+            or (owner_tenant_id and actor.tenant_id != owner_tenant_id)
+        ):
+            raise KeyError(f"task not found: {request.task_id}")
+        task = task.model_copy(update={
+            "title": request.title,
+            "domain": request.domain,
+            "intent": request.intent,
+            "input": _input_with_authenticated_actor(request.input),
+            "security_level": request.security_level,
+            "priority": request.priority,
+            "enabled_plugin_ids": request.enabled_plugin_ids,
+        })
+        runtime.workflow_store.save_task(task)
+    else:
+        task = runtime.create_task(
+            title=request.title,
+            domain=request.domain,
+            intent=request.intent,
+            input=_input_with_authenticated_actor(request.input),
+            security_level=request.security_level,
+            priority=request.priority,
+            role_type=request.role_type,
+            task_type=request.task_type,
+            workflow_id=request.workflow_id,
+            enabled_plugin_ids=request.enabled_plugin_ids,
+        )
     _, run = runtime.prepare_run(
         task_id=task.task_id,
         workflow_id=request.workflow_id,
@@ -459,7 +492,12 @@ async def _create_task_and_submit(
         )
         raise
     latest = runtime.workflow_store.get_run(run.run_id)
-    return {"accepted": True, "task": _to_json(task), "run": _to_json(latest)}
+    return {
+        "accepted": True,
+        "acgTaskId": latest.run_id,
+        "task": _to_json(task),
+        "run": _to_json(latest),
+    }
 
 
 def _normalize_acg_start_request(request: WorkflowStartRequest) -> WorkflowStartRequest:
@@ -518,6 +556,7 @@ LEGACY_AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
         "domain": "legal",
         "intent": "case_analysis",
         "workflow_id": "legal_case_analysis_v1",
+        "plugin_id": "kinlin.legal",
         "input_key": "caseText",
         "skills": {
             "case_intake": "case_understanding",
@@ -530,6 +569,7 @@ LEGACY_AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
         "domain": "education",
         "intent": "lesson_plan",
         "workflow_id": "education_lesson_plan_v1",
+        "plugin_id": "education",
         "input_key": "topic",
         "skills": {"lesson_plan": "lesson_plan_generation"},
     },
@@ -538,6 +578,7 @@ LEGACY_AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
         "domain": "programmer",
         "intent": "requirement_analysis",
         "workflow_id": "programmer_requirement_analysis_v1",
+        "plugin_id": "programmer",
         "input_key": "requirement",
         "skills": {
             "requirement_analysis": "requirement_analysis",
@@ -551,6 +592,7 @@ LEGACY_AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
         "domain": "writer",
         "intent": "story_outline",
         "workflow_id": "writer_story_outline_v1",
+        "plugin_id": "writer",
         "input_key": "premise",
         "skills": {"outline_generate": "outline_generate"},
     },
@@ -1668,8 +1710,10 @@ def _legacy_response(role: str, role_config: Dict[str, Any], request: LegacyAgen
     if run.error:
         response["error"] = run.error
     response["workflowRunId"] = run.run_id
+    response["acgTaskId"] = run.run_id
     response["workflowId"] = run.workflow_id
     response["workflowStatus"] = run.status.value
+    response["enabledPluginIds"] = list(getattr(run, "enabled_plugin_ids", ()) or ())
     response["runtimeEngine"] = getattr(run, "runtime_engine", None)
     response["implementationId"] = getattr(run, "implementation_id", None)
     response["routing"] = {
@@ -1866,6 +1910,15 @@ def create_router(
                 return direct_response
 
         workflow_id = str(route_decision.get("workflowId") or _legacy_workflow_id_for_chat(role_key, role_config, text))
+        workflow = runtime.workflow_registry.get(workflow_id)
+        configured_plugin_id = str(role_config["plugin_id"])
+        workflow_plugin_id = str(getattr(workflow, "plugin_id", "") or "")
+        if getattr(workflow, "source", "native") == "plugin" and workflow_plugin_id != configured_plugin_id:
+            raise HTTPException(
+                status_code=500,
+                detail=f"role pack mismatch: {configured_plugin_id} != {workflow_plugin_id}",
+            )
+        enabled_plugin_ids = [configured_plugin_id] if workflow_plugin_id == configured_plugin_id else None
         workflow_input = _legacy_workflow_input(role_config, workflow_id, text)
         start_request = WorkflowStartRequest(
             title=f"{role_config['title']}: {text[:40]}",
@@ -1876,6 +1929,7 @@ def create_router(
             priority="normal",
             workflowId=workflow_id,
             reviewMode="human_in_loop" if workflow_id == "legal_contract_review_v1" else "auto",
+            enabledPluginIds=enabled_plugin_ids,
         )
         try:
             payload = await _create_task_and_start(runtime, start_request)
@@ -1898,6 +1952,7 @@ def create_router(
         task_id: Optional[str] = Query(None, alias="taskId"),
         lifecycle_phase: Optional[str] = Query(None, alias="lifecyclePhase"),
         source: Optional[str] = None,
+        sources: Optional[str] = None,
         summary: bool = False,
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
@@ -1906,7 +1961,13 @@ def create_router(
             workflow_id = runtime.resolve_workflow_id(workflow_id)
         actor = current_trusted_user()
         requested_statuses = [item.strip() for item in (statuses or "").split(",") if item.strip()]
-        result = runtime.workflow_store.list_runs(
+        requested_sources = [item.strip() for item in (sources or "").split(",") if item.strip()]
+        list_method = (
+            runtime.workflow_store.list_run_summaries
+            if summary
+            else runtime.workflow_store.list_runs
+        )
+        result = list_method(
             status=status,
             statuses=requested_statuses or None,
             domain=domain,
@@ -1914,33 +1975,20 @@ def create_router(
             task_id=task_id,
             lifecycle_phase=lifecycle_phase,
             source=source,
+            sources=requested_sources or None,
             owner_user_id=actor.user_id if actor else None,
             owner_tenant_id=actor.tenant_id if actor else None,
             page=page,
             page_size=page_size,
         )
-        if not summary:
-            return _page_to_json(result)
-        summary_items = []
-        for run in result.items:
-            try:
-                task_title = runtime.workflow_store.get_task(run.task_id).title
-            except KeyError:
-                task_title = None
-            summary_items.append(
-                {
-                    **_to_json(progress_assembler.assemble(run)),
-                    "source": run.input.get("source"),
-                    "title": task_title,
-                    "createdAt": run.created_at,
-                }
-            )
-        return {
-            "items": summary_items,
-            "total": result.total,
-            "page": result.page,
-            "pageSize": result.page_size,
-        }
+        if summary:
+            return {
+                "items": list(result.items),
+                "total": result.total,
+                "page": result.page,
+                "pageSize": result.page_size,
+            }
+        return _page_to_json(result)
 
     @router.get("/core/workflows/metrics")
     async def evaluate_workflows(
@@ -2292,6 +2340,7 @@ def create_router(
                 "tokensDelivered": tokens_delivered,
                 "tokensSaved": max(0, tokens_available - tokens_delivered),
                 "recoveryCount": run.recovery_count,
+                "degradationCount": run.degradation_count,
                 "interactionCount": len(interactions),
                 "contractViolationCount": len(contract_violations),
                 "integrityStatus": provenance.get("integrityStatus", "legacy_or_invalid"),

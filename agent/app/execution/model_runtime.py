@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from typing import Any, Dict
 
-from agentos.adapters.model_adapter import (
+from adapters.model_adapter import (
     StructuredGenerationError,
     StructuredGenerationResult,
 )
@@ -34,6 +34,10 @@ class GatewayStructuredGenerationRuntime:
 
     def is_available(self) -> bool:
         return get_llm_gateway().provider_name not in {"", "mock", "unavailable"}
+
+    def close(self) -> None:
+        """Release application-owned worker threads during service shutdown."""
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     async def generate_json(
         self,

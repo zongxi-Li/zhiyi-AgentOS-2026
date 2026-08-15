@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-from agentos.packs.registry import pack_path
+from support.packs.registry import pack_path
 
 WRITER_PROMPT_DIR = pack_path("writer", "prompts")
 

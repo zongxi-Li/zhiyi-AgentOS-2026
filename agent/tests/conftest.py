@@ -2,8 +2,9 @@ import asyncio
 import inspect
 import json
 import os
+import shutil
 import sys
-import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -32,23 +33,53 @@ def _schema_value(schema, field_name="value"):
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AGENTOS_SRC = PROJECT_ROOT / "agentOS" / "src"
+AGENTOS_ROOT = PROJECT_ROOT / "agentOS"
 AGENT_APP_ROOT = PROJECT_ROOT / "agent"
+TEST_TEMP_ROOT = PROJECT_ROOT / ".tmp-tests"
+TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 # AgentOS creates its global Chroma client while test modules are imported.
 # Isolate that client before collection so tests never open the tracked database.
-_TEST_CHROMA_DIR = tempfile.TemporaryDirectory(prefix="kinlin-agent-chroma-tests-")
-os.environ["AGENT_CHROMA_PATH"] = _TEST_CHROMA_DIR.name
-_TEST_WORKFLOW_DIR = tempfile.TemporaryDirectory(
-    prefix="kinlin-agent-workflow-tests-", ignore_cleanup_errors=True
-)
+_TEST_CHROMA_DIR = TEST_TEMP_ROOT / f"kinlin-agent-chroma-tests-{uuid.uuid4().hex}"
+_TEST_CHROMA_DIR.mkdir(parents=True)
+os.environ["AGENT_CHROMA_PATH"] = str(_TEST_CHROMA_DIR)
+_TEST_WORKFLOW_DIR = TEST_TEMP_ROOT / f"kinlin-agent-workflow-tests-{uuid.uuid4().hex}"
+_TEST_WORKFLOW_DIR.mkdir(parents=True)
 os.environ["AGENTOS_WORKFLOW_DB_PATH"] = str(
-    Path(_TEST_WORKFLOW_DIR.name) / "workflows.sqlite3"
+    _TEST_WORKFLOW_DIR / "workflows.sqlite3"
+)
+os.environ["AGENTOS_LANGGRAPH_CHECKPOINT_DB"] = str(
+    _TEST_WORKFLOW_DIR / "langgraph_checkpoints.sqlite3"
+)
+os.environ["AGENTOS_EXECUTION_VALUE_DB"] = str(
+    _TEST_WORKFLOW_DIR / "execution_values.sqlite3"
+)
+os.environ["AGENTOS_EXECUTION_MEMORY_DB"] = str(
+    _TEST_WORKFLOW_DIR / "execution_memory.sqlite3"
+)
+os.environ["AGENTOS_PROVENANCE_DB"] = str(
+    _TEST_WORKFLOW_DIR / "provenance.sqlite3"
+)
+os.environ["AGENTOS_AUDIT_DB"] = str(
+    _TEST_WORKFLOW_DIR / "audit_decisions.sqlite3"
 )
 
-for path in (PROJECT_ROOT, AGENT_APP_ROOT, AGENTOS_SRC):
+for path in (PROJECT_ROOT, AGENT_APP_ROOT, AGENTOS_ROOT, AGENTOS_SRC):
     value = str(path)
     if value not in sys.path:
         sys.path.insert(0, value)
+
+
+@pytest.fixture
+def tmp_path():
+    """Workspace-local temp path that remains writable in restricted Windows runs."""
+
+    directory = TEST_TEMP_ROOT / f"pytest-case-{uuid.uuid4().hex}"
+    directory.mkdir(parents=True)
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 class _ContractReviewTestProvider:
@@ -61,7 +92,7 @@ class _ContractReviewTestProvider:
         return ""
 
     def generate_json(self, prompt, schema, **kwargs):
-        from agent.app.llm.schemas import compact_schema_name
+        from app.llm.schemas import compact_schema_name
 
         task = compact_schema_name(schema)
         if task == "parse_contract":
@@ -124,21 +155,22 @@ class _ReadOnlyToolTestRuntime:
 
     def __init__(self, allowed_tools=None):
         self.allowed_tools = set(
-            allowed_tools
-            or {
+            {
                 "web_search",
                 "web_extract",
                 "knowledge_search",
                 "codebase_search",
                 "current_datetime",
             }
+            if allowed_tools is None
+            else allowed_tools
         )
 
     def scoped(self, allowed_tools):
         return _ReadOnlyToolTestRuntime(self.allowed_tools.intersection(allowed_tools))
 
     async def run(self, text, **kwargs):
-        from agent.app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
+        from app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
 
         source = SourceReference(
             citationId="src_test_evidence",
@@ -163,7 +195,7 @@ class _ReadOnlyToolTestRuntime:
         )
 
     async def execute(self, name, arguments, **kwargs):
-        from agent.app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
+        from app.tools.contracts import SourceReference, ToolExecutionRecord, ToolRunResult
 
         if name not in self.allowed_tools:
             raise PermissionError(f"tool is not allowed in this test run: {name}")
@@ -216,8 +248,8 @@ def _force_mock_llm(monkeypatch):
     测试仍可用 set_llm_gateway_for_tests 注入自定义 provider。
     """
     monkeypatch.setenv("AGENTOS_LLM_PROVIDER", "mock")
-    from agent.app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
-    from agentos.adapters.tool_adapter import (
+    from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
+    from adapters.tool_adapter import (
         clear_tool_runtime_factory,
         register_tool_runtime_factory,
     )
@@ -251,5 +283,7 @@ def pytest_unconfigure(config):
         close = getattr(client, "close", None)
         if callable(close):
             close()
-    _TEST_CHROMA_DIR.cleanup()
-    _TEST_WORKFLOW_DIR.cleanup()
+    # Native database handles may remain locked briefly on Windows. Cleanup is
+    # best-effort so a successful test suite cannot be turned into exit code 1.
+    shutil.rmtree(_TEST_CHROMA_DIR, ignore_errors=True)
+    shutil.rmtree(_TEST_WORKFLOW_DIR, ignore_errors=True)
