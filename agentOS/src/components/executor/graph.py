@@ -303,6 +303,11 @@ class ACGExecutionGraph:
                 state.active_step_ids = []
                 cause = tasks[failures[0]].exception()
                 assert cause is not None
+                # 进程终止、测试模拟断电等 ``BaseException`` 不能被误标为业务节点
+                # 失败或触发 failed run 投影；让调用栈直接中断，下一进程从持久化边界
+                # 继续。普通 ``Exception`` 仍保留完整的超步失败语义。
+                if not isinstance(cause, Exception):
+                    raise cause
                 yield {
                     "type": "superstep_failed",
                     "failedStepIds": failures,

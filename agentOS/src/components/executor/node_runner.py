@@ -12,7 +12,7 @@ AgentOS 通信、记忆、Adapter 与审计边界，不暴露 LangGraph 对象�
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from components.communicator import CommunicatorService
@@ -58,6 +58,7 @@ class ACGNodeRunner:
         model_runtime: object | None = None,
         capability_descriptors: Mapping[str, object] | None = None,
         tool_runtime: object | None = None,
+        fault_hook: Callable[[str], None] | None = None,
     ) -> None:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
         self.task = task
@@ -84,6 +85,9 @@ class ACGNodeRunner:
         self.model_runtime = model_runtime
         self.capability_descriptors = dict(capability_descriptors or {})
         self.tool_runtime = tool_runtime
+        # 仅由故障恢复测试在运行时对象上临时注入。生产装配不会设置该钩子，业务合同、
+        # Blueprint 和持久化状态都不包含故障阶段或异常对象。
+        self._fault_hook = fault_hook
 
     @classmethod
     def minimal(cls, *, agent: BaseAgent, entropy_budget: int | None = None) -> "ACGNodeRunner":
@@ -259,12 +263,6 @@ class ACGNodeRunner:
                 "memoryAccess": memory_access,
             }
 
-        self.communicator.record_production(
-            step_id,
-            controlled,
-            agent_name=agent.profile.agent_name,
-            operation_id=commit_id,
-        )
         output_ref = self.value_store.put_output(
             run_id=state.run_id,
             step_id=step_id,
@@ -275,6 +273,14 @@ class ACGNodeRunner:
             step_id=step_id,
             payload=pack.model_dump(by_alias=True, mode="json"),
         )
+        self._inject_fault("after_values")
+        self.communicator.record_production(
+            step_id,
+            controlled,
+            agent_name=agent.profile.agent_name,
+            operation_id=commit_id,
+        )
+        self._inject_fault("after_provenance")
         memory_record = None
         pending_memory: dict[str, str] | None = None
         if persisted_decision.outcome == "allow" and memory_policy["write"]:
@@ -294,6 +300,7 @@ class ACGNodeRunner:
                 "writeType": memory_policy["writeType"].value,
                 "auditDecisionRef": persisted_decision.decision_id,
             }
+        self._inject_fault("after_memory")
         memory_access["written"] = memory_record is not None
         result = {
             "commitId": commit_id,
@@ -490,6 +497,11 @@ class ACGNodeRunner:
     def _commit_id(run_id: str, step_id: str, attempt: int) -> str:
         """生成步骤尝试的稳定提交标识；重试次数变化才会开启新的副作用边界。"""
         return f"commit:{run_id}:{step_id}:{max(0, attempt)}"
+
+    def _inject_fault(self, stage: str) -> None:
+        """执行测试专用中断钩子；未注入时是零行为的私有空操作。"""
+        if self._fault_hook is not None:
+            self._fault_hook(stage)
 
 
 __all__ = ["ACGNodeRunner", "EntropyBudgetExceededError"]

@@ -166,6 +166,9 @@ class WorkflowRuntime:
         self.decision_store = decision_store or SQLiteDecisionStore(
             db_path=os.getenv("AGENTOS_AUDIT_DB", "data/audit_decisions.sqlite3")
         )
+        # 测试可临时设置该私有钩子，模拟进程在一个已提交边界后消失。它不属于构造
+        # 参数、环境变量或公开 contracts，生产运行时始终保持 ``None``。
+        self._fault_hook: Callable[[str], None] | None = None
         self.tool_runtime = tool_runtime
         self.review_manager = review_manager or ReviewManager(self.trace_store)
         self.evaluator = evaluator or WorkflowEvaluator()
@@ -723,6 +726,7 @@ class WorkflowRuntime:
                 registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
             ),
             decision_store=self.decision_store,
+            fault_hook=self._fault_hook,
         )
 
     def _project_acg_event(self, run: WorkflowRun, state: ACGExecutionState, event: dict) -> None:
@@ -874,6 +878,7 @@ class WorkflowRuntime:
                 )
         if node_trace_batch:
             self.trace_store.append_batch(run, node_trace_batch)
+            self._inject_fault("after_trace")
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
         self._persist_acg_state(run, state)
@@ -906,12 +911,19 @@ class WorkflowRuntime:
         encoded = json.dumps(checkpoint_data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         checkpoint_id = f"acgckpt_{hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:24]}"
         state.checkpoint_id = checkpoint_id
-        return self.checkpoint_store.save(
+        saved = self.checkpoint_store.save(
             run_id=run.run_id,
             checkpoint_id=checkpoint_id,
             state=state.model_dump(by_alias=True, mode="json"),
             expected_version=expected_version,
         )
+        self._inject_fault("after_checkpoint")
+        return saved
+
+    def _inject_fault(self, stage: str) -> None:
+        """调用测试专用中断钩子；正常执行没有附加分支或持久化副作用。"""
+        if self._fault_hook is not None:
+            self._fault_hook(stage)
 
     @staticmethod
     def _acg_output(state: ACGExecutionState) -> dict[str, str]:
