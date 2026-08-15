@@ -66,6 +66,12 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
     assert _output(first, paused, "parse_contract")["contract_type"]
     assert _output(first, paused, "risk_detect")["risks"]
     assert _output(first, paused, "statute_retrieve")["sources"]
+    statute_memory = first.memory_store.get(f"memory:{paused.run_id}:statute_retrieve")
+    evidence_memory = first.memory_store.get(f"memory:{paused.run_id}:legal_evidence_match")
+    assert statute_memory is not None and statute_memory.memory_type.value == "evidence"
+    assert evidence_memory is not None and evidence_memory.memory_type.value == "evidence"
+    assert paused.execution_state["memoryRefs"]["statute_retrieve"] == statute_memory.memory_id
+    assert paused.execution_state["memoryRefs"]["legal_evidence_match"] == evidence_memory.memory_id
     assert any(
         event.event_type.value == "tool_called" and event.step_id == "statute_retrieve"
         for event in paused.trace

@@ -74,6 +74,12 @@ class ExecutionValueStore(Protocol):
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按当前 run 读取 ContextPack 正文；跨 run 与缺失引用必须失败。"""
 
+    def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
+        """Persist a graph-patch body outside execution state."""
+
+    def get_graph_patch(self, *, run_id: str, patch_ref: str) -> dict[str, Any]:
+        """Dereference a graph patch within its owning run."""
+
     def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
         """确认引用类别、运行和来源步骤均与执行状态声明一致，不读取正文。"""
 
@@ -103,6 +109,7 @@ class InMemoryExecutionValueStore:
         """分别保存节点输出与 ContextPack，避免引用类别互相误读。"""
         self._outputs: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
         self._context_packs: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
+        self._graph_patches: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
         self._node_commits: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
@@ -124,6 +131,19 @@ class InMemoryExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """读取 ContextPack 的受控副本，不允许跨 run 访问。"""
         return self._get(self._context_packs, run_id=run_id, reference=context_ref)
+
+    def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
+        reference = self._new_reference("graph-patch", run_id, "__graph__")
+        self._graph_patches[reference] = (
+            run_id,
+            "__graph__",
+            deepcopy(dict(payload)),
+            self._now(),
+        )
+        return reference
+
+    def get_graph_patch(self, *, run_id: str, patch_ref: str) -> dict[str, Any]:
+        return self._get(self._graph_patches, run_id=run_id, reference=patch_ref)
 
     def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
         """在不返回正文的前提下验证引用的类型、运行与产生步骤。"""
@@ -179,7 +199,11 @@ class InMemoryExecutionValueStore:
         """按 run 和保留阈值列出可评估的引用元数据，不暴露任何 JSON 正文。"""
         cutoff = self._require_aware_time(older_than)
         records: list[StoredValueRef] = []
-        for kind, values in (("output", self._outputs), ("context", self._context_packs)):
+        for kind, values in (
+            ("output", self._outputs),
+            ("context", self._context_packs),
+            ("graph-patch", self._graph_patches),
+        ):
             for reference, (owner_run_id, step_id, _payload, created_at) in values.items():
                 if owner_run_id == run_id and created_at < cutoff:
                     records.append(
@@ -197,7 +221,7 @@ class InMemoryExecutionValueStore:
         """只删除明确传入且属于当前 run 的值，跨 run 引用会保留。"""
         deleted = 0
         for reference in set(references):
-            for values in (self._outputs, self._context_packs):
+            for values in (self._outputs, self._context_packs, self._graph_patches):
                 record = values.get(reference)
                 if record is not None and record[0] == run_id:
                     del values[reference]
@@ -231,6 +255,8 @@ class InMemoryExecutionValueStore:
             return self._outputs
         if kind == "context":
             return self._context_packs
+        if kind == "graph-patch":
+            return self._graph_patches
         raise ValueError(f"unsupported execution reference kind: {kind}")
 
     @staticmethod
@@ -336,6 +362,12 @@ class SQLiteExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按 run 隔离读取 ContextPack 正文，禁止跨运行回退。"""
         return self._get("context", run_id=run_id, reference=context_ref)
+
+    def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
+        return self._put("graph-patch", run_id=run_id, step_id="__graph__", payload=payload)
+
+    def get_graph_patch(self, *, run_id: str, patch_ref: str) -> dict[str, Any]:
+        return self._get("graph-patch", run_id=run_id, reference=patch_ref)
 
     def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
         """验证持久引用的类型、运行和产生步骤，不读取或返回其正文。"""

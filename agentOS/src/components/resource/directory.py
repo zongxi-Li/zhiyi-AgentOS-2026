@@ -139,6 +139,40 @@ class ResourceDirectory:
             f"agent resource not found: domain={domain}, agentName={agent_name}, capability={capability}"
         )
 
+    def resolve_agent_candidates(
+        self,
+        *,
+        domain: str,
+        capability: str,
+        allowed_agent_ids: Iterable[str] | None = None,
+        excluded_agent_ids: Iterable[str] = (),
+    ) -> tuple[AgentResource, ...]:
+        """Return every healthy compatible resource in deterministic order."""
+        normalized_domain = (domain or "").strip().lower()
+        normalized_capability = (capability or "").strip().lower()
+        allowed = {str(item) for item in allowed_agent_ids} if allowed_agent_ids is not None else None
+        excluded = {str(item) for item in excluded_agent_ids}
+        candidates = [
+            item
+            for item in self._agents.values()
+            if item.enabled
+            and self._health.get(item.agent_id, True)
+            and item.agent_id not in excluded
+            and (allowed is None or item.agent_id in allowed)
+            and item.domain in (normalized_domain, "general")
+            and normalized_capability in item.capabilities
+        ]
+        return tuple(
+            sorted(
+                candidates,
+                key=lambda item: (
+                    0 if item.domain == normalized_domain else 1,
+                    -item.priority,
+                    item.agent_id,
+                ),
+            )
+        )
+
     @staticmethod
     def _select(candidates: list[AgentResource], requested_domain: str) -> AgentResource:
         """将请求领域、优先级和稳定 ID 组成唯一且可预测的选择顺序。"""

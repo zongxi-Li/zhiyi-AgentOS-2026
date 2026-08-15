@@ -20,6 +20,10 @@ class AgentResolver(Protocol):
         """返回 scope 内可用 Agent；不存在或不可见时抛出 ``AgentNotFound``。"""
 
 
+    def resolve_by_id(self, agent_id: str) -> BaseAgent:
+        """Resolve one frozen binding inside the same scope."""
+
+
 class AgentInvocationError(RuntimeError):
     """把 Agent 解析/调用前边界错误转为稳定、可审计的错误码。"""
 
@@ -35,15 +39,19 @@ class AgentInvocationAdapter:
     def __init__(self, *, registry: AgentResolver) -> None:
         self.registry = registry
 
-    async def invoke(self, *, context: AgentRunContext) -> AgentOutput:
+    async def invoke(self, *, context: AgentRunContext, agent: BaseAgent | None = None) -> AgentOutput:
         """解析当前步骤 Agent 并执行，不可见目标在外部副作用前明确失败。"""
         step = context.step
         try:
-            agent = self.registry.resolve(
-                domain=context.workflow.domain,
-                agent_name=step.agent_name,
-                capability=step.capability,
-            )
+            if agent is None:
+                agent = self.registry.resolve(
+                    domain=context.workflow.domain,
+                    agent_name=step.agent_name,
+                    capability=step.capability,
+                )
+            else:
+                agent_id = str(agent.profile.agent_id or agent.profile.agent_name)
+                agent = self.registry.resolve_by_id(agent_id)
         except (AgentNotFound, KeyError) as exc:
             raise AgentInvocationError(
                 "AGENT_NOT_IN_SCOPE",

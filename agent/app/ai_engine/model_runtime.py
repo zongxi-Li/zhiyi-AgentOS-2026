@@ -7,21 +7,21 @@ from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
 
-from agent.app.llm.capabilities import (
+from app.llm.capabilities import (
     adapt_chat_completion_parameters,
     normalize_deepseek_model,
     normalize_model_request,
     normalize_thinking_mode,
     provider_model_capabilities,
 )
-from agent.app.llm.contracts import (
+from app.llm.contracts import (
     ProviderProtocolMessage,
     ProviderRawResult,
     ProviderToolCall,
     ThinkingMode,
 )
-from agent.app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
-from agent.app.llm.provider_conversation import (
+from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
+from app.llm.provider_conversation import (
     ProviderConversationManager,
     configured_provider_conversation_manager,
 )
@@ -35,7 +35,7 @@ REASONING_INSTRUCTIONS = {
 
 def resolve_system_runtime_config(model: str = "") -> tuple[str, str, str]:
     """Resolve a request-level model override against server-managed credentials."""
-    from agent.app.config import settings
+    from app.config import settings
 
     deepseek_key = (settings.DEEPSEEK_API_KEY or "").strip()
     if deepseek_key:

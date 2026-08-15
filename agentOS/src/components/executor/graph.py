@@ -33,6 +33,8 @@ class ACGExecutionState(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     run_id: str = Field(alias="runId")
     graph_id: str | None = Field(default=None, alias="graphId")
+    graph_version: int = Field(default=1, alias="graphVersion", ge=1)
+    graph_patch_refs: list[str] = Field(default_factory=list, alias="graphPatchRefs")
     current_step_id: str | None = Field(default=None, alias="currentStepId")
     completed_step_ids: list[str] = Field(default_factory=list, alias="completedStepIds")
     active_step_ids: list[str] = Field(default_factory=list, alias="activeStepIds")
@@ -382,6 +384,12 @@ class ACGExecutionGraph:
                         # 值仓库，人工批准前绝不进入 MemoryStore 或执行 State 主字段。
                         review_payload["pendingMemory"] = dict(pending_memory)
                     state.review_payload = review_payload
+                    # The review node has already committed successfully.  A paused
+                    # checkpoint therefore has no actively executing node; keeping
+                    # the just-completed superstep in activeStepIds makes the
+                    # persisted state lie and prevents safe graph mutation while
+                    # the run is stopped at its review barrier.
+                    state.active_step_ids = []
                     from components.recovery.checkpoint import ExecutionInterrupt
 
                     raise ExecutionInterrupt("execution requires review", state.review_payload)

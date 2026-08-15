@@ -242,7 +242,7 @@ class ACGNodeRunner:
             commitId=commit_id,
         )
         output = (
-            await self.agent_invoker.invoke(context=agent_context)
+            await self.agent_invoker.invoke(context=agent_context, agent=agent)
             if self.agent_invoker is not None
             else await agent.run(agent_context)
         )

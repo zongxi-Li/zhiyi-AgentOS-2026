@@ -93,7 +93,10 @@ from .evolution import (
 from .execution import ExecutionOutcomeRef, ExecutionPackageRef
 from .governance import AuditFinding, AuditRequest, PolicyDecision
 from .memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
-from .recovery import FailureEvent, GraphPatchRef, RecoveryPlan
+from .recovery import (
+    FailureEvent, GraphPatch, GraphPatchRef, GraphPatchResult,
+    RecoveryNodeTemplate, RecoveryPlan, RecoveryRecipe,
+)
 from .resource import ResourceLease, ResourceProfile, ResourceSnapshot, SchedulingDecision, SchedulingRequest
 from .task import TaskConstraint, TaskLifecycleEvent
 from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
@@ -104,10 +107,10 @@ __all__ = [
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind",
     "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
     "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphEvolutionProposal",
-    "GraphNodeRef", "GraphPatchRef", "GraphRef", "MemoryPolicy", "MemoryQuery",
+    "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
     "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent", "PolicyDecision",
-    "RecoveryPlan", "ResourceLease", "ResourceProfile", "ResourceSnapshot",
+    "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "ResourceLease", "ResourceProfile", "ResourceSnapshot",
     "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
     "Trajectory", "TrajectoryEvaluation", "TrajectoryStep", "stable_checksum",

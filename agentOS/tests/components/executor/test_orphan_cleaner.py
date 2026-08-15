@@ -54,3 +54,29 @@ def test_cleaner_never_deletes_another_run_reference() -> None:
     with pytest.raises(ExecutionValueAccessError):
         store.get_output(run_id="run-a", output_ref=own_ref)
     assert store.get_output(run_id="run-b", output_ref=other_ref) == {"body": "other"}
+
+
+def test_cleaner_preserves_referenced_graph_patch_and_removes_orphan() -> None:
+    store = InMemoryExecutionValueStore()
+    protected_ref = store.put_graph_patch(
+        run_id="run-a", payload={"patchId": "protected"}
+    )
+    orphan_ref = store.put_graph_patch(
+        run_id="run-a", payload={"patchId": "orphan"}
+    )
+    cleaner = ExecutionOrphanCleaner(value_store=store)
+
+    stats = cleaner.clean(
+        run_id="run-a",
+        protected_refs={protected_ref},
+        older_than=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+
+    assert stats.scanned == 2
+    assert stats.protected == 1
+    assert stats.deleted == 1
+    assert store.get_graph_patch(run_id="run-a", patch_ref=protected_ref) == {
+        "patchId": "protected"
+    }
+    with pytest.raises(ExecutionValueAccessError, match="does not exist"):
+        store.get_graph_patch(run_id="run-a", patch_ref=orphan_ref)

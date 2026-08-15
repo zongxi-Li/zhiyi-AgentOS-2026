@@ -37,6 +37,8 @@ from components.executor import (
     ExecutionOrphanCleaner,
     ExecutionValueStore,
     SQLiteExecutionValueStore,
+    GraphPatchConflictError,
+    GraphPatchService,
 )
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
@@ -72,6 +74,8 @@ from contracts.workflow import (
     utc_now,
 )
 from contracts.execution import WorkflowProgressPhase
+from contracts.recovery import GraphPatch, GraphPatchRef, GraphPatchResult
+from contracts.workflow import GraphRef
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from runtime.execution_migration import ExecutionEngineMigratingError
 from support.acg.models import build_default_capability_catalog
@@ -516,6 +520,7 @@ class WorkflowRuntime:
         execution_state = state or ACGExecutionState(
             runId=run.run_id,
             graphId=blueprint.graph_id,
+            graphVersion=blueprint.version,
         )
         if execution_state.run_id != run.run_id:
             raise ValueError("execution state runId does not match workflow run")
@@ -607,6 +612,10 @@ class WorkflowRuntime:
             raise ValueError(
                 f"checkpoint graphId {state.graph_id!r} does not match run graphId {expected_graph_id!r}"
             )
+        if int(state.graph_version) != int(blueprint.version):
+            raise ValueError(
+                f"checkpoint graphVersion {state.graph_version} does not match blueprint version {blueprint.version}"
+            )
         source_blueprint_version = run.execution_state.get("sourceBlueprintVersion")
         if source_blueprint_version is not None and int(blueprint.version) != int(source_blueprint_version):
             raise ValueError(
@@ -648,6 +657,13 @@ class WorkflowRuntime:
         for step_id, context_ref in state.context_refs.items():
             self.execution_value_store.assert_reference(
                 kind="context", run_id=run.run_id, step_id=step_id, reference=context_ref
+            )
+        for patch_ref in state.graph_patch_refs:
+            self.execution_value_store.assert_reference(
+                kind="graph-patch",
+                run_id=run.run_id,
+                step_id="__graph__",
+                reference=patch_ref,
             )
         for step_id, memory_ref in state.memory_refs.items():
             if memory_ref != "memory:none":
@@ -1593,16 +1609,18 @@ class WorkflowRuntime:
         """从已定义的引用字段收集标识，不能把任意字符串误当成可保护的引用。"""
         if not isinstance(payload, dict):
             return
-        for field_name in ("outputRef", "contextRef"):
+        for field_name in ("outputRef", "contextRef", "graphPatchRef"):
             value = payload.get(field_name)
             if isinstance(value, str) and value:
                 references.add(value)
-        for field_name in ("outputRefs", "contextRefs"):
+        for field_name in ("outputRefs", "contextRefs", "graphPatchRefs"):
             values = payload.get(field_name)
             if isinstance(values, dict):
                 references.update(
                     value for value in values.values() if isinstance(value, str) and value
                 )
+            elif isinstance(values, list):
+                references.update(value for value in values if isinstance(value, str) and value)
         review_payload = payload.get("reviewPayload")
         if isinstance(review_payload, dict):
             pending_memory = review_payload.get("pendingMemory")
@@ -1682,6 +1700,201 @@ class WorkflowRuntime:
         workflow = self._workflow_for_run(run)
         adapter = self._workflow_adapter(workflow)
         return await adapter.apply_review(decision)
+
+    async def apply_graph_patch(self, patch: GraphPatch) -> GraphPatchResult:
+        """Apply one audited graph revision at a persisted review barrier.
+
+        Patch bodies live in ``ExecutionValueStore``; WorkflowRun and the
+        checkpoint retain only the resulting revision and patch reference.
+        Running or terminal graphs are never mutated in place.
+        """
+        async with self.run_lock_manager.lock_for(patch.run_id):
+            run = self.workflow_store.get_run(patch.run_id)
+            if self._normalize_runtime_engine(run.runtime_engine) != "acg":
+                raise ValueError("graph patching is only available for ACG runs")
+            if run.status is not WorkflowStatus.WAITING_REVIEW:
+                raise GraphPatchConflictError(
+                    "graph patches require a persisted WAITING_REVIEW barrier"
+                )
+            if not isinstance(run.acg_blueprint, dict):
+                raise ValueError("ACG run has no persisted blueprint")
+            checkpoint_id = str(run.execution_state.get("checkpointId") or "")
+            checkpoint_data = self.checkpoint_store.load(
+                run_id=run.run_id,
+                checkpoint_id=checkpoint_id,
+            )
+            if checkpoint_data is None:
+                raise ValueError("graph patch requires a persisted checkpoint")
+            state = ACGExecutionState.model_validate(checkpoint_data)
+            blueprint = ACGBlueprint.model_validate(run.acg_blueprint)
+            outcome = GraphPatchService().apply(
+                blueprint,
+                patch,
+                completed_step_ids=set(state.completed_step_ids),
+                active_step_ids=set(state.active_step_ids),
+            )
+            previous = next(
+                (
+                    item
+                    for item in outcome.blueprint.metadata.get("appliedGraphPatches", [])
+                    if isinstance(item, dict) and item.get("patchId") == patch.patch_id
+                ),
+                {},
+            )
+            if outcome.idempotent_replay:
+                uri = str(previous.get("patchRef") or "")
+                if not uri:
+                    raise ValueError("persisted graph patch is missing its reference")
+                return GraphPatchResult(
+                    applied=False,
+                    idempotentReplay=True,
+                    graphVersion=outcome.blueprint.version,
+                    patchRef=GraphPatchRef(
+                        patchId=patch.patch_id,
+                        graph=GraphRef(
+                            graphId=outcome.blueprint.graph_id,
+                            version=str(outcome.blueprint.version),
+                        ),
+                        uri=uri,
+                        checksum=outcome.checksum,
+                    ),
+                )
+
+            task = self.task_manager.get_task(run.task_id)
+            workflow = self._workflow_for_run(run)
+            scope = run.execution_scope
+            if scope is None:
+                raise ValueError("graph patch requires a frozen execution scope")
+            self._validate_blueprint_agents(
+                outcome.blueprint,
+                domain=workflow.domain or task.domain,
+                scope=scope,
+            )
+            old_step_ids = {step.step_id for step in run.steps}
+            self._sync_run_steps_to_acg(run, outcome.blueprint)
+            for agent in self.agent_registry.all():
+                self.resource_directory.register_agent(agent.profile)
+            bindings = dict(run.execution_state.get("resourceBindings") or {})
+            for step in run.steps:
+                if step.step_id in old_step_ids:
+                    continue
+                selected = self.resource_directory.resolve_agent(
+                    domain=workflow.domain,
+                    agent_name=step.agent_name,
+                    capability=step.capability,
+                    allowed_agent_ids=scope.agent_ids,
+                )
+                bindings[step.step_id] = selected.agent_id
+
+            patch_uri = self.execution_value_store.put_graph_patch(
+                run_id=run.run_id,
+                payload=patch.model_dump(by_alias=True, mode="json"),
+            )
+            patch_ref = GraphPatchRef(
+                patchId=patch.patch_id,
+                graph=GraphRef(
+                    graphId=outcome.blueprint.graph_id,
+                    version=str(outcome.blueprint.version),
+                ),
+                uri=patch_uri,
+                checksum=outcome.checksum,
+            )
+            applied_metadata = list(outcome.blueprint.metadata["appliedGraphPatches"])
+            applied_metadata[-1] = {**applied_metadata[-1], "patchRef": patch_uri}
+            outcome.blueprint.metadata["appliedGraphPatches"] = applied_metadata
+            run.acg_blueprint = outcome.blueprint.model_dump(by_alias=True, mode="json")
+            state.graph_version = outcome.blueprint.version
+            state.graph_patch_refs = list(dict.fromkeys([*state.graph_patch_refs, patch_uri]))
+            state.checkpoint_id = None
+            run.execution_state["resourceBindings"] = bindings
+            run.execution_state["sourceBlueprintVersion"] = outcome.blueprint.version
+            run.execution_state["graphVersion"] = outcome.blueprint.version
+            self._persist_acg_state(run, state)
+            new_checkpoint_id = self._save_acg_checkpoint(run, state)
+            self._persist_acg_state(run, state)
+            self.trace_store.append(
+                run,
+                TraceEventType.GRAPH_PATCH_APPLIED,
+                observation="ACG graph patch applied",
+                payload={
+                    "patchId": patch.patch_id,
+                    "patchRef": patch_uri,
+                    "baseGraphVersion": patch.base_graph_version,
+                    "graphVersion": outcome.blueprint.version,
+                    "checkpointId": new_checkpoint_id,
+                },
+            )
+            self.workflow_store.save_run(run)
+            return GraphPatchResult(
+                applied=True,
+                graphVersion=outcome.blueprint.version,
+                patchRef=patch_ref,
+            )
+
+    async def rebind_step(self, *, run_id: str, step_id: str, reason: str) -> str:
+        """Select a healthy alternate Agent inside the run's frozen scope.
+
+        Rebinding is intentionally limited to a persisted review barrier and a
+        not-yet-executed step. It changes only the frozen resource projection;
+        no executor, workflow state machine, or graph is duplicated.
+        """
+        async with self.run_lock_manager.lock_for(run_id):
+            run = self.workflow_store.get_run(run_id)
+            if self._normalize_runtime_engine(run.runtime_engine) != "acg":
+                raise ValueError("resource rebinding is only available for ACG runs")
+            if run.status is not WorkflowStatus.WAITING_REVIEW:
+                raise ValueError("resource rebinding requires a persisted WAITING_REVIEW barrier")
+            step = run.get_step(step_id)
+            if step.status not in {StepStatus.PENDING, StepStatus.RETRYING}:
+                raise ValueError("only a pending or retrying step can be rebound")
+            scope = run.execution_scope
+            if scope is None:
+                raise ValueError("resource rebinding requires a frozen execution scope")
+            bindings = dict(run.execution_state.get("resourceBindings") or {})
+            current_agent_id = str(bindings.get(step_id) or "")
+            if not current_agent_id:
+                raise ValueError(f"ACG step has no frozen resource binding: {step_id}")
+            history = list(run.execution_state.get("bindingHistory") or [])
+            if any(item.get("stepId") == step_id for item in history if isinstance(item, dict)):
+                raise ValueError(f"alternate binding budget exhausted for step: {step_id}")
+            candidates = self.resource_directory.resolve_agent_candidates(
+                domain=self._workflow_for_run(run).domain,
+                capability=step.capability,
+                allowed_agent_ids=scope.agent_ids,
+                excluded_agent_ids=(current_agent_id,),
+            )
+            if not candidates:
+                raise ResourceNotFoundError(f"no healthy alternate resource for step: {step_id}")
+            selected = candidates[0]
+            # Resolve the instance now so a stale directory entry cannot enter
+            # persisted state.
+            self.agent_registry.resolve_by_id(selected.agent_id, allowed_agent_ids=scope.agent_ids)
+            bindings[step_id] = selected.agent_id
+            run.execution_state["resourceBindings"] = bindings
+            history.append(
+                {
+                    "stepId": step_id,
+                    "previousAgentId": current_agent_id,
+                    "agentId": selected.agent_id,
+                    "reason": reason,
+                }
+            )
+            run.execution_state["bindingHistory"] = history
+            self.trace_store.append(
+                run,
+                TraceEventType.RUNTIME_PATCH_APPLIED,
+                observation="ACG resource binding changed at review barrier",
+                step_id=step_id,
+                agent_name=selected.agent_name,
+                payload={
+                    "patchType": "alternate_binding",
+                    "previousAgentId": current_agent_id,
+                    "agentId": selected.agent_id,
+                    "reason": reason,
+                },
+            )
+            self.workflow_store.save_run(run)
+            return selected.agent_id
 
     async def _apply_acg_review(self, decision: ReviewDecision) -> WorkflowRun:
         """校验审核决定并从同一 run 的 SQLite 检查点恢复融合 ACG。"""
