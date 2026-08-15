@@ -6,11 +6,11 @@ Phase 10：将开发与生产容器切到 wkn AgentOS 的完整源码布局、�
 
 ## Baseline SHA
 
-`b629b5b9aa8a17cd39f9334b225b6086c46c1e07`
+`11c82567db8e8e630aeade62d2f43b73dad85a5a`
 
 ## Result SHA
 
-由提交 `11 refactor(docker): adopt runtime/storage layout` 固化；确切 SHA 在 Phase 11 报告提交时回填。
+`e553aae9fa4d837abe8282b0a7ad7640eaee63f1`
 
 ## Changed
 

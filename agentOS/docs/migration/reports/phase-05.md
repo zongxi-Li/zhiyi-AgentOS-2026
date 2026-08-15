@@ -6,11 +6,11 @@ Phase 5：仅迁移 Capability Matrix 中的内核与应用 P0/P1 `MIGRATE` 缺�
 
 ## Baseline SHA
 
-`9e0a22d7eaff05361ac8f4fa8c7594bc5d69487d`
+`648d1d152ad203a8c1faff0612f8984864f3192a`
 
 ## Result SHA
 
-`c4ae5f259782b7def6b288b213576dd25bcaae1a`
+`ee20519d39957c834b5ea8cb424dfa0154f8e886`
 
 ## Changed
 

@@ -10,7 +10,7 @@ Phase 0：共同祖先能力审计。
 
 ## Result SHA
 
-`559edc5497b5be901e053c4873887c9c2d3e7036`（`01 audit: freeze migration capability matrix`）。
+`d17a7d081b15819628209cbda31c1e9488b3b7db`（`01 audit(migration): 冻结 ACG 迁移能力矩阵`）。
 
 ## Changed
 

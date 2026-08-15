@@ -6,11 +6,11 @@ Phase 9：把 C4 工作台、Chat 与运行控制台迁移到 AgentOS v2 的引�
 
 ## Baseline SHA
 
-`a56a9979f84891fe3ae69912ee45eee90f78965e`
+`350c4a3998aa7b9438986a6e15ba453cfe96a0e3`
 
 ## Result SHA
 
-`b629b5b9aa8a17cd39f9334b225b6086c46c1e07`
+`11c82567db8e8e630aeade62d2f43b73dad85a5a`
 
 ## Changed
 

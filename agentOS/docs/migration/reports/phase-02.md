@@ -6,11 +6,11 @@ Phase 2：以 wkn-master 完整替换 C4 AgentOS tracked tree。
 
 ## Baseline SHA
 
-`559edc5497b5be901e053c4873887c9c2d3e7036`。
+`d17a7d081b15819628209cbda31c1e9488b3b7db`。
 
 ## Result SHA
 
-`82914e4dd8c6179fff91b2b441f00e4293a1ea49`（由提交 02 完成树替换，由提交 03 完成 cwd/import 基线修复）。
+`9b87219eae92d0105b9bbddd40938c3073d54061`（由提交 02 完成树替换，由提交 03 完成 cwd/import 基线修复）。
 
 ## Changed
 

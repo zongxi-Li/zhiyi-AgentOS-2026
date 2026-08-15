@@ -6,11 +6,11 @@ Phase 6：按 General/Native → Programmer → Education → Writer 的顺序�
 
 ## Baseline SHA
 
-`c4ae5f259782b7def6b288b213576dd25bcaae1a`
+`ee20519d39957c834b5ea8cb424dfa0154f8e886`
 
 ## Result SHA
 
-`8ffb9c6148860e3d4a6dc3dfa8aa9c07750666dc`
+`10b1f82483718fc5e68c0ad7f95e8a1c493c6175`
 
 ## Changed
 

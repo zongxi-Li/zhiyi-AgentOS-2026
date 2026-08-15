@@ -6,11 +6,11 @@ Phase 4：在唯一 wkn `WorkflowRuntime` 上恢复 Legal Contract Review 的真
 
 ## Baseline SHA
 
-`2675c5f46fbbaac39607d4a180a7256b4a02392f`
+`1ca2afee8863a989ae4631aa30a5990f01559a25`
 
 ## Result SHA
 
-`9e0a22d7eaff05361ac8f4fa8c7594bc5d69487d`
+`648d1d152ad203a8c1faff0612f8984864f3192a`
 
 ## Changed
 

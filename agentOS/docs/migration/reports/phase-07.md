@@ -6,11 +6,11 @@ Phase 7：以真实 `WorkflowRuntime` 为唯一真源，冻结引用优先的 Ap
 
 ## Baseline SHA
 
-`8ffb9c6148860e3d4a6dc3dfa8aa9c07750666dc`
+`10b1f82483718fc5e68c0ad7f95e8a1c493c6175`
 
 ## Result SHA
 
-`1bee526d6624d945d9aff618cb16eb0cd7b2c773`
+`c20f89cb6fda2198a751abe9a16580d2c5085da4`
 
 ## Changed
 

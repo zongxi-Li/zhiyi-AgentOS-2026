@@ -6,11 +6,11 @@ Phase 3：由 Application 完整装配唯一 wkn WorkflowRuntime，并移除生�
 
 ## Baseline SHA
 
-`82914e4dd8c6179fff91b2b441f00e4293a1ea49`。
+`9b87219eae92d0105b9bbddd40938c3073d54061`。
 
 ## Result SHA
 
-`2675c5f46fbbaac39607d4a180a7256b4a02392f`
+`1ca2afee8863a989ae4631aa30a5990f01559a25`
 
 ## Changed
 

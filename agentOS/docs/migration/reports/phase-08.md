@@ -6,11 +6,11 @@ Phase 8：将 Spring 收束为 AgentOS v2 的鉴权、作用域、DTO 校验、H
 
 ## Baseline SHA
 
-`1bee526d6624d945d9aff618cb16eb0cd7b2c773`
+`c20f89cb6fda2198a751abe9a16580d2c5085da4`
 
 ## Result SHA
 
-`a56a9979f84891fe3ae69912ee45eee90f78965e`
+`350c4a3998aa7b9438986a6e15ba453cfe96a0e3`
 
 ## Changed
 
