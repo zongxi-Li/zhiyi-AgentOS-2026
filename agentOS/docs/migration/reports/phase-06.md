@@ -10,7 +10,7 @@ Phase 6：按 General/Native → Programmer → Education → Writer 的顺序�
 
 ## Result SHA
 
-由提交 `07 refactor(packs): migrate remaining domain packs` 固化；确切 SHA 在 Phase 7 报告提交时回填。
+`8ffb9c6148860e3d4a6dc3dfa8aa9c07750666dc`
 
 ## Changed
 

@@ -1,0 +1,325 @@
+"""Reference-first HTTP projection of the single wkn ``WorkflowRuntime``."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.execution.coordinator import RunExecutionCoordinator
+from app.security.internal_auth import current_trusted_user
+from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowRun
+from runtime import WorkflowRuntime
+
+
+class RunCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str = Field(min_length=1, max_length=500)
+    domain: str = "general"
+    intent: str = "general"
+    workflow_id: str | None = Field(default=None, alias="workflowId")
+    review_mode: str = Field(default="auto", alias="reviewMode")
+    input: dict[str, Any] = Field(default_factory=dict)
+    security_level: str = Field(default="internal", alias="securityLevel")
+    priority: str = "normal"
+    enabled_plugin_ids: list[str] | None = Field(default=None, alias="enabledPluginIds")
+    client_request_id: str | None = Field(default=None, alias="clientRequestId", max_length=200)
+
+
+class ReviewApplyRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    step_id: str = Field(alias="stepId", min_length=1)
+    decision: ReviewDecisionType
+    reviewer: str = "system"
+    comment: str = Field(default="", max_length=2000)
+    operation_id: str = Field(alias="operationId", min_length=1)
+
+
+_SENSITIVE_KEYS = (
+    "authorization", "password", "secret", "token", "cookie", "api_key",
+    "apikey", "prompt", "arguments", "response", "content", "input",
+)
+
+
+def _redact(value: Any, *, depth: int = 0) -> Any:
+    if depth > 6:
+        return "[truncated]"
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[redacted]"
+                if any(marker in str(key).lower().replace("-", "_") for marker in _SENSITIVE_KEYS)
+                else _redact(item, depth=depth + 1)
+            )
+            for key, item in list(value.items())[:100]
+        }
+    if isinstance(value, list):
+        return [_redact(item, depth=depth + 1) for item in value[:100]]
+    if isinstance(value, str):
+        return value[:2000]
+    return value
+
+
+def _actor_input(payload: dict[str, Any]) -> dict[str, Any]:
+    actor = current_trusted_user()
+    if actor is None:
+        return dict(payload)
+    result = {
+        **payload,
+        "authenticatedUserId": actor.user_id,
+        "authenticatedSubject": actor.subject,
+        "authenticatedRole": actor.role,
+    }
+    if actor.tenant_id:
+        result["authenticatedTenantId"] = actor.tenant_id
+    return result
+
+
+def _require_access(run: WorkflowRun) -> None:
+    owner = str(run.input.get("authenticatedUserId") or "")
+    if not owner:
+        return
+    actor = current_trusted_user()
+    tenant = str(run.input.get("authenticatedTenantId") or "")
+    if actor is None or actor.user_id != owner or (tenant and actor.tenant_id != tenant):
+        raise HTTPException(status_code=404, detail="run not found")
+
+
+def _state(run: WorkflowRun) -> dict[str, Any]:
+    raw = run.execution_state if isinstance(run.execution_state, dict) else {}
+    allowed = (
+        "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
+        "memoryRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
+        "outputSummaries", "resourceBindings", "bindingHistory",
+    )
+    return {key: raw[key] for key in allowed if key in raw}
+
+
+def project_run(run: WorkflowRun) -> dict[str, Any]:
+    """Project lifecycle and references without task input or output bodies."""
+    state = _state(run)
+    return {
+        "runId": run.run_id,
+        "taskId": run.task_id,
+        "workflowId": run.workflow_id,
+        "domain": run.domain,
+        "runtimeEngine": run.runtime_engine,
+        "status": run.status.value,
+        "lifecyclePhase": run.lifecycle_phase.value if run.lifecycle_phase else None,
+        "lifecycleMessage": run.lifecycle_message,
+        "currentStepId": run.current_step_id,
+        "completedStepIds": list(run.completed_step_ids),
+        "activeStepIds": list(run.active_step_ids),
+        "skippedStepIds": list(run.execution_state.get("skippedStepIds") or []),
+        "outputRef": run.output.get("outputRef") if isinstance(run.output, dict) else None,
+        "executionState": state,
+        "steps": [
+            {
+                "stepId": step.step_id,
+                "name": step.name,
+                "agentName": step.agent_name,
+                "capability": step.capability,
+                "status": step.status.value,
+                "attempt": step.attempt,
+                "retryCount": step.retry_count,
+                "reviewRequired": step.requires_review,
+                "outputRef": (state.get("outputRefs") or {}).get(step.step_id),
+                "outputSummary": (state.get("outputSummaries") or {}).get(step.step_id, ""),
+                "startedAt": step.started_at,
+                "completedAt": step.completed_at,
+            }
+            for step in run.steps
+        ],
+        "createdAt": run.created_at,
+        "updatedAt": run.updated_at,
+        "startedAt": run.started_at,
+    }
+
+
+def project_graph(run: WorkflowRun) -> dict[str, Any]:
+    blueprint = dict(run.acg_blueprint or {})
+    state = _state(run)
+    return {
+        "runId": run.run_id,
+        "graphId": blueprint.get("graphId") or state.get("graphId"),
+        "graphVersion": blueprint.get("version") or state.get("graphVersion"),
+        "nodes": list(blueprint.get("nodes") or []),
+        "edges": list(blueprint.get("edges") or []),
+        "completedStepIds": list(run.completed_step_ids),
+        "activeStepIds": list(run.active_step_ids),
+        "skippedStepIds": list(run.execution_state.get("skippedStepIds") or []),
+        "graphPatchRefs": list(state.get("graphPatchRefs") or []),
+        "resourceBindings": dict(state.get("resourceBindings") or {}),
+    }
+
+
+def _idempotency(request: RunCreateRequest) -> tuple[str | None, str | None]:
+    if not request.client_request_id:
+        return None, None
+    actor = current_trusted_user()
+    caller = f"{getattr(actor, 'tenant_id', '')}:{getattr(actor, 'user_id', '')}" if actor else "internal"
+    key = hashlib.sha256(f"{caller}:agentos-v2:{request.client_request_id}".encode()).hexdigest()
+    body = request.model_dump(by_alias=True, mode="json", exclude={"client_request_id"})
+    fingerprint = hashlib.sha256(
+        json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return key, fingerprint
+
+
+def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator) -> APIRouter:
+    router = APIRouter(prefix="/agentos/v2")
+
+    def load_run(run_id: str) -> WorkflowRun:
+        try:
+            run = runtime.get_status(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        _require_access(run)
+        return run
+
+    @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
+    async def create_run(request: RunCreateRequest):
+        key, fingerprint = _idempotency(request)
+        if key:
+            existing = runtime.workflow_store.find_run_by_idempotency_key(key)
+            if existing is not None:
+                _require_access(existing)
+                if existing.idempotency_fingerprint != fingerprint:
+                    raise HTTPException(status_code=409, detail="clientRequestId conflict")
+                return project_run(existing)
+        try:
+            task = runtime.create_task(
+                title=request.title,
+                domain=request.domain,
+                intent=request.intent,
+                input=_actor_input(request.input),
+                security_level=request.security_level,
+                priority=request.priority,
+                workflow_id=request.workflow_id,
+                enabled_plugin_ids=request.enabled_plugin_ids,
+            )
+            _, run = runtime.prepare_run(
+                task.task_id,
+                workflow_id=request.workflow_id,
+                review_mode=request.review_mode,
+                idempotency_key=key,
+                idempotency_fingerprint=fingerprint,
+                enabled_plugin_ids=request.enabled_plugin_ids,
+            )
+            await coordinator.submit(run.run_id)
+            return project_run(runtime.get_status(run.run_id))
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="invalid workflow request") from exc
+
+    @router.get("/runs")
+    async def list_runs(
+        status_value: str | None = Query(default=None, alias="status"),
+        domain: str | None = None,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+    ):
+        actor = current_trusted_user()
+        result = runtime.workflow_store.list_runs(
+            status=status_value,
+            domain=domain,
+            owner_user_id=(actor.user_id if actor else None),
+            owner_tenant_id=(actor.tenant_id if actor else None),
+            page=page,
+            page_size=page_size,
+        )
+        return {
+            "items": [project_run(run) for run in result.items],
+            "total": result.total,
+            "page": result.page,
+            "pageSize": result.page_size,
+        }
+
+    @router.get("/runs/{run_id}")
+    async def get_run(run_id: str):
+        return project_run(load_run(run_id))
+
+    @router.get("/runs/{run_id}/graph")
+    async def get_graph(run_id: str):
+        return project_graph(load_run(run_id))
+
+    @router.get("/runs/{run_id}/outputs/{output_ref}")
+    async def get_output(run_id: str, output_ref: str):
+        run = load_run(run_id)
+        allowed = set((_state(run).get("outputRefs") or {}).values())
+        if output_ref not in allowed:
+            raise HTTPException(status_code=404, detail="output not found")
+        try:
+            content = runtime.execution_value_store.get_output(run_id=run_id, output_ref=output_ref)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="output not found") from exc
+        return {"runId": run_id, "outputRef": output_ref, "content": content}
+
+    @router.get("/runs/{run_id}/trace")
+    async def get_trace(run_id: str):
+        run = load_run(run_id)
+        exported = runtime.trace_store.export_json(run)
+        exported["events"] = [_redact(item) for item in exported.get("events", [])]
+        return exported
+
+    @router.get("/runs/{run_id}/provenance")
+    async def get_provenance(run_id: str):
+        run = load_run(run_id)
+        ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, task_id=run.task_id)
+        return {
+            "runId": run.run_id,
+            "integrityStatus": "valid" if ledger.verify_integrity() else "invalid",
+            "events": ledger.trace_events(),
+        }
+
+    @router.get("/runs/{run_id}/checkpoints")
+    async def get_checkpoints(run_id: str):
+        run = load_run(run_id)
+        checkpoint_id = str(run.execution_state.get("checkpointId") or "")
+        items = []
+        if checkpoint_id:
+            items.append(
+                {
+                    "checkpointId": checkpoint_id,
+                    "version": runtime.checkpoint_store.version(run_id=run_id, checkpoint_id=checkpoint_id),
+                    "canResume": run.status.value == "waiting_review",
+                }
+            )
+        return {"runId": run_id, "items": items, "total": len(items)}
+
+    @router.get("/runs/{run_id}/reviews")
+    async def get_reviews(run_id: str):
+        load_run(run_id)
+        reviews = runtime.list_reviews(run_id)
+        return {
+            "runId": run_id,
+            "items": [item.model_dump(by_alias=True, mode="json") for item in reviews],
+            "total": len(reviews),
+        }
+
+    @router.post("/runs/{run_id}/reviews")
+    async def apply_review(run_id: str, request: ReviewApplyRequest):
+        load_run(run_id)
+        try:
+            run = await runtime.apply_review(
+                ReviewDecision(
+                    runId=run_id,
+                    stepId=request.step_id,
+                    decision=request.decision,
+                    reviewer=request.reviewer,
+                    comment=request.comment,
+                    operationId=request.operation_id,
+                )
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="review conflict") from exc
+        return project_run(run)
+
+    return router
+
+
+__all__ = ["RunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
