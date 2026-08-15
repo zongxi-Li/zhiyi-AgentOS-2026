@@ -8,4 +8,5 @@ contributions:
     - lesson_plan
   workflows:
     - education_lesson_plan_v1
-  capabilities: []
+  capabilities:
+    - lesson_plan

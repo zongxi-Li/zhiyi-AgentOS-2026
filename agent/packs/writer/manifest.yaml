@@ -8,4 +8,5 @@ contributions:
     - outline_generate
   workflows:
     - writer_story_outline_v1
-  capabilities: []
+  capabilities:
+    - outline_generate

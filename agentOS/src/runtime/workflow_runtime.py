@@ -931,9 +931,14 @@ class WorkflowRuntime:
         """选择最后完成步骤的输出引用作为运行最终产物，不复制真实输出正文。"""
         if not state.completed_step_ids:
             return {}
-        final_step_id = state.completed_step_ids[-1]
-        output_ref = state.output_refs.get(final_step_id)
-        return {"outputRef": output_ref} if output_ref else {}
+        # Enriched planner graphs may complete support/control projections after
+        # the last value-producing step. Select the latest committed output,
+        # not merely the last completed node identifier.
+        for final_step_id in reversed(state.completed_step_ids):
+            output_ref = state.output_refs.get(final_step_id)
+            if output_ref:
+                return {"outputRef": output_ref}
+        return {}
 
     def _validate_blueprint_agents(
         self,

@@ -10,7 +10,7 @@ Phase 5：仅迁移 Capability Matrix 中的内核与应用 P0/P1 `MIGRATE` 缺�
 
 ## Result SHA
 
-由提交 `06 feat(agentos): migrate missing C4 ACG capabilities` 固化；确切 SHA 在 Phase 6 报告提交时回填。
+`c4ae5f259782b7def6b288b213576dd25bcaae1a`
 
 ## Changed
 

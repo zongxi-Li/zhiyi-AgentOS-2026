@@ -11,4 +11,7 @@ contributions:
     - diagram_generation
   workflows:
     - programmer_requirement_analysis_v1
-  capabilities: []
+  capabilities:
+    - codebase_semantic_search
+    - code_generation
+    - diagram_generation
