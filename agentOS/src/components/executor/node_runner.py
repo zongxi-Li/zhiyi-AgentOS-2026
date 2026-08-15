@@ -15,8 +15,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from components.communicator import CommunicatorService
-from components.communicator.contracts import ContextPack, estimate_tokens
+from components.communicator import CommunicationBroker, CommunicatorService
+from components.communicator.contracts import ContextPack, estimate_tokens, input_revision
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService
@@ -58,6 +58,7 @@ class ACGNodeRunner:
         model_runtime: object | None = None,
         capability_descriptors: Mapping[str, object] | None = None,
         tool_runtime: object | None = None,
+        communication_broker: CommunicationBroker | None = None,
         fault_hook: Callable[[str], None] | None = None,
     ) -> None:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
@@ -85,6 +86,7 @@ class ACGNodeRunner:
         self.model_runtime = model_runtime
         self.capability_descriptors = dict(capability_descriptors or {})
         self.tool_runtime = tool_runtime
+        self.communication_broker = communication_broker
         # 仅由故障恢复测试在运行时对象上临时注入。生产装配不会设置该钩子，业务合同、
         # Blueprint 和持久化状态都不包含故障阶段或异常对象。
         self._fault_hook = fault_hook
@@ -153,6 +155,16 @@ class ACGNodeRunner:
                 ],
                 sourceStepIds=list(source_ids),
             )
+        elif self.communication_broker is not None:
+            pack = await self._assemble_broker_context(
+                state=state,
+                step_id=step_id,
+                step=step,
+                commit_id=commit_id,
+            )
+            # Broker 是唯一正文读取入口；读取成功后才用已裁剪的 ContextPack 登记
+            # 消费与交互血缘。账本仅封存摘要、字段名和引用，恢复会复用 commitId。
+            self.communicator.record_context_consumption(pack, operation_id=commit_id)
         else:
             pack = self.communicator.assemble_execution_context(
                 run_id=state.run_id,
@@ -318,6 +330,13 @@ class ACGNodeRunner:
             "modelInvocations": self._safe_model_invocations(output.model_invocations),
             "toolCalls": self._safe_tool_calls(tool_events),
             "provenanceEvents": self.communicator.drain_provenance_events(step_id=step_id),
+            # Broker 的读取事件只含引用、字段名、计数和通道，Runtime 会投影为安全
+            # Trace；正文仍只存在于 Value Store 与当前 Agent 调用栈。
+            "communicationReads": (
+                self.communication_broker.drain_events(consumer_step_id=step_id)
+                if self.communication_broker is not None
+                else []
+            ),
             # 仅含策略、条数和预算统计；记忆正文始终留在 MemoryService/Store 中。
             "memoryAccess": memory_access,
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
@@ -502,6 +521,62 @@ class ACGNodeRunner:
         """执行测试专用中断钩子；未注入时是零行为的私有空操作。"""
         if self._fault_hook is not None:
             self._fault_hook(stage)
+
+    async def _assemble_broker_context(
+        self,
+        *,
+        state: ACGExecutionState,
+        step_id: str,
+        step: WorkflowStep,
+        commit_id: str,
+    ) -> ContextPack:
+        """按编译拓扑经 Broker 读取上游引用，并合并为节点可消费的最小 ContextPack。"""
+        assert self.communication_broker is not None
+        source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
+        from_map = step.input.get("from") if isinstance(step.input, dict) else None
+        data: dict[str, Any] = {}
+        source_data: dict[str, dict[str, Any]] = {}
+        evidence_refs: list[str] = []
+        delivered = 0
+        available = 0
+        for source_id in source_ids:
+            output_ref = state.output_refs.get(source_id)
+            if output_ref is None:
+                continue
+            requested = from_map.get(source_id, []) if isinstance(from_map, dict) else []
+            if not isinstance(requested, list):
+                raise ValueError(f"inputSpec.from.{source_id} must be a list")
+            partial = await self.communication_broker.read_reference(
+                run_id=state.run_id,
+                consumer_step_id=step_id,
+                output_ref=output_ref,
+                requested_fields=[str(field) for field in requested],
+                max_tokens=self.entropy_budget if self.entropy_budget is not None else 4096,
+                reason=f"ACG step {step_id} requires upstream {source_id}",
+            )
+            data.update(partial.data)
+            source_data.update(partial.source_data)
+            evidence_refs.extend(item for item in partial.evidence_refs if item not in evidence_refs)
+            delivered += partial.tokens_delivered
+            available += partial.tokens_available
+        # 预算使用是可恢复的数字投影；Broker 在运行期共享同一实例，下一次节点读取
+        # 会继续累加，Runtime 重建时又会从 checkpoint 的这份计数恢复。
+        state.communication_usage = self.communication_broker.usage_snapshot()
+        return ContextPack(
+            runId=state.run_id,
+            stepId=step_id,
+            objective=self.workflow.description,
+            stepGoal=step.name,
+            data=data,
+            sourceData=source_data,
+            evidenceRefs=evidence_refs,
+            tokensDelivered=delivered,
+            tokensAvailable=available,
+            savingRatio=(round(max(0.0, 1.0 - delivered / available), 4) if available else 0.0),
+            sourceStepIds=list(source_ids),
+            inputRevision=input_revision(data),
+            attemptId=commit_id,
+        )
 
 
 __all__ = ["ACGNodeRunner", "EntropyBudgetExceededError"]

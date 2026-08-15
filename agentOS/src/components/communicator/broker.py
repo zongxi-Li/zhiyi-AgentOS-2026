@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from .contracts import ContextPack, estimate_tokens, input_revision
 from .manifest import CommunicationManifest, CommunicationRule
@@ -39,13 +39,20 @@ class ExecutionValueReader(Protocol):
 class CommunicationBroker:
     """执行 Manifest 的唯一正文读取入口，并维护当前进程的预算消耗。"""
 
-    def __init__(self, *, manifest: CommunicationManifest, value_store: ExecutionValueReader) -> None:
+    def __init__(
+        self,
+        *,
+        manifest: CommunicationManifest,
+        value_store: ExecutionValueReader,
+        usage: Mapping[str, Any] | None = None,
+    ) -> None:
         self.manifest = manifest
         self.value_store = value_store
         self._run_used = 0
         self._step_used: dict[str, int] = {}
         self._channel_used: dict[str, int] = {}
         self._events: list[dict[str, Any]] = []
+        self.restore_usage(usage or {})
 
     async def read_reference(
         self,
@@ -108,11 +115,55 @@ class CommunicationBroker:
         )
         return pack
 
-    def drain_events(self) -> list[dict[str, Any]]:
+    def drain_events(self, *, consumer_step_id: str | None = None) -> list[dict[str, Any]]:
         """领取无正文读取审计事件；返回后清空私有缓冲避免后续步骤重复投影。"""
-        events = list(self._events)
-        self._events.clear()
+        events = [
+            event for event in self._events
+            if consumer_step_id is None or event["consumerStepId"] == consumer_step_id
+        ]
+        if consumer_step_id is None:
+            self._events.clear()
+        else:
+            self._events = [
+                event for event in self._events if event["consumerStepId"] != consumer_step_id
+            ]
         return events
+
+    def usage_snapshot(self) -> dict[str, Any]:
+        """返回可进入 State/checkpoint 的通信消耗计数，不包含引用或正文。"""
+        return {
+            "run": self._run_used,
+            "steps": dict(self._step_used),
+            "channels": dict(self._channel_used),
+        }
+
+    def restore_usage(self, usage: Mapping[str, Any]) -> None:
+        """从检查点恢复已消费预算；非法值明确拒绝而不是重置额度。"""
+        run_used = usage.get("run", 0)
+        steps = usage.get("steps", {})
+        channels = usage.get("channels", {})
+        if (
+            not isinstance(run_used, int)
+            or isinstance(run_used, bool)
+            or run_used < 0
+            or not isinstance(steps, Mapping)
+            or not isinstance(channels, Mapping)
+        ):
+            raise ValueError("communication usage is invalid")
+        normalized_steps = self._normalize_usage(steps)
+        normalized_channels = self._normalize_usage(channels)
+        self._run_used = run_used
+        self._step_used = normalized_steps
+        self._channel_used = normalized_channels
+
+    @staticmethod
+    def _normalize_usage(values: Mapping[str, Any]) -> dict[str, int]:
+        normalized: dict[str, int] = {}
+        for key, value in values.items():
+            if not isinstance(key, str) or not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError("communication usage counters are invalid")
+            normalized[key] = value
+        return normalized
 
     def _resolve_rule(
         self,

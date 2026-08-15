@@ -98,6 +98,37 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     assert latest_state["completedStepIds"] == ["extract", "summarize"]
 
 
+def test_runtime_persists_broker_communication_usage_without_output_body() -> None:
+    """严格链路应经 Broker 读取上游引用，并把预算统计而非正文写入运行状态。"""
+    runtime = _runtime()
+    task = runtime.create_task("broker usage", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.task_id)
+
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    usage = result.execution_state["communicationUsage"]
+    assert usage["run"] > 0
+    assert usage["steps"]["summarize"] > 0
+    assert usage["channels"]["extract:summarize"] > 0
+    broker_events = [
+        event for event in result.trace
+        if event.observation == "Broker communication read projected"
+    ]
+    assert len(broker_events) == 1
+    assert set(broker_events[0].payload) == {
+        "runId",
+        "consumerStepId",
+        "producerStepId",
+        "outputRef",
+        "fields",
+        "tokens",
+        "channel",
+    }
+    assert broker_events[0].payload["fields"] == ["title"]
+    trace_payloads = [event.payload for event in result.trace]
+    assert all("hidden" not in str(payload) for payload in trace_payloads)
+
+
 def test_runtime_cleanup_keeps_committed_and_review_references(tmp_path) -> None:
     """运行时清理必须汇总提交与审核保护引用，Trace 只能记录无正文统计。"""
     values = InMemoryExecutionValueStore()

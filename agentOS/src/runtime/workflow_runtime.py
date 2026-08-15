@@ -27,7 +27,7 @@ from components.task_manager.state_machine import StateMachine
 from components.task_manager.service import TaskManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
-from components.communicator import CommunicatorService
+from components.communicator import CommunicationBroker, CommunicatorService
 from components.communicator.provenance import ProvenanceLedger
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor import (
@@ -497,7 +497,7 @@ class WorkflowRuntime:
         if not isinstance(blueprint_data, dict):
             raise ExecutionEngineMigratingError(run.run_id)
         blueprint = ACGBlueprint.model_validate(blueprint_data)
-        graph = ACGGraphCompiler().compile(blueprint)
+        graph = ACGGraphCompiler().compile(blueprint, run_id=run.run_id)
         execution_state = state or ACGExecutionState(
             runId=run.run_id,
             graphId=blueprint.graph_id,
@@ -512,7 +512,14 @@ class WorkflowRuntime:
         )
         ledger = self.provenance_store.load_ledger(run_id=run.run_id, task_id=task.task_id)
         self._validate_acg_state_references(run=run, state=execution_state, ledger=ledger)
-        runner = self._build_acg_runner(task=task, run=run, workflow=workflow, graph=graph, ledger=ledger)
+        runner = self._build_acg_runner(
+            task=task,
+            run=run,
+            workflow=workflow,
+            graph=graph,
+            state=execution_state,
+            ledger=ledger,
+        )
         run.execution_state["engineMigration"] = "langgraph_fused_v1"
         run.execution_state["graphId"] = blueprint.graph_id
         run = self._set_run_lifecycle(
@@ -669,6 +676,7 @@ class WorkflowRuntime:
         run: WorkflowRun,
         workflow: WorkflowDefinition,
         graph,
+        state: ACGExecutionState,
         ledger: ProvenanceLedger,
     ) -> ACGNodeRunner:
         """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
@@ -699,6 +707,22 @@ class WorkflowRuntime:
             if delegate is not None
             else None
         )
+        # Broker 由单次图执行共享，读取后的预算计数写入引用型 State；从检查点恢复
+        # 时，已消费额度会作为构造参数重新载入，不能因重启而回到零。
+        communication_broker = (
+            CommunicationBroker(
+                manifest=graph.communication_manifest,
+                value_store=self.execution_value_store,
+                usage=state.communication_usage,
+            )
+            if graph.communication_manifest is not None
+            else None
+        )
+        if communication_broker is not None:
+            # 空图或仅根节点的运行同样必须采用统一的零值表示。否则首次执行会在
+            # Broker 调用后才写入零计数，而提交重放会保留空对象，造成等价状态生成
+            # 不同 checkpoint 摘要并破坏恢复幂等性。
+            state.communication_usage = communication_broker.usage_snapshot()
         return ACGNodeRunner(
             task=task,
             run=run,
@@ -722,6 +746,7 @@ class WorkflowRuntime:
                 if step.capability
             },
             tool_runtime=scoped_tools,
+            communication_broker=communication_broker,
             agent_invoker=AgentInvocationAdapter(
                 registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
             ),
@@ -848,6 +873,41 @@ class WorkflowRuntime:
                     step_id=event.get("stepId"),
                     observation="Step memory policy applied",
                     payload=dict(memory_access),
+                )
+        # 通信读取事件来自 Broker，仅允许引用、字段名、计数与逻辑通道进入审计。
+        # 即便节点事件被外部调用方伪造，也不能借此把 reason 或任何正文塞进 Trace。
+        for communication_read in event.get("communicationReads", []):
+            if not isinstance(communication_read, dict):
+                continue
+            allowed = {
+                "runId",
+                "consumerStepId",
+                "producerStepId",
+                "outputRef",
+                "fields",
+                "tokens",
+                "channel",
+            }
+            payload = {
+                key: value
+                for key, value in communication_read.items()
+                if key in allowed
+            }
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_event(
+                    run,
+                    event_type=TraceEventType.DATA_CONSUMED,
+                    step_id=event.get("stepId"),
+                    observation="Broker communication read projected",
+                    payload=payload,
+                ))
+            else:
+                self.trace_store.append(
+                    run,
+                    TraceEventType.DATA_CONSUMED,
+                    step_id=event.get("stepId"),
+                    observation="Broker communication read projected",
+                    payload=payload,
                 )
         for provenance_event in event.get("provenanceEvents", []):
             if not isinstance(provenance_event, dict):

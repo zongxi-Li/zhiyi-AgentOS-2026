@@ -6,6 +6,18 @@
 
 系统仍然禁止在执行 State、checkpoint、Trace 中保存输出、上下文、记忆、提示词、工具参数或模型响应正文；这些位置只能保存摘要、统计数据与受控引用。
 
+## 当前交付
+
+截至本轮，`STRICT_CONTRACT` 的真实执行路径已经接入受控 Broker，而不是仅停留在独立组件测试：
+
+- `ACGGraphCompiler` 以 `runId` 编译内部 `CommunicationManifest`；依赖边成为唯一可读拓扑边。未精确声明 `inputSpec.from` 时，生产步骤的公开 `outputSpec.properties` 只作为字段读取上界，不被当作编译期必填 slot 契约。
+- `WorkflowRuntime` 为每次图执行创建共享 Broker。节点读取上游输出必须经过 Broker；运行 State 与 SQLite checkpoint 只保存 `communicationUsage` 的 `run`、`steps`、`channels` 三类整数计数。
+- Broker 的读取结果会回写既有消费/交互血缘账本，并投影为 `data_consumed` Trace。Trace 载荷严格限定为 run、生产/消费步骤、输出引用、字段名、Token 计数和逻辑通道，不记录读取理由或正文。
+- 恢复时 Broker 从 checkpoint 的预算计数继续扣减；空图和根节点也规范化为零值计数，避免提交重放生成不同 checkpoint 摘要或重复保存版本。
+- `EVENT` 仍只传递受控事件引用，`BLACKBOARD` 与 `DEBATE` 仍由编译器明确拒绝。修订去重、事件变化发布、受保护工作记忆与受治理辩论子图尚未实现，不能作为可用能力宣传。
+
+本轮验证：`python -m compileall -q src`、`pytest -q`（151 项通过）及 `git diff --check`。
+
 ## 总体结构
 
 每个 ACG Blueprint 新增内部 `CommunicationManifest`，由编译器生成而不泄漏到公开 contracts：

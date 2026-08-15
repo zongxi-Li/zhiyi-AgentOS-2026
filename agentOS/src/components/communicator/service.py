@@ -108,6 +108,42 @@ class CommunicatorService:
         """
         self._assembler.record_production(step_id, output, **kwargs)  # type: ignore[arg-type]
 
+    def record_context_consumption(self, pack: ContextPack, *, operation_id: str = "") -> None:
+        """把已获准的 ContextPack 写入消费与交互血缘账本。
+
+        Broker 已完成正文读取和字段裁剪；本方法只把 ContextPack 中的字段名、校验
+        摘要、引用和统计写入账本。它不保存 ``data`` 或 ``sourceData`` 正文，且用
+        节点提交标识派生两个角色不同的幂等键，恢复重放不会生成重复血缘事件。
+        """
+        fields_by_producer = {
+            source_step_id: list(source_data)
+            for source_step_id, source_data in pack.source_data.items()
+        }
+        consumption_operation = f"{operation_id}:consume" if operation_id else ""
+        interaction_operation = f"{operation_id}:interact" if operation_id else ""
+        self.provenance.record_consumption(
+            pack.step_id,
+            list(pack.source_step_ids),
+            list(pack.data),
+            fields_by_producer=fields_by_producer,
+            data=pack.data,
+            tokens_delivered=pack.tokens_delivered,
+            tokens_available=pack.tokens_available,
+            saving_ratio=pack.saving_ratio,
+            contract_status=pack.contract_status,
+            operation_id=consumption_operation,
+        )
+        self.provenance.record_interaction(
+            producer_step_ids=list(pack.source_step_ids),
+            consumer_step_id=pack.step_id,
+            fields_by_producer=fields_by_producer,
+            evidence_refs=list(pack.evidence_refs),
+            tokens_delivered=pack.tokens_delivered,
+            tokens_available=pack.tokens_available,
+            saving_ratio=pack.saving_ratio,
+            operation_id=interaction_operation,
+        )
+
     @property
     def provenance(self) -> ProvenanceLedger:
         """返回本服务持有的可导出内存血缘账本引用。

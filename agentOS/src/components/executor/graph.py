@@ -47,6 +47,9 @@ class ACGExecutionState(BaseModel):
     # 通信正文与安全 Trace 均不进入 State；这里只保留已被账本封存的事件标识，
     # 恢复时 Runtime 会重新加载哈希链并检查该事件属于同一 run、task 与步骤。
     provenance_refs: dict[str, list[str]] = Field(default_factory=dict, alias="provenanceRefs")
+    # 通信预算只保存已消耗的整数计数，恢复后 Broker 用它继续限制剩余额度。它不含
+    # 输出、ContextPack、字段值或任何外部调用正文。
+    communication_usage: dict[str, Any] = Field(default_factory=dict, alias="communicationUsage")
     checkpoint_id: str | None = Field(default=None, alias="checkpointId")
     review_payload: dict[str, Any] | None = Field(default=None, alias="reviewPayload")
 
@@ -183,10 +186,12 @@ class ACGExecutionGraph:
         nodes: tuple[str, ...],
         edges: tuple[tuple[str, str], ...] = (),
         node_specs: dict[str, ACGNodeSpec] | None = None,
+        communication_manifest: object | None = None,
     ) -> None:
         self.nodes = tuple(dict.fromkeys(nodes))
         self.edges = tuple(edges)
         self.node_specs = node_specs or {node_id: ACGNodeSpec(node_id=node_id) for node_id in self.nodes}
+        self.communication_manifest = communication_manifest
         known = set(self.nodes)
         if set(self.node_specs) != known or any(source not in known or target not in known for source, target in self.edges):
             raise ValueError("graph nodes and edges must be declared consistently")
@@ -359,6 +364,7 @@ class ACGExecutionGraph:
                     "modelInvocations": list(result.get("modelInvocations") or []),
                     "toolCalls": list(result.get("toolCalls") or []),
                     "provenanceEvents": list(result.get("provenanceEvents") or []),
+                    "communicationReads": list(result.get("communicationReads") or []),
                     "memoryAccess": memory_access,
                 }
                 if self.node_specs[step_id].review_required or result.get("reviewRequired"):
