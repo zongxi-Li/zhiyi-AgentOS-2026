@@ -138,6 +138,19 @@ class ACGCheckpointStore:
             raise KeyError(f"no checkpoint found for run {run_id}")
         return str(row[0]), json.loads(row[1])
 
+    def list_states(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
+        """返回当前 run 的全部引用型检查点状态，供孤儿保护扫描使用。
+
+        结果按版本排序，不读取其它运行的数据。调用方只能从中提取已知引用字段，
+        不得将状态正文扩散到日志、Trace 或未受控的应用内存。
+        """
+        rows = self._connection.execute(
+            """SELECT state_json FROM acg_execution_checkpoints
+               WHERE thread_id = ? ORDER BY version""",
+            (run_id,),
+        ).fetchall()
+        return tuple(json.loads(str(row[0])) for row in rows)
+
     def version(self, *, run_id: str, checkpoint_id: str) -> int:
         """读取检查点版本；不存在时明确报告缺失。"""
         row = self._connection.execute(

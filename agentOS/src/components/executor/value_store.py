@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+from time import time
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -45,6 +48,17 @@ class ExecutionValueAccessError(ValueError):
         self.requested_run_id = requested_run_id
 
 
+@dataclass(frozen=True)
+class StoredValueRef:
+    """不含正文的执行值引用元数据，供延迟清理与审计统计使用。"""
+
+    reference: str
+    run_id: str
+    step_id: str
+    kind: str
+    created_at: datetime
+
+
 class ExecutionValueStore(Protocol):
     """节点执行管线访问受控正文的最小接口。"""
 
@@ -72,20 +86,29 @@ class ExecutionValueStore(Protocol):
     def get_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any] | None:
         """读取同一 run 的节点提交记录；不存在返回 ``None``。"""
 
+    def list_node_commits(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
+        """列举当前 run 的引用型节点提交记录，不读取输出或 ContextPack 正文。"""
+
+    def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
+        """列举早于保留阈值的输出与 ContextPack 元数据，绝不返回正文。"""
+
+    def delete_references(self, *, run_id: str, references: Iterable[str]) -> int:
+        """删除当前 run 的输出或 ContextPack 引用并返回实际删除数。"""
+
 
 class InMemoryExecutionValueStore:
     """面向单进程运行期的引用仓库，严格实现 ``ExecutionValueStore`` 语义。"""
 
     def __init__(self) -> None:
         """分别保存节点输出与 ContextPack，避免引用类别互相误读。"""
-        self._outputs: dict[str, tuple[str, str, dict[str, Any]]] = {}
-        self._context_packs: dict[str, tuple[str, str, dict[str, Any]]] = {}
+        self._outputs: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
+        self._context_packs: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
         self._node_commits: dict[str, tuple[str, dict[str, Any]]] = {}
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
         """深拷贝已校验输出，防止 Agent 或调用者之后修改原对象。"""
         reference = self._new_reference("output", run_id, step_id)
-        self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)))
+        self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now())
         return reference
 
     def get_output(self, *, run_id: str, output_ref: str) -> dict[str, Any]:
@@ -95,7 +118,7 @@ class InMemoryExecutionValueStore:
     def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
         """深拷贝已装配上下文，使 checkpoint 外的正文仍受服务边界保护。"""
         reference = self._new_reference("context", run_id, step_id)
-        self._context_packs[reference] = (run_id, step_id, deepcopy(dict(payload)))
+        self._context_packs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now())
         return reference
 
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
@@ -144,6 +167,44 @@ class InMemoryExecutionValueStore:
             raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
         return deepcopy(payload)
 
+    def list_node_commits(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
+        """返回当前 run 的提交载荷副本，供恢复与孤儿保护引用收集使用。"""
+        return tuple(
+            deepcopy(payload)
+            for owner_run_id, payload in self._node_commits.values()
+            if owner_run_id == run_id
+        )
+
+    def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
+        """按 run 和保留阈值列出可评估的引用元数据，不暴露任何 JSON 正文。"""
+        cutoff = self._require_aware_time(older_than)
+        records: list[StoredValueRef] = []
+        for kind, values in (("output", self._outputs), ("context", self._context_packs)):
+            for reference, (owner_run_id, step_id, _payload, created_at) in values.items():
+                if owner_run_id == run_id and created_at < cutoff:
+                    records.append(
+                        StoredValueRef(
+                            reference=reference,
+                            run_id=owner_run_id,
+                            step_id=step_id,
+                            kind=kind,
+                            created_at=created_at,
+                        )
+                    )
+        return tuple(sorted(records, key=lambda item: item.reference))
+
+    def delete_references(self, *, run_id: str, references: Iterable[str]) -> int:
+        """只删除明确传入且属于当前 run 的值，跨 run 引用会保留。"""
+        deleted = 0
+        for reference in set(references):
+            for values in (self._outputs, self._context_packs):
+                record = values.get(reference)
+                if record is not None and record[0] == run_id:
+                    del values[reference]
+                    deleted += 1
+                    break
+        return deleted
+
     @staticmethod
     def _new_reference(kind: str, run_id: str, step_id: str) -> str:
         """生成带有类别、归属 run 与来源步骤的可追溯引用。"""
@@ -151,7 +212,7 @@ class InMemoryExecutionValueStore:
 
     @staticmethod
     def _get(
-        records: Mapping[str, tuple[str, str, dict[str, Any]]],
+        records: Mapping[str, tuple[str, str, dict[str, Any], datetime]],
         *,
         run_id: str,
         reference: str,
@@ -160,12 +221,12 @@ class InMemoryExecutionValueStore:
         record = records.get(reference)
         if record is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, _owner_step_id, payload = record
+        owner_run_id, _owner_step_id, payload, _created_at = record
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, owner_run_id, run_id)
         return deepcopy(payload)
 
-    def _records_for_kind(self, kind: str) -> Mapping[str, tuple[str, str, dict[str, Any]]]:
+    def _records_for_kind(self, kind: str) -> Mapping[str, tuple[str, str, dict[str, Any], datetime]]:
         if kind == "output":
             return self._outputs
         if kind == "context":
@@ -174,7 +235,7 @@ class InMemoryExecutionValueStore:
 
     @staticmethod
     def _assert(
-        records: Mapping[str, tuple[str, str, dict[str, Any]]],
+        records: Mapping[str, tuple[str, str, dict[str, Any], datetime]],
         *,
         run_id: str,
         step_id: str,
@@ -183,7 +244,7 @@ class InMemoryExecutionValueStore:
         record = records.get(reference)
         if record is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, owner_step_id, _payload = record
+        owner_run_id, owner_step_id, _payload, _created_at = record
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, owner_run_id, run_id)
         if owner_step_id != step_id:
@@ -191,6 +252,18 @@ class InMemoryExecutionValueStore:
                 reference,
                 message=f"execution value reference {reference} belongs to step {owner_step_id}, not declared step {step_id}",
             )
+
+    @staticmethod
+    def _now() -> datetime:
+        """统一生成带时区的创建时间，避免比较本地时间与 UTC 时间。"""
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _require_aware_time(value: datetime) -> datetime:
+        """拒绝无时区阈值，防止宿主机时区变化改变清理范围。"""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("older_than must include a timezone")
+        return value.astimezone(timezone.utc)
 
 
 class SQLiteExecutionValueStore:
@@ -212,7 +285,8 @@ class SQLiteExecutionValueStore:
                 run_id TEXT NOT NULL,
                 step_id TEXT NOT NULL DEFAULT '',
                 kind TEXT NOT NULL,
-                payload_json TEXT NOT NULL
+                payload_json TEXT NOT NULL,
+                created_at REAL NOT NULL
             )"""
         )
         value_columns = {
@@ -221,6 +295,14 @@ class SQLiteExecutionValueStore:
         if "step_id" not in value_columns:
             self._connection.execute(
                 "ALTER TABLE execution_values ADD COLUMN step_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "created_at" not in value_columns:
+            # 旧版本没有可追溯创建时间。把升级时刻作为年龄起点，先完整保留一个
+            # retention 周期，不能因元数据缺失把历史审核或恢复正文立即当作孤儿。
+            self._connection.execute("ALTER TABLE execution_values ADD COLUMN created_at REAL")
+            self._connection.execute(
+                "UPDATE execution_values SET created_at = ? WHERE created_at IS NULL",
+                (time(),),
             )
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS acg_node_commits (
@@ -341,6 +423,56 @@ class SQLiteExecutionValueStore:
             raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
         return deepcopy(json.loads(payload_json))
 
+    def list_node_commits(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
+        """按 run 列举提交的安全载荷，数据库查询不包含执行正文表。"""
+        rows = self._connection.execute(
+            "SELECT payload_json FROM acg_node_commits WHERE run_id = ? ORDER BY commit_id",
+            (run_id,),
+        ).fetchall()
+        return tuple(deepcopy(json.loads(str(row[0]))) for row in rows)
+
+    def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
+        """只读取候选值的元数据；查询始终带 runId 条件避免跨运行扫描。"""
+        if older_than.tzinfo is None or older_than.utcoffset() is None:
+            raise ValueError("older_than must include a timezone")
+        rows = self._connection.execute(
+            """SELECT reference, run_id, step_id, kind, created_at
+               FROM execution_values
+               WHERE run_id = ? AND created_at < ?
+               ORDER BY reference""",
+            (run_id, older_than.astimezone(timezone.utc).timestamp()),
+        ).fetchall()
+        return tuple(
+            StoredValueRef(
+                reference=str(row[0]),
+                run_id=str(row[1]),
+                step_id=str(row[2]),
+                kind=str(row[3]),
+                created_at=datetime.fromtimestamp(float(row[4]), tz=timezone.utc),
+            )
+            for row in rows
+        )
+
+    def delete_references(self, *, run_id: str, references: Iterable[str]) -> int:
+        """在 SQLite 事务中按 run 约束删除引用，不匹配归属的项不会受影响。"""
+        unique = tuple(set(references))
+        if not unique:
+            return 0
+        deleted = 0
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            for reference in unique:
+                cursor = self._connection.execute(
+                    "DELETE FROM execution_values WHERE reference = ? AND run_id = ?",
+                    (reference, run_id),
+                )
+                deleted += max(0, int(cursor.rowcount))
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+        return deleted
+
     def close(self) -> None:
         """关闭当前 SQLite 连接；运行时退出时由装配层负责调用。"""
         self._connection.close()
@@ -349,8 +481,10 @@ class SQLiteExecutionValueStore:
         reference = self._new_reference(kind, run_id, step_id)
         encoded = json.dumps(deepcopy(dict(payload)), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         self._connection.execute(
-            "INSERT INTO execution_values(reference, run_id, step_id, kind, payload_json) VALUES (?, ?, ?, ?, ?)",
-            (reference, run_id, step_id, kind, encoded),
+            """INSERT INTO execution_values
+               (reference, run_id, step_id, kind, payload_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (reference, run_id, step_id, kind, encoded, time()),
         )
         self._connection.commit()
         return reference
@@ -380,4 +514,5 @@ __all__ = [
     "ExecutionValueStore",
     "InMemoryExecutionValueStore",
     "SQLiteExecutionValueStore",
+    "StoredValueRef",
 ]

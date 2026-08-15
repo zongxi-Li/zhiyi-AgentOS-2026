@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from datetime import datetime
 import hashlib
 import json
 import logging
@@ -33,6 +34,7 @@ from components.executor import (
     ACGExecutionState,
     ACGGraphCompiler,
     ACGNodeRunner,
+    ExecutionOrphanCleaner,
     ExecutionValueStore,
     SQLiteExecutionValueStore,
 )
@@ -150,6 +152,7 @@ class WorkflowRuntime:
         self.execution_value_store = execution_value_store or SQLiteExecutionValueStore(
             db_path=os.getenv("AGENTOS_EXECUTION_VALUE_DB", "data/execution_values.sqlite3")
         )
+        self.orphan_cleaner = ExecutionOrphanCleaner(value_store=self.execution_value_store)
         self.memory_store = memory_store or SQLiteMemoryStore(
             db_path=os.getenv("AGENTOS_EXECUTION_MEMORY_DB", "data/execution_memory.sqlite3")
         )
@@ -1364,6 +1367,79 @@ class WorkflowRuntime:
     def list_checkpoints(self, run_id: str) -> list[Checkpoint]:
         """读取运行关联检查点列表，不改变运行或检查点状态。"""
         return list(self.workflow_store.get_run(run_id).checkpoints)
+
+    def clean_execution_orphans(self, *, run_id: str, older_than: datetime):
+        """延迟清理当前运行未被提交、State、检查点或审核意图保护的执行正文。
+
+        调用方必须显式给出带时区的保留阈值，避免默认立即删除。整个收集和删除过程
+        持有当前 run 锁，因此恢复、审核和清理不会交错地删除仍准备提交的引用。Trace
+        只记录扫描、保护和删除计数，不能包含 output、ContextPack 或记忆正文。
+        """
+        with self.run_lock_manager.lock_for(run_id):
+            run = self.workflow_store.get_run(run_id)
+            protected_refs = self._protected_execution_references(run)
+            stats = self.orphan_cleaner.clean(
+                run_id=run_id,
+                protected_refs=protected_refs,
+                older_than=older_than,
+            )
+            self.trace_store.append(
+                run,
+                TraceEventType.TASK_STATUS_CHANGED,
+                observation="Expired execution values cleaned",
+                payload={
+                    "kind": "execution_value_cleanup",
+                    "scanned": stats.scanned,
+                    "protected": stats.protected,
+                    "deleted": stats.deleted,
+                },
+            )
+            self.workflow_store.save_run(run)
+            return stats
+
+    def _protected_execution_references(self, run: WorkflowRun) -> set[str]:
+        """从所有可恢复入口提取已知正文引用，不递归读取或复制任何正文。"""
+        references: set[str] = set()
+        self._collect_value_references(run.execution_state, references)
+        self._collect_value_references(run.output, references)
+        for commit in self.execution_value_store.list_node_commits(run_id=run.run_id):
+            self._collect_value_references(commit, references)
+        checkpoint_states = getattr(self.checkpoint_store, "list_states", None)
+        if callable(checkpoint_states):
+            for state in checkpoint_states(run_id=run.run_id):
+                self._collect_value_references(state, references)
+        for checkpoint in run.checkpoints:
+            self._collect_value_references(checkpoint.state_snapshot, references)
+            self._collect_value_references(checkpoint.output_snapshot, references)
+        return references
+
+    @staticmethod
+    def _collect_value_references(payload: object, references: set[str]) -> None:
+        """从已定义的引用字段收集标识，不能把任意字符串误当成可保护的引用。"""
+        if not isinstance(payload, dict):
+            return
+        for field_name in ("outputRef", "contextRef"):
+            value = payload.get(field_name)
+            if isinstance(value, str) and value:
+                references.add(value)
+        for field_name in ("outputRefs", "contextRefs"):
+            values = payload.get(field_name)
+            if isinstance(values, dict):
+                references.update(
+                    value for value in values.values() if isinstance(value, str) and value
+                )
+        review_payload = payload.get("reviewPayload")
+        if isinstance(review_payload, dict):
+            pending_memory = review_payload.get("pendingMemory")
+            if isinstance(pending_memory, dict):
+                output_ref = pending_memory.get("outputRef")
+                if isinstance(output_ref, str) and output_ref:
+                    references.add(output_ref)
+        pending_memory = payload.get("pendingMemory")
+        if isinstance(pending_memory, dict):
+            output_ref = pending_memory.get("outputRef")
+            if isinstance(output_ref, str) and output_ref:
+                references.add(output_ref)
 
     def list_reviews(self, run_id: str) -> list[ReviewRecord]:
         """读取运行审核记录列表，不执行审核决策或状态迁移。"""

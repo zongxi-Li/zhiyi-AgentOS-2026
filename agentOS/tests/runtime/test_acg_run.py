@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from runtime.workflow_runtime import WorkflowRuntime
-from components.executor.value_store import SQLiteExecutionValueStore
+from components.executor.value_store import InMemoryExecutionValueStore, SQLiteExecutionValueStore
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryQuery
@@ -95,6 +96,51 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     assert latest_id == result.execution_state["checkpointId"]
     assert latest_state["checkpointId"] == latest_id
     assert latest_state["completedStepIds"] == ["extract", "summarize"]
+
+
+def test_runtime_cleanup_keeps_committed_and_review_references(tmp_path) -> None:
+    """运行时清理必须汇总提交与审核保护引用，Trace 只能记录无正文统计。"""
+    values = InMemoryExecutionValueStore()
+    runtime = WorkflowRuntime(
+        agent_registry=AgentRegistry(),
+        workflow_registry=WorkflowRegistry(),
+        workflow_store=MemoryWorkflowStore(),
+        checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
+        execution_value_store=values,
+    )
+    task = runtime.create_task("clean execution values")
+    committed_ref = values.put_output(run_id="run-clean", step_id="done", payload={"body": "committed"})
+    review_ref = values.put_output(run_id="run-clean", step_id="review", payload={"body": "review"})
+    orphan_ref = values.put_context_pack(run_id="run-clean", step_id="draft", payload={"body": "orphan"})
+    values.prepare_node_commit(run_id="run-clean", commit_id="commit:run-clean:done:0")
+    values.complete_node_commit(
+        run_id="run-clean",
+        commit_id="commit:run-clean:done:0",
+        payload={"outputRef": committed_ref},
+    )
+    run = WorkflowRun(
+        runId="run-clean",
+        taskId=task.task_id,
+        workflowId="workflow-clean",
+        domain="general",
+        runtimeEngine="acg",
+        status=WorkflowStatus.WAITING_REVIEW,
+        executionState={"reviewPayload": {"pendingMemory": {"outputRef": review_ref}}},
+    )
+    runtime.workflow_store.save_run(run)
+
+    stats = runtime.clean_execution_orphans(
+        run_id=run.run_id,
+        older_than=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+
+    assert stats.deleted == 1
+    assert values.get_output(run_id="run-clean", output_ref=committed_ref) == {"body": "committed"}
+    assert values.get_output(run_id="run-clean", output_ref=review_ref) == {"body": "review"}
+    with pytest.raises(Exception):
+        values.get_context_pack(run_id="run-clean", context_ref=orphan_ref)
+    payload = runtime.workflow_store.get_run(run.run_id).trace[-1].payload
+    assert payload == {"kind": "execution_value_cleanup", "scanned": 3, "protected": 2, "deleted": 1}
 
 
 def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
