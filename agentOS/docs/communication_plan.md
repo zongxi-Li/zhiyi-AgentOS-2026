@@ -11,12 +11,14 @@
 截至本轮，`STRICT_CONTRACT` 的真实执行路径已经接入受控 Broker，而不是仅停留在独立组件测试：
 
 - `ACGGraphCompiler` 以 `runId` 编译内部 `CommunicationManifest`；依赖边成为唯一可读拓扑边。未精确声明 `inputSpec.from` 时，生产步骤的公开 `outputSpec.properties` 只作为字段读取上界，不被当作编译期必填 slot 契约。
-- `WorkflowRuntime` 为每次图执行创建共享 Broker。节点读取上游输出必须经过 Broker；运行 State 与 SQLite checkpoint 只保存 `communicationUsage` 的 `run`、`steps`、`channels` 三类整数计数。
+- `WorkflowRuntime` 为每次图执行创建共享 Broker。节点读取上游输出必须经过 Broker；运行 State 与 SQLite checkpoint 只保存 `communicationUsage` 的 `run`、`steps`、`channels` 三类整数计数。Blueprint 的 `communicationBudget` 已成为实际执行的 run 级硬上限。
+- 严格通信节点可在 `inputSpec.prefetch` 预取最小字段；Agent 随后只能通过 `AgentRunContext.communication_reader` 补读其直接上游的已授权字段。每次补读仍受 Broker 预算、血缘和无正文 Trace 约束。
+- Runtime 会把注入模型放入统一的超时、重试、限流保护层；工具按“先冻结授权、后保护调用”组合，并对同一节点尝试始终透传同一个 `commit_id`。
 - Broker 的读取结果会回写既有消费/交互血缘账本，并投影为 `data_consumed` Trace。Trace 载荷严格限定为 run、生产/消费步骤、输出引用、字段名、Token 计数和逻辑通道，不记录读取理由或正文。
 - 恢复时 Broker 从 checkpoint 的预算计数继续扣减；空图和根节点也规范化为零值计数，避免提交重放生成不同 checkpoint 摘要或重复保存版本。
 - `EVENT` 仍只传递受控事件引用，`BLACKBOARD` 与 `DEBATE` 仍由编译器明确拒绝。修订去重、事件变化发布、受保护工作记忆与受治理辩论子图尚未实现，不能作为可用能力宣传。
 
-本轮验证：`python -m compileall -q src`、`pytest -q`（151 项通过）及 `git diff --check`。
+本轮验证：模型/工具保护、通信 Broker、运行期补读、ACG 图、恢复与运行时定向回归共 83 项通过；完整验证将在本轮提交前重新执行。
 
 ## 总体结构
 

@@ -74,7 +74,7 @@ class NativeGeneralAgent(BaseAgent):
             result = await context.tool_runtime.execute(
                 "knowledge_search",
                 {"query": task_summary[:500], "top_k": 5},
-                commitId=context.commit_id,
+                commit_id=context.commit_id,
             )
             try:
                 envelope = json.loads(result.text)

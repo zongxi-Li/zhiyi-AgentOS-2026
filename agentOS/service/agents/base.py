@@ -57,6 +57,9 @@ class AgentRunContext(BaseModel):
     step: WorkflowStep
     memory: Any
     context_pack: Optional[Any] = Field(default=None, alias="contextPack")
+    # 可选的运行期补读入口。它只能读取当前节点已声明的上游引用，Agent 不会得到
+    # Value Store、Broker 状态或其它步骤的完整输出集合。
+    communication_reader: Optional[Any] = Field(default=None, alias="communicationReader")
     tool_runtime: Optional[Any] = Field(default=None, alias="toolRuntime")
     model_runtime: Optional[Any] = Field(default=None, alias="modelRuntime")
     capability_descriptor: Optional[Any] = Field(default=None, alias="capabilityDescriptor")

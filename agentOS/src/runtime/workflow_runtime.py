@@ -49,6 +49,8 @@ from components.recovery.checkpoint import (
 )
 from adapters.agent_invocation import AgentInvocationAdapter
 from adapters.audited_tool_runtime import AuditedToolRuntime
+from adapters.guarded_model import GuardedModelRuntime
+from adapters.guarded_tool import GuardedToolRuntime
 from adapters.tool_adapter import configured_tool_runtime
 from contracts.workflow import (
     AgentTask,
@@ -208,9 +210,12 @@ class WorkflowRuntime:
         self._planning_engine = None
 
     def set_model_runtime(self, model_runtime) -> None:
-        """将应用层拥有的结构化模型运行时注入 ACG Agent；只替换引用，不创建连接。"""
-
-        self._model_runtime = model_runtime
+        """注入结构化模型运行时，并统一置于超时、重试与限流保护边界内。"""
+        self._model_runtime = (
+            model_runtime
+            if isinstance(model_runtime, GuardedModelRuntime)
+            else GuardedModelRuntime(delegate=model_runtime, retries=1)
+        )
 
     @property
     def planning_engine(self):
@@ -702,9 +707,16 @@ class WorkflowRuntime:
             for tool_name in agent.profile.allowed_tools
         }
         delegate = self.tool_runtime or configured_tool_runtime()
+        # 工具必须先经过 AgentOS 的授权检查，再进入统一的超时、重试、限流与安全
+        # 错误映射边界。对已受保护的运行时不重复包装，避免双重重试放大副作用。
+        protected_tools = (
+            delegate
+            if isinstance(delegate, GuardedToolRuntime)
+            else GuardedToolRuntime(delegate=delegate, retries=1)
+        ) if delegate is not None else None
         scoped_tools = (
-            AuditedToolRuntime(delegate=delegate, allowed_tools=allowed_tools)
-            if delegate is not None
+            AuditedToolRuntime(delegate=protected_tools, allowed_tools=allowed_tools)
+            if protected_tools is not None
             else None
         )
         # Broker 由单次图执行共享，读取后的预算计数写入引用型 State；从检查点恢复

@@ -85,6 +85,16 @@ class ACGGraphCompiler:
         if not run_id:
             return None
         steps = {step.node_id: step for step in blueprint.step_nodes()}
+        metadata = blueprint.metadata if isinstance(blueprint.metadata, dict) else {}
+        raw_run_budget = metadata.get("communicationBudget")
+        if isinstance(raw_run_budget, bool):
+            raise ValueError("communication budget must be a non-negative integer")
+        try:
+            run_budget = int(raw_run_budget) if raw_run_budget is not None else None
+        except (TypeError, ValueError) as exc:
+            raise ValueError("communication budget must be a non-negative integer") from exc
+        if run_budget is not None and run_budget < 0:
+            raise ValueError("communication budget must be a non-negative integer")
         rules: list[CommunicationRule] = []
         step_budgets: dict[str, int] = {}
         channel_budgets: dict[str, int] = {}
@@ -121,7 +131,7 @@ class ACGGraphCompiler:
         return CommunicationManifest(
             run_id=run_id,
             rules=tuple(rules),
-            run_budget=None,
+            run_budget=run_budget,
             step_budgets=step_budgets,
             channel_budgets=channel_budgets,
         )

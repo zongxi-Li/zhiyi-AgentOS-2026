@@ -136,6 +136,21 @@ def test_compiler_uses_dependency_edges_only() -> None:
     assert graph.edges == (("one", "two"),)
 
 
+def test_compiler_maps_blueprint_budget_to_manifest_run_budget() -> None:
+    """蓝图的总通信预算必须成为 Broker 可执行的 run 级硬上限。"""
+    blueprint = ACGBlueprint(
+        graphId="acg-budget",
+        metadata={"communicationBudget": 120},
+        nodes=[StepNode(nodeId="produce"), StepNode(nodeId="consume")],
+        edges=[ACGEdge(sourceId="produce", targetId="consume", edgeType=EdgeType.DEPENDENCY)],
+    )
+
+    graph = ACGGraphCompiler().compile(blueprint, run_id="run-budget")
+
+    assert graph.communication_manifest is not None
+    assert graph.communication_manifest.run_budget == 120
+
+
 def test_compiler_maps_step_dependencies_and_review_interrupt() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-review",

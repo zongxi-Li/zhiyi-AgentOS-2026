@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from components.communicator import CommunicationBroker, CommunicatorService
+from components.communicator import CommunicationBroker, CommunicationReader, CommunicatorService
 from components.communicator.contracts import ContextPack, estimate_tokens, input_revision
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
@@ -183,6 +183,11 @@ class ACGNodeRunner:
         input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
         validate_contract_payload(pack.data, input_schema, step_id=step_id, direction="input")
         memory_policy = self._memory_policy(step.input)
+        communication_reader = self._build_communication_reader(
+            state=state,
+            step_id=step_id,
+            mode=mode,
+        )
         memories = (
             self.memory.recall_for_step(
                 run_id=state.run_id,
@@ -225,6 +230,7 @@ class ACGNodeRunner:
             step=step,
             memory=memories,
             contextPack=pack,
+            communicationReader=communication_reader,
             toolRuntime=step_tool_runtime,
             modelRuntime=self.model_runtime,
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
@@ -235,6 +241,16 @@ class ACGNodeRunner:
             if self.agent_invoker is not None
             else await agent.run(agent_context)
         )
+        if communication_reader is not None:
+            for index, dynamic_pack in enumerate(communication_reader.drain_packs()):
+                # 每次补读都有独立角色键；节点重放时相同提交标识会复用血缘记录，
+                # 不会把多次合法读取错误合并成同一次消费。
+                self.communicator.record_context_consumption(
+                    dynamic_pack,
+                    operation_id=f"{commit_id}:dynamic:{index}",
+                )
+        if self.communication_broker is not None:
+            state.communication_usage = self.communication_broker.usage_snapshot()
         tool_events = list(output.tool_executions)
         runtime_events = getattr(step_tool_runtime, "events", None)
         if isinstance(runtime_events, list):
@@ -534,6 +550,7 @@ class ACGNodeRunner:
         assert self.communication_broker is not None
         source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
         from_map = step.input.get("from") if isinstance(step.input, dict) else None
+        prefetch_map = step.input.get("prefetch") if isinstance(step.input, dict) else None
         data: dict[str, Any] = {}
         source_data: dict[str, dict[str, Any]] = {}
         evidence_refs: list[str] = []
@@ -543,9 +560,14 @@ class ACGNodeRunner:
             output_ref = state.output_refs.get(source_id)
             if output_ref is None:
                 continue
-            requested = from_map.get(source_id, []) if isinstance(from_map, dict) else []
+            declared = from_map.get(source_id, []) if isinstance(from_map, dict) else []
+            requested = (
+                prefetch_map.get(source_id, declared)
+                if isinstance(prefetch_map, dict)
+                else declared
+            )
             if not isinstance(requested, list):
-                raise ValueError(f"inputSpec.from.{source_id} must be a list")
+                raise ValueError(f"inputSpec prefetch fields for {source_id} must be a list")
             partial = await self.communication_broker.read_reference(
                 run_id=state.run_id,
                 consumer_step_id=step_id,
@@ -576,6 +598,30 @@ class ACGNodeRunner:
             sourceStepIds=list(source_ids),
             inputRevision=input_revision(data),
             attemptId=commit_id,
+        )
+
+    def _build_communication_reader(
+        self,
+        *,
+        state: ACGExecutionState,
+        step_id: str,
+        mode: str,
+    ) -> CommunicationReader | None:
+        """为严格通信节点创建仅能补读其直接上游的受控读取器。"""
+        if self.communication_broker is None or mode != "STRICT_CONTRACT":
+            return None
+        source_ids = self.upstream_step_ids.get(step_id, tuple())
+        output_refs = {
+            source_id: state.output_refs[source_id]
+            for source_id in source_ids
+            if source_id in state.output_refs
+        }
+        return CommunicationReader(
+            broker=self.communication_broker,
+            run_id=state.run_id,
+            consumer_step_id=step_id,
+            output_refs=output_refs,
+            max_tokens=self.entropy_budget if self.entropy_budget is not None else 4096,
         )
 
 
