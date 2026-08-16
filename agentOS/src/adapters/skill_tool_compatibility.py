@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from contracts.capability import CapabilityInvocation, CapabilityInvocationResult, CapabilityManifest
+from adapters.registry import CapabilityRegistry
+from contracts.capability import (
+    CapabilityInvocation,
+    CapabilityInvocationResult,
+    CapabilityKind,
+    CapabilityManifest,
+)
 
 
 class SkillToolAdapter(Protocol):
@@ -21,23 +27,20 @@ class SkillToolAdapter(Protocol):
 
 
 class SkillToolCompatibilityRegistry:
-    """为 Skills 和各类工具协议预留发现、校验和受限调用门面。"""
+    """维护本地技能、函数与工具协议适配器的受限发现入口。"""
+
+    def __init__(self) -> None:
+        self._capabilities: CapabilityRegistry[SkillToolAdapter] = CapabilityRegistry(
+            allowed_kinds=(CapabilityKind.SKILL, CapabilityKind.TOOL)
+        )
 
     def register(self, adapter: SkillToolAdapter) -> None:
-        """登记一个技能或工具适配器。
-
-        TODO: 实现 manifest 校验、协议版本协商和命名空间冲突处理。
-        """
-        del adapter
-        raise NotImplementedError("TODO: 实现技能工具适配器注册")
+        """登记技能或工具适配器；不同类别不能通过本入口静默伪装。"""
+        self._capabilities.register(adapter)
 
     def resolve(self, capability_id: str) -> SkillToolAdapter:
-        """按能力标识解析已登记的技能或工具适配器。
-
-        TODO: 实现权限范围过滤、MCP 会话生命周期与故障隔离。
-        """
-        del capability_id
-        raise NotImplementedError("TODO: 实现技能工具适配器解析")
+        """按能力 ID 解析健康适配器；权限和会话仍由调用运行时负责。"""
+        return self._capabilities.resolve(capability_id)
 
 
 __all__ = ["SkillToolAdapter", "SkillToolCompatibilityRegistry"]

@@ -35,10 +35,10 @@
 
 ## P1：实现统一能力注册表，并接入运行时装配
 
-- **现状：** `ModelCompatibilityRegistry`、`AgentArchitectureRegistry` 与 `SkillToolCompatibilityRegistry` 只有 Protocol 和会抛出 `NotImplementedError` 的门面；`contracts/capability.py` 尚未被 `WorkflowRuntime` 消费。
-- **边界：** 先实现无网络、副作用隔离的内存注册表：manifest 合法性、能力类别匹配、版本/命名空间冲突、确定性解析和健康状态投影。随后仅在 `runtime/bootstrap.py` 装配 registry；具体 SDK 留在 adapters 的 provider 实现中。
-- **依赖：** 需先确定 capability ID、版本协商和“同一模型多实现”选择策略；不得把供应商 SDK 对象放入 contracts。
-- **验收：** 三个 registry 使用同一类测试矩阵验证重复注册、错误类别、版本回退和不可解析能力；runtime 可通过公开依赖注入拿到 registry，且未配置外部 SDK 时保持可启动。
+- **已完成：** `ModelCompatibilityRegistry`、`AgentArchitectureRegistry` 与 `SkillToolCompatibilityRegistry` 已实现为进程内、无网络注册表。它们校验 `CapabilityManifest.kind`、拒绝同 ID 不同声明、拒绝不健康实例，并提供稳定错误码。模型按“提供商 + 模型名”精确路由；启动层默认装配三个空注册表。
+- **已完成：** `OpenAICompatibleRuntime` 通过应用层注入的 `JsonTransport` 对接 `/chat/completions`，可用于 OpenAI、DeepSeek、通义兼容模式、Ollama、vLLM 等兼容端点。它不保存密钥、SDK 或网络客户端，并将 JSON Schema 和响应映射为统一模型合同。
+- **待完成：** 版本协商、同模型多实现的优先级与故障切换、异步健康探测、供应商流式响应，以及将模型路由选择接入每个 `AgentProfile` 的运行时装配。不得把供应商 SDK 对象放入 `contracts/`，也不得让外部 Agent 框架接管 ACG 执行图。
+- **验收：** 增加版本回退与多实现优先级测试；应用层可用显式依赖注入完成实际 HTTP 传输；`WorkflowRuntime` 按冻结运行范围选择模型适配器且 Trace 只记录安全投影。
 
 ## P1：建立可演化的轨迹闭环（当前仅合同与门面）
 

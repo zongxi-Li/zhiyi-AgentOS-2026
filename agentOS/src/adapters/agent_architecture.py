@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from contracts.capability import CapabilityInvocation, CapabilityInvocationResult, CapabilityManifest
+from adapters.registry import CapabilityRegistry
+from contracts.capability import (
+    CapabilityInvocation,
+    CapabilityInvocationResult,
+    CapabilityKind,
+    CapabilityManifest,
+)
 
 
 class AgentArchitectureAdapter(Protocol):
@@ -21,23 +27,20 @@ class AgentArchitectureAdapter(Protocol):
 
 
 class AgentArchitectureRegistry:
-    """为 LangGraph、AutoGen、CrewAI 等框架预留统一解析门面。"""
+    """维护 AgentOS 可调用的 Agent 架构适配器，不创建外部框架运行时。"""
+
+    def __init__(self) -> None:
+        self._capabilities: CapabilityRegistry[AgentArchitectureAdapter] = CapabilityRegistry(
+            allowed_kinds=(CapabilityKind.AGENT,)
+        )
 
     def register(self, adapter: AgentArchitectureAdapter) -> None:
-        """登记一个智能体架构适配器。
-
-        TODO: 根据 framework、architecture 和版本建立可审计的多实现索引。
-        """
-        del adapter
-        raise NotImplementedError("TODO: 实现智能体架构适配器注册")
+        """登记 Agent 适配器；相同声明幂等，冲突和类别错误明确拒绝。"""
+        self._capabilities.register(adapter)
 
     def resolve(self, capability_id: str) -> AgentArchitectureAdapter:
-        """按能力标识解析一个框架适配器。
-
-        TODO: 实现框架能力匹配、运行时健康检查及跨框架上下文转换。
-        """
-        del capability_id
-        raise NotImplementedError("TODO: 实现智能体架构适配器解析")
+        """按能力 ID 解析健康的 Agent 适配器，不做跨框架上下文转换。"""
+        return self._capabilities.resolve(capability_id)
 
 
 __all__ = ["AgentArchitectureAdapter", "AgentArchitectureRegistry"]

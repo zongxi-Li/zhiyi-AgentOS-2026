@@ -2,7 +2,7 @@
 
 ## 目标与阶段边界
 
-本设计新增两个互相独立的部件：统一能力适配和自进化。当前阶段仅提供可导入的数据合同、适配协议与服务门面；真实 SDK 调用、算法、存储和运行时写入均不实现，并在代码中以中文 TODO 标记边界。
+本设计包含两个互相独立的部件：统一能力适配和自进化。统一能力适配目前已提供稳定数据合同、进程内注册表，以及不绑定 SDK 的 OpenAI 兼容模型调用入口；自进化仍只提供合同与服务门面。模型密钥、HTTP 客户端、供应商 SDK、算法、持久化和运行时写入均保持在明确的应用层或后续阶段。
 
 ## 总体结构
 
@@ -38,7 +38,9 @@ adapters/
 
 `contracts/capability.py` 是外部生态接入的唯一稳定合同。`CapabilityManifest` 描述能力身份、版本、协议和可声明能力；调用时只传递 JSON 兼容的规范请求/结果，禁止将供应商 SDK、框架对象或 MCP 会话对象泄漏到 components 和 runtime。
 
-模型通过 `ModelProviderAdapter.invoke` 接收统一消息、结构化 Schema 与选项。SDK 鉴权、流式响应、重试、限流、熔断、观测和供应商特有字段留待具体提供商实现。
+模型通过 `ModelProviderAdapter.invoke` 接收统一消息、结构化 Schema 与选项。`ModelCompatibilityRegistry` 以 `provider + model` 建立精确路由，要求模型标识声明在 `manifest.capabilities` 中；相同能力 ID 的相同声明可重复登记，不同声明和路由冲突会明确失败。可选同步 `is_available()` 健康检查返回否或抛异常时，解析会拒绝该实例。
+
+`OpenAICompatibleRuntime` 是首个真实调用映射：应用层注入 `JsonTransport` 后，它向 `/chat/completions` 发送 JSON，支持把 `responseSchema` 映射为 OpenAI JSON Schema 格式，并把首个 choice 的 JSON 对象还原为 `ModelInvocationResponse`。SDK 鉴权、流式响应、重试、限流、熔断和观测不在该适配器内实现；它们应由应用层传输或已存在的 Guarded Runtime 组合提供。
 
 智能体通过 `AgentArchitectureAdapter.execute` 映射单 Agent、ReAct、Plan-Execute、Supervisor、层级、Swarm、Graph、事件驱动、Pipeline、辩论、反思和一般多 Agent 架构。AgentOS 的 RuntimeGraph 仍是唯一的运行期执行图；外部框架只能经适配器转换上下文和结果。
 
@@ -81,3 +83,9 @@ src/components/evolution/
 ```
 
 依赖方向为：`runtime → components.evolution → contracts.evolution`，`adapters → contracts.capability`。演化部件不得反向依赖特定模型或 Agent 框架；调度、规划和审核只能调用公开服务门面，不可绕过治理层改写技能库或执行图。
+
+## 当前装配与下一步
+
+`runtime.bootstrap.bootstrap()` 会默认提供三个空依赖：`model_compatibility_registry`、`agent_architecture_registry`、`skill_tool_compatibility_registry`。应用层负责创建实际适配器并显式登记，未配置任何外部模型或工具时系统仍可启动，且不会隐式联网。
+
+下一阶段需把运行冻结范围中的 Agent/Profile 模型选择映射为模型注册表查询，并保留现有 `GuardedModelRuntime` 的超时、重试、限流和 `commit_id` 幂等边界。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。

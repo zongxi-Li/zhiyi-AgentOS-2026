@@ -14,17 +14,31 @@ from adapters.model_adapter import (
 )
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.guarded_tool import GuardedToolRuntime, ToolInvocationError
+from adapters.agent_architecture import AgentArchitectureRegistry
+from adapters.model_compatibility import ModelCompatibilityRegistry
+from adapters.openai_runtime import (
+    JsonTransport,
+    ModelInvocationError,
+    OpenAICompatibleRuntime,
+)
+from adapters.skill_tool_compatibility import SkillToolCompatibilityRegistry
 from .model import ModelProvider
 
 __all__ = [
     "AIService",
+    "AgentArchitectureRegistry",
     "FederatedAdapter",
     "GuardedModelRuntime",
     "GuardedToolRuntime",
+    "JsonTransport",
     "ModelAdapter",
+    "ModelCompatibilityRegistry",
+    "ModelInvocationError",
     "ModelProvider",
     "ModelService",
     "ModelServiceFactory",
+    "OpenAICompatibleRuntime",
+    "SkillToolCompatibilityRegistry",
     "StructuredGenerationError",
     "StructuredGenerationResult",
     "StructuredGenerationRuntime",
