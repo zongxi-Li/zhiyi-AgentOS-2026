@@ -94,4 +94,6 @@ src/components/evolution/
 
 应用层可使用 `HttpJsonTransport` 作为 `OpenAICompatibleRuntime` 的 `JsonTransport` 实现。它只接受显式注入的 `base_url`、`api_key` 和 `request_timeout`，默认拒绝 HTTP 明文连接；`api_key` 仅映射为 `Authorization` Header，`commitId` 仅映射为 `Idempotency-Key` Header。HTTP 状态与网络故障会映射为安全错误码，原始响应正文不会进入错误、Trace 或 checkpoint。
 
-下一阶段应加入模型版本协商、异步健康探测、供应商流式输出和应用层密钥轮换/关闭生命周期。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。
+应用层可定时调用 `ModelCompatibilityRegistry.refresh_health()` 刷新指定 provider 或模型路由。适配器可选提供 `check_health()` 同步/异步实现；注册表只缓存 `capabilityId → bool`，探测异常、超时或非布尔值均标记为不健康。模型解析和 ACG 节点执行只读取这份缓存与本地适配器状态，不会在任务关键路径隐式联网。
+
+下一阶段应加入模型版本协商、供应商流式输出以及应用层健康刷新调度、密钥轮换/关闭生命周期。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。

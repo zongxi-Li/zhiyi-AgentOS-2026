@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from adapters.agent_architecture import AgentArchitectureRegistry
@@ -166,6 +168,85 @@ def test_model_registry_falls_back_to_lower_priority_healthy_adapter() -> None:
     registry.register(backup)
 
     assert registry.resolve("openai_compatible", "local-chat") is backup
+
+
+def test_model_registry_refreshes_async_health_before_routing() -> None:
+    """异步健康检查结果必须缓存为布尔状态，并影响后续无网络路由。"""
+    class _AsyncHealthAdapter(_ModelAdapter):
+        def __init__(self, manifest: CapabilityManifest, *, health: bool) -> None:
+            super().__init__(manifest)
+            self.health = health
+            self.checks = 0
+
+        async def check_health(self) -> bool:
+            self.checks += 1
+            return self.health
+
+    registry = ModelCompatibilityRegistry()
+    primary = _AsyncHealthAdapter(
+        _manifest(
+            capability_id="model.health.primary",
+            kind=CapabilityKind.MODEL,
+            provider="openai_compatible",
+            capabilities=["health-chat"],
+            metadata={"priority": 100},
+        ),
+        health=False,
+    )
+    backup = _AsyncHealthAdapter(
+        _manifest(
+            capability_id="model.health.backup",
+            kind=CapabilityKind.MODEL,
+            provider="openai_compatible",
+            capabilities=["health-chat"],
+            metadata={"priority": 10},
+        ),
+        health=True,
+    )
+    registry.register(primary)
+    registry.register(backup)
+
+    health = asyncio.run(
+        registry.refresh_health(
+            provider="openai_compatible",
+            model="health-chat",
+        )
+    )
+
+    assert health == {
+        "model.health.primary": False,
+        "model.health.backup": True,
+    }
+    assert primary.checks == 1
+    assert backup.checks == 1
+    assert registry.resolve("openai_compatible", "health-chat") is backup
+
+
+def test_model_registry_scopes_health_refresh_to_provider() -> None:
+    """只指定提供商时，健康刷新不得探测其他提供商的外部端点。"""
+    registry = ModelCompatibilityRegistry()
+    openai = _ModelAdapter(
+        _manifest(
+            capability_id="model.openai.health",
+            kind=CapabilityKind.MODEL,
+            provider="openai",
+            capabilities=["gpt-test"],
+        )
+    )
+    deepseek = _ModelAdapter(
+        _manifest(
+            capability_id="model.deepseek.health",
+            kind=CapabilityKind.MODEL,
+            provider="deepseek",
+            capabilities=["deepseek-test"],
+        )
+    )
+    registry.register(openai)
+    registry.register(deepseek)
+
+    health = asyncio.run(registry.refresh_health(provider="openai"))
+
+    assert health == {"model.openai.health": True}
 
 
 def test_agent_registry_rejects_unhealthy_adapter() -> None:

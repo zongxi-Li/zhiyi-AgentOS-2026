@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from threading import RLock
 from typing import Protocol
 
@@ -19,7 +21,12 @@ from contracts.capability import (
 
 
 class ModelProviderAdapter(Protocol):
-    """定义所有模型提供商适配器必须实现的无 SDK 调用接口。"""
+    """定义所有模型提供商适配器必须实现的无 SDK 调用接口。
+
+    适配器还可选实现 ``check_health() -> bool | Awaitable[bool]``，由应用层定时调用
+    ``ModelCompatibilityRegistry.refresh_health``。该可选方法不属于调用必要条件，
+    因而不会破坏仅提供同步 ``is_available`` 的既有适配器。
+    """
 
     @property
     def manifest(self) -> CapabilityManifest:
@@ -41,6 +48,10 @@ class ModelCompatibilityRegistry:
         # 一个逻辑模型可有多个实现。元组内容为 ``(-priority, capability_id)``，
         # 使优先级高的实现先被尝试；相同优先级按能力 ID 排序，避免注册顺序影响。
         self._routes: dict[tuple[str, str], list[tuple[int, str]]] = {}
+        # 异步健康探测只保留能力 ID 到布尔状态的投影，不保存错误、响应正文或时间。
+        # 缓存未命中时仍使用既有同步 ``is_available`` 语义，保证旧适配器兼容。
+        self._health: dict[str, bool] = {}
+        self._adapters: dict[str, ModelProviderAdapter] = {}
         self._lock = RLock()
 
     def register(self, adapter: ModelProviderAdapter) -> None:
@@ -63,6 +74,8 @@ class ModelCompatibilityRegistry:
 
         with self._lock:
             entry = self._capabilities.register(adapter)
+            self._adapters.setdefault(entry.manifest.capability_id, entry.adapter)
+            self._health.pop(entry.manifest.capability_id, None)
             for route in routes:
                 candidates = self._routes.setdefault(route, [])
                 candidate = (-priority, entry.manifest.capability_id)
@@ -89,6 +102,10 @@ class ModelCompatibilityRegistry:
             )
         resolved: list[ModelProviderAdapter] = []
         for _, capability_id in candidates:
+            with self._lock:
+                cached_health = self._health.get(capability_id)
+            if cached_health is False:
+                continue
             try:
                 resolved.append(self._capabilities.resolve(capability_id))
             except CapabilityResolutionError:
@@ -100,6 +117,53 @@ class ModelCompatibilityRegistry:
         raise LookupError(
             f"MODEL_UNAVAILABLE: {route[0]}/{route[1]} has no healthy adapter"
         )
+
+    async def refresh_health(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, bool]:
+        """异步刷新指定模型或全部模型的健康缓存，不把网络 I/O 放进路由路径。
+
+        适配器可选实现 ``check_health()``，返回布尔值或布尔协程。没有该方法的旧
+        实现会退回同步 ``is_available()``；探测异常、超时和非布尔结果一律标记为
+        不健康。返回值只含能力 ID 与布尔状态，适合应用层监控且不泄露供应商正文。
+        """
+        if timeout_seconds <= 0:
+            raise ValueError("MODEL_HEALTH_TIMEOUT_INVALID: timeout_seconds must be greater than zero")
+        if model is not None and provider is None:
+            raise ValueError("MODEL_HEALTH_FILTER_INVALID: model requires provider")
+        provider_filter = self._provider_key(provider) if provider is not None else None
+        model_filter = self._model_key(model) if model is not None else None
+        with self._lock:
+            routes = tuple(
+                (route, tuple(candidates))
+                for route, candidates in self._routes.items()
+                if (provider_filter is None or route[0] == provider_filter)
+                and (model_filter is None or route[1] == model_filter)
+            )
+            candidate_ids = tuple(
+                capability_id
+                for _, candidates in routes
+                for _, capability_id in candidates
+            )
+            adapters = {
+                capability_id: self._adapters[capability_id]
+                for capability_id in candidate_ids
+                if capability_id in self._adapters
+            }
+        refreshed: dict[str, bool] = {}
+        for capability_id in candidate_ids:
+            adapter = adapters.get(capability_id)
+            if adapter is None or capability_id in refreshed:
+                continue
+            healthy = await self._probe_health(adapter, timeout_seconds=timeout_seconds)
+            with self._lock:
+                self._health[capability_id] = healthy
+            refreshed[capability_id] = healthy
+        return refreshed
 
     @staticmethod
     def _provider_key(provider: str) -> str:
@@ -135,6 +199,22 @@ class ModelCompatibilityRegistry:
                 "MODEL_PRIORITY_INVALID: metadata.priority must be an integer"
             )
         return priority
+
+    @staticmethod
+    async def _probe_health(adapter: ModelProviderAdapter, *, timeout_seconds: float) -> bool:
+        """执行可选健康探测并把任意失败收敛为 ``False``，不暴露异常文字。"""
+        checker = getattr(adapter, "check_health", None)
+        if checker is None:
+            checker = getattr(adapter, "is_available", None)
+        if not callable(checker):
+            return True
+        try:
+            value = checker()
+            if inspect.isawaitable(value):
+                value = await asyncio.wait_for(value, timeout=timeout_seconds)
+        except Exception:
+            return False
+        return value is True
 
 
 __all__ = ["ModelCompatibilityRegistry", "ModelProviderAdapter"]
