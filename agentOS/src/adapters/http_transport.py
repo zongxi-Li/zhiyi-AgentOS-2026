@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from threading import RLock
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -17,6 +18,27 @@ class HttpTransportError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class RotatingKeyProvider:
+    """保存应用层当前密钥并支持原子轮换，不向调用方返回密钥正文。"""
+
+    def __init__(self, initial_key: str | None = None) -> None:
+        self._key = initial_key.strip() if initial_key else None
+        self._revision = 0
+        self._lock = RLock()
+
+    def current_key(self) -> str | None:
+        """返回仅供传输层立即写入请求头的当前密钥。"""
+        with self._lock:
+            return self._key
+
+    def rotate(self, key: str | None) -> int:
+        """原子替换当前密钥并返回无敏感信息的修订号。"""
+        with self._lock:
+            self._key = key.strip() if key else None
+            self._revision += 1
+            return self._revision
 
 
 class HttpJsonTransport:
@@ -33,6 +55,7 @@ class HttpJsonTransport:
         *,
         base_url: str,
         api_key: str | None = None,
+        key_provider: RotatingKeyProvider | None = None,
         request_timeout: float = 120.0,
         allow_insecure: bool = False,
         opener: Callable[..., Any] = urlopen,
@@ -49,7 +72,10 @@ class HttpJsonTransport:
         if request_timeout <= 0:
             raise ValueError("HTTP_TIMEOUT_INVALID: request_timeout must be greater than zero")
         self._base_url = normalized_url
+        if api_key is not None and key_provider is not None:
+            raise ValueError("HTTP_KEY_CONFIGURATION_INVALID: use api_key or key_provider, not both")
         self._api_key = api_key.strip() if api_key else None
+        self._key_provider = key_provider
         self._request_timeout = request_timeout
         self._opener = opener
 
@@ -89,8 +115,9 @@ class HttpJsonTransport:
                 "HTTP payload is not JSON serializable",
             ) from exc
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+        api_key = self._key_provider.current_key() if self._key_provider is not None else self._api_key
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         if idempotency_key and idempotency_key.strip():
             headers["Idempotency-Key"] = idempotency_key.strip()
         request = Request(url=url, data=body, headers=headers, method="POST")
@@ -153,4 +180,4 @@ class HttpJsonTransport:
         return "MODEL_PROVIDER_FAILED"
 
 
-__all__ = ["HttpJsonTransport", "HttpTransportError"]
+__all__ = ["HttpJsonTransport", "HttpTransportError", "RotatingKeyProvider"]

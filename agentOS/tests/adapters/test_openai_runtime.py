@@ -122,3 +122,33 @@ def test_openai_compatible_runtime_preserves_safe_transport_error_code() -> None
 
     assert captured.value.code == "MODEL_RATE_LIMITED"
     assert "private provider body" not in str(captured.value)
+
+
+def test_openai_compatible_runtime_projects_stream_deltas() -> None:
+    """流式响应只向调用会话输出 delta 与完成事件，不写入持久化状态。"""
+    class _StreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {"choices": [{"delta": {"content": "hel"}}]}
+            yield {"choices": [{"delta": {"content": "lo"}, "finish_reason": "stop"}]}
+
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.stream",
+            kind=CapabilityKind.MODEL,
+            displayName="Stream model",
+            provider="openai_compatible",
+            capabilities=["local-chat"],
+        ),
+        transport=_StreamTransport(),
+    )
+
+    async def collect():
+        return [event async for event in runtime.astream(ModelInvocationRequest(requestId="stream-1", model="local-chat"))]
+
+    events = asyncio.run(collect())
+
+    assert [(event.event_type, event.delta) for event in events] == [
+        ("delta", "hel"),
+        ("delta", "lo"),
+        ("completed", ""),
+    ]

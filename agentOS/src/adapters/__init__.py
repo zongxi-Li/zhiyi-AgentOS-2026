@@ -22,7 +22,7 @@ from adapters.openai_runtime import (
     OpenAICompatibleRuntime,
 )
 from adapters.model_runtime import RegisteredModelRuntime
-from adapters.http_transport import HttpJsonTransport, HttpTransportError
+from adapters.http_transport import HttpJsonTransport, HttpTransportError, RotatingKeyProvider
 from adapters.skill_tool_compatibility import SkillToolCompatibilityRegistry
 from .model import ModelProvider
 
@@ -43,6 +43,7 @@ __all__ = [
     "ModelServiceFactory",
     "OpenAICompatibleRuntime",
     "RegisteredModelRuntime",
+    "RotatingKeyProvider",
     "SkillToolCompatibilityRegistry",
     "StructuredGenerationError",
     "StructuredGenerationResult",

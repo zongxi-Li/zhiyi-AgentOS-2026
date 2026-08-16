@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Any, AsyncIterator, Protocol
 
 from adapters.http_transport import HttpTransportError
 from contracts.capability import (
@@ -12,6 +12,7 @@ from contracts.capability import (
     CapabilityManifest,
     ModelInvocationRequest,
     ModelInvocationResponse,
+    ModelStreamEvent,
 )
 
 
@@ -54,7 +55,7 @@ class OpenAICompatibleRuntime:
     """
 
     _PATH = "/chat/completions"
-    _RESERVED_OPTIONS = frozenset({"model", "messages", "response_format"})
+    _RESERVED_OPTIONS = frozenset({"model", "messages", "response_format", "stream"})
 
     def __init__(self, *, manifest: CapabilityManifest, transport: JsonTransport) -> None:
         """保存模型声明和应用层传输，并在启动期验证声明边界。"""
@@ -106,6 +107,42 @@ class OpenAICompatibleRuntime:
                 "OpenAI compatible provider request failed",
             ) from exc
         return self._parse_response(request=request, response=response, model=model)
+
+    async def astream(self, request: ModelInvocationRequest) -> AsyncIterator[ModelStreamEvent]:
+        """将 OpenAI 兼容流投影为会话内增量事件，不向运行状态写入正文。"""
+        model = request.model.strip()
+        if model not in self._models:
+            raise ModelInvocationError("MODEL_NOT_SUPPORTED", "requested model is not declared by this adapter")
+        streamer = getattr(self._transport, "stream_json", None)
+        if not callable(streamer):
+            raise ModelInvocationError("MODEL_STREAM_UNSUPPORTED", "transport does not support streaming")
+        payload = self._build_payload(request, model)
+        payload["stream"] = True
+        completed = False
+        try:
+            async for chunk in streamer(path=self._PATH, payload=payload, idempotency_key=request.commit_id):
+                if not isinstance(chunk, Mapping):
+                    raise ModelInvocationError("MODEL_RESPONSE_INVALID", "stream chunk is not an object")
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+                    continue
+                choice = choices[0]
+                delta_data = choice.get("delta")
+                delta = delta_data.get("content") if isinstance(delta_data, Mapping) else None
+                if isinstance(delta, str) and delta:
+                    yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta=delta, provider=self._manifest.provider, model=model)
+                if isinstance(choice.get("finish_reason"), str):
+                    completed = True
+                    yield ModelStreamEvent(requestId=request.request_id, eventType="completed", provider=self._manifest.provider, model=model)
+                    return
+        except HttpTransportError as exc:
+            raise ModelInvocationError(exc.code, "OpenAI compatible provider stream failed") from exc
+        except ModelInvocationError:
+            raise
+        except Exception as exc:
+            raise ModelInvocationError("MODEL_PROVIDER_FAILED", "OpenAI compatible provider stream failed") from exc
+        if not completed:
+            raise ModelInvocationError("MODEL_STREAM_INCOMPLETE", "provider stream ended without completion")
 
     def _build_payload(
         self,

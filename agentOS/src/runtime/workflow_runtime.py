@@ -1087,6 +1087,7 @@ class WorkflowRuntime:
         """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""
         provider = (getattr(profile, "model_provider", None) or "").strip()
         model = (getattr(profile, "model_name", None) or "").strip()
+        version = (getattr(profile, "model_version", None) or "").strip() or None
         if not provider and not model:
             return None
         if not provider or not model:
@@ -1094,12 +1095,15 @@ class WorkflowRuntime:
                 f"MODEL_PROFILE_INCOMPLETE: step {step_id} must set both modelProvider and modelName"
             )
         try:
-            self.model_registry.resolve(provider, model)
+            self.model_registry.resolve(provider, model, version=version)
         except LookupError as exc:
             raise ValueError(
                 f"MODEL_PROFILE_UNAVAILABLE: step {step_id} cannot resolve {provider}/{model}"
             ) from exc
-        return {"provider": provider, "model": model}
+        binding = {"provider": provider, "model": model}
+        if version is not None:
+            binding["version"] = version
+        return binding
 
     def _model_runtime_from_binding(self, binding: object) -> object | None:
         """依据冻结路由构造受保护运行时；未配置 Profile 时回退既有全局默认值。"""
@@ -1109,13 +1113,17 @@ class WorkflowRuntime:
             raise ValueError("ACG model binding must be an object or null")
         provider = binding.get("provider")
         model = binding.get("model")
+        version = binding.get("version")
         if not isinstance(provider, str) or not isinstance(model, str):
             raise ValueError("ACG model binding is incomplete")
+        if version is not None and not isinstance(version, str):
+            raise ValueError("ACG model binding version is invalid")
         return GuardedModelRuntime(
             delegate=RegisteredModelRuntime(
                 registry=self.model_registry,
                 provider=provider,
                 model=model,
+                version=version,
             ),
             retries=1,
         )

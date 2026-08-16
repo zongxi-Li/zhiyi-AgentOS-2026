@@ -30,11 +30,13 @@ class RegisteredModelRuntime:
         registry: ModelCompatibilityRegistry,
         provider: str,
         model: str,
+        version: str | None = None,
     ) -> None:
         """保存只读路由键；空键在构造期失败，避免节点开始后才发现配置不完整。"""
         self._registry = registry
         self.provider = provider.strip()
         self.model = model.strip()
+        self.version = version.strip() if version is not None else None
         if not self.provider:
             raise ValueError("MODEL_PROVIDER_REQUIRED: Agent profile must set modelProvider")
         if not self.model:
@@ -43,7 +45,7 @@ class RegisteredModelRuntime:
     def is_available(self) -> bool:
         """返回当前路由是否能解析到健康适配器，不执行网络连通性探测。"""
         try:
-            self._registry.resolve(self.provider, self.model)
+            self._registry.resolve(self.provider, self.model, version=self.version)
         except LookupError:
             return False
         return True
@@ -90,7 +92,11 @@ class RegisteredModelRuntime:
         )
         started = monotonic()
         try:
-            candidates = self._registry.resolve_candidates(self.provider, self.model)
+            candidates = self._registry.resolve_candidates(
+                self.provider,
+                self.model,
+                version=self.version,
+            )
         except LookupError as exc:
             raise StructuredGenerationError(
                 "MODEL_NOT_CONFIGURED",

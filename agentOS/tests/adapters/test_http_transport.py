@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from adapters.http_transport import HttpJsonTransport
+from adapters.http_transport import HttpJsonTransport, RotatingKeyProvider
 
 
 class _Response:
@@ -60,3 +60,26 @@ def test_http_transport_sends_auth_and_idempotency_outside_json_payload() -> Non
     }
     assert timeout == 12.0
     assert result == {"choices": []}
+
+
+def test_http_transport_reads_rotated_key_for_each_request() -> None:
+    """密钥轮换后，新请求必须使用新值，且轮换 API 不返回密钥正文。"""
+    requests = []
+
+    def opener(request, *, timeout: float):
+        requests.append(request)
+        return _Response()
+
+    keys = RotatingKeyProvider("old-key")
+    transport = HttpJsonTransport(
+        base_url="https://model.example/v1",
+        key_provider=keys,
+        opener=opener,
+    )
+    asyncio.run(transport.post_json(path="/chat/completions", payload={}))
+    revision = keys.rotate("new-key")
+    asyncio.run(transport.post_json(path="/chat/completions", payload={}))
+
+    assert requests[0].get_header("Authorization") == "Bearer old-key"
+    assert requests[1].get_header("Authorization") == "Bearer new-key"
+    assert revision == 1

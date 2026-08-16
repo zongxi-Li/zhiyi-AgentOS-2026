@@ -29,12 +29,14 @@ class _Provider:
         priority: int = 0,
         failure_code: str | None = None,
         delay_seconds: float = 0.0,
+        version: str = "v1",
     ) -> None:
         self.requests: list[ModelInvocationRequest] = []
         self.capability_id = capability_id
         self.priority = priority
         self.failure_code = failure_code
         self.delay_seconds = delay_seconds
+        self.version = version
 
     @property
     def manifest(self) -> CapabilityManifest:
@@ -46,6 +48,7 @@ class _Provider:
             provider="openai_compatible",
             capabilities=["local-chat"],
             metadata={"priority": self.priority},
+            version=self.version,
         )
 
     def is_available(self) -> bool:
@@ -168,3 +171,26 @@ def test_registered_runtime_keeps_timeout_across_all_failover_candidates() -> No
     assert monotonic() - started < 0.07
     assert len(primary.requests) == 1
     assert len(backup.requests) == 1
+
+
+def test_registered_runtime_uses_profile_version_constraint() -> None:
+    """桥接运行时必须把冻结版本约束传递到模型注册表。"""
+    legacy = _Provider(capability_id="model.version.legacy", version="1.9.0")
+    current = _Provider(capability_id="model.version.current", version="2.2.0")
+    registry = ModelCompatibilityRegistry()
+    registry.register(legacy)
+    registry.register(current)
+    runtime = RegisteredModelRuntime(
+        registry=registry,
+        provider="openai_compatible",
+        model="local-chat",
+        version="^2.0",
+    )
+
+    result = asyncio.run(
+        runtime.generate_json(prompt="只返回 JSON", schema={"type": "object"})
+    )
+
+    assert result.data == {"answer": "ok"}
+    assert legacy.requests == []
+    assert len(current.requests) == 1

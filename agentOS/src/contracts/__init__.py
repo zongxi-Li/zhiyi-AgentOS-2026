@@ -77,6 +77,7 @@ from .capability import (
     ModelInvocationRequest,
     ModelInvocationResponse,
     ModelProvider,
+    ModelStreamEvent,
     ToolProtocol,
 )
 from .evolution import (
@@ -105,7 +106,7 @@ __all__ = [
     "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphEvolutionProposal",
     "GraphNodeRef", "GraphPatchRef", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
-    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "PolicyDecision",
+    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent", "PolicyDecision",
     "RecoveryPlan", "ResourceLease", "ResourceProfile", "ResourceSnapshot",
     "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",

@@ -249,6 +249,34 @@ def test_model_registry_scopes_health_refresh_to_provider() -> None:
     assert health == {"model.openai.health": True}
 
 
+def test_model_registry_negotiates_highest_compatible_model_version() -> None:
+    """版本约束应优先选择最高兼容版本，再使用实现优先级打破同版本并列。"""
+    registry = ModelCompatibilityRegistry()
+    registry.register(
+        _ModelAdapter(
+            _manifest(
+                capability_id="model.version.two-one",
+                kind=CapabilityKind.MODEL,
+                provider="openai_compatible",
+                capabilities=["version-chat"],
+                metadata={"priority": 100},
+            ).model_copy(update={"version": "2.1.0"})
+        )
+    )
+    latest = _ModelAdapter(
+        _manifest(
+            capability_id="model.version.two-three",
+            kind=CapabilityKind.MODEL,
+            provider="openai_compatible",
+            capabilities=["version-chat"],
+            metadata={"priority": 1},
+        ).model_copy(update={"version": "2.3.0"})
+    )
+    registry.register(latest)
+
+    assert registry.resolve("openai_compatible", "version-chat", version="^2.1") is latest
+
+
 def test_agent_registry_rejects_unhealthy_adapter() -> None:
     """不健康的 Agent 适配器不能被解析，以免运行时静默调用失效实现。"""
     adapter = _CapabilityAdapter(

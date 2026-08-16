@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from threading import RLock
 from typing import Protocol
 
@@ -52,6 +53,7 @@ class ModelCompatibilityRegistry:
         # 缓存未命中时仍使用既有同步 ``is_available`` 语义，保证旧适配器兼容。
         self._health: dict[str, bool] = {}
         self._adapters: dict[str, ModelProviderAdapter] = {}
+        self._manifests: dict[str, CapabilityManifest] = {}
         self._lock = RLock()
 
     def register(self, adapter: ModelProviderAdapter) -> None:
@@ -71,10 +73,12 @@ class ModelCompatibilityRegistry:
         models = self._model_keys(manifest)
         routes = tuple((provider, model) for model in models)
         priority = self._priority(manifest)
+        self._version_tuple(manifest.version)
 
         with self._lock:
             entry = self._capabilities.register(adapter)
             self._adapters.setdefault(entry.manifest.capability_id, entry.adapter)
+            self._manifests.setdefault(entry.manifest.capability_id, entry.manifest)
             self._health.pop(entry.manifest.capability_id, None)
             for route in routes:
                 candidates = self._routes.setdefault(route, [])
@@ -83,11 +87,23 @@ class ModelCompatibilityRegistry:
                     candidates.append(candidate)
                     candidates.sort()
 
-    def resolve(self, provider: str, model: str) -> ModelProviderAdapter:
+    def resolve(
+        self,
+        provider: str,
+        model: str,
+        *,
+        version: str | None = None,
+    ) -> ModelProviderAdapter:
         """按提供商和模型名解析健康适配器，不进行隐式模型或端点回退。"""
-        return self.resolve_candidates(provider, model)[0]
+        return self.resolve_candidates(provider, model, version=version)[0]
 
-    def resolve_candidates(self, provider: str, model: str) -> tuple[ModelProviderAdapter, ...]:
+    def resolve_candidates(
+        self,
+        provider: str,
+        model: str,
+        *,
+        version: str | None = None,
+    ) -> tuple[ModelProviderAdapter, ...]:
         """按优先级返回全部健康实现，供调用层在临时故障时受控切换。
 
         返回值是调用时的元组快照，后续注册不会改变本次调用的候选顺序。该方法不
@@ -100,8 +116,25 @@ class ModelCompatibilityRegistry:
             raise LookupError(
                 f"MODEL_NOT_FOUND: {route[0]}/{route[1]} is not registered"
             )
+        constraint = self._version_constraint(version)
+        compatible = []
+        for priority, capability_id in candidates:
+            manifest = self._manifests.get(capability_id)
+            if manifest is None:
+                continue
+            parsed_version = self._version_tuple(manifest.version)
+            if self._matches_version(parsed_version, constraint):
+                compatible.append((parsed_version, priority, capability_id))
+        compatible.sort(
+            key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[1], item[2])
+        )
+        if not compatible:
+            requested = version or "latest"
+            raise LookupError(
+                f"MODEL_VERSION_UNAVAILABLE: {route[0]}/{route[1]} does not satisfy {requested}"
+            )
         resolved: list[ModelProviderAdapter] = []
-        for _, capability_id in candidates:
+        for _, _, capability_id in compatible:
             with self._lock:
                 cached_health = self._health.get(capability_id)
             if cached_health is False:
@@ -199,6 +232,47 @@ class ModelCompatibilityRegistry:
                 "MODEL_PRIORITY_INVALID: metadata.priority must be an integer"
             )
         return priority
+
+    _VERSION_PATTERN = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
+
+    @classmethod
+    def _version_tuple(cls, value: str) -> tuple[int, int, int]:
+        """解析受限语义版本；拒绝预发布和任意文本以保持协商结果可预测。"""
+        matched = cls._VERSION_PATTERN.fullmatch(value.strip())
+        if matched is None:
+            raise CapabilityRegistrationError(
+                "MODEL_VERSION_INVALID: version must use numeric semantic form such as 2.1.0"
+            )
+        return tuple(int(part or 0) for part in matched.groups())
+
+    @classmethod
+    def _version_constraint(cls, value: str | None) -> tuple[str, tuple[int, int, int]] | None:
+        """解析精确、主版本兼容和次版本兼容约束。"""
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip()
+        operator = "="
+        if normalized[0] in {"^", "~"}:
+            operator, normalized = normalized[0], normalized[1:]
+        try:
+            return operator, cls._version_tuple(normalized)
+        except CapabilityRegistrationError as exc:
+            raise ValueError("MODEL_VERSION_CONSTRAINT_INVALID: invalid model version constraint") from exc
+
+    @staticmethod
+    def _matches_version(
+        candidate: tuple[int, int, int],
+        constraint: tuple[str, tuple[int, int, int]] | None,
+    ) -> bool:
+        """按约束判断候选版本是否兼容；未指定时由最高可用版本胜出。"""
+        if constraint is None:
+            return True
+        operator, requested = constraint
+        if operator == "=":
+            return candidate == requested
+        if operator == "^":
+            return candidate[0] == requested[0] and candidate >= requested
+        return candidate[:2] == requested[:2] and candidate >= requested
 
     @staticmethod
     async def _probe_health(adapter: ModelProviderAdapter, *, timeout_seconds: float) -> bool:

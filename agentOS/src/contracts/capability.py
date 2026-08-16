@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -125,6 +125,18 @@ class ModelInvocationResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelStreamEvent(BaseModel):
+    """模型流式调用的会话内事件，不属于执行 State 或审计持久化合同。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    request_id: str = Field(alias="requestId", min_length=1)
+    event_type: Literal["delta", "completed"] = Field(alias="eventType")
+    delta: str = ""
+    provider: str
+    model: str
+
+
 class CapabilityInvocation(BaseModel):
     """定义智能体、技能或工具的统一调用信封。"""
 
@@ -152,6 +164,6 @@ class CapabilityInvocationResult(BaseModel):
 __all__ = [
     "AgentArchitecture", "AgentFramework", "CapabilityInvocation",
     "CapabilityInvocationResult", "CapabilityKind", "CapabilityManifest",
-    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider",
+    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent",
     "ToolProtocol",
 ]
