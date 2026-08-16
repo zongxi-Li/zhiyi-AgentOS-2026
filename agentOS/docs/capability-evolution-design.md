@@ -88,4 +88,6 @@ src/components/evolution/
 
 `runtime.bootstrap.bootstrap()` 会默认提供三个空依赖：`model_compatibility_registry`、`agent_architecture_registry`、`skill_tool_compatibility_registry`。应用层负责创建实际适配器并显式登记，未配置任何外部模型或工具时系统仍可启动，且不会隐式联网。
 
-下一阶段需把运行冻结范围中的 Agent/Profile 模型选择映射为模型注册表查询，并保留现有 `GuardedModelRuntime` 的超时、重试、限流和 `commit_id` 幂等边界。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。
+`AgentProfile` 通过可选的 `modelProvider` 与 `modelName` 声明模型路由。ACG 在 `prepare_run` 时同时校验两项、确认注册表可解析，并将 `{provider, model}` 写入每一步的 `executionState.modelBindings`。节点执行与 checkpoint 恢复只读取这个冻结绑定；`RegisteredModelRuntime` 将原生 `generate_json` 转成统一模型请求，再由 `GuardedModelRuntime` 提供超时、重试、限流和 `commit_id` 幂等边界。未声明模型的旧 Agent 仍可使用显式配置的全局结构化模型运行时。
+
+下一阶段应加入模型版本协商和同模型多实现的优先级/故障切换，并由应用层实现带密钥生命周期的 HTTP 传输。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。

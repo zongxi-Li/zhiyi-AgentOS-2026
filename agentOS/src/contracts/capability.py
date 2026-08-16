@@ -107,6 +107,9 @@ class ModelInvocationRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(default_factory=list)
     response_schema: dict[str, Any] | None = Field(default=None, alias="responseSchema")
     options: dict[str, Any] = Field(default_factory=dict)
+    # 模型请求与 ACG 节点提交边界的关联标识。它不是 prompt、模型正文或检查点状态；
+    # 支持幂等键的应用层传输可将它安全映射为 HTTP Header 或供应商请求标识。
+    commit_id: str | None = Field(default=None, alias="commitId")
 
 
 class ModelInvocationResponse(BaseModel):

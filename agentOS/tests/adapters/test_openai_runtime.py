@@ -18,11 +18,13 @@ class _JsonTransport:
     def __init__(self) -> None:
         self.path: str | None = None
         self.payload: dict | None = None
+        self.idempotency_key: str | None = None
 
-    async def post_json(self, *, path: str, payload: dict) -> dict:
+    async def post_json(self, *, path: str, payload: dict, idempotency_key: str | None = None) -> dict:
         """返回 OpenAI Chat Completions 兼容的最小 JSON 响应。"""
         self.path = path
         self.payload = payload
+        self.idempotency_key = idempotency_key
         return {
             "id": "chatcmpl-test",
             "choices": [
@@ -60,6 +62,7 @@ def test_openai_compatible_runtime_maps_json_request_and_response() -> None:
                     "properties": {"answer": {"type": "string"}},
                 },
                 options={"temperature": 0},
+                commitId="commit:run-1:step-1:0",
             )
         )
     )
@@ -87,3 +90,4 @@ def test_openai_compatible_runtime_maps_json_request_and_response() -> None:
     assert response.model == "local-chat"
     assert response.usage == {"prompt_tokens": 12, "completion_tokens": 3}
     assert response.metadata == {"finishReason": "stop"}
+    assert transport.idempotency_key == "commit:run-1:step-1:0"

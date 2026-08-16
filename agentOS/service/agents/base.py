@@ -23,6 +23,9 @@ class AgentProfile(BaseModel):
     risk_level: str = Field(default="normal", alias="riskLevel")
     description: str = ""
     agent_id: Optional[str] = Field(default=None, alias="agentId")
+    # 模型路由必须同时声明提供商与模型名。它们只用于在执行期解析已登记适配器，
+    # 不保存密钥、端点 URL 或供应商 SDK；具体实例始终由应用层注册表持有。
+    model_provider: Optional[str] = Field(default=None, alias="modelProvider")
     model_name: Optional[str] = Field(default=None, alias="modelName")
     binding_priority: int = Field(default=0, alias="bindingPriority")
     enabled: bool = True

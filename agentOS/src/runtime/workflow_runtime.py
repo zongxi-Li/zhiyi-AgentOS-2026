@@ -51,6 +51,8 @@ from adapters.agent_invocation import AgentInvocationAdapter
 from adapters.audited_tool_runtime import AuditedToolRuntime
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.guarded_tool import GuardedToolRuntime
+from adapters.model_compatibility import ModelCompatibilityRegistry, ModelProviderAdapter
+from adapters.model_runtime import RegisteredModelRuntime
 from adapters.tool_adapter import configured_tool_runtime
 from contracts.workflow import (
     AgentTask,
@@ -139,12 +141,16 @@ class WorkflowRuntime:
         recovery_recipe_registry: Optional[object] = None,
         capability_catalog: CapabilityCatalog | None = None,
         resource_directory: ResourceDirectory | None = None,
+        model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
     ):
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
         self.resource_directory = resource_directory or ResourceDirectory()
+        # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
+        # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
+        self.model_registry = model_registry or ModelCompatibilityRegistry()
         self.plugin_manifests = tuple(plugin_manifests)
         self.workflow_store = workflow_store or MemoryWorkflowStore()
         self.trace_store = trace_store or TraceStore()
@@ -216,6 +222,10 @@ class WorkflowRuntime:
             if isinstance(model_runtime, GuardedModelRuntime)
             else GuardedModelRuntime(delegate=model_runtime, retries=1)
         )
+
+    def register_model_adapter(self, adapter: ModelProviderAdapter) -> None:
+        """登记应用层创建的模型适配器，不接收密钥、SDK 或网络配置。"""
+        self.model_registry.register(adapter)
 
     @property
     def planning_engine(self):
@@ -735,6 +745,13 @@ class WorkflowRuntime:
             # Broker 调用后才写入零计数，而提交重放会保留空对象，造成等价状态生成
             # 不同 checkpoint 摘要并破坏恢复幂等性。
             state.communication_usage = communication_broker.usage_snapshot()
+        model_bindings = run.execution_state.get("modelBindings")
+        if not isinstance(model_bindings, dict):
+            raise ValueError("ACG run has no frozen model bindings")
+        step_model_runtimes = {
+            step_id: self._model_runtime_from_binding(model_bindings.get(step_id))
+            for step_id in steps
+        }
         return ACGNodeRunner(
             task=task,
             run=run,
@@ -752,6 +769,11 @@ class WorkflowRuntime:
             communication_modes={node_id: spec.communication_mode for node_id, spec in graph.node_specs.items() if spec.kind == "step"},
             upstream_step_ids=upstream_step_ids,
             model_runtime=self._model_runtime,
+            model_runtimes={
+                step_id: runtime
+                for step_id, runtime in step_model_runtimes.items()
+                if runtime is not None
+            },
             capability_descriptors={
                 step.capability: self.capability_catalog.get(step.capability)
                 for step in steps.values()
@@ -1038,6 +1060,7 @@ class WorkflowRuntime:
         for agent in self.agent_registry.all():
             self.resource_directory.register_agent(agent.profile)
         bindings: dict[str, str] = {}
+        model_bindings: dict[str, dict[str, str] | None] = {}
         for step in run.steps:
             try:
                 selected = self.resource_directory.resolve_agent(
@@ -1049,7 +1072,53 @@ class WorkflowRuntime:
             except ResourceNotFoundError as exc:
                 raise ValueError(f"ACG step has no eligible resource: {step.step_id}") from exc
             bindings[step.step_id] = selected.agent_id
+            agent = self.agent_registry.resolve_by_id(
+                selected.agent_id,
+                allowed_agent_ids=scope.agent_ids,
+            )
+            model_bindings[step.step_id] = self._freeze_model_binding(
+                step_id=step.step_id,
+                profile=agent.profile,
+            )
         run.execution_state["resourceBindings"] = bindings
+        run.execution_state["modelBindings"] = model_bindings
+
+    def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, str] | None:
+        """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""
+        provider = (getattr(profile, "model_provider", None) or "").strip()
+        model = (getattr(profile, "model_name", None) or "").strip()
+        if not provider and not model:
+            return None
+        if not provider or not model:
+            raise ValueError(
+                f"MODEL_PROFILE_INCOMPLETE: step {step_id} must set both modelProvider and modelName"
+            )
+        try:
+            self.model_registry.resolve(provider, model)
+        except LookupError as exc:
+            raise ValueError(
+                f"MODEL_PROFILE_UNAVAILABLE: step {step_id} cannot resolve {provider}/{model}"
+            ) from exc
+        return {"provider": provider, "model": model}
+
+    def _model_runtime_from_binding(self, binding: object) -> object | None:
+        """依据冻结路由构造受保护运行时；未配置 Profile 时回退既有全局默认值。"""
+        if binding is None:
+            return None
+        if not isinstance(binding, dict):
+            raise ValueError("ACG model binding must be an object or null")
+        provider = binding.get("provider")
+        model = binding.get("model")
+        if not isinstance(provider, str) or not isinstance(model, str):
+            raise ValueError("ACG model binding is incomplete")
+        return GuardedModelRuntime(
+            delegate=RegisteredModelRuntime(
+                registry=self.model_registry,
+                provider=provider,
+                model=model,
+            ),
+            retries=1,
+        )
 
     def _build_acg_blueprint(
         self,

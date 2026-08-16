@@ -21,8 +21,14 @@ class JsonTransport(Protocol):
     已规范化的相对路径和 JSON 请求，不保存密钥，也不接触任何供应商 SDK 对象。
     """
 
-    async def post_json(self, *, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """向相对路径提交 JSON 并返回已解析的 JSON 对象。"""
+    async def post_json(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """提交 JSON 并可将提交标识映射为 HTTP 幂等键，返回已解析对象。"""
         ...
 
 
@@ -84,7 +90,11 @@ class OpenAICompatibleRuntime:
             )
         payload = self._build_payload(request, model)
         try:
-            response = await self._transport.post_json(path=self._PATH, payload=payload)
+            response = await self._transport.post_json(
+                path=self._PATH,
+                payload=payload,
+                idempotency_key=request.commit_id,
+            )
         except ModelInvocationError:
             raise
         except Exception as exc:

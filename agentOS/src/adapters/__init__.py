@@ -21,6 +21,7 @@ from adapters.openai_runtime import (
     ModelInvocationError,
     OpenAICompatibleRuntime,
 )
+from adapters.model_runtime import RegisteredModelRuntime
 from adapters.skill_tool_compatibility import SkillToolCompatibilityRegistry
 from .model import ModelProvider
 
@@ -38,6 +39,7 @@ __all__ = [
     "ModelService",
     "ModelServiceFactory",
     "OpenAICompatibleRuntime",
+    "RegisteredModelRuntime",
     "SkillToolCompatibilityRegistry",
     "StructuredGenerationError",
     "StructuredGenerationResult",

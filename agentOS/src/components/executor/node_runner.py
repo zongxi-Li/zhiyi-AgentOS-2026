@@ -56,6 +56,7 @@ class ACGNodeRunner:
         decision_store: DecisionStore | None = None,
         agent_invoker: AgentInvocationAdapter | None = None,
         model_runtime: object | None = None,
+        model_runtimes: Mapping[str, object] | None = None,
         capability_descriptors: Mapping[str, object] | None = None,
         tool_runtime: object | None = None,
         communication_broker: CommunicationBroker | None = None,
@@ -84,6 +85,10 @@ class ACGNodeRunner:
         self.decision_store = decision_store or InMemoryDecisionStore()
         self.agent_invoker = agent_invoker
         self.model_runtime = model_runtime
+        # 模型绑定在 ``prepare_run`` 时冻结为 step → provider/model，再由 Runtime
+        # 组装为此映射。节点不会从可变 Agent Profile 读取模型配置，恢复时也不会
+        # 因全局 Agent 注册表被修改而换用另一家模型。
+        self.model_runtimes = dict(model_runtimes or {})
         self.capability_descriptors = dict(capability_descriptors or {})
         self.tool_runtime = tool_runtime
         self.communication_broker = communication_broker
@@ -232,7 +237,7 @@ class ACGNodeRunner:
             contextPack=pack,
             communicationReader=communication_reader,
             toolRuntime=step_tool_runtime,
-            modelRuntime=self.model_runtime,
+            modelRuntime=self.model_runtimes.get(step_id, self.model_runtime),
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
             commitId=commit_id,
         )
