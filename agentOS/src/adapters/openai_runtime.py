@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from adapters.http_transport import HttpTransportError
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -97,6 +98,8 @@ class OpenAICompatibleRuntime:
             )
         except ModelInvocationError:
             raise
+        except HttpTransportError as exc:
+            raise ModelInvocationError(exc.code, "OpenAI compatible provider request failed") from exc
         except Exception as exc:
             raise ModelInvocationError(
                 "MODEL_PROVIDER_FAILED",

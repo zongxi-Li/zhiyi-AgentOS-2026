@@ -22,6 +22,7 @@ from adapters.openai_runtime import (
     OpenAICompatibleRuntime,
 )
 from adapters.model_runtime import RegisteredModelRuntime
+from adapters.http_transport import HttpJsonTransport, HttpTransportError
 from adapters.skill_tool_compatibility import SkillToolCompatibilityRegistry
 from .model import ModelProvider
 
@@ -31,6 +32,8 @@ __all__ = [
     "FederatedAdapter",
     "GuardedModelRuntime",
     "GuardedToolRuntime",
+    "HttpJsonTransport",
+    "HttpTransportError",
     "JsonTransport",
     "ModelAdapter",
     "ModelCompatibilityRegistry",

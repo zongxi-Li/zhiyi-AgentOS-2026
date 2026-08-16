@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
+
+import pytest
 
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
+from adapters.model_adapter import StructuredGenerationError
+from adapters.openai_runtime import ModelInvocationError
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -17,18 +22,30 @@ from contracts.capability import (
 class _Provider:
     """记录统一模型请求，避免测试依赖网络或供应商 SDK。"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capability_id: str = "model.local.chat",
+        priority: int = 0,
+        failure_code: str | None = None,
+        delay_seconds: float = 0.0,
+    ) -> None:
         self.requests: list[ModelInvocationRequest] = []
+        self.capability_id = capability_id
+        self.priority = priority
+        self.failure_code = failure_code
+        self.delay_seconds = delay_seconds
 
     @property
     def manifest(self) -> CapabilityManifest:
         """声明一个可由注册表精确解析的模型。"""
         return CapabilityManifest(
-            capabilityId="model.local.chat",
+            capabilityId=self.capability_id,
             kind=CapabilityKind.MODEL,
             displayName="Local chat",
             provider="openai_compatible",
             capabilities=["local-chat"],
+            metadata={"priority": self.priority},
         )
 
     def is_available(self) -> bool:
@@ -38,6 +55,10 @@ class _Provider:
     async def invoke(self, request: ModelInvocationRequest) -> ModelInvocationResponse:
         """回传统一 JSON 输出，并记录模型桥接后的请求。"""
         self.requests.append(request)
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        if self.failure_code is not None:
+            raise ModelInvocationError(self.failure_code, "provider failed")
         return ModelInvocationResponse(
             requestId=request.request_id,
             content={"answer": "ok"},
@@ -79,3 +100,71 @@ def test_registered_runtime_converts_native_generation_to_capability_request() -
     }
     assert provider.requests[0].options == {"max_tokens": 256}
     assert provider.requests[0].commit_id == "commit:run-1:step-1:0"
+
+
+def test_registered_runtime_uses_backup_after_primary_temporary_failure() -> None:
+    """主实现调用时临时失败，必须在同一请求内切换至健康备实现。"""
+    primary = _Provider(
+        capability_id="model.local.primary",
+        priority=100,
+        failure_code="MODEL_TEMPORARY_UNAVAILABLE",
+    )
+    backup = _Provider(capability_id="model.local.backup", priority=10)
+    registry = ModelCompatibilityRegistry()
+    registry.register(primary)
+    registry.register(backup)
+    runtime = RegisteredModelRuntime(
+        registry=registry,
+        provider="openai_compatible",
+        model="local-chat",
+    )
+
+    result = asyncio.run(
+        runtime.generate_json(
+            prompt="只返回 JSON",
+            schema={"type": "object"},
+            commit_id="commit:run-1:step-1:0",
+        )
+    )
+
+    assert result.data == {"answer": "ok"}
+    assert len(primary.requests) == 1
+    assert len(backup.requests) == 1
+    assert backup.requests[0].commit_id == "commit:run-1:step-1:0"
+
+
+def test_registered_runtime_keeps_timeout_across_all_failover_candidates() -> None:
+    """故障切换不能把调用者的总超时按候选数量累加。"""
+    primary = _Provider(
+        capability_id="model.local.primary",
+        priority=100,
+        delay_seconds=0.2,
+    )
+    backup = _Provider(
+        capability_id="model.local.backup",
+        priority=10,
+        delay_seconds=0.2,
+    )
+    registry = ModelCompatibilityRegistry()
+    registry.register(primary)
+    registry.register(backup)
+    runtime = RegisteredModelRuntime(
+        registry=registry,
+        provider="openai_compatible",
+        model="local-chat",
+    )
+
+    started = monotonic()
+    with pytest.raises(StructuredGenerationError) as captured:
+        asyncio.run(
+            runtime.generate_json(
+                prompt="只返回 JSON",
+                schema={"type": "object"},
+                timeout_seconds=0.04,
+            )
+        )
+
+    assert captured.value.code == "MODEL_TIMEOUT"
+    assert monotonic() - started < 0.07
+    assert len(primary.requests) == 1
+    assert len(backup.requests) == 1

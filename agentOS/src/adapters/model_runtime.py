@@ -48,6 +48,15 @@ class RegisteredModelRuntime:
             return False
         return True
 
+    _FAILOVER_CODES = frozenset(
+        {
+            "MODEL_TIMEOUT",
+            "MODEL_RATE_LIMITED",
+            "MODEL_TEMPORARY_UNAVAILABLE",
+            "MODEL_PROVIDER_FAILED",
+        }
+    )
+
     async def generate_json(
         self,
         *,
@@ -81,28 +90,56 @@ class RegisteredModelRuntime:
         )
         started = monotonic()
         try:
-            adapter = self._registry.resolve(self.provider, self.model)
-            response = await asyncio.wait_for(
-                adapter.invoke(request),
-                timeout=timeout_seconds,
-            )
-        except asyncio.TimeoutError as exc:
-            raise StructuredGenerationError(
-                "MODEL_TIMEOUT",
-                "model invocation timed out",
-            ) from exc
-        except ModelInvocationError as exc:
-            raise StructuredGenerationError(exc.code, str(exc)) from exc
+            candidates = self._registry.resolve_candidates(self.provider, self.model)
         except LookupError as exc:
             raise StructuredGenerationError(
                 "MODEL_NOT_CONFIGURED",
                 "requested model adapter is not registered or healthy",
             ) from exc
-        except Exception as exc:
+        response = None
+        last_error: ModelInvocationError | asyncio.TimeoutError | None = None
+        for index, adapter in enumerate(candidates):
+            # ``timeout_seconds`` 是整个模型选择动作的上限，而不是每个候选各自的
+            # 上限。剩余时间在尚未尝试的候选之间均分：主实现慢超时时备实现仍有机会
+            # 返回，同时候选数增加也不会线性放大用户等待时间。
+            remaining = timeout_seconds - (monotonic() - started)
+            if remaining <= 0:
+                raise StructuredGenerationError(
+                    "MODEL_TIMEOUT",
+                    "model invocation timed out",
+                )
+            candidate_timeout = remaining / (len(candidates) - index)
+            try:
+                response = await asyncio.wait_for(
+                    adapter.invoke(request),
+                    timeout=candidate_timeout,
+                )
+                break
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+                if index + 1 < len(candidates):
+                    continue
+                raise StructuredGenerationError(
+                    "MODEL_TIMEOUT",
+                    "model invocation timed out",
+                ) from exc
+            except ModelInvocationError as exc:
+                last_error = exc
+                if exc.code in self._FAILOVER_CODES and index + 1 < len(candidates):
+                    continue
+                raise StructuredGenerationError(exc.code, str(exc)) from exc
+            except Exception as exc:
+                raise StructuredGenerationError(
+                    "MODEL_PROVIDER_FAILED",
+                    "model provider invocation failed",
+                ) from exc
+        if response is None:
+            if isinstance(last_error, ModelInvocationError):
+                raise StructuredGenerationError(last_error.code, str(last_error)) from last_error
             raise StructuredGenerationError(
                 "MODEL_PROVIDER_FAILED",
                 "model provider invocation failed",
-            ) from exc
+            )
         return StructuredGenerationResult(
             data=dict(response.content),
             provider=response.provider,

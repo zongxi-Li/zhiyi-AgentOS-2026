@@ -80,6 +80,7 @@ def _manifest(
     kind: CapabilityKind,
     provider: str = "",
     capabilities: list[str] | None = None,
+    metadata: dict | None = None,
 ) -> CapabilityManifest:
     """生成每个测试都可读的最小能力声明。"""
     return CapabilityManifest(
@@ -90,6 +91,7 @@ def _manifest(
         framework=AgentFramework.NATIVE if kind is CapabilityKind.AGENT else None,
         protocol=ToolProtocol.NATIVE if kind in {CapabilityKind.SKILL, CapabilityKind.TOOL} else None,
         capabilities=capabilities or [],
+        metadata=metadata or {},
     )
 
 
@@ -135,6 +137,35 @@ def test_model_registry_rejects_conflicting_capability_id() -> None:
                 )
             )
         )
+
+
+def test_model_registry_falls_back_to_lower_priority_healthy_adapter() -> None:
+    """同模型高优先级实现不健康时，必须确定性选择次优健康实现。"""
+    registry = ModelCompatibilityRegistry()
+    primary = _ModelAdapter(
+        _manifest(
+            capability_id="model.local.primary",
+            kind=CapabilityKind.MODEL,
+            provider="openai_compatible",
+            capabilities=["local-chat"],
+            metadata={"priority": 100},
+        ),
+        available=False,
+    )
+    backup = _ModelAdapter(
+        _manifest(
+            capability_id="model.local.backup",
+            kind=CapabilityKind.MODEL,
+            provider="openai_compatible",
+            capabilities=["local-chat"],
+            metadata={"priority": 10},
+        )
+    )
+
+    registry.register(primary)
+    registry.register(backup)
+
+    assert registry.resolve("openai_compatible", "local-chat") is backup
 
 
 def test_agent_registry_rejects_unhealthy_adapter() -> None:

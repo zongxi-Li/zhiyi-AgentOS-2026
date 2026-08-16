@@ -90,4 +90,8 @@ src/components/evolution/
 
 `AgentProfile` 通过可选的 `modelProvider` 与 `modelName` 声明模型路由。ACG 在 `prepare_run` 时同时校验两项、确认注册表可解析，并将 `{provider, model}` 写入每一步的 `executionState.modelBindings`。节点执行与 checkpoint 恢复只读取这个冻结绑定；`RegisteredModelRuntime` 将原生 `generate_json` 转成统一模型请求，再由 `GuardedModelRuntime` 提供超时、重试、限流和 `commit_id` 幂等边界。未声明模型的旧 Agent 仍可使用显式配置的全局结构化模型运行时。
 
-下一阶段应加入模型版本协商和同模型多实现的优先级/故障切换，并由应用层实现带密钥生命周期的 HTTP 传输。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。
+同一 `provider + model` 可登记多个实现。注册表按 `manifest.metadata.priority` 降序选择，同优先级按 `capabilityId` 固定排序；同步健康检查失败的实现会被跳过。`RegisteredModelRuntime` 若主实现返回临时不可用、限流、超时或供应商暂时失败，会在同一 `commitId` 内切换至下一个健康实现，并让所有候选共用调用者的总超时预算。
+
+应用层可使用 `HttpJsonTransport` 作为 `OpenAICompatibleRuntime` 的 `JsonTransport` 实现。它只接受显式注入的 `base_url`、`api_key` 和 `request_timeout`，默认拒绝 HTTP 明文连接；`api_key` 仅映射为 `Authorization` Header，`commitId` 仅映射为 `Idempotency-Key` Header。HTTP 状态与网络故障会映射为安全错误码，原始响应正文不会进入错误、Trace 或 checkpoint。
+
+下一阶段应加入模型版本协商、异步健康探测、供应商流式输出和应用层密钥轮换/关闭生命周期。外部 Agent 框架只能作为 `AgentArchitectureAdapter` 的被调适实现；ACG 编译、检查点、中断续跑和审计闭环仍由 AgentOS 自身控制。

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 
-from adapters.openai_runtime import OpenAICompatibleRuntime
+import pytest
+
+from adapters.http_transport import HttpTransportError
+from adapters.openai_runtime import ModelInvocationError, OpenAICompatibleRuntime
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -91,3 +94,31 @@ def test_openai_compatible_runtime_maps_json_request_and_response() -> None:
     assert response.usage == {"prompt_tokens": 12, "completion_tokens": 3}
     assert response.metadata == {"finishReason": "stop"}
     assert transport.idempotency_key == "commit:run-1:step-1:0"
+
+
+def test_openai_compatible_runtime_preserves_safe_transport_error_code() -> None:
+    """HTTP 限流等传输错误必须保留稳定代码，不能退化为无差别供应商失败。"""
+    class _RateLimitedTransport:
+        async def post_json(self, **_kwargs) -> dict:
+            raise HttpTransportError("MODEL_RATE_LIMITED", "private provider body")
+
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.limit",
+            kind=CapabilityKind.MODEL,
+            displayName="Limited model",
+            provider="openai_compatible",
+            capabilities=["local-chat"],
+        ),
+        transport=_RateLimitedTransport(),
+    )
+
+    with pytest.raises(ModelInvocationError) as captured:
+        asyncio.run(
+            runtime.invoke(
+                ModelInvocationRequest(requestId="request-1", model="local-chat")
+            )
+        )
+
+    assert captured.value.code == "MODEL_RATE_LIMITED"
+    assert "private provider body" not in str(captured.value)

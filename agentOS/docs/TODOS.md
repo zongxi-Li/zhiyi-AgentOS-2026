@@ -38,8 +38,10 @@
 - **已完成：** `ModelCompatibilityRegistry`、`AgentArchitectureRegistry` 与 `SkillToolCompatibilityRegistry` 已实现为进程内、无网络注册表。它们校验 `CapabilityManifest.kind`、拒绝同 ID 不同声明、拒绝不健康实例，并提供稳定错误码。模型按“提供商 + 模型名”精确路由；启动层默认装配三个空注册表。
 - **已完成：** `OpenAICompatibleRuntime` 通过应用层注入的 `JsonTransport` 对接 `/chat/completions`，可用于 OpenAI、DeepSeek、通义兼容模式、Ollama、vLLM 等兼容端点。它不保存密钥、SDK 或网络客户端，并将 JSON Schema 和响应映射为统一模型合同。
 - **已完成：** `AgentProfile.modelProvider + modelName` 已接入 ACG 运行时。`prepare_run` 会校验模型路由并把每一步的 provider/model 冻结到 `executionState.modelBindings`；执行和恢复均由 `RegisteredModelRuntime` 按冻结绑定解析，随后再经 `GuardedModelRuntime` 施加超时、重试、限流与 `commitId` 保护。没有 Profile 模型配置的既有 Agent 保持使用显式全局默认模型。
-- **待完成：** 版本协商、同模型多实现的优先级与故障切换、异步健康探测、供应商流式响应，以及应用层实际 HTTP 传输与密钥生命周期。不得把供应商 SDK 对象放入 `contracts/`，也不得让外部 Agent 框架接管 ACG 执行图。
-- **验收：** 增加版本回退与多实现优先级测试；应用层可用显式依赖注入完成实际 HTTP 传输；模型不可用时以稳定错误码失败，Trace 只记录安全投影。
+- **已完成：** 同一 `provider + model` 允许多个实现，以 `metadata.priority` 从高到低、能力 ID 为同级稳定排序；不健康、临时不可用、限流或超时的主实现会切换到下一个健康备实现。所有候选共享调用者的总超时，不会因候选数量增加而线性延长等待。
+- **已完成：** `HttpJsonTransport` 是应用层可直接注入 `OpenAICompatibleRuntime` 的标准库 HTTP 传输。它显式接收基地址、密钥和超时，默认要求 HTTPS；密钥与 `commitId` 分别写入 `Authorization` 和 `Idempotency-Key` 请求头，绝不进入 JSON 正文、运行状态或 Trace。
+- **待完成：** 版本协商、异步健康探测、供应商流式响应，以及应用层密钥轮换/关闭生命周期。不得把供应商 SDK 对象放入 `contracts/`，也不得让外部 Agent 框架接管 ACG 执行图。
+- **验收：** 增加版本回退和流式输出测试；模型不可用时以稳定错误码失败，Trace 只记录安全投影；密钥轮换不会中断冻结中的运行。
 
 ## P1：建立可演化的轨迹闭环（当前仅合同与门面）
 
