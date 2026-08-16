@@ -6,8 +6,15 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  logging: *default-logging
+  labels:
+    com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
+
 services:
   postgres:
+    <<: *service-defaults
     build:
       context: ./docker/postgres
     image: ${KINLIN_POSTGRES_IMAGE:-kinlin-ai-postgres:dev}
@@ -26,19 +33,16 @@ services:
     tmpfs:
       - /run/kinlin-secrets:mode=0700
     networks: [data-network]
-    restart: unless-stopped
     stop_grace_period: 60s
-    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 10s
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
 
   redis:
+    <<: *service-defaults
     build:
       context: ./docker/redis
     image: ${KINLIN_REDIS_IMAGE:-kinlin-ai-redis:dev}
@@ -50,19 +54,16 @@ services:
     tmpfs:
       - /run/kinlin-secrets:mode=0700
     networks: [data-network, provider-state-network]
-    restart: unless-stopped
     stop_grace_period: 30s
-    logging: *default-logging
     healthcheck:
       test: ["CMD", "/usr/local/bin/kinlin-redis-healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 5s
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
 
   ai-service:
+    <<: *service-defaults
     build:
       context: .
       dockerfile: agent/Dockerfile
@@ -95,19 +96,16 @@ services:
     tmpfs:
       - /run/kinlin-secrets:mode=0700
     networks: [agent-network, provider-state-network]
-    restart: unless-stopped
     stop_grace_period: 60s
-    logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 15s
       timeout: 7s
       retries: 10
       start_period: 20s
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
 
   backend:
+    <<: *service-defaults
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -135,19 +133,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
     stop_grace_period: 45s
-    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://$$(cat /tmp/backend-listen-address):8080/health/ready"]
       interval: 15s
       timeout: 7s
       retries: 10
       start_period: 30s
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
 
   frontend:
+    <<: *service-defaults
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -156,18 +151,15 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    restart: unless-stopped
     stop_grace_period: 20s
-    logging: *default-logging
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 15s
       timeout: 5s
       retries: 5
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
 
   schema-tool:
+    <<: *service-defaults
     profiles: [migration]
     build:
       context: ./docker/flyway

@@ -1,5 +1,20 @@
+x-windows-service-defaults: &windows-service-defaults
+  labels:
+    com.kinlin.environment: windows-development
+
+x-windows-debug-service: &windows-debug-service
+  profiles: [debug-ports]
+  build:
+    context: ./docker/debug-proxy
+  image: ${KINLIN_DEBUG_PROXY_IMAGE:-kinlin-ai-debug-proxy:dev}
+  restart: unless-stopped
+  labels:
+    com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
+    com.kinlin.environment: windows-development-debug
+
 services:
   frontend:
+    <<: *windows-service-defaults
     networks: [web-network, windows-ingress-network]
     ports: !override
       - "127.0.0.1:${KINLIN_HTTP_PORT:-8080}:8080"
@@ -19,10 +34,9 @@ services:
     depends_on: !override
       backend:
         condition: service_started
-    labels:
-      com.kinlin.environment: windows-development
 
   backend:
+    <<: *windows-service-defaults
     environment:
       MAVEN_CONFIG: /home/kinlin/.m2
       HOME: /home/kinlin
@@ -46,10 +60,9 @@ services:
       start_period: 300s
       start_interval: 1s
       retries: 20
-    labels:
-      com.kinlin.environment: windows-development
 
   ai-service:
+    <<: *windows-service-defaults
     environment:
       PATH: /opt/kinlin-venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
       VIRTUAL_ENV: /opt/kinlin-venv
@@ -61,26 +74,19 @@ services:
       - pip-cache:/pip-cache
     healthcheck:
       start_interval: 1s
-    labels:
-      com.kinlin.environment: windows-development
 
   postgres:
+    <<: *windows-service-defaults
     healthcheck:
       start_interval: 1s
-    labels:
-      com.kinlin.environment: windows-development
 
   redis:
+    <<: *windows-service-defaults
     healthcheck:
       start_interval: 1s
-    labels:
-      com.kinlin.environment: windows-development
 
   backend-debug-port:
-    profiles: [debug-ports]
-    build:
-      context: ./docker/debug-proxy
-    image: ${KINLIN_DEBUG_PROXY_IMAGE:-kinlin-ai-debug-proxy:dev}
+    <<: *windows-debug-service
     command: ["TCP-LISTEN:18080,fork,reuseaddr", "TCP:backend:8080"]
     ports:
       - "127.0.0.1:${KINLIN_BACKEND_DEBUG_PORT:-18080}:18080"
@@ -88,16 +94,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    restart: unless-stopped
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
-      com.kinlin.environment: windows-development-debug
 
   ai-debug-port:
-    profiles: [debug-ports]
-    build:
-      context: ./docker/debug-proxy
-    image: ${KINLIN_DEBUG_PROXY_IMAGE:-kinlin-ai-debug-proxy:dev}
+    <<: *windows-debug-service
     command: ["TCP-LISTEN:18000,fork,reuseaddr", "TCP:ai-service:8000"]
     ports:
       - "127.0.0.1:${KINLIN_AI_DEBUG_PORT:-18000}:18000"
@@ -105,10 +104,6 @@ services:
     depends_on:
       ai-service:
         condition: service_healthy
-    restart: unless-stopped
-    labels:
-      com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
-      com.kinlin.environment: windows-development-debug
 
 volumes:
   backend-source-cache:
