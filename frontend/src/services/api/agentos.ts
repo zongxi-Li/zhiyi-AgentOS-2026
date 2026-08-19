@@ -582,9 +582,9 @@ export const agentosApi = {
     return response.data
   },
 
-  async getAcgView(runId: string, options: { signal?: AbortSignal } = {}): Promise<AcgView> {
+  async getAcgView(runId: string, options: { signal?: AbortSignal; run?: WorkflowRun | Promise<WorkflowRun> } = {}): Promise<AcgView> {
     const [run, graphResponse, provenanceResponse, trace] = await Promise.all([
-      this.getWorkflowRun(runId, options),
+      options.run || this.getWorkflowRun(runId, options),
       agentosRequest.get<any>(`${runPath(runId)}/graph`, { signal: options.signal }),
       agentosRequest.get<any>(`${runPath(runId)}/provenance`, { signal: options.signal }),
       this.getWorkflowTrace(runId, options)

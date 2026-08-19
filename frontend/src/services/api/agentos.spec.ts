@@ -73,6 +73,19 @@ describe('AgentOS v2 application API', () => {
     expect(get).toHaveBeenLastCalledWith('/runs/run_1/outputs/output%3Arun_1%3Adeliver', { signal: undefined })
   })
 
+  it('reuses an already loaded Run when projecting the ACG view', async () => {
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+
+    await agentosApi.getAcgView('run_1', { run })
+
+    expect(get).not.toHaveBeenCalledWith('/runs/run_1', expect.anything())
+    expect(get).toHaveBeenCalledTimes(4)
+  })
+
   it('loads inline outputs through the guarded compatibility resource for legacy runs', async () => {
     const legacyRun = {
       ...run,

@@ -366,7 +366,8 @@ const filters = reactive({
 let listTimer: ReturnType<typeof setTimeout> | null = null
 let listController: AbortController | null = null
 let listGeneration = 0
-let detailController: AbortController | null = null
+const detailControllers = new Set<AbortController>()
+let detailRequestCount = 0
 let detailGeneration = 0
 
 const progressTracker = useWorkflowProgress({
@@ -475,8 +476,9 @@ const changePage = (offset: number) => {
 
 const clearSelectedDetails = () => {
   detailGeneration += 1
-  detailController?.abort()
-  detailController = null
+  for (const controller of detailControllers) controller.abort()
+  detailControllers.clear()
+  detailRequestCount = 0
   selectedRun.value = null
   selectedAcgView.value = null
   traceEvents.value = []
@@ -535,14 +537,17 @@ const activateRun = async (runId: string, syncRoute: boolean) => {
 const loadSelectedDetail = async (options: { full?: boolean; acg?: boolean; review?: boolean } = {}) => {
   const runId = selectedRunId.value
   if (!runId) return
-  const generation = ++detailGeneration
-  detailController?.abort()
-  detailController = new AbortController()
-  const signal = detailController.signal
+  const generation = detailGeneration
+  const controller = new AbortController()
+  detailControllers.add(controller)
+  const signal = controller.signal
+  detailRequestCount += 1
   detailLoading.value = true
   try {
     const runPromise = workflowApi.getRun(runId, { signal })
-    const acgPromise = options.acg || options.full ? workflowApi.getAcgView(runId, { signal }) : Promise.resolve(null)
+    const acgPromise = options.acg || options.full
+      ? workflowApi.getAcgView(runId, { signal, run: runPromise })
+      : Promise.resolve(null)
     const reviewsPromise = options.review || options.full
       ? workflowApi.listReviews(runId, { signal })
       : Promise.resolve({ items: [] as ReviewRecord[], total: 0, runId })
@@ -578,9 +583,10 @@ const loadSelectedDetail = async (options: { full?: boolean; acg?: boolean; revi
     }
     if (options.review || options.full) reviewDetailsLoaded.delete(runId)
   } finally {
+    detailControllers.delete(controller)
+    detailRequestCount = Math.max(0, detailRequestCount - 1)
     if (generation === detailGeneration) {
-      detailController = null
-      detailLoading.value = false
+      detailLoading.value = detailRequestCount > 0
     }
   }
 }
@@ -677,7 +683,8 @@ onBeforeUnmount(() => {
   listGeneration += 1
   listController?.abort()
   detailGeneration += 1
-  detailController?.abort()
+  for (const controller of detailControllers) controller.abort()
+  detailControllers.clear()
   progressTracker.reset()
 })
 

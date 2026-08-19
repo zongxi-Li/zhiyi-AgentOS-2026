@@ -6,6 +6,7 @@ import { ElMessageBox } from 'element-plus'
 import { workflowApi, type AcgView, type WorkflowProgress, type WorkflowRun, type WorkflowRunSummary } from '@/services/api/workflow'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
+import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
 import AgentOsConsoleView from './AgentOsConsoleView.vue'
 
 vi.mock('@/services/api/workflow', async importOriginal => {
@@ -123,6 +124,35 @@ describe('AgentOsConsoleView control plane', () => {
     expect(workflowApi.getRun).toHaveBeenCalledTimes(1)
     expect(workflowApi.getAcgView).toHaveBeenCalledTimes(1)
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps full audit details when a terminal ACG load overlaps the detail request', async () => {
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      phase: 'completed', status: 'completed', percent: 100, completedSteps: 4
+    }))
+    let releaseFirstAcg!: () => void
+    vi.mocked(workflowApi.getAcgView)
+      .mockImplementationOnce(() => new Promise(resolve => {
+        releaseFirstAcg = () => resolve(acg)
+      }))
+      .mockResolvedValue(acg)
+    vi.mocked(workflowApi.getTrace).mockResolvedValue({
+      runId: 'run_1', taskId: 'task_1', workflowId: 'workflow_1', domain: 'test', status: 'completed',
+      eventCount: 1, events: [{ eventId: 'trace_1', eventType: 'run_completed', payload: {} }]
+    })
+    const { wrapper } = await mountConsole('?runId=run_1')
+    await flushPromises()
+
+    const fullDetail = (wrapper.vm as any).loadSelectedDetail({ full: true, acg: true, review: true })
+    await fullDetail
+    releaseFirstAcg()
+    await flushPromises()
+
+    expect(workflowApi.getTrace).toHaveBeenCalledWith('run_1', expect.any(Object))
+    expect(wrapper.findComponent(RuntimeAuditTimeline).props('events')).toEqual([
+      expect.objectContaining({ eventId: 'trace_1', eventType: 'run_completed' })
+    ])
     wrapper.unmount()
   })
 

@@ -764,9 +764,10 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
   const signal = topologyController.signal
   isAcgLoading.value = true
   try {
+    const runPromise = workflowApi.getRun(runId, { signal })
     const [runResult, viewResult] = await Promise.allSettled([
-      workflowApi.getRun(runId, { signal }),
-      workflowApi.getAcgView(runId, { signal })
+      runPromise,
+      workflowApi.getAcgView(runId, { signal, run: runPromise })
     ])
     if (requestGeneration !== topologyGeneration || runId !== activeRunId.value) return
     if (viewResult.status === 'rejected') throw viewResult.reason

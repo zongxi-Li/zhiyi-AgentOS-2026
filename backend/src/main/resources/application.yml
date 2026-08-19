@@ -67,6 +67,8 @@ ai:
 
 # 应用配置
 app:
+  rate-limit:
+    requests-per-minute: ${APP_RATE_LIMIT_REQUESTS_PER_MINUTE:300}
   upload:
     dir: ${APP_UPLOAD_DIR:uploads}
     max-size: 10485760  # 10MB

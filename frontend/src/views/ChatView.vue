@@ -1493,9 +1493,10 @@ const loadActiveAcgView = (runId = activeWorkflowRunId.value, force = false): Pr
   workflowResultError.value = null
 
   const pending = (async () => {
+    const runPromise = agentosApi.getWorkflowRun(runId, { signal })
     const [runResult, viewResult] = await Promise.allSettled([
-      agentosApi.getWorkflowRun(runId, { signal }),
-      agentosApi.getAcgView(runId, { signal })
+      runPromise,
+      agentosApi.getAcgView(runId, { signal, run: runPromise })
     ])
     if (requestGeneration !== workflowResultGeneration || runId !== activeWorkflowRunId.value) return false
 
