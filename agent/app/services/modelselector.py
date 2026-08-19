@@ -17,7 +17,7 @@ FEDERATED_OPTIMIZATION_AVAILABLE = False
 federated_model_optimizer = None
 
 try:
-    from agent.app.services.federatedmodeloptimizer import federated_model_optimizer
+    from app.services.federatedmodeloptimizer import federated_model_optimizer
     if federated_model_optimizer is not None:
         FEDERATED_OPTIMIZATION_AVAILABLE = True
 except (ImportError, AttributeError, Exception) as e:

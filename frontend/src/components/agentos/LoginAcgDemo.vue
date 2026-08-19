@@ -76,7 +76,6 @@
           <div v-if="selectedStepState?.currentBinding?.pluginVersion"><dt>插件版本</dt><dd>{{ selectedStepState.currentBinding.pluginVersion }}</dd></div>
           <div v-if="selectedStepState?.currentBinding?.modelName"><dt>模型</dt><dd>{{ selectedStepState.currentBinding.modelName }}</dd></div>
           <div v-if="selectedStepState?.currentBinding?.bindingId"><dt>Binding ID</dt><dd><code>{{ selectedStepState.currentBinding.bindingId }}</code></dd></div>
-          <div v-if="(selectedStepState?.bindingSwitchCount || 0) > 0"><dt>替代 Binding</dt><dd>已切换 {{ selectedStepState?.bindingSwitchCount }} 次</dd></div>
           <div v-if="selectedStepState?.attempt"><dt>Attempt</dt><dd>{{ selectedStepState.attempt }} 次</dd></div>
           <div v-if="selectedStepState?.createdGraphVersion"><dt>创建图版本</dt><dd>v{{ selectedStepState.createdGraphVersion }}</dd></div>
           <div v-if="selectedStepState?.sourcePatchId"><dt>来源 Patch</dt><dd><code>{{ selectedStepState.sourcePatchId }}</code></dd></div>
@@ -143,7 +142,7 @@ import { Aim, ArrowDownBold, Close, FullScreen, RefreshRight, Share } from '@ele
 import { DataSet } from 'vis-data'
 import { Network } from 'vis-network'
 import type { AcgBlueprint, AcgNode, AcgEdge, AcgStepState } from '@/services/api/agentos'
-import { mapEdgeVisualState, mapNodeVisualState } from '@/utils/runtimePresentation'
+import { mapEdgeVisualState, mapNodeVisualState } from '@/utils/acgGraphPresentation'
 
 const props = defineProps<{
   blueprint: AcgBlueprint | null

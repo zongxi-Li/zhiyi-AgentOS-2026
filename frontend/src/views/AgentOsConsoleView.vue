@@ -13,7 +13,7 @@
       </button>
     </header>
 
-    <section class="console-layout">
+    <section ref="consoleLayoutRef" class="console-layout" :style="consoleLayoutStyle">
       <aside class="run-sidebar ui-surface ui-surface--pad" aria-label="Workflow 运行列表">
         <div class="filter-panel">
           <div class="filter-title">
@@ -25,6 +25,14 @@
             <select v-model="filters.status" @change="applyFilters">
               <option value="">默认范围</option>
               <option v-for="item in statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+            </select>
+          </label>
+          <label>
+            <span>角色</span>
+            <select v-model="filters.role" aria-label="按角色筛选 ACG 记录" @change="applyFilters">
+              <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
             </select>
           </label>
           <label>
@@ -67,21 +75,11 @@
                 <span v-else class="run-mini-progress indeterminate" aria-hidden="true"><span></span></span>
                 <span class="run-item__metrics">
                   <span>{{ run.totalSteps > 0 ? `${run.completedSteps}/${run.totalSteps} 步` : '规模计算中' }}</span>
-                  <span>恢复 {{ run.recoveryCount }}</span>
                   <span v-if="run.source === 'chat'">来自 Chat</span>
                   <span v-else-if="run.source === 'acg'">来自 ACG</span>
+                  <span v-else-if="run.source === 'legacy_agent_chat'">来自主对话</span>
+                  <span v-else-if="run.source === 'agent'">来自 Agent</span>
                 </span>
-              </button>
-              <button
-                v-if="canDeleteRun(run)"
-                class="run-item-delete"
-                type="button"
-                title="删除运行记录"
-                :aria-label="`删除运行：${run.runId}`"
-                :disabled="deletingRunId === run.runId"
-                @click="deleteRun(run.runId)"
-              >
-                <el-icon><DeleteIcon /></el-icon>
               </button>
             </div>
           </section>
@@ -93,6 +91,18 @@
           <button type="button" :disabled="filters.page >= totalPages" @click="changePage(1)">下一页</button>
         </footer>
       </aside>
+
+      <div
+        class="console-resizer console-resizer--left"
+        role="separator"
+        aria-label="调整运行列表宽度"
+        aria-orientation="vertical"
+        :aria-valuenow="leftPanelWidth"
+        tabindex="0"
+        @pointerdown="startPanelResize('left', $event)"
+        @dblclick="resetPanelWidth('left')"
+        @keydown="handleResizerKeydown('left', $event)"
+      ></div>
 
       <section class="console-main">
         <div v-if="!selectedRunId" class="selection-empty ui-surface">
@@ -109,17 +119,6 @@
             <nav aria-label="运行页面导航">
               <button type="button" @click="openAcg">进入 ACG</button>
               <button v-if="selectedReference?.conversationId" type="button" @click="openChat">返回 Chat</button>
-              <button
-                v-if="selectedCanDelete"
-                class="run-toolbar__delete"
-                type="button"
-                :disabled="Boolean(deletingRunId)"
-                title="删除当前运行记录"
-                @click="deleteRun(selectedRunId)"
-              >
-                <el-icon><DeleteIcon /></el-icon>
-                删除
-              </button>
               <button type="button" :disabled="detailLoading" @click="toggleDetails">
                 {{ detailExpanded ? '收起详情' : '加载详情' }}
               </button>
@@ -131,11 +130,6 @@
             :loading="progressTracker.isLoading.value"
             :sync-error="progressTracker.syncError.value"
           />
-          <DynamicRunSummaryCard
-            :progress="progressTracker.progress.value"
-            :run="selectedRun"
-            :view="selectedAcgView"
-          />
 
           <p v-if="runError" class="error-message" role="alert">{{ runError }}</p>
 
@@ -143,7 +137,6 @@
             <div><dt>Workflow</dt><dd>{{ progressTracker.progress.value.workflowId }}</dd></div>
             <div><dt>当前步骤</dt><dd>{{ progressTracker.progress.value.currentStepId || '准备中' }}</dd></div>
             <div><dt>活动节点</dt><dd>{{ progressTracker.progress.value.activeStepIds.length }}</dd></div>
-            <div><dt>恢复次数</dt><dd>{{ progressTracker.progress.value.recoveryCount }}</dd></div>
             <div><dt>开始时间</dt><dd>{{ formatTime(progressTracker.progress.value.startedAt) }}</dd></div>
             <div><dt>更新时间</dt><dd>{{ formatTime(progressTracker.progress.value.updatedAt) }}</dd></div>
           </dl>
@@ -151,7 +144,6 @@
           <template v-if="detailExpanded">
             <WorkflowRunPanel
               :run="selectedRun"
-              :metrics="null"
               :loading="detailLoading"
               @refresh="refreshSelectedDetail"
               @export-trace="exportTrace"
@@ -163,7 +155,6 @@
             <CheckpointPanel
               :checkpoints="checkpoints"
               :loading="detailLoading"
-              @resume="resumeFromCheckpoint"
             />
             <TraceEventTimeline
               :events="traceEvents"
@@ -173,6 +164,19 @@
           </template>
         </template>
       </section>
+
+
+      <div
+        class="console-resizer console-resizer--right"
+        role="separator"
+        aria-label="调整摘要面板宽度"
+        aria-orientation="vertical"
+        :aria-valuenow="rightPanelWidth"
+        tabindex="0"
+        @pointerdown="startPanelResize('right', $event)"
+        @dblclick="resetPanelWidth('right')"
+        @keydown="handleResizerKeydown('right', $event)"
+      ></div>
 
       <aside class="console-side">
         <WorkflowReviewPanel
@@ -194,13 +198,6 @@
           </div>
           <p v-else>终态、人工审核或展开详情时才读取完整 ACG，不参与列表轮询。</p>
         </section>
-        <RuntimeChangeTimeline
-          v-if="selectedAcgView"
-          :runtime-events="selectedAcgView.runtimeEvents"
-          :applied-patches="selectedAcgView.appliedPatches"
-          :branch-decisions="selectedAcgView.branchDecisions"
-          :step-states="selectedAcgView.stepStates"
-        />
       </aside>
     </section>
   </main>
@@ -209,14 +206,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
-import { Delete as DeleteIcon, Monitor, Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { Monitor, Refresh, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import CheckpointPanel from '@/components/agentos/CheckpointPanel.vue'
 import TraceEventTimeline from '@/components/agentos/TraceEventTimeline.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import DynamicRunSummaryCard from '@/components/agentos/DynamicRunSummaryCard.vue'
-import RuntimeChangeTimeline from '@/components/agentos/RuntimeChangeTimeline.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import WorkflowRunPanel from '@/components/agentos/WorkflowRunPanel.vue'
 import WorkflowStepList from '@/components/agentos/WorkflowStepList.vue'
@@ -234,12 +229,29 @@ import {
 } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { isWorkflowReviewPending } from '@/utils/workflowReviewState'
-import { runtimeProjectionChanged } from '@/utils/runtimePresentation'
+import {
+  ACG_HISTORY_ROLE_OPTIONS,
+  ACG_HISTORY_ROLE_CHANGE_EVENT,
+  ACG_HISTORY_SOURCES,
+  acgHistoryRoleDomain,
+  loadAcgHistoryRole,
+  saveAcgHistoryRole,
+  type AcgHistoryRole
+} from '@/utils/acgHistoryFilter'
 
 const DEFAULT_STATUSES = ['pending', 'planning', 'running', 'retrying', 'waiting_review', 'completed', 'failed', 'cancelled']
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 const LIST_INTERVAL_MS = 7000
 const PAGE_SIZE = 50
+const CONSOLE_LEFT_WIDTH_KEY = 'agentos.console.left_width'
+const CONSOLE_RIGHT_WIDTH_KEY = 'agentos.console.right_width'
+const DEFAULT_LEFT_WIDTH = 320
+const DEFAULT_RIGHT_WIDTH = 340
+const MIN_LEFT_WIDTH = 240
+const MAX_LEFT_WIDTH = 420
+const MIN_RIGHT_WIDTH = 260
+const MAX_RIGHT_WIDTH = 460
+const MIN_MAIN_WIDTH = 360
 
 const route = useRoute()
 const router = useRouter()
@@ -252,17 +264,88 @@ const selectedAcgView = ref<AcgView | null>(null)
 const traceEvents = ref<TraceEvent[]>([])
 const checkpoints = ref<Checkpoint[]>([])
 const reviews = ref<ReviewRecord[]>([])
+const consoleLayoutRef = ref<HTMLElement | null>(null)
+const leftPanelWidth = ref(Number(localStorage.getItem(CONSOLE_LEFT_WIDTH_KEY)) || DEFAULT_LEFT_WIDTH)
+const rightPanelWidth = ref(Number(localStorage.getItem(CONSOLE_RIGHT_WIDTH_KEY)) || DEFAULT_RIGHT_WIDTH)
 const listLoading = ref(false)
 const detailLoading = ref(false)
 const detailExpanded = ref(false)
-const deletingRunId = ref('')
 const listError = ref('')
 const runError = ref('')
+const consoleLayoutStyle = computed(() => ({
+  '--console-left-width': `${leftPanelWidth.value}px`,
+  '--console-right-width': `${rightPanelWidth.value}px`
+}))
+
+let stopPanelResize: (() => void) | null = null
+const clampPanelWidth = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+const availablePanelWidth = (side: 'left' | 'right') => {
+  const total = consoleLayoutRef.value?.clientWidth || window.innerWidth
+  const opposite = side === 'left' ? rightPanelWidth.value : leftPanelWidth.value
+  return Math.max(0, total - opposite - MIN_MAIN_WIDTH - 10)
+}
+
+const setPanelWidth = (side: 'left' | 'right', value: number) => {
+  if (side === 'left') {
+    leftPanelWidth.value = clampPanelWidth(value, MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, availablePanelWidth(side)))
+    return
+  }
+  rightPanelWidth.value = clampPanelWidth(value, MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, availablePanelWidth(side)))
+}
+
+const persistPanelWidths = () => {
+  localStorage.setItem(CONSOLE_LEFT_WIDTH_KEY, String(Math.round(leftPanelWidth.value)))
+  localStorage.setItem(CONSOLE_RIGHT_WIDTH_KEY, String(Math.round(rightPanelWidth.value)))
+}
+
+const startPanelResize = (side: 'left' | 'right', event: PointerEvent) => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  stopPanelResize?.()
+  const startX = event.clientX
+  const startWidth = side === 'left' ? leftPanelWidth.value : rightPanelWidth.value
+  document.body.classList.add('console-panel-resizing')
+
+  const move = (moveEvent: PointerEvent) => {
+    const delta = moveEvent.clientX - startX
+    setPanelWidth(side, startWidth + (side === 'left' ? delta : -delta))
+  }
+  const stop = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', stop)
+    document.body.classList.remove('console-panel-resizing')
+    persistPanelWidths()
+    stopPanelResize = null
+  }
+  stopPanelResize = stop
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', stop, { once: true })
+}
+
+const resetPanelWidth = (side: 'left' | 'right') => {
+  setPanelWidth(side, side === 'left' ? DEFAULT_LEFT_WIDTH : DEFAULT_RIGHT_WIDTH)
+  persistPanelWidths()
+}
+
+const handleResizerKeydown = (side: 'left' | 'right', event: KeyboardEvent) => {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  const current = side === 'left' ? leftPanelWidth.value : rightPanelWidth.value
+  const direction = event.key === 'ArrowRight' ? 1 : -1
+  setPanelWidth(side, current + direction * (side === 'left' ? 12 : -12))
+  persistPanelWidths()
+}
 const terminalDetailsLoaded = new Set<string>()
 const reviewDetailsLoaded = new Set<string>()
 const terminalDetailCache = new Map<string, { run: WorkflowRun; acg: AcgView }>()
 
-const filters = reactive({ status: '' as WorkflowStatus | '', query: '', page: 1 })
+const filters = reactive({
+  status: '' as WorkflowStatus | '',
+  role: loadAcgHistoryRole() as AcgHistoryRole,
+  query: '',
+  page: 1
+})
 let listTimer: ReturnType<typeof setTimeout> | null = null
 let listController: AbortController | null = null
 let listGeneration = 0
@@ -302,12 +385,6 @@ const runGroups = computed(() => [
 const totalPages = computed(() => Math.max(1, Math.ceil(totalRuns.value / PAGE_SIZE)))
 const selectedReference = computed(() => workflowRunsStore.getReference(selectedRunId.value))
 const selectedSummary = computed(() => runs.value.find(run => run.runId === selectedRunId.value))
-const selectedCanDelete = computed(() => {
-  const status = selectedSummary.value?.status || progressTracker.progress.value?.status || selectedRun.value?.status
-  return Boolean(status && TERMINAL.has(status))
-})
-
-const canDeleteRun = (run: WorkflowRunSummary) => TERMINAL.has(run.status)
 
 const listParams = () => {
   const query = filters.query.trim()
@@ -316,6 +393,8 @@ const listParams = () => {
     statuses: filters.status ? undefined : DEFAULT_STATUSES.join(','),
     workflowId: query.startsWith('task_') ? undefined : query || undefined,
     taskId: query.startsWith('task_') ? query : undefined,
+    sources: ACG_HISTORY_SOURCES,
+    domain: acgHistoryRoleDomain(filters.role),
     summary: true,
     page: filters.page,
     pageSize: PAGE_SIZE
@@ -360,6 +439,15 @@ const loadRuns = async (force = false) => {
 }
 
 const applyFilters = () => {
+  saveAcgHistoryRole(filters.role)
+  filters.page = 1
+  void loadRuns(true)
+}
+
+const handleRoleFilterSync = (event: Event) => {
+  const role = (event as CustomEvent<AcgHistoryRole>).detail
+  if (!ACG_HISTORY_ROLE_OPTIONS.some(option => option.value === role) || role === filters.role) return
+  filters.role = role
   filters.page = 1
   void loadRuns(true)
 }
@@ -485,9 +573,6 @@ function handleProgressChanged(current: WorkflowProgress, previous: WorkflowProg
   workflowRunsStore.updateObservedState(current.runId, current.status, current.phase, current.updatedAt)
   const index = runs.value.findIndex(item => item.runId === current.runId)
   if (index >= 0) runs.value[index] = { ...runs.value[index], ...current }
-  if (runtimeProjectionChanged(current, previous) && !TERMINAL.has(current.status)) {
-    void loadSelectedDetail({ acg: true })
-  }
   if (isWorkflowReviewPending(current) && !isWorkflowReviewPending(previous) && !reviewDetailsLoaded.has(current.runId)) {
     void loadSelectedDetail({ review: true })
   }
@@ -519,20 +604,6 @@ const handleReviewConflict = async () => {
   await loadSelectedDetail({ review: true })
 }
 
-const resumeFromCheckpoint = async (checkpointId: string) => {
-  if (!selectedRunId.value || detailLoading.value) return
-  detailLoading.value = true
-  try {
-    await workflowApi.resumeFromCheckpoint(selectedRunId.value, checkpointId)
-    await progressTracker.refresh()
-    await loadSelectedDetail({ full: true, acg: true, review: true })
-  } catch {
-    runError.value = '恢复请求未能完成'
-  } finally {
-    detailLoading.value = false
-  }
-}
-
 const exportTrace = async () => {
   if (!selectedRunId.value) return
   const markdown = await workflowApi.exportTraceMarkdown(selectedRunId.value)
@@ -547,53 +618,6 @@ const exportTrace = async () => {
 const refreshAll = async () => {
   await loadRuns(true)
   if (selectedRunId.value) await progressTracker.refresh()
-}
-const deleteRun = async (runId: string) => {
-  const summary = runs.value.find(run => run.runId === runId)
-  if (summary && !canDeleteRun(summary)) {
-    ElMessage.warning('运行中的任务需先取消后才能删除')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      '该操作将永久删除本次运行的步骤、动态历史和执行结果，无法恢复。',
-      '删除运行记录？',
-      {
-        confirmButtonText: '永久删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-        distinguishCancelAndClose: true
-      }
-    )
-    deletingRunId.value = runId
-    const wasSelected = selectedRunId.value === runId
-    const nextRunId = runs.value.find(run => run.runId !== runId)?.runId || ''
-    await workflowApi.deleteRun(runId)
-    terminalDetailsLoaded.delete(runId)
-    reviewDetailsLoaded.delete(runId)
-    terminalDetailCache.delete(runId)
-    workflowRunsStore.removeReference(runId)
-    runs.value = runs.value.filter(run => run.runId !== runId)
-    totalRuns.value = Math.max(0, totalRuns.value - 1)
-    if (wasSelected) {
-      progressTracker.reset()
-      clearSelectedDetails()
-      selectedRunId.value = ''
-      const query = { ...route.query }
-      delete query.runId
-      await router.replace({ query })
-      if (nextRunId) await activateRun(nextRunId, true)
-    }
-    window.dispatchEvent(new Event('acg-runs-refresh'))
-    ElMessage.success('ACG 运行记录已删除')
-    await loadRuns(true)
-  } catch (error: unknown) {
-    if (error === 'cancel' || error === 'close') return
-    const data = (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data
-    ElMessage.error(data?.message || data?.detail || '删除失败，请稍后重试')
-  } finally {
-    deletingRunId.value = ''
-  }
 }
 const openAcg = () => void router.push({ path: '/agentos/acg', query: { runId: selectedRunId.value } })
 const openChat = () => {
@@ -624,11 +648,14 @@ watch(() => progressTracker.syncError.value, error => {
 
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibility)
+  window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   void loadRuns(true)
 })
 
 onBeforeUnmount(() => {
+  stopPanelResize?.()
   document.removeEventListener('visibilitychange', handleVisibility)
+  window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   clearListTimer()
   listGeneration += 1
   listController?.abort()
@@ -648,8 +675,8 @@ const formatRelativeTime = (value?: string | null) => value ? new Date(value).to
 </script>
 
 <style scoped>
-.agentos-console { height: 100%; min-height: 0; color: var(--text-primary); overflow: hidden; }
-.console-header { flex: 0 0 auto; }
+.agentos-console { height: 100%; min-height: 0; padding: 0; gap: 0; color: var(--text-primary); overflow: hidden; }
+.console-header { z-index: 1; flex: 0 0 50px; min-height: 50px; border-width: 0 0 1px; border-radius: 0; box-shadow: none; }
 .console-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .console-refresh,
 .run-toolbar button,
@@ -660,10 +687,22 @@ const formatRelativeTime = (value?: string | null) => value ? new Date(value).to
 }
 .console-refresh:hover:not(:disabled), .run-toolbar button:hover:not(:disabled), .pagination button:hover:not(:disabled) { border-color: var(--primary-line); color: var(--primary-color); }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
-.console-layout { display: grid; grid-template-columns: minmax(280px, 330px) minmax(0, 1fr) minmax(300px, 360px); align-items: stretch; gap: 14px; flex: 1 1 auto; height: auto; min-height: 0; overflow: hidden; }
+.console-layout { display: grid; grid-template-columns: var(--console-left-width) 5px minmax(360px, 1fr) 5px var(--console-right-width); align-items: stretch; gap: 0; flex: 1 1 auto; height: auto; min-height: 0; overflow: hidden; border: 0; border-radius: 0; background: var(--bg-card); }
 .run-sidebar, .console-main, .console-side { min-width: 0; min-height: 0; height: 100%; }
 .run-sidebar, .console-main, .console-side { overflow-y: auto; scrollbar-gutter: stable; }
-.console-main, .console-side { display: flex; flex-direction: column; gap: 12px; }
+.run-sidebar { padding: 12px; border: 0; border-radius: 0; box-shadow: none; }
+.console-main, .console-side { display: flex; flex-direction: column; gap: 0; background: var(--bg-card); }
+.console-main { border-left: 1px solid var(--border-light); border-right: 1px solid var(--border-light); }
+.console-main > .ui-surface,
+.console-main > :deep(.ui-surface),
+.console-side > .ui-surface,
+.console-side > :deep(.ui-surface) { border-width: 0 0 1px; border-radius: 0; box-shadow: none; }
+.console-side { padding: 0; }
+.console-resizer { position: relative; z-index: 3; width: 5px; min-width: 5px; cursor: col-resize; background: var(--bg-panel); outline: none; touch-action: none; }
+.console-resizer::after { content: ''; position: absolute; inset: 0 1px; background: transparent; transition: background-color 120ms ease; }
+.console-resizer:hover::after,
+.console-resizer:focus-visible::after { background: var(--primary-color); }
+.acg-summary { box-sizing: border-box; min-height: 84px; max-height: 280px; resize: vertical; overflow: auto; }
 .console-main > * { flex-shrink: 0; }
 .console-main > .selection-empty:last-child,
 .console-main > .run-facts:last-child,
@@ -731,6 +770,6 @@ select:focus, input:focus { border-color: var(--primary-line); box-shadow: 0 0 0
 .acg-summary__facts span { padding: 4px 7px; border-radius: 5px; background: var(--bg-input); font-size: 11px; }
 @keyframes list-progress { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
 @media (prefers-reduced-motion: reduce) { .run-mini-progress.indeterminate > span { animation: none; transform: translateX(80%); } }
-@media (max-width: 1180px) { .agentos-console { height: auto; min-height: 100%; overflow: visible; } .console-layout { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); flex: none; height: auto; overflow: visible; } .run-sidebar, .console-main, .console-side { height: auto; } .console-side { grid-column: 2; } .run-sidebar { max-height: 720px; } }
-@media (max-width: 760px) { .agentos-console { padding: 12px; } .console-header { align-items: flex-start; flex-direction: column; } .console-layout { grid-template-columns: 1fr; } .console-side { grid-column: 1; } .run-sidebar { max-height: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .run-toolbar { align-items: flex-start; flex-direction: column; } .run-toolbar nav { justify-content: flex-start; } }
+@media (max-width: 1180px) { .agentos-console { height: auto; min-height: 100%; overflow: visible; } .console-layout { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); flex: none; height: auto; overflow: visible; } .console-resizer { display: none; } .run-sidebar, .console-main, .console-side { height: auto; } .console-side { grid-column: 2; } .run-sidebar { max-height: 720px; } }
+@media (max-width: 760px) { .agentos-console { padding: 0; } .console-header { align-items: flex-start; flex-direction: column; flex-basis: auto; } .console-layout { grid-template-columns: 1fr; } .console-side { grid-column: 1; } .run-sidebar { max-height: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .run-toolbar { align-items: flex-start; flex-direction: column; } .run-toolbar nav { justify-content: flex-start; } }
 </style>

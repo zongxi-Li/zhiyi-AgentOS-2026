@@ -1,4 +1,4 @@
-# 联邦智枢 Frontend
+# 知弈 AgentOS Frontend
 
 Vue 3前端应用
 

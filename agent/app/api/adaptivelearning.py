@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
-from agent.app.services.adaptivelearningservice import adaptive_learning_service
+from app.services.adaptivelearningservice import adaptive_learning_service
 
 router = APIRouter()
 

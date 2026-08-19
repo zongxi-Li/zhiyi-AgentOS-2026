@@ -3,7 +3,7 @@ RAG联邦优化测试
 测试RAG联邦学习优化功能
 """
 import pytest
-from agent.app.services.federatedragoptimizer import (
+from app.services.federatedragoptimizer import (
     FederatedRAGOptimizer,
     RAGStatistics
 )

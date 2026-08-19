@@ -5,8 +5,8 @@ AI服务
 """
 import logging
 from typing import Dict, List, Optional
-from agent.app.ai_engine.kylin_sdk.client import KylinAIClient
-from agent.app.ai_engine.model_runtime import (
+from app.ai_engine.kylin_sdk.client import KylinAIClient
+from app.ai_engine.model_runtime import (
     apply_reasoning_instruction,
     generate_with_runtime_model,
     resolve_system_runtime_config,
@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 
 # 可选导入创新功能（如果可用）
 try:
-    from agent.app.services.emotionawareservice import emotion_aware_service
+    from app.services.emotionawareservice import emotion_aware_service
     EMOTION_AWARE_AVAILABLE = True
 except ImportError:
     EMOTION_AWARE_AVAILABLE = False
     logger.warning("情感感知服务未加载")
 
 try:
-    from agent.app.services.digitalhumanservice import digital_human_service
+    from app.services.digitalhumanservice import digital_human_service
     DIGITAL_HUMAN_AVAILABLE = True
 except ImportError:
     DIGITAL_HUMAN_AVAILABLE = False

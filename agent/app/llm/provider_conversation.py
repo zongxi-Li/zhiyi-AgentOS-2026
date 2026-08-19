@@ -339,7 +339,7 @@ _configured_manager: Optional[ProviderConversationManager] = None
 
 def configured_provider_conversation_manager() -> Optional[ProviderConversationManager]:
     global _configured_manager, _configured_store
-    from agent.app.config import settings
+    from app.config import settings
 
     if not settings.PROVIDER_STATE_ENABLED:
         return None

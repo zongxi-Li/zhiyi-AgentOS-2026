@@ -1,4 +1,4 @@
-from agent.app.observability.context import accepted_or_new_trace_id, reset_trace_id, set_trace_id
+from app.observability.context import accepted_or_new_trace_id, reset_trace_id, set_trace_id
 
 
 class TraceIdMiddleware:

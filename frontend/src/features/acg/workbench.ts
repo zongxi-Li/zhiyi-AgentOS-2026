@@ -15,6 +15,7 @@ export interface WorkbenchDraft {
   planningMode: WorkbenchPlanningMode
   planningDiversity: PlanningDiversity
   planningSeed: number | null
+  webSearchEnabled: boolean
   thinkingMode: 'disabled' | 'standard' | 'deep'
   reviewMode: 'auto' | 'human_in_loop'
   pluginData: Record<string, Record<string, unknown>>
@@ -48,16 +49,17 @@ export interface PluginUiExtension {
 }
 
 export const createNativeWorkbenchDraft = (): WorkbenchDraft => ({
-  title: '基础软件项目实施方案',
-  taskGoal: '设计一个基础软件项目实施方案，包括目标、阶段、风险和交付物',
+  title: '',
+  taskGoal: '',
   materialText: '',
   constraints: [],
-  expectedArtifacts: ['实施方案'],
+  expectedArtifacts: [],
   materialIds: [],
   enabledPluginIds: [],
   planningMode: 'dynamic',
   planningDiversity: 'stable',
   planningSeed: null,
+  webSearchEnabled: true,
   thinkingMode: 'disabled',
   reviewMode: 'auto',
   pluginData: {}
@@ -94,8 +96,10 @@ export const buildWorkbenchStartRequest = (
     expectedArtifacts: [...draft.expectedArtifacts],
     planningMode: draft.planningMode,
     usePlanner: true,
-    forceDynamicPlanning: draft.planningMode === 'dynamic',
+    webSearchEnabled: draft.webSearchEnabled,
     thinkingMode: draft.thinkingMode,
+    planningDiversity: draft.planningDiversity,
+    ...(draft.planningSeed === null ? {} : { planningSeed: draft.planningSeed }),
     pluginData: clonePluginData(draft.pluginData)
   }
 
@@ -111,6 +115,9 @@ export const buildWorkbenchStartRequest = (
     input = mergeInput(input, contribution.input)
   }
 
+  // The user's privacy/network choice is authoritative across every plugin.
+  input.webSearchEnabled = draft.webSearchEnabled
+
   return {
     title: draft.title.trim(),
     domain,
@@ -119,8 +126,6 @@ export const buildWorkbenchStartRequest = (
     reviewMode,
     input,
     clientRequestId,
-    planningDiversity: draft.planningDiversity,
-    planningSeed: draft.planningSeed ?? undefined,
     enabledPluginIds: [...draft.enabledPluginIds]
   }
 }

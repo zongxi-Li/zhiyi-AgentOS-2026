@@ -5,7 +5,7 @@ RAG联邦优化API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from agent.app.services.federatedragoptimizer import federated_rag_optimizer
+from app.services.federatedragoptimizer import federated_rag_optimizer
 
 router = APIRouter()
 

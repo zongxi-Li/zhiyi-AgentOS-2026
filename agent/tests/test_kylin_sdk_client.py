@@ -2,7 +2,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 
-from agent.app.ai_engine.kylin_sdk.client import KylinSDKClient
+from app.ai_engine.kylin_sdk.client import KylinSDKClient
 
 
 async def test_deepseek_generation_does_not_block_the_event_loop():

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Any, Dict, List
 
-from agent.app.rag.legal_document_loader import LegalDocument
+from app.rag.legal_document_loader import LegalDocument
 
 
 @dataclass

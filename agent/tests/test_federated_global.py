@@ -6,8 +6,8 @@ import pytest
 import json
 import tempfile
 from pathlib import Path
-from agent.app.services.globalmodelmanager import GlobalModelManager
-from agent.app.services.localtrainingmanager import LocalTrainingManager
+from app.services.globalmodelmanager import GlobalModelManager
+from app.services.localtrainingmanager import LocalTrainingManager
 
 
 class TestGlobalModelManager:
@@ -85,7 +85,7 @@ class TestGlobalModelManager:
             )
         
         # 模拟收集参数更新
-        from agent.app.services.encryptionservice import encryption_service
+        from app.services.encryptionservice import encryption_service
         
         for client_id in clients:
             # 模拟参数更新
@@ -245,7 +245,7 @@ class TestEndToEndWorkflow:
 
 def test_differential_privacy():
     """测试差分隐私保护"""
-    from agent.app.services.encryptionservice import encryption_service
+    from app.services.encryptionservice import encryption_service
     
     original_params = {
         'weights': [1.0, 2.0, 3.0, 4.0, 5.0]
@@ -268,7 +268,7 @@ def test_differential_privacy():
 
 def test_parameter_encryption():
     """测试参数加密"""
-    from agent.app.services.encryptionservice import encryption_service
+    from app.services.encryptionservice import encryption_service
     
     original_params = {
         'param1': [1.0, 2.0, 3.0],

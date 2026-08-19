@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from './workflowRuns'
+import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
 
 vi.mock('@/services/api/workflow', async importOriginal => {
   const actual = await importOriginal<typeof import('@/services/api/workflow')>()
@@ -109,7 +110,7 @@ describe('workflow run reference store', () => {
 
     expect(workflowApi.listRuns).toHaveBeenCalledOnce()
     expect(workflowApi.listRuns).toHaveBeenCalledWith(expect.objectContaining({
-      statuses: expect.stringContaining('waiting_review'), pageSize: 100, summary: true
+      statuses: expect.stringContaining('waiting_review'), sources: ACG_HISTORY_SOURCES, pageSize: 100, summary: true
     }))
     expect(store.getReference('run_1')?.status).toBe('running')
   })

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import base64
-from agent.app.services.multimodalservice import multimodal_fusion_service
+from app.services.multimodalservice import multimodal_fusion_service
 
 router = APIRouter()
 

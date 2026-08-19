@@ -8,7 +8,7 @@ import asyncio
 from typing import Dict, Optional, AsyncGenerator
 from collections import deque
 import numpy as np
-from agent.app.config import settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +260,7 @@ class RealtimeASRService:
                 # 获取API密钥
                 api_key = getattr(settings, 'DASHSCOPE_API_KEY', '') or getattr(settings, 'QWEN_API_KEY', '')
                 if api_key:
-                    from agent.app.ai_engine.speechadapter import SpeechAdapter
+                    from app.ai_engine.speechadapter import SpeechAdapter
                     self._speech_adapter = SpeechAdapter(api_key)
                     logger.info("实时语音识别服务已初始化语音适配器")
                 else:

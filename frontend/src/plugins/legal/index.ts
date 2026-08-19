@@ -15,7 +15,7 @@ export interface LegalPluginDraft {
 
 const defaults = (): LegalPluginDraft => ({
   contractText: '',
-  reviewGoal: '识别合同风险、核验法律依据并生成修改建议',
+  reviewGoal: '完整审查合同：解析合同并进行条款分类，识别风险，联网核验法律依据，生成修改建议、人工审核要点和最终合同审查报告',
   contractType: '',
   useTemplateWorkflow: false,
   evidenceFirst: true,
@@ -24,6 +24,7 @@ const defaults = (): LegalPluginDraft => ({
 })
 
 const DEFAULT_LEGAL_TITLE = '合同审查与风险分析'
+const DEFAULT_LEGAL_ARTIFACTS = ['合同审查报告', '风险清单', '条款修改建议']
 
 export const legalUiExtension: PluginUiExtension = {
   pluginId: 'kinlin.legal',
@@ -31,6 +32,7 @@ export const legalUiExtension: PluginUiExtension = {
   createDefaults: () => ({
     title: DEFAULT_LEGAL_TITLE,
     taskGoal: defaults().reviewGoal,
+    expectedArtifacts: [...DEFAULT_LEGAL_ARTIFACTS],
     reviewMode: 'human_in_loop',
     pluginData: { 'kinlin.legal': defaults() as unknown as Record<string, unknown> }
   }),
@@ -55,6 +57,7 @@ export const legalUiExtension: PluginUiExtension = {
       reviewMode: legal.conservativeReview ? 'human_in_loop' : draft.reviewMode,
       input: {
         userIntent: legal.reviewGoal,
+        ...(legal.useTemplateWorkflow ? { planningMode: 'template_preferred' } : {}),
         contractText,
         contractType: legal.contractType,
         legalReviewGoal: legal.reviewGoal,

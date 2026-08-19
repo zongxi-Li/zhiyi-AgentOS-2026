@@ -6,9 +6,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional, List
 from datetime import datetime
-from agent.app.services.federatedmodeloptimizer import federated_model_optimizer
-from agent.app.services.modelselector import model_selector, ModelType
-from agent.app.services.federatedlearning import federated_learning_service
+from app.services.federatedmodeloptimizer import federated_model_optimizer
+from app.services.modelselector import model_selector, ModelType
+from app.services.federatedlearning import federated_learning_service
 
 router = APIRouter()
 

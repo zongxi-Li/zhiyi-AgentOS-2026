@@ -2,11 +2,15 @@ import { reactive } from 'vue'
 import { flushPromises, shallowMount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ElMessageBox } from 'element-plus'
 import { agentosApi, type AcgView, type WorkflowRun } from '@/services/api/agentos'
 import { workflowApi, type WorkflowProgress } from '@/services/api/workflow'
-import { recommendationApi } from '@/services/api/recommendation'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import RoleTemplateSwitchDialog from '@/components/RoleTemplateSwitchDialog.vue'
+import LawyerSkillPanel from '@/components/agent/LawyerSkillPanel.vue'
+import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
+import MessageBubble from '@/components/MessageBubble.vue'
+import ContractReviewReportMessage from '@/components/agentos/ContractReviewReportMessage.vue'
 import ChatView from './ChatView.vue'
 
 let chatStoreMock: ReturnType<typeof createChatStoreMock>
@@ -15,9 +19,6 @@ let roleStoreMock: ReturnType<typeof createRoleStoreMock>
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/stores/chat', () => ({ useChatStore: () => chatStoreMock }))
 vi.mock('@/stores/role', () => ({ useRoleStore: () => roleStoreMock }))
-vi.mock('@/services/api/recommendation', () => ({
-  recommendationApi: { getContextualRecommendations: vi.fn().mockResolvedValue([]) }
-}))
 vi.mock('@/services/api/workflow', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/api/workflow')>()
   return {
@@ -34,9 +35,11 @@ const binding = (conversationId: string, runId: string, status = 'pending') => (
   conversationId,
   messageId: `message_${runId}`,
   taskId: `task_${runId}`,
+  acgTaskId: runId,
   runId,
   workflowId: 'legal_case_analysis_v1',
   clientRequestId: `request_${runId}`,
+  source: 'agent' as const,
   createdAt: '2026-07-22T00:00:00Z',
   status
 })
@@ -52,6 +55,7 @@ function createChatStoreMock() {
     currentRoleId: null as string | null,
     workflowBindings: bindings,
     upgradeToWorkflow: vi.fn(),
+    startAgentRun: vi.fn(),
     getActiveWorkflowBinding: vi.fn((conversationId: string) =>
       [...(bindings[conversationId] || [])].reverse().find(item => !['completed', 'failed', 'cancelled'].includes(item.status))
     ),
@@ -59,7 +63,10 @@ function createChatStoreMock() {
     updateWorkflowBindingStatus: vi.fn(),
     markWorkflowBindingInvalid: vi.fn(),
     loadHistory: vi.fn(async (contextId: string) => { chatStoreMock.contextId = contextId }),
-    clearMessages: vi.fn(() => { chatStoreMock.messages = [] }),
+    clearMessages: vi.fn(() => {
+      chatStoreMock.messages = []
+      chatStoreMock.contextId = null
+    }),
     setRole: vi.fn(),
     sendLawyerMessage: vi.fn(),
     sendTeacherMessage: vi.fn(),
@@ -77,7 +84,8 @@ function createRoleStoreMock() {
     ],
     currentRole: { id: 'role_1', name: '律师' },
     loadRoles: vi.fn().mockResolvedValue(undefined),
-    setCurrentRole: vi.fn().mockResolvedValue(undefined)
+    setCurrentRole: vi.fn().mockResolvedValue(undefined),
+    clearCurrentRole: vi.fn(() => { roleStoreMock.currentRole = null })
   })
 }
 
@@ -151,9 +159,7 @@ const mountPage = async (query = '?workspace=agent&contextId=conversation_1'): P
 const setInputAndUpgrade = async (wrapper: VueWrapper, text = '请升级为 ACG') => {
   const input = wrapper.get('.composer-card textarea')
   await input.setValue(text)
-  const button = wrapper.findAll('button').find(item => item.text().includes('Workflow'))
-  if (!button) throw new Error('Workflow button not found')
-  await button.trigger('click')
+  await wrapper.get('.composer-send').trigger('click')
   await flushPromises()
 }
 
@@ -173,13 +179,13 @@ describe('ChatView ACG progress integration', () => {
       value: vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
     })
     HTMLElement.prototype.scrollTo = vi.fn()
-    vi.mocked(recommendationApi.getContextualRecommendations).mockResolvedValue([])
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress())
     vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run())
     vi.spyOn(agentosApi, 'getAcgView').mockResolvedValue(acg())
-    chatStoreMock.upgradeToWorkflow.mockResolvedValue({
+    chatStoreMock.startAgentRun.mockResolvedValue({
       response: {
         accepted: true,
+        acgTaskId: 'run_1',
         task: { taskId: 'task_run_1', status: 'pending' },
         run: { runId: 'run_1', workflowId: 'legal_case_analysis_v1', status: 'pending' }
       },
@@ -191,6 +197,8 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage('?workspace=agent')
 
     expect(wrapper.get('.chat-panel').classes()).toContain('hero-mode')
+    expect(wrapper.text()).not.toContain('下一步推荐')
+    expect(wrapper.find('.recommendation-panel-wrap').exists()).toBe(false)
     expect(wrapper.find('.context-panel').exists()).toBe(false)
     expect(wrapper.find('.workflow-acg-panel').exists()).toBe(false)
     expect(wrapper.get('.agent-panel').classes()).toContain('collapsed')
@@ -218,16 +226,69 @@ describe('ChatView ACG progress integration', () => {
     expect(wrapper.find('.workflow-acg-panel').exists()).toBe(true)
   })
 
+  it('shows distinct general interfaces for Agent and Chat without auto-selecting a role', async () => {
+    roleStoreMock.currentRole = null
+    const { wrapper, router } = await mountPage('?workspace=agent')
+
+    expect(wrapper.text()).toContain('通用 Agent 对话')
+    expect(wrapper.get('.composer-agent-mode').text()).toContain('通用 Agent')
+    expect(roleStoreMock.setCurrentRole).not.toHaveBeenCalled()
+    expect(chatStoreMock.setRole).toHaveBeenCalledWith(null)
+
+    await router.push('/chat?workspace=chat')
+    window.dispatchEvent(new CustomEvent('workspace-mode-change', { detail: 'chat' }))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('通用 Chat 对话')
+    expect(wrapper.get('.composer-agent-mode').text()).toContain('通用 Chat')
+    wrapper.unmount()
+  })
+
+  it('uses the current workspace name in vertical-role conversation titles', async () => {
+    roleStoreMock.currentRole = { id: 'role_2', name: '教师' }
+    const { wrapper, router } = await mountPage('?workspace=chat')
+
+    expect(wrapper.text()).toContain('教师 Chat 对话')
+    expect(wrapper.text()).not.toContain('教师 Agent 对话')
+
+    await router.push('/chat?workspace=agent')
+    window.dispatchEvent(new CustomEvent('workspace-mode-change', { detail: 'agent' }))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('教师 Agent 对话')
+    wrapper.unmount()
+  })
+
+  it('routes a general Agent task through dynamic ACG parameters', async () => {
+    roleStoreMock.currentRole = null
+    const { wrapper } = await mountPage('?workspace=agent')
+    await wrapper.get('.composer-card textarea').setValue('制定一个跨部门产品发布计划')
+    await wrapper.get('.composer-send').trigger('click')
+    await flushPromises()
+
+    expect(chatStoreMock.startAgentRun).toHaveBeenCalledWith(
+      '制定一个跨部门产品发布计划',
+      expect.objectContaining({
+        domain: 'general',
+        intent: 'general',
+        workflowId: undefined,
+        reviewMode: 'auto'
+      })
+    )
+    wrapper.unmount()
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
   it('starts asynchronously, creates a binding, writes query, and starts Progress immediately', async () => {
+    roleStoreMock.currentRole = null
     const { wrapper, router } = await mountPage()
     await setInputAndUpgrade(wrapper)
 
-    expect(chatStoreMock.upgradeToWorkflow).toHaveBeenCalledWith('请升级为 ACG', expect.objectContaining({
+    expect(chatStoreMock.startAgentRun).toHaveBeenCalledWith('请升级为 ACG', expect.objectContaining({
       conversationId: 'conversation_1',
       clientRequestId: expect.any(String)
     }))
@@ -235,24 +296,25 @@ describe('ChatView ACG progress integration', () => {
     expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run_1', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(router.currentRoute.value.query.runId).toBe('run_1')
     expect(agentosApi.getAcgView).not.toHaveBeenCalled()
-    expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
+    expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
     wrapper.unmount()
   })
 
   it('keeps Chat streaming independent from Workflow planning', async () => {
+    roleStoreMock.currentRole = null
     chatStoreMock.loading = true
     chatStoreMock.isStreaming = true
     const { wrapper } = await mountPage()
     await setInputAndUpgrade(wrapper, '流式聊天期间启动')
 
-    expect(chatStoreMock.upgradeToWorkflow).toHaveBeenCalledOnce()
+    expect(chatStoreMock.startAgentRun).toHaveBeenCalledOnce()
     expect(chatStoreMock.isStreaming).toBe(true)
-    expect(wrapper.findComponent(WorkflowProgressBar).props('progress')).toEqual(expect.objectContaining({ phase: 'planning' }))
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run_1', expect.any(Object))
     wrapper.unmount()
   })
 
   it('opens the role template dialog from the composer and applies a selected role', async () => {
-    const { wrapper } = await mountPage()
+    const { wrapper } = await mountPage('?workspace=agent')
     const trigger = wrapper.get('.composer-agent-mode')
 
     expect(trigger.attributes('aria-haspopup')).toBe('dialog')
@@ -271,8 +333,59 @@ describe('ChatView ACG progress integration', () => {
     wrapper.unmount()
   })
 
+  it('creates a fresh Agent context when switching roles and preserves the old run in history', async () => {
+    chatStoreMock.messages = [{ id: 'message_1', role: 'user', content: '旧任务' }]
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'run_1', 'completed')]
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=conversation_1&runId=run_1')
+
+    await wrapper.get('.composer-agent-mode').trigger('click')
+    const dialog = wrapper.findComponent(RoleTemplateSwitchDialog)
+    dialog.vm.$emit('confirm', { roleId: 'teacher', templateKey: 'teacher-lesson' })
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('当前 Agent 任务会保留在记录中'),
+      '切换角色与模板',
+      expect.objectContaining({ confirmButtonText: '新建并切换' })
+    )
+    expect(chatStoreMock.clearMessages).toHaveBeenCalledOnce()
+    expect(roleStoreMock.setCurrentRole).toHaveBeenCalledWith(expect.objectContaining({ id: 'role_2' }))
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'agent' })
+    expect(chatStoreMock.markWorkflowBindingInvalid).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('starts a clean Agent draft without restoring the previous history Run', async () => {
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'run_history', 'completed')]
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_history',
+      taskId: 'task_run_history',
+      status: 'completed',
+      phase: 'completed'
+    }))
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue(run('run_history'))
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('run_history'))
+
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=conversation_1&runId=run_history')
+    await flushPromises()
+    const previousDraftId = localStorage.getItem('chat.workflow_draft_conversation_id')
+
+    expect(wrapper.find('.workflow-history-detail').exists()).toBe(true)
+    window.dispatchEvent(new Event('agent-new-task'))
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'agent' })
+    expect(wrapper.find('.workflow-history-detail').exists()).toBe(false)
+    expect(wrapper.get('.chat-panel').classes()).toContain('hero-mode')
+    expect(localStorage.getItem('chat.workflow_draft_conversation_id')).not.toBe(previousDraftId)
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('shows idempotency conflict without falling back to synchronous start', async () => {
-    chatStoreMock.upgradeToWorkflow.mockRejectedValue({ isAxiosError: true, response: { status: 409 } })
+    roleStoreMock.currentRole = null
+    chatStoreMock.startAgentRun.mockRejectedValue({ isAxiosError: true, response: { status: 409 } })
     const { wrapper } = await mountPage()
     await setInputAndUpgrade(wrapper)
 
@@ -283,11 +396,13 @@ describe('ChatView ACG progress integration', () => {
   })
 
   it('reuses clientRequestId when a temporarily unavailable submission is retried', async () => {
-    chatStoreMock.upgradeToWorkflow
+    roleStoreMock.currentRole = null
+    chatStoreMock.startAgentRun
       .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503 } })
       .mockResolvedValueOnce({
         response: {
           accepted: true,
+          acgTaskId: 'run_1',
           task: { taskId: 'task_run_1', status: 'pending' },
           run: { runId: 'run_1', workflowId: 'legal_case_analysis_v1', status: 'pending' }
         },
@@ -296,10 +411,10 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage()
     await setInputAndUpgrade(wrapper, '可恢复提交')
     expect(wrapper.text()).toContain('ACG 任务暂时不可用')
-    const firstRequestId = chatStoreMock.upgradeToWorkflow.mock.calls[0][1].clientRequestId
+    const firstRequestId = chatStoreMock.startAgentRun.mock.calls[0][1].clientRequestId
 
     await setInputAndUpgrade(wrapper, '可恢复提交')
-    const secondRequestId = chatStoreMock.upgradeToWorkflow.mock.calls[1][1].clientRequestId
+    const secondRequestId = chatStoreMock.startAgentRun.mock.calls[1][1].clientRequestId
     expect(secondRequestId).toBe(firstRequestId)
     wrapper.unmount()
   })
@@ -321,7 +436,264 @@ describe('ChatView ACG progress integration', () => {
 
     expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run_2', expect.any(Object))
     expect(wrapper.findComponent(WorkflowProgressBar).props('progress')).toEqual(expect.objectContaining({ runId: 'run_2' }))
-    expect(chatStoreMock.upgradeToWorkflow).not.toHaveBeenCalled()
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('treats an explicit history runId as authoritative over a stale conversation binding', async () => {
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'run_old')]
+    vi.mocked(workflowApi.getWorkflowProgress).mockImplementation(runId => Promise.resolve(progress({
+      runId,
+      taskId: `task_${runId}`
+    })))
+    vi.mocked(agentosApi.getWorkflowRun).mockImplementation(runId => Promise.resolve(run(runId)))
+    vi.mocked(agentosApi.getAcgView).mockImplementation(runId => Promise.resolve(acg(runId)))
+
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=conversation_1&runId=run_selected')
+    await flushPromises()
+
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run_selected', expect.any(Object))
+    expect(agentosApi.getAcgView).toHaveBeenCalledWith('run_selected', expect.any(Object))
+    expect(router.currentRoute.value.query.runId).toBe('run_selected')
+    wrapper.unmount()
+  })
+
+  it('renders the saved task input and final deliverable when an Agent history run has no chat messages', async () => {
+    roleStoreMock.currentRole = null
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({
+      ...run('run_history'),
+      domain: 'general',
+      workflowId: 'native_acg_runtime_v1',
+      input: { userIntent: '审查软件开发合同并生成可追溯报告' },
+      steps: [{
+        stepId: 'report_generate',
+        name: '生成报告',
+        agentName: 'Report Agent',
+        status: 'completed',
+        output: {
+          artifact: {
+            artifactId: 'artifact_history',
+            type: 'report',
+            title: '合同审查报告',
+            mediaType: 'text/markdown',
+            content: '# 合同审查报告',
+            structuredData: { executiveSummary: '发现高风险条款。' }
+          }
+        }
+      }]
+    })
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue({
+      ...acg('run_history'),
+      finalArtifacts: [{
+        artifactId: 'legacy_projection',
+        type: 'report',
+        title: 'Workflow final report',
+        mediaType: 'text/markdown',
+        content: '# Legacy report',
+        structuredData: {},
+        legacy: true
+      }],
+      finalReport: null
+    })
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_history',
+      taskId: 'task_run_history',
+      status: 'completed',
+      phase: 'completed',
+      totalSteps: 1,
+      completedSteps: 1
+    }))
+
+    const { wrapper } = await mountPage('?workspace=agent&runId=run_history')
+    await flushPromises()
+
+    expect(wrapper.get('.workflow-history-detail').text()).toContain('任务原文不属于运行状态')
+    const artifactPanel = wrapper.findComponent(GenericArtifactPanel)
+    expect(artifactPanel.props('stepOutputs')).toHaveLength(0)
+    expect(artifactPanel.props('finalArtifacts')).toEqual([
+      expect.objectContaining({ artifactId: 'legacy_projection', content: '# Legacy report' })
+    ])
+    expect(chatStoreMock.messages).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('hydrates contract-review ACG artifacts for the lawyer result panel on history restore', async () => {
+    roleStoreMock.currentRole = null
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({
+      ...run('run_contract'),
+      status: 'waiting_review',
+      steps: [
+        { stepId: 'contract_parse', name: '合同解析', agentName: '合同解析 Agent', status: 'completed' },
+        { stepId: 'risk_detect', name: '风险识别', agentName: '风险识别 Agent', status: 'waiting_review' }
+      ],
+      output: {
+        artifacts: {
+          risk_detect: { risks: [{ id: 'risk_1', title: '付款与验收倒挂', level: 'high' }] },
+          legal_evidence_match: { evidences: [{ id: 'evidence_1', sourceName: '民法典' }] },
+          report_generate: { report_markdown: '# 合同审查报告' }
+        }
+      }
+    })
+    const projected = [
+      { stepId: 'risk_detect', name: '风险识别', status: 'completed', output: { risks: [{ id: 'risk_1', title: '付款与验收倒挂', level: 'high' }] } },
+      { stepId: 'legal_evidence_match', name: '证据匹配', status: 'completed', output: { evidences: [{ id: 'evidence_1', sourceName: '民法典' }] } },
+      { stepId: 'report_generate', name: '报告生成', status: 'completed', output: { report_markdown: '# 合同审查报告' } }
+    ]
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue({
+      ...acg('run_contract'), deliverables: projected, stepOutputs: projected, finalReport: '# 合同审查报告'
+    })
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_contract',
+      taskId: 'task_run_contract',
+      status: 'waiting_review',
+      phase: 'review'
+    }))
+
+    const { wrapper } = await mountPage('?workspace=agent&runId=run_contract')
+    await flushPromises()
+
+    expect(agentosApi.getWorkflowRun).toHaveBeenCalledWith('run_contract', expect.any(Object))
+    expect(agentosApi.getAcgView).toHaveBeenCalledWith('run_contract', expect.any(Object))
+    const lawyerPanel = wrapper.findComponent(LawyerSkillPanel)
+    expect(lawyerPanel.props('resultCount')).toBe(3)
+    expect(lawyerPanel.props('skillsUsed')).toEqual(['contract_parse', 'risk_detect'])
+    expect(lawyerPanel.props('trace')).toHaveLength(2)
+    expect(lawyerPanel.props('riskLevel')).toBe('high')
+    const historyMessages = wrapper.findAllComponents(MessageBubble)
+    expect(historyMessages).toHaveLength(1)
+    expect(historyMessages[0].props('message')).toEqual(expect.objectContaining({ role: 'user' }))
+    const report = wrapper.findComponent(ContractReviewReportMessage)
+    expect(report.props('report')).toBe('# 合同审查报告')
+    expect(report.props('risks')).toHaveLength(1)
+    await wrapper.get('.lawyer-workflow-progress__toggle').trigger('click')
+    expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
+    expect(wrapper.get('.lawyer-workflow-progress__collapsed-row').text()).toContain('ACG 执行状态')
+    expect(localStorage.getItem('chat.lawyer_workflow_progress_collapsed')).toBe('1')
+    await wrapper.get('.lawyer-workflow-progress__collapsed-row').trigger('click')
+    expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
+    expect(wrapper.findComponent(GenericArtifactPanel).exists()).toBe(false)
+    expect(wrapper.text()).toContain('律师模式')
+    wrapper.unmount()
+  })
+
+  it('refreshes lawyer activity from completed Run steps instead of an older chat snapshot', async () => {
+    chatStoreMock.messages = [{
+      id: 'message_old',
+      role: 'assistant',
+      agentMode: 'lawyer',
+      skillsUsed: ['contract_parse'],
+      trace: [{ step: 1, action: 'contract_parse' }]
+    }]
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'run_completed', 'completed')]
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({
+      ...run('run_completed'),
+      steps: [
+        { stepId: 'contract_parse', name: '合同解析', agentName: '合同解析 Agent', status: 'completed' },
+        { stepId: 'report_generate', name: '审查报告生成', agentName: '报告生成 Agent', status: 'completed' }
+      ]
+    })
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('run_completed'))
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_completed',
+      taskId: 'task_run_completed',
+      status: 'completed',
+      phase: 'completed',
+      totalSteps: 2,
+      completedSteps: 2
+    }))
+
+    const { wrapper } = await mountPage('?workspace=agent&contextId=conversation_1&runId=run_completed')
+    await flushPromises()
+
+    const lawyerPanel = wrapper.findComponent(LawyerSkillPanel)
+    expect(lawyerPanel.props('skillsUsed')).toEqual(['contract_parse', 'report_generate'])
+    expect(lawyerPanel.props('trace')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('automatically replaces a finished lawyer conversation with its final report', async () => {
+    chatStoreMock.messages = [
+      { id: 'message_user', role: 'user', content: '请审查采购合同' },
+      {
+        id: 'message_summary',
+        role: 'assistant',
+        content: '合同正在审查中',
+        agentMode: 'lawyer',
+        workflowRunId: 'run_live'
+      }
+    ]
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'run_live', 'completed')]
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({
+      ...run('run_live'),
+      domain: 'legal',
+      input: { userIntent: '请审查采购合同' },
+      output: { report_markdown: '# 最终合同审查报告' }
+    })
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue({ ...acg('run_live'), finalReport: '# 最终合同审查报告' })
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_live',
+      taskId: 'task_run_live',
+      status: 'completed',
+      phase: 'completed',
+      percent: 100
+    }))
+
+    const { wrapper } = await mountPage('?workspace=agent&contextId=conversation_1&runId=run_live')
+    await flushPromises()
+
+    expect(wrapper.find('.message-list').exists()).toBe(false)
+    expect(wrapper.find('.workflow-history-detail').exists()).toBe(true)
+    expect(wrapper.findComponent(ContractReviewReportMessage).props('report')).toBe('# 最终合同审查报告')
+    expect(chatStoreMock.messages).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('does not read a saved lawyer report body from Run state when output projection fails', async () => {
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({
+      ...run('run_partial'),
+      input: { userIntent: '审查采购合同' },
+      output: { report_markdown: '# 已恢复的合同审查报告' }
+    })
+    vi.mocked(agentosApi.getAcgView).mockRejectedValue(new Error('projection unavailable'))
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_partial',
+      taskId: 'task_run_partial',
+      status: 'completed',
+      phase: 'completed'
+    }))
+
+    const { wrapper } = await mountPage('?workspace=agent&runId=run_partial')
+    await flushPromises()
+
+    expect(wrapper.findComponent(ContractReviewReportMessage).props('report')).not.toContain('已恢复的合同审查报告')
+    expect(wrapper.get('.workflow-history-partial').text()).toContain('动态拓扑暂时未能加载')
+    expect(wrapper.text()).not.toContain('正在恢复任务详情')
+    wrapper.unmount()
+  })
+
+  it('ends the loading state and retries after both history detail requests fail', async () => {
+    vi.mocked(agentosApi.getWorkflowRun).mockRejectedValue(new Error('detail unavailable'))
+    vi.mocked(agentosApi.getAcgView).mockRejectedValue(new Error('projection unavailable'))
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      runId: 'run_retry',
+      taskId: 'task_run_retry',
+      status: 'completed',
+      phase: 'completed'
+    }))
+
+    const { wrapper } = await mountPage('?workspace=agent&runId=run_retry')
+    await flushPromises()
+
+    expect(wrapper.get('.workflow-history-loading').text()).toContain('任务详情暂时未能加载')
+    expect(wrapper.text()).not.toContain('正在恢复任务详情')
+
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue(run('run_retry'))
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('run_retry'))
+    await wrapper.get('.workflow-history-loading button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.workflow-history-loading').exists()).toBe(false)
+    expect(wrapper.findComponent(ContractReviewReportMessage).exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -333,7 +705,7 @@ describe('ChatView ACG progress integration', () => {
 
     expect(wrapper.findComponent(WorkflowProgressBar).props('syncError')).toContain('不存在或当前账户无权访问')
     expect(chatStoreMock.markWorkflowBindingInvalid).toHaveBeenCalledWith('conversation_1', 'run_missing')
-    expect(chatStoreMock.upgradeToWorkflow).not.toHaveBeenCalled()
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

@@ -36,7 +36,6 @@
       <div class="workflow-progress__metrics">
         <span>{{ stepSummary }}</span>
         <span>当前活动 {{ progress?.activeStepIds.length ?? 0 }}</span>
-        <span>恢复 {{ progress?.recoveryCount ?? 0 }} 次</span>
       </div>
       <strong v-if="!isIndeterminate" class="workflow-progress__percent">
         {{ formattedPercent }}

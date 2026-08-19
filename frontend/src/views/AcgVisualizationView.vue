@@ -39,7 +39,7 @@
         <span class="input-summary__copy">
           <el-icon><Document /></el-icon>
           <strong>{{ taskName || '未命名 ACG 任务' }}</strong>
-          <small>任务材料 · {{ contractText.length.toLocaleString('zh-CN') }} 字｜{{ planningModeSummary }}｜{{ activePluginSummary }}</small>
+          <small>任务材料 · {{ taskMaterialLength.toLocaleString('zh-CN') }} 字｜{{ planningModeSummary }}｜{{ draft.webSearchEnabled ? '联网' : '仅本地' }}｜{{ activePluginSummary }}</small>
         </span>
       </div>
       <Transition
@@ -93,7 +93,7 @@
         </div>
       </div>
       <section class="plugin-selector" aria-label="专业能力扩展">
-        <header><div><strong>专业能力扩展（单选）</strong><small>Native Core 始终启用；每个 Run 最多叠加一个专业能力包</small></div><span v-if="pluginsLoading">正在读取...</span></header>
+        <header><div><strong>专业能力扩展（单选）</strong><small>Native Core 始终启用；每个 Run 最多叠加一个专业能力包</small></div></header>
         <div class="plugin-options">
           <button type="button" class="plugin-card native-card" :class="{ selected: !draft.enabledPluginIds.length }" :aria-pressed="!draft.enabledPluginIds.length" :disabled="scopeLocked" @click="clearPlugins">
             <strong>Native Core · 始终启用</strong><small>{{ draft.enabledPluginIds.length ? '作为专业能力包的运行基础' : '当前仅使用通用规划、分析与交付能力' }}</small><code>不叠加专业能力包</code>
@@ -135,26 +135,38 @@
         <div v-show="inputPanelExpanded" class="primary-config"><span class="ctrl-label">规划方式</span><el-radio-group v-model="planningMode" size="small"><el-radio-button label="dynamic">动态规划</el-radio-button><el-radio-button label="template_preferred">模板优先</el-radio-button></el-radio-group></div>
         <div v-show="inputPanelExpanded" class="primary-config"><span class="ctrl-label">思考强度</span><el-radio-group v-model="thinkingMode" size="small"><el-radio-button label="disabled">关闭</el-radio-button><el-radio-button label="standard">标准</el-radio-button><el-radio-button label="deep">深度</el-radio-button></el-radio-group></div>
         <div v-show="inputPanelExpanded" class="primary-config"><span class="ctrl-label">审核方式</span><el-radio-group v-model="draft.reviewMode" size="small"><el-radio-button label="auto">自动</el-radio-button><el-radio-button label="human_in_loop">人工介入</el-radio-button></el-radio-group></div>
+        <div
+          v-show="inputPanelExpanded"
+          class="primary-config network-config"
+          :class="{ enabled: draft.webSearchEnabled }"
+          title="用于检索公开网页；失败或超时会自动回退本地资料"
+        >
+          <span class="ctrl-label">联网检索</span>
+          <el-switch
+            v-model="draft.webSearchEnabled"
+            size="small"
+            inline-prompt
+            active-text="开"
+            inactive-text="关"
+            :disabled="isSubmitting"
+            aria-label="联网检索"
+          />
+        </div>
         <button v-show="inputPanelExpanded" class="advanced-toggle" type="button" :aria-expanded="advancedSettingsExpanded" @click="advancedSettingsExpanded = !advancedSettingsExpanded"><span>高级设置</span><el-icon><ArrowUp v-if="advancedSettingsExpanded" /><ArrowDown v-else /></el-icon></button>
         <el-button :type="mainAction.type" :loading="mainAction.loading" :disabled="mainAction.disabled" @click="handleMainAction">{{ mainAction.label }}</el-button>
       </div>
     </section>
 
-    <section v-if="activeRunId" class="run-scope ui-surface ui-surface--pad">
-      <header><strong>本次 Run 的能力范围（已冻结）</strong><el-tag effect="plain" type="info">只读</el-tag></header>
-      <p v-if="activeRun?.legacyPluginScope" class="scope-warning">该运行创建于插件快照功能之前，未伪造插件版本。</p>
-      <p v-else-if="missingSnapshotPlugins.length" class="scope-warning">原插件当前不可用：{{ missingSnapshotPlugins.join('、') }}。历史图和输出仍可查看，不能扩大 Scope 后继续执行。</p>
+    <section
+      v-if="activeRunId || isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
+      class="run-overview ui-surface"
+      aria-label="ACG 运行概览"
+    >
+    <section v-if="activeRunId" class="run-scope">
+      <header><strong>运行状态来自 WorkflowRuntime</strong><el-tag effect="plain" type="info">引用式只读</el-tag></header>
       <div class="snapshot-list">
-        <span v-if="!activeRun?.pluginSnapshot?.length">Native only</span>
-        <span v-for="snapshot in activeRun?.pluginSnapshot || []" :key="snapshot.pluginId"><b>{{ snapshot.pluginId }}</b> v{{ snapshot.version }}</span>
-        <code v-if="activeRun?.capabilityCatalogRevision">Catalog {{ activeRun.capabilityCatalogRevision.slice(0, 12) }}</code>
-        <code v-if="activeRun?.planningDiversity && activeRun.planningDiversity !== 'stable'">
-          {{ activeRun.planningDiversity === 'balanced' ? '均衡规划' : '探索规划' }} · Seed {{ activeRun.planningSeed }} · 候选 {{ activeRun.planningCandidateCount || 1 }} 选 1
-        </code>
-      </div>
-      <div v-if="planningSelectionReasons.length" class="planning-selection-reasons">
-        <strong>本次规划选择依据</strong>
-        <span v-for="reason in planningSelectionReasons.slice(0, 4)" :key="reason">{{ reason }}</span>
+        <span>{{ activePluginSummary }}</span>
+        <code v-if="activeRun?.executionState?.checkpointId">Checkpoint {{ activeRun.executionState.checkpointId }}</code>
       </div>
     </section>
 
@@ -164,12 +176,7 @@
       :loading="isSubmitting || progressTracker.isLoading.value"
       :sync-error="progressTracker.syncError.value"
     />
-    <DynamicRunSummaryCard
-      v-if="activeRunId"
-      :progress="progressTracker.progress.value"
-      :run="activeRun"
-      :view="acgView"
-    />
+    </section>
 
     <p v-if="startError" class="run-error" role="alert">{{ startError }}</p>
 
@@ -183,7 +190,11 @@
     />
 
     <!-- 主区：拓扑 + 指标/血缘 -->
-    <div class="acg-grid" v-if="acgView">
+    <div
+      v-if="acgView"
+      class="acg-grid"
+      :class="{ 'is-side-collapsed': sidePanelCollapsed }"
+    >
       <div class="grid-main">
         <AcgTopologyGraph
           :blueprint="acgView.acgBlueprint"
@@ -210,8 +221,36 @@
           </div>
         </div>
       </div>
-      <div class="grid-side">
+      <aside v-if="sidePanelCollapsed" class="side-rail" aria-label="运行详情折叠栏">
+        <button
+          class="side-rail__toggle"
+          type="button"
+          title="展开运行详情"
+          aria-label="展开运行详情"
+          :aria-expanded="false"
+          aria-controls="acg-run-details"
+          @click="setSidePanelCollapsed(false)"
+        >
+          <el-icon><ArrowLeft /></el-icon>
+        </button>
+      </aside>
+      <aside id="acg-run-details" class="grid-side" :aria-hidden="sidePanelCollapsed">
+        <button
+          class="grid-side__collapse"
+          type="button"
+          title="收起运行详情"
+          aria-label="收起运行详情"
+          :aria-expanded="true"
+          aria-controls="acg-run-details"
+          @click="setSidePanelCollapsed(true)"
+        >
+          <el-icon><ArrowRight /></el-icon>
+          <span>收起运行详情</span>
+        </button>
+        <div class="grid-side__metrics">
         <AcgLowEntropyMetrics :metrics="acgView.lowEntropyMetrics" />
+        </div>
+        <div class="grid-side__audit">
         <AcgProvenancePanel
           :consumptions="acgView.provenance.consumptions"
           :interactions="acgView.interactions"
@@ -220,13 +259,8 @@
           @export-json="exportAudit('json')"
           @export-csv="exportAudit('csv')"
         />
-        <RuntimeChangeTimeline
-          :runtime-events="acgView.runtimeEvents"
-          :applied-patches="acgView.appliedPatches"
-          :branch-decisions="acgView.branchDecisions"
-          :step-states="acgView.stepStates"
-        />
-      </div>
+        </div>
+      </aside>
     </div>
 
     <div v-else class="ui-surface task-brief">
@@ -238,15 +272,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type DeepReadonly } from 'vue'
 import axios from 'axios'
-import { ArrowDown, ArrowUp, CopyDocument, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CopyDocument, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
   workflowApi,
-  type AcgDeliverable,
-  type AcgFinalArtifact,
   type AcgView,
-  type InstalledPlugin,
   type WorkflowRun,
   type WorkflowProgress
 } from '@/services/api/workflow'
@@ -254,17 +285,14 @@ import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import AcgLowEntropyMetrics from '@/components/agentos/AcgLowEntropyMetrics.vue'
 import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import DynamicRunSummaryCard from '@/components/agentos/DynamicRunSummaryCard.vue'
-import RuntimeChangeTimeline from '@/components/agentos/RuntimeChangeTimeline.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
-import { graphVersionChanged, runtimeProjectionChanged } from '@/utils/runtimePresentation'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
-import { fileApi, type TaskMaterial } from '@/services/api/file'
+import { fileApi } from '@/services/api/file'
 import { buildAcgAuditCsv, buildAcgAuditExport } from '@/utils/acgAuditExport'
 import { isWorkflowReviewPending } from '@/utils/workflowReviewState'
-import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
+import { resolveAcgTaskTitle, resolveAcgTaskTitleAutoUpdate } from '@/utils/acgTaskTitle'
 import PluginExtensionHost from '@/features/acg/PluginExtensionHost.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
 import {
@@ -291,13 +319,30 @@ const expectedArtifactsText = computed({
 const advancedSettingsExpanded = ref(false)
 const debugTraceEnabled = ref(false)
 const lowEntropyOptions = ref(['trace_provenance'])
+const autoGeneratedTaskName = ref('')
 
 watch(userIntent, value => {
-  if (!activeRunId.value) taskName.value = resolveAcgTaskTitle({ title: value })
+  if (activeRunId.value) return
+  const update = resolveAcgTaskTitleAutoUpdate({
+    currentTitle: taskName.value,
+    previousAutoTitle: autoGeneratedTaskName.value,
+    taskGoal: value,
+    defaultTitle: createNativeWorkbenchDraft().title
+  })
+  taskName.value = update.title
+  autoGeneratedTaskName.value = update.autoTitle
 })
 
 const acgView = ref<AcgView | null>(null)
 const activeRun = ref<WorkflowRun | null>(null)
+const taskMaterialLength = computed(() => {
+  const legalDraft = draft.pluginData['kinlin.legal']
+  const candidates = [
+    contractText.value,
+    typeof legalDraft?.contractText === 'string' ? legalDraft.contractText : ''
+  ]
+  return (candidates.find(value => value.trim()) || '').length
+})
 const loading = reactive({ upload: false })
 const isSubmitting = ref(false)
 const isAcgLoading = ref(false)
@@ -306,15 +351,16 @@ const route = useRoute()
 const router = useRouter()
 const workflowRunsStore = useWorkflowRunsStore()
 const activeRunId = ref('')
-const installedPlugins = ref<InstalledPlugin[]>([])
-const pluginsLoading = ref(false)
+const installedPlugins = computed(() => pluginUiExtensions.all().map(extension => ({
+  pluginId: extension.pluginId,
+  displayName: extension.displayName,
+  description: '随前端扩展与应用 Pack 一同部署',
+  version: 'workspace',
+  available: true
+})))
 const scopeLocked = computed(() => Boolean(activeRunId.value))
 const draftExtensions = computed(() => pluginUiExtensions.resolve(draft.enabledPluginIds))
-const activePluginIds = computed(() => (
-  activeRun.value?.resolvedEnabledPluginIds
-  || activeRun.value?.enabledPluginIds
-  || draft.enabledPluginIds
-))
+const activePluginIds = computed(() => draft.enabledPluginIds)
 const activeExtensions = computed(() => pluginUiExtensions.resolve(activePluginIds.value))
 const artifactRenderers = computed(() => activeExtensions.value
   .filter(item => item.artifactRenderer)
@@ -322,24 +368,41 @@ const artifactRenderers = computed(() => activeExtensions.value
 const activePluginSummary = computed(() => activePluginIds.value.length
   ? activePluginIds.value.join('、')
   : 'Native only')
-const missingSnapshotPlugins = computed(() => {
-  const available = new Set(installedPlugins.value.filter(item => item.available).map(item => item.pluginId))
-  return (activeRun.value?.pluginSnapshot || [])
-    .map(item => item.pluginId)
-    .filter(pluginId => !available.has(pluginId))
-})
 const inputPanelExpanded = ref(true)
 const inputPanelCompact = ref(false)
+const sidePanelCollapsed = ref(false)
+const sidePanelManuallySet = ref(false)
 const loadedRunId = ref('')
+
+const isCompletedRun = computed(() => (
+  acgView.value?.status === 'completed'
+  || activeRun.value?.status === 'completed'
+))
+
+const setSidePanelCollapsed = (collapsed: boolean) => {
+  sidePanelManuallySet.value = true
+  sidePanelCollapsed.value = collapsed
+}
+
+watch(activeRunId, () => {
+  sidePanelManuallySet.value = false
+  sidePanelCollapsed.value = false
+})
+
+watch(isCompletedRun, completed => {
+  if (sidePanelManuallySet.value) return
+  sidePanelCollapsed.value = completed
+}, { immediate: true })
 const contractFileInput = ref<HTMLInputElement | null>(null)
 const uploadDragging = ref(false)
-type SelectedMaterial = Omit<TaskMaterial, 'extractedText'> & { extractedText?: string }
+type SelectedMaterial = { originalFilename: string; size: number; textLength: number; extractedText: string }
 const selectedContractFile = ref<SelectedMaterial | null>(null)
 const uploadState = ref<'idle' | 'uploading' | 'parsing' | 'ready' | 'error'>('idle')
 const uploadError = ref('')
 
 const resetDraftContent = () => {
   Object.assign(draft, createNativeWorkbenchDraft())
+  autoGeneratedTaskName.value = ''
   selectedContractFile.value = null
   uploadState.value = 'idle'
   uploadError.value = ''
@@ -351,6 +414,9 @@ const applyExtensionDefaults = (pluginId: string) => {
   const nativeDefaults = createNativeWorkbenchDraft()
   if (defaults.title && draft.title === nativeDefaults.title) draft.title = defaults.title
   if (defaults.taskGoal && draft.taskGoal === nativeDefaults.taskGoal) draft.taskGoal = defaults.taskGoal
+  if (defaults.expectedArtifacts && draft.expectedArtifacts.join('\u0000') === nativeDefaults.expectedArtifacts.join('\u0000')) {
+    draft.expectedArtifacts = [...defaults.expectedArtifacts]
+  }
   if (defaults.reviewMode) draft.reviewMode = defaults.reviewMode
   if (defaults.pluginData) draft.pluginData = { ...draft.pluginData, ...defaults.pluginData }
 }
@@ -360,6 +426,9 @@ const removeExtensionDefaults = (pluginId: string) => {
   const nativeDefaults = createNativeWorkbenchDraft()
   if (defaults?.title && draft.title === defaults.title) draft.title = nativeDefaults.title
   if (defaults?.taskGoal && draft.taskGoal === defaults.taskGoal) draft.taskGoal = nativeDefaults.taskGoal
+  if (defaults?.expectedArtifacts && draft.expectedArtifacts.join('\u0000') === defaults.expectedArtifacts.join('\u0000')) {
+    draft.expectedArtifacts = [...nativeDefaults.expectedArtifacts]
+  }
 }
 
 const togglePlugin = (pluginId: string) => {
@@ -381,18 +450,6 @@ const clearPlugins = () => {
   draft.enabledPluginIds = []
   draft.pluginData = {}
   draft.reviewMode = 'auto'
-}
-
-const loadInstalledPlugins = async () => {
-  pluginsLoading.value = true
-  try {
-    installedPlugins.value = await workflowApi.listInstalledPlugins()
-  } catch {
-    installedPlugins.value = []
-    ElMessage.warning('专业能力包列表暂时无法加载，仍可使用 Native 能力')
-  } finally {
-    pluginsLoading.value = false
-  }
 }
 
 const progressTracker = useWorkflowProgress({
@@ -439,18 +496,20 @@ const processContractFile = async (file: File) => {
     loading.upload = true
     uploadState.value = 'uploading'
     uploadError.value = ''
-    const previous = selectedContractFile.value
-    const result = await fileApi.uploadTaskMaterial(file, () => { uploadState.value = 'parsing' })
-    const extractedText = (result.extractedText || '').trim()
+    uploadState.value = 'parsing'
+    const result = await fileApi.extractDocumentText(file)
+    const extractedText = (result.text || result.content || '').trim()
     if (!extractedText) throw new Error('未能从文件中提取到文本，请确认文档包含可复制文字')
 
     contractText.value = extractedText
-    draft.materialIds = [result.materialId]
-    selectedContractFile.value = { ...result, extractedText }
-    uploadState.value = 'ready'
-    if (previous?.state === 'ready' && previous.materialId !== result.materialId) {
-      void fileApi.deleteTaskMaterial(previous.materialId).catch(() => undefined)
+    draft.materialIds = []
+    selectedContractFile.value = {
+      originalFilename: result.filename || file.name,
+      size: file.size,
+      textLength: extractedText.length,
+      extractedText
     }
+    uploadState.value = 'ready'
     ElMessage.success(`已载入任务文件：${file.name}`)
   } catch (error: any) {
     const message = materialErrorMessage(error)
@@ -477,9 +536,6 @@ const handleContractDrop = (event: DragEvent) => {
 
 const clearContractFile = () => {
   const selected = selectedContractFile.value
-  if (selected?.state === 'ready') {
-    void fileApi.deleteTaskMaterial(selected.materialId).catch(() => undefined)
-  }
   if (selected?.extractedText && contractText.value === selected.extractedText) contractText.value = ''
   draft.materialIds = []
   selectedContractFile.value = null
@@ -492,11 +548,6 @@ const materialErrorMessage = (error: any): string => {
   const data = error?.response?.data
   const detail = typeof data?.detail === 'string' ? data.detail : data?.detail?.message
   return data?.message || detail || error?.message || '任务文件上传失败'
-}
-
-const sha256Text = async (value: string): Promise<string> => {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 const statusLabel = computed(() => {
@@ -558,85 +609,6 @@ const scheduleBatches = computed(() => {
   return Array.from(batches.values()).sort((a, b) => a.round - b.round)
 })
 
-const hasStepOutput = (output?: Record<string, any>) => {
-  return !!output && Object.keys(output).length > 0
-}
-
-const deliverablesFromRun = (run: WorkflowRun): AcgDeliverable[] => {
-  return (run.steps || [])
-    .filter((step) => hasStepOutput(step.output))
-    .map((step) => ({
-      stepId: step.stepId,
-      name: step.name,
-      status: step.status,
-      output: step.output || {}
-    }))
-}
-
-const asMarkdown = (value: unknown): string | null => {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null
-}
-
-const finalReportFromRun = (run: WorkflowRun): string | null => {
-  let finalReport: string | null = null
-  for (const step of run.steps || []) {
-    const output = step.output || {}
-    const markdown = asMarkdown(output.final_answer) || asMarkdown(output.report_markdown) || asMarkdown(output.report) || asMarkdown(output.final_report)
-    if (markdown) finalReport = markdown
-  }
-
-  if (finalReport) return finalReport
-
-  const runOutput = run.output || {}
-  const direct = asMarkdown(runOutput.final_answer) || asMarkdown(runOutput.report_markdown) || asMarkdown(runOutput.report) || asMarkdown(runOutput.final_report)
-  if (direct) return direct
-
-  const artifacts = runOutput.artifacts
-  if (artifacts && typeof artifacts === 'object') {
-    for (const artifact of Object.values(artifacts as Record<string, any>)) {
-      if (!artifact || typeof artifact !== 'object') continue
-      const markdown = asMarkdown(artifact.final_answer) || asMarkdown(artifact.report_markdown) || asMarkdown(artifact.report) || asMarkdown(artifact.final_report)
-      if (markdown) finalReport = markdown
-    }
-  }
-
-  return finalReport
-}
-
-const finalArtifactsFromRun = (run: WorkflowRun): AcgFinalArtifact[] => {
-  const artifacts: AcgFinalArtifact[] = []
-  for (const step of run.steps || []) {
-    const candidate = step.output?.artifact
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
-    const content = asMarkdown(candidate.content)
-    if (!content) continue
-    artifacts.push({
-      artifactId: String(candidate.artifactId || `artifact_${run.runId}_${step.stepId}`),
-      type: String(candidate.type || 'report'),
-      title: String(candidate.title || step.name),
-      mediaType: String(candidate.mediaType || 'text/markdown'),
-      content,
-      structuredData: candidate.structuredData && typeof candidate.structuredData === 'object'
-        ? candidate.structuredData as Record<string, any>
-        : {},
-      stepId: step.stepId
-    })
-  }
-  return artifacts
-}
-
-const hydrateAcgView = (view: AcgView, run: WorkflowRun): AcgView => {
-  const fallbackOutputs = deliverablesFromRun(run)
-  const fallbackFinalArtifacts = finalArtifactsFromRun(run)
-  return {
-    ...view,
-    deliverables: view.deliverables.length ? view.deliverables : fallbackOutputs,
-    stepOutputs: view.stepOutputs?.length ? view.stepOutputs : fallbackOutputs,
-    finalArtifacts: view.finalArtifacts?.length ? view.finalArtifacts : fallbackFinalArtifacts,
-    finalReport: view.finalReport || finalReportFromRun(run)
-  }
-}
-
 const ACTIVE_TOPOLOGY_PHASES = new Set(['executing', 'recovery', 'review'])
 const TOPOLOGY_REFRESH_MS = 8000
 let topologyController: AbortController | null = null
@@ -647,6 +619,7 @@ let lastTopologyUpdatedAt: string | null = null
 let submitController: AbortController | null = null
 let inputCollapseTimer: ReturnType<typeof setTimeout> | null = null
 let inputPanelCompactTimer: ReturnType<typeof setTimeout> | null = null
+let terminalNotificationRunId: string | null = null
 
 const clearInputCollapseTimer = () => {
   if (inputCollapseTimer !== null) window.clearTimeout(inputCollapseTimer)
@@ -780,29 +753,9 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
     }
 
     const run = runResult.value
-    acgView.value = hydrateAcgView(view, run)
+    acgView.value = view
     activeRun.value = run
-    if (run.planningDiversity) draft.planningDiversity = run.planningDiversity
-    draft.planningSeed = run.planningSeed ?? null
-    draft.enabledPluginIds = [...(run.resolvedEnabledPluginIds || run.enabledPluginIds || [])]
-    draft.pluginData = (
-      run.input?.pluginData && typeof run.input.pluginData === 'object'
-        ? JSON.parse(JSON.stringify(run.input.pluginData)) as Record<string, Record<string, unknown>>
-        : {}
-    )
     taskName.value = resolveAcgTaskTitle(run)
-    if (typeof run.input?.materialText === 'string') contractText.value = run.input.materialText
-    for (const extension of draftExtensions.value) {
-      const current = draft.pluginData[extension.pluginId] || {}
-      draft.pluginData[extension.pluginId] = extension.hydratePluginData?.(run.input || {}, current) || current
-    }
-    if (typeof run.input?.userIntent === 'string') userIntent.value = run.input.userIntent
-    const material = Array.isArray(run.input?.sourceMaterials) ? run.input.sourceMaterials[0] : null
-    if (material?.materialId) {
-      selectedContractFile.value = { ...material, state: 'bound' }
-      uploadState.value = 'ready'
-      uploadError.value = ''
-    }
     loadedRunId.value = runId
     lastTopologyRefreshAt = Date.now()
     lastTopologyUpdatedAt = progressTracker.progress.value?.updatedAt ?? null
@@ -844,6 +797,8 @@ const scheduleTopologyRefresh = (value: DeepReadonly<WorkflowProgress>) => {
 }
 
 async function handleTerminal(value: WorkflowProgress): Promise<void> {
+  const shouldNotify = terminalNotificationRunId === value.runId
+  if (shouldNotify) terminalNotificationRunId = null
   clearTopologyTimer()
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await refreshAcgForRun(value.runId, true)
@@ -856,6 +811,7 @@ async function handleTerminal(value: WorkflowProgress): Promise<void> {
     if (projectionComplete) break
     await new Promise(resolve => window.setTimeout(resolve, 300))
   }
+  if (!shouldNotify) return
   if (value.phase === 'completed') ElMessage.success('ACG 引擎执行完成')
   if (value.phase === 'failed') ElMessage.error('ACG 工作流执行失败')
   if (value.phase === 'cancelled') ElMessage.info('ACG 工作流已取消')
@@ -872,12 +828,6 @@ watch(
     } else if (stateChanged && (value.status === 'waiting_review' || ['review', 'completed', 'cancelled'].includes(value.phase))) {
       scheduleInputCollapse(0)
     }
-    if (graphVersionChanged(value, previous) && !['completed', 'failed', 'cancelled'].includes(value.status)) {
-      clearTopologyTimer()
-      void refreshAcgForRun(value.runId, true)
-      return
-    }
-    if (runtimeProjectionChanged(value, previous)) scheduleTopologyRefresh(value)
     if (isWorkflowReviewPending(value, activeRun.value) && !isWorkflowReviewPending(previous, activeRun.value)) {
       clearTopologyTimer()
       void refreshAcgForRun(value.runId, true)
@@ -891,10 +841,6 @@ watch(() => progressTracker.syncError.value, error => {
   if (error === '该运行记录不存在或当前账户无权访问' && activeRunId.value) {
     void removeMissingAcgRun(activeRunId.value)
   }
-})
-const planningSelectionReasons = computed<string[]>(() => {
-  const reasons = activeRun.value?.executionState?.planningSelectionReasons
-  return Array.isArray(reasons) ? reasons.filter(item => typeof item === 'string') : []
 })
 
 watch(inputPanelExpanded, value => {
@@ -916,6 +862,7 @@ watch(
     if (typeof value !== 'string' || !value.trim()) return
     const runId = value.trim()
     if (runId === activeRunId.value && progressTracker.runId.value === runId) return
+    terminalNotificationRunId = null
     progressTracker.reset()
     clearRunData()
     startError.value = null
@@ -1033,6 +980,7 @@ const startRun = async () => {
   progressTracker.reset()
   clearRunData()
   activeRunId.value = ''
+  terminalNotificationRunId = null
   try {
     const clientRequestId = createClientRequestId()
     const request = buildWorkbenchStartRequest(draft, draftExtensions.value, clientRequestId)
@@ -1043,31 +991,22 @@ const startRun = async () => {
       lowEntropyOptions: [...lowEntropyOptions.value]
     }
     request.input = requestInput
-    if (selectedContractFile.value) {
-      const workingTextSha256 = await sha256Text(contractText.value)
-      requestInput.sourceMaterials = [{
-        materialId: selectedContractFile.value.materialId,
-        purpose: 'task_material',
-        edited: workingTextSha256 !== selectedContractFile.value.extractedTextSha256,
-        workingTextSha256
-      }]
-    }
     const res = await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
-    if (selectedContractFile.value) selectedContractFile.value.state = 'bound'
-    activeRunId.value = res.run.runId
+    activeRunId.value = res.runId
     scheduleInputCollapse()
     advancedSettingsExpanded.value = false
     workflowRunsStore.register({
-      runId: res.run.runId,
-      taskId: res.task.taskId,
-      workflowId: res.run.workflowId || request.workflowId || 'native_acg_runtime_v1',
+      runId: res.runId,
+      taskId: res.taskId,
+      workflowId: res.workflowId || request.workflowId || 'native_acg_runtime_v1',
       source: 'acg',
-      status: res.run.status,
-      phase: res.run.lifecyclePhase
+      status: res.status,
+      phase: res.lifecyclePhase || undefined
     })
     window.dispatchEvent(new Event('acg-runs-refresh'))
-    void progressTracker.start(res.run.runId, { fresh: true })
-    await router.replace({ query: { ...route.query, runId: res.run.runId } })
+    terminalNotificationRunId = res.runId
+    void progressTracker.start(res.runId, { fresh: true })
+    await router.replace({ query: { ...route.query, runId: res.runId } })
   } catch (error: unknown) {
     if (axios.isCancel(error)) return
     startError.value = startErrorMessage(error)
@@ -1110,7 +1049,6 @@ const startErrorMessage = (error: unknown): string => {
 
 onMounted(() => {
   window.addEventListener('acg-new-task', enterNewAcgDraft)
-  void loadInstalledPlugins()
 })
 
 onBeforeUnmount(() => {
@@ -1131,9 +1069,14 @@ onBeforeUnmount(() => {
 .acg-view > .control-bar { border-top: 0; border-radius: 0 0 8px 8px; }
 .acg-view.is-draft > .control-bar { flex: 1 1 auto; }
 .acg-view.has-progress:not(.has-run) > .control-bar { border-bottom: 0; border-radius: 0; box-shadow: none; }
-.acg-view.has-progress:not(.has-run) > :deep(.workflow-progress) { border-top: 0; border-radius: 0 0 8px 8px; }
-.acg-view.has-run > .run-scope { margin-top: 12px; }
-.acg-view.has-run > :deep(.workflow-progress) { margin-top: 16px; }
+.acg-view.has-progress:not(.has-run) > .run-overview { border-top: 0; border-radius: 0 0 8px 8px; }
+.run-overview { margin-top: 12px; overflow: hidden; }
+.run-overview > :deep(.workflow-progress),
+.run-overview > :deep(.dynamic-run-summary) {
+  margin: 0; border: 0; border-radius: 0; background: transparent;
+}
+.run-overview > :deep(.workflow-progress) { padding: 14px 16px; }
+.run-overview > :deep(.dynamic-run-summary) { padding: 14px 16px; }
 .hero-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ui-hero h3 { overflow: hidden; margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 800; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .hero-right { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; }
@@ -1168,6 +1111,9 @@ onBeforeUnmount(() => {
 .planning-selection-reasons { display:flex; flex-wrap:wrap; gap:6px 10px; margin-top:10px; font-size:11px; color:var(--text-secondary); }
 .planning-selection-reasons strong { width:100%; color:var(--text-primary); }
 .planning-selection-reasons span { padding:4px 7px; border-radius:6px; background:var(--bg-input); }
+.planning-diagnostics { display:flex; flex-direction:column; gap:7px; margin-top:4px; }
+.planning-diagnostic-tags { display:flex; align-items:center; flex-wrap:wrap; gap:7px; color:var(--text-secondary); font-size:11px; }
+.planning-fallback-warning { margin:0; padding:8px 10px; border-left:3px solid var(--el-color-warning); background:color-mix(in srgb, var(--el-color-warning) 8%, transparent); color:var(--text-secondary); font-size:12px; }
 .scope-warning { margin:0; padding:8px 10px; border-left:3px solid var(--el-color-warning); background:color-mix(in srgb, var(--el-color-warning) 8%, transparent); color:var(--text-secondary); font-size:12px; }
 .input-panel-expandable {
   display: flex;
@@ -1196,6 +1142,19 @@ onBeforeUnmount(() => {
 .contract-pane .ctrl-row { flex: 1 1 auto; min-height: 0; }
 .contract-pane .contract-textarea { flex: 1 1 auto; min-height: 0; }
 .definition-pane { min-width: 0; gap: 12px; }
+.definition-pane :deep(.el-input__wrapper) {
+  min-height: 42px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  box-shadow: none;
+}
+.definition-pane :deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--border-light) inset;
+}
+.definition-pane :deep(.el-input__wrapper.is-focus) {
+  background: var(--surface-solid);
+  box-shadow: 0 0 0 1px var(--primary-color) inset;
+}
 .pane-heading { color: var(--text-primary); font-size: 13px; font-weight: 750; }
 .pane-heading small { margin-left: 4px; color: var(--text-disabled); font-size: 10px; font-weight: 600; }
 .input-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
@@ -1218,6 +1177,13 @@ onBeforeUnmount(() => {
 .primary-config { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .primary-config :deep(.el-radio-button__inner) { border-color: transparent; background: transparent; box-shadow: none; }
 .primary-config :deep(.el-radio-button.is-active .el-radio-button__inner) { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); }
+.network-config {
+  min-height: 30px; padding: 0 9px; border: 1px solid var(--border-light); border-radius: 6px;
+  background: var(--surface-solid); transition: var(--transition);
+}
+.network-config.enabled { border-color: var(--primary-line); background: var(--primary-fade); }
+.network-config.enabled .ctrl-label { color: var(--primary-color); }
+.network-config:focus-within { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 .advanced-toggle {
   min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px;
   border: 1px solid var(--border-light); border-radius: 6px; background: var(--surface-solid);
@@ -1300,10 +1266,36 @@ onBeforeUnmount(() => {
 .contract-upload__actions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
 
 .acg-view > :deep(.workflow-review) { margin-top: var(--space-lg); }
-.acg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 11px; margin-top: 16px; align-items: stretch; min-width: 0; }
+.acg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 11px; margin-top: 16px; align-items: stretch; min-width: 0; transition: grid-template-columns 180ms ease; }
+.acg-grid.is-side-collapsed { grid-template-columns: minmax(0, 1fr) 44px; }
 .grid-main { display: flex; flex-direction: column; gap: var(--space-lg); min-width: 0; }
-.grid-side { display: flex; flex-direction: column; gap: var(--space-lg); min-width: 0; min-height: 0; }
+.grid-side {
+  position: relative; align-self: stretch; box-sizing: border-box; height: 100%; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--space-lg);
+}
+.is-side-collapsed .grid-side { display: none; }
 .grid-side :deep(.acg-provenance) { flex: 1 1 auto; min-height: 0; }
+.grid-side__metrics { flex: 0 0 auto; min-width: 0; }
+.grid-side__audit { flex: 1 1 auto; min-width: 0; min-height: 360px; display: flex; }
+.grid-side__audit :deep(.acg-provenance) { width: 100%; height: 100%; }
+.grid-side > :deep(.runtime-timeline) { flex: 0 0 auto; }
+.grid-side__collapse {
+  min-height: 32px; display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px;
+  padding: 0 9px; border: 1px solid var(--border-light); border-radius: 7px;
+  background: var(--surface-solid); color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+.grid-side__collapse:hover, .grid-side__collapse:focus-visible { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); }
+.side-rail {
+  align-self: stretch; box-sizing: border-box; height: 100%; min-height: 176px; display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  padding: 6px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--surface-solid);
+}
+.side-rail button { border: 0; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.side-rail__toggle {
+  width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 6px !important;
+  background: var(--primary-fade) !important; color: var(--primary-color) !important;
+}
+.side-rail button:focus-visible, .grid-side__collapse:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 
 .schedule-strip { padding: var(--space-md); }
 .schedule-strip h4 { margin: 0 0 var(--space-sm); font-size: 13px; font-weight: 700; color: var(--text-primary); }
@@ -1329,7 +1321,17 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1160px) {
   .acg-grid { grid-template-columns: minmax(0, 1fr); }
+  .acg-grid.is-side-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .side-rail { display: none; }
+  .grid-side, .is-side-collapsed .grid-side { display: flex; height: auto; }
+  .grid-side__audit { min-height: 0; display: block; }
+  .grid-side__audit :deep(.acg-provenance) { height: auto; }
+  .grid-side__collapse { display: none; }
   .advanced-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acg-grid { transition: none; }
 }
 
 @media (max-width: 720px) {

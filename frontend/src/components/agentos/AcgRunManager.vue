@@ -8,7 +8,7 @@
     <div class="acg-run-tools">
       <label class="acg-run-search">
         <el-icon><Search /></el-icon>
-        <input v-model.trim="searchKeyword" type="search" placeholder="搜索运行 ID / 任务名称" />
+        <input v-model.trim="searchKeyword" type="search" placeholder="搜索任务 ID / 任务名称" />
       </label>
       <select v-model="statusFilter" class="acg-run-filter" aria-label="筛选运行状态">
         <option value="all">全部</option>
@@ -17,10 +17,21 @@
         <option value="failed">需处理</option>
         <option value="completed">已完成</option>
       </select>
+      <select
+        v-model="roleFilter"
+        class="acg-run-filter"
+        aria-label="按角色筛选 ACG 记录"
+        @change="handleRoleFilterChange"
+      >
+        <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
+      <span v-if="refreshing && runs.length" class="acg-run-refreshing">更新中</span>
     </div>
 
-    <div v-if="loading" class="acg-run-message">正在加载运行记录…</div>
-    <div v-else-if="loadError" class="acg-run-message acg-run-message--error">
+    <div v-if="loading && !runs.length" class="acg-run-message">正在加载运行记录…</div>
+    <div v-else-if="loadError && !runs.length" class="acg-run-message acg-run-message--error">
       <span>{{ loadError }}</span>
       <button type="button" @click="loadRuns()">重试</button>
     </div>
@@ -41,18 +52,28 @@
           <button
             class="acg-run-item__select"
             type="button"
-            :title="`${displayTitle(run)}\n${run.runId}`"
+            :title="`${displayTitle(run)}\n${taskIdentity(run)}`"
             @click="emit('select', run.runId)"
           >
-            <span class="acg-run-item__status" aria-hidden="true"></span>
+            <span
+              class="acg-run-item__status"
+              role="img"
+              :aria-label="`${group.label}：${phaseLabel(run)}`"
+              :title="`${group.label}：${phaseLabel(run)}`"
+            ></span>
             <span class="acg-run-item__body">
               <span class="acg-run-item__headline">
                 <strong>{{ displayTitle(run) }}</strong>
-                <time>{{ formatRunTime(run.updatedAt || run.startedAt || run.createdAt) }}</time>
               </span>
-              <span class="acg-run-item__identity"><code>{{ shortenRunId(run.runId) }}</code></span>
-              <span class="acg-run-item__phase">
-                {{ phaseLabel(run) }}<template v-if="run.totalSteps"> · {{ run.completedSteps }}/{{ run.totalSteps }}</template>
+              <span class="acg-run-item__meta">
+                <span class="acg-run-item__phase">
+                  {{ phaseLabel(run) }}<template v-if="run.totalSteps"> · 步骤 {{ run.completedSteps }}/{{ run.totalSteps }}</template>
+                </span>
+                <time
+                  v-if="runActivityTime(run)"
+                  :datetime="runActivityTime(run)"
+                  :title="formatFullRunTime(runActivityTime(run))"
+                >{{ runTimeLabel(run) }} {{ formatRunTime(runActivityTime(run)) }}</time>
               </span>
               <span v-if="showProgress(run)" class="acg-run-item__progress" aria-hidden="true">
                 <span :style="{ width: `${safePercentage(run)}%` }"></span>
@@ -60,19 +81,8 @@
             </span>
           </button>
           <span class="acg-run-actions">
-            <button class="acg-run-action" type="button" title="复制完整 Run ID" :aria-label="`复制 Run ID：${run.runId}`" @click="copyRunId(run.runId)">
+            <button class="acg-run-action" type="button" title="复制完整任务 ID" :aria-label="`复制任务 ID：${taskIdentity(run)}`" @click="copyTaskId(taskIdentity(run))">
               <el-icon><CopyDocument /></el-icon>
-            </button>
-            <button
-              v-if="canDelete(run)"
-              class="acg-run-action acg-run-delete"
-              type="button"
-              title="删除运行记录"
-              :aria-label="`删除运行：${displayTitle(run)}`"
-              :disabled="deletingRunId === run.runId"
-              @click="deleteRun(run)"
-            >
-              <el-icon><DeleteIcon /></el-icon>
             </button>
           </span>
         </div>
@@ -97,6 +107,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
+import {
+  ACG_HISTORY_ROLE_OPTIONS,
+  ACG_HISTORY_ROLE_CHANGE_EVENT,
+  ACG_HISTORY_SOURCES,
+  acgHistoryRoleDomain,
+  loadAcgHistoryRole,
+  saveAcgHistoryRole,
+  type AcgHistoryRole
+} from '@/utils/acgHistoryFilter'
 
 defineProps<{ activeRunId?: string }>()
 
@@ -111,13 +130,20 @@ type RunGroupKey = 'active' | 'review' | 'failed' | 'completed'
 
 const runs = ref<WorkflowRunSummary[]>([])
 const loading = ref(false)
+const refreshing = ref(false)
 const loadError = ref('')
 const searchKeyword = ref('')
 const statusFilter = ref<'all' | RunGroupKey>('all')
-const deletingRunId = ref('')
+const roleFilter = ref<AcgHistoryRole>(loadAcgHistoryRole())
 const workflowRunsStore = useWorkflowRunsStore()
 let loadController: AbortController | null = null
-let refreshTimer: ReturnType<typeof window.setInterval> | null = null
+let loadPromise: Promise<void> | null = null
+let refreshTimer: ReturnType<typeof window.setTimeout> | null = null
+let unmounted = false
+const ACTIVE_REFRESH_INTERVAL_MS = 8_000
+const IDLE_REFRESH_INTERVAL_MS = 30_000
+const RUN_LIST_PAGE_SIZE = 20
+const RUN_LIST_STATUSES = 'pending,planning,running,waiting_review,retrying,failed,completed,cancelled'
 
 const groupKey = (run: WorkflowRunSummary): RunGroupKey => {
   if (run.status === 'waiting_review' || run.phase === 'review') return 'review'
@@ -128,14 +154,26 @@ const groupKey = (run: WorkflowRunSummary): RunGroupKey => {
 
 const filteredRuns = computed(() => {
   const keyword = searchKeyword.value.toLocaleLowerCase('zh-CN')
-  return runs.value.filter(run => {
-    const key = groupKey(run)
-    if (statusFilter.value !== 'all' && statusFilter.value !== key) return false
-    if (!keyword) return true
-    return [run.runId, run.title, run.workflowId, run.message]
-      .filter(Boolean)
-      .some(value => String(value).toLocaleLowerCase('zh-CN').includes(keyword))
-  })
+  const latestByTask = new Map<string, WorkflowRunSummary>()
+  for (const run of runs.value) {
+    const identity = run.taskId || run.runId
+    const current = latestByTask.get(identity)
+    const timestamp = Date.parse(run.updatedAt || run.startedAt || run.createdAt || '') || 0
+    const currentTimestamp = current
+      ? Date.parse(current.updatedAt || current.startedAt || current.createdAt || '') || 0
+      : -1
+    if (!current || timestamp >= currentTimestamp) latestByTask.set(identity, run)
+  }
+  return [...latestByTask.values()]
+    .filter(run => {
+      const key = groupKey(run)
+      if (statusFilter.value !== 'all' && statusFilter.value !== key) return false
+      if (!keyword) return true
+      return [run.taskId, run.runId, run.title, run.workflowId, run.message]
+        .filter(Boolean)
+        .some(value => String(value).toLocaleLowerCase('zh-CN').includes(keyword))
+    })
+    .sort((left, right) => runTimestamp(right) - runTimestamp(left))
 })
 
 const visibleGroups = computed(() => {
@@ -152,7 +190,15 @@ const visibleGroups = computed(() => {
 
 const displayTitle = (run: WorkflowRunSummary) => resolveAcgTaskTitle(run)
 
-const shortenRunId = (runId: string) => runId.length > 18 ? `${runId.slice(0, 15)}…` : runId
+const taskIdentity = (run: WorkflowRunSummary) => run.taskId || run.runId
+const runActivityTime = (run: WorkflowRunSummary) => run.updatedAt || run.startedAt || run.createdAt || ''
+const runTimestamp = (run: WorkflowRunSummary) => Date.parse(runActivityTime(run)) || 0
+const runTimeLabel = (run: WorkflowRunSummary) => {
+  const key = groupKey(run)
+  if (key === 'completed') return '完成于'
+  if (key === 'failed') return '结束于'
+  return '更新于'
+}
 
 const safePercentage = (run: WorkflowRunSummary) => {
   const value = run.percent ?? run.percentage ?? run.progress ?? 0
@@ -161,7 +207,6 @@ const safePercentage = (run: WorkflowRunSummary) => {
 
 const showProgress = (run: WorkflowRunSummary) => groupKey(run) === 'active' || groupKey(run) === 'review'
 
-const canDelete = (run: WorkflowRunSummary) => ['completed', 'failed', 'cancelled'].includes(run.status)
 
 const phaseLabel = (run: WorkflowRunSummary) => {
   if (run.status === 'waiting_review' || run.phase === 'review') return '人工审核门'
@@ -178,79 +223,122 @@ const formatRunTime = (value?: string | null) => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const dayDifference = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86_400_000)
+  const clock = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    return `今天 ${clock}`
   }
-  return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+  if (dayDifference === 1) return `昨天 ${clock}`
+  if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
 }
 
-const copyRunId = async (runId: string) => {
+const formatFullRunTime = (value?: string | null) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `最后更新：${date.toLocaleString('zh-CN', {
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  })}`
+}
+
+const copyTaskId = async (taskId: string) => {
   try {
-    await navigator.clipboard.writeText(runId)
-    ElMessage.success('Run ID 已复制')
+    await navigator.clipboard.writeText(taskId)
+    ElMessage.success('任务 ID 已复制')
   } catch {
-    ElMessage.warning('复制失败，请手动选择 Run ID')
+    ElMessage.warning('复制失败，请手动选择任务 ID')
   }
 }
 
-const deleteRun = async (run: WorkflowRunSummary) => {
-  try {
-    await ElMessageBox.confirm(
-      '该操作将永久删除本次运行的步骤、动态历史和执行结果，无法恢复。',
-      '删除运行记录？',
-      {
-        confirmButtonText: '永久删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-        distinguishCancelAndClose: true
-      }
-    )
-    deletingRunId.value = run.runId
-    await workflowApi.deleteRun(run.runId)
-    runs.value = runs.value.filter(item => item.runId !== run.runId)
-    workflowRunsStore.removeReference(run.runId)
-    emit('deleted', run.runId)
-    window.dispatchEvent(new Event('acg-runs-refresh'))
-    ElMessage.success('ACG 运行记录已删除')
-  } catch (error: unknown) {
-    if (error === 'cancel' || error === 'close') return
-    const data = (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data
-    ElMessage.error(data?.message || data?.detail || '删除失败，请稍后重试')
-  } finally {
-    deletingRunId.value = ''
-  }
-}
+const loadRuns = (silent = false): Promise<void> => {
+  if (loadPromise) return loadPromise
 
-const loadRuns = async (silent = false) => {
-  loadController?.abort()
-  loadController = new AbortController()
-  if (!silent) loading.value = true
+  const controller = new AbortController()
+  loadController = controller
+  if (!silent && !runs.value.length) loading.value = true
+  refreshing.value = true
   loadError.value = ''
-  try {
-    const page = await workflowApi.listRuns(
-      { source: 'acg', summary: true, page: 1, pageSize: 100 },
-      { signal: loadController.signal }
-    )
-    runs.value = page.items || []
-  } catch (error: unknown) {
-    if ((error as { code?: string })?.code !== 'ERR_CANCELED') loadError.value = '运行记录暂时无法加载'
-  } finally {
-    if (!silent) loading.value = false
-  }
+  const pending = (async () => {
+    try {
+      const page = await workflowApi.listRuns(
+        {
+          sources: ACG_HISTORY_SOURCES,
+          statuses: RUN_LIST_STATUSES,
+          domain: acgHistoryRoleDomain(roleFilter.value),
+          summary: true,
+          page: 1,
+          pageSize: RUN_LIST_PAGE_SIZE
+        },
+        { signal: controller.signal }
+      )
+      if (!controller.signal.aborted) runs.value = page.items || []
+    } catch (error: unknown) {
+      if ((error as { code?: string })?.code !== 'ERR_CANCELED' && !controller.signal.aborted) {
+        loadError.value = '运行记录暂时无法加载'
+      }
+    } finally {
+      if (loadController === controller) {
+        loadController = null
+        loadPromise = null
+        loading.value = false
+        refreshing.value = false
+      }
+    }
+  })()
+  loadPromise = pending
+  return pending
 }
 
-const handleRunsRefresh = () => void loadRuns()
+const handleRoleFilterChange = () => {
+  saveAcgHistoryRole(roleFilter.value)
+  loadController?.abort()
+  loadPromise = null
+  void loadRuns()
+}
+
+const handleRoleFilterSync = (event: Event) => {
+  const role = (event as CustomEvent<AcgHistoryRole>).detail
+  if (!ACG_HISTORY_ROLE_OPTIONS.some(option => option.value === role) || role === roleFilter.value) return
+  roleFilter.value = role
+  loadController?.abort()
+  loadPromise = null
+  void loadRuns()
+}
+
+const scheduleRefresh = () => {
+  if (unmounted) return
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer)
+  const hasActiveRuns = runs.value.some(run => groupKey(run) === 'active' || groupKey(run) === 'review')
+  refreshTimer = window.setTimeout(async () => {
+    refreshTimer = null
+    if (document.visibilityState !== 'hidden') await loadRuns(true)
+    scheduleRefresh()
+  }, hasActiveRuns ? ACTIVE_REFRESH_INTERVAL_MS : IDLE_REFRESH_INTERVAL_MS)
+}
+
+// External mutations refresh the usable local list in the background and reset the poll window.
+const handleRunsRefresh = () => {
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer)
+  refreshTimer = null
+  void loadRuns(true).finally(scheduleRefresh)
+}
 
 onMounted(() => {
   window.addEventListener('acg-runs-refresh', handleRunsRefresh)
-  void loadRuns()
-  refreshTimer = window.setInterval(() => void loadRuns(true), 8000)
+  window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
+  void loadRuns().finally(scheduleRefresh)
 })
 
 onUnmounted(() => {
+  unmounted = true
   loadController?.abort()
-  if (refreshTimer !== null) window.clearInterval(refreshTimer)
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer)
   window.removeEventListener('acg-runs-refresh', handleRunsRefresh)
+  window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
 })
 </script>
 
@@ -259,8 +347,9 @@ onUnmounted(() => {
 .acg-new-run { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border-light); border-radius: 7px; background: color-mix(in srgb, var(--bg-card) 84%, transparent); color: var(--text-primary); box-shadow: var(--shadow-sm); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; transition: var(--transition); }
 .acg-new-run:hover { border-color: var(--primary-line); background: var(--bg-card); color: var(--primary-color); }
 .acg-new-run:focus-visible, .acg-run-item__select:focus-visible, .acg-run-manage:focus-visible, .acg-run-search:focus-within, .acg-run-filter:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
-.acg-run-tools { display: grid; grid-template-columns: minmax(0, 1fr) 72px; gap: 6px; margin: 8px 0 6px; }
-.acg-run-search { min-width: 0; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-input); color: var(--text-disabled); }
+.acg-run-tools { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0 6px; }
+.acg-run-refreshing { position: absolute; right: 4px; top: 34px; z-index: 1; color: var(--primary-color); font-size: 9px; }
+.acg-run-search { grid-column: 1 / -1; min-width: 0; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-input); color: var(--text-disabled); }
 .acg-run-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 10px; }
 .acg-run-search input::placeholder { color: var(--text-disabled); }
 .acg-run-filter { height: 30px; min-width: 0; padding: 0 6px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-input); color: var(--text-secondary); font: inherit; font-size: 10px; }
@@ -271,28 +360,41 @@ onUnmounted(() => {
 .acg-run-group__head { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 4px; color: var(--text-disabled); font-size: 11px; font-weight: 700; }
 .acg-run-group__head span:last-child { min-width: 16px; height: 16px; display: inline-grid; place-items: center; padding: 0 4px; border-radius: 999px; background: var(--primary-fade); color: var(--primary-color); font-size: 10px; }
 .acg-run-item { position: relative; width: 100%; border-radius: 7px; background: transparent; color: var(--text-secondary); transition: background-color 160ms ease, color 160ms ease; }
-.acg-run-item__select { width: 100%; display: grid; grid-template-columns: 9px minmax(0, 1fr); gap: 6px; padding: 8px 8px 8px 7px; border: 0; border-radius: inherit; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.acg-run-item__select { width: 100%; display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 6px; padding: 8px 8px 8px 7px; border: 0; border-radius: inherit; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .acg-run-item::before { content: ''; position: absolute; inset: 5px auto 5px 0; width: 2px; border-radius: 0 2px 2px 0; background: transparent; }
 .acg-run-item:hover { background: var(--bg-panel); color: var(--text-primary); }
 .acg-run-item.active { background: var(--primary-fade); color: var(--text-primary); }
 .acg-run-item.active::before { background: var(--primary-color); }
-.acg-run-item__status { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: var(--text-disabled); }
-.status-active .acg-run-item__status { background: var(--primary-color); box-shadow: 0 0 0 3px var(--primary-fade); }
-.status-review .acg-run-item__status { background: var(--warning); }
-.status-failed .acg-run-item__status { background: var(--danger); }
-.status-completed .acg-run-item__status { background: var(--success); }
-.acg-run-item__body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.acg-run-item__headline, .acg-run-item__identity { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.acg-run-item__status { width: 13px; height: 13px; margin-top: 1px; display: inline-grid; place-items: center; border: 1px solid var(--text-disabled); border-radius: 50%; background: var(--bg-card); color: var(--text-disabled); font-size: 9px; font-weight: 800; line-height: 1; }
+.status-active .acg-run-item__status { border-color: var(--primary-color); background: var(--primary-fade); color: var(--primary-color); animation: acg-status-pulse 1.8s ease-in-out infinite; }
+.status-active .acg-run-item__status::after { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
+.status-review .acg-run-item__status { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--bg-card)); color: var(--warning); }
+.status-review .acg-run-item__status::after { content: '!'; }
+.status-failed .acg-run-item__status { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--bg-card)); color: var(--danger); }
+.status-failed .acg-run-item__status::after { content: '\00d7'; }
+.status-completed .acg-run-item__status { border-color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--bg-card)); color: var(--success); }
+.status-completed .acg-run-item__status::after { content: '\2713'; }
+
+@keyframes acg-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--primary-fade); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-active .acg-run-item__status { animation: none; }
+}
+.acg-run-item__body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.acg-run-item__headline { min-width: 0; display: flex; align-items: center; }
 .acg-run-item__headline strong { overflow: hidden; color: inherit; font-size: 11px; font-weight: 700; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
-.acg-run-item__headline time { flex: 0 0 auto; color: var(--text-disabled); font-size: 9px; font-variant-numeric: tabular-nums; }
-.acg-run-item__identity code { overflow: hidden; color: var(--text-muted); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.acg-run-actions { position: absolute; z-index: 1; top: 27px; right: 5px; display: flex; align-items: center; gap: 1px; opacity: 0; transition: opacity 160ms ease; }
+.acg-run-item__meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.acg-run-item__meta time { flex: 0 0 auto; color: var(--text-disabled); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acg-run-actions { position: absolute; z-index: 1; top: 5px; right: 5px; display: flex; align-items: center; gap: 1px; opacity: 0; transition: opacity 160ms ease; }
 .acg-run-item:hover .acg-run-actions, .acg-run-actions:focus-within { opacity: 1; }
+.acg-run-item:hover .acg-run-item__headline { padding-right: 44px; }
 .acg-run-action { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: color-mix(in srgb, var(--bg-card) 88%, transparent); color: var(--text-disabled); cursor: pointer; transition: color 160ms ease, background-color 160ms ease; }
 .acg-run-action:hover { background: var(--bg-card); color: var(--primary-color); }
 .acg-run-delete:hover { background: var(--danger-fade); color: var(--danger); }
 .acg-run-action:disabled { cursor: wait; opacity: .55; }
-.acg-run-item:hover .acg-run-item__identity { padding-right: 44px; }
 .acg-run-item__phase { overflow: hidden; color: var(--text-secondary); font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .acg-run-item__progress { height: 2px; margin-top: 2px; overflow: hidden; border-radius: 999px; background: var(--border-light); }
 .acg-run-item__progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary-color); transition: width 240ms ease; }

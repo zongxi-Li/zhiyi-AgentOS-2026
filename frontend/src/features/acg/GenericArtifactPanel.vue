@@ -32,7 +32,7 @@
       <article class="delivery-overview">
         <span class="artifact-kind">{{ artifactTypeLabel }}</span>
         <h5>{{ deliveryTitle }}</h5>
-        <p>{{ executiveSummary || reportContent }}</p>
+        <p v-if="executiveSummary">{{ executiveSummary }}</p>
       </article>
 
       <div v-if="hasStructuredDelivery" class="delivery-facts" aria-label="成果内容统计">
@@ -62,8 +62,47 @@
           <span class="section-index">{{ String(index + 1).padStart(2, '0') }}</span>
           <div>
             <h6>{{ section.title }}</h6>
-            <p>{{ section.content }}</p>
-            <div v-if="section.sourceFields.length" class="source-fields">
+            <p v-if="section.summary && section.fields.length" class="section-summary">{{ section.summary }}</p>
+            <div v-if="section.fields.length" class="structured-fields">
+              <section v-for="field in section.fields" :key="field.source" class="structured-field">
+                <header class="field-head">
+                  <strong>{{ field.label }}</strong>
+                  <code>{{ field.source }}</code>
+                </header>
+
+                <p v-if="field.kind === 'text'" class="field-text">{{ field.text }}</p>
+
+                <ol v-else-if="field.kind === 'list'" class="field-list">
+                  <li v-for="(item, itemIndex) in field.items" :key="`${itemIndex}-${item}`">
+                    {{ item }}
+                  </li>
+                </ol>
+
+                <dl v-else-if="field.kind === 'record'" class="field-properties">
+                  <template v-for="entry in field.entries" :key="entry.label">
+                    <dt>{{ entry.label }}</dt>
+                    <dd>{{ entry.value }}</dd>
+                  </template>
+                </dl>
+
+                <ol v-else class="record-list">
+                  <li v-for="(record, recordIndex) in field.records" :key="`${recordIndex}-${record.title}`">
+                    <span class="record-index">{{ String(recordIndex + 1).padStart(2, '0') }}</span>
+                    <div class="record-content">
+                      <p>{{ record.title }}</p>
+                      <dl v-if="record.meta.length">
+                        <template v-for="entry in record.meta" :key="entry.label">
+                          <dt>{{ entry.label }}</dt>
+                          <dd>{{ entry.value }}</dd>
+                        </template>
+                      </dl>
+                    </div>
+                  </li>
+                </ol>
+              </section>
+            </div>
+            <p v-else class="section-fallback">{{ section.content }}</p>
+            <div v-if="section.sourceFields.length && !section.fields.length" class="source-fields">
               <span v-for="field in section.sourceFields" :key="field">{{ field }}</span>
             </div>
           </div>
@@ -105,8 +144,7 @@
         </footer>
       </section>
 
-      <article v-else class="report-fallback">
-        <pre>{{ reportContent }}</pre>
+      <article v-else class="report-fallback markdown-body" v-html="renderedReportHtml">
       </article>
     </div>
 
@@ -121,7 +159,7 @@
       <div class="artifact-list">
         <details v-for="item in stepOutputs" :key="item.stepId">
           <summary>
-            <span>{{ item.name }}</span>
+            <span>{{ displayStepName(item) }}</span>
             <small>{{ statusLabel(item.status) }}</small>
           </summary>
           <pre>{{ JSON.stringify(item.output, null, 2) }}</pre>
@@ -134,13 +172,36 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { AcgDeliverable, AcgFinalArtifact } from '@/services/api/workflow'
+import { renderMarkdown } from '@/utils/markdown'
 
 type DeliveryTab = 'solution' | 'calculations' | 'decisions'
 
 interface DeliverySection {
   title: string
   content: string
+  summary: string
   sourceFields: string[]
+  fields: DeliveryField[]
+}
+
+interface FieldEntry {
+  label: string
+  value: string
+}
+
+interface DeliveryRecord {
+  title: string
+  meta: FieldEntry[]
+}
+
+interface DeliveryField {
+  source: string
+  label: string
+  kind: 'text' | 'list' | 'record' | 'records'
+  text: string
+  items: string[]
+  entries: FieldEntry[]
+  records: DeliveryRecord[]
 }
 
 interface DeliveryCalculation {
@@ -179,18 +240,185 @@ const asTextList = (value: unknown): string[] => Array.isArray(value)
   ? value.map(asText).filter(Boolean)
   : []
 
+const FIELD_LABELS: Record<string, string> = {
+  constraints: '约束条件',
+  task_summary: '任务摘要',
+  acceptance_criteria: '验收标准',
+  requirements: '需求清单',
+  success_criteria: '成功标准',
+  assumptions: '前提假设',
+  open_questions: '待确认事项',
+  findings: '分析结论',
+  risks: '风险清单',
+  cost_drivers: '成本驱动因素',
+  alternatives: '候选方案',
+  comparison: '方案比较',
+  recommendations: '建议方案',
+  process_steps: '流程步骤'
+}
+
+const PROPERTY_LABELS: Record<string, string> = {
+  id: '编号',
+  requirement_id: '需求编号',
+  priority: '优先级',
+  source: '来源',
+  mandatory: '约束级别',
+  metric: '指标',
+  target: '目标值',
+  status: '状态',
+  owner: '负责人',
+  evidence: '依据',
+  impact: '影响程度',
+  probability: '发生概率',
+  trigger: '触发条件',
+  mitigation: '控制措施',
+  activities: '执行活动',
+  inputs: '输入',
+  outputs: '输出',
+  quality_gate: '质量门槛'
+}
+
+const PRIMARY_RECORD_FIELDS = [
+  'constraint',
+  'criterion',
+  'requirement',
+  'finding',
+  'risk',
+  'recommendation',
+  'title',
+  'name',
+  'description',
+  'content'
+]
+
+const humanizeKey = (key: string) => FIELD_LABELS[key]
+  || PROPERTY_LABELS[key]
+  || key.replace(/^.*\./, '').replace(/_/g, ' ')
+
+const displayValue = (value: unknown): string => {
+  if (typeof value === 'boolean') return value ? '必须' : '可选'
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.map(displayValue).filter(Boolean).join('；')
+  if (typeof value === 'object') return Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => `${humanizeKey(key)}：${displayValue(item)}`)
+    .filter(item => !item.endsWith('：'))
+    .join('；')
+  return String(value).trim()
+}
+
+const parseJsonValue = (raw: string): unknown => {
+  const value = raw.trim()
+  if (!value || !['[', '{'].includes(value[0])) return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+const normalizeRecord = (value: Record<string, unknown>): DeliveryRecord => {
+  const primaryKey = PRIMARY_RECORD_FIELDS.find(key => displayValue(value[key]))
+  const title = primaryKey ? displayValue(value[primaryKey]) : displayValue(value)
+  const meta = Object.entries(value)
+    .filter(([key, item]) => key !== primaryKey && displayValue(item))
+    .map(([key, item]) => ({ label: humanizeKey(key), value: displayValue(item) }))
+  return { title, meta }
+}
+
+const normalizeField = (source: string, rawValue: string, sourceValue?: unknown): DeliveryField => {
+  const key = source.split('.').pop() || source
+  const value = sourceValue === undefined ? parseJsonValue(rawValue) : sourceValue
+  const base = {
+    source,
+    label: humanizeKey(key),
+    text: '',
+    items: [] as string[],
+    entries: [] as FieldEntry[],
+    records: [] as DeliveryRecord[]
+  }
+
+  if (Array.isArray(value)) {
+    if (value.every(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+      return { ...base, kind: 'list' as const, items: value.map(displayValue).filter(Boolean) }
+    }
+    return {
+      ...base,
+      kind: 'records' as const,
+      records: value
+        .filter(item => item && typeof item === 'object' && !Array.isArray(item))
+        .map(item => normalizeRecord(item as Record<string, unknown>))
+        .filter(item => item.title)
+    }
+  }
+
+  if (value && typeof value === 'object') {
+    return {
+      ...base,
+      kind: 'record' as const,
+      entries: Object.entries(value as Record<string, unknown>)
+        .map(([entryKey, item]) => ({ label: humanizeKey(entryKey), value: displayValue(item) }))
+        .filter(item => item.value)
+    }
+  }
+
+  return { ...base, kind: 'text' as const, text: displayValue(value) }
+}
+
+const stepOutputLookup = computed(() => new Map(
+  props.stepOutputs.map(item => [item.stepId, asRecord(item.output)])
+))
+
+const resolveSourceValue = (source: string): unknown => {
+  const separator = source.lastIndexOf('.')
+  if (separator <= 0) return undefined
+  const producer = source.slice(0, separator)
+  const field = source.slice(separator + 1)
+  const output = stepOutputLookup.value.get(producer)
+  return output && Object.prototype.hasOwnProperty.call(output, field)
+    ? output[field]
+    : undefined
+}
+
+const parseStructuredFields = (content: string): DeliveryField[] => {
+  const lines = content.split(/\r?\n/).filter(line => line.trim())
+  const fields: DeliveryField[] = []
+  for (const line of lines) {
+    // A bounded artifact may fold overflow supplements into the final section.
+    // Their Markdown headings separate groups but are not data fields themselves.
+    if (/^\s*#{1,6}\s+\S/.test(line)) continue
+    const match = line.match(/^\s*-\s+\*\*(.+?)\*\*:\s*(.*)$/s)
+    if (!match) continue
+    const source = match[1].trim()
+    fields.push(normalizeField(source, match[2], resolveSourceValue(source)))
+  }
+  return fields.filter(field => (
+    field.text || field.items.length || field.entries.length || field.records.length
+  ))
+}
+
+const parseSectionSummary = (content: string): string => content
+  .split(/\r?\n/)
+  .map(line => line.trim())
+  .filter(line => line && !/^#{1,6}\s+\S/.test(line) && !/^-\s+\*\*(.+?)\*\*:\s*/.test(line))
+  .join('\n')
+
 const primaryArtifact = computed(() => props.finalArtifacts[0] || null)
 const structuredData = computed(() => asRecord(primaryArtifact.value?.structuredData))
-const deliveryTitle = computed(() => (
-  asText(structuredData.value.title)
-  || asText(primaryArtifact.value?.title)
-  || '任务最终成果'
-))
 const executiveSummary = computed(() => asText(structuredData.value.executiveSummary))
 const reportContent = computed(() => (
   asText(primaryArtifact.value?.content)
   || asText(props.finalReport)
 ))
+const reportHeading = computed(() => reportContent.value.match(/^#\s+(.+)$/m)?.[1]?.trim() || '')
+const deliveryTitle = computed(() => {
+  const artifactTitle = asText(primaryArtifact.value?.title)
+  const isGenericTitle = /^workflow final report$/i.test(artifactTitle)
+  return asText(structuredData.value.title)
+    || (isGenericTitle ? reportHeading.value : artifactTitle)
+    || reportHeading.value
+    || '任务最终成果'
+})
+const renderedReportHtml = computed(() => renderMarkdown(reportContent.value))
 const artifactTypeLabel = computed(() => {
   const type = asText(primaryArtifact.value?.type).toLowerCase()
   if (type === 'report') return '实施方案'
@@ -205,7 +433,9 @@ const sections = computed<DeliverySection[]>(() => {
       return {
         title: asText(item.title) || '未命名章节',
         content: asText(item.content),
-        sourceFields: asTextList(item.sourceFields)
+        summary: parseSectionSummary(asText(item.content)),
+        sourceFields: asTextList(item.sourceFields),
+        fields: parseStructuredFields(asText(item.content))
       }
     })
     .filter((item: DeliverySection) => item.content)
@@ -264,6 +494,22 @@ const statusLabel = (status: string) => ({
   retrying: '重试中',
   cancelled: '已取消'
 })[status] || status
+
+const STEP_NAME_LABELS: Record<string, string> = {
+  evidence_retrieval: '证据检索',
+  evidence_validation: '证据核验'
+}
+
+const normalizeStepNameKey = (value: string) => value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+
+const displayStepName = (item: AcgDeliverable): string => {
+  const nameKey = normalizeStepNameKey(item.name || '')
+  const stepIdKey = normalizeStepNameKey(item.stepId || '')
+  return STEP_NAME_LABELS[nameKey]
+    || STEP_NAME_LABELS[stepIdKey]
+    || item.name
+    || item.stepId
+}
 
 const deliveryMarkdown = computed(() => {
   if (!hasStructuredDelivery.value) return reportContent.value
@@ -440,7 +686,33 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 .solution-section h6,
 .calculation-card h6,
 .decision-grid h6 { margin: 0; font-size: 13px; }
-.solution-section p { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
+.section-fallback { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
+.section-summary { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
+.structured-fields { display: grid; gap: 14px; margin-top: 12px; }
+.structured-field + .structured-field { padding-top: 14px; border-top: 1px solid var(--border-light); }
+.field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.field-head strong { color: var(--text-primary); font-size: 12px; font-weight: 700; }
+.field-head code {
+  color: var(--text-secondary);
+  font: 10px/1.4 var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.field-text { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; text-wrap: pretty; }
+.field-list { display: grid; gap: 7px; margin: 0; padding-left: 24px; }
+.field-list li { padding-left: 3px; color: var(--text-secondary); font-size: 12px; line-height: 1.65; text-wrap: pretty; }
+.field-list li::marker { color: var(--primary-color); font-family: var(--font-mono, monospace); font-size: 10px; font-weight: 700; }
+.field-properties { display: grid; grid-template-columns: minmax(88px, auto) 1fr; gap: 7px 14px; margin: 0; font-size: 12px; }
+.field-properties dt { color: var(--text-secondary); }
+.field-properties dd { margin: 0; color: var(--text-primary); line-height: 1.6; }
+.record-list { margin: 0; padding: 0; list-style: none; }
+.record-list > li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 10px 0; }
+.record-list > li + li { border-top: 1px solid var(--border-light); }
+.record-index { padding-top: 2px; color: var(--primary-color); font: 700 10px/1.5 var(--font-mono, monospace); }
+.record-content > p { margin: 0; color: var(--text-primary); font-size: 12px; line-height: 1.65; text-wrap: pretty; }
+.record-content dl { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 6px 0 0; }
+.record-content dt { color: var(--text-secondary); font-size: 10px; }
+.record-content dd { margin: 0 8px 0 -7px; color: var(--text-primary); font-size: 10px; }
 .source-fields { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .source-fields span,
 .decision-grid footer code {
@@ -469,7 +741,41 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 .decision-grid li { margin: 0 0 7px; padding-left: 3px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 .decision-grid footer { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text-secondary); font-size: 11px; }
 .muted { color: var(--text-secondary); font-size: 12px; }
-.report-fallback pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.75 inherit; }
+.report-fallback {
+  padding: 4px 2px 18px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.75;
+}
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4),
+.markdown-body :deep(h5),
+.markdown-body :deep(h6) { margin: 20px 0 9px; color: var(--text-primary); line-height: 1.4; }
+.markdown-body :deep(h1) { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid var(--border-light); font-size: 22px; }
+.markdown-body :deep(h2) { padding-bottom: 6px; border-bottom: 1px solid var(--border-light); font-size: 17px; }
+.markdown-body :deep(h3) { font-size: 14px; }
+.markdown-body :deep(p) { margin: 7px 0; color: var(--text-secondary); }
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) { margin: 8px 0 12px; padding-left: 24px; }
+.markdown-body :deep(li) { margin: 5px 0; color: var(--text-secondary); }
+.markdown-body :deep(strong) { color: var(--text-primary); font-weight: 750; }
+.markdown-body :deep(code) { padding: 2px 5px; border-radius: 4px; background: var(--bg-input); font: 12px var(--font-mono, monospace); }
+.markdown-body :deep(pre) { padding: 12px; overflow-x: auto; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-input); }
+.markdown-body :deep(pre code) { padding: 0; background: transparent; }
+.markdown-body :deep(blockquote) { margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--primary-color); background: color-mix(in srgb, var(--primary-color) 5%, transparent); color: var(--text-secondary); }
+.markdown-body :deep(a) { color: var(--primary-color); text-decoration: none; }
+.markdown-body :deep(a:hover) { text-decoration: underline; }
+.markdown-body :deep(.markdown-table-wrap) { margin: 12px 0 18px; overflow-x: auto; border: 1px solid var(--border-light); border-radius: 8px; }
+.markdown-body :deep(table) { width: 100%; border-collapse: collapse; background: var(--bg-panel); font-size: 12px; }
+.markdown-body :deep(th),
+.markdown-body :deep(td) { min-width: 110px; padding: 9px 11px; border-right: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); text-align: left; vertical-align: top; }
+.markdown-body :deep(th) { color: var(--text-primary); background: var(--bg-input); font-weight: 700; }
+.markdown-body :deep(th:last-child),
+.markdown-body :deep(td:last-child) { border-right: 0; }
+.markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
 
 .step-output-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
 .step-output-section > header { justify-content: space-between; margin-bottom: 9px; }

@@ -7,7 +7,7 @@ import re
 import sys
 from datetime import datetime, timezone
 
-from agent.app.observability.context import current_task_id, current_trace_id, current_workflow_id
+from app.observability.context import current_task_id, current_trace_id, current_workflow_id
 
 _configured_mode: str | None = None
 _REDACTIONS = (

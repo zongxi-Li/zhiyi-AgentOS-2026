@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Dict, Optional
-from agent.app.services.emotiondrivenresponse import emotion_driven_response_service
+from app.services.emotiondrivenresponse import emotion_driven_response_service
 
 router = APIRouter()
 
@@ -62,7 +62,7 @@ async def recognize_voice_emotion(
 ):
     """识别语音情感"""
     try:
-        from agent.app.services.voiceemotionrecognition import voice_emotion_recognizer
+        from app.services.voiceemotionrecognition import voice_emotion_recognizer
         
         audio_data = await audio.read()
         result = voice_emotion_recognizer.recognize_emotion(audio_data)

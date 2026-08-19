@@ -62,6 +62,7 @@ const eventLabel = (eventType: string) => {
     step_failed: '步骤失败',
     run_failed: '运行失败',
     run_recovered: '运行恢复',
+    run_degraded: '降级交付',
     run_completed: '运行完成',
     run_cancelled: '运行取消'
   }

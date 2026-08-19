@@ -5,8 +5,8 @@ import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from agent.app.services.knowledgegraphservice import knowledge_graph_service
-from agent.app.services.ragservice import RAGService
+from app.services.knowledgegraphservice import knowledge_graph_service
+from app.services.ragservice import RAGService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

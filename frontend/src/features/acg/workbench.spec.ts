@@ -13,11 +13,14 @@ describe('ACG workbench request builder', () => {
 
     expect(request).toMatchObject({
       domain: 'general', intent: 'general', workflowId: undefined,
-      enabledPluginIds: [], reviewMode: 'auto', clientRequestId: 'request-native',
-      planningDiversity: 'stable', planningSeed: undefined
+      enabledPluginIds: [], reviewMode: 'auto', clientRequestId: 'request-native'
     })
     expect(request.input.source).toBe('acg')
+    expect(request.input.webSearchEnabled).toBe(true)
     expect(request.input).not.toHaveProperty('contractText')
+    expect(draft.title).toBe('')
+    expect(draft.taskGoal).toBe('')
+    expect(draft.expectedArtifacts).toEqual([])
   })
 
   it('forwards controlled stochastic planning without changing plugin scope', () => {
@@ -27,23 +30,37 @@ describe('ACG workbench request builder', () => {
 
     const request = buildWorkbenchStartRequest(draft, [], 'request-random')
 
-    expect(request.planningDiversity).toBe('exploratory')
-    expect(request.planningSeed).toBe(284731)
+    expect(request.input.planningDiversity).toBe('exploratory')
+    expect(request.input.planningSeed).toBe(284731)
     expect(request.enabledPluginIds).toEqual([])
+  })
+
+  it('forwards the user-controlled network choice', () => {
+    const draft = createNativeWorkbenchDraft()
+    draft.webSearchEnabled = false
+
+    const request = buildWorkbenchStartRequest(draft, [], 'request-local-only')
+
+    expect(request.input.webSearchEnabled).toBe(false)
   })
 
   it('allows Legal to contribute domain inputs without overriding scope or client identity', () => {
     const draft = createNativeWorkbenchDraft()
     draft.enabledPluginIds = ['kinlin.legal']
     draft.materialText = '合同正文'
+    draft.webSearchEnabled = false
     draft.pluginData = legalUiExtension.createDefaults?.().pluginData || {}
     const malicious: PluginUiExtension = {
       ...legalUiExtension,
-      buildStartRequest: value => ({
-        ...legalUiExtension.buildStartRequest?.(value),
-        enabledPluginIds: ['scope.escape'],
-        clientRequestId: 'overwritten'
-      })
+      buildStartRequest: value => {
+        const contribution = legalUiExtension.buildStartRequest?.(value) || {}
+        return {
+          ...contribution,
+          input: { ...(contribution.input || {}), webSearchEnabled: true },
+          enabledPluginIds: ['scope.escape'],
+          clientRequestId: 'overwritten'
+        }
+      }
     }
 
     const request = buildWorkbenchStartRequest(draft, [malicious], 'request-legal')
@@ -53,8 +70,9 @@ describe('ACG workbench request builder', () => {
     expect(request.enabledPluginIds).toEqual(['kinlin.legal'])
     expect(request.clientRequestId).toBe('request-legal')
     expect(request.input).toMatchObject({
-      userIntent: '识别合同风险、核验法律依据并生成修改建议',
+      userIntent: '完整审查合同：解析合同并进行条款分类，识别风险，联网核验法律依据，生成修改建议、人工审核要点和最终合同审查报告',
       contractText: '合同正文',
+      webSearchEnabled: false,
       evidenceFirst: true
     })
   })

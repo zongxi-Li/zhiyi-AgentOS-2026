@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from agent.app.services.rolefusionservice import role_fusion_service
+from app.services.rolefusionservice import role_fusion_service
 
 router = APIRouter()
 

@@ -1,7 +1,7 @@
 <!-- ACG 交付物面板 — 双 Tab 展示合同审查交付物：Markdown 最终报告和按步骤拆分的结构化产物 -->
 <template>
   <section class="acg-deliverables ui-surface">
-    <header class="panel-head">
+    <header v-if="showHeader" class="panel-head">
       <div class="head-left">
         <el-icon class="head-icon"><Document /></el-icon>
         <h4>审查交付物</h4>
@@ -63,13 +63,16 @@
 import { computed, ref, watch } from 'vue'
 import { Document } from '@element-plus/icons-vue'
 import type { AcgDeliverable } from '@/services/api/workflow'
+import { renderMarkdown } from '@/utils/markdown'
 
 const props = withDefaults(defineProps<{
   deliverables?: AcgDeliverable[]
   finalReport?: string | null
+  showHeader?: boolean
 }>(), {
   deliverables: () => [],
-  finalReport: null
+  finalReport: null,
+  showHeader: true
 })
 
 const hasReport = computed(() => !!props.finalReport && props.finalReport.trim().length > 0)
@@ -79,116 +82,7 @@ watch(hasReport, (v) => { if (v) tab.value = 'report' }, { immediate: true })
 
 const asArray = (v: any): any[] => (Array.isArray(v) ? v : [])
 
-const escapeHtml = (raw: string) =>
-  raw
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-
-const escapeAttr = (raw: string) => escapeHtml(raw).replace(/"/g, '&quot;')
-const isSafeUrl = (url: string) => /^(https?:\/\/|mailto:|\/)/i.test(url)
-
-const applyInlineMarkdown = (value: string) => {
-  let text = value
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_all, label, url) => {
-    const safe = String(url || '').trim()
-    if (!isSafeUrl(safe)) return label
-    return `<a href="${escapeAttr(safe)}" target="_blank" rel="noopener noreferrer">${label}</a>`
-  })
-  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>')
-  return text
-}
-
-const markdownToHtml = (raw: string) => {
-  if (!raw) return ''
-
-  const codeBlocks: string[] = []
-  const stripped = raw.replace(/```([a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g, (_m, lang, code) => {
-    const language = (lang || '').trim()
-    const escapedCode = escapeHtml(String(code || '').replace(/\n$/, ''))
-    const className = language ? ` class="language-${escapeAttr(language)}"` : ''
-    const token = `@@CODE_BLOCK_${codeBlocks.length}@@`
-    codeBlocks.push(`<pre><code${className}>${escapedCode}</code></pre>`)
-    return token
-  })
-
-  const lines = stripped.split(/\r?\n/)
-  const output: string[] = []
-  let inUl = false
-  let inOl = false
-
-  const closeLists = () => {
-    if (inUl) {
-      output.push('</ul>')
-      inUl = false
-    }
-    if (inOl) {
-      output.push('</ol>')
-      inOl = false
-    }
-  }
-
-  lines.forEach((line) => {
-    const trimmed = line.trim()
-    if (!trimmed) {
-      closeLists()
-      return
-    }
-
-    if (/^@@CODE_BLOCK_\d+@@$/.test(trimmed)) {
-      closeLists()
-      output.push(trimmed)
-      return
-    }
-
-    const escaped = escapeHtml(trimmed)
-    const heading = escaped.match(/^(#{1,6})\s+(.+)$/)
-    if (heading) {
-      closeLists()
-      const level = Math.min(6, heading[1].length)
-      output.push(`<h${level}>${applyInlineMarkdown(heading[2])}</h${level}>`)
-      return
-    }
-
-    const ul = escaped.match(/^[-*]\s+(.+)$/)
-    if (ul) {
-      if (!inUl) {
-        closeLists()
-        output.push('<ul>')
-        inUl = true
-      }
-      output.push(`<li>${applyInlineMarkdown(ul[1])}</li>`)
-      return
-    }
-
-    const ol = escaped.match(/^\d+\.\s+(.+)$/)
-    if (ol) {
-      if (!inOl) {
-        closeLists()
-        output.push('<ol>')
-        inOl = true
-      }
-      output.push(`<li>${applyInlineMarkdown(ol[1])}</li>`)
-      return
-    }
-
-    closeLists()
-    output.push(`<p>${applyInlineMarkdown(escaped)}</p>`)
-  })
-
-  closeLists()
-  let html = output.join('\n')
-  codeBlocks.forEach((block, index) => {
-    html = html.replace(`@@CODE_BLOCK_${index}@@`, block)
-  })
-  return html
-}
-
-const renderedReportHtml = computed(() => markdownToHtml(props.finalReport || ''))
+const renderedReportHtml = computed(() => renderMarkdown(props.finalReport || ''))
 
 // 从各步骤 output 中提取结构化结论（风险/证据/建议/摘要）
 const structuredDeliverables = computed(() => {
@@ -297,6 +191,38 @@ const riskClass = (r: any) => {
   text-decoration: none;
 }
 .markdown-body :deep(a:hover) { text-decoration: underline; }
+.markdown-body :deep(.markdown-table-wrap) {
+  width: 100%;
+  margin: 12px 0 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+}
+.markdown-body :deep(table) {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  padding: 8px 10px;
+  border-right: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.markdown-body :deep(th) {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.markdown-body :deep(th:last-child),
+.markdown-body :deep(td:last-child) { border-right: 0; }
+.markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
 
 .detail-body { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-md); }
 .deliverable-block { border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: var(--space-sm); background: var(--bg-panel); }

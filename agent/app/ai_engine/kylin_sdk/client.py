@@ -52,8 +52,8 @@ class KylinSDKClient:
         # DeepSeek 优先初始化（文本生成主引擎，速度快）
         if deepseek_api_key:
             try:
-                from agent.app.ai_engine.deepseekadapter import DeepSeekAdapter
-                from agent.app.config import settings
+                from app.ai_engine.deepseekadapter import DeepSeekAdapter
+                from app.config import settings
                 ds_base_url = getattr(settings, 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')
                 self.deepseek_adapter = DeepSeekAdapter(deepseek_api_key, deepseek_model, base_url=ds_base_url)
                 self.use_deepseek = True
@@ -77,8 +77,8 @@ class KylinSDKClient:
         # Qwen 作为备用引擎（图像/语音/多模态 + 文本回退）
         if not self.use_kylin_sdk and qwen_api_key:
             try:
-                from agent.app.ai_engine.qwenadapter import QwenAdapter
-                from agent.app.config import settings
+                from app.ai_engine.qwenadapter import QwenAdapter
+                from app.config import settings
                 qwen_base_url = getattr(settings, 'QWEN_BASE_URL', None)
                 self.qwen_adapter = QwenAdapter(qwen_api_key, qwen_model, base_url=qwen_base_url)
                 self.use_qwen = True
@@ -116,7 +116,7 @@ class KylinSDKClient:
             
             # 导入麒麟OS集成服务（如果可用）
             try:
-                from agent.app.services.kylinosintegration import kylin_os_integration_service
+                from app.services.kylinosintegration import kylin_os_integration_service
                 return kylin_os_integration_service.is_kylin_os
             except ImportError:
                 pass
@@ -413,7 +413,7 @@ class KylinSDKClient:
             # 如果启用了通义千问，尝试使用语音适配器
             if self.use_qwen and self.qwen_adapter and self.api_key:
                 try:
-                    from agent.app.ai_engine.speechadapter import SpeechAdapter
+                    from app.ai_engine.speechadapter import SpeechAdapter
                     speech_adapter = SpeechAdapter(self.api_key)
                     result = await speech_adapter.recognize_speech(
                         audio_data=audio_data,
@@ -522,7 +522,7 @@ class KylinSDKClient:
             # 如果启用了通义千问，尝试使用语音适配器
             if self.use_qwen and self.qwen_adapter and self.api_key:
                 try:
-                    from agent.app.ai_engine.speechadapter import SpeechAdapter
+                    from app.ai_engine.speechadapter import SpeechAdapter
                     speech_adapter = SpeechAdapter(self.api_key)
                     
                     # 映射默认语音类型
@@ -659,7 +659,7 @@ class KylinAIClient:
         """
         # 尝试从配置导入
         try:
-            from agent.app.config import settings
+            from app.config import settings
             self._api_key = api_key or getattr(settings, 'KYLIN_AI_API_KEY', '')
             self._api_endpoint = api_endpoint or getattr(settings, 'KYLIN_AI_ENDPOINT', 'https://api.kylin.ai')
             self._timeout = timeout or getattr(settings, 'KYLIN_AI_TIMEOUT', 240)
@@ -671,7 +671,7 @@ class KylinAIClient:
         
         # 检查DeepSeek配置（文本生成主引擎）
         try:
-            from agent.app.config import settings
+            from app.config import settings
             self._deepseek_api_key = settings.DEEPSEEK_API_KEY or ''
             self._deepseek_model = settings.DEEPSEEK_MODEL
         except Exception:
@@ -680,7 +680,7 @@ class KylinAIClient:
 
         # 检查通义千问配置（备用引擎 + 图像/语音/多模态）
         try:
-            from agent.app.config import settings
+            from app.config import settings
             dashscope_key = settings.DASHSCOPE_API_KEY or ''
             qwen_key = settings.QWEN_API_KEY or ''
             self._qwen_api_key = dashscope_key if dashscope_key else qwen_key

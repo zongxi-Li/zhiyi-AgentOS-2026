@@ -116,7 +116,6 @@ const canReview = computed(() => Boolean(
   && isWorkflowReviewPending(props.progress, props.run)
 ))
 const reviewReason = computed(() => {
-  if (props.run && typeof props.run.error === 'string' && props.run.error.trim()) return props.run.error
   return props.progress?.message || '该节点需要人工确认后才能继续执行。'
 })
 

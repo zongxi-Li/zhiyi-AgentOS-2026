@@ -5,11 +5,6 @@ const api = axios.create({
   timeout: 240000
 })
 
-const materialApi = axios.create({
-  baseURL: '/ai',
-  timeout: 240000
-})
-
 // 请求拦截器：添加Token
 api.interceptors.request.use(
   (config) => {
@@ -23,12 +18,6 @@ api.interceptors.request.use(
     return Promise.reject(error)
   }
 )
-
-materialApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
 
 export interface FileUploadResponse {
   filePath: string
@@ -58,44 +47,7 @@ export interface DocumentExtractionResult {
   note?: string
 }
 
-export interface TaskMaterial {
-  materialId: string
-  state: 'ready' | 'bound'
-  originalFilename: string
-  mediaType: string
-  size: number
-  sha256: string
-  extractedTextSha256: string
-  extractedText: string
-  textLength: number
-  extraction: {
-    method: string
-    ocrUsed: boolean
-    pages: number
-  }
-}
-
 export const fileApi = {
-  async uploadTaskMaterial(file: File, onUploaded?: () => void): Promise<TaskMaterial> {
-    const formData = new FormData()
-    formData.append('file', file)
-    // Do not set Content-Type here: the browser must add the multipart boundary.
-    let uploadCompleted = false
-    const response = await materialApi.post<TaskMaterial>('/core/materials', formData, {
-      onUploadProgress: progress => {
-        if (!uploadCompleted && progress.total && progress.loaded >= progress.total) {
-          uploadCompleted = true
-          onUploaded?.()
-        }
-      }
-    })
-    return response.data
-  },
-
-  async deleteTaskMaterial(materialId: string): Promise<void> {
-    await materialApi.delete(`/core/materials/${encodeURIComponent(materialId)}`)
-  },
-
   // 上传文件
   async uploadFile(file: File, type: string = 'general'): Promise<FileUploadResponse> {
     const formData = new FormData()

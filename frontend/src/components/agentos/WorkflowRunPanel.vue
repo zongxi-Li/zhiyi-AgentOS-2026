@@ -45,46 +45,24 @@
           <strong>{{ run.implementationId || run.workflowId }}</strong>
         </div>
         <div>
-          <small>审核模式</small>
-          <strong>{{ run.reviewMode }}</strong>
+          <small>Output Ref</small>
+          <strong>{{ run.outputRef || '尚未生成' }}</strong>
         </div>
         <div>
-          <small>恢复次数</small>
-          <strong>{{ run.recoveryCount || 0 }}</strong>
+          <small>Checkpoint</small>
+          <strong>{{ run.executionState?.checkpointId || '尚未生成' }}</strong>
         </div>
       </div>
-
-      <div class="metric-strip">
-        <div>
-          <small>完成率</small>
-          <strong>{{ percent(metrics?.metrics.completionRate) }}</strong>
-        </div>
-        <div>
-          <small>失败率</small>
-          <strong>{{ percent(metrics?.metrics.failureRate) }}</strong>
-        </div>
-        <div>
-          <small>恢复成功率</small>
-          <strong>{{ percent(metrics?.metrics.recoverySuccessRate) }}</strong>
-        </div>
-        <div>
-          <small>审核记录</small>
-          <strong>{{ metrics?.metrics.reviewCount ?? 0 }}</strong>
-        </div>
-      </div>
-
-      <p v-if="run.error" class="error-line">{{ run.error }}</p>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
 import { Download, Refresh } from '@element-plus/icons-vue'
-import type { EvaluationRun, WorkflowRun, WorkflowStatus } from '@/services/api/workflow'
+import type { WorkflowRun, WorkflowStatus } from '@/services/api/workflow'
 
 defineProps<{
   run: WorkflowRun | null
-  metrics: EvaluationRun | null
   loading?: boolean
 }>()
 
@@ -108,7 +86,6 @@ const statusLabel = (status: WorkflowStatus) => {
   return labels[status] || status
 }
 
-const percent = (value?: number) => `${Math.round((value || 0) * 100)}%`
 </script>
 
 <style scoped>

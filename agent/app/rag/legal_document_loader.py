@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from agent.app.paths import AGENT_ROOT
+from app.paths import AGENT_ROOT
 
 
 DEFAULT_LEGAL_KNOWLEDGE_DIR = AGENT_ROOT / "knowledge" / "legal"

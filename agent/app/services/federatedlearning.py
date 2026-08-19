@@ -69,7 +69,7 @@ class FederatedLearningService:
             添加噪声后的参数
         """
         try:
-            from agent.app.services.encryptionservice import encryption_service
+            from app.services.encryptionservice import encryption_service
             return encryption_service.add_differential_privacy(
                 parameters=parameters,
                 epsilon=epsilon,
@@ -105,7 +105,7 @@ class FederatedLearningService:
             加密后的参数
         """
         try:
-            from agent.app.services.encryptionservice import encryption_service
+            from app.services.encryptionservice import encryption_service
             return encryption_service.encrypt_parameters(
                 parameters=parameters,
                 method=encryption_method
@@ -142,7 +142,7 @@ class FederatedLearningService:
             解密后的参数
         """
         try:
-            from agent.app.services.encryptionservice import encryption_service
+            from app.services.encryptionservice import encryption_service
             return encryption_service.decrypt_parameters(encrypted_parameters)
         except Exception as e:
             logger.warning(f"使用加密服务解密参数失败: {e}，使用简化实现")

@@ -9,17 +9,17 @@ import asyncio
 import logging
 import time
 from uuid import uuid4
-from agent.app.services.aiservice import AIService
-from agent.app.config import settings
-from agent.app.ai_engine.kylin_sdk.client import KylinAIClient
-from agent.app.ai_engine.model_runtime import (
+from app.services.aiservice import AIService
+from app.config import settings
+from app.ai_engine.kylin_sdk.client import KylinAIClient
+from app.ai_engine.model_runtime import (
     apply_reasoning_instruction,
     list_system_runtime_models,
     resolve_system_runtime_config,
     stream_with_runtime_model,
 )
-from agent.app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
-from agent.app.tools import get_tool_runtime
+from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
+from app.tools import get_tool_runtime
 
 router = APIRouter()
 

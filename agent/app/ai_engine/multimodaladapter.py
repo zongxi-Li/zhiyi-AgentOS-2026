@@ -7,7 +7,7 @@ import logging
 import base64
 import httpx
 from typing import Dict, Optional, List
-from agent.app.config import settings
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -7,9 +7,9 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
-from agent.app.middleware.trace import TraceIdMiddleware
-from agent.app.observability.context import current_trace_id, execution_context
-from agent.app.utils.logger import KinlinJsonFormatter
+from app.middleware.trace import TraceIdMiddleware
+from app.observability.context import current_trace_id, execution_context
+from app.utils.logger import KinlinJsonFormatter
 
 
 def build_app():

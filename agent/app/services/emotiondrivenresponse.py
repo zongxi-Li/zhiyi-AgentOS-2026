@@ -4,8 +4,8 @@
 """
 import logging
 from typing import Dict, Optional, List
-from agent.app.services.emotionawareservice import EmotionAwareResponseGenerator
-from agent.app.services.voiceemotionrecognition import voice_emotion_recognizer
+from app.services.emotionawareservice import EmotionAwareResponseGenerator
+from app.services.voiceemotionrecognition import voice_emotion_recognizer
 
 logger = logging.getLogger(__name__)
 

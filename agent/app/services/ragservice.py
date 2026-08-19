@@ -144,8 +144,8 @@ class RAGService:
 
             # 优先使用高级文档处理器（集成easydoc、mineru等）
             try:
-                from agent.app.services.documentprocessoradvanced import document_processor_advanced
-                from agent.app.config import settings
+                from app.services.documentprocessoradvanced import document_processor_advanced
+                from app.config import settings
                 
                 use_enhanced = getattr(settings, 'DOCUMENT_PROCESSOR_USE_ENHANCED', True)
                 method = getattr(settings, 'DOCUMENT_PROCESSOR_METHOD', 'auto')
@@ -167,7 +167,7 @@ class RAGService:
             
             # 回退到增强文档处理器
             try:
-                from agent.app.services.documentprocessorenhanced import enhanced_document_processor
+                from app.services.documentprocessorenhanced import enhanced_document_processor
                 
                 result = enhanced_document_processor.extract_text(
                     file_data=file_data,
@@ -237,7 +237,7 @@ class RAGService:
         """
         try:
             # 优先使用embedding服务
-            from agent.app.services.embeddingservice import embedding_service
+            from app.services.embeddingservice import embedding_service
             return await embedding_service.generate_embedding(text)
         except Exception as e:
             logger.warning(f"使用embedding服务失败: {e}，尝试sentence-transformers")
@@ -492,7 +492,7 @@ class RAGService:
             # 如果启用知识图谱
             if use_knowledge_graph:
                 try:
-                    from agent.app.services.knowledgegraphservice import knowledge_graph_service
+                    from app.services.knowledgegraphservice import knowledge_graph_service
                     
                     # 混合检索
                     hybrid_result = knowledge_graph_service.hybrid_retrieval(

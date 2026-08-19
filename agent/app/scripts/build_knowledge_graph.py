@@ -11,8 +11,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from agent.app.services.ragservice import RAGService
-from agent.app.services.knowledgegraphservice import knowledge_graph_service
+from app.services.ragservice import RAGService
+from app.services.knowledgegraphservice import knowledge_graph_service
 
 # 角色ID映射
 ROLE_MAPPING = {

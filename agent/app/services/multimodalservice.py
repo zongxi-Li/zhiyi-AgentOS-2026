@@ -71,7 +71,7 @@ class ImageProcessor:
         """从图像中提取文字（OCR，使用通义千问多模态API）"""
         try:
             # 使用多模态适配器
-            from agent.app.ai_engine.multimodaladapter import get_multimodal_adapter
+            from app.ai_engine.multimodaladapter import get_multimodal_adapter
             adapter = await get_multimodal_adapter()
             
             if adapter:
@@ -105,7 +105,7 @@ class ImageProcessor:
         """生成图像描述（使用通义千问多模态API）"""
         try:
             # 使用多模态适配器
-            from agent.app.ai_engine.multimodaladapter import get_multimodal_adapter
+            from app.ai_engine.multimodaladapter import get_multimodal_adapter
             adapter = await get_multimodal_adapter()
             
             if adapter:
@@ -142,7 +142,7 @@ class ImageProcessor:
         
         try:
             # 使用多模态适配器
-            from agent.app.ai_engine.multimodaladapter import get_multimodal_adapter
+            from app.ai_engine.multimodaladapter import get_multimodal_adapter
             adapter = await get_multimodal_adapter()
             
             if adapter:
@@ -498,7 +498,7 @@ class MultimodalFusionService:
     def _process_audio(self, audio_data: bytes) -> Dict:
         """处理音频（增强实现，使用ASR服务）"""
         try:
-            from agent.app.ai_engine.kylin_sdk.client import KylinAIClient
+            from app.ai_engine.kylin_sdk.client import KylinAIClient
             import asyncio
             
             # 使用ASR服务进行语音识别

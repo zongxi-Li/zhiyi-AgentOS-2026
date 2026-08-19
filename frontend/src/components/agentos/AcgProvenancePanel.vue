@@ -130,6 +130,7 @@ const agentNames = (names: string[], stepIds: string[]) => {
 const recoveryLabel = (t: string) => {
   if (t === 'step_failed') return '故障注入'
   if (t === 'run_recovered') return '检查点恢复'
+  if (t === 'run_degraded') return '降级交付'
   if (t === 'contract_violation') return '契约异常'
   return t
 }
