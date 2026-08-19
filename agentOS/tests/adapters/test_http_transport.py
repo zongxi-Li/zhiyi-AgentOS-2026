@@ -26,6 +26,24 @@ class _Response:
         return b'{"choices": []}'
 
 
+class _SseResponse:
+    """模拟可逐行读取的 SSE 响应，并记录消费者是否主动关闭连接。"""
+
+    status = 200
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = iter(lines)
+        self.closed = False
+
+    def readline(self) -> bytes:
+        """返回下一行 SSE 数据。"""
+        return next(self._lines, b"")
+
+    def close(self) -> None:
+        """记录传输层释放了底层连接。"""
+        self.closed = True
+
+
 def test_http_transport_sends_auth_and_idempotency_outside_json_payload() -> None:
     """密钥和提交标识必须放在请求头，JSON 正文只保留模型调用数据。"""
     requests = []
@@ -83,3 +101,41 @@ def test_http_transport_reads_rotated_key_for_each_request() -> None:
     assert requests[0].get_header("Authorization") == "Bearer old-key"
     assert requests[1].get_header("Authorization") == "Bearer new-key"
     assert revision == 1
+
+
+def test_http_transport_reads_openai_sse_and_closes_connection_on_consumer_stop() -> None:
+    """SSE 只输出解析后的 JSON；消费者提前停止时底层响应必须被关闭。"""
+    response = _SseResponse(
+        [
+            b'data: {"choices":[{"delta":{"content":"hel"}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
+        ]
+    )
+
+    def opener(_request, *, timeout: float):
+        """返回固定 SSE 响应，不访问网络。"""
+        assert timeout == 120.0
+        return response
+
+    transport = HttpJsonTransport(
+        base_url="https://model.example/v1",
+        api_key="secret-key",
+        opener=opener,
+    )
+
+    async def collect_first() -> list[dict]:
+        """只取首个事件，模拟客户端断开。"""
+        events = []
+        async for item in transport.stream_json(path="/chat/completions", payload={}):
+            events.append(item)
+            break
+        return events
+
+    assert asyncio.run(collect_first()) == [
+        {"choices": [{"delta": {"content": "hel"}}]}
+    ]
+    assert response.closed is True

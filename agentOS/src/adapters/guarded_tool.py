@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any, TypeVar
 
 from adapters.tool_adapter import ToolRuntime
@@ -121,6 +121,21 @@ class GuardedToolRuntime:
             lambda: self.delegate.execute(name, arguments, commit_id=commit_id, **kwargs),
             timeout_seconds=timeout_seconds,
         )
+
+    async def astream_execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """转发底层工具流；不包裹取消，确保客户端断开可立刻中止真实请求。"""
+        streamer = getattr(self.delegate, "astream_execute", None)
+        if not callable(streamer):
+            raise ToolInvocationError(
+                "TOOL_STREAM_UNSUPPORTED", "tool runtime does not support streaming"
+            )
+        async for event in streamer(name, arguments, **kwargs):
+            yield event
 
     async def _invoke(
         self,

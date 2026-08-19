@@ -60,3 +60,34 @@ def test_scoped_tool_runtime_has_independent_event_buffer() -> None:
     assert left.events == [{"type": "tool_called", "tool": "search"}]
     assert right.events == []
     assert runtime.events == []
+
+
+def test_audited_tool_runtime_propagates_stream_cancellation() -> None:
+    """客户端取消流式工具消费时，包装器不得伪造成功或吞没取消。"""
+    class _StreamingTool:
+        def scoped(self, _allowed_tools):
+            return self
+
+        async def run(self, _text, **_kwargs):
+            return None
+
+        async def execute(self, _name, _arguments, **_kwargs):
+            return None
+
+        async def astream_execute(self, _name, _arguments, **_kwargs):
+            yield {"type": "delta", "data": "one"}
+            await asyncio.sleep(60)
+
+    runtime = AuditedToolRuntime(delegate=_StreamingTool(), allowed_tools={"search"})
+
+    async def consume_then_cancel() -> None:
+        stream = runtime.astream_execute("search", {"q": "x"})
+        assert await anext(stream) == {"type": "delta", "data": "one"}
+        task = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await stream.aclose()
+
+    asyncio.run(consume_then_cancel())

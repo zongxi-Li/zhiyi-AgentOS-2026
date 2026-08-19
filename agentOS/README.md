@@ -182,3 +182,5 @@ TODO 实现边界
 ├─ 合同：完整 JSON Schema（oneOf、引用、格式）
 └─ 架构：support/domain 与 contracts 模型归并；support/stores 下沉；恢复/执行/规划的跨部件内部导入收敛到 contracts 或公开门面
 ```
+
+模型兼容端点的启动配置、健康刷新、SSE 流、取消和外部 Agent 框架边界见 [模型运行时装配](docs/model-runtime.md)。

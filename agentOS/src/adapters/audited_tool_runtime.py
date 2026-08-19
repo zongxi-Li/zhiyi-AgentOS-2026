@@ -7,7 +7,7 @@ Trace；详细参数仍只停留在实际工具的受控边界中。
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
 from adapters.tool_adapter import ToolRuntime
@@ -47,6 +47,19 @@ class AuditedToolRuntime:
             raise ToolAuthorizationError(name)
         self.events.append({"type": "tool_called", "tool": name})
         return await self.delegate.execute(name, arguments, **kwargs)
+
+    async def astream_execute(
+        self, name: str, arguments: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[dict[str, Any]]:
+        """授权后转发工具流；取消会自然关闭 delegate 迭代器并终止底层请求。"""
+        if name not in self.allowed_tools:
+            raise ToolAuthorizationError(name)
+        streamer = getattr(self.delegate, "astream_execute", None)
+        if not callable(streamer):
+            raise RuntimeError("TOOL_STREAM_UNSUPPORTED: tool runtime does not support streaming")
+        self.events.append({"type": "tool_streamed", "tool": name})
+        async for event in streamer(name, arguments, **kwargs):
+            yield event
 
 
 __all__ = ["AuditedToolRuntime", "ToolAuthorizationError"]

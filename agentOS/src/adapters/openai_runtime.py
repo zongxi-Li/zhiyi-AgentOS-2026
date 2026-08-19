@@ -33,6 +33,16 @@ class JsonTransport(Protocol):
         """提交 JSON 并可将提交标识映射为 HTTP 幂等键，返回已解析对象。"""
         ...
 
+    def stream_json(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """流式返回已解析 JSON，取消生成器时应停止底层网络读取。"""
+        ...
+
 
 class ModelInvocationError(RuntimeError):
     """表示调用或响应不满足统一模型合同的稳定错误。
@@ -131,6 +141,29 @@ class OpenAICompatibleRuntime:
                 delta = delta_data.get("content") if isinstance(delta_data, Mapping) else None
                 if isinstance(delta, str) and delta:
                     yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta=delta, provider=self._manifest.provider, model=model)
+                if isinstance(delta_data, Mapping):
+                    tool_calls = delta_data.get("tool_calls")
+                    if isinstance(tool_calls, list):
+                        for tool_call in tool_calls:
+                            if not isinstance(tool_call, Mapping):
+                                continue
+                            function = tool_call.get("function")
+                            if not isinstance(function, Mapping):
+                                continue
+                            name = function.get("name")
+                            arguments = function.get("arguments", "")
+                            call_id = tool_call.get("id")
+                            if not isinstance(arguments, str):
+                                continue
+                            yield ModelStreamEvent(
+                                requestId=request.request_id,
+                                eventType="tool_call",
+                                provider=self._manifest.provider,
+                                model=model,
+                                toolCallId=call_id if isinstance(call_id, str) else None,
+                                toolName=name if isinstance(name, str) else None,
+                                toolArguments=arguments,
+                            )
                 if isinstance(choice.get("finish_reason"), str):
                     completed = True
                     yield ModelStreamEvent(requestId=request.request_id, eventType="completed", provider=self._manifest.provider, model=model)

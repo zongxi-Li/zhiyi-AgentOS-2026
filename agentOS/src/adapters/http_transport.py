@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from threading import RLock
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -94,6 +94,57 @@ class HttpJsonTransport:
             idempotency_key=idempotency_key,
         )
 
+    async def stream_json(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """读取 OpenAI 兼容 SSE 并逐个产出 JSON 对象。
+
+        标准库没有异步 HTTP 流，因此连接建立和每次 ``readline`` 均移至工作线程。
+        生成器被关闭或调用任务被取消时，无论读取正处于何处都会关闭底层响应，让
+        服务端能够感知客户端已断开；SSE 正文不会缓存到传输对象、日志或状态中。
+        """
+        response = await asyncio.to_thread(
+            self._open_stream_sync,
+            path=path,
+            payload=payload,
+            idempotency_key=idempotency_key,
+        )
+        data_lines: list[str] = []
+        try:
+            while True:
+                raw_line = await asyncio.to_thread(response.readline)
+                if not raw_line:
+                    if data_lines:
+                        event = self._parse_sse_data(data_lines)
+                        if event is not None:
+                            yield event
+                    return
+                try:
+                    line = raw_line.decode("utf-8").rstrip("\r\n")
+                except UnicodeDecodeError as exc:
+                    raise HttpTransportError(
+                        "MODEL_RESPONSE_INVALID",
+                        "HTTP provider stream is not UTF-8",
+                    ) from exc
+                if not line:
+                    if not data_lines:
+                        continue
+                    event = self._parse_sse_data(data_lines)
+                    data_lines = []
+                    if event is None:
+                        return
+                    yield event
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip(" "))
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                await asyncio.to_thread(close)
+
     def _post_json_sync(
         self,
         *,
@@ -156,6 +207,93 @@ class HttpJsonTransport:
                 "HTTP provider response must be a JSON object",
             )
         return parsed
+
+    def _open_stream_sync(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None,
+    ) -> Any:
+        """建立 SSE 请求并在返回响应前完成状态码校验。"""
+        request = self._request_for(
+            path=path,
+            payload=payload,
+            idempotency_key=idempotency_key,
+            accept="text/event-stream",
+        )
+        try:
+            response = self._opener(request, timeout=self._request_timeout)
+            status_value = getattr(response, "status", None)
+            status = int(status_value if status_value is not None else response.getcode())
+        except HTTPError as exc:
+            raise HttpTransportError(
+                self._code_for_status(exc.code),
+                "HTTP provider returned an error response",
+            ) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise HttpTransportError(
+                "MODEL_TEMPORARY_UNAVAILABLE",
+                "HTTP provider connection failed",
+            ) from exc
+        if status < 200 or status >= 300:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+            raise HttpTransportError(
+                self._code_for_status(status),
+                "HTTP provider returned an error response",
+            )
+        return response
+
+    @staticmethod
+    def _parse_sse_data(data_lines: list[str]) -> dict[str, Any] | None:
+        """解析一个完整 SSE 事件，``[DONE]`` 作为流结束信号而非业务正文。"""
+        data = "\n".join(data_lines)
+        if data == "[DONE]":
+            return None
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise HttpTransportError(
+                "MODEL_RESPONSE_INVALID",
+                "HTTP provider stream event is not valid JSON",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise HttpTransportError(
+                "MODEL_RESPONSE_INVALID",
+                "HTTP provider stream event must be a JSON object",
+            )
+        return parsed
+
+    def _request_for(
+        self,
+        *,
+        path: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None,
+        accept: str,
+    ) -> Request:
+        """构造 JSON 请求并把密钥与提交标识限制在 HTTP Header 中。"""
+        url = self._url_for(path)
+        try:
+            body = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise HttpTransportError(
+                "HTTP_PAYLOAD_INVALID",
+                "HTTP payload is not JSON serializable",
+            ) from exc
+        headers = {"Accept": accept, "Content-Type": "application/json"}
+        api_key = self._key_provider.current_key() if self._key_provider is not None else self._api_key
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        if idempotency_key and idempotency_key.strip():
+            headers["Idempotency-Key"] = idempotency_key.strip()
+        return Request(url=url, data=body, headers=headers, method="POST")
 
     def _url_for(self, path: str) -> str:
         """仅允许相对路径，避免适配器被请求参数诱导访问其他主机。"""

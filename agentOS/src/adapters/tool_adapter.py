@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, Callable, Iterable, Protocol
 
 
@@ -34,6 +35,12 @@ class ToolRuntime(Protocol):
         ``arguments`` 应可序列化，额外关键字传递运行时控制信息；权限拒绝、参数
         错误、超时和工具失败必须由实现显式报告，不得伪造成功结果。
         """
+        ...
+
+    def astream_execute(
+        self, name: str, arguments: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[dict[str, Any]]:
+        """可选地流式执行单工具；调用方关闭迭代器即代表取消外部请求。"""
         ...
 
 

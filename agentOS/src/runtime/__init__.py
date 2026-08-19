@@ -8,6 +8,7 @@ __all__: list[str] = []
 """
 
 from .bootstrap import bootstrap
+from .app_setup import ApplicationSetup, ApplicationSetupError
 
 
 def __getattr__(name: str):
@@ -18,4 +19,10 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-__all__ = ["WorkflowRuntime", "bootstrap", "build_default_runtime"]
+__all__ = [
+    "ApplicationSetup",
+    "ApplicationSetupError",
+    "WorkflowRuntime",
+    "bootstrap",
+    "build_default_runtime",
+]

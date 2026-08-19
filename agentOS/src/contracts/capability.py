@@ -131,10 +131,15 @@ class ModelStreamEvent(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
     request_id: str = Field(alias="requestId", min_length=1)
-    event_type: Literal["delta", "completed"] = Field(alias="eventType")
+    event_type: Literal["delta", "tool_call", "completed"] = Field(alias="eventType")
     delta: str = ""
     provider: str
     model: str
+    # 流式工具调用仅是面向当前客户端的临时投影。参数分片不得写入 State、
+    # checkpoint 或 Trace；真正执行仍需通过 ACG 节点内受权限保护的工具运行时。
+    tool_call_id: str | None = Field(default=None, alias="toolCallId")
+    tool_name: str | None = Field(default=None, alias="toolName")
+    tool_arguments: str = Field(default="", alias="toolArguments")
 
 
 class CapabilityInvocation(BaseModel):
