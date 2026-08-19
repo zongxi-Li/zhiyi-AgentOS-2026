@@ -66,6 +66,11 @@ public class AgentOsGatewayController {
         return response(gateway.get(runPath(runId) + "/outputs/" + segment(outputRef)));
     }
 
+    @GetMapping("/runs/{runId}/legacy-outputs")
+    public ResponseEntity<Map<String, Object>> getLegacyOutputs(@PathVariable String runId) {
+        return response(gateway.get(runPath(runId) + "/legacy-outputs"));
+    }
+
     @GetMapping("/runs/{runId}/trace")
     public ResponseEntity<Map<String, Object>> getTrace(@PathVariable String runId) {
         return response(gateway.get(runPath(runId) + "/trace"));

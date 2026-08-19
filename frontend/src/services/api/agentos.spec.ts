@@ -43,6 +43,16 @@ describe('AgentOS v2 application API', () => {
     expect(get).toHaveBeenCalledWith('/runs/run%2F1', { signal })
   })
 
+  it('preserves task titles in run history summaries', async () => {
+    vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { items: [{ ...run, title: 'IC-200智能装配生产线立项实施方案' }], total: 1, page: 1, pageSize: 20 }
+    } as never)
+
+    const result = await agentosApi.listWorkflowRuns()
+
+    expect(result.items[0].title).toBe('IC-200智能装配生产线立项实施方案')
+  })
+
   it('dereferences owned outputs and projects real artifacts', async () => {
     const artifact = {
       artifactId: 'artifact_1', type: 'report', title: 'Final result',
@@ -61,6 +71,32 @@ describe('AgentOS v2 application API', () => {
     expect(result.finalArtifacts).toEqual([{ ...artifact, stepId: 'deliver' }])
     expect(result.stepStates[0].currentBinding).toEqual({ resourceId: 'legal.drafter' })
     expect(get).toHaveBeenLastCalledWith('/runs/run_1/outputs/output%3Arun_1%3Adeliver', { signal: undefined })
+  })
+
+  it('loads inline outputs through the guarded compatibility resource for legacy runs', async () => {
+    const legacyRun = {
+      ...run,
+      steps: [{ ...run.steps[0], outputRef: undefined }],
+      executionState: { resourceBindings: {} }
+    }
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: legacyRun } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_legacy', graphVersion: 1, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({
+        data: {
+          items: [{ stepId: 'deliver', name: 'Deliver', status: 'completed', content: { final_answer: '# Legacy' } }]
+        }
+      } as never)
+
+    const result = await agentosApi.getAcgView('run_legacy')
+
+    expect(result.stepOutputs).toEqual([
+      { stepId: 'deliver', name: 'Deliver', status: 'completed', output: { final_answer: '# Legacy' } }
+    ])
+    expect(result.finalReport).toBe('# Legacy')
+    expect(get).toHaveBeenLastCalledWith('/runs/run_legacy/legacy-outputs', { signal: undefined })
   })
 
   it('forwards review concurrency fields and does not swallow conflicts', async () => {

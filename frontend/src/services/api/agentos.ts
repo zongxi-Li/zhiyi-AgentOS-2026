@@ -514,7 +514,14 @@ export const agentosApi = {
       params: { status: params.status || undefined, domain: params.domain, page: params.page, pageSize: params.pageSize },
       signal: options.signal
     })
-    return { ...response.data, items: response.data.items.map(run => ({ ...projectProgress(run), createdAt: run.createdAt })) }
+    return {
+      ...response.data,
+      items: response.data.items.map(run => ({
+        ...projectProgress(run),
+        title: run.title,
+        createdAt: run.createdAt
+      }))
+    }
   },
 
   async startWorkflow(payload: WorkflowStartRequest): Promise<WorkflowRun> {
@@ -585,14 +592,23 @@ export const agentosApi = {
     const graph = graphResponse.data
     const provenance = provenanceProjection(provenanceResponse.data)
     const outputRefs = Object.entries(run.executionState?.outputRefs || {}) as Array<[string, string]>
-    const outputs = await Promise.all(outputRefs.map(async ([stepId, outputRef]) => {
-      const response = await agentosRequest.get<{ content: Record<string, any> }>(
-        `${runPath(runId)}/outputs/${encodeURIComponent(outputRef)}`,
-        { signal: options.signal }
-      )
-      const step = run.steps.find(item => item.stepId === stepId)
-      return { stepId, name: step?.name || stepId, status: step?.status || 'completed', output: response.data.content }
-    }))
+    const outputs = outputRefs.length
+      ? await Promise.all(outputRefs.map(async ([stepId, outputRef]) => {
+        const response = await agentosRequest.get<{ content: Record<string, any> }>(
+          `${runPath(runId)}/outputs/${encodeURIComponent(outputRef)}`,
+          { signal: options.signal }
+        )
+        const step = run.steps.find(item => item.stepId === stepId)
+        return { stepId, name: step?.name || stepId, status: step?.status || 'completed', output: response.data.content }
+      }))
+      : (await agentosRequest.get<{
+          items: Array<{ stepId: string; name: string; status: StepStatus; content: Record<string, any> }>
+        }>(`${runPath(runId)}/legacy-outputs`, { signal: options.signal })).data.items.map(item => ({
+          stepId: item.stepId,
+          name: item.name,
+          status: item.status,
+          output: item.content
+        }))
     const interactions = provenance.interactions
     const tokensAvailable = interactions.reduce((sum, item) => sum + Number(item.tokensAvailable || 0), 0)
     const tokensDelivered = interactions.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)

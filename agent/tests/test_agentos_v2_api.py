@@ -81,6 +81,7 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert response.status_code == 200
         state_body = response.json()
         serialized = response.text
+        assert state_body["title"] == "API projection must not leak input"
         assert state_body["outputRef"] == run.output["outputRef"]
         assert state_body["steps"][0]["outputSummary"] == "safe report summary"
         assert _SECRET not in serialized
@@ -98,6 +99,35 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert trace.status_code == 200
         assert "PRIVATE-PROMPT" not in trace.text
         assert any(event["payload"].get("prompt") == "[redacted]" for event in trace.json()["events"])
+
+
+async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_task("Legacy API projection", workflow_id="api-workflow")
+    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    run.execution_state.pop("outputRefs", None)
+    run.output = {"final_answer": _SECRET}
+    run.steps[0].output = {"report": _SECRET}
+    runtime.workflow_store.save_run(run)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/agentos/v2/runs/{run.run_id}/legacy-outputs")
+        assert response.status_code == 200
+        assert response.json()["items"] == [
+            {
+                "stepId": "report",
+                "name": "report",
+                "status": "completed",
+                "content": {"report": _SECRET},
+            }
+        ]
+
+        run.execution_state["outputRefs"] = {"report": "output:owned"}
+        runtime.workflow_store.save_run(run)
+        response = await client.get(f"/agentos/v2/runs/{run.run_id}/legacy-outputs")
+        assert response.status_code == 404
 
 
 async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tmp_path) -> None:

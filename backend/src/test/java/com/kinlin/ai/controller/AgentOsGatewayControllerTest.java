@@ -82,6 +82,12 @@ class AgentOsGatewayControllerTest {
                 .andExpect(status().isOk());
         assertEquals(outputPath, gateway.lastGetPath);
 
+        String legacyOutputPath = "/ai/agentos/v2/runs/run_001/legacy-outputs";
+        gateway.getResponses.put(legacyOutputPath, response(200, Map.of("runId", "run_001", "items", java.util.List.of())));
+        mockMvc.perform(get("/api/agentos/v2/runs/run_001/legacy-outputs"))
+                .andExpect(status().isOk());
+        assertEquals(legacyOutputPath, gateway.lastGetPath);
+
         String reviewPath = "/ai/agentos/v2/runs/run_001/reviews";
         gateway.postResponses.put(reviewPath, response(200, Map.of("runId", "run_001", "status", "running")));
         mockMvc.perform(post("/api/agentos/v2/runs/run_001/reviews")

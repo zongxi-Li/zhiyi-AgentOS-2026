@@ -100,12 +100,13 @@ def _state(run: WorkflowRun) -> dict[str, Any]:
     return {key: raw[key] for key in allowed if key in raw}
 
 
-def project_run(run: WorkflowRun) -> dict[str, Any]:
+def project_run(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]:
     """Project lifecycle and references without task input or output bodies."""
     state = _state(run)
     return {
         "runId": run.run_id,
         "taskId": run.task_id,
+        "title": title,
         "workflowId": run.workflow_id,
         "domain": run.domain,
         "runtimeEngine": run.runtime_engine,
@@ -182,6 +183,13 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
         _require_access(run)
         return run
 
+    def project(run: WorkflowRun) -> dict[str, Any]:
+        try:
+            title = runtime.workflow_store.get_task(run.task_id).title
+        except KeyError:
+            title = None
+        return project_run(run, title=title)
+
     @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
     async def create_run(request: RunCreateRequest):
         key, fingerprint = _idempotency(request)
@@ -191,7 +199,7 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
                 _require_access(existing)
                 if existing.idempotency_fingerprint != fingerprint:
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
-                return project_run(existing)
+                return project(existing)
         try:
             task = runtime.create_task(
                 title=request.title,
@@ -212,7 +220,7 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
                 enabled_plugin_ids=request.enabled_plugin_ids,
             )
             await coordinator.submit(run.run_id)
-            return project_run(runtime.get_status(run.run_id))
+            return project(runtime.get_status(run.run_id))
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=422, detail="invalid workflow request") from exc
 
@@ -233,7 +241,7 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
             page_size=page_size,
         )
         return {
-            "items": [project_run(run) for run in result.items],
+            "items": [project(run) for run in result.items],
             "total": result.total,
             "page": result.page,
             "pageSize": result.page_size,
@@ -241,7 +249,7 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
 
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str):
-        return project_run(load_run(run_id))
+        return project(load_run(run_id))
 
     @router.get("/runs/{run_id}/graph")
     async def get_graph(run_id: str):
@@ -258,6 +266,25 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="output not found") from exc
         return {"runId": run_id, "outputRef": output_ref, "content": content}
+
+    @router.get("/runs/{run_id}/legacy-outputs")
+    async def get_legacy_outputs(run_id: str):
+        run = load_run(run_id)
+        if _state(run).get("outputRefs"):
+            raise HTTPException(status_code=404, detail="legacy outputs not found")
+        items = [
+            {
+                "stepId": step.step_id,
+                "name": step.name,
+                "status": step.status.value,
+                "content": dict(step.output),
+            }
+            for step in run.steps
+            if isinstance(step.output, dict) and step.output
+        ]
+        if not items:
+            raise HTTPException(status_code=404, detail="legacy outputs not found")
+        return {"runId": run_id, "items": items}
 
     @router.get("/runs/{run_id}/trace")
     async def get_trace(run_id: str):
@@ -317,7 +344,7 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
             )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail="review conflict") from exc
-        return project_run(run)
+        return project(run)
 
     return router
 
