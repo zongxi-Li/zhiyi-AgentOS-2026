@@ -130,6 +130,14 @@
             :loading="progressTracker.isLoading.value"
             :sync-error="progressTracker.syncError.value"
           />
+          <AgentOsRunSummaryCard
+            :progress="progressTracker.progress.value"
+            :run="selectedRun"
+            :view="selectedAcgView"
+            :events="traceEvents"
+            :checkpoint-count="checkpoints.length"
+            :review-count="reviews.length"
+          />
 
           <p v-if="runError" class="error-message" role="alert">{{ runError }}</p>
 
@@ -198,6 +206,13 @@
           </div>
           <p v-else>终态、人工审核或展开详情时才读取完整 ACG，不参与列表轮询。</p>
         </section>
+        <RuntimeAuditTimeline
+          v-if="selectedRun || selectedAcgView"
+          :events="traceEvents"
+          :patch-refs="selectedRun?.executionState?.graphPatchRefs || []"
+          :checkpoints="checkpoints"
+          :reviews="reviews"
+        />
       </aside>
     </section>
   </main>
@@ -215,6 +230,8 @@ import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import WorkflowRunPanel from '@/components/agentos/WorkflowRunPanel.vue'
 import WorkflowStepList from '@/components/agentos/WorkflowStepList.vue'
+import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
+import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import {
   workflowApi,
@@ -708,6 +725,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .console-main > .run-facts:last-child,
 .console-main > :deep(.trace-event-timeline:last-child),
 .console-side > .acg-summary:last-child { flex: 1 0 auto; min-height: 0; }
+.console-side > :deep(.runtime-audit-timeline) { flex: 1 1 auto; min-height: 150px; overflow: auto; }
 .console-main > :deep(.trace-event-timeline:last-child) { min-height: 260px; }
 .filter-panel { display: grid; gap: 10px; }
 .filter-title, .run-list-head, .run-group > header, .run-item__top, .run-item__metrics, .run-toolbar, .run-toolbar nav, .acg-summary header, .acg-summary__facts, .pagination { display: flex; align-items: center; }

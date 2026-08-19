@@ -176,6 +176,14 @@
       :loading="isSubmitting || progressTracker.isLoading.value"
       :sync-error="progressTracker.syncError.value"
     />
+    <AgentOsRunSummaryCard
+      v-if="activeRunId"
+      class="run-summary-card"
+      :progress="progressTracker.progress.value"
+      :run="activeRun"
+      :view="acgView"
+      :events="acgAuditEvents"
+    />
     </section>
 
     <p v-if="startError" class="run-error" role="alert">{{ startError }}</p>
@@ -260,6 +268,10 @@
           @export-csv="exportAudit('csv')"
         />
         </div>
+        <RuntimeAuditTimeline
+          :events="acgAuditEvents"
+          :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+        />
       </aside>
     </div>
 
@@ -286,6 +298,8 @@ import AcgLowEntropyMetrics from '@/components/agentos/AcgLowEntropyMetrics.vue'
 import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
+import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
+import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
@@ -335,6 +349,20 @@ watch(userIntent, value => {
 
 const acgView = ref<AcgView | null>(null)
 const activeRun = ref<WorkflowRun | null>(null)
+const acgAuditEvents = computed(() => {
+  const events = [
+    ...(acgView.value?.recoveryTrace || []),
+    ...(acgView.value?.scheduleTrace || []),
+    ...(acgView.value?.contractViolations || [])
+  ]
+  const seen = new Set<string>()
+  return events.filter((event, index) => {
+    const key = event.eventId || `${event.eventType}:${event.createdAt || index}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
 const taskMaterialLength = computed(() => {
   const legalDraft = draft.pluginData['kinlin.legal']
   const candidates = [
@@ -1108,13 +1136,6 @@ onBeforeUnmount(() => {
 .run-scope header strong { font-size:13px; }
 .snapshot-list { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--text-secondary); font-size:11px; }
 .snapshot-list span, .snapshot-list code { padding:5px 8px; border-radius:6px; background:var(--bg-input); }
-.planning-selection-reasons { display:flex; flex-wrap:wrap; gap:6px 10px; margin-top:10px; font-size:11px; color:var(--text-secondary); }
-.planning-selection-reasons strong { width:100%; color:var(--text-primary); }
-.planning-selection-reasons span { padding:4px 7px; border-radius:6px; background:var(--bg-input); }
-.planning-diagnostics { display:flex; flex-direction:column; gap:7px; margin-top:4px; }
-.planning-diagnostic-tags { display:flex; align-items:center; flex-wrap:wrap; gap:7px; color:var(--text-secondary); font-size:11px; }
-.planning-fallback-warning { margin:0; padding:8px 10px; border-left:3px solid var(--el-color-warning); background:color-mix(in srgb, var(--el-color-warning) 8%, transparent); color:var(--text-secondary); font-size:12px; }
-.scope-warning { margin:0; padding:8px 10px; border-left:3px solid var(--el-color-warning); background:color-mix(in srgb, var(--el-color-warning) 8%, transparent); color:var(--text-secondary); font-size:12px; }
 .input-panel-expandable {
   display: flex;
   flex-direction: column;
@@ -1278,7 +1299,7 @@ onBeforeUnmount(() => {
 .grid-side__metrics { flex: 0 0 auto; min-width: 0; }
 .grid-side__audit { flex: 1 1 auto; min-width: 0; min-height: 360px; display: flex; }
 .grid-side__audit :deep(.acg-provenance) { width: 100%; height: 100%; }
-.grid-side > :deep(.runtime-timeline) { flex: 0 0 auto; }
+.grid-side > :deep(.runtime-audit-timeline) { flex: 0 0 auto; max-height: 380px; overflow: auto; }
 .grid-side__collapse {
   min-height: 32px; display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px;
   padding: 0 9px; border: 1px solid var(--border-light); border-radius: 7px;
