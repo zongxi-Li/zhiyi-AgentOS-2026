@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from components.auditor.governance.trace import TraceStore
 from .store import WorkflowRegistry
-from .models import ProgressCalculator, WorkflowProgress
+from .scheduler import ProgressCalculator, WorkflowProgress
 from .state_machine import StateMachine
 from contracts.workflow import (
     AgentTask,

@@ -1,8 +1,5 @@
-"""任务管理部件的包边界；业务实现将在后续迁移。"""
+"""Public task-manager boundary backed by one lifecycle implementation."""
 
-__all__: list[str] = []
-"""任务管理部件的公共入口。"""
+from .service import TaskManager, TaskManagerService
 
-from .service import TaskManagerService
-
-__all__ = ["TaskManagerService"]
+__all__ = ["TaskManager", "TaskManagerService"]

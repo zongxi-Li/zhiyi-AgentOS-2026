@@ -89,7 +89,7 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
 
     assert result.status is WorkflowStatus.COMPLETED
     assert result.execution_state["engineMigration"] == "langgraph_fused_v1"
-    assert result.runtime_graph is None
+    assert "runtimeGraph" not in result.model_dump(by_alias=True)
     assert result.output["outputRef"].startswith("output:")
     assert "title" not in result.execution_state
     latest_id, latest_state = runtime.checkpoint_store.load_latest(run_id=result.run_id)

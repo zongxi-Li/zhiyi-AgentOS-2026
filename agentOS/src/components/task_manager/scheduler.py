@@ -46,10 +46,7 @@ class WorkflowProgress(CoreModel):
     active_step_ids: list[str] = Field(default_factory=list, alias="activeStepIds")
     recovery_count: int = Field(default=0, alias="recoveryCount")
     graph_version: Optional[int] = Field(default=None, alias="graphVersion")
-    dynamic_step_count: int = Field(default=0, alias="dynamicStepCount")
-    binding_switch_count: int = Field(default=0, alias="bindingSwitchCount")
     skipped_by_condition_count: int = Field(default=0, alias="skippedByConditionCount")
-    conditional_decision_count: int = Field(default=0, alias="conditionalDecisionCount")
     started_at: Optional[datetime] = Field(default=None, alias="startedAt")
     updated_at: Optional[datetime] = Field(default=None, alias="updatedAt")
     # Deprecated compatibility fields. `progress` is the 0..1 ratio and
@@ -125,22 +122,8 @@ class ProgressAssembler:
             counts[StepStatus.COMPLETED] + skipped_by_condition_count,
             len(steps),
         )
-        runtime_graph = run.runtime_graph
-        graph_version = runtime_graph.graph_version if runtime_graph is not None else None
-        dynamic_step_count = (
-            sum(
-                1
-                for node in runtime_graph.nodes
-                if node.node_type.value == "step" and node.created_graph_version > 1
-            )
-            if runtime_graph is not None
-            else 0
-        )
-        binding_switch_count = (
-            sum(node.binding_switch_count for node in runtime_graph.nodes)
-            if runtime_graph is not None
-            else 0
-        )
+        graph_version_value = run.execution_state.get("graphVersion")
+        graph_version = int(graph_version_value) if graph_version_value is not None else None
 
         return WorkflowProgress(
             taskId=run.task_id,
@@ -162,12 +145,7 @@ class ProgressAssembler:
             activeStepIds=active_step_ids,
             recoveryCount=run.recovery_count,
             graphVersion=graph_version,
-            dynamicStepCount=dynamic_step_count,
-            bindingSwitchCount=binding_switch_count,
             skippedByConditionCount=skipped_by_condition_count,
-            conditionalDecisionCount=(
-                len(runtime_graph.branch_decisions) if runtime_graph is not None else 0
-            ),
             startedAt=run.started_at,
             updatedAt=run.updated_at,
             **self._compatibility_values(percent),

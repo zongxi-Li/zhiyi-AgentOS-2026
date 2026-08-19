@@ -330,8 +330,6 @@ class SQLiteWorkflowStore(WorkflowStore):
 
 def _validate_obvious_run_state_conflicts(run: WorkflowRun) -> None:
     statuses = {step.status for step in run.steps}
-    if run.runtime_graph is not None:
-        statuses.update(node.status for node in run.runtime_graph.nodes)
 
     if run.status == WorkflowStatus.COMPLETED:
         conflicts = {

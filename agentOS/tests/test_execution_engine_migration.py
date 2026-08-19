@@ -37,16 +37,18 @@ def test_prepare_acg_run_persists_blueprint_and_pending_migration_state() -> Non
 
     assert persisted.status.value == "pending"
     assert persisted.acg_blueprint is not None
-    assert persisted.runtime_graph is None
+    assert "runtimeGraph" not in persisted.model_dump(by_alias=True)
     assert persisted.execution_state["engineMigration"] == "langgraph_pending"
 
 
 def test_legacy_runtime_graph_snapshot_remains_migration_blocked() -> None:
     """缺少新 Blueprint 的历史 runtimeGraph 快照不能误走融合执行入口。"""
     runtime, run = _prepared_acg_run()
-    legacy = run.model_copy(deep=True)
-    legacy.acg_blueprint = None
-    legacy.runtime_graph = {"legacy": True}
+    payload = run.model_dump(by_alias=True)
+    payload["acgBlueprint"] = None
+    payload["runtimeGraph"] = {"legacy": True}
+    legacy = type(run).model_validate(payload)
+    assert "runtimeGraph" not in legacy.model_dump(by_alias=True)
     runtime.workflow_store.save_run(legacy)
 
     with pytest.raises(ExecutionEngineMigratingError):

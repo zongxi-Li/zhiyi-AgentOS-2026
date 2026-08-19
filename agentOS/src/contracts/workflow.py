@@ -374,10 +374,6 @@ class WorkflowRun(CoreModel):
     # acg_blueprint 存规划器产物 / 升格结果；completed_step_ids 记录就绪集调度
     # 已完成的 StepNode，用于并行调度时计算下一批就绪集，不影响线性路径。
     acg_blueprint: Optional[Dict[str, Any]] = Field(default=None, alias="acgBlueprint")
-    # Stage one: authoritative runtime structure/version/patch history.  WorkflowStep
-    # remains the execution-state authority until the executor is migrated.
-    # 运行图由 executor 持有；合同仅保存可序列化快照，避免 contracts 反向依赖实现部件。
-    runtime_graph: Optional[Any] = Field(default=None, alias="runtimeGraph")
     completed_step_ids: List[str] = Field(default_factory=list, alias="completedStepIds")
     active_step_ids: List[str] = Field(default_factory=list, alias="activeStepIds")
     # 数据血缘图（低熵通信审计产物，ACG 路径填充）：生产/消费事件，供前端血缘面板。
