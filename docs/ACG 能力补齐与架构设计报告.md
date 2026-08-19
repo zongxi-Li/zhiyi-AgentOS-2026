@@ -91,10 +91,15 @@ IntentParser → TemplateMatcher（可选）→ CognitiveRouter → ACGBuilder
 - AgentRegistry 中的能力匹配。
 - ACGBlueprint 的生成和基础验证。
 
-当前限制包括：
+已完成的闭环修复包括：
 
-- 强制动态模式使用确定性意图解析，规划模型不会参与拓扑生成。
-- 规划输入主要是 `userIntent/title/description`，没有统一解析上传文件和任务材料。
+- `dynamic` 与 `template_preferred` 均先执行 LLM 语义解析，确定性解析仅用于测试或显式降级。
+- 规划输入已拆分为目标、约束、交付物、验证要求和有界任务材料，Run 中只记录材料摘要哈希与覆盖统计。
+- `planningMode` 已成为权威模式；Native bootstrap 不再隐式强制动态构图，显式工作流优先。
+- 模板与动态图均执行服务端可信熵预算检查，并在 Run/Trace/前端展示结构化规划诊断。
+
+仍需继续演进的限制包括：
+
 - `CognitiveRouter` 是别名/包含关系匹配，不具备文档要求的多维效用评分。
 - `ACGBuilder` 依赖 `_ROLE_ORDER`、`_ROLE_SOURCE_FIELDS` 等核心规则，生成的是预设角色链。
 - Memory/Evidence/Control 节点主要靠能力关键词注入，不是规划语义的编译结果。
@@ -738,9 +743,9 @@ agentos/core/
 
 | 判断                                                           | 代码依据                                                                                        |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 当前规划链只有画像、模板、简单路由和 Builder                   | `agentOS/src/agentos/core/planning/engine.py:56`                                              |
-| 动态模式使用确定性意图解析，且规划输入未统一包含任务文件材料   | `agentOS/src/agentos/core/runtime.py:408`、`:411`、`:426`                                 |
-| 认知路由是简化能力匹配，熵超限优化仍标注为完整实现中的未来行为 | `agentOS/src/agentos/core/planning/cognitive_router.py:83`、`:111`                          |
+| 规划链已包含有界上下文、LLM/规则画像、模板、路由、预算和 Builder | `agentOS/src/agentos/core/planning/engine.py`、`context.py`、`budget.py`                    |
+| 两种模式均可调用 LLM，材料经 12,000 字符预算进入同一次画像解析  | `agentOS/src/agentos/core/runtime.py`、`planning/intent_parser.py`、`planning/context.py`   |
+| 认知路由仍是简化能力匹配，但模板和动态图的熵超限已强制拦截      | `agentOS/src/agentos/core/planning/cognitive_router.py`、`planning/engine.py`               |
 | Builder 依赖固定角色顺序、来源字段和组图规则                   | `agentOS/src/agentos/core/planning/acg_builder.py:39`、`:49`、`:59`、`:257`             |
 | ACG 六类节点模型已经存在                                       | `agentOS/src/agentos/core/acg/nodes.py:33`、`:54`、`:67`、`:78`、`:87`、`:95`       |
 | 当前图验证支持环、端点、契约和依赖路径，但明确拒绝 IF/LOOP     | `agentOS/src/agentos/core/acg/graph_ops.py:144`                                               |

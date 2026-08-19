@@ -47,11 +47,12 @@ agentOS/src/agentos/core/
 ### 1.1 端到端数据流
 
 ```text
-用户意图(自然语言)
-   ↓  IntentParser（真实 DeepSeek / 启发式回退）
-TaskSemanticProfile（语义画像：目标/能力/复杂度/熵预算）
-   ↓  TemplateMatcher（role+task 索引 + 相似度，≥85% 命中）
-   ├─ 命中 → 复用模板 → 线性升格为 ACG（静态优选，零规划开销）
+规划请求（目标/约束/交付物/验证要求/有界材料）
+   ↓  IntentParser（两种规划模式均先调用 LLM；30 秒后安全降级）
+TaskSemanticProfile（语义画像：目标/能力/约束/交付物/验证/复杂度/风险）
+   ↓  PlanningBudgetPolicy（服务端可信预算）
+   ↓  TemplateMatcher（template_preferred 下按 role+task+相似度匹配）
+   ├─ 命中 → 复用模板 → 线性升格为 ACG（静态优选，降低构图开销）
    └─ 未命中 → CognitiveRouter（能力→Agent）→ ACGBuilder（动态生成）
 ACGBlueprint（节点+边+约束的统一计算图）
    ↓  ACGExecutor（就绪集并行调度）
@@ -88,26 +89,37 @@ ACGBlueprint（节点+边+约束的统一计算图）
 ## 3. 规划器（Cognitive Planning Engine）
 
 采用「**静态优选，动态补位**」混合策略。综合资源利用与响应速度：简单/已知任务
-复用验证过的模板（零规划开销、质量有保障），复杂/未知任务才动态生成认知网络。
+复用验证过的模板（降低构图开销、质量有保障），复杂/未知任务才动态生成认知网络。
 
 ### 3.1 意图解析
 
-`IntentParser` 把自然语言意图解析为 `TaskSemanticProfile`（核心目标、关键约束、
-所需认知能力、复杂度、领域、隐含需求、风险等级、熵预算）。
+`IntentParser` 把结构化 `PlanningRequestContext` 解析为 `TaskSemanticProfile`（核心目标、
+关键约束、所需认知能力、交付物、验证要求、复杂度、领域、隐含需求和风险等级）。
+`planningMode` 是唯一权威模式；旧字段 `forceDynamicPlanning` 仅在请求没有
+`planningMode` 时兼容。Native bootstrap 只负责进入规划器，不再强制动态构图。
 
 分层设计遵守 Core 不依赖 app 层 LLM 的架构铁律：Core 定义最小 `IntentLLM`
-协议，app 层装配时注入真实 DeepSeek 网关；未注入或调用失败时回落确定性
-启发式，保证 Core 离线可测、规划不被 LLM 故障阻断。
+协议，app 层装配时注入真实模型网关。`dynamic` 和 `template_preferred` 都使用同一次
+LLM 调用完成材料归纳与画像生成，调用参数为温度 0、30 秒超时、无重试。未注入、
+超时或响应非法时回落确定性启发式，并用安全原因码写入 Run 诊断，规划不会被
+模型临时故障阻断。
 
 ```python
-def parse(intent, domain, task_type) -> TaskSemanticProfile:
-    if llm is not None:
-        try:
-            return parse_with_llm(intent, domain, task_type)  # DeepSeek 结构化输出
-        except Exception:
-            pass  # 不阻断规划
-    return heuristic(intent, domain, task_type)  # 关键词→能力映射 + 长度→复杂度
+def parse(context: PlanningRequestContext) -> IntentParseOutcome:
+    try:
+        return parse_with_llm(context, temperature=0, timeout=30)
+    except SafePlanningFailure as failure:
+        return heuristic(context, fallback_reason=failure.safe_code)
 ```
+
+材料按内容哈希去重，总规划预算为 12,000 字符。超限时确定性保留前 3,000、后
+2,000 字符，并从能力别名、约束和交付物关键词附近选取去重窗口；余量用中段等距
+片段补齐。Trace 只保存材料哈希、字符统计和截断状态，不保存材料原文片段。
+
+显式约束、交付物和验证要求与模型结果合并且不可被模型删除。能力完成目录过滤和
+强依赖展开后再绑定 Agent；缺少产物或验证能力时按目录元数据补入相应节点。协调
+熵预算由服务端按 simple/medium/complex/extreme 分配 2048/4096/8192/16384，模板与
+动态图统一检查，客户端和模型均不能提高预算。
 
 ### 3.2 模板匹配（静态优选）
 

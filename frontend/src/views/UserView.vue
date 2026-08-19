@@ -1,44 +1,38 @@
 <!-- 用户个人中心页面 — 头像上传、用户名/邮箱、注册日期及统计数据展示 -->
 <template>
   <div class="user-view">
-    <div class="user-container">
-      <!-- 用户信息卡片 -->
-      <div class="profile-header-card">
-        <div class="profile-background"></div>
-        <div class="profile-content">
-          <div class="avatar-section">
-            <div class="avatar-wrapper">
-              <el-upload
-                class="avatar-uploader"
-                action="/api/upload/avatar"
-                :show-file-list="false"
-                :on-success="handleAvatarSuccess"
-              >
-                <el-avatar :src="userInfo.avatar" :size="120" class="user-avatar">
-                  <el-icon :size="60"><User /></el-icon>
-                </el-avatar>
-                <div class="avatar-overlay">
-                  <el-icon><Camera /></el-icon>
-                </div>
-              </el-upload>
-            </div>
-            <div class="user-basic-info">
-              <h1 class="username">{{ userInfo.username }}</h1>
-              <p class="user-email">{{ userInfo.email || '未设置邮箱' }}</p>
-              <div class="user-meta">
-                <span class="meta-item">
-                  <el-icon><Calendar /></el-icon>
-                  <span>注册于 {{ formatDate(userInfo.createdAt) }}</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
+    <section class="page-header panel">
+      <div class="page-title">
+        <span class="title-icon"><el-icon><User /></el-icon></span>
+        <h1>个人中心</h1>
       </div>
+      <span class="account-status">账户信息</span>
+    </section>
 
-      <!-- 统计卡片 -->
-      <div class="stats-grid">
-        <div class="stat-card">
+    <section class="profile-summary panel">
+      <el-upload
+        class="avatar-uploader"
+        action="/api/upload/avatar"
+        :show-file-list="false"
+        :on-success="handleAvatarSuccess"
+      >
+        <el-avatar :src="userInfo.avatar" :size="52" class="user-avatar">
+          <el-icon :size="25"><User /></el-icon>
+        </el-avatar>
+        <span class="avatar-edit" title="更换头像"><el-icon><Camera /></el-icon></span>
+      </el-upload>
+      <div class="identity">
+        <strong>{{ userInfo.username }}</strong>
+        <span>{{ userInfo.email || '未设置邮箱' }}</span>
+      </div>
+      <div class="registration">
+        <el-icon><Calendar /></el-icon>
+        <span>注册于 {{ formatDate(userInfo.createdAt) }}</span>
+      </div>
+    </section>
+
+    <section class="stats-grid">
+        <div class="stat-card panel conversations">
           <div class="stat-icon conversations">
             <el-icon><ChatDotRound /></el-icon>
           </div>
@@ -47,7 +41,7 @@
             <div class="stat-label">对话数</div>
           </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card panel roles">
           <div class="stat-icon roles">
             <el-icon><UserFilled /></el-icon>
           </div>
@@ -56,7 +50,7 @@
             <div class="stat-label">角色数</div>
           </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card panel messages">
           <div class="stat-icon messages">
             <el-icon><Message /></el-icon>
           </div>
@@ -65,15 +59,16 @@
             <div class="stat-label">消息数</div>
           </div>
         </div>
-      </div>
+    </section>
 
-      <!-- 主要内容区域 -->
-      <div class="content-grid">
-        <!-- 个人信息编辑 -->
-        <div class="content-card">
+    <section class="content-grid">
+        <div class="content-card panel">
           <div class="card-header">
-            <h2 class="card-title">个人信息</h2>
-            <p class="card-subtitle">管理您的个人资料信息</p>
+            <span class="section-icon"><el-icon><User /></el-icon></span>
+            <div>
+              <h2 class="card-title">个人信息</h2>
+              <p class="card-subtitle">管理您的个人资料信息</p>
+            </div>
           </div>
           <div class="card-body">
             <el-form :model="userInfo" label-position="top" class="profile-form">
@@ -96,20 +91,22 @@
               </el-form-item>
 
               <el-form-item>
-                <button class="save-button" @click="updateProfile">
+                <el-button type="primary" @click="updateProfile">
                   <el-icon><Check /></el-icon>
                   <span>保存更改</span>
-                </button>
+                </el-button>
               </el-form-item>
             </el-form>
           </div>
         </div>
 
-        <!-- 账户安全 -->
-        <div class="content-card">
+        <div class="content-card panel">
           <div class="card-header">
-            <h2 class="card-title">账户安全</h2>
-            <p class="card-subtitle">修改密码和账户安全设置</p>
+            <span class="section-icon"><el-icon><Lock /></el-icon></span>
+            <div>
+              <h2 class="card-title">账户安全</h2>
+              <p class="card-subtitle">修改密码和账户安全设置</p>
+            </div>
           </div>
           <div class="card-body">
             <el-form :model="accountForm" label-position="top" class="security-form">
@@ -145,16 +142,15 @@
               </el-form-item>
 
               <el-form-item>
-                <button class="save-button secondary" @click="changePassword">
+                <el-button @click="changePassword">
                   <el-icon><Lock /></el-icon>
                   <span>修改密码</span>
-                </button>
+                </el-button>
               </el-form-item>
             </el-form>
           </div>
         </div>
-      </div>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -665,6 +661,286 @@ onMounted(async () => {
 
 :deep(.el-upload) {
   border: none !important;
+}
+
+/* 与管理页面统一为紧凑、连续的工作区。 */
+.user-view {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-primary);
+}
+
+.panel {
+  background: color-mix(in srgb, var(--bg-card) 90%, transparent);
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.page-header {
+  box-sizing: border-box;
+  min-height: 50px;
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.page-title,
+.profile-summary,
+.registration,
+.card-header {
+  display: flex;
+  align-items: center;
+}
+
+.page-title {
+  gap: 9px;
+}
+
+.page-title h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.title-icon,
+.section-icon {
+  display: grid;
+  place-items: center;
+  color: var(--primary-color);
+  background: var(--primary-fade);
+  border: 1px solid var(--primary-line);
+  border-radius: 6px;
+}
+
+.title-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.account-status {
+  height: 28px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--primary-color);
+  background: var(--primary-fade);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.profile-summary {
+  min-height: 76px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  gap: 12px;
+}
+
+.avatar-uploader {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.user-avatar {
+  border: 1px solid var(--primary-line);
+  background: var(--primary-fade);
+  color: var(--primary-color);
+}
+
+.avatar-edit {
+  position: absolute;
+  right: -2px;
+  bottom: 1px;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--primary-color);
+  border: 2px solid var(--bg-card);
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.identity {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.identity strong {
+  font-size: 15px;
+}
+
+.identity span,
+.registration {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registration {
+  margin-left: auto;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.stats-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat-card {
+  position: relative;
+  min-height: 72px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  gap: 10px;
+  border-radius: 7px;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: var(--primary-color);
+}
+
+.stat-card.roles::before {
+  background: #4d8f72;
+}
+
+.stat-card.messages::before {
+  background: #b38a3e;
+}
+
+.stat-card:hover {
+  border-color: var(--border-hover);
+  transform: none;
+}
+
+.stat-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 17px;
+}
+
+.stat-value {
+  margin: 0 0 2px;
+  font-size: 18px;
+}
+
+.stat-label {
+  font-size: 11px;
+}
+
+.content-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.content-card {
+  border-radius: 7px;
+  transition: border-color 0.2s ease;
+}
+
+.card-header {
+  min-height: 54px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  margin: 0;
+  gap: 9px;
+}
+
+.section-icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+.card-title {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.card-subtitle {
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
+.card-body {
+  padding: 12px;
+}
+
+.profile-form .el-form-item,
+.security-form .el-form-item {
+  margin-bottom: 14px;
+}
+
+.profile-form .el-form-item:last-child,
+.security-form .el-form-item:last-child {
+  margin: 2px 0 0;
+}
+
+.profile-form :deep(.el-form-item__label),
+.security-form :deep(.el-form-item__label) {
+  margin-bottom: 5px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.custom-input :deep(.el-input__wrapper) {
+  min-height: 32px;
+  border-radius: 6px;
+}
+
+.form-hint {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.card-body :deep(.el-button) {
+  height: 30px;
+  min-width: 96px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .user-view {
+    padding: var(--space-md);
+    gap: var(--space-md);
+  }
+
+  .profile-summary {
+    flex-wrap: wrap;
+  }
+
+  .registration {
+    width: 100%;
+    margin-left: 64px;
+  }
+
+  .stats-grid,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 
