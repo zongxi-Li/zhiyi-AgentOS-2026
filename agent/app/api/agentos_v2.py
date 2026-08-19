@@ -100,6 +100,16 @@ def _state(run: WorkflowRun) -> dict[str, Any]:
     return {key: raw[key] for key in allowed if key in raw}
 
 
+def _legacy_provenance_items(value: Any, allowed: set[str]) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {key: _redact(item[key]) for key in allowed if key in item}
+        for item in value[:100]
+        if isinstance(item, dict)
+    ]
+
+
 def project_run(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]:
     """Project lifecycle and references without task input or output bodies."""
     state = _state(run)
@@ -297,10 +307,33 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
     async def get_provenance(run_id: str):
         run = load_run(run_id)
         ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, task_id=run.task_id)
+        events = ledger.trace_events()
+        legacy = run.provenance if isinstance(run.provenance, dict) else {}
+        if not events and any(isinstance(legacy.get(key), list) and legacy[key] for key in ("productions", "consumptions", "interactions")):
+            common = {"eventId", "runId", "taskId", "attempt", "previousHash", "eventHash", "createdAt"}
+            return {
+                "runId": run.run_id,
+                "schemaVersion": legacy.get("schemaVersion"),
+                "integrityStatus": legacy.get("integrityStatus", "unknown"),
+                "productions": _legacy_provenance_items(legacy.get("productions"), common | {
+                    "producerStepId", "agentName", "checksum", "fieldNames", "tokenSize", "evidenceRefs",
+                }),
+                "consumptions": _legacy_provenance_items(legacy.get("consumptions"), common | {
+                    "consumerStepId", "producerStepIds", "consumerAgentName", "producerEventIds",
+                    "consumedFields", "fieldsByProducer", "tokensDelivered", "tokensAvailable",
+                    "savingRatio", "contractStatus", "checksum",
+                }),
+                "interactions": _legacy_provenance_items(legacy.get("interactions"), common | {
+                    "interactionId", "edgeIds", "producerStepIds", "consumerStepId",
+                    "producerAgentNames", "consumerAgentName", "fieldsByProducer", "tokensDelivered",
+                    "tokensAvailable", "savingRatio", "evidenceRefs", "contractStatus", "checksum",
+                }),
+                "legacy": True,
+            }
         return {
             "runId": run.run_id,
             "integrityStatus": "valid" if ledger.verify_integrity() else "invalid",
-            "events": ledger.trace_events(),
+            "events": events,
         }
 
     @router.get("/runs/{run_id}/checkpoints")

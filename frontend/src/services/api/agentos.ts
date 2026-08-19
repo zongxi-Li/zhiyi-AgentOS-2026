@@ -496,13 +496,26 @@ const outputMarkdown = (content: Record<string, any>): string | null => {
   return null
 }
 
-const provenanceProjection = (raw: { integrityStatus?: string; events?: Array<Record<string, any>> }) => {
+const provenanceProjection = (raw: {
+  schemaVersion?: number
+  integrityStatus?: string
+  events?: Array<Record<string, any>>
+  productions?: ProvenanceProduction[]
+  consumptions?: ProvenanceConsumption[]
+  interactions?: RuntimeInteraction[]
+}) => {
   const events = Array.isArray(raw.events) ? raw.events : []
   const payloads = events.map(event => ({ eventType: String(event.eventType || ''), ...(event.payload || {}) }))
-  const productions = payloads.filter(item => item.producerStepId && !item.consumerStepId) as unknown as ProvenanceProduction[]
-  const consumptions = payloads.filter(item => item.consumerStepId && !item.interactionId) as unknown as ProvenanceConsumption[]
-  const interactions = payloads.filter(item => item.interactionId) as unknown as RuntimeInteraction[]
-  return { integrityStatus: raw.integrityStatus, productions, consumptions, interactions }
+  const productions = events.length
+    ? payloads.filter(item => item.producerStepId && !item.consumerStepId) as unknown as ProvenanceProduction[]
+    : (Array.isArray(raw.productions) ? raw.productions : [])
+  const consumptions = events.length
+    ? payloads.filter(item => item.consumerStepId && !item.interactionId) as unknown as ProvenanceConsumption[]
+    : (Array.isArray(raw.consumptions) ? raw.consumptions : [])
+  const interactions = events.length
+    ? payloads.filter(item => item.interactionId) as unknown as RuntimeInteraction[]
+    : (Array.isArray(raw.interactions) ? raw.interactions : [])
+  return { schemaVersion: raw.schemaVersion, integrityStatus: raw.integrityStatus, productions, consumptions, interactions }
 }
 
 export const agentosApi = {

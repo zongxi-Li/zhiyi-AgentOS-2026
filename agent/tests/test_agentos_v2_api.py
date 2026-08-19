@@ -130,6 +130,33 @@ async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(t
         assert response.status_code == 404
 
 
+async def test_v2_provenance_falls_back_to_read_only_legacy_snapshot(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_task("Legacy provenance projection", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.task_id, workflow_id="api-workflow")
+    run.provenance = {
+        "schemaVersion": 2,
+        "integrityStatus": "valid",
+        "productions": [{"eventId": "prod_000001", "producerStepId": "report", "fieldNames": ["report"]}],
+        "consumptions": [{"eventId": "cons_000002", "consumerStepId": "deliver", "tokensAvailable": 100, "tokensDelivered": 40}],
+        "interactions": [{"eventId": "int_000003", "interactionId": "int_000003", "consumerStepId": "deliver", "tokensAvailable": 100, "tokensDelivered": 40, "savingRatio": 0.6, "content": _SECRET}],
+    }
+    runtime.workflow_store.save_run(run)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/agentos/v2/runs/{run.run_id}/provenance")
+
+    assert response.status_code == 200
+    assert response.json()["legacy"] is True
+    assert response.json()["schemaVersion"] == 2
+    assert response.json()["productions"][0]["producerStepId"] == "report"
+    assert response.json()["interactions"][0]["savingRatio"] == 0.6
+    assert response.json()["interactions"][0]["tokensAvailable"] == 100
+    assert _SECRET not in response.text
+
+
 async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     task = runtime.create_task("API resources", workflow_id="api-workflow")

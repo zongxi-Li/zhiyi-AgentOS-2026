@@ -112,6 +112,35 @@ describe('AgentOS v2 application API', () => {
     expect(get).toHaveBeenLastCalledWith('/runs/run_legacy/legacy-outputs', { signal: undefined })
   })
 
+  it('projects low-entropy metrics and lineage from legacy provenance snapshots', async () => {
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: run } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_legacy', graphVersion: 1, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: {
+        schemaVersion: 2,
+        integrityStatus: 'valid',
+        productions: [{ eventId: 'prod_000001', producerStepId: 'research', fieldNames: ['findings'] }],
+        consumptions: [{ eventId: 'cons_000002', consumerStepId: 'deliver', producerStepIds: ['research'], tokensAvailable: 100, tokensDelivered: 40, savingRatio: 0.6 }],
+        interactions: [{ eventId: 'int_000003', interactionId: 'int_000003', consumerStepId: 'deliver', producerStepIds: ['research'], tokensAvailable: 100, tokensDelivered: 40, savingRatio: 0.6 }]
+      } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_legacy_provenance')
+
+    expect(result.provenance.productions).toHaveLength(1)
+    expect(result.provenance.consumptions[0].producerStepIds).toEqual(['research'])
+    expect(result.interactions).toHaveLength(1)
+    expect(result.lowEntropyMetrics).toMatchObject({
+      effectiveSavingRatio: 0.6,
+      tokensAvailable: 100,
+      tokensDelivered: 40,
+      tokensSaved: 60,
+      interactionCount: 1,
+      integrityStatus: 'valid'
+    })
+  })
+
   it('forwards review concurrency fields and does not swallow conflicts', async () => {
     const conflict = { response: { status: 409 } }
     const post = vi.spyOn(agentosRequest, 'post').mockRejectedValue(conflict)
