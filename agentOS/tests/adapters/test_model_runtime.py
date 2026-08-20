@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from time import monotonic
 
 import pytest
 
@@ -141,23 +140,30 @@ def test_registered_runtime_keeps_timeout_across_all_failover_candidates() -> No
     primary = _Provider(
         capability_id="model.local.primary",
         priority=100,
-        delay_seconds=0.2,
     )
     backup = _Provider(
         capability_id="model.local.backup",
         priority=10,
-        delay_seconds=0.2,
     )
     registry = ModelCompatibilityRegistry()
     registry.register(primary)
     registry.register(backup)
+    clock_values = iter((0.0, 0.0, 0.02))
+    observed_timeouts: list[float] = []
+
+    async def controlled_timeout(awaitable, timeout: float):
+        observed_timeouts.append(timeout)
+        awaitable.close()
+        raise asyncio.TimeoutError
+
     runtime = RegisteredModelRuntime(
         registry=registry,
         provider="openai_compatible",
         model="local-chat",
+        clock=lambda: next(clock_values),
+        wait_for=controlled_timeout,
     )
 
-    started = monotonic()
     with pytest.raises(StructuredGenerationError) as captured:
         asyncio.run(
             runtime.generate_json(
@@ -168,9 +174,7 @@ def test_registered_runtime_keeps_timeout_across_all_failover_candidates() -> No
         )
 
     assert captured.value.code == "MODEL_TIMEOUT"
-    assert monotonic() - started < 0.07
-    assert len(primary.requests) == 1
-    assert len(backup.requests) == 1
+    assert observed_timeouts == pytest.approx([0.02, 0.02])
 
 
 def test_registered_runtime_uses_profile_version_constraint() -> None:

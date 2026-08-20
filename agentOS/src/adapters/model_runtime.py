@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Any
 from uuid import uuid4
@@ -31,12 +32,16 @@ class RegisteredModelRuntime:
         provider: str,
         model: str,
         version: str | None = None,
+        clock: Callable[[], float] = monotonic,
+        wait_for: Callable[[Awaitable[Any], float], Awaitable[Any]] | None = None,
     ) -> None:
         """保存只读路由键；空键在构造期失败，避免节点开始后才发现配置不完整。"""
         self._registry = registry
         self.provider = provider.strip()
         self.model = model.strip()
         self.version = version.strip() if version is not None else None
+        self._clock = clock
+        self._wait_for = wait_for or _wait_for
         if not self.provider:
             raise ValueError("MODEL_PROVIDER_REQUIRED: Agent profile must set modelProvider")
         if not self.model:
@@ -90,7 +95,7 @@ class RegisteredModelRuntime:
             options={"max_tokens": max_output_tokens},
             commitId=commit_id,
         )
-        started = monotonic()
+        started = self._clock()
         try:
             candidates = self._registry.resolve_candidates(
                 self.provider,
@@ -108,7 +113,7 @@ class RegisteredModelRuntime:
             # ``timeout_seconds`` 是整个模型选择动作的上限，而不是每个候选各自的
             # 上限。剩余时间在尚未尝试的候选之间均分：主实现慢超时时备实现仍有机会
             # 返回，同时候选数增加也不会线性放大用户等待时间。
-            remaining = timeout_seconds - (monotonic() - started)
+            remaining = timeout_seconds - (self._clock() - started)
             if remaining <= 0:
                 raise StructuredGenerationError(
                     "MODEL_TIMEOUT",
@@ -116,9 +121,9 @@ class RegisteredModelRuntime:
                 )
             candidate_timeout = remaining / (len(candidates) - index)
             try:
-                response = await asyncio.wait_for(
+                response = await self._wait_for(
                     adapter.invoke(request),
-                    timeout=candidate_timeout,
+                    candidate_timeout,
                 )
                 break
             except asyncio.TimeoutError as exc:
@@ -150,10 +155,14 @@ class RegisteredModelRuntime:
             data=dict(response.content),
             provider=response.provider,
             model=response.model,
-            latencyMs=round((monotonic() - started) * 1000),
+            latencyMs=round((self._clock() - started) * 1000),
             promptVersion=prompt_version,
             usage=dict(response.usage),
         )
+
+async def _wait_for(awaitable: Awaitable[Any], timeout: float) -> Any:
+    """Keep asyncio behind an injectable deadline boundary for deterministic tests."""
+    return await asyncio.wait_for(awaitable, timeout=timeout)
 
 
 __all__ = ["RegisteredModelRuntime"]
