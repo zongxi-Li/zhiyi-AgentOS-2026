@@ -11,6 +11,14 @@ from .bootstrap import bootstrap
 
 
 def __getattr__(name: str):
+    if name in {"ApplicationSetup", "ApplicationSetupError", "ModelSetup"}:
+        from .app_setup import ApplicationSetup, ApplicationSetupError, ModelSetup
+
+        return {
+            "ApplicationSetup": ApplicationSetup,
+            "ApplicationSetupError": ApplicationSetupError,
+            "ModelSetup": ModelSetup,
+        }[name]
     if name in {"WorkflowRuntime", "build_default_runtime"}:
         from .workflow_runtime import WorkflowRuntime, build_default_runtime
 
@@ -18,4 +26,11 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-__all__ = ["WorkflowRuntime", "bootstrap", "build_default_runtime"]
+__all__ = [
+    "ApplicationSetup",
+    "ApplicationSetupError",
+    "ModelSetup",
+    "WorkflowRuntime",
+    "bootstrap",
+    "build_default_runtime",
+]

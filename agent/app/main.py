@@ -18,7 +18,12 @@ from app.paths import APP_DATA_DIR
 from app.services.aiservice import AIService
 from app.integrations.model_adapter import configure_model_adapter
 from app.integrations.tool_adapter import configure_tool_adapter
-from app.execution import RunExecutionCoordinator, build_default_runtime, close_runtime
+from app.execution import (
+    RunExecutionCoordinator,
+    build_default_runtime,
+    build_model_setup,
+    close_runtime,
+)
 from app.tools import get_tool_runtime
 from app.config import settings
 from app.security.internal_auth import (
@@ -36,6 +41,7 @@ logger = setup_logger(level=logging.INFO)
 configure_model_adapter()
 configure_tool_adapter()
 runtime = build_default_runtime()
+model_setup = build_model_setup(runtime)
 coordinator = RunExecutionCoordinator(runtime)
 
 # 生命周期事件处理器
@@ -49,12 +55,23 @@ async def lifespan(app: FastAPI):
         logger.info("Read-only tool runtime ready: %s", warmup)
     except Exception as exc:
         logger.warning("Read-only tool runtime warmup failed: %s", type(exc).__name__)
-    await coordinator.startup()
+    try:
+        await model_setup.start()
+        await coordinator.startup()
+    except Exception:
+        await model_setup.close()
+        close_runtime(runtime)
+        raise
     try:
         yield
     finally:
-        await coordinator.shutdown()
-        close_runtime(runtime)
+        try:
+            await coordinator.shutdown()
+        finally:
+            try:
+                await model_setup.close()
+            finally:
+                close_runtime(runtime)
     
         # 关闭时执行 - 简化日志输出
         from app.llm.provider_conversation import close_configured_provider_conversation_store

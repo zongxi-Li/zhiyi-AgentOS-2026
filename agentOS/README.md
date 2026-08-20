@@ -1,5 +1,9 @@
 # AgentOS 部件化统一设计
 
+模型兼容端点的 registry 复用、生命周期、SSE 与外部框架边界见
+[模型运行时装配](docs/model-runtime.md)。Gitee 分叉提交的迁移判定见
+[Gitee 模型运行时迁移检查](docs/gitee-model-runtime-migration.md)。
+
 ```text
 AgentOS
 │

@@ -19,7 +19,7 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
 from components.task_manager.store import WorkflowRegistry
-from runtime import WorkflowRuntime
+from runtime import ApplicationSetup, WorkflowRuntime
 from service.agents import AgentRegistry
 from support.packs.registry import register_installed_packs
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -87,6 +87,18 @@ def configure_runtime(
     runtime.set_intent_llm(intent_llm or GatewayIntentLLM())
     runtime.set_model_runtime(model_runtime or GatewayStructuredGenerationRuntime())
     return runtime
+
+
+def build_model_setup(
+    runtime: WorkflowRuntime,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> ApplicationSetup:
+    """Bind configured adapters to the Runtime-owned model registry."""
+    return ApplicationSetup.from_environment(
+        os.environ if environment is None else environment,
+        model_registry=runtime.model_registry,
+    )
 
 
 def build_default_runtime(
@@ -168,4 +180,10 @@ def close_runtime(runtime: WorkflowRuntime) -> None:
     release_workflow_instance_lock()
 
 
-__all__ = ["GatewayIntentLLM", "build_default_runtime", "close_runtime", "configure_runtime"]
+__all__ = [
+    "GatewayIntentLLM",
+    "build_default_runtime",
+    "build_model_setup",
+    "close_runtime",
+    "configure_runtime",
+]
