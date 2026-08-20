@@ -12,11 +12,11 @@ from contracts.evolution import (
     TrajectoryEvaluation,
 )
 
-from .store import InMemoryEvolutionStore
+from .store import EvolutionStore, InMemoryEvolutionStore
 
 
 class EvolutionService:
-    def __init__(self, *, store: InMemoryEvolutionStore | None = None, proposal_threshold: int = 3) -> None:
+    def __init__(self, *, store: EvolutionStore | None = None, proposal_threshold: int = 3) -> None:
         if proposal_threshold < 1:
             raise ValueError("proposal_threshold must be positive")
         self.store = store or InMemoryEvolutionStore()

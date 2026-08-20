@@ -10,6 +10,8 @@ from adapters.model.native import register_native_runtime
 from components.auditor.decision_store import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
+from components.evolution.service import EvolutionService
+from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
 from components.resource.service import ResourceService
 from components.resource.store import SQLiteResourceStore
@@ -34,6 +36,7 @@ _DEFAULT_DATABASES = {
     "AGENTOS_PROVENANCE_DB": "data/provenance.sqlite3",
     "AGENTOS_AUDIT_DB": "data/audit_decisions.sqlite3",
     "AGENTOS_RESOURCE_DB": "data/resources.sqlite3",
+    "AGENTOS_EVOLUTION_DB": "data/evolution.sqlite3",
 }
 
 
@@ -123,6 +126,9 @@ def build_default_runtime(
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
         resource_service=resource_service,
         scheduler_service=scheduler_service,
+        evolution_service=EvolutionService(
+            store=SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB"))
+        ),
         provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
         tool_runtime=tool_runtime or get_tool_runtime(),
@@ -145,6 +151,7 @@ def close_runtime(runtime: WorkflowRuntime) -> None:
         runtime.memory_store,
         runtime.resource_service.store,
         runtime.scheduler_service.coordinator,
+        runtime.evolution_service.store,
         runtime.provenance_store,
         runtime.decision_store,
         getattr(runtime, "_model_runtime", None),

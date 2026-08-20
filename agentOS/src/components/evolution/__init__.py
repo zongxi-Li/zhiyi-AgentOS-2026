@@ -5,6 +5,12 @@ from components.evolution.skill_service import SkillEvolutionService
 
 __all__ = ["GraphEvolutionService", "SkillEvolutionService"]
 from .service import EvolutionService
-from .store import EvolutionVersionConflict, InMemoryEvolutionStore
+from .store import EvolutionStore, EvolutionVersionConflict, InMemoryEvolutionStore, SQLiteEvolutionStore
 
-__all__ = ["EvolutionService", "EvolutionVersionConflict", "InMemoryEvolutionStore"]
+__all__ = [
+    "EvolutionService",
+    "EvolutionStore",
+    "EvolutionVersionConflict",
+    "InMemoryEvolutionStore",
+    "SQLiteEvolutionStore",
+]
