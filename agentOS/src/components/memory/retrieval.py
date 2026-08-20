@@ -60,18 +60,52 @@ def record_text(record: MemoryRecord) -> str:
 
 
 def lexical_scores(records: list[MemoryRecord], query: str) -> dict[str, float]:
-    terms = _tokens(query)
-    if not terms:
+    """Return deterministic BM25 scores for the already-admitted records."""
+    query_terms = _tokens(query)
+    if not query_terms or not records:
         return {record.memory_id: 0.0 for record in records}
+    documents = {record.memory_id: _tokens(record_text(record)) for record in records}
+    average_length = sum(len(tokens) for tokens in documents.values()) / len(documents)
+    document_frequency = Counter(
+        term for tokens in documents.values() for term in set(tokens)
+    )
+    query_frequency = Counter(query_terms)
+    document_count = len(documents)
+    k1 = 1.5
+    b = 0.75
     scores: dict[str, float] = {}
     for record in records:
-        counts = Counter(_tokens(record_text(record)))
-        scores[record.memory_id] = sum(counts[term] for term in terms) / max(sum(counts.values()), 1)
+        tokens = documents[record.memory_id]
+        counts = Counter(tokens)
+        length_normalizer = 1.0 - b + b * len(tokens) / max(average_length, 1.0)
+        score = 0.0
+        for term, query_count in query_frequency.items():
+            frequency = counts[term]
+            if frequency == 0:
+                continue
+            inverse_frequency = math.log(
+                1.0 + (document_count - document_frequency[term] + 0.5)
+                / (document_frequency[term] + 0.5)
+            )
+            score += query_count * inverse_frequency * (
+                frequency * (k1 + 1.0)
+                / (frequency + k1 * length_normalizer)
+            )
+        scores[record.memory_id] = round(score, 12)
     return scores
 
 
 def _tokens(text: str) -> list[str]:
-    return re.findall(r"[\w\u4e00-\u9fff]+", text.lower())
+    tokens: list[str] = []
+    for chunk in re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]+", text.lower()):
+        if not re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+            tokens.append(chunk)
+            continue
+        tokens.append(chunk)
+        tokens.extend(chunk[index : index + 2] for index in range(max(0, len(chunk) - 1)))
+        if len(chunk) == 1:
+            tokens.append(chunk)
+    return tokens
 
 
 def retrieve(records: list[MemoryRecord], query: MemoryQuery) -> list[MemoryRecord]:
