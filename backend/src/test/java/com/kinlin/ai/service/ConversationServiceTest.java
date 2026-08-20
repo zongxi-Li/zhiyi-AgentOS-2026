@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -68,6 +69,32 @@ class ConversationServiceTest {
         assertFalse(conversationService.deleteConversation(conversationId, UUID.randomUUID()));
 
         verify(messageRepository, never()).deleteByConversationId(conversationId);
+    }
+
+    @Test
+    void listsOnlyTheRequestedWorkspace() {
+        UUID userId = UUID.randomUUID();
+        when(conversationRepository.findRecentConversationsByUserIdAndWorkspaceMode(userId, "agent"))
+                .thenReturn(List.of());
+
+        conversationService.getUserConversations(userId, "agent");
+
+        verify(conversationRepository).findRecentConversationsByUserIdAndWorkspaceMode(userId, "agent");
+        verify(conversationRepository, never()).findRecentConversationsByUserId(userId);
+    }
+
+    @Test
+    void deletesOnlyTheRequestedWorkspace() {
+        UUID userId = UUID.randomUUID();
+        Conversation agentConversation = conversation(UUID.randomUUID(), userId);
+        agentConversation.setWorkspaceMode("agent");
+        when(conversationRepository.findRecentConversationsByUserIdAndWorkspaceMode(userId, "agent"))
+                .thenReturn(List.of(agentConversation));
+
+        conversationService.deleteAllConversations(userId, "agent");
+
+        verify(conversationRepository).deleteAll(List.of(agentConversation));
+        verify(conversationRepository, never()).findByUserId(userId);
     }
 
     private Conversation conversation(UUID conversationId, UUID userId) {

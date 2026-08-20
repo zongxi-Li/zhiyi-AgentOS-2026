@@ -2,13 +2,18 @@ package com.kinlin.ai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.repository.ConversationRepository;
 import com.kinlin.ai.repository.MessageRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.http.codec.ServerSentEvent;
 
 import java.util.Map;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -16,8 +21,84 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class ChatStreamPersistenceServiceTest {
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void doesNotReuseAStreamConversationFromAnotherWorkspace() {
+        UUID userId = UUID.randomUUID();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+        ConversationRepository conversations = mock(ConversationRepository.class);
+        MessageRepository messages = mock(MessageRepository.class);
+        ChatStreamPersistenceService service = new ChatStreamPersistenceService(
+                conversations, messages, new ObjectMapper());
+
+        Conversation existing = new Conversation();
+        existing.setId(UUID.randomUUID());
+        existing.setContextId("ctx-chat");
+        existing.setWorkspaceMode("chat");
+        when(conversations.findByContextId("ctx-chat")).thenReturn(Optional.of(existing));
+        when(conversations.save(any(Conversation.class))).thenAnswer(invocation -> {
+            Conversation saved = invocation.getArgument(0);
+            saved.setId(UUID.randomUUID());
+            return saved;
+        });
+
+        ChatStreamPersistenceService.PreparedStream prepared = service.prepare(Map.of(
+                "text", "agent task",
+                "context_id", "ctx-chat",
+                "workspace_mode", "agent"
+        ));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Conversation.class);
+        verify(conversations).save(captor.capture());
+        assertEquals("agent", captor.getValue().getWorkspaceMode());
+        assertFalse("ctx-chat".equals(captor.getValue().getContextId()));
+        assertEquals(captor.getValue().getContextId(), prepared.contextId());
+        assertEquals("agent", prepared.body().get("workspace_mode"));
+    }
+
+    @Test
+    void doesNotReuseAStreamConversationOwnedByAnotherUser() {
+        UUID userId = UUID.randomUUID();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+        ConversationRepository conversations = mock(ConversationRepository.class);
+        MessageRepository messages = mock(MessageRepository.class);
+        ChatStreamPersistenceService service = new ChatStreamPersistenceService(
+                conversations, messages, new ObjectMapper());
+
+        Conversation existing = new Conversation();
+        existing.setId(UUID.randomUUID());
+        existing.setContextId("ctx-other-user");
+        existing.setUserId(UUID.randomUUID());
+        existing.setWorkspaceMode("chat");
+        when(conversations.findByContextId("ctx-other-user")).thenReturn(Optional.of(existing));
+        when(conversations.save(any(Conversation.class))).thenAnswer(invocation -> {
+            Conversation saved = invocation.getArgument(0);
+            saved.setId(UUID.randomUUID());
+            return saved;
+        });
+
+        ChatStreamPersistenceService.PreparedStream prepared = service.prepare(Map.of(
+                "text", "private task",
+                "context_id", "ctx-other-user",
+                "workspace_mode", "chat"
+        ));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Conversation.class);
+        verify(conversations).save(captor.capture());
+        assertEquals(userId, captor.getValue().getUserId());
+        assertFalse("ctx-other-user".equals(prepared.contextId()));
+    }
 
     @Test
     void persistsFinalContentAndMetricsWithoutRawReasoning() {

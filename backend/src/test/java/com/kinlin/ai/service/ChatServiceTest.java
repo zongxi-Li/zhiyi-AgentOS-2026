@@ -93,6 +93,7 @@ class ChatServiceTest {
         Conversation conversation = new Conversation();
         conversation.setId(UUID.randomUUID());
         conversation.setContextId(contextId);
+        conversation.setUserId(userId);
 
         ChatResponse aiResponse = new ChatResponse();
         aiResponse.setText("AI回复");
@@ -110,6 +111,75 @@ class ChatServiceTest {
         // Then
         assertNotNull(response);
         verify(conversationRepository, never()).save(any(Conversation.class));
+    }
+
+    @Test
+    void testSendMessage_DoesNotReuseConversationFromAnotherWorkspace() {
+        String chatContextId = UUID.randomUUID().toString();
+        chatRequest.setContextId(chatContextId);
+        chatRequest.setWorkspaceMode("agent");
+
+        Conversation chatConversation = new Conversation();
+        chatConversation.setId(UUID.randomUUID());
+        chatConversation.setContextId(chatContextId);
+        chatConversation.setWorkspaceMode("chat");
+
+        ChatResponse aiResponse = new ChatResponse();
+        aiResponse.setText("Agent reply");
+
+        when(conversationRepository.findByContextId(chatContextId)).thenReturn(Optional.of(chatConversation));
+        when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> {
+            Conversation saved = invocation.getArgument(0);
+            saved.setId(UUID.randomUUID());
+            return saved;
+        });
+        when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
+                .thenReturn(Collections.emptyList());
+        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+                .thenReturn(aiResponse);
+
+        ChatResponse response = chatService.sendMessage(chatRequest, userId);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Conversation.class);
+        verify(conversationRepository).save(captor.capture());
+        assertEquals("agent", captor.getValue().getWorkspaceMode());
+        assertNotEquals(chatContextId, captor.getValue().getContextId());
+        assertEquals(captor.getValue().getContextId(), response.getContextId());
+    }
+
+    @Test
+    void testSendMessage_DoesNotReuseConversationOwnedByAnotherUser() {
+        String contextId = UUID.randomUUID().toString();
+        chatRequest.setContextId(contextId);
+        chatRequest.setWorkspaceMode("chat");
+
+        Conversation anotherUsersConversation = new Conversation();
+        anotherUsersConversation.setId(UUID.randomUUID());
+        anotherUsersConversation.setContextId(contextId);
+        anotherUsersConversation.setUserId(UUID.randomUUID());
+        anotherUsersConversation.setWorkspaceMode("chat");
+
+        ChatResponse aiResponse = new ChatResponse();
+        aiResponse.setText("Fresh reply");
+
+        when(conversationRepository.findByContextId(contextId))
+                .thenReturn(Optional.of(anotherUsersConversation));
+        when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> {
+            Conversation saved = invocation.getArgument(0);
+            saved.setId(UUID.randomUUID());
+            return saved;
+        });
+        when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
+                .thenReturn(Collections.emptyList());
+        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+                .thenReturn(aiResponse);
+
+        chatService.sendMessage(chatRequest, userId);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Conversation.class);
+        verify(conversationRepository).save(captor.capture());
+        assertEquals(userId, captor.getValue().getUserId());
+        assertNotEquals(contextId, captor.getValue().getContextId());
     }
 
     @Test
@@ -282,6 +352,7 @@ class ChatServiceTest {
         Conversation conversation = new Conversation();
         conversation.setId(UUID.randomUUID());
         conversation.setContextId(contextId);
+        conversation.setUserId(userId);
 
         Message previousMessage = new Message();
         previousMessage.setContent("之前的消息");
