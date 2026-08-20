@@ -97,7 +97,17 @@ from .recovery import (
     FailureEvent, GraphPatch, GraphPatchRef, GraphPatchResult,
     RecoveryNodeTemplate, RecoveryPlan, RecoveryRecipe,
 )
-from .resource import ResourceLease, ResourceProfile, ResourceSnapshot, SchedulingDecision, SchedulingRequest
+from .resource import (
+    BindingRequirement,
+    ExecutionBinding,
+    ResourceHealthStatus,
+    ResourceLease,
+    ResourceProfile,
+    ResourceSnapshot,
+    ResourceType,
+    SchedulingDecision,
+    SchedulingRequest,
+)
 from .task import TaskConstraint, TaskLifecycleEvent
 from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 
@@ -110,7 +120,8 @@ __all__ = [
     "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
     "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent", "PolicyDecision",
-    "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "ResourceLease", "ResourceProfile", "ResourceSnapshot",
+    "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
+    "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
     "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
     "Trajectory", "TrajectoryEvaluation", "TrajectoryStep", "stable_checksum",

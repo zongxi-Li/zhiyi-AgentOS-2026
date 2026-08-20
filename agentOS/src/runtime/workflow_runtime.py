@@ -43,7 +43,9 @@ from components.executor import (
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryType
+from contracts.resource import BindingRequirement, ResourceType
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
+from components.resource.service import ResourceService
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
     ExecutionInterrupt,
@@ -144,6 +146,7 @@ class WorkflowRuntime:
         run_lock_manager: Optional[RunLockManager] = None,
         recovery_recipe_registry: Optional[object] = None,
         capability_catalog: CapabilityCatalog | None = None,
+        resource_service: ResourceService | None = None,
         resource_directory: ResourceDirectory | None = None,
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
@@ -151,7 +154,15 @@ class WorkflowRuntime:
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
-        self.resource_directory = resource_directory or ResourceDirectory()
+        if resource_directory is not None:
+            directory_service = resource_directory.resource_service
+            if resource_service is not None and directory_service is not resource_service:
+                raise ValueError("ResourceDirectory must delegate to the injected ResourceService")
+            self.resource_service = resource_service or directory_service
+            self.resource_directory = resource_directory
+        else:
+            self.resource_service = resource_service or ResourceService()
+            self.resource_directory = ResourceDirectory(self.resource_service)
         # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
         # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
         self.model_registry = model_registry or ModelCompatibilityRegistry()
@@ -1095,8 +1106,18 @@ class WorkflowRuntime:
         for agent in self.agent_registry.all():
             self.resource_directory.register_agent(agent.profile)
         bindings: dict[str, str] = {}
+        requirements: dict[str, dict[str, object]] = {}
         model_bindings: dict[str, dict[str, str] | None] = {}
         for step in run.steps:
+            required_capability = step.capability or f"agent:{step.agent_name.lower()}"
+            requirement = BindingRequirement(
+                requiredCapabilities=[required_capability],
+                domain=workflow.domain,
+                resourceTypes=[ResourceType.AGENT],
+                allowedResourceIds=list(scope.agent_ids),
+                policyMetadata={"source": "prepared-run", "stepId": step.step_id},
+            )
+            requirements[step.step_id] = requirement.model_dump(by_alias=True, mode="json")
             try:
                 selected = self.resource_directory.resolve_agent(
                     domain=workflow.domain,
@@ -1116,6 +1137,7 @@ class WorkflowRuntime:
                 profile=agent.profile,
             )
         run.execution_state["resourceBindings"] = bindings
+        run.execution_state["bindingRequirements"] = requirements
         run.execution_state["modelBindings"] = model_bindings
 
     def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, str] | None:

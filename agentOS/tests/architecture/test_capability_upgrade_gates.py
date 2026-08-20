@@ -52,6 +52,14 @@ def test_scheduler_has_no_dag_readiness_dependency() -> None:
         assert imports.isdisjoint(forbidden_modules), path
 
 
+def test_resource_directory_has_no_independent_truth_containers() -> None:
+    """The legacy directory is a facade, not a second registry or health store."""
+    from components.resource.directory import ResourceDirectory
+
+    directory = ResourceDirectory()
+    assert set(vars(directory)) == {"resource_service"}
+
+
 def test_memory_and_evolution_forbid_runtime_mutation_primitives() -> None:
     """Memory remains a service/store and evolution remains declarative policy data."""
     guarded_roots = (SRC / "components" / "memory", SRC / "components" / "evolution")

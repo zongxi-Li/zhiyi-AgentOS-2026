@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
@@ -12,16 +13,44 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class ResourceType(str, Enum):
+    """Stable kinds handled by the single resource service."""
+
+    AGENT = "agent"
+    MODEL = "model"
+    EMBEDDING = "embedding"
+    TOOL = "tool"
+    WORKER = "worker"
+    SKILL = "skill"
+
+
+class ResourceHealthStatus(str, Enum):
+    """Persistable health projection; UNKNOWN is the safe restart state."""
+
+    UNKNOWN = "unknown"
+    ONLINE = "online"
+    DEGRADED = "degraded"
+    OFFLINE = "offline"
+
+
 class ResourceProfile(BaseModel):
     """可参与调度的资源静态画像；至少声明一项能力。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="资源唯一标识。")
+    resource_type: ResourceType = Field(default=ResourceType.AGENT, alias="resourceType")
     capabilities: list[StrictStr] = Field(min_length=1, description="资源可提供的能力，不能为空。")
+    domains: list[StrictStr] = Field(default_factory=list, description="资源可服务的稳定领域。")
     labels: dict[str, str] = Field(default_factory=dict, description="用于筛选的稳定键值标签。")
+    location: StrictStr | None = Field(default=None, description="资源位置或部署区域。")
+    data_zone: StrictStr | None = Field(default=None, alias="dataZone", description="数据驻留区域。")
+    cost_metadata: dict[str, float] = Field(default_factory=dict, alias="costMetadata")
     capacity: int = Field(default=1, ge=1, description="该资源可并发承接的最大工作数。")
+    owner_scope: StrictStr | None = Field(default=None, alias="ownerScope")
     enabled: bool = Field(default=True, description="资源是否可接受新调度。")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    version: int = Field(default=1, ge=1)
 
 
 class ResourceSnapshot(BaseModel):
@@ -33,7 +62,44 @@ class ResourceSnapshot(BaseModel):
     observed_at: datetime = Field(default_factory=_utc_now, alias="observedAt", description="观测发生的 UTC 时间。")
     available_slots: int = Field(ge=0, alias="availableSlots", description="当前可供分配的空闲槽位数。")
     utilization: float = Field(ge=0.0, le=1.0, description="资源利用率，范围为 0 到 1。")
+    health_status: ResourceHealthStatus = Field(default=ResourceHealthStatus.UNKNOWN, alias="healthStatus")
+    reliability: float | None = Field(default=None, ge=0.0, le=1.0)
+    latency_ms: float | None = Field(default=None, ge=0.0, alias="latencyMs")
     metrics: dict[str, float] = Field(default_factory=dict, description="可扩展的数值型资源指标。")
+
+
+class BindingRequirement(BaseModel):
+    """Frozen Run/Step policy describing what may execute a future attempt."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    required_capabilities: list[StrictStr] = Field(alias="requiredCapabilities", min_length=1)
+    domain: StrictStr | None = None
+    resource_types: list[ResourceType] = Field(default_factory=list, alias="resourceTypes")
+    allowed_resource_ids: list[StrictStr] = Field(default_factory=list, alias="allowedResourceIds")
+    excluded_resource_ids: list[StrictStr] = Field(default_factory=list, alias="excludedResourceIds")
+    data_zone: StrictStr | None = Field(default=None, alias="dataZone")
+    owner_scope: StrictStr | None = Field(default=None, alias="ownerScope")
+    labels: dict[str, str] = Field(default_factory=dict)
+    max_cost: float | None = Field(default=None, alias="maxCost", ge=0.0)
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    policy_metadata: dict[str, Any] = Field(default_factory=dict, alias="policyMetadata")
+
+
+class ExecutionBinding(BaseModel):
+    """The concrete resource selected for one immutable execution attempt."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    binding_id: StrictStr = Field(alias="bindingId", min_length=1)
+    run_id: StrictStr = Field(alias="runId", min_length=1)
+    step_id: StrictStr = Field(alias="stepId", min_length=1)
+    attempt_id: StrictStr = Field(alias="attemptId", min_length=1)
+    resource_id: StrictStr = Field(alias="resourceId", min_length=1)
+    resource_type: ResourceType = Field(alias="resourceType")
+    snapshot_version: int = Field(alias="snapshotVersion", ge=1)
+    bound_at: datetime = Field(default_factory=_utc_now, alias="boundAt")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResourceLease(BaseModel):

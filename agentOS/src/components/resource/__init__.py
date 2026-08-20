@@ -4,7 +4,7 @@ from .health import ResourceHealthMonitor
 from .directory import AgentResource, ResourceConflictError, ResourceDirectory, ResourceNotFoundError
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .service import ResourceService
-from .store import InMemoryResourceStore, ResourceStore, VersionConflict
+from .store import InMemoryResourceStore, ResourceStore, SQLiteResourceStore, VersionConflict
 
 __all__ = [
     "InMemoryResourceStore",
@@ -17,6 +17,7 @@ __all__ = [
     "ResourceNotFoundError",
     "ResourceService",
     "ResourceStore",
+    "SQLiteResourceStore",
     "VersionConflict",
     "VersionedResourceSnapshot",
 ]

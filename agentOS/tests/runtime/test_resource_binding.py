@@ -51,6 +51,21 @@ def test_prepare_run_freezes_resource_bindings() -> None:
     _, run = runtime.prepare_run(task.task_id)
 
     assert run.execution_state["resourceBindings"] == {"analyse": "agent-primary"}
+    assert run.execution_state["bindingRequirements"] == {
+        "analyse": {
+            "requiredCapabilities": ["analysis"],
+            "domain": "general",
+            "resourceTypes": ["agent"],
+            "allowedResourceIds": ["agent-primary"],
+            "excludedResourceIds": [],
+            "dataZone": None,
+            "ownerScope": None,
+            "labels": {},
+            "maxCost": None,
+            "preferences": {},
+            "policyMetadata": {"source": "prepared-run", "stepId": "analyse"},
+        }
+    }
 
 
 def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> None:

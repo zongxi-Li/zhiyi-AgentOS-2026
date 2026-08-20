@@ -11,6 +11,8 @@ from components.auditor.decision_store import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
+from components.resource.service import ResourceService
+from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.task_manager.store import WorkflowRegistry
 from runtime import WorkflowRuntime
@@ -29,6 +31,7 @@ _DEFAULT_DATABASES = {
     "AGENTOS_EXECUTION_MEMORY_DB": "data/execution_memory.sqlite3",
     "AGENTOS_PROVENANCE_DB": "data/provenance.sqlite3",
     "AGENTOS_AUDIT_DB": "data/audit_decisions.sqlite3",
+    "AGENTOS_RESOURCE_DB": "data/resources.sqlite3",
 }
 
 
@@ -80,6 +83,11 @@ def build_default_runtime(
         checkpoint_store=ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")),
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
+        resource_service=ResourceService(
+            store=SQLiteResourceStore(
+                Path(str(env.get("AGENTOS_RESOURCE_DB") or workflow_path.with_name("resources.sqlite3")))
+            )
+        ),
         provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
         tool_runtime=tool_runtime or get_tool_runtime(),
@@ -100,6 +108,7 @@ def close_runtime(runtime: WorkflowRuntime) -> None:
         runtime.checkpoint_store,
         runtime.execution_value_store,
         runtime.memory_store,
+        runtime.resource_service.store,
         runtime.provenance_store,
         runtime.decision_store,
         getattr(runtime, "_model_runtime", None),

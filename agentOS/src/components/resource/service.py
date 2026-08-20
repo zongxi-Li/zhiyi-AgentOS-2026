@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from contracts.resource import ResourceProfile, ResourceSnapshot
+from contracts.resource import BindingRequirement, ResourceProfile, ResourceSnapshot
 
 from .algorithms import health_score, is_resource_available
 from .health import ResourceHealthMonitor
@@ -45,6 +45,14 @@ class ResourceService:
         """读取调度决策所需的最新版本快照。"""
         return self.store.get_snapshot(resource_id)
 
+    def profile(self, resource_id: str) -> ResourceProfile:
+        """Read the authoritative static profile."""
+        return self.store.get_profile(resource_id)
+
+    def profiles(self) -> list[ResourceProfile]:
+        """List authoritative profiles in stable order."""
+        return self.store.list_profiles()
+
     def heartbeat(self, resource_id: str, *, received_at: datetime | None = None) -> ResourceHealth:
         """记录已登记资源的存活信号，未知资源不会被静默接纳。"""
         self.registry.get(resource_id)
@@ -66,6 +74,11 @@ class ResourceService:
             latency_ms=latency_ms,
             observed_at=observed_at,
         )
+
+    def set_health(self, resource_id: str, *, healthy: bool) -> ResourceHealth:
+        """Record a compatibility adapter's explicit health observation."""
+        self.registry.get(resource_id)
+        return self.health_monitor.set_health(resource_id, healthy=healthy)
 
     def candidates(
         self,
@@ -94,3 +107,29 @@ class ResourceService:
         return sorted(candidates, key=lambda candidate: (-candidate.score, candidate.profile.resource_id))
 
     get_candidates = candidates
+
+    def find_candidates(
+        self, requirement: BindingRequirement, *, now: datetime | None = None
+    ) -> list[ResourceCandidate]:
+        """Resolve a frozen requirement without creating a concrete binding."""
+        allowed = set(requirement.allowed_resource_ids)
+        excluded = set(requirement.excluded_resource_ids)
+        selected = self.candidates(
+            requirement.required_capabilities,
+            labels=requirement.labels,
+            now=now,
+        )
+        return [
+            candidate
+            for candidate in selected
+            if (not allowed or candidate.profile.resource_id in allowed)
+            and candidate.profile.resource_id not in excluded
+            and (not requirement.resource_types or candidate.profile.resource_type in requirement.resource_types)
+            and (requirement.domain is None or not candidate.profile.domains or requirement.domain in candidate.profile.domains or "general" in candidate.profile.domains)
+            and (requirement.data_zone is None or candidate.profile.data_zone == requirement.data_zone)
+            and (requirement.owner_scope is None or candidate.profile.owner_scope == requirement.owner_scope)
+            and (
+                requirement.max_cost is None
+                or candidate.profile.cost_metadata.get("unit", 0.0) <= requirement.max_cost
+            )
+        ]

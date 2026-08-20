@@ -37,12 +37,19 @@ class ResourceHealthMonitor:
         self._reliability: dict[str, float] = {}
         self._latency_ms: dict[str, float] = {}
         self._heartbeats: dict[str, datetime] = {}
+        self._forced_health: dict[str, bool] = {}
 
     def heartbeat(self, resource_id: str, *, received_at: datetime | None = None) -> ResourceHealth:
         """记录本地接收心跳的时间，并返回新的健康投影。"""
         timestamp = _utc(received_at) if received_at is not None else datetime.now(timezone.utc)
         self._heartbeats[resource_id] = timestamp
+        self._forced_health.pop(resource_id, None)
         return self.health(resource_id, now=timestamp)
+
+    def set_health(self, resource_id: str, *, healthy: bool) -> ResourceHealth:
+        """Apply an explicit adapter observation without inventing a heartbeat."""
+        self._forced_health[resource_id] = healthy
+        return self.health(resource_id)
 
     def observe(
         self,
@@ -68,7 +75,8 @@ class ResourceHealthMonitor:
         """按调用时刻计算健康状态，因此资源会在没有新心跳时自然过期。"""
         current_time = _utc(now) if now is not None else datetime.now(timezone.utc)
         heartbeat = self._heartbeats.get(resource_id)
-        healthy = heartbeat is not None and current_time - heartbeat <= self.heartbeat_timeout
+        naturally_healthy = heartbeat is not None and current_time - heartbeat <= self.heartbeat_timeout
+        healthy = self._forced_health.get(resource_id, naturally_healthy)
         return ResourceHealth(
             resource_id=resource_id,
             healthy=healthy,
