@@ -1110,11 +1110,11 @@ onBeforeUnmount(() => {
 .acg-view.has-progress:not(.has-run) > .run-overview { border-top: 0; border-radius: 0 0 8px 8px; }
 .run-overview { margin-top: 12px; overflow: hidden; }
 .run-overview > :deep(.workflow-progress),
-.run-overview > :deep(.dynamic-run-summary) {
+.run-overview > :deep(.agentos-run-summary) {
   margin: 0; border: 0; border-radius: 0; background: transparent;
 }
 .run-overview > :deep(.workflow-progress) { padding: 14px 16px; }
-.run-overview > :deep(.dynamic-run-summary) { padding: 14px 16px; }
+.run-overview > :deep(.agentos-run-summary) { padding: 14px 16px; }
 .hero-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ui-hero h3 { overflow: hidden; margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 800; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .hero-right { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; }

@@ -6,6 +6,7 @@ import { ElMessageBox } from 'element-plus'
 import { agentosApi, type AcgView, type WorkflowRun } from '@/services/api/agentos'
 import { workflowApi, type WorkflowProgress } from '@/services/api/workflow'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
+import AcgRunInspector from '@/components/agentos/AcgRunInspector.vue'
 import RoleTemplateSwitchDialog from '@/components/RoleTemplateSwitchDialog.vue'
 import LawyerSkillPanel from '@/components/agent/LawyerSkillPanel.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
@@ -297,6 +298,10 @@ describe('ChatView ACG progress integration', () => {
     expect(router.currentRoute.value.query.runId).toBe('run_1')
     expect(agentosApi.getAcgView).not.toHaveBeenCalled()
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
+    const inspector = wrapper.findComponent(AcgRunInspector)
+    expect(inspector.exists()).toBe(true)
+    expect(inspector.props('runId')).toBe('run_1')
+    expect(inspector.props('progress')).toEqual(expect.objectContaining({ runId: 'run_1' }))
     wrapper.unmount()
   })
 
