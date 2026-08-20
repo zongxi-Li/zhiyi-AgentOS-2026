@@ -284,18 +284,22 @@ class RAGToolsIntegration:
     ) -> List[Dict]:
         """使用内置RAG服务搜索"""
         try:
+            import asyncio
             from app.services.ragservice import RAGService
             
             # 创建或获取RAG服务实例
             rag_service = RAGService(use_vector_db=True)
             
             # 执行搜索
-            results = rag_service.search(
+            # RAGService 仍提供同步搜索接口；在线程中调用，避免其向量化桥接
+            # 在当前 WorkflowRuntime 事件循环内再次驱动同一个 loop。
+            results = await asyncio.to_thread(
+                rag_service.search,
                 query=query,
                 top_k=top_k,
                 role_id=role_id,
                 use_vector_search=True,
-                **kwargs
+                **kwargs,
             )
             
             logger.debug(f"内置RAG搜索完成: {len(results)} 个结果")

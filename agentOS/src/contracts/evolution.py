@@ -61,6 +61,8 @@ class EvolutionProposal(BaseModel):
     mutations: list[PolicyMutation] = Field(min_length=1)
     evaluation_checksum: str = Field(alias="evaluationChecksum", min_length=1)
     status: EvolutionProposalStatus = EvolutionProposalStatus.DRAFT
+    reviewed_by: str | None = Field(default=None, alias="reviewedBy")
+    reviewed_at: datetime | None = Field(default=None, alias="reviewedAt")
 
 
 class EvolutionPolicyVersion(BaseModel):

@@ -7,7 +7,13 @@ import sqlite3
 from threading import RLock
 from typing import Protocol
 
-from contracts.evolution import EvolutionPolicyVersion
+from contracts.evolution import (
+    EvolutionPolicyVersion,
+    EvolutionProposal,
+    EvolutionProposalStatus,
+    Trajectory,
+    TrajectoryEvaluation,
+)
 
 
 class EvolutionVersionConflict(ValueError):
@@ -21,12 +27,21 @@ class EvolutionStore(Protocol):
     def create(
         self, value: EvolutionPolicyVersion, *, expected_active: int
     ) -> EvolutionPolicyVersion: ...
+    def save_trajectory(self, value: Trajectory) -> Trajectory: ...
+    def get_trajectory(self, trajectory_id: str) -> Trajectory: ...
+    def save_evaluation(self, value: TrajectoryEvaluation) -> TrajectoryEvaluation: ...
+    def get_evaluation(self, trajectory_id: str) -> TrajectoryEvaluation: ...
+    def save_proposal(self, value: EvolutionProposal) -> EvolutionProposal: ...
+    def get_proposal(self, proposal_id: str) -> EvolutionProposal: ...
 
 
 class InMemoryEvolutionStore:
     def __init__(self) -> None:
         self._versions = {0: EvolutionPolicyVersion(version=0, policy={})}
         self._active = 0
+        self._trajectories: dict[str, Trajectory] = {}
+        self._evaluations: dict[str, TrajectoryEvaluation] = {}
+        self._proposals: dict[str, EvolutionProposal] = {}
         self._lock = RLock()
 
     def active(self) -> EvolutionPolicyVersion:
@@ -54,6 +69,54 @@ class InMemoryEvolutionStore:
             self._versions[value.version] = value.model_copy(deep=True)
             self._active = value.version
             return value.model_copy(deep=True)
+
+    def save_trajectory(self, value: Trajectory) -> Trajectory:
+        return self._save_immutable(self._trajectories, value.trajectory_id, value)
+
+    def get_trajectory(self, trajectory_id: str) -> Trajectory:
+        return self._get(self._trajectories, trajectory_id, "trajectory")
+
+    def save_evaluation(self, value: TrajectoryEvaluation) -> TrajectoryEvaluation:
+        return self._save_immutable(self._evaluations, value.trajectory_id, value)
+
+    def get_evaluation(self, trajectory_id: str) -> TrajectoryEvaluation:
+        return self._get(self._evaluations, trajectory_id, "evaluation")
+
+    def save_proposal(self, value: EvolutionProposal) -> EvolutionProposal:
+        with self._lock:
+            existing = self._proposals.get(value.proposal_id)
+            self._validate_proposal_transition(existing, value)
+            self._proposals[value.proposal_id] = value.model_copy(deep=True)
+            return value.model_copy(deep=True)
+
+    def get_proposal(self, proposal_id: str) -> EvolutionProposal:
+        return self._get(self._proposals, proposal_id, "proposal")
+
+    def _save_immutable(self, values, key: str, value):
+        with self._lock:
+            existing = values.get(key)
+            if existing is not None and existing != value:
+                raise EvolutionVersionConflict(f"{key} already exists with different content")
+            values[key] = value.model_copy(deep=True)
+            return value.model_copy(deep=True)
+
+    def _get(self, values, key: str, kind: str):
+        try:
+            return values[key].model_copy(deep=True)
+        except KeyError as exc:
+            raise KeyError(f"unknown evolution {kind}: {key}") from exc
+
+    @staticmethod
+    def _validate_proposal_transition(existing, value: EvolutionProposal) -> None:
+        if existing is None or existing == value:
+            return
+        if existing.model_copy(update={"status": value.status, "reviewed_by": value.reviewed_by, "reviewed_at": value.reviewed_at}) != value:
+            raise EvolutionVersionConflict("proposal content cannot change after validation")
+        if existing.status is not EvolutionProposalStatus.PENDING_REVIEW or value.status not in {
+            EvolutionProposalStatus.APPROVED,
+            EvolutionProposalStatus.REJECTED,
+        }:
+            raise EvolutionVersionConflict("invalid evolution proposal status transition")
 
 
 class SQLiteEvolutionStore:
@@ -90,6 +153,14 @@ class SQLiteEvolutionStore:
             self._connection.execute(
                 "INSERT OR IGNORE INTO evolution_policy_state(singleton, active_version) VALUES (1, 0)"
             )
+            for table, key_name in (
+                ("evolution_trajectories", "trajectory_id"),
+                ("evolution_evaluations", "trajectory_id"),
+                ("evolution_proposals", "proposal_id"),
+            ):
+                self._connection.execute(
+                    f"CREATE TABLE IF NOT EXISTS {table} ({key_name} TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
 
     def active(self) -> EvolutionPolicyVersion:
         with self._lock:
@@ -160,6 +231,66 @@ class SQLiteEvolutionStore:
                 self._connection.rollback()
                 raise
         return value.model_copy(deep=True)
+
+    def save_trajectory(self, value: Trajectory) -> Trajectory:
+        return self._save_json("evolution_trajectories", "trajectory_id", value.trajectory_id, value, immutable=True)
+
+    def get_trajectory(self, trajectory_id: str) -> Trajectory:
+        return Trajectory.model_validate_json(
+            self._get_json("evolution_trajectories", "trajectory_id", trajectory_id, "trajectory")
+        )
+
+    def save_evaluation(self, value: TrajectoryEvaluation) -> TrajectoryEvaluation:
+        return self._save_json("evolution_evaluations", "trajectory_id", value.trajectory_id, value, immutable=True)
+
+    def get_evaluation(self, trajectory_id: str) -> TrajectoryEvaluation:
+        return TrajectoryEvaluation.model_validate_json(
+            self._get_json("evolution_evaluations", "trajectory_id", trajectory_id, "evaluation")
+        )
+
+    def save_proposal(self, value: EvolutionProposal) -> EvolutionProposal:
+        with self._lock:
+            try:
+                existing = self.get_proposal(value.proposal_id)
+            except KeyError:
+                existing = None
+            InMemoryEvolutionStore._validate_proposal_transition(existing, value)
+            return self._save_json(
+                "evolution_proposals",
+                "proposal_id",
+                value.proposal_id,
+                value,
+                immutable=False,
+            )
+
+    def get_proposal(self, proposal_id: str) -> EvolutionProposal:
+        return EvolutionProposal.model_validate_json(
+            self._get_json("evolution_proposals", "proposal_id", proposal_id, "proposal")
+        )
+
+    def _save_json(self, table: str, key_name: str, key: str, value, *, immutable: bool):
+        payload = value.model_dump_json(by_alias=True)
+        with self._lock:
+            row = self._connection.execute(
+                f"SELECT payload FROM {table} WHERE {key_name} = ?", (key,)
+            ).fetchone()
+            if row is not None and immutable and str(row["payload"]) != payload:
+                raise EvolutionVersionConflict(f"{key} already exists with different content")
+            self._connection.execute(
+                f"INSERT OR REPLACE INTO {table}({key_name}, payload) VALUES (?, ?)",
+                (key, payload),
+            )
+            self._connection.commit()
+        return value.model_copy(deep=True)
+
+    def _get_json(self, table: str, key_name: str, key: str, kind: str) -> str:
+        with self._lock:
+            row = self._connection.execute(
+                f"SELECT payload FROM {table} WHERE {key_name} = ?", (key,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown evolution {kind}: {key}")
+        return str(row["payload"])
 
     def close(self) -> None:
         with self._lock:

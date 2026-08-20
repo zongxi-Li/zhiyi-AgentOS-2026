@@ -11,7 +11,15 @@ from components.evolution.store import (
     InMemoryEvolutionStore,
     SQLiteEvolutionStore,
 )
-from contracts.evolution import EvolutionPolicyVersion
+from contracts.evolution import (
+    EvolutionPolicyVersion,
+    EvolutionProposal,
+    EvolutionProposalStatus,
+    PolicyMutation,
+    Trajectory,
+    TrajectoryEvaluation,
+    TrajectoryStep,
+)
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -64,5 +72,47 @@ def test_sqlite_evolution_store_survives_restart(tmp_path: Path) -> None:
         assert restarted.active().version == 1
         assert restarted.active().policy == {"route": "stable"}
         assert [item.version for item in restarted.list_versions()] == [0, 1]
+    finally:
+        restarted.close()
+
+
+def test_sqlite_real_run_artifacts_survive_restart(tmp_path: Path) -> None:
+    path = tmp_path / "artifacts.sqlite3"
+    trajectory = Trajectory(
+        trajectoryId="trajectory:run-1:checksum",
+        task={"runId": "run-1", "policyVersion": 0},
+        steps=[TrajectoryStep(stepId="analyse", actionType="evidence_analysis")],
+        outcome={"status": "completed", "checkpointId": "checkpoint-1"},
+    )
+    evaluation = TrajectoryEvaluation(
+        trajectoryId=trajectory.trajectory_id,
+        successScore=1,
+        efficiencyScore=1,
+        noveltyScore=0,
+        qualityScore=1,
+    )
+    proposal = EvolutionProposal(
+        proposalId="proposal:run-1",
+        baseVersion=0,
+        trajectoryIds=[trajectory.trajectory_id],
+        mutations=[PolicyMutation(
+            mutationType="budget_adjustment",
+            target="memory_token_budget",
+            value=768,
+        )],
+        evaluationChecksum="evaluation-checksum",
+        status=EvolutionProposalStatus.PENDING_REVIEW,
+    )
+    first = SQLiteEvolutionStore(path)
+    first.save_trajectory(trajectory)
+    first.save_evaluation(evaluation)
+    first.save_proposal(proposal)
+    first.close()
+
+    restarted = SQLiteEvolutionStore(path)
+    try:
+        assert restarted.get_trajectory(trajectory.trajectory_id) == trajectory
+        assert restarted.get_evaluation(trajectory.trajectory_id) == evaluation
+        assert restarted.get_proposal(proposal.proposal_id) == proposal
     finally:
         restarted.close()

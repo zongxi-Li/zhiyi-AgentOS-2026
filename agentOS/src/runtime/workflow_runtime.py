@@ -42,6 +42,12 @@ from components.executor import (
 )
 from components.memory import MemoryService, StructuredMemoryEvent
 from components.evolution.service import EvolutionService
+from contracts.evolution import (
+    EvolutionPolicyVersion,
+    EvolutionProposal,
+    Trajectory,
+    TrajectoryEvaluation,
+)
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
@@ -1473,6 +1479,21 @@ class WorkflowRuntime:
             if memory_policy is not None:
                 if not isinstance(memory_policy, dict):
                     raise ValueError(f"ACG step {node.node_id} memoryPolicy must be an object")
+                memory_policy = dict(memory_policy)
+                evolved_budget = (run.execution_state.get("evolutionPolicy") or {}).get(
+                    "budget_adjustment:memory_token_budget"
+                )
+                if evolved_budget is not None:
+                    if (
+                        not isinstance(evolved_budget, (int, float))
+                        or isinstance(evolved_budget, bool)
+                        or evolved_budget <= 0
+                    ):
+                        raise ValueError("active evolution memory token budget must be positive")
+                    memory_policy["tokenBudget"] = int(evolved_budget)
+                    run.execution_state.setdefault("appliedEvolutionPolicy", {})[
+                        "memoryTokenBudget"
+                    ] = int(evolved_budget)
                 # 在 prepare_run 冻结前立即校验并标准化策略。这样错误配置不会等到
                 # 节点已经调用 Agent 后才暴露；保存到运行的快照始终采用读写分离格式。
                 normalized = ACGNodeRunner._memory_policy({"memoryPolicy": memory_policy})
@@ -1845,6 +1866,28 @@ class WorkflowRuntime:
     def list_reviews(self, run_id: str) -> list[ReviewRecord]:
         """读取运行审核记录列表，不执行审核决策或状态迁移。"""
         return self.review_manager.list(self.workflow_store.get_run(run_id))
+
+    def propose_evolution_from_run(
+        self, run_id: str
+    ) -> tuple[Trajectory, TrajectoryEvaluation, EvolutionProposal]:
+        """从一个真实完成运行投影轨迹并生成待人工审核的演化提案。"""
+        run = self.workflow_store.get_run(run_id)
+        if run.status is not WorkflowStatus.COMPLETED:
+            raise ValueError("only a completed workflow run can produce an evolution proposal")
+        ledger = self.provenance_store.load_ledger(run_id=run.run_id, task_id=run.task_id)
+        return self.evolution_service.propose_from_run(
+            run,
+            provenance_events=ledger.trace_events(),
+        )
+
+    def approve_evolution_proposal(
+        self, proposal_id: str, *, approved_by: str
+    ) -> EvolutionPolicyVersion:
+        """审核一个已持久化提案并以 CAS 创建新的 General 策略版本。"""
+        if not approved_by.strip():
+            raise ValueError("evolution proposal reviewer is required")
+        proposal = self.evolution_service.store.get_proposal(proposal_id)
+        return self.evolution_service.approve(proposal, approved_by=approved_by.strip())
 
     def evaluate_runs(
         self,

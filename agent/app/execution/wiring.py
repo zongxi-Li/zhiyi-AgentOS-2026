@@ -127,7 +127,8 @@ def build_default_runtime(
         resource_service=resource_service,
         scheduler_service=scheduler_service,
         evolution_service=EvolutionService(
-            store=SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB"))
+            store=SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB")),
+            proposal_threshold=1,
         ),
         provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),

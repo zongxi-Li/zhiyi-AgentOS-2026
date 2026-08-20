@@ -47,6 +47,12 @@ class EvolutionRollbackRequest(BaseModel):
     reviewer: str = Field(min_length=1)
 
 
+class EvolutionApprovalRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    reviewer: str = Field(min_length=1)
+
+
 _SENSITIVE_KEYS = (
     "authorization", "password", "secret", "token", "cookie", "api_key",
     "apikey", "prompt", "arguments", "response", "content", "input",
@@ -459,6 +465,32 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
         ]
         return {"items": items, "total": len(items)}
 
+    @router.post("/runs/{run_id}/evolution-proposals")
+    async def create_evolution_proposal(run_id: str):
+        load_run(run_id)
+        try:
+            trajectory, evaluation, proposal = runtime.propose_evolution_from_run(run_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="evolution proposal conflict") from exc
+        return {
+            "trajectory": trajectory.model_dump(by_alias=True, mode="json"),
+            "evaluation": evaluation.model_dump(by_alias=True, mode="json"),
+            "proposal": proposal.model_dump(by_alias=True, mode="json"),
+        }
+
+    @router.post("/evolution/proposals/{proposal_id}/approve")
+    async def approve_evolution_proposal(
+        proposal_id: str, request: EvolutionApprovalRequest
+    ):
+        try:
+            version = runtime.approve_evolution_proposal(
+                proposal_id,
+                approved_by=request.reviewer,
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="evolution approval conflict") from exc
+        return version.model_dump(by_alias=True, mode="json")
+
     @router.post("/evolution/rollback")
     async def rollback_evolution_policy(request: EvolutionRollbackRequest):
         try:
@@ -490,4 +522,4 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
     return router
 
 
-__all__ = ["EvolutionRollbackRequest", "RunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
+__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "RunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
