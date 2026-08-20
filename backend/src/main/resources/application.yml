@@ -5,7 +5,7 @@ server:
 
 spring:
   application:
-    name: federal-hub-backend
+    name: kinlin-backend
 
   servlet:
     multipart:
