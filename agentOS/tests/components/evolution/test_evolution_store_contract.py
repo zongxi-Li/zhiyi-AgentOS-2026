@@ -1,3 +1,5 @@
+"""Shared evolution-store contract and restart coverage."""
+
 from __future__ import annotations
 
 from pathlib import Path
