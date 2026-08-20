@@ -8,6 +8,7 @@ from app.execution.coordinator import RunExecutionCoordinator
 from components.executor import InMemoryExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.task_manager.store import WorkflowRegistry
+from contracts.evolution import PolicyMutation, Trajectory
 from contracts.workflow import TraceEventType, WorkflowDefinition, WorkflowStepDefinition
 from runtime import WorkflowRuntime
 from service.agents import AgentRegistry
@@ -99,6 +100,43 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert trace.status_code == 200
         assert "PRIVATE-PROMPT" not in trace.text
         assert any(event["payload"].get("prompt") == "[redacted]" for event in trace.json()["events"])
+
+
+async def test_v2_projects_scheduling_and_versioned_evolution_without_bodies(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_task("Scheduling projection", workflow_id="api-workflow")
+    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    proposal = runtime.evolution_service.propose(
+        [
+            Trajectory(
+                trajectoryId=f"trajectory-{index}",
+                task={"domain": "general"},
+                outcome={"status": "completed"},
+            )
+            for index in range(3)
+        ],
+        PolicyMutation(mutationType="budget_adjustment", target="analysis", value=4096),
+    )
+    assert proposal is not None
+    runtime.evolution_service.approve(proposal, approved_by="reviewer")
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        scheduling = await client.get(f"/agentos/v2/runs/{run.run_id}/scheduling")
+        assert scheduling.status_code == 200
+        assert scheduling.json()["items"][0]["binding"]["resourceId"] == "api-agent"
+
+        active = await client.get("/agentos/v2/evolution/active")
+        assert active.json()["version"] == 1
+        history = await client.get("/agentos/v2/evolution/history")
+        assert history.json()["total"] == 2
+        rolled_back = await client.post(
+            "/agentos/v2/evolution/rollback",
+            json={"targetVersion": 0, "reviewer": "reviewer"},
+        )
+        assert rolled_back.status_code == 200
+        assert rolled_back.json()["version"] == 2
 
 
 async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(tmp_path) -> None:

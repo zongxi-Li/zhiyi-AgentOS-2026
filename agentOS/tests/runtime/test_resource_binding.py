@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from components.task_manager.store import WorkflowRegistry
+from contracts.evolution import PolicyMutation, Trajectory
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime.workflow_runtime import WorkflowRuntime
 from service.agents import AgentRegistry
@@ -82,3 +83,29 @@ def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> Non
     asyncio.run(runtime.execute_prepared_run(run.run_id))
 
     assert calls == ["agent-primary"]
+
+
+def test_approved_evolution_version_only_changes_future_general_runs() -> None:
+    runtime, _ = _runtime([])
+    old_task = runtime.create_task("old", workflow_id="resource-run")
+    _, old_run = runtime.prepare_run(old_task.task_id)
+    proposal = runtime.evolution_service.propose(
+        [
+            Trajectory(
+                trajectoryId=f"trajectory-{index}",
+                task={"domain": "general"},
+                outcome={"status": "completed"},
+            )
+            for index in range(3)
+        ],
+        PolicyMutation(mutationType="budget_adjustment", target="analysis", value=4096),
+    )
+    assert proposal is not None
+    runtime.evolution_service.approve(proposal, approved_by="reviewer")
+    new_task = runtime.create_task("new", workflow_id="resource-run")
+    _, new_run = runtime.prepare_run(new_task.task_id)
+
+    assert old_run.execution_state["evolutionPolicyVersion"] == 0
+    assert new_run.execution_state["evolutionPolicyVersion"] == 1
+    assert old_run.execution_state["evolutionPolicy"] == {}
+    assert new_run.execution_state["evolutionPolicy"] != {}

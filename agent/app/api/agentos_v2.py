@@ -40,6 +40,13 @@ class ReviewApplyRequest(BaseModel):
     operation_id: str = Field(alias="operationId", min_length=1)
 
 
+class EvolutionRollbackRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    target_version: int = Field(alias="targetVersion", ge=0)
+    reviewer: str = Field(min_length=1)
+
+
 _SENSITIVE_KEYS = (
     "authorization", "password", "secret", "token", "cookie", "api_key",
     "apikey", "prompt", "arguments", "response", "content", "input",
@@ -96,6 +103,8 @@ def _state(run: WorkflowRun) -> dict[str, Any]:
         "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
         "memoryRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
         "outputSummaries", "resourceBindings", "bindingHistory",
+        "bindingRequirements", "executionBindings", "schedulingDecisions",
+        "evolutionPolicyVersion",
     )
     return {key: raw[key] for key in allowed if key in raw}
 
@@ -361,6 +370,54 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
             "total": len(reviews),
         }
 
+    @router.get("/runs/{run_id}/scheduling")
+    async def get_scheduling(run_id: str):
+        run = load_run(run_id)
+        items = list(run.execution_state.get("schedulingDecisions") or [])
+        return {"runId": run_id, "items": _redact(items), "total": len(items)}
+
+    @router.get("/runs/{run_id}/memory-events")
+    async def get_memory_events(run_id: str):
+        run = load_run(run_id)
+        items = []
+        for event in run.trace:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            if "retrievalMode" not in payload:
+                continue
+            items.append(
+                {
+                    "stepId": event.step_id,
+                    "retrievalMode": payload.get("retrievalMode"),
+                    "hitRefs": list(payload.get("hitRefs") or []),
+                    "budget": payload.get("tokenBudget"),
+                    "fallbackReason": payload.get("fallbackReason"),
+                    "createdAt": event.created_at,
+                }
+            )
+        return {"runId": run_id, "items": items, "total": len(items)}
+
+    @router.get("/evolution/active")
+    async def get_active_evolution_policy():
+        return runtime.evolution_service.store.active().model_dump(by_alias=True, mode="json")
+
+    @router.get("/evolution/history")
+    async def get_evolution_history():
+        items = [
+            item.model_dump(by_alias=True, mode="json")
+            for item in runtime.evolution_service.store.list_versions()
+        ]
+        return {"items": items, "total": len(items)}
+
+    @router.post("/evolution/rollback")
+    async def rollback_evolution_policy(request: EvolutionRollbackRequest):
+        try:
+            version = runtime.evolution_service.rollback(
+                request.target_version, approved_by=request.reviewer
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="evolution rollback conflict") from exc
+        return version.model_dump(by_alias=True, mode="json")
+
     @router.post("/runs/{run_id}/reviews")
     async def apply_review(run_id: str, request: ReviewApplyRequest):
         load_run(run_id)
@@ -382,4 +439,4 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
     return router
 
 
-__all__ = ["RunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
+__all__ = ["EvolutionRollbackRequest", "RunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]

@@ -209,6 +209,8 @@ class ACGNodeRunner:
             "policyId": memory_policy["policyId"],
             "read": memory_policy["read"],
             "readCount": len(memories),
+            "retrievalMode": "bm25_vector_rrf" if memory_policy["read"] else "disabled",
+            "hitRefs": [memory.memory_id for memory in memories],
             "write": memory_policy["write"],
             "written": False,
             "readTypes": [item.value for item in memory_policy["readTypes"]],

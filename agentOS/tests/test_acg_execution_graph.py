@@ -483,8 +483,10 @@ def test_node_runner_obeys_step_memory_policy_and_returns_safe_access_metadata()
     assert result["memoryRef"] == "memory:none"
     assert result["memoryAccess"] == {
         "policyId": "no-memory",
-        "read": False,
-        "readCount": 0,
+            "read": False,
+            "readCount": 0,
+            "retrievalMode": "disabled",
+            "hitRefs": [],
         "write": False,
         "written": False,
         "readTypes": [],
