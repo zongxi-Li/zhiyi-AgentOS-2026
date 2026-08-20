@@ -91,6 +91,22 @@ from .evolution import (
     TrajectoryStep,
 )
 from .execution import ExecutionOutcomeRef, ExecutionPackageRef
+from .identity import (
+    AttemptId,
+    BlueprintId,
+    RunId,
+    StepExecutionId,
+    TaskNodeId,
+    UserTaskId,
+    generate_identity,
+    new_attempt_id,
+    new_blueprint_id,
+    new_run_id,
+    new_step_execution_id,
+    new_task_node_id,
+    new_user_task_id,
+    validate_identity,
+)
 from .governance import AuditFinding, AuditRequest, PolicyDecision
 from .memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
 from .recovery import (
@@ -115,14 +131,17 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 __all__ = [
     "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind",
-    "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
+    "AttemptId", "BlueprintId", "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
     "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphEvolutionProposal",
     "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
     "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent", "PolicyDecision",
     "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
     "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
-    "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
+    "RunId", "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
+    "StepExecutionId", "TaskNodeId", "UserTaskId", "generate_identity", "new_attempt_id",
+    "new_blueprint_id", "new_run_id", "new_step_execution_id", "new_task_node_id",
+    "new_user_task_id", "validate_identity",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
     "Trajectory", "TrajectoryEvaluation", "TrajectoryStep", "stable_checksum",
     "stable_json_dumps",

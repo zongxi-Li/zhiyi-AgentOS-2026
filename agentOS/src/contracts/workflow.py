@@ -11,6 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
 from contracts.execution import StepStatus, WorkflowProgressPhase
+from contracts.identity import generate_identity
 
 
 def utc_now() -> datetime:
@@ -20,6 +21,8 @@ def utc_now() -> datetime:
 
 def new_id(prefix: str) -> str:
     """以给定前缀生成短 UUID 标识；仅提供唯一性，不表达排序或时间语义。"""
+    if prefix in {"task", "run"}:
+        return generate_identity(prefix)
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
