@@ -19,6 +19,8 @@
       "name": "法条检索",
       "agentName": "statute",
       "capability": "statute_retrieval",
+      "timeout": 20,
+      "maxRetries": 0,
       "nextStepId": "risk"
     },
     {
