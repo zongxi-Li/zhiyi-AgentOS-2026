@@ -25,6 +25,10 @@ class _RecordingToolRuntime:
         self.calls.append((name, arguments))
         return {"ok": True}
 
+    async def astream_execute(self, name: str, arguments: dict[str, object], **kwargs):
+        self.calls.append((name, arguments))
+        yield {"type": "delta"}
+
 
 def test_audited_tool_runtime_blocks_unapproved_tool_before_delegate() -> None:
     """工具未获冻结 scope 授权时，必须在 delegate 调用前失败。"""
@@ -60,3 +64,18 @@ def test_scoped_tool_runtime_has_independent_event_buffer() -> None:
     assert left.events == [{"type": "tool_called", "tool": "search"}]
     assert right.events == []
     assert runtime.events == []
+
+
+def test_audited_tool_stream_checks_scope_before_delegate() -> None:
+    """流式入口必须复用相同授权边界，且审计事件不包含参数。"""
+    delegate = _RecordingToolRuntime()
+    runtime = AuditedToolRuntime(delegate=delegate, allowed_tools={"search"})
+
+    async def collect(name: str):
+        return [event async for event in runtime.astream_execute(name, {"query": "private"})]
+
+    with pytest.raises(ToolAuthorizationError):
+        asyncio.run(collect("shell"))
+    assert delegate.calls == []
+    assert asyncio.run(collect("search")) == [{"type": "delta"}]
+    assert runtime.events == [{"type": "tool_streamed", "tool": "search"}]

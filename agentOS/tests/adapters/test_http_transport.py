@@ -26,6 +26,22 @@ class _Response:
         return b'{"choices": []}'
 
 
+class _SseResponse:
+    """模拟可逐行读取的 SSE 响应，并记录主动关闭。"""
+
+    status = 200
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = iter(lines)
+        self.closed = False
+
+    def readline(self) -> bytes:
+        return next(self._lines, b"")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_http_transport_sends_auth_and_idempotency_outside_json_payload() -> None:
     """密钥和提交标识必须放在请求头，JSON 正文只保留模型调用数据。"""
     requests = []
@@ -83,3 +99,39 @@ def test_http_transport_reads_rotated_key_for_each_request() -> None:
     assert requests[0].get_header("Authorization") == "Bearer old-key"
     assert requests[1].get_header("Authorization") == "Bearer new-key"
     assert revision == 1
+
+
+def test_http_transport_reads_sse_and_closes_when_consumer_stops() -> None:
+    """消费者提前停止时，底层响应必须释放且不缓存事件正文。"""
+    response = _SseResponse(
+        [
+            b'data: {"choices":[{"delta":{"content":"hel"}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
+        ]
+    )
+
+    def opener(_request, *, timeout: float):
+        assert timeout == 120.0
+        return response
+
+    transport = HttpJsonTransport(
+        base_url="https://model.example/v1",
+        api_key="secret-key",
+        opener=opener,
+    )
+
+    async def collect_first() -> list[dict]:
+        events = []
+        async for item in transport.stream_json(path="/chat/completions", payload={}):
+            events.append(item)
+            break
+        return events
+
+    assert asyncio.run(collect_first()) == [
+        {"choices": [{"delta": {"content": "hel"}}]}
+    ]
+    assert response.closed is True

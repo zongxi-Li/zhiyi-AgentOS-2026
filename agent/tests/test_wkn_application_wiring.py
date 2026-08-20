@@ -14,7 +14,7 @@ from adapters.guarded_model import GuardedModelRuntime
 from runtime import WorkflowRuntime
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
-from app.execution.wiring import build_default_runtime, close_runtime
+from app.execution.wiring import build_default_runtime, build_model_setup, close_runtime
 
 
 class _InjectedToolRuntime:
@@ -112,3 +112,18 @@ def test_application_wires_an_injected_redis_lease_coordinator(tmp_path: Path) -
     finally:
         close_runtime(runtime)
     assert client.closed is True
+
+
+def test_model_setup_reuses_the_single_workflow_runtime_registry(tmp_path: Path) -> None:
+    environment = _environment(tmp_path)
+    runtime = build_default_runtime(
+        environment=environment,
+        tool_runtime=_InjectedToolRuntime(),
+        model_runtime=_InjectedModelRuntime(),
+        intent_llm=_InjectedIntentLLM(),
+    )
+    try:
+        setup = build_model_setup(runtime, environment=environment)
+        assert setup.model_registry is runtime.model_registry
+    finally:
+        close_runtime(runtime)

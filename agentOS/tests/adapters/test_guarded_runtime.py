@@ -74,6 +74,22 @@ class _FailingTool:
         raise RuntimeError(str(arguments))
 
 
+class _StreamingTool:
+    def scoped(self, _allowed_tools):
+        return self
+
+    async def run(self, _text: str, **_kwargs):
+        return {"ok": True}
+
+    async def execute(self, _name: str, _arguments: dict[str, object], **_kwargs):
+        return {"ok": True}
+
+    async def astream_execute(self, _name: str, _arguments: dict[str, object], **_kwargs):
+        yield {"delta": "first"}
+        await asyncio.sleep(0.05)
+        yield {"delta": "late"}
+
+
 def test_guarded_model_retries_temporary_error_with_same_commit_id() -> None:
     """可重试模型错误必须复用同一个提交标识，不能生成第二个外部副作用边界。"""
     delegate = _FlakyModel()
@@ -141,4 +157,24 @@ def test_guarded_tool_maps_unknown_failure_without_argument_body() -> None:
 
     assert captured.value.code == "TOOL_EXECUTION_FAILED"
     assert "private input" not in str(captured.value)
+
+
+def test_guarded_tool_stream_enforces_total_timeout() -> None:
+    """流式工具在完整流生命周期内受总超时保护。"""
+    runtime = GuardedToolRuntime(delegate=_StreamingTool())
+
+    async def collect():
+        return [
+            event
+            async for event in runtime.astream_execute(
+                "search",
+                {"query": "private"},
+                timeout_seconds=0.01,
+            )
+        ]
+
+    with pytest.raises(ToolInvocationError) as captured:
+        asyncio.run(collect())
+    assert captured.value.code == "TOOL_TIMEOUT"
+    assert "private" not in str(captured.value)
 

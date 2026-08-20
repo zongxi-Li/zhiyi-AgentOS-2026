@@ -152,3 +152,44 @@ def test_openai_compatible_runtime_projects_stream_deltas() -> None:
         ("delta", "lo"),
         ("completed", ""),
     ]
+
+
+def test_openai_compatible_runtime_projects_stream_tool_calls() -> None:
+    """工具参数分片只作为当前会话事件返回。"""
+    class _StreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "id": "call-1",
+                            "function": {"name": "search", "arguments": '{"q":"x'},
+                        }]
+                    }
+                }]
+            }
+            yield {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.tools",
+            kind=CapabilityKind.MODEL,
+            displayName="Tool stream model",
+            provider="openai_compatible",
+            capabilities=["local-chat"],
+        ),
+        transport=_StreamTransport(),
+    )
+
+    async def collect():
+        request = ModelInvocationRequest(requestId="stream-tool-1", model="local-chat")
+        return [event async for event in runtime.astream(request)]
+
+    events = asyncio.run(collect())
+    assert [
+        (event.event_type, event.tool_call_id, event.tool_name, event.tool_arguments)
+        for event in events
+    ] == [
+        ("tool_call", "call-1", "search", '{"q":"x'),
+        ("completed", None, None, ""),
+    ]
