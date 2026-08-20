@@ -46,6 +46,7 @@ from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.resource.service import ResourceService
+from components.scheduler.service import SchedulerService
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
     ExecutionInterrupt,
@@ -148,6 +149,7 @@ class WorkflowRuntime:
         capability_catalog: CapabilityCatalog | None = None,
         resource_service: ResourceService | None = None,
         resource_directory: ResourceDirectory | None = None,
+        scheduler_service: SchedulerService | None = None,
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
     ):
@@ -163,6 +165,9 @@ class WorkflowRuntime:
         else:
             self.resource_service = resource_service or ResourceService()
             self.resource_directory = ResourceDirectory(self.resource_service)
+        self.scheduler_service = scheduler_service or SchedulerService(
+            resource_service=self.resource_service
+        )
         # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
         # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
         self.model_registry = model_registry or ModelCompatibilityRegistry()
@@ -551,6 +556,7 @@ class WorkflowRuntime:
             state=execution_state,
             ledger=ledger,
         )
+        scheduled_runner = self._ready_node_runner(run=run, runner=runner)
         run.execution_state["engineMigration"] = "langgraph_fused_v1"
         run.execution_state["graphId"] = blueprint.graph_id
         run = self._set_run_lifecycle(
@@ -563,9 +569,9 @@ class WorkflowRuntime:
         self.task_manager.mark_running(task)
         try:
             stream = (
-                graph.astream(execution_state, runner)
+                graph.astream(execution_state, scheduled_runner)
                 if command is None
-                else graph.astream_after_resume(execution_state, command, runner)
+                else graph.astream_after_resume(execution_state, command, scheduled_runner)
             )
             async for event in stream:
                 self._project_acg_event(run, execution_state, event)
@@ -608,6 +614,65 @@ class WorkflowRuntime:
                 error_message=self._safe_error_message(exc),
             )
             raise
+
+    def _ready_node_runner(self, *, run: WorkflowRun, runner: ACGNodeRunner):
+        """Decorate NodeRunner after Executor readiness with binding and lease coordination."""
+        raw_requirements = run.execution_state.get("bindingRequirements")
+        if not isinstance(raw_requirements, dict):
+            return runner
+        # A recreated Runtime resumes an already-prepared run without repeating
+        # prepare_run. Re-project the current registry through the authoritative
+        # resource service so every resource starts UNKNOWN and becomes usable
+        # only after this live registration heartbeat.
+        for agent in self.agent_registry.all():
+            self.resource_directory.register_agent(agent.profile)
+
+        async def execute(step_id: str, state: ACGExecutionState):
+            payload = raw_requirements.get(step_id)
+            if not isinstance(payload, dict):
+                raise ValueError(f"READY step has no binding requirement: {step_id}")
+            requirement = BindingRequirement.model_validate(payload)
+            step = run.get_step(step_id)
+            attempt_id = f"{run.run_id}:{step_id}:{step.attempt}"
+            while True:
+                decision = self.scheduler_service.schedule_ready(
+                    run_id=run.run_id,
+                    step_id=step_id,
+                    attempt_id=attempt_id,
+                    requirement=requirement,
+                )
+                if decision.status == "allocated":
+                    break
+                await asyncio.sleep(0.01)
+            assert decision.binding is not None and decision.lease is not None
+            selected_agent = self.agent_registry.resolve_by_id(
+                decision.binding.resource_id,
+                allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
+            )
+            runner.agents[step_id] = selected_agent
+            run.execution_state.setdefault("executionBindings", {})[step_id] = (
+                decision.binding.model_dump(by_alias=True, mode="json")
+            )
+            run.execution_state.setdefault("schedulingDecisions", []).append(
+                {
+                    "stepId": step_id,
+                    "attemptId": attempt_id,
+                    "candidates": [
+                        item.model_dump(by_alias=True, mode="json") for item in decision.candidates
+                    ],
+                    "binding": decision.binding.model_dump(by_alias=True, mode="json"),
+                    "lease": decision.lease.model_dump(by_alias=True, mode="json"),
+                }
+            )
+            run.execution_state.setdefault("resourceBindings", {})[step_id] = (
+                decision.binding.resource_id
+            )
+            try:
+                return await runner(step_id, state)
+            finally:
+                self.scheduler_service.release(decision.lease.lease_id)
+
+        return execute
 
     @staticmethod
     def _validate_acg_resume_identity(
@@ -1802,6 +1867,7 @@ class WorkflowRuntime:
             for agent in self.agent_registry.all():
                 self.resource_directory.register_agent(agent.profile)
             bindings = dict(run.execution_state.get("resourceBindings") or {})
+            requirements = dict(run.execution_state.get("bindingRequirements") or {})
             for step in run.steps:
                 if step.step_id in old_step_ids:
                     continue
@@ -1812,6 +1878,15 @@ class WorkflowRuntime:
                     allowed_agent_ids=scope.agent_ids,
                 )
                 bindings[step.step_id] = selected.agent_id
+                requirements[step.step_id] = BindingRequirement(
+                    requiredCapabilities=[
+                        step.capability or f"agent:{step.agent_name.lower()}"
+                    ],
+                    domain=workflow.domain,
+                    resourceTypes=[ResourceType.AGENT],
+                    allowedResourceIds=list(scope.agent_ids),
+                    policyMetadata={"source": "graph-patch", "stepId": step.step_id},
+                ).model_dump(by_alias=True, mode="json")
 
             patch_uri = self.execution_value_store.put_graph_patch(
                 run_id=run.run_id,
@@ -1834,6 +1909,7 @@ class WorkflowRuntime:
             state.graph_patch_refs = list(dict.fromkeys([*state.graph_patch_refs, patch_uri]))
             state.checkpoint_id = None
             run.execution_state["resourceBindings"] = bindings
+            run.execution_state["bindingRequirements"] = requirements
             run.execution_state["sourceBlueprintVersion"] = outcome.blueprint.version
             run.execution_state["graphVersion"] = outcome.blueprint.version
             self._persist_acg_state(run, state)

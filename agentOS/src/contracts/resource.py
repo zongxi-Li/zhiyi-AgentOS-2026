@@ -110,6 +110,11 @@ class ResourceLease(BaseModel):
     lease_id: StrictStr = Field(alias="leaseId", min_length=1, description="租约唯一标识。")
     resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="被租用资源标识。")
     owner_id: StrictStr | None = Field(default=None, alias="ownerId", description="获得使用权的任务或执行标识。")
+    run_id: StrictStr | None = Field(default=None, alias="runId")
+    step_id: StrictStr | None = Field(default=None, alias="stepId")
+    attempt_id: StrictStr | None = Field(default=None, alias="attemptId")
+    slot_count: int = Field(default=1, alias="slotCount", ge=1)
+    status: Literal["active", "released", "expired"] = "active"
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt", description="租约创建的 UTC 时间。")
     expires_at: datetime = Field(alias="expiresAt", description="租约失效的 UTC 时间，必须晚于创建时间。")
 
