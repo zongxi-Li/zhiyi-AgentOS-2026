@@ -518,6 +518,14 @@ const provenanceProjection = (raw: {
   return { schemaVersion: raw.schemaVersion, integrityStatus: raw.integrityStatus, productions, consumptions, interactions }
 }
 
+export interface WorkflowHistoryConfig {
+  runId: string
+  title?: string | null
+  reviewMode?: string
+  enabledPluginIds?: string[]
+  input?: Record<string, unknown>
+}
+
 export const agentosApi = {
   async listWorkflowRuns(
     params: WorkflowRunQuery = {},
@@ -562,6 +570,13 @@ export const agentosApi = {
 
   async getWorkflowRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     const response = await agentosRequest.get<WorkflowRun>(runPath(runId), {
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async getWorkflowHistoryConfig(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowHistoryConfig> {
+    const response = await agentosRequest.get<WorkflowHistoryConfig>(`${runPath(runId)}/history-config`, {
       signal: options.signal
     })
     return response.data

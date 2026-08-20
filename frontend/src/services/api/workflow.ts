@@ -26,6 +26,7 @@ import {
   type StepStatus,
   type TraceEvent,
   type WorkflowRun,
+  type WorkflowHistoryConfig,
   type WorkflowRunQuery,
   type WorkflowStep,
   type WorkflowStatus,
@@ -59,6 +60,7 @@ export type {
   StepStatus,
   TraceEvent,
   WorkflowRun,
+  WorkflowHistoryConfig,
   WorkflowRunQuery,
   WorkflowStep,
   WorkflowStatus,
@@ -93,6 +95,10 @@ export const workflowApi = {
 
   getRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     return agentosApi.getWorkflowRun(runId, options)
+  },
+
+  getRunHistoryConfig(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowHistoryConfig> {
+    return agentosApi.getWorkflowHistoryConfig(runId, options)
   },
 
   getTrace(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowTraceExport> {

@@ -70,6 +70,14 @@ class AgentOsGatewayControllerTest {
                 .andExpect(jsonPath("$.runId").value("run_001"));
         assertEquals("/ai/agentos/v2/runs/run_001/graph", gateway.lastGetPath);
 
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_001/history-config", response(200, Map.of(
+                "runId", "run_001", "input", Map.of("taskGoal", "Restore task")
+        )));
+        mockMvc.perform(get("/api/agentos/v2/runs/run_001/history-config"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.input.taskGoal").value("Restore task"));
+        assertEquals("/ai/agentos/v2/runs/run_001/history-config", gateway.lastGetPath);
+
         mockMvc.perform(get("/api/agentos/core/workflows/runs/run_001/acg"))
                 .andExpect(status().isNotFound());
     }

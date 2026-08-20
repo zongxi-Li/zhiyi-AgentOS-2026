@@ -312,6 +312,7 @@ import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
 import {
   buildWorkbenchStartRequest,
   createNativeWorkbenchDraft,
+  restoreWorkbenchDraft,
   type WorkbenchDraft
 } from '@/features/acg/workbench'
 import { pluginUiExtensions } from '@/plugins'
@@ -765,9 +766,10 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
   isAcgLoading.value = true
   try {
     const runPromise = workflowApi.getRun(runId, { signal })
-    const [runResult, viewResult] = await Promise.allSettled([
+    const [runResult, viewResult, historyConfigResult] = await Promise.allSettled([
       runPromise,
-      workflowApi.getAcgView(runId, { signal, run: runPromise })
+      workflowApi.getAcgView(runId, { signal, run: runPromise }),
+      workflowApi.getRunHistoryConfig(runId, { signal })
     ])
     if (requestGeneration !== topologyGeneration || runId !== activeRunId.value) return
     if (viewResult.status === 'rejected') throw viewResult.reason
@@ -784,7 +786,12 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
     const run = runResult.value
     acgView.value = view
     activeRun.value = run
-    taskName.value = resolveAcgTaskTitle(run)
+    if (loadedRunId.value !== runId && historyConfigResult.status === 'fulfilled') {
+      const historyConfig = historyConfigResult.value
+      restoreWorkbenchDraft(draft, historyConfig, pluginUiExtensions.resolve(historyConfig.enabledPluginIds || []))
+    } else {
+      taskName.value = resolveAcgTaskTitle(run)
+    }
     loadedRunId.value = runId
     lastTopologyRefreshAt = Date.now()
     lastTopologyUpdatedAt = progressTracker.progress.value?.updatedAt ?? null

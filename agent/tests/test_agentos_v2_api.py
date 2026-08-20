@@ -168,6 +168,43 @@ async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(t
         assert response.status_code == 404
 
 
+async def test_v2_history_config_returns_only_owner_visible_workbench_fields(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_task(
+        "Historical workbench",
+        workflow_id="api-workflow",
+        input={
+            "taskGoal": "Restore the saved objective",
+            "materialText": "Owner-visible material",
+            "constraints": ["No external writes"],
+            "expectedArtifacts": ["Report"],
+            "webSearchEnabled": False,
+            "apiKey": _SECRET,
+        },
+    )
+    _, run = runtime.prepare_run(task.task_id, workflow_id="api-workflow", review_mode="human_in_loop")
+    run.enabled_plugin_ids = ["kinlin.legal"]
+    runtime.workflow_store.save_run(run)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/agentos/v2/runs/{run.run_id}/history-config")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["runId"] == run.run_id
+    assert body["title"] == "Historical workbench"
+    assert body["reviewMode"] == "human_in_loop"
+    assert body["enabledPluginIds"] == ["kinlin.legal"]
+    assert body["input"]["taskGoal"] == "Restore the saved objective"
+    assert body["input"]["materialText"] == "Owner-visible material"
+    assert body["input"]["constraints"] == ["No external writes"]
+    assert body["input"]["expectedArtifacts"] == ["Report"]
+    assert body["input"]["webSearchEnabled"] is False
+    assert _SECRET not in response.text
+
+
 async def test_v2_provenance_falls_back_to_read_only_legacy_snapshot(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     task = runtime.create_task("Legacy provenance projection", workflow_id="api-workflow")

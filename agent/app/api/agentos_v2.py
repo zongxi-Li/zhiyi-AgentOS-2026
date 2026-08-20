@@ -109,6 +109,46 @@ def _state(run: WorkflowRun) -> dict[str, Any]:
     return {key: raw[key] for key in allowed if key in raw}
 
 
+_HISTORY_INPUT_KEYS = (
+    "taskName", "taskGoal", "userIntent", "materialText", "materialIds", "constraints",
+    "expectedArtifacts", "planningMode", "planningDiversity", "planningSeed", "webSearchEnabled",
+    "thinkingMode", "pluginData", "contractText", "contractType", "legalReviewGoal",
+    "evidenceFirst", "riskParallel", "conservativeReview",
+)
+
+
+def _history_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return value
+    if isinstance(value, list):
+        return [_history_value(item) for item in value[:100] if isinstance(item, (str, int, float, bool, dict, list))]
+    if isinstance(value, dict):
+        return {
+            str(key): _history_value(item)
+            for key, item in list(value.items())[:100]
+            if not any(marker in str(key).lower().replace("-", "_") for marker in _SENSITIVE_KEYS)
+        }
+    return None
+
+
+def project_history_config(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]:
+    """Return only the owner-visible configuration needed to reopen a historical workbench."""
+    raw = run.input if isinstance(run.input, dict) else {}
+    return {
+        "runId": run.run_id,
+        "title": title or str(raw.get("taskName") or ""),
+        "reviewMode": run.review_mode,
+        "enabledPluginIds": list(run.enabled_plugin_ids),
+        "input": {
+            key: _history_value(raw[key])
+            for key in _HISTORY_INPUT_KEYS
+            if key in raw
+        },
+    }
+
+
 def _legacy_provenance_items(value: Any, allowed: set[str]) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -269,6 +309,15 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str):
         return project(load_run(run_id))
+
+    @router.get("/runs/{run_id}/history-config")
+    async def get_history_config(run_id: str):
+        run = load_run(run_id)
+        try:
+            title = runtime.workflow_store.get_task(run.task_id).title
+        except KeyError:
+            title = None
+        return project_history_config(run, title=title)
 
     @router.get("/runs/{run_id}/graph")
     async def get_graph(run_id: str):

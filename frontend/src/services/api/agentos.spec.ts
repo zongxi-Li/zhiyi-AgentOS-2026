@@ -43,6 +43,18 @@ describe('AgentOS v2 application API', () => {
     expect(get).toHaveBeenCalledWith('/runs/run%2F1', { signal })
   })
 
+  it('loads the protected workbench configuration for a historical Run', async () => {
+    const signal = new AbortController().signal
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { runId: 'run/1', title: '历史任务', input: { taskGoal: '恢复目标' } }
+    } as never)
+
+    await expect(agentosApi.getWorkflowHistoryConfig('run/1', { signal })).resolves.toMatchObject({
+      title: '历史任务', input: { taskGoal: '恢复目标' }
+    })
+    expect(get).toHaveBeenCalledWith('/runs/run%2F1/history-config', { signal })
+  })
+
   it('preserves task titles in run history summaries', async () => {
     vi.spyOn(agentosRequest, 'get').mockResolvedValue({
       data: { items: [{ ...run, title: 'IC-200智能装配生产线立项实施方案' }], total: 1, page: 1, pageSize: 20 }

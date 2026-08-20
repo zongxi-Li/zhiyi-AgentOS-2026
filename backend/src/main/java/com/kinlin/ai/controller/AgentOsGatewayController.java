@@ -53,6 +53,11 @@ public class AgentOsGatewayController {
         return response(gateway.get(runPath(runId)));
     }
 
+    @GetMapping("/runs/{runId}/history-config")
+    public ResponseEntity<Map<String, Object>> getHistoryConfig(@PathVariable String runId) {
+        return response(gateway.get(runPath(runId) + "/history-config"));
+    }
+
     @GetMapping("/runs/{runId}/graph")
     public ResponseEntity<Map<String, Object>> getGraph(@PathVariable String runId) {
         return response(gateway.get(runPath(runId) + "/graph"));

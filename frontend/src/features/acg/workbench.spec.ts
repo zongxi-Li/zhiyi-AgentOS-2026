@@ -3,6 +3,7 @@ import { legalUiExtension } from '@/plugins/legal'
 import {
   buildWorkbenchStartRequest,
   createNativeWorkbenchDraft,
+  restoreWorkbenchDraft,
   type PluginUiExtension
 } from './workbench'
 
@@ -42,6 +43,29 @@ describe('ACG workbench request builder', () => {
     const request = buildWorkbenchStartRequest(draft, [], 'request-local-only')
 
     expect(request.input.webSearchEnabled).toBe(false)
+  })
+
+  it('restores the editable native workbench fields from a historical Run', () => {
+    const draft = createNativeWorkbenchDraft()
+    restoreWorkbenchDraft(draft, {
+      runId: 'run_history',
+      title: '历史港口调度方案',
+      reviewMode: 'human_in_loop',
+      enabledPluginIds: [],
+      input: {
+        taskGoal: '恢复原任务目标', materialText: '恢复原任务材料',
+        constraints: ['控制预算', '两周交付'], expectedArtifacts: ['实施方案'],
+        planningMode: 'template_preferred', planningDiversity: 'balanced', planningSeed: 42,
+        webSearchEnabled: false, thinkingMode: 'deep'
+      }
+    }, [])
+
+    expect(draft).toMatchObject({
+      title: '历史港口调度方案', taskGoal: '恢复原任务目标', materialText: '恢复原任务材料',
+      constraints: ['控制预算', '两周交付'], expectedArtifacts: ['实施方案'],
+      planningMode: 'template_preferred', planningDiversity: 'balanced', planningSeed: 42,
+      webSearchEnabled: false, thinkingMode: 'deep', reviewMode: 'human_in_loop'
+    })
   })
 
   it('allows Legal to contribute domain inputs without overriding scope or client identity', () => {
