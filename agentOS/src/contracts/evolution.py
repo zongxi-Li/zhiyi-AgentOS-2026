@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +27,52 @@ class SkillLifecycleState(str, Enum):
     VERIFIED = "verified"
     DEPRECATED = "deprecated"
     RETIRED = "retired"
+
+
+class EvolutionProposalStatus(str, Enum):
+    DRAFT = "draft"
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    REJECTED_VALIDATION = "rejected_validation"
+
+
+class PolicyMutation(BaseModel):
+    """Closed mutation vocabulary; no executable code or unknown graph nodes."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    mutation_type: Literal[
+        "budget_adjustment",
+        "skill_preference_adjustment",
+        "capability_route_adjustment",
+        "registered_validator_insertion",
+    ] = Field(alias="mutationType")
+    target: str = Field(min_length=1)
+    value: int | float | str | list[str]
+
+
+class EvolutionProposal(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    proposal_id: str = Field(alias="proposalId", min_length=1)
+    base_version: int = Field(alias="baseVersion", ge=0)
+    trajectory_ids: list[str] = Field(alias="trajectoryIds", min_length=1)
+    mutations: list[PolicyMutation] = Field(min_length=1)
+    evaluation_checksum: str = Field(alias="evaluationChecksum", min_length=1)
+    status: EvolutionProposalStatus = EvolutionProposalStatus.DRAFT
+
+
+class EvolutionPolicyVersion(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    version: int = Field(ge=0)
+    base_version: int | None = Field(default=None, alias="baseVersion", ge=0)
+    proposal_ids: list[str] = Field(default_factory=list, alias="proposalIds")
+    policy: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="createdAt")
+    approved_by: str | None = Field(default=None, alias="approvedBy")
+    status: Literal["active", "superseded"] = "active"
 
 
 class TrajectoryStep(BaseModel):
@@ -106,7 +154,7 @@ class GraphEvolutionProposal(BaseModel):
 
 
 __all__ = [
-    "EvolutionAction", "GraphEvolutionProposal", "SkillCandidate",
+    "EvolutionAction", "EvolutionPolicyVersion", "EvolutionProposal", "EvolutionProposalStatus", "GraphEvolutionProposal", "PolicyMutation", "SkillCandidate",
     "SkillEvolutionProposal", "SkillLifecycleState", "Trajectory",
     "TrajectoryEvaluation", "TrajectoryStep",
 ]

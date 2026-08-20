@@ -41,6 +41,7 @@ from components.executor import (
     GraphPatchService,
 )
 from components.memory import MemoryService
+from components.evolution.service import EvolutionService
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
@@ -150,6 +151,7 @@ class WorkflowRuntime:
         resource_service: ResourceService | None = None,
         resource_directory: ResourceDirectory | None = None,
         scheduler_service: SchedulerService | None = None,
+        evolution_service: EvolutionService | None = None,
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
     ):
@@ -168,6 +170,7 @@ class WorkflowRuntime:
         self.scheduler_service = scheduler_service or SchedulerService(
             resource_service=self.resource_service
         )
+        self.evolution_service = evolution_service or EvolutionService()
         # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
         # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
         self.model_registry = model_registry or ModelCompatibilityRegistry()
@@ -411,6 +414,10 @@ class WorkflowRuntime:
                 "plannerAlgorithmVersion": PLANNER_ALGORITHM_VERSION,
             },
         )
+        if (workflow.domain or task.domain).strip().lower() == "general":
+            active_evolution = self.evolution_service.store.active()
+            run.execution_state["evolutionPolicyVersion"] = active_evolution.version
+            run.execution_state["evolutionPolicy"] = dict(active_evolution.policy)
         if is_acg:
             blueprint = self._build_acg_blueprint(task, run, workflow)
             self._validate_blueprint_agents(

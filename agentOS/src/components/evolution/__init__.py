@@ -4,3 +4,7 @@ from components.evolution.graph_service import GraphEvolutionService
 from components.evolution.skill_service import SkillEvolutionService
 
 __all__ = ["GraphEvolutionService", "SkillEvolutionService"]
+from .service import EvolutionService
+from .store import EvolutionVersionConflict, InMemoryEvolutionStore
+
+__all__ = ["EvolutionService", "EvolutionVersionConflict", "InMemoryEvolutionStore"]
