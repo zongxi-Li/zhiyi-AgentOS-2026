@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 
 from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID
 from app.execution.coordinator import RunExecutionCoordinator
@@ -12,6 +13,7 @@ from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowStatu
 
 def _environment(tmp_path) -> dict[str, str]:
     return {
+        **os.environ,
         "AGENTOS_WORKFLOW_DB_PATH": str(tmp_path / "workflows.sqlite3"),
         "AGENTOS_LANGGRAPH_CHECKPOINT_DB": str(tmp_path / "checkpoints.sqlite3"),
         "AGENTOS_EXECUTION_VALUE_DB": str(tmp_path / "values.sqlite3"),
@@ -31,7 +33,7 @@ def _provenance_ids(runtime, run) -> list[str]:
     ]
 
 
-async def test_general_human_review_survives_two_ai_service_restarts(tmp_path) -> None:
+async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_path) -> None:
     environment = _environment(tmp_path)
     first = build_default_runtime(environment=environment)
     task = first.create_task(
@@ -64,6 +66,20 @@ async def test_general_human_review_survives_two_ai_service_restarts(tmp_path) -
     provenance_before = _provenance_ids(first, paused)
     trace_ids_before = [event.event_id for event in paused.trace]
     run_id = paused.run_id
+    blueprint_nodes = paused.acg_blueprint["nodes"]
+    assert len(blueprint_nodes) == 16
+    assert len(paused.acg_blueprint["edges"]) == 42
+    assert {node["nodeId"] for node in blueprint_nodes if node["nodeType"] == "control"} >= {
+        "ctrl_parallel_1",
+        "ctrl_join_1",
+    }
+    memory_events_before = [
+        event for event in paused.trace
+        if event.observation == "Structured memory event projected"
+    ]
+    assert len(memory_events_before) == 6
+    assert any(event.payload.get("evidenceRefs") for event in memory_events_before)
+    assert len(paused.execution_state["phaseCapsuleRefs"]) == 1
     close_runtime(first)
 
     second = build_default_runtime(environment=environment)
@@ -121,4 +137,41 @@ async def test_general_human_review_survives_two_ai_service_restarts(tmp_path) -
     assert scheduling_after[-1]["stepId"] != review_step.step_id
     assert all(item["lease"]["status"] == "released" for item in scheduling_after)
     assert completed.run_id == run_id
+
+    trajectory, evaluation, proposal = third.propose_evolution_from_run(run_id)
+    assert trajectory.task["runId"] == run_id
+    assert len(trajectory.outcome["traceRefs"]) == len(completed.trace)
+    assert len(trajectory.outcome["phaseCapsuleRefs"]) == 2
+    assert all(step.input["candidateCount"] > 0 for step in trajectory.steps)
+    assert all(step.input["memoryEventRef"] for step in trajectory.steps)
+    assert all(step.output["provenanceRefs"] for step in trajectory.steps)
+    assert evaluation.success_score == 1
+    assert proposal.status.value == "pending_review"
+    policy = third.approve_evolution_proposal(
+        proposal.proposal_id,
+        approved_by="golden-policy-reviewer",
+    )
+    assert policy.version == 1
+
+    next_task = third.create_task(
+        title="Verify the evolved General policy snapshot",
+        domain="general",
+        intent="evidence_decision",
+        workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
+        input={"userIntent": "Prepare a new evidence decision run."},
+    )
+    _, next_run = third.prepare_run(
+        next_task.task_id,
+        workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
+    )
+    assert third.get_status(run_id).execution_state["evolutionPolicyVersion"] == 0
+    assert next_run.execution_state["evolutionPolicyVersion"] == 1
+    assert next_run.execution_state["appliedEvolutionPolicy"] == {
+        "memoryTokenBudget": 768
+    }
+    assert all(
+        step.input["memoryPolicy"]["tokenBudget"] == 768
+        for step in next_run.steps
+        if "memoryPolicy" in step.input
+    )
     close_runtime(third)
