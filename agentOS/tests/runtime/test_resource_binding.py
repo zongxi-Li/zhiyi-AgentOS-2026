@@ -63,7 +63,7 @@ def test_prepare_run_freezes_resource_bindings() -> None:
             "ownerScope": None,
             "labels": {},
             "maxCost": None,
-            "preferences": {},
+            "preferences": {"resourceId": "agent-primary"},
             "policyMetadata": {"source": "prepared-run", "stepId": "analyse"},
         }
     }

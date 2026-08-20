@@ -1181,15 +1181,6 @@ class WorkflowRuntime:
         requirements: dict[str, dict[str, object]] = {}
         model_bindings: dict[str, dict[str, str] | None] = {}
         for step in run.steps:
-            required_capability = step.capability or f"agent:{step.agent_name.lower()}"
-            requirement = BindingRequirement(
-                requiredCapabilities=[required_capability],
-                domain=workflow.domain,
-                resourceTypes=[ResourceType.AGENT],
-                allowedResourceIds=list(scope.agent_ids),
-                policyMetadata={"source": "prepared-run", "stepId": step.step_id},
-            )
-            requirements[step.step_id] = requirement.model_dump(by_alias=True, mode="json")
             try:
                 selected = self.resource_directory.resolve_agent(
                     domain=workflow.domain,
@@ -1200,6 +1191,16 @@ class WorkflowRuntime:
             except ResourceNotFoundError as exc:
                 raise ValueError(f"ACG step has no eligible resource: {step.step_id}") from exc
             bindings[step.step_id] = selected.agent_id
+            required_capability = step.capability or f"agent:{step.agent_name.lower()}"
+            requirement = BindingRequirement(
+                requiredCapabilities=[required_capability],
+                domain=workflow.domain,
+                resourceTypes=[ResourceType.AGENT],
+                allowedResourceIds=list(scope.agent_ids),
+                preferences={"resourceId": selected.agent_id},
+                policyMetadata={"source": "prepared-run", "stepId": step.step_id},
+            )
+            requirements[step.step_id] = requirement.model_dump(by_alias=True, mode="json")
             agent = self.agent_registry.resolve_by_id(
                 selected.agent_id,
                 allowed_agent_ids=scope.agent_ids,
@@ -1892,6 +1893,7 @@ class WorkflowRuntime:
                     domain=workflow.domain,
                     resourceTypes=[ResourceType.AGENT],
                     allowedResourceIds=list(scope.agent_ids),
+                    preferences={"resourceId": selected.agent_id},
                     policyMetadata={"source": "graph-patch", "stepId": step.step_id},
                 ).model_dump(by_alias=True, mode="json")
 
@@ -1981,6 +1983,19 @@ class WorkflowRuntime:
             self.agent_registry.resolve_by_id(selected.agent_id, allowed_agent_ids=scope.agent_ids)
             bindings[step_id] = selected.agent_id
             run.execution_state["resourceBindings"] = bindings
+            requirements = dict(run.execution_state.get("bindingRequirements") or {})
+            requirement_payload = requirements.get(step_id)
+            if isinstance(requirement_payload, dict):
+                requirement = BindingRequirement.model_validate(requirement_payload)
+                requirements[step_id] = requirement.model_copy(
+                    update={
+                        "preferences": {
+                            **requirement.preferences,
+                            "resourceId": selected.agent_id,
+                        }
+                    }
+                ).model_dump(by_alias=True, mode="json")
+                run.execution_state["bindingRequirements"] = requirements
             history.append(
                 {
                     "stepId": step_id,

@@ -253,6 +253,9 @@ def test_runtime_rebinds_pending_step_to_scoped_healthy_alternate(tmp_path):
 
     assert selected == "alternate"
     assert calls == ["alternate"]
+    assert completed.execution_state["bindingRequirements"]["deliver"]["preferences"] == {
+        "resourceId": "alternate"
+    }
     assert completed.execution_state["bindingHistory"][-1]["previousAgentId"] == "primary"
     assert any(
         event.event_type.value == "runtime_patch_applied"
