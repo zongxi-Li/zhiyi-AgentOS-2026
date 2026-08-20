@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Mapping
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
 
@@ -49,6 +52,39 @@ class WorkingMemory:
             observations=observations,
         )
 
+
+class HybridMemoryHit(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    memory_id: str = Field(alias="memoryId")
+    lexical_score: float = Field(alias="lexicalScore", ge=0.0)
+    vector_score: float = Field(alias="vectorScore", ge=0.0)
+    fused_score: float = Field(alias="fusedScore", ge=0.0)
+
+
+class MemoryRetrievalEvent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    scope: str
+    mode: str
+    hit_refs: list[str] = Field(alias="hitRefs")
+    budget: int | None = None
+    fallback_reason: str | None = Field(default=None, alias="fallbackReason")
+
+
+class PhaseCapsule(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    capsule_id: str = Field(alias="capsuleId")
+    run_id: str = Field(alias="runId")
+    phase_id: str = Field(alias="phaseId")
+    source_memory_refs: list[str] = Field(alias="sourceMemoryRefs")
+    key_facts: list[str] = Field(default_factory=list, alias="keyFacts")
+    open_risks: list[str] = Field(default_factory=list, alias="openRisks")
+    decisions: list[str] = Field(default_factory=list)
+    token_count: int = Field(alias="tokenCount", ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="createdAt")
+
     def record(self, step_id: str, output: Mapping[str, Any]) -> None:
         """以 ``step_id`` 写入一份浅复制的步骤输出观察。
 
@@ -77,4 +113,4 @@ class WorkingMemory:
         )
 
 
-__all__ = ["MemoryPolicy", "MemoryQuery", "MemoryRecord", "MemoryType", "MemoryWriteBatch", "WorkingMemory"]
+__all__ = ["HybridMemoryHit", "MemoryPolicy", "MemoryQuery", "MemoryRecord", "MemoryRetrievalEvent", "MemoryType", "MemoryWriteBatch", "PhaseCapsule", "WorkingMemory"]

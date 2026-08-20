@@ -2,14 +2,23 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 
 from contracts.memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType
 from components.communicator.contracts import estimate_tokens
 
 from .admission import admitted
 from .algorithms import rerank_memories
-from .retrieval import retrieve
-from .models import WorkingMemory
+from .retrieval import (
+    DeterministicEmbeddingAdapter,
+    EmbeddingAdapter,
+    InMemoryVectorIndex,
+    VectorIndex,
+    lexical_scores,
+    record_text,
+    retrieve,
+)
+from .models import HybridMemoryHit, MemoryRetrievalEvent, PhaseCapsule, WorkingMemory
 from .store import MemoryStore
 
 
@@ -20,8 +29,17 @@ class MemoryService:
     跨线程/进程一致性，应注入具备相应语义的存储实现。
     """
 
-    def __init__(self, store: MemoryStore | None = None) -> None:
+    def __init__(
+        self,
+        store: MemoryStore | None = None,
+        *,
+        embedding_adapter: EmbeddingAdapter | None = None,
+        vector_index: VectorIndex | None = None,
+    ) -> None:
         self._store = store or MemoryStore()
+        self.embedding_adapter = embedding_adapter or DeterministicEmbeddingAdapter()
+        self.vector_index = vector_index or InMemoryVectorIndex()
+        self.rebuild_vector_index()
 
     def remember(self, record: MemoryRecord, policy: MemoryPolicy | None = None) -> bool:
         """在 ``record`` 符合可选策略时写入并返回 ``True``。
@@ -32,7 +50,134 @@ class MemoryService:
         if not admitted(record, policy):
             return False
         self._store.put(record)
+        self.vector_index.upsert(
+            record.memory_id,
+            self.embedding_adapter.embed(record_text(record)),
+        )
         return True
+
+    def rebuild_vector_index(self) -> int:
+        """Rebuild the derived vector index completely from the authoritative store."""
+        count = 0
+        for record in self._store.values():
+            self.vector_index.upsert(
+                record.memory_id,
+                self.embedding_adapter.embed(record_text(record)),
+            )
+            count += 1
+        return count
+
+    def hybrid_search(
+        self,
+        query: MemoryQuery,
+        *,
+        token_budget: int | None = None,
+    ) -> tuple[list[MemoryRecord], list[HybridMemoryHit], MemoryRetrievalEvent]:
+        """Apply metadata admission before lexical/vector scoring and RRF fusion."""
+        admitted_records = retrieve(
+            self._store.values(),
+            query.model_copy(update={"limit": 100}),
+        )
+        lexical = lexical_scores(admitted_records, query.query)
+        lexical_rank = sorted(admitted_records, key=lambda item: (-lexical[item.memory_id], item.memory_id))
+        fallback_reason = None
+        try:
+            vector_rows = self.vector_index.search(
+                self.embedding_adapter.embed(query.query),
+                max(query.limit * 4, query.limit),
+            )
+        except Exception:
+            vector_rows = []
+            fallback_reason = "VECTOR_INDEX_UNAVAILABLE"
+        allowed_ids = {record.memory_id for record in admitted_records}
+        vector_rows = [item for item in vector_rows if item[0] in allowed_ids]
+        vector_rank = {memory_id: index for index, (memory_id, _) in enumerate(vector_rows, 1)}
+        vector_score = dict(vector_rows)
+        lexical_positions = {record.memory_id: index for index, record in enumerate(lexical_rank, 1)}
+        hits = [
+            HybridMemoryHit(
+                memoryId=record.memory_id,
+                lexicalScore=lexical[record.memory_id],
+                vectorScore=vector_score.get(record.memory_id, 0.0),
+                fusedScore=(
+                    1.0 / (60 + lexical_positions[record.memory_id])
+                    + (
+                        1.0 / (60 + vector_rank[record.memory_id])
+                        if fallback_reason is None and record.memory_id in vector_rank
+                        else 0.0
+                    )
+                ),
+            )
+            for record in admitted_records
+        ]
+        hits.sort(key=lambda item: (-item.fused_score, item.memory_id))
+        by_id = {record.memory_id: record for record in admitted_records}
+        selected: list[MemoryRecord] = []
+        used = 0
+        for hit in hits:
+            record = by_id[hit.memory_id]
+            cost = estimate_tokens(record.content)
+            if token_budget is not None and used + cost > token_budget:
+                continue
+            selected.append(record)
+            used += cost
+            if len(selected) >= query.limit:
+                break
+        selected_ids = {record.memory_id for record in selected}
+        selected_hits = [hit for hit in hits if hit.memory_id in selected_ids]
+        event = MemoryRetrievalEvent(
+            scope=query.scope or "global",
+            mode="bm25_vector_rrf" if fallback_reason is None else "lexical_fallback",
+            hitRefs=[record.memory_id for record in selected],
+            budget=token_budget,
+            fallbackReason=fallback_reason,
+        )
+        return selected, selected_hits, event
+
+    def create_phase_capsule(
+        self,
+        *,
+        run_id: str,
+        phase_id: str,
+        source_memory_refs: list[str],
+        token_budget: int = 512,
+    ) -> PhaseCapsule:
+        """Compress a completed phase into deterministic facts and source references."""
+        if token_budget < 1:
+            raise ValueError("capsule token_budget must be positive")
+        records: list[MemoryRecord] = []
+        for memory_ref in source_memory_refs:
+            record = self._store.get(memory_ref)
+            if record is None or record.scope != run_id:
+                raise ValueError(f"invalid phase memory reference: {memory_ref}")
+            records.append(record)
+        facts: list[str] = []
+        used = 0
+        for record in records:
+            text = json.dumps(record.content, ensure_ascii=False, sort_keys=True)
+            cost = estimate_tokens(text)
+            if used + cost > token_budget:
+                continue
+            facts.append(text)
+            used += cost
+        capsule = PhaseCapsule(
+            capsuleId=f"capsule:{run_id}:{phase_id}",
+            runId=run_id,
+            phaseId=phase_id,
+            sourceMemoryRefs=list(source_memory_refs),
+            keyFacts=facts,
+            tokenCount=used,
+        )
+        self.remember(
+            MemoryRecord(
+                memoryId=capsule.capsule_id,
+                memoryType=MemoryType.SEMANTIC,
+                content=capsule.model_dump(by_alias=True, mode="json"),
+                scope=run_id,
+                tags=["phase-capsule", phase_id],
+            )
+        )
+        return capsule
 
     def search(self, query: MemoryQuery) -> list[MemoryRecord]:
         """执行本地元数据过滤后按重要度稳定重排并返回结果副本。
@@ -59,13 +204,16 @@ class MemoryService:
         节点已冻结的记忆策略传入。预算只会丢弃放不下的完整记录，绝不截断正文或
         放宽限制；负数预算属于无效策略并立即拒绝。
         """
-        records = self.search(
+        if token_budget is not None and token_budget < 0:
+            raise ValueError("memory token_budget must be non-negative")
+        records, _, _ = self.hybrid_search(
             MemoryQuery(
                 query=query,
                 scope=run_id,
                 memoryTypes=memory_types or [],
                 limit=limit,
-            )
+            ),
+            token_budget=token_budget,
         )
         now = datetime.now(timezone.utc)
         live_records = [
@@ -75,17 +223,7 @@ class MemoryService:
         ]
         if token_budget is None:
             return live_records
-        if token_budget < 0:
-            raise ValueError("memory token_budget must be non-negative")
-        selected: list[MemoryRecord] = []
-        used_tokens = 0
-        for record in live_records:
-            record_tokens = estimate_tokens(record.content)
-            if used_tokens + record_tokens > token_budget:
-                continue
-            selected.append(record)
-            used_tokens += record_tokens
-        return selected
+        return live_records
 
     def assert_step_ref(self, *, run_id: str, step_id: str, memory_ref: str) -> None:
         """确认 ``memory_ref`` 指向当前运行和当前来源步骤的真实执行记忆。
