@@ -1633,7 +1633,7 @@ class CapabilityCandidate(BaseModel):
     capability_id: str = Field(alias="capabilityId")
     score: float = Field(ge=0, le=1)
     matched_terms: List[str] = Field(default_factory=list, alias="matchedTerms")
-    source: Literal["catalog_alias", "llm", "fallback", "dependency"]
+    source: Literal["catalog_alias", "llm", "fallback", "dependency", "workflow_template"]
 
 
 class TaskSemanticProfile(BaseModel):

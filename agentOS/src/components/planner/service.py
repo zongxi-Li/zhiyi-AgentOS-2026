@@ -15,10 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import random
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from service.agents import AgentRegistry
-from support.acg.models import ACGBlueprint, promote_workflow_to_acg
+from support.acg.models import ACGBlueprint, CapabilityCandidate, promote_workflow_to_acg
 from .acg_builder import ACGBuilder
 from support.acg.models import CapabilityCatalog
 from .cognitive_router import CognitiveRouter
@@ -124,6 +124,7 @@ class PlanningEngine:
         planning_diversity: str = "stable",
         planning_seed: int | None = None,
         capability_catalog_revision: str | None = None,
+        required_capabilities: Sequence[str] | None = None,
     ) -> PlanResult:
         """为任务选择模板或动态生成 ACG。
 
@@ -141,6 +142,22 @@ class PlanningEngine:
             thinking_mode=thinking_mode,
             use_llm=not deterministic_intent,
         )
+        if required_capabilities:
+            selected = self.capability_catalog.expand_dependencies(required_capabilities)
+            existing = {
+                item.capability_id: item for item in profile.capability_candidates
+            }
+            profile.required_capabilities = selected
+            profile.capability_candidates = [
+                existing.get(capability_id)
+                or CapabilityCandidate(
+                    capabilityId=capability_id,
+                    score=1.0,
+                    matchedTerms=[],
+                    source="workflow_template",
+                )
+                for capability_id in selected
+            ]
 
         match = None
         if not force_dynamic and diversity == "stable":

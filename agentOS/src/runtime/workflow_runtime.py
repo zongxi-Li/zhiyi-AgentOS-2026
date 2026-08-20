@@ -1314,6 +1314,7 @@ class WorkflowRuntime:
                 planning_diversity=run.planning_diversity,
                 planning_seed=run.planning_seed,
                 capability_catalog_revision=run.capability_catalog_revision,
+                required_capabilities=workflow.required_capabilities,
             )
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
@@ -1357,7 +1358,22 @@ class WorkflowRuntime:
                     observation="No stochastic candidate passed validation; stable planning used",
                     payload=plan.to_decision(),
                 )
-            return plan.blueprint
+            blueprint = plan.blueprint
+            if workflow.review_capability:
+                review_nodes = [
+                    node
+                    for node in blueprint.step_nodes()
+                    if node.capability == workflow.review_capability
+                ]
+                if len(review_nodes) != 1:
+                    raise ValueError(
+                        "workflow review capability must resolve to exactly one ACG step: "
+                        f"{workflow.review_capability}"
+                    )
+                review_nodes[0].review_required = True
+                review_nodes[0].metadata["reviewBarrier"] = True
+                blueprint.metadata["reviewCapability"] = workflow.review_capability
+            return blueprint
 
         return promote_workflow_to_acg(workflow, task_id=task.task_id)
 

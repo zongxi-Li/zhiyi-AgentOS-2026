@@ -7,13 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from adapters.model.native import register_native_runtime
+from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID, register_native_runtime
 from runtime.execution_migration import ExecutionEngineMigratingError
 from runtime.workflow_runtime import ReviewConflictError
 from runtime.workflow_runtime import WorkflowRuntime
 from service.agents import AgentRegistry
 from components.task_manager.store import WorkflowRegistry
 from support.stores.memory_workflow_store import MemoryWorkflowStore
+from support.acg.models import ACGBlueprint
 
 
 def _prepared_acg_run():
@@ -39,6 +40,44 @@ def test_prepare_acg_run_persists_blueprint_and_pending_migration_state() -> Non
     assert persisted.acg_blueprint is not None
     assert "runtimeGraph" not in persisted.model_dump(by_alias=True)
     assert persisted.execution_state["engineMigration"] == "langgraph_pending"
+
+
+def test_core_general_evidence_template_builds_required_dynamic_acg() -> None:
+    agents = AgentRegistry()
+    workflows = WorkflowRegistry()
+    register_native_runtime(agent_registry=agents, workflow_registry=workflows)
+    runtime = WorkflowRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=MemoryWorkflowStore(),
+    )
+    task = runtime.create_task(
+        "Assess a complex technical proposal",
+        workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
+    )
+
+    _, run = runtime.prepare_run(task.task_id, workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID)
+
+    assert run.acg_blueprint is not None
+    blueprint = ACGBlueprint.model_validate(run.acg_blueprint)
+    steps = {node.capability: node for node in blueprint.step_nodes()}
+    required = {
+        "task_understanding",
+        "information_extraction",
+        "information_retrieval",
+        "evidence_analysis",
+        "comparative_analysis",
+        "verification",
+        "artifact_generation",
+    }
+    assert required <= set(steps)
+    assert steps["verification"].review_required is True
+    assert steps["verification"].metadata["reviewBarrier"] is True
+    assert blueprint.metadata["reviewCapability"] == "verification"
+    assert any(node.name.startswith("PARALLEL:") for node in blueprint.nodes)
+    assert run.execution_state["selectedCapabilities"] == [
+        node.capability for node in blueprint.step_nodes()
+    ]
 
 
 def test_legacy_runtime_graph_snapshot_remains_migration_blocked() -> None:

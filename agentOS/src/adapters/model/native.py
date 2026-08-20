@@ -23,6 +23,7 @@ from support.acg.models import NATIVE_CAPABILITY_IDS
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"
+GENERAL_EVIDENCE_WORKFLOW_ID = "general_evidence_decision"
 NATIVE_AGENT_NAME = "native_general_agent"
 # Backward-compatible export derived from the native Catalog contribution.
 NATIVE_CAPABILITIES = NATIVE_CAPABILITY_IDS
@@ -464,6 +465,35 @@ def native_bootstrap_definition() -> WorkflowDefinition:
     )
 
 
+def general_evidence_definition() -> WorkflowDefinition:
+    """Return the bounded Core-owned evidence decision planning template."""
+
+    return WorkflowDefinition(
+        workflowId=GENERAL_EVIDENCE_WORKFLOW_ID,
+        name="Core General Evidence Decision",
+        domain="general",
+        intent="evidence_decision",
+        runtimeEngine="acg",
+        definitionType=WorkflowDefinitionType.NATIVE_BOOTSTRAP,
+        description=(
+            "Core-owned evidence decision workflow with extraction, retrieval, "
+            "evidence analysis, comparison, validation, human review, and citation report."
+        ),
+        tags=["general", "evidence", "decision", "review", "citation"],
+        requiredCapabilities=[
+            "task_understanding",
+            "information_extraction",
+            "information_retrieval",
+            "evidence_analysis",
+            "comparative_analysis",
+            "verification",
+            "artifact_generation",
+        ],
+        reviewCapability="verification",
+        steps=[],
+    )
+
+
 def register_native_runtime(*, agent_registry, workflow_registry) -> None:
     """向给定注册表登记原生 Agent 与启动工作流。
 
@@ -474,13 +504,16 @@ def register_native_runtime(*, agent_registry, workflow_registry) -> None:
 
     agent_registry.register(NativeGeneralAgent())
     workflow_registry.register(native_bootstrap_definition())
+    workflow_registry.register(general_evidence_definition())
 
 
 __all__ = [
     "NATIVE_ACG_WORKFLOW_ID",
+    "GENERAL_EVIDENCE_WORKFLOW_ID",
     "NATIVE_AGENT_NAME",
     "NATIVE_CAPABILITIES",
     "NativeGeneralAgent",
+    "general_evidence_definition",
     "native_bootstrap_definition",
     "register_native_runtime",
 ]
