@@ -14,6 +14,8 @@ from components.memory.store import SQLiteMemoryStore
 from components.resource.service import ResourceService
 from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
+from components.scheduler.leases import RedisLeaseCoordinator
+from components.scheduler.service import SchedulerService
 from components.task_manager.store import WorkflowRegistry
 from runtime import WorkflowRuntime
 from service.agents import AgentRegistry
@@ -53,6 +55,26 @@ def _database_path(environment: Mapping[str, str], name: str) -> Path:
     return Path(str(environment.get(name) or _DEFAULT_DATABASES[name]).strip())
 
 
+def _read_optional_secret(environment: Mapping[str, str], name: str) -> str | None:
+    direct = str(environment.get(name) or "").strip()
+    if direct:
+        return direct
+    secret_path = str(environment.get(f"{name}_FILE") or "").strip()
+    if not secret_path:
+        return None
+    return Path(secret_path).read_text(encoding="utf-8").strip() or None
+
+
+def _build_coordination_client(environment: Mapping[str, str]):
+    from redis import Redis
+
+    return Redis.from_url(
+        str(environment["AGENTOS_COORDINATION_REDIS_URL"]),
+        password=_read_optional_secret(environment, "REDIS_PASSWORD"),
+        decode_responses=False,
+    )
+
+
 def configure_runtime(
     runtime: WorkflowRuntime,
     *,
@@ -70,12 +92,28 @@ def build_default_runtime(
     intent_llm: object | None = None,
     model_runtime: object | None = None,
     tool_runtime: object | None = None,
+    coordination_client: object | None = None,
 ) -> WorkflowRuntime:
     """Construct all registries, stores, and external adapters in the application."""
     env = environment or os.environ
     workflow_path = _workflow_db_path(env)
     acquire_workflow_instance_lock(str(workflow_path))
 
+    resource_service = ResourceService(
+        store=SQLiteResourceStore(
+            Path(str(env.get("AGENTOS_RESOURCE_DB") or workflow_path.with_name("resources.sqlite3")))
+        )
+    )
+    coordination_url = str(env.get("AGENTOS_COORDINATION_REDIS_URL") or "").strip()
+    scheduler_service = None
+    if coordination_client is not None or coordination_url:
+        coordinator = RedisLeaseCoordinator(
+            coordination_client or _build_coordination_client(env)
+        )
+        scheduler_service = SchedulerService(
+            resource_service=resource_service,
+            coordinator=coordinator,
+        )
     runtime = WorkflowRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
@@ -83,11 +121,8 @@ def build_default_runtime(
         checkpoint_store=ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")),
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
-        resource_service=ResourceService(
-            store=SQLiteResourceStore(
-                Path(str(env.get("AGENTOS_RESOURCE_DB") or workflow_path.with_name("resources.sqlite3")))
-            )
-        ),
+        resource_service=resource_service,
+        scheduler_service=scheduler_service,
         provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
         tool_runtime=tool_runtime or get_tool_runtime(),
@@ -109,6 +144,7 @@ def close_runtime(runtime: WorkflowRuntime) -> None:
         runtime.execution_value_store,
         runtime.memory_store,
         runtime.resource_service.store,
+        runtime.scheduler_service.coordinator,
         runtime.provenance_store,
         runtime.decision_store,
         getattr(runtime, "_model_runtime", None),

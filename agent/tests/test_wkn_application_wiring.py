@@ -8,6 +8,7 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
 from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
+from components.scheduler.leases import RedisLeaseCoordinator
 from adapters.guarded_model import GuardedModelRuntime
 from runtime import WorkflowRuntime
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -26,6 +27,14 @@ class _InjectedModelRuntime:
 
 class _InjectedIntentLLM:
     pass
+
+
+class _InjectedRedis:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _environment(root: Path) -> dict[str, str]:
@@ -83,3 +92,20 @@ def test_production_python_does_not_import_the_removed_agentos_package() -> None
         if "from agentos" in text or "import agentos" in text or "agentos.core" in text:
             offenders.append(str(source.relative_to(root)))
     assert offenders == []
+
+
+def test_application_wires_an_injected_redis_lease_coordinator(tmp_path: Path) -> None:
+    client = _InjectedRedis()
+    runtime = build_default_runtime(
+        environment=_environment(tmp_path),
+        tool_runtime=_InjectedToolRuntime(),
+        model_runtime=_InjectedModelRuntime(),
+        intent_llm=_InjectedIntentLLM(),
+        coordination_client=client,
+    )
+    try:
+        assert isinstance(runtime.scheduler_service.coordinator, RedisLeaseCoordinator)
+        assert runtime.scheduler_service.coordinator.client is client
+    finally:
+        close_runtime(runtime)
+    assert client.closed is True

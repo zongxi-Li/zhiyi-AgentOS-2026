@@ -93,6 +93,7 @@ services:
       CHROMA_TELEMETRY_ENABLED: "false"
       PROVIDER_STATE_ENABLED: ${PROVIDER_STATE_ENABLED:-true}
       PROVIDER_STATE_REDIS_URL: redis://redis:6379/0
+      AGENTOS_COORDINATION_REDIS_URL: redis://redis:6379/1
       PROVIDER_STATE_TTL_SECONDS: ${PROVIDER_STATE_TTL_SECONDS:-3600}
       REDIS_PASSWORD_FILE: /run/kinlin-secrets/redis_password
     secrets: [ai_internal_token, deepseek_api_key, dashscope_api_key, tavily_api_key, redis_password]
