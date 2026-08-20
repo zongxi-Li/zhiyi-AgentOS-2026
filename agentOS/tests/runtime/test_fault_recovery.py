@@ -97,5 +97,9 @@ def test_restart_reuses_commit_and_does_not_duplicate_persistence(stage: str, tm
     records = MemoryService(store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3")).search(
         MemoryQuery(query="safe", scope=run.run_id)
     )
-    assert [record.memory_id for record in records] == [f"memory:{run.run_id}:one"]
+    assert {record.memory_id for record in records} == {
+        f"memory:{run.run_id}:one",
+        f"capsule:{run.run_id}:execution",
+    }
+    assert len(records) == 2
     assert '"answer"' not in json.dumps(result.execution_state, ensure_ascii=False)
