@@ -74,7 +74,7 @@ class ResourceDirectory:
             capabilities=sorted(declared_capabilities | {f"agent:{agent_name.lower()}"}),
             domains=[domain],
             labels=labels,
-            capacity=max(1, int(extra.get("capacity", 1))),
+            capacity=max(1, int(profile.capacity)),
             enabled=resource.enabled,
             metadata={
                 "directoryKind": "agent",

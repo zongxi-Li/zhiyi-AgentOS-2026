@@ -29,6 +29,7 @@ class AgentProfile(BaseModel):
     model_name: Optional[str] = Field(default=None, alias="modelName")
     model_version: Optional[str] = Field(default=None, alias="modelVersion")
     binding_priority: int = Field(default=0, alias="bindingPriority")
+    capacity: int = Field(default=1, ge=1)
     enabled: bool = True
     source: Literal["native", "plugin"] = "native"
     plugin_id: Optional[str] = Field(default=None, alias="pluginId")

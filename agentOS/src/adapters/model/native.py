@@ -43,6 +43,7 @@ class NativeGeneralAgent(BaseAgent):
                 agentName=NATIVE_AGENT_NAME,
                 domain="general",
                 capabilities=list(NATIVE_CAPABILITY_IDS),
+                capacity=4,
                 allowedTools=[
                     "knowledge_search",
                     "current_datetime",

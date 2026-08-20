@@ -255,7 +255,12 @@ class AgentsToolRuntime:
         arguments: dict[str, Any],
         *,
         role_id: str | None = None,
+        commit_id: str | None = None,
     ) -> ToolRunResult:
+        # Read-only catalog calls have no external mutation to deduplicate, but the
+        # runtime accepts the node commit boundary so guarded callers keep one
+        # uniform invocation contract across tool implementations.
+        del commit_id
         context = self._context(role_id)
         output = await context.invoke(name, arguments)
         return ToolRunResult(
