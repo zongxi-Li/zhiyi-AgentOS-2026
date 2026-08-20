@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
 from adapters.tool_adapter import ToolRuntime
@@ -44,6 +45,12 @@ class _CallGate:
 
     async def call(self, operation: Callable[[], Awaitable[_Result]]) -> _Result:
         """串联开始间隔并限制同时运行的真实工具调用数。"""
+        async with self.slot():
+            return await operation()
+
+    @asynccontextmanager
+    async def slot(self):
+        """在完整流生命周期内持有并发槽，并统一执行开始间隔。"""
         async with self._semaphore:
             async with self._spacing_lock:
                 now = asyncio.get_running_loop().time()
@@ -52,7 +59,7 @@ class _CallGate:
                     if remaining > 0:
                         await asyncio.sleep(remaining)
                 self._last_started = asyncio.get_running_loop().time()
-            return await operation()
+            yield
 
 
 class GuardedToolRuntime:
@@ -121,6 +128,54 @@ class GuardedToolRuntime:
             lambda: self.delegate.execute(name, arguments, commit_id=commit_id, **kwargs),
             timeout_seconds=timeout_seconds,
         )
+
+    async def astream_execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: float = 120.0,
+        commit_id: str | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """在同一并发和总超时边界内转发流，取消信号不做错误改写。"""
+        if timeout_seconds <= 0:
+            raise ToolInvocationError(
+                "TOOL_TIMEOUT",
+                "tool timeout must be positive",
+                retryable=True,
+            )
+        streamer = getattr(self.delegate, "astream_execute", None)
+        if not callable(streamer):
+            raise ToolInvocationError(
+                "TOOL_STREAM_UNSUPPORTED",
+                "tool runtime does not support streaming",
+            )
+        try:
+            async with self._gate.slot():
+                async with asyncio.timeout(timeout_seconds):
+                    async for event in streamer(
+                        name,
+                        arguments,
+                        commit_id=commit_id,
+                        **kwargs,
+                    ):
+                        yield event
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError as exc:
+            raise ToolInvocationError(
+                "TOOL_TIMEOUT",
+                "tool stream timed out",
+                retryable=True,
+            ) from exc
+        except ToolInvocationError:
+            raise
+        except Exception as exc:
+            raise ToolInvocationError(
+                "TOOL_EXECUTION_FAILED",
+                "tool stream failed",
+            ) from exc
 
     async def _invoke(
         self,
