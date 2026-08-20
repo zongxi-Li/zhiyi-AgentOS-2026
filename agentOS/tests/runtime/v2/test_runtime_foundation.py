@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+import pytest
+
+from domain.models import AttemptStatus, RunStatus, StepExecutionStatus, UserTaskStatus
+from domain.repository import IdentityConflictError
+from runtime.v2 import WorkflowRuntimeV2
+from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+
+
+@pytest.fixture
+def runtime_v2():
+    storage = SQLiteV2Storage(":memory:")
+    runtime = WorkflowRuntimeV2(SQLiteV2Repositories(storage))
+    try:
+        yield runtime
+    finally:
+        runtime.close()
+
+
+def _planned_task(runtime: WorkflowRuntimeV2, *, goal: str = "审查合同"):
+    task = runtime.create_task(user_id="user-1", goal=goal)
+    node = runtime.create_task_node(
+        task_id=task.task_id,
+        title="识别风险",
+        objective="识别高风险合同条款",
+    )
+    blueprint = runtime.create_blueprint(
+        task_id=task.task_id,
+        version=1,
+        graph_id="runtime_graph_v1",
+        graph={"nodes": [{"nodeId": node.node_id}], "edges": []},
+    )
+    return task, node, blueprint
+
+
+def test_task_node_blueprint_lifecycle_is_persisted(runtime_v2: WorkflowRuntimeV2) -> None:
+    task, node, blueprint = _planned_task(runtime_v2)
+
+    persisted_task = runtime_v2.repositories.user_tasks.get(task.task_id)
+    persisted_nodes = runtime_v2.repositories.task_nodes.list_for_task(task.task_id)
+    persisted_blueprints = runtime_v2.repositories.blueprints.list_for_task(task.task_id)
+
+    assert persisted_task is not None
+    assert persisted_task.status is UserTaskStatus.READY
+    assert [item.node_id for item in persisted_nodes] == [node.node_id]
+    assert [item.blueprint_id for item in persisted_blueprints] == [blueprint.blueprint_id]
+
+
+def test_one_task_can_have_failed_then_successful_runs(runtime_v2: WorkflowRuntimeV2) -> None:
+    task, node, blueprint = _planned_task(runtime_v2)
+    failed_run = runtime_v2.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint.blueprint_id,
+    )
+    runtime_v2.create_attempt(run_id=failed_run.run_id, node_id=node.node_id)
+    runtime_v2.finish_run(failed_run.run_id, RunStatus.FAILED)
+
+    successful_run = runtime_v2.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint.blueprint_id,
+    )
+    runtime_v2.create_attempt(run_id=successful_run.run_id, node_id=node.node_id)
+    runtime_v2.finish_run(successful_run.run_id, RunStatus.SUCCEEDED)
+
+    runs = runtime_v2.repositories.runs.list_for_task(task.task_id)
+    assert [run.status for run in runs] == [RunStatus.FAILED, RunStatus.SUCCEEDED]
+    assert runs[0].run_id != runs[1].run_id
+    assert runtime_v2.repositories.user_tasks.get(task.task_id).status is UserTaskStatus.COMPLETED
+
+
+def test_blueprint_versions_bind_runs_to_the_selected_version(runtime_v2: WorkflowRuntimeV2) -> None:
+    task, node, blueprint_v1 = _planned_task(runtime_v2)
+    blueprint_v2 = runtime_v2.create_blueprint(
+        task_id=task.task_id,
+        version=2,
+        graph_id="runtime_graph_v2",
+        graph={"nodes": [{"nodeId": node.node_id}], "edges": [], "revision": 2},
+    )
+    run_v1 = runtime_v2.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint_v1.blueprint_id,
+    )
+    run_v2 = runtime_v2.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint_v2.blueprint_id,
+    )
+
+    assert run_v1.blueprint_id == blueprint_v1.blueprint_id
+    assert run_v1.graph_version == 1
+    assert run_v2.blueprint_id == blueprint_v2.blueprint_id
+    assert run_v2.graph_version == 2
+
+
+def test_attempt_retry_and_step_execution_are_persisted(runtime_v2: WorkflowRuntimeV2) -> None:
+    task, node, blueprint = _planned_task(runtime_v2)
+    run = runtime_v2.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
+    attempt_one = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
+
+    with pytest.raises(RuntimeError, match="temporary failure"):
+        runtime_v2.execute_step(
+            runtime_v2.create_context(run.run_id),
+            input={"contract": "v1"},
+            operation=lambda _input: (_ for _ in ()).throw(RuntimeError("temporary failure")),
+        )
+
+    attempt_two = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
+    execution = runtime_v2.execute_step(
+        runtime_v2.create_context(run.run_id),
+        input={"contract": "v1"},
+        operation=lambda input: {"reviewed": input["contract"]},
+    )
+
+    attempts = runtime_v2.repositories.attempts.list_for_run(run.run_id)
+    assert [item.attempt_number for item in attempts] == [1, 2]
+    assert attempts[0].attempt_id == attempt_one.attempt_id
+    assert attempts[0].status is AttemptStatus.FAILED
+    assert attempts[0].failure_reason == "temporary failure"
+    assert attempts[1].attempt_id == attempt_two.attempt_id
+    assert attempts[1].status is AttemptStatus.SUCCEEDED
+    assert execution.status is StepExecutionStatus.SUCCEEDED
+    assert execution.attempt_id == attempt_two.attempt_id
+    assert runtime_v2.repositories.step_executions.list_for_attempt(attempt_one.attempt_id)[0].status is StepExecutionStatus.FAILED
+
+
+def test_execution_context_tracks_the_running_step(runtime_v2: WorkflowRuntimeV2) -> None:
+    task, node, blueprint = _planned_task(runtime_v2)
+    run = runtime_v2.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
+    runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
+    context = runtime_v2.create_context(run.run_id)
+    observed: list[str] = []
+
+    def operation(_input):
+        observed.extend(context.active_executions)
+        return {"ok": True}
+
+    execution = runtime_v2.execute_step(context, input={}, operation=operation)
+
+    assert observed == [execution.step_execution_id]
+    assert context.active_executions == []
+
+
+def test_sqlite_runtime_survives_reopen(tmp_path) -> None:
+    db_path = tmp_path / "new-acg.sqlite3"
+    first = WorkflowRuntimeV2.from_sqlite(db_path)
+    task, node, blueprint = _planned_task(first)
+    run = first.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
+    attempt = first.create_attempt(run_id=run.run_id, node_id=node.node_id)
+    execution = first.execute_step(
+        first.create_context(run.run_id),
+        input={"source": "persisted"},
+        operation=lambda value: {"echo": value["source"]},
+    )
+    first.close()
+
+    second = WorkflowRuntimeV2.from_sqlite(db_path)
+    try:
+        assert second.repositories.user_tasks.get(task.task_id) is not None
+        assert second.repositories.blueprints.get(blueprint.blueprint_id) is not None
+        assert second.repositories.runs.get(run.run_id) is not None
+        assert second.repositories.attempts.get(attempt.attempt_id).status is AttemptStatus.SUCCEEDED
+        assert second.repositories.step_executions.get(execution.step_execution_id).output == {
+            "echo": "persisted"
+        }
+    finally:
+        second.close()
+
+
+def test_run_cannot_use_another_tasks_blueprint(runtime_v2: WorkflowRuntimeV2) -> None:
+    task_a, _node_a, blueprint_a = _planned_task(runtime_v2, goal="目标 A")
+    task_b = runtime_v2.create_task(user_id="user-2", goal="目标 B")
+    runtime_v2.create_task_node(
+        task_id=task_b.task_id,
+        title="节点 B",
+        objective="执行目标 B",
+    )
+
+    with pytest.raises(IdentityConflictError, match="another UserTask"):
+        runtime_v2.create_run(
+            task_id=task_b.task_id,
+            blueprint_id=blueprint_a.blueprint_id,
+        )
+
+    assert runtime_v2.repositories.runs.list_for_task(task_a.task_id) == []
+    assert runtime_v2.repositories.runs.list_for_task(task_b.task_id) == []
+
+
+def test_legacy_runtime_remains_available_from_both_import_paths() -> None:
+    from runtime import WorkflowRuntime as original
+    from runtime.legacy import WorkflowRuntime as legacy
+
+    assert legacy is original
