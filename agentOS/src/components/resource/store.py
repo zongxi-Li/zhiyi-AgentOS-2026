@@ -46,6 +46,12 @@ class ResourceStore(Protocol):
         """按可选期望版本原子更新快照；过期版本应抛出 ``VersionConflict``。"""
         ...
 
+    def update_capacity(
+        self, resource_id: str, capacity: int, *, expected_capacity: int
+    ) -> VersionedResourceSnapshot:
+        """CAS 更新同一资源的静态容量并同步可用槽位。"""
+        ...
+
 
 class InMemoryResourceStore:
     """面向单进程运行的资源存储。
@@ -114,6 +120,35 @@ class InMemoryResourceStore:
                 snapshot=snapshot.model_copy(deep=True), version=current.version + 1
             )
             self._snapshots[snapshot.resource_id] = versioned
+            return self._copy_versioned(versioned)
+
+    def update_capacity(
+        self, resource_id: str, capacity: int, *, expected_capacity: int
+    ) -> VersionedResourceSnapshot:
+        if capacity < 1:
+            raise ValueError("resource capacity must be positive")
+        with self._lock:
+            try:
+                profile = self._profiles[resource_id]
+                current = self._snapshots[resource_id]
+            except KeyError as error:
+                raise KeyError(f"unknown resource: {resource_id}") from error
+            if profile.capacity != expected_capacity:
+                raise VersionConflict(
+                    f"capacity conflict for {resource_id}: "
+                    f"expected {expected_capacity}, current {profile.capacity}"
+                )
+            allocated = max(0, profile.capacity - current.snapshot.available_slots)
+            snapshot = current.snapshot.model_copy(update={
+                "available_slots": max(0, capacity - allocated),
+                "utilization": min(1.0, allocated / capacity),
+            })
+            versioned = VersionedResourceSnapshot(
+                snapshot=snapshot,
+                version=current.version + 1,
+            )
+            self._profiles[resource_id] = profile.model_copy(update={"capacity": capacity})
+            self._snapshots[resource_id] = versioned
             return self._copy_versioned(versioned)
 
     @staticmethod
@@ -232,6 +267,56 @@ class SQLiteResourceStore:
                 raise VersionConflict(f"snapshot version conflict for {snapshot.resource_id}")
             self._connection.commit()
             return VersionedResourceSnapshot(snapshot=snapshot.model_copy(deep=True), version=next_version)
+
+    def update_capacity(
+        self, resource_id: str, capacity: int, *, expected_capacity: int
+    ) -> VersionedResourceSnapshot:
+        if capacity < 1:
+            raise ValueError("resource capacity must be positive")
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT profile_json, snapshot_json, version FROM resources WHERE resource_id = ?",
+                    (resource_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"unknown resource: {resource_id}")
+                profile = ResourceProfile.model_validate(json.loads(str(row[0])))
+                snapshot = ResourceSnapshot.model_validate(json.loads(str(row[1])))
+                version = int(row[2])
+                if profile.capacity != expected_capacity:
+                    raise VersionConflict(
+                        f"capacity conflict for {resource_id}: "
+                        f"expected {expected_capacity}, current {profile.capacity}"
+                    )
+                allocated = max(0, profile.capacity - snapshot.available_slots)
+                updated_profile = profile.model_copy(update={"capacity": capacity})
+                updated_snapshot = snapshot.model_copy(update={
+                    "available_slots": max(0, capacity - allocated),
+                    "utilization": min(1.0, allocated / capacity),
+                })
+                cursor = self._connection.execute(
+                    "UPDATE resources SET profile_json = ?, snapshot_json = ?, version = ? "
+                    "WHERE resource_id = ? AND version = ?",
+                    (
+                        self._json(updated_profile),
+                        self._json(updated_snapshot),
+                        version + 1,
+                        resource_id,
+                        version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise VersionConflict(f"capacity conflict for {resource_id}")
+                self._connection.commit()
+                return VersionedResourceSnapshot(
+                    snapshot=updated_snapshot.model_copy(deep=True),
+                    version=version + 1,
+                )
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def close(self) -> None:
         self._connection.close()

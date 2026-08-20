@@ -87,6 +87,19 @@ def test_directory_rejects_conflicting_agent_or_capability_identity() -> None:
         directory.register_capability(manifest.model_copy(update={"version": "v2"}))
 
 
+def test_directory_reconciles_only_agent_capacity_for_a_stable_identity() -> None:
+    directory = ResourceDirectory()
+    original = _profile("agent-1")
+    directory.register_agent(original)
+
+    directory.register_agent(original.model_copy(update={"capacity": 4}))
+
+    assert directory.resource_service.profile("agent-1").capacity == 4
+    snapshot = directory.resource_service.snapshot("agent-1")
+    assert snapshot.snapshot.available_slots == 4
+    assert snapshot.version == 2
+
+
 def test_directory_rejects_disabled_and_out_of_scope_agents() -> None:
     """禁用或不在冻结 scope 内的 Agent 不能通过能力回退被选中。"""
     directory = ResourceDirectory()

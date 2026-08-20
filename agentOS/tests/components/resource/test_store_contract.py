@@ -58,6 +58,13 @@ def test_resource_store_contract_create_get_list_duplicate_and_cas(store) -> Non
     updated = store.update_snapshot(_snapshot("b", slots=0), expected_version=1)
     assert updated.version == 2
     assert updated.snapshot.available_slots == 0
+    scaled = store.update_capacity("b", 4, expected_capacity=1)
+    assert scaled.version == 3
+    assert scaled.snapshot.available_slots == 3
+    assert scaled.snapshot.utilization == 0.25
+    assert store.get_profile("b").capacity == 4
+    with pytest.raises(VersionConflict):
+        store.update_capacity("b", 5, expected_capacity=1)
     with pytest.raises(VersionConflict):
         store.update_snapshot(_snapshot("b"), expected_version=1)
     with pytest.raises(ValueError, match="already registered"):

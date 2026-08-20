@@ -41,6 +41,16 @@ class ResourceService:
         """更新动态负载观测；版本冲突交给存储层显式报告。"""
         return self.store.update_snapshot(snapshot, expected_version=expected_version)
 
+    def update_capacity(
+        self, resource_id: str, capacity: int, *, expected_capacity: int
+    ) -> VersionedResourceSnapshot:
+        """以 CAS 同步已登记资源的声明容量和动态空闲槽位。"""
+        return self.store.update_capacity(
+            resource_id,
+            capacity,
+            expected_capacity=expected_capacity,
+        )
+
     def snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
         """读取调度决策所需的最新版本快照。"""
         return self.store.get_snapshot(resource_id)

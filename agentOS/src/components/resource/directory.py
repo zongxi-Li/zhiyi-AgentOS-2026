@@ -131,9 +131,17 @@ class ResourceDirectory:
             )
         else:
             if existing != profile:
-                raise ResourceConflictError(
-                    f"resource conflicts with existing identity: {profile.resource_id}"
-                )
+                same_identity = existing.model_copy(update={"capacity": profile.capacity}) == profile
+                if same_identity:
+                    self.resource_service.update_capacity(
+                        profile.resource_id,
+                        profile.capacity,
+                        expected_capacity=existing.capacity,
+                    )
+                else:
+                    raise ResourceConflictError(
+                        f"resource conflicts with existing identity: {profile.resource_id}"
+                    )
         self.resource_service.heartbeat(profile.resource_id)
 
     def set_health(self, resource_id: str, *, healthy: bool) -> None:
