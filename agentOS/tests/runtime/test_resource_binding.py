@@ -80,9 +80,11 @@ def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> Non
         capabilities=["analysis"], bindingPriority=99,
     ), calls))
 
-    asyncio.run(runtime.execute_prepared_run(run.run_id))
+    completed = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
     assert calls == ["agent-primary"]
+    assert completed.execution_state["schedulingDecisions"][0]["lease"]["status"] == "released"
+    assert runtime.scheduler_service.coordinator.active_slots("agent-primary") == 0
 
 
 def test_approved_evolution_version_only_changes_future_general_runs() -> None:

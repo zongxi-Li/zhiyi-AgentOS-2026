@@ -677,7 +677,15 @@ class WorkflowRuntime:
             try:
                 return await runner(step_id, state)
             finally:
-                self.scheduler_service.release(decision.lease.lease_id)
+                released = self.scheduler_service.release(decision.lease.lease_id)
+                if released:
+                    for scheduling_item in reversed(
+                        run.execution_state.get("schedulingDecisions") or []
+                    ):
+                        lease = scheduling_item.get("lease") if isinstance(scheduling_item, dict) else None
+                        if isinstance(lease, dict) and lease.get("leaseId") == decision.lease.lease_id:
+                            lease["status"] = "released"
+                            break
 
         return execute
 
