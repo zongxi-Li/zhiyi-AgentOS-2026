@@ -19,7 +19,7 @@ from components.communicator import CommunicationBroker, CommunicationReader, Co
 from components.communicator.contracts import ContextPack, estimate_tokens, input_revision
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
-from components.memory import MemoryService
+from components.memory import MemoryService, StructuredMemoryEventBuilder
 from adapters.agent_invocation import AgentInvocationAdapter
 from contracts.communication import validate_contract_payload
 from contracts.governance import AuditRequest
@@ -289,6 +289,24 @@ class ACGNodeRunner:
             outcomes={decision.outcome},
         )
         requires_review = step.requires_review or persisted_decision.outcome == "review"
+        output_evidence = controlled.get("evidence_refs") or controlled.get("evidenceRefs") or []
+        evidence_refs = [
+            *output.evidence_refs,
+            *(output_evidence if isinstance(output_evidence, list) else []),
+        ]
+        memory_event = StructuredMemoryEventBuilder.build(
+            run_id=state.run_id,
+            step_id=step_id,
+            commit_id=commit_id,
+            summary=output.summary,
+            evidence_refs=evidence_refs,
+            audit_outcome=persisted_decision.outcome,
+            upstream_step_ids=self.upstream_step_ids.get(step_id, ()),
+            field_count=len(controlled),
+            model_invocation_count=len(output.model_invocations),
+            tool_call_count=len(tool_events),
+        )
+        memory_event_payload = memory_event.model_dump(by_alias=True, mode="json")
         if persisted_decision.outcome == "deny":
             return {
                 "outputSummary": output.summary or f"denied:{step_id}",
@@ -297,6 +315,7 @@ class ACGNodeRunner:
                 "auditOutcome": persisted_decision.outcome,
                 "modelInvocations": self._safe_model_invocations(output.model_invocations),
                 "memoryAccess": memory_access,
+                "memoryEvent": memory_event_payload,
             }
 
         output_ref = self.value_store.put_output(
@@ -318,12 +337,12 @@ class ACGNodeRunner:
         )
         self._inject_fault("after_provenance")
         memory_record = None
-        pending_memory: dict[str, str] | None = None
+        pending_memory: dict[str, Any] | None = None
         if persisted_decision.outcome == "allow" and not requires_review and memory_policy["write"]:
             memory_record = self.memory.remember_step_output(
                 run_id=state.run_id,
                 step_id=step_id,
-                output=controlled,
+                output=memory_event_payload,
                 memory_type=memory_policy["writeType"],
                 policy=self._write_memory_policy(memory_policy),
             )
@@ -335,6 +354,7 @@ class ACGNodeRunner:
                 "policyId": str(memory_policy["policyId"]),
                 "writeType": memory_policy["writeType"].value,
                 "auditDecisionRef": persisted_decision.decision_id,
+                "memoryEvent": memory_event_payload,
             }
         self._inject_fault("after_memory")
         memory_access["written"] = memory_record is not None
@@ -363,6 +383,7 @@ class ACGNodeRunner:
             ),
             # 仅含策略、条数和预算统计；记忆正文始终留在 MemoryService/Store 中。
             "memoryAccess": memory_access,
+            "memoryEvent": memory_event_payload,
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
         }

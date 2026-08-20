@@ -101,7 +101,7 @@ def _state(run: WorkflowRun) -> dict[str, Any]:
     raw = run.execution_state if isinstance(run.execution_state, dict) else {}
     allowed = (
         "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
-        "memoryRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
+        "memoryRefs", "phaseCapsuleRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
         "outputSummaries", "resourceBindings", "bindingHistory",
         "bindingRequirements", "executionBindings", "schedulingDecisions",
         "evolutionPolicyVersion",
@@ -431,18 +431,20 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
         items = []
         for event in run.trace:
             payload = event.payload if isinstance(event.payload, dict) else {}
-            if "retrievalMode" not in payload:
-                continue
-            items.append(
-                {
+            if "retrievalMode" in payload:
+                items.append({
+                    "kind": "memory_access",
                     "stepId": event.step_id,
                     "retrievalMode": payload.get("retrievalMode"),
                     "hitRefs": list(payload.get("hitRefs") or []),
                     "budget": payload.get("tokenBudget"),
                     "fallbackReason": payload.get("fallbackReason"),
                     "createdAt": event.created_at,
-                }
-            )
+                })
+            elif event.observation == "Structured memory event projected":
+                items.append({"kind": "memory_event", **_redact(payload)})
+            elif payload.get("kind") == "phase_capsule":
+                items.append({"kind": "phase_capsule", **_redact(payload)})
         return {"runId": run_id, "items": items, "total": len(items)}
 
     @router.get("/evolution/active")

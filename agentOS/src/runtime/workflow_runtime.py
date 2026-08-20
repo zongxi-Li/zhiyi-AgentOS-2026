@@ -40,7 +40,7 @@ from components.executor import (
     GraphPatchConflictError,
     GraphPatchService,
 )
-from components.memory import MemoryService
+from components.memory import MemoryService, StructuredMemoryEvent
 from components.evolution.service import EvolutionService
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryType
@@ -934,6 +934,7 @@ class WorkflowRuntime:
             run.completed_step_ids = list(state.completed_step_ids)
             run.active_step_ids = list(state.active_step_ids)
         elif event_type == "superstep_completed":
+            self._project_completed_phase_capsules(run=run, state=state)
             checkpoint_id = self._save_acg_checkpoint(run, state)
             state.checkpoint_id = checkpoint_id
             run.execution_state["checkpointId"] = checkpoint_id
@@ -1029,6 +1030,27 @@ class WorkflowRuntime:
                     observation="Step memory policy applied",
                     payload=dict(memory_access),
                 )
+        memory_event = event.get("memoryEvent")
+        if isinstance(memory_event, dict) and memory_event:
+            projected = StructuredMemoryEvent.model_validate(memory_event).model_dump(
+                by_alias=True, mode="json"
+            )
+            if event_type == "node_completed":
+                node_trace_batch.append(self.trace_store.build_event(
+                    run,
+                    event_type=TraceEventType.DATA_PRODUCED,
+                    step_id=event.get("stepId"),
+                    observation="Structured memory event projected",
+                    payload=projected,
+                ))
+            else:
+                self.trace_store.append(
+                    run,
+                    TraceEventType.DATA_PRODUCED,
+                    step_id=event.get("stepId"),
+                    observation="Structured memory event projected",
+                    payload=projected,
+                )
         # 通信读取事件来自 Broker，仅允许引用、字段名、计数与逻辑通道进入审计。
         # 即便节点事件被外部调用方伪造，也不能借此把 reason 或任何正文塞进 Trace。
         for communication_read in event.get("communicationReads", []):
@@ -1097,6 +1119,68 @@ class WorkflowRuntime:
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
         self._persist_acg_state(run, state)
+
+    def _project_completed_phase_capsules(
+        self,
+        *,
+        run: WorkflowRun,
+        state: ACGExecutionState,
+    ) -> None:
+        """Persist one deterministic capsule when every step in a planning stage completed."""
+        if not isinstance(run.acg_blueprint, dict):
+            return
+        blueprint = ACGBlueprint.model_validate(run.acg_blueprint)
+        stages: dict[str, list[str]] = {}
+        for node in blueprint.step_nodes():
+            stage = str(node.metadata.get("planningStage") or "execution")
+            stages.setdefault(stage, []).append(node.node_id)
+        completed = set(state.completed_step_ids)
+        capsule_refs = run.execution_state.setdefault("phaseCapsuleRefs", {})
+        if not isinstance(capsule_refs, dict):
+            raise ValueError("phaseCapsuleRefs must be an object")
+        task = self.task_manager.get_task(run.task_id)
+        raw_constraints = task.input.get("constraints")
+        constraints = raw_constraints if isinstance(raw_constraints, list) else []
+        raw_questions = task.input.get("openQuestions")
+        open_questions = raw_questions if isinstance(raw_questions, list) else []
+        service = MemoryService(store=self.memory_store)
+        for stage, step_ids in stages.items():
+            if not set(step_ids) <= completed:
+                continue
+            source_refs = [
+                state.memory_refs[step_id]
+                for step_id in step_ids
+                if state.memory_refs.get(step_id) not in {None, "memory:none"}
+            ]
+            if not source_refs:
+                continue
+            capsule = service.create_phase_capsule(
+                run_id=run.run_id,
+                phase_id=stage,
+                source_memory_refs=source_refs,
+                goal=task.title,
+                constraints=constraints,
+                open_questions=open_questions,
+            )
+            previous = capsule_refs.get(stage)
+            if previous is not None and previous != capsule.capsule_id:
+                raise ValueError(f"phase {stage} already points to a different capsule")
+            if previous == capsule.capsule_id:
+                continue
+            capsule_refs[stage] = capsule.capsule_id
+            self.trace_store.append(
+                run,
+                TraceEventType.DATA_PRODUCED,
+                observation="Phase capsule persisted",
+                payload={
+                    "kind": "phase_capsule",
+                    "phaseId": stage,
+                    "capsuleRef": capsule.capsule_id,
+                    "sourceMemoryRefs": list(capsule.source_memory_refs),
+                    "evidenceRefs": list(capsule.evidence_refs),
+                    "tokenCount": capsule.token_count,
+                },
+            )
 
     @staticmethod
     def _is_projected_commit(run: WorkflowRun, commit_id: str) -> bool:
@@ -2122,11 +2206,10 @@ class WorkflowRuntime:
         step: WorkflowStep,
         state: ACGExecutionState,
     ) -> None:
-        """在人工批准后按待写入意图落入正式记忆，不读取检查点中的正文。
+        """在人工批准后按待写入的结构化事件落入正式记忆。
 
-        待写入意图来自节点提交和审核检查点，只允许引用、策略标识与审计决定。真正
-        输出仍必须通过 ``ExecutionValueStore`` 按 run/step 重新读取，避免人工审核
-        路径意外成为把正文写回 State 或绕过输出合同的后门。
+        待写入意图只携带输出引用、策略、审计决定和经过白名单验证的 MemoryEvent；
+        输出引用仍需按 run/step 校验，但完整输出正文不会进入 MemoryStore。
         """
         review_payload = state.review_payload or {}
         pending = review_payload.get("pendingMemory")
@@ -2138,6 +2221,7 @@ class WorkflowRuntime:
         policy_id = pending.get("policyId")
         write_type = pending.get("writeType")
         decision_ref = pending.get("auditDecisionRef")
+        memory_event = pending.get("memoryEvent")
         if not all(isinstance(value, str) and value for value in (output_ref, policy_id, write_type, decision_ref)):
             raise ValueError("review pendingMemory is incomplete")
         if review_payload.get("auditDecisionRef") != decision_ref:
@@ -2164,11 +2248,13 @@ class WorkflowRuntime:
             step_id=step.step_id,
             reference=output_ref,
         )
-        output = self.execution_value_store.get_output(run_id=run.run_id, output_ref=output_ref)
+        event = StructuredMemoryEvent.model_validate(memory_event)
+        if event.run_id != run.run_id or event.step_id != step.step_id:
+            raise ValueError("review pendingMemory event belongs to a different run or step")
         record = MemoryService(store=self.memory_store).remember_step_output(
             run_id=run.run_id,
             step_id=step.step_id,
-            output=output,
+            output=event.model_dump(by_alias=True, mode="json"),
             memory_type=MemoryType(write_type),
             policy=MemoryPolicy(
                 policyId=policy_id,
@@ -2188,6 +2274,7 @@ class WorkflowRuntime:
                 "policyId": policy_id,
                 "writeType": write_type,
                 "written": True,
+                "memoryEventRef": event.event_id,
                 "auditDecisionRef": decision_ref,
             },
         )

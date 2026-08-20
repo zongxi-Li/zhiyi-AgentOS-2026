@@ -141,6 +141,9 @@ class MemoryService:
         phase_id: str,
         source_memory_refs: list[str],
         token_budget: int = 512,
+        goal: str = "",
+        constraints: list[str] | None = None,
+        open_questions: list[str] | None = None,
     ) -> PhaseCapsule:
         """Compress a completed phase into deterministic facts and source references."""
         if token_budget < 1:
@@ -152,6 +155,10 @@ class MemoryService:
                 raise ValueError(f"invalid phase memory reference: {memory_ref}")
             records.append(record)
         facts: list[str] = []
+        summaries: list[str] = []
+        evidence_refs: list[str] = []
+        risks: list[str] = []
+        decisions: list[str] = []
         used = 0
         for record in records:
             text = json.dumps(record.content, ensure_ascii=False, sort_keys=True)
@@ -160,14 +167,40 @@ class MemoryService:
                 continue
             facts.append(text)
             used += cost
+            summary = record.content.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                summaries.append(summary.strip())
+            raw_evidence_refs = record.content.get("evidenceRefs")
+            for evidence_ref in raw_evidence_refs if isinstance(raw_evidence_refs, list) else []:
+                if isinstance(evidence_ref, str) and evidence_ref not in evidence_refs:
+                    evidence_refs.append(evidence_ref)
+            decision = record.content.get("decision")
+            if isinstance(decision, str) and decision:
+                decisions.append(decision)
+                if decision in {"review", "deny"}:
+                    risks.append(f"{record.tags[-1]}:{decision}")
         capsule = PhaseCapsule(
             capsuleId=f"capsule:{run_id}:{phase_id}",
             runId=run_id,
             phaseId=phase_id,
             sourceMemoryRefs=list(source_memory_refs),
+            goal=str(goal)[:500],
+            confirmedSummary="\n".join(summaries)[:4000],
+            evidenceRefs=evidence_refs,
+            constraints=[str(item)[:300] for item in (constraints or [])],
+            risks=risks,
+            openQuestions=[str(item)[:300] for item in (open_questions or [])],
             keyFacts=facts,
+            decisions=decisions,
             tokenCount=used,
         )
+        existing = self._store.get(capsule.capsule_id)
+        if existing is not None:
+            restored = PhaseCapsule.model_validate(existing.content)
+            comparable = {"created_at"}
+            if restored.model_dump(exclude=comparable) != capsule.model_dump(exclude=comparable):
+                raise ValueError(f"phase capsule already exists with different content: {capsule.capsule_id}")
+            return restored
         self.remember(
             MemoryRecord(
                 memoryId=capsule.capsule_id,

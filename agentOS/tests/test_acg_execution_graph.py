@@ -444,8 +444,13 @@ def test_node_runner_recalls_and_persists_run_scoped_controlled_memory() -> None
 
     assert [record.memory_id for record in agent.context.memory] == ["memory:run-1:known"]
     assert result["memoryRef"] == "memory:run-1:one"
-    persisted = memory.recall_for_step(run_id="run-1", step_id="one", query="answer")
-    assert any(record.memory_id == "memory:run-1:one" and record.content == {"answer": "accepted"} for record in persisted)
+    persisted = memory.recall_for_step(run_id="run-1", step_id="one", query="accepted")
+    event = next(record for record in persisted if record.memory_id == "memory:run-1:one")
+    assert event.content["summary"] == "accepted"
+    assert event.content["decision"] == "allow"
+    assert event.content["metrics"]["fieldCount"] == 1
+    assert "answer" not in event.content
+    assert "ignored" not in str(event.content)
 
 
 def test_node_runner_obeys_step_memory_policy_and_returns_safe_access_metadata() -> None:
@@ -672,12 +677,12 @@ def test_review_decision_defers_memory_write_until_human_approval() -> None:
     assert result["auditOutcome"] == "review"
     assert "memoryRef" not in result
     assert result["memoryAccess"]["written"] is False
-    assert result["pendingMemory"] == {
-        "outputRef": result["outputRef"],
-        "policyId": "default",
-        "writeType": "episodic",
-        "auditDecisionRef": result["auditDecisionRef"],
-    }
+    assert result["pendingMemory"]["outputRef"] == result["outputRef"]
+    assert result["pendingMemory"]["policyId"] == "default"
+    assert result["pendingMemory"]["writeType"] == "episodic"
+    assert result["pendingMemory"]["auditDecisionRef"] == result["auditDecisionRef"]
+    assert result["pendingMemory"]["memoryEvent"]["decision"] == "review"
+    assert "needs-review" not in str(result["pendingMemory"])
     assert memory.search(MemoryQuery(query="one", scope="run-1")) == []
     assert decision_store.assert_decision(
         run_id="run-1",

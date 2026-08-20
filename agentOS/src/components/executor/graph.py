@@ -358,6 +358,7 @@ class ACGExecutionGraph:
                     )
                 state.completed_step_ids.append(step_id)
                 memory_access = self._safe_memory_access(result.get("memoryAccess"))
+                memory_event = self._safe_memory_event(result.get("memoryEvent"))
                 yield {
                     "type": "node_completed",
                     "stepId": step_id,
@@ -368,6 +369,7 @@ class ACGExecutionGraph:
                     "provenanceEvents": list(result.get("provenanceEvents") or []),
                     "communicationReads": list(result.get("communicationReads") or []),
                     "memoryAccess": memory_access,
+                    "memoryEvent": memory_event,
                 }
                 if self.node_specs[step_id].review_required or result.get("reviewRequired"):
                     review_payload = {
@@ -420,6 +422,8 @@ class ACGExecutionGraph:
             "policyId",
             "read",
             "readCount",
+            "retrievalMode",
+            "hitRefs",
             "write",
             "written",
             "readTypes",
@@ -428,6 +432,24 @@ class ACGExecutionGraph:
             "tokenBudget",
             "tokensUsed",
             "requireAudit",
+        }
+        return {key: item for key, item in value.items() if key in allowed}
+
+    @staticmethod
+    def _safe_memory_event(value: object) -> dict[str, Any]:
+        """Whitelist the compact event contract before it reaches Runtime Trace."""
+        if not isinstance(value, dict):
+            return {}
+        allowed = {
+            "eventId",
+            "runId",
+            "stepId",
+            "commitId",
+            "summary",
+            "evidenceRefs",
+            "metrics",
+            "decision",
+            "relations",
         }
         return {key: item for key, item in value.items() if key in allowed}
 

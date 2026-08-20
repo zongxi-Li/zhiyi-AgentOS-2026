@@ -287,7 +287,13 @@ def test_review_approval_commits_deferred_memory_after_recreation(tmp_path) -> N
     )
     assert completed.status is WorkflowStatus.COMPLETED
     assert [record.memory_id for record in records] == [f"memory:{run.run_id}:review"]
-    assert records[0].content == {"summary": "needs-human-review"}
+    assert records[0].content["summary"] == "needs-human-review"
+    assert records[0].content["decision"] == "review"
+    assert records[0].content["runId"] == run.run_id
+    assert set(records[0].content) == {
+        "eventId", "runId", "stepId", "commitId", "summary",
+        "evidenceRefs", "metrics", "decision", "relations",
+    }
 
 
 def test_review_rejection_discards_deferred_memory(tmp_path) -> None:

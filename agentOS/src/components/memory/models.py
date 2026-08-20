@@ -72,6 +72,22 @@ class MemoryRetrievalEvent(BaseModel):
     fallback_reason: str | None = Field(default=None, alias="fallbackReason")
 
 
+class StructuredMemoryEvent(BaseModel):
+    """A compact committed-step projection safe for Trace and long-term memory."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    event_id: str = Field(alias="eventId")
+    run_id: str = Field(alias="runId")
+    step_id: str = Field(alias="stepId")
+    commit_id: str = Field(alias="commitId")
+    summary: str
+    evidence_refs: list[str] = Field(default_factory=list, alias="evidenceRefs")
+    metrics: dict[str, int] = Field(default_factory=dict)
+    decision: str
+    relations: list[dict[str, str]] = Field(default_factory=list)
+
+
 class PhaseCapsule(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
@@ -79,6 +95,12 @@ class PhaseCapsule(BaseModel):
     run_id: str = Field(alias="runId")
     phase_id: str = Field(alias="phaseId")
     source_memory_refs: list[str] = Field(alias="sourceMemoryRefs")
+    goal: str = ""
+    confirmed_summary: str = Field(default="", alias="confirmedSummary")
+    evidence_refs: list[str] = Field(default_factory=list, alias="evidenceRefs")
+    constraints: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list, alias="openQuestions")
     key_facts: list[str] = Field(default_factory=list, alias="keyFacts")
     open_risks: list[str] = Field(default_factory=list, alias="openRisks")
     decisions: list[str] = Field(default_factory=list)
@@ -113,4 +135,4 @@ class PhaseCapsule(BaseModel):
         )
 
 
-__all__ = ["HybridMemoryHit", "MemoryPolicy", "MemoryQuery", "MemoryRecord", "MemoryRetrievalEvent", "MemoryType", "MemoryWriteBatch", "PhaseCapsule", "WorkingMemory"]
+__all__ = ["HybridMemoryHit", "MemoryPolicy", "MemoryQuery", "MemoryRecord", "MemoryRetrievalEvent", "MemoryType", "MemoryWriteBatch", "PhaseCapsule", "StructuredMemoryEvent", "WorkingMemory"]
