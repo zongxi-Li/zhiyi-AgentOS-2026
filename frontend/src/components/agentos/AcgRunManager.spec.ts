@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import AcgRunManager from './AcgRunManager.vue'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { ElMessageBox } from 'element-plus'
-import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
+import { ACG_HISTORY_SOURCES, ACG_RUN_INVALIDATED_EVENT } from '@/utils/acgHistoryFilter'
 
 vi.mock('@/services/api/workflow', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/api/workflow')>()
@@ -207,6 +207,24 @@ describe('AcgRunManager', () => {
     expect(wrapper.emitted('new')).toHaveLength(1)
     expect(wrapper.emitted('select')?.[0]).toEqual(['run_active_123456789'])
     expect(workflowApi.listRuns).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('removes a run immediately after its detail resource is invalidated', async () => {
+    const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
+    await flushPromises()
+
+    window.dispatchEvent(new CustomEvent(ACG_RUN_INVALIDATED_EVENT, {
+      detail: { runId: 'run_active_123456789' }
+    }))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('软件开发合同审查')
+    expect(wrapper.findAll('.acg-run-item')).toHaveLength(2)
+
+    window.dispatchEvent(new Event('acg-runs-refresh'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('软件开发合同审查')
     wrapper.unmount()
   })
 

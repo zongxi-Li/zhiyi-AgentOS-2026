@@ -93,6 +93,11 @@ def _actor_input(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _csv_values(value: str | None) -> tuple[str, ...] | None:
+    values = tuple(dict.fromkeys(item.strip() for item in (value or "").split(",") if item.strip()))
+    return values or None
+
+
 def _require_access(run: WorkflowRun) -> None:
     owner = str(run.input.get("authenticatedUserId") or "")
     if not owner:
@@ -174,6 +179,7 @@ def project_run(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]
         "title": title,
         "workflowId": run.workflow_id,
         "domain": run.domain,
+        "source": str(run.input.get("source") or "") or None,
         "runtimeEngine": run.runtime_engine,
         "status": run.status.value,
         "lifecyclePhase": run.lifecycle_phase.value if run.lifecycle_phase else None,
@@ -292,14 +298,27 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
     @router.get("/runs")
     async def list_runs(
         status_value: str | None = Query(default=None, alias="status"),
+        statuses_value: str | None = Query(default=None, alias="statuses"),
         domain: str | None = None,
+        workflow_id: str | None = Query(default=None, alias="workflowId"),
+        task_id: str | None = Query(default=None, alias="taskId"),
+        lifecycle_phase: str | None = Query(default=None, alias="lifecyclePhase"),
+        source: str | None = None,
+        sources_value: str | None = Query(default=None, alias="sources"),
+        _summary: bool = Query(default=True, alias="summary"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     ):
         actor = current_trusted_user()
         result = runtime.workflow_store.list_runs(
             status=status_value,
+            statuses=_csv_values(statuses_value),
             domain=domain,
+            workflow_id=workflow_id,
+            task_id=task_id,
+            lifecycle_phase=lifecycle_phase,
+            source=source,
+            sources=_csv_values(sources_value),
             owner_user_id=(actor.user_id if actor else None),
             owner_tenant_id=(actor.tenant_id if actor else None),
             page=page,

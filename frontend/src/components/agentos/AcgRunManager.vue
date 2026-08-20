@@ -110,6 +110,7 @@ import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
 import {
   ACG_HISTORY_ROLE_OPTIONS,
   ACG_HISTORY_ROLE_CHANGE_EVENT,
+  ACG_RUN_INVALIDATED_EVENT,
   ACG_HISTORY_SOURCES,
   acgHistoryRoleDomain,
   loadAcgHistoryRole,
@@ -140,6 +141,7 @@ let loadController: AbortController | null = null
 let loadPromise: Promise<void> | null = null
 let refreshTimer: ReturnType<typeof window.setTimeout> | null = null
 let unmounted = false
+const invalidatedRunIds = new Set<string>()
 const ACTIVE_REFRESH_INTERVAL_MS = 8_000
 const IDLE_REFRESH_INTERVAL_MS = 30_000
 const RUN_LIST_PAGE_SIZE = 20
@@ -275,7 +277,9 @@ const loadRuns = (silent = false): Promise<void> => {
         },
         { signal: controller.signal }
       )
-      if (!controller.signal.aborted) runs.value = page.items || []
+      if (!controller.signal.aborted) {
+        runs.value = (page.items || []).filter(run => !invalidatedRunIds.has(run.runId))
+      }
     } catch (error: unknown) {
       if ((error as { code?: string })?.code !== 'ERR_CANCELED' && !controller.signal.aborted) {
         loadError.value = '运行记录暂时无法加载'
@@ -327,8 +331,18 @@ const handleRunsRefresh = () => {
   void loadRuns(true).finally(scheduleRefresh)
 }
 
+const handleRunInvalidated = (event: Event) => {
+  const runId = (event as CustomEvent<{ runId?: unknown }>).detail?.runId
+  if (typeof runId !== 'string' || !runId.trim()) return
+  const normalizedRunId = runId.trim()
+  invalidatedRunIds.add(normalizedRunId)
+  runs.value = runs.value.filter(run => run.runId !== normalizedRunId)
+  workflowRunsStore.removeReference(normalizedRunId)
+}
+
 onMounted(() => {
   window.addEventListener('acg-runs-refresh', handleRunsRefresh)
+  window.addEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
   window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   void loadRuns().finally(scheduleRefresh)
 })
@@ -338,6 +352,7 @@ onUnmounted(() => {
   loadController?.abort()
   if (refreshTimer !== null) window.clearTimeout(refreshTimer)
   window.removeEventListener('acg-runs-refresh', handleRunsRefresh)
+  window.removeEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
   window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
 })
 </script>

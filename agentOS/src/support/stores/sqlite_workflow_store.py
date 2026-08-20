@@ -130,6 +130,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         task_id: str | None = None,
         lifecycle_phase: str | None = None,
         source: str | None = None,
+        sources=None,
         owner_user_id: str | None = None,
         owner_tenant_id: str | None = None,
         page: int = 1,
@@ -138,6 +139,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         """载入、筛选并分页运行；多状态查询按运行优先级、更新时间和标识降序，复杂度 ``O(R log R)``。"""
         expected_status = status_value(status)
         expected_statuses = status_values(statuses)
+        expected_sources = {str(item) for item in sources} if sources else None
         rows = self._fetch_all("SELECT payload FROM runs")
         runs = [
             run
@@ -151,6 +153,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                 task_id=task_id,
                 lifecycle_phase=lifecycle_phase,
                 source=source,
+                sources=expected_sources,
                 owner_user_id=owner_user_id,
                 owner_tenant_id=owner_tenant_id,
             )

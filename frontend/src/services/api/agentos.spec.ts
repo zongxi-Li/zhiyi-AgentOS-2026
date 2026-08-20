@@ -65,6 +65,26 @@ describe('AgentOS v2 application API', () => {
     expect(result.items[0].title).toBe('IC-200智能装配生产线立项实施方案')
   })
 
+  it('forwards the complete run history filter contract', async () => {
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { items: [], total: 0, page: 2, pageSize: 50 }
+    } as never)
+
+    await agentosApi.listWorkflowRuns({
+      statuses: 'running,waiting_review', domain: 'legal', workflowId: 'workflow_1',
+      taskId: 'task_1', lifecyclePhase: 'review', source: 'acg', sources: 'acg,chat',
+      summary: true, page: 2, pageSize: 50
+    })
+
+    expect(get).toHaveBeenCalledWith('/runs', expect.objectContaining({
+      params: expect.objectContaining({
+        statuses: 'running,waiting_review', domain: 'legal', workflowId: 'workflow_1',
+        taskId: 'task_1', lifecyclePhase: 'review', source: 'acg', sources: 'acg,chat',
+        summary: true, page: 2, pageSize: 50
+      })
+    }))
+  })
+
   it('dereferences owned outputs and projects real artifacts', async () => {
     const artifact = {
       artifactId: 'artifact_1', type: 'report', title: 'Final result',

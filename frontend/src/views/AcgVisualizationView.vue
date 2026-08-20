@@ -307,6 +307,7 @@ import { fileApi } from '@/services/api/file'
 import { buildAcgAuditCsv, buildAcgAuditExport } from '@/utils/acgAuditExport'
 import { isWorkflowReviewPending } from '@/utils/workflowReviewState'
 import { resolveAcgTaskTitle, resolveAcgTaskTitleAutoUpdate } from '@/utils/acgTaskTitle'
+import { notifyAcgRunInvalidated } from '@/utils/acgHistoryFilter'
 import PluginExtensionHost from '@/features/acg/PluginExtensionHost.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
 import {
@@ -811,6 +812,7 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
 
 const removeMissingAcgRun = async (runId: string) => {
   workflowRunsStore.removeReference(runId)
+  notifyAcgRunInvalidated(runId)
   if (activeRunId.value !== runId) return
   progressTracker.reset()
   clearRunData()

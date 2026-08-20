@@ -9,7 +9,14 @@ from components.executor import InMemoryExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.task_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
-from contracts.workflow import TraceEventType, WorkflowDefinition, WorkflowStepDefinition
+from contracts.workflow import (
+    StepStatus,
+    TraceEventType,
+    WorkflowDefinition,
+    WorkflowProgressPhase,
+    WorkflowStatus,
+    WorkflowStepDefinition,
+)
 from runtime import WorkflowRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -100,6 +107,51 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert trace.status_code == 200
         assert "PRIVATE-PROMPT" not in trace.text
         assert any(event["payload"].get("prompt") == "[redacted]" for event in trace.json()["events"])
+
+
+async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    visible_task = runtime.create_task(
+        "Visible ACG run",
+        workflow_id="api-workflow",
+        input={"source": "acg"},
+    )
+    _, visible_run = runtime.prepare_run(visible_task.task_id, workflow_id="api-workflow")
+    visible_run.status = WorkflowStatus.WAITING_REVIEW
+    visible_run.lifecycle_phase = WorkflowProgressPhase.REVIEW
+    visible_run.steps[0].status = StepStatus.WAITING_REVIEW
+    runtime.workflow_store.save_run(visible_run)
+
+    hidden_task = runtime.create_task(
+        "Owned by another user",
+        workflow_id="api-workflow",
+        input={"source": "acg", "authenticatedUserId": "other-user"},
+    )
+    _, hidden_run = runtime.prepare_run(hidden_task.task_id, workflow_id="api-workflow")
+    runtime.workflow_store.save_run(hidden_run)
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/agentos/v2/runs",
+            params={
+                "statuses": "running,waiting_review",
+                "domain": "general",
+                "workflowId": "api-workflow",
+                "taskId": visible_task.task_id,
+                "lifecyclePhase": "review",
+                "sources": "acg,chat",
+                "summary": "true",
+            },
+        )
+        hidden_detail = await client.get(f"/agentos/v2/runs/{hidden_run.run_id}")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["runId"] == visible_run.run_id
+    assert response.json()["items"][0]["source"] == "acg"
+    assert hidden_detail.status_code == 404
 
 
 async def test_v2_projects_scheduling_and_versioned_evolution_without_bodies(tmp_path) -> None:

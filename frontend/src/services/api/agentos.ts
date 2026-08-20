@@ -532,7 +532,19 @@ export const agentosApi = {
     options: { signal?: AbortSignal } = {}
   ): Promise<PageResponse<WorkflowRunSummary>> {
     const response = await agentosRequest.get<PageResponse<WorkflowRun>>('/runs', {
-      params: { status: params.status || undefined, domain: params.domain, page: params.page, pageSize: params.pageSize },
+      params: {
+        status: params.status || undefined,
+        statuses: params.statuses || undefined,
+        domain: params.domain,
+        workflowId: params.workflowId,
+        taskId: params.taskId,
+        lifecyclePhase: params.lifecyclePhase || undefined,
+        source: params.source,
+        sources: params.sources,
+        summary: params.summary,
+        page: params.page,
+        pageSize: params.pageSize
+      },
       signal: options.signal
     })
     return {

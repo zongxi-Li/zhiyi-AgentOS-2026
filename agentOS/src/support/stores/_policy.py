@@ -38,6 +38,7 @@ def matches_run(
     task_id: str | None,
     lifecycle_phase: str | None,
     source: str | None,
+    sources: set[str] | None,
     owner_user_id: str | None,
     owner_tenant_id: str | None,
 ) -> bool:
@@ -56,11 +57,15 @@ def matches_run(
         return False
     if source is not None and run.input.get("source") != source:
         return False
+    if sources is not None and run.input.get("source") not in sources:
+        return False
     run_owner = str(run.input.get("authenticatedUserId") or "").strip()
     run_tenant = str(run.input.get("authenticatedTenantId") or "").strip()
-    if owner_user_id is not None and run_owner and run_owner != owner_user_id:
+    if run_owner and run_owner != owner_user_id:
         return False
-    return owner_tenant_id is None or not run_tenant or run_tenant == owner_tenant_id
+    if run_owner and run_tenant and run_tenant != owner_tenant_id:
+        return False
+    return True
 
 
 def run_priority(run: WorkflowRun) -> int:

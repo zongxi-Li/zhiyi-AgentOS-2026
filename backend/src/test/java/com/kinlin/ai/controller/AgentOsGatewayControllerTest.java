@@ -83,6 +83,32 @@ class AgentOsGatewayControllerTest {
     }
 
     @Test
+    void listRunsForwardsTheCompleteHistoryFilterContract() throws Exception {
+        String upstream = "/ai/agentos/v2/runs?statuses=running,waiting_review&domain=legal"
+                + "&workflowId=workflow_1&taskId=task_1&lifecyclePhase=review&source=acg"
+                + "&sources=acg,chat&summary=true&page=2&pageSize=50";
+        gateway.getResponses.put(upstream, response(200, Map.of(
+                "items", java.util.List.of(), "total", 0, "page", 2, "pageSize", 50
+        )));
+
+        mockMvc.perform(get("/api/agentos/v2/runs")
+                        .param("statuses", "running,waiting_review")
+                        .param("domain", "legal")
+                        .param("workflowId", "workflow_1")
+                        .param("taskId", "task_1")
+                        .param("lifecyclePhase", "review")
+                        .param("source", "acg")
+                        .param("sources", "acg,chat")
+                        .param("summary", "true")
+                        .param("page", "2")
+                        .param("pageSize", "50"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+
+        assertEquals(upstream, gateway.lastGetPath);
+    }
+
+    @Test
     void outputAndReviewUseOwnedSubresourcePathsAndValidatedDtos() throws Exception {
         String outputPath = "/ai/agentos/v2/runs/run_001/outputs/output:run_001:report:hash";
         gateway.getResponses.put(outputPath, response(200, Map.of("outputRef", "output:run_001:report:hash")));

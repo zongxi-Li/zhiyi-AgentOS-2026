@@ -36,13 +36,27 @@ public class AgentOsGatewayController {
     @GetMapping("/runs")
     public ResponseEntity<Map<String, Object>> listRuns(
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String statuses,
             @RequestParam(required = false) String domain,
+            @RequestParam(required = false) String workflowId,
+            @RequestParam(required = false) String taskId,
+            @RequestParam(required = false) String lifecyclePhase,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) String sources,
+            @RequestParam(required = false) Boolean summary,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize
     ) {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("status", status);
+        params.put("statuses", statuses);
         params.put("domain", domain);
+        params.put("workflowId", workflowId);
+        params.put("taskId", taskId);
+        params.put("lifecyclePhase", lifecyclePhase);
+        params.put("source", source);
+        params.put("sources", sources);
+        params.put("summary", summary == null ? null : summary.toString());
         params.put("page", String.valueOf(page));
         params.put("pageSize", String.valueOf(pageSize));
         return response(gateway.get(query(UPSTREAM_ROOT + "/runs", params)));

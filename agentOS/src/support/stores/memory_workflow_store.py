@@ -121,6 +121,7 @@ class MemoryWorkflowStore(WorkflowStore):
         task_id: str | None = None,
         lifecycle_phase: str | None = None,
         source: str | None = None,
+        sources=None,
         owner_user_id: str | None = None,
         owner_tenant_id: str | None = None,
         page: int = 1,
@@ -133,6 +134,7 @@ class MemoryWorkflowStore(WorkflowStore):
         """
         expected_status = status_value(status)
         expected_statuses = status_values(statuses)
+        expected_sources = {str(item) for item in sources} if sources else None
         runs = [
             run.model_copy(deep=True)
             for run in self._runs.values()
@@ -145,6 +147,7 @@ class MemoryWorkflowStore(WorkflowStore):
                 task_id=task_id,
                 lifecycle_phase=lifecycle_phase,
                 source=source,
+                sources=expected_sources,
                 owner_user_id=owner_user_id,
                 owner_tenant_id=owner_tenant_id,
             )

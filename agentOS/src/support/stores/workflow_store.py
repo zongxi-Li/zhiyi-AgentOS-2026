@@ -130,6 +130,7 @@ class WorkflowStore(ABC):
         task_id: str | None = None,
         lifecycle_phase: str | None = None,
         source: str | None = None,
+        sources: Sequence[str] | None = None,
         owner_user_id: str | None = None,
         owner_tenant_id: str | None = None,
         page: int = 1,
