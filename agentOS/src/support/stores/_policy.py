@@ -10,6 +10,7 @@ TERMINAL_RUN_STATUSES = frozenset(
         WorkflowStatus.COMPLETED,
         WorkflowStatus.FAILED,
         WorkflowStatus.CANCELLED,
+        WorkflowStatus.SUPERSEDED,
     }
 )
 

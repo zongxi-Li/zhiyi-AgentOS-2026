@@ -20,7 +20,11 @@ from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
 from components.task_manager.store import WorkflowRegistry
 from runtime import ApplicationSetup, WknWorkflowRuntime
-from runtime.v2 import AcgIdentityLifecycleService, WknIdentityLifecycleAdapter
+from runtime.v2 import (
+    AcgIdentityLifecycleService,
+    IdentityProjectionReconciler,
+    WknIdentityLifecycleAdapter,
+)
 from service.agents import AgentRegistry
 from support.packs.registry import register_installed_packs
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -158,6 +162,10 @@ def build_default_runtime(
         tool_runtime=tool_runtime or get_tool_runtime(),
         identity_lifecycle=identity_adapter,
     )
+    reconciliation = IdentityProjectionReconciler(
+        identity_adapter
+    ).reconcile_workflow_store(runtime.workflow_store)
+    runtime.identity_reconciliation_report = reconciliation
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)
     runtime.plugin_manifests = register_installed_packs(
         agent_registry=runtime.agent_registry,

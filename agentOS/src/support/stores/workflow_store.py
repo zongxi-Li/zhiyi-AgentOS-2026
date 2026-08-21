@@ -145,6 +145,11 @@ class WorkflowStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[WorkflowRun, ...]:
+        """Return an unscoped page for reconciliation, including terminal runs."""
+        raise NotImplementedError
+
+    @abstractmethod
     def find_run_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
         """按幂等键查找最近运行；无匹配时返回 ``None``。"""
         raise NotImplementedError

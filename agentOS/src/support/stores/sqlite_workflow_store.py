@@ -32,16 +32,17 @@ class SQLiteWorkflowStore(WorkflowStore):
 
     def save_task(self, task: AgentTask) -> None:
         """以任务标识 UPSERT JSON 快照并提交事务；SQLite 错误由驱动层原样抛出。"""
-        self._execute(
-            """
-            INSERT INTO tasks(task_id, payload, updated_at)
-            VALUES(?, ?, ?)
-            ON CONFLICT(task_id) DO UPDATE SET
-                payload=excluded.payload,
-                updated_at=excluded.updated_at
-            """,
-            (task.task_id, json.dumps(task.model_dump(by_alias=True, mode="json"), ensure_ascii=False), task.updated_at.isoformat()),
-        )
+        payload = json.dumps(task.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO tasks(task_id, payload, updated_at)
+                   VALUES(?, ?, ?)
+                   ON CONFLICT(task_id) DO UPDATE SET
+                       payload=excluded.payload, updated_at=excluded.updated_at""",
+                (task.task_id, payload, task.updated_at.isoformat()),
+            )
+            self._append_outbox(conn, f"task:{task.task_id}:{task.updated_at.isoformat()}", "task.created", task.task_id, payload)
+            conn.commit()
 
     def get_task(self, task_id: str) -> AgentTask:
         """读取并校验任务 JSON 快照；缺失时抛出 ``KeyError``。"""
@@ -90,6 +91,42 @@ class SQLiteWorkflowStore(WorkflowStore):
                     json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
                     run.updated_at.isoformat(),
                 ),
+            )
+            event_type = (
+                "run.superseded" if run.status is WorkflowStatus.SUPERSEDED
+                else "run.finished" if run.status in {
+                    WorkflowStatus.COMPLETED,
+                    WorkflowStatus.FAILED,
+                    WorkflowStatus.CANCELLED,
+                }
+                else "run.prepared" if run.status is WorkflowStatus.PENDING
+                else "run.snapshot"
+            )
+            self._append_outbox(
+                conn,
+                f"run:{run.run_id}:{run.updated_at.isoformat()}",
+                event_type,
+                run.run_id,
+                json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
+            )
+            conn.commit()
+
+    def list_outbox(self, *, limit: int = 200) -> list[dict]:
+        rows = self._fetch_all(
+            """SELECT event_id, event_type, aggregate_id, payload, attempts
+               FROM lifecycle_outbox WHERE status != 'applied'
+               ORDER BY created_at, event_id LIMIT ?""",
+            (max(1, limit),),
+        )
+        return [dict(row) for row in rows]
+
+    def mark_outbox(self, event_id: str, *, applied: bool, error: str | None = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE lifecycle_outbox
+                   SET status = ?, attempts = attempts + 1, last_error = ?
+                   WHERE event_id = ?""",
+                ("applied" if applied else "failed", error, event_id),
             )
             conn.commit()
 
@@ -170,7 +207,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         rows = self._fetch_all(
             """
             SELECT payload FROM runs
-            WHERE json_extract(payload, '$.status') NOT IN (?, ?, ?)
+            WHERE json_extract(payload, '$.status') NOT IN (?, ?, ?, ?)
             ORDER BY updated_at DESC
             LIMIT ?
             """,
@@ -178,12 +215,20 @@ class SQLiteWorkflowStore(WorkflowStore):
                 WorkflowStatus.COMPLETED.value,
                 WorkflowStatus.FAILED.value,
                 WorkflowStatus.CANCELLED.value,
+                WorkflowStatus.SUPERSEDED.value,
                 safe_limit,
             ),
         )
         return tuple(
             WorkflowRun.model_validate(json.loads(row["payload"])) for row in rows
         )
+
+    def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[WorkflowRun, ...]:
+        rows = self._fetch_all(
+            "SELECT payload FROM runs ORDER BY updated_at, run_id LIMIT ? OFFSET ?",
+            (max(1, limit), max(0, offset)),
+        )
+        return tuple(WorkflowRun.model_validate(json.loads(row["payload"])) for row in rows)
 
     def find_run_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
         """按幂等键返回更新时间最新的运行；无匹配时返回 ``None``。"""
@@ -271,7 +316,35 @@ class SQLiteWorkflowStore(WorkflowStore):
                 )
                 """
             )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS lifecycle_outbox (
+                       event_id TEXT PRIMARY KEY,
+                       event_type TEXT NOT NULL,
+                       aggregate_id TEXT NOT NULL,
+                       payload TEXT NOT NULL,
+                       status TEXT NOT NULL DEFAULT 'pending',
+                       attempts INTEGER NOT NULL DEFAULT 0,
+                       last_error TEXT,
+                       created_at TEXT NOT NULL
+                   )"""
+            )
             conn.commit()
+
+    @staticmethod
+    def _append_outbox(
+        conn: sqlite3.Connection,
+        event_id: str,
+        event_type: str,
+        aggregate_id: str,
+        payload: str,
+    ) -> None:
+        conn.execute(
+            """INSERT INTO lifecycle_outbox(
+                   event_id, event_type, aggregate_id, payload, status, attempts, created_at
+               ) VALUES (?, ?, ?, ?, 'pending', 0, datetime('now'))
+               ON CONFLICT(event_id) DO UPDATE SET payload=excluded.payload""",
+            (event_id, event_type, aggregate_id, payload),
+        )
 
     def _execute(self, sql: str, params: tuple) -> None:
         with self._connect() as conn:

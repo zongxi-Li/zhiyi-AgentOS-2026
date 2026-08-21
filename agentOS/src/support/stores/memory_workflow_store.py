@@ -168,6 +168,14 @@ class MemoryWorkflowStore(WorkflowStore):
         runs.sort(key=lambda run: (run.updated_at, run.run_id), reverse=True)
         return tuple(runs[: max(1, limit)])
 
+    def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[WorkflowRun, ...]:
+        runs = sorted(
+            (run.model_copy(deep=True) for run in self._runs.values()),
+            key=lambda run: (run.created_at, run.run_id),
+        )
+        start = max(0, offset)
+        return tuple(runs[start:start + max(1, limit)])
+
     def find_run_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
         """按幂等键返回创建时间最新的运行深复制；无匹配时返回 ``None``。"""
         matches = [
