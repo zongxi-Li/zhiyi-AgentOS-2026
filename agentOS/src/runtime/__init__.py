@@ -19,10 +19,14 @@ def __getattr__(name: str):
             "ApplicationSetupError": ApplicationSetupError,
             "ModelSetup": ModelSetup,
         }[name]
-    if name in {"WorkflowRuntime", "build_default_runtime"}:
-        from .workflow_runtime import WorkflowRuntime, build_default_runtime
+    if name in {"WknWorkflowRuntime", "WorkflowRuntime", "build_default_runtime"}:
+        from .workflow_runtime import WknWorkflowRuntime, WorkflowRuntime, build_default_runtime
 
-        return {"WorkflowRuntime": WorkflowRuntime, "build_default_runtime": build_default_runtime}[name]
+        return {
+            "WknWorkflowRuntime": WknWorkflowRuntime,
+            "WorkflowRuntime": WorkflowRuntime,
+            "build_default_runtime": build_default_runtime,
+        }[name]
     raise AttributeError(name)
 
 
@@ -30,6 +34,7 @@ __all__ = [
     "ApplicationSetup",
     "ApplicationSetupError",
     "ModelSetup",
+    "WknWorkflowRuntime",
     "WorkflowRuntime",
     "bootstrap",
     "build_default_runtime",

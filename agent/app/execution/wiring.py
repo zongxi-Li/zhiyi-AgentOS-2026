@@ -19,8 +19,8 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
 from components.task_manager.store import WorkflowRegistry
-from runtime import ApplicationSetup, WorkflowRuntime
-from runtime.v2 import WknAcgIdentityBridge, WorkflowRuntimeV2
+from runtime import ApplicationSetup, WknWorkflowRuntime
+from runtime.v2 import AcgIdentityLifecycleService, WknIdentityLifecycleAdapter
 from service.agents import AgentRegistry
 from support.packs.registry import register_installed_packs
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -80,18 +80,18 @@ def _build_coordination_client(environment: Mapping[str, str]):
 
 
 def configure_runtime(
-    runtime: WorkflowRuntime,
+    runtime: WknWorkflowRuntime,
     *,
     intent_llm: object | None = None,
     model_runtime: object | None = None,
-) -> WorkflowRuntime:
+) -> WknWorkflowRuntime:
     runtime.set_intent_llm(intent_llm or GatewayIntentLLM())
     runtime.set_model_runtime(model_runtime or GatewayStructuredGenerationRuntime())
     return runtime
 
 
 def build_model_setup(
-    runtime: WorkflowRuntime,
+    runtime: WknWorkflowRuntime,
     *,
     environment: Mapping[str, str] | None = None,
 ) -> ApplicationSetup:
@@ -109,7 +109,7 @@ def build_default_runtime(
     model_runtime: object | None = None,
     tool_runtime: object | None = None,
     coordination_client: object | None = None,
-) -> WorkflowRuntime:
+) -> WknWorkflowRuntime:
     """Construct all registries, stores, and external adapters in the application."""
     env = environment or os.environ
     workflow_path = _workflow_db_path(env)
@@ -130,17 +130,17 @@ def build_default_runtime(
             resource_service=resource_service,
             coordinator=coordinator,
         )
-    identity_runtime = WorkflowRuntimeV2.from_sqlite(
+    identity_service = AcgIdentityLifecycleService.from_sqlite(
         Path(str(
             env.get("AGENTOS_IDENTITY_DB")
             or workflow_path.with_name("identity_v2.sqlite3")
         ))
     )
-    identity_bridge = WknAcgIdentityBridge(
-        identity_runtime,
-        identity_runtime.repositories,
+    identity_adapter = WknIdentityLifecycleAdapter(
+        identity_service,
+        identity_service.repositories,
     )
-    runtime = WorkflowRuntime(
+    runtime = WknWorkflowRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
         workflow_store=SQLiteWorkflowStore(workflow_path),
@@ -156,7 +156,7 @@ def build_default_runtime(
         provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
         tool_runtime=tool_runtime or get_tool_runtime(),
-        identity_lifecycle=identity_bridge,
+        identity_lifecycle=identity_adapter,
     )
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)
     runtime.plugin_manifests = register_installed_packs(
@@ -167,7 +167,7 @@ def build_default_runtime(
     return configure_runtime(runtime, intent_llm=intent_llm, model_runtime=model_runtime)
 
 
-def close_runtime(runtime: WorkflowRuntime) -> None:
+def close_runtime(runtime: WknWorkflowRuntime) -> None:
     """Close resources created by this composition root without changing workflow state."""
     resources = (
         runtime.workflow_store,
@@ -180,7 +180,11 @@ def close_runtime(runtime: WorkflowRuntime) -> None:
         runtime.provenance_store,
         runtime.decision_store,
         getattr(runtime, "_model_runtime", None),
-        getattr(getattr(runtime, "identity_lifecycle", None), "runtime", None),
+        getattr(
+            getattr(runtime, "identity_lifecycle", None),
+            "lifecycle_service",
+            None,
+        ),
     )
     seen: set[int] = set()
     for resource in resources:

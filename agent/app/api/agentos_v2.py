@@ -1,4 +1,4 @@
-"""Reference-first HTTP projection of the single wkn ``WorkflowRuntime``."""
+"""Reference-first HTTP projection of the single ``WknWorkflowRuntime``."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
-from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowRun
-from runtime import WorkflowRuntime
+from contracts.workflow import ReviewDecision, ReviewDecisionType, WknWorkflowRun
+from runtime import WknWorkflowRuntime
 
 
 class RunCreateRequest(BaseModel):
@@ -98,7 +98,7 @@ def _csv_values(value: str | None) -> tuple[str, ...] | None:
     return values or None
 
 
-def _require_access(run: WorkflowRun) -> None:
+def _require_access(run: WknWorkflowRun) -> None:
     owner = str(run.input.get("authenticatedUserId") or "")
     if not owner:
         return
@@ -108,7 +108,7 @@ def _require_access(run: WorkflowRun) -> None:
         raise HTTPException(status_code=404, detail="run not found")
 
 
-def _state(run: WorkflowRun) -> dict[str, Any]:
+def _state(run: WknWorkflowRun) -> dict[str, Any]:
     raw = run.execution_state if isinstance(run.execution_state, dict) else {}
     allowed = (
         "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
@@ -144,7 +144,11 @@ def _history_value(value: Any) -> Any:
     return None
 
 
-def project_history_config(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]:
+def project_history_config(
+    run: WknWorkflowRun,
+    *,
+    title: str | None = None,
+) -> dict[str, Any]:
     """Return only the owner-visible configuration needed to reopen a historical workbench."""
     raw = run.input if isinstance(run.input, dict) else {}
     return {
@@ -170,7 +174,7 @@ def _legacy_provenance_items(value: Any, allowed: set[str]) -> list[dict[str, An
     ]
 
 
-def project_run(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]:
+def project_run(run: WknWorkflowRun, *, title: str | None = None) -> dict[str, Any]:
     """Project lifecycle and references without task input or output bodies."""
     state = _state(run)
     return {
@@ -213,7 +217,7 @@ def project_run(run: WorkflowRun, *, title: str | None = None) -> dict[str, Any]
     }
 
 
-def project_graph(run: WorkflowRun) -> dict[str, Any]:
+def project_graph(run: WknWorkflowRun) -> dict[str, Any]:
     blueprint = dict(run.acg_blueprint or {})
     state = _state(run)
     return {
@@ -243,10 +247,13 @@ def _idempotency(request: RunCreateRequest) -> tuple[str | None, str | None]:
     return key, fingerprint
 
 
-def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator) -> APIRouter:
+def create_router(
+    runtime: WknWorkflowRuntime,
+    coordinator: RunExecutionCoordinator,
+) -> APIRouter:
     router = APIRouter(prefix="/agentos/v2")
 
-    def load_run(run_id: str) -> WorkflowRun:
+    def load_run(run_id: str) -> WknWorkflowRun:
         try:
             run = runtime.get_status(run_id)
         except KeyError as exc:
@@ -254,7 +261,7 @@ def create_router(runtime: WorkflowRuntime, coordinator: RunExecutionCoordinator
         _require_access(run)
         return run
 
-    def project(run: WorkflowRun) -> dict[str, Any]:
+    def project(run: WknWorkflowRun) -> dict[str, Any]:
         try:
             title = runtime.workflow_store.get_task(run.task_id).title
         except KeyError:

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from service.agents import AgentRegistry
 from support.acg.models import (
-    ACGBlueprint,
+    WknBlueprintSpec,
     promote_workflow_to_acg,
 )
 from components.auditor.governance.evaluation import WorkflowEvaluator
@@ -132,8 +132,8 @@ class ReviewConflictError(ValueError):
     """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
 
 
-class WorkflowRuntime:
-    """AgentOS Core 的工作流运行时，串联任务、Trace、审核与恢复流程。"""
+class WknWorkflowRuntime:
+    """唯一 WKN 执行内核，串联规划、调度、节点执行、审核与恢复。"""
 
     def __init__(
         self,
@@ -564,7 +564,7 @@ class WorkflowRuntime:
         blueprint_data = run.acg_blueprint
         if not isinstance(blueprint_data, dict):
             raise ExecutionEngineMigratingError(run.run_id)
-        blueprint = ACGBlueprint.model_validate(blueprint_data)
+        blueprint = WknBlueprintSpec.model_validate(blueprint_data)
         graph = ACGGraphCompiler().compile(blueprint, run_id=run.run_id)
         execution_state = state or ACGExecutionState(
             runId=run.run_id,
@@ -772,7 +772,7 @@ class WorkflowRuntime:
         *,
         run: WorkflowRun,
         workflow: WorkflowDefinition,
-        blueprint: ACGBlueprint,
+        blueprint: WknBlueprintSpec,
         state: ACGExecutionState,
     ) -> None:
         """恢复前校验运行、蓝图、工作流和 checkpoint 的版本身份。"""
@@ -1207,7 +1207,7 @@ class WorkflowRuntime:
         """Persist one deterministic capsule when every step in a planning stage completed."""
         if not isinstance(run.acg_blueprint, dict):
             return
-        blueprint = ACGBlueprint.model_validate(run.acg_blueprint)
+        blueprint = WknBlueprintSpec.model_validate(run.acg_blueprint)
         stages: dict[str, list[str]] = {}
         for node in blueprint.step_nodes():
             stage = str(node.metadata.get("planningStage") or "execution")
@@ -1318,7 +1318,7 @@ class WorkflowRuntime:
 
     def _validate_blueprint_agents(
         self,
-        blueprint: ACGBlueprint,
+        blueprint: WknBlueprintSpec,
         *,
         domain: str,
         scope: RunExecutionScope | None = None,
@@ -1433,7 +1433,7 @@ class WorkflowRuntime:
         task: AgentTask,
         run: WorkflowRun,
         workflow: WorkflowDefinition,
-    ) -> ACGBlueprint:
+    ) -> WknBlueprintSpec:
         """获取 ACG 蓝图，三级优先级：
 
         1. 现成蓝图：run.input['acgBlueprint'] 或 run.acg_blueprint（外部/前序产物）。
@@ -1443,7 +1443,7 @@ class WorkflowRuntime:
         """
         provided = run.input.get("acgBlueprint") or (run.acg_blueprint if run.acg_blueprint else None)
         if isinstance(provided, dict) and provided.get("nodes"):
-            blueprint = ACGBlueprint.model_validate(provided)
+            blueprint = WknBlueprintSpec.model_validate(provided)
             if not blueprint.task_id:
                 blueprint = blueprint.model_copy(deep=True, update={"task_id": task.task_id})
             return blueprint
@@ -1539,7 +1539,11 @@ class WorkflowRuntime:
 
         return promote_workflow_to_acg(workflow, task_id=task.task_id)
 
-    def _sync_run_steps_to_acg(self, run: WorkflowRun, blueprint: ACGBlueprint) -> None:
+    def _sync_run_steps_to_acg(
+        self,
+        run: WorkflowRun,
+        blueprint: WknBlueprintSpec,
+    ) -> None:
         """让 WorkflowRun 的步骤列表与最终 ACG 蓝图保持一致。"""
         existing = {step.step_id: step for step in run.steps}
         synced: list[WorkflowStep] = []
@@ -2049,7 +2053,7 @@ class WorkflowRuntime:
             if checkpoint_data is None:
                 raise ValueError("graph patch requires a persisted checkpoint")
             state = ACGExecutionState.model_validate(checkpoint_data)
-            blueprint = ACGBlueprint.model_validate(run.acg_blueprint)
+            blueprint = WknBlueprintSpec.model_validate(run.acg_blueprint)
             outcome = GraphPatchService().apply(
                 blueprint,
                 patch,
@@ -2586,7 +2590,7 @@ class WorkflowRuntime:
             step.completed_at = step.completed_at or utc_now()
 
 
-def build_default_runtime() -> WorkflowRuntime:
+def build_default_runtime() -> WknWorkflowRuntime:
     """按环境变量装配默认运行时并登记原生与已安装插件；缺少数据库路径时抛出错误。"""
     agent_registry = AgentRegistry()
     workflow_registry = WorkflowRegistry()
@@ -2597,7 +2601,7 @@ def build_default_runtime() -> WorkflowRuntime:
         raise RuntimeError("Workflow database path is required outside test mode.")
     workflow_store = SQLiteWorkflowStore(db_path)
 
-    runtime = WorkflowRuntime(
+    runtime = WknWorkflowRuntime(
         agent_registry=agent_registry,
         workflow_registry=workflow_registry,
         workflow_store=workflow_store,
@@ -2614,4 +2618,8 @@ def build_default_runtime() -> WorkflowRuntime:
     return runtime
 
 
-__all__ = ["WorkflowRuntime", "build_default_runtime"]
+# 兼容既有 API 与第三方导入；新代码使用 WknWorkflowRuntime 明确唯一执行内核。
+WorkflowRuntime = WknWorkflowRuntime
+
+
+__all__ = ["WknWorkflowRuntime", "WorkflowRuntime", "build_default_runtime"]
