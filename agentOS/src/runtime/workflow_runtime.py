@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 from time import monotonic
+from contracts.identity import new_attempt_id, new_step_execution_id
 from typing import Callable, Mapping, Optional
 from uuid import uuid4
 
@@ -27,7 +28,7 @@ from components.task_manager.state_machine import StateMachine
 from components.task_manager.service import TaskManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
-from components.communicator import CommunicationBroker, CommunicatorService
+from components.communicator import CommunicationBroker, CommunicatorService, ReliableMessage, SQLiteReliableCommunicationStore
 from components.communicator.provenance import ProvenanceLedger
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor import (
@@ -217,6 +218,9 @@ class WknWorkflowRuntime:
         self.decision_store = decision_store or SQLiteDecisionStore(
             db_path=os.getenv("AGENTOS_AUDIT_DB", "data/audit_decisions.sqlite3")
         )
+        self.reliable_communication_store = SQLiteReliableCommunicationStore(
+            os.getenv("AGENTOS_COMMUNICATION_DB", "data/communication.sqlite3")
+        )
         # 测试可临时设置该私有钩子，模拟进程在一个已提交边界后消失。它不属于构造
         # 参数、环境变量或公开 contracts，生产运行时始终保持 ``None``。
         self._fault_hook: Callable[[str], None] | None = None
@@ -332,7 +336,7 @@ class WknWorkflowRuntime:
         if self.identity_lifecycle is not None and task.recommended_workflow:
             recommended = self.workflow_registry.get(task.recommended_workflow)
             if recommended.effective_runtime_engine == "acg":
-                self.identity_lifecycle.on_task_created(task)
+                self._flush_identity_outbox()
         return task
 
     async def start(
@@ -396,7 +400,8 @@ class WknWorkflowRuntime:
         if self.identity_lifecycle is not None and is_acg:
             # A task may have been created against a legacy/default workflow and
             # explicitly rebound to ACG only when the run is prepared.
-            self.identity_lifecycle.on_task_created(task)
+            self.workflow_store.save_task(task)
+            self._flush_identity_outbox()
         planning_diversity = normalize_planning_diversity(
             task.input.get("planningDiversity")
         )
@@ -469,10 +474,13 @@ class WknWorkflowRuntime:
                 scope=scope,
             )
             self._sync_run_steps_to_acg(run, blueprint)
+            compiler = ACGGraphCompiler()
+            compiled_package = compiler.compile_package(blueprint, run_id=run.run_id)
             self._register_and_freeze_resources(
                 run=run,
                 workflow=workflow,
                 scope=scope,
+                binding_manifest=compiled_package.binding_manifest,
             )
             run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
             run.execution_state.update(
@@ -480,6 +488,14 @@ class WknWorkflowRuntime:
                     "workflowVersion": workflow.version,
                     "graphId": blueprint.graph_id,
                     "sourceBlueprintVersion": blueprint.version,
+                    "compiledACGPackage": compiled_package.model_dump(
+                        by_alias=True, mode="json"
+                    ),
+                    "compiledPackageId": compiled_package.package_id,
+                    "compiledPackageChecksum": compiled_package.checksum,
+                    "compiledPackageVersion": compiled_package.package_version,
+                    "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
+                    "compilerWarnings": list(compiled_package.compatibility_warnings),
                     **(
                         {
                             "taskPlanVersion": task_plan.plan_version,
@@ -494,17 +510,9 @@ class WknWorkflowRuntime:
                     ),
                 }
             )
-            if self.identity_lifecycle is not None:
-                if task_plan is None:
-                    raise ValueError(
-                        "identity-enabled ACG execution requires Planner output"
-                    )
-                self.identity_lifecycle.on_run_prepared(
-                    task,
-                    run,
-                    blueprint,
-                    task_plan,
-                    task_node_bindings,
+            if self.identity_lifecycle is not None and task_plan is None:
+                raise ValueError(
+                    "identity-enabled ACG execution requires Planner output"
                 )
         self.trace_store.append(
             run=run,
@@ -527,6 +535,8 @@ class WknWorkflowRuntime:
             },
         )
         self.workflow_store.save_run(run)
+        if self.identity_lifecycle is not None and is_acg:
+            self._flush_identity_outbox()
         logger.info(
             "run_prepared",
             extra={
@@ -606,7 +616,17 @@ class WknWorkflowRuntime:
         if not isinstance(blueprint_data, dict):
             raise ExecutionEngineMigratingError(run.run_id)
         blueprint = WknBlueprintSpec.model_validate(blueprint_data)
-        graph = ACGGraphCompiler().compile(blueprint, run_id=run.run_id)
+        raw_package = run.execution_state.get("compiledACGPackage")
+        if not isinstance(raw_package, dict):
+            raise ExecutionEngineMigratingError(run.run_id)
+        from contracts.compiled_acg import CompiledACGPackage
+
+        compiled_package = CompiledACGPackage.model_validate(raw_package)
+        graph = ACGGraphCompiler().compile(
+            blueprint,
+            run_id=run.run_id,
+            package=compiled_package,
+        )
         execution_state = state or ACGExecutionState(
             runId=run.run_id,
             graphId=blueprint.graph_id,
@@ -633,6 +653,7 @@ class WknWorkflowRuntime:
         scheduled_runner = self._ready_node_runner(run=run, runner=runner)
         run.execution_state["engineMigration"] = "langgraph_fused_v1"
         run.execution_state["graphId"] = blueprint.graph_id
+        run.execution_state["compiledPackageId"] = compiled_package.package_id
         run = self._set_run_lifecycle(
             run,
             status=WorkflowStatus.RUNNING,
@@ -664,7 +685,7 @@ class WknWorkflowRuntime:
             self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
             self.workflow_store.save_run(run)
             if self.identity_lifecycle is not None:
-                self.identity_lifecycle.on_run_finished(run.run_id, "succeeded")
+                self._flush_identity_outbox()
             return run
         except ExecutionInterrupt as interrupt:
             self._persist_acg_state(run, execution_state)
@@ -687,13 +708,35 @@ class WknWorkflowRuntime:
             self.workflow_store.save_run(run)
             return run
         except Exception as exc:
+            from components.recovery import RecoveryService, failure_event_from_exception
+
+            failure = failure_event_from_exception(
+                exc,
+                subject_ref=(
+                    f"run:{run.run_id}:step:{execution_state.current_step_id}"
+                    if execution_state.current_step_id
+                    else f"run:{run.run_id}"
+                ),
+            )
+            recovery_plan = RecoveryService().propose(failure)
+            run.execution_state.setdefault("failureEvents", []).append(
+                failure.model_dump(by_alias=True, mode="json")
+            )
+            run.execution_state["recoveryOutcome"] = {
+                "failureId": failure.failure_id,
+                "source": failure.source.value,
+                "reasonCode": failure.reason_code,
+                "action": recovery_plan.strategy.value,
+                "status": "proposed",
+            }
+            self.workflow_store.save_run(run)
             await self.fail_run_safely(
                 run.run_id,
                 error_code="acg_execution_failed",
                 error_message=self._safe_error_message(exc),
             )
             if self.identity_lifecycle is not None:
-                self.identity_lifecycle.on_run_finished(run.run_id, "failed")
+                self._flush_identity_outbox()
             raise
 
     def _ready_node_runner(self, *, run: WorkflowRun, runner: ACGNodeRunner):
@@ -715,11 +758,15 @@ class WknWorkflowRuntime:
             requirement = BindingRequirement.model_validate(payload)
             step = run.get_step(step_id)
             attempt_number = max(step.attempt, step.retry_count) + 1
-            attempt_id = (
-                self.identity_lifecycle.ensure_attempt(run, step_id, attempt_number)
-                if self.identity_lifecycle is not None
-                else f"{run.run_id}:{step_id}:{step.attempt}"
-            )
+            loop_path = tuple(state.loop_paths.get(step_id, ()))
+            loop_key = ".".join(str(item) for item in loop_path) or "root"
+            attempts = run.execution_state.setdefault("attemptIds", {})
+            attempt_key = f"{step_id}:{attempt_number}:{loop_key}"
+            attempt_id = str(attempts.setdefault(
+                attempt_key,
+                new_attempt_id() if self.identity_lifecycle is not None
+                else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
+            ))
             while True:
                 decision = self.scheduler_service.schedule_ready(
                     run_id=run.run_id,
@@ -736,20 +783,34 @@ class WknWorkflowRuntime:
                 allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
             )
             runner.agents[step_id] = selected_agent
-            step_execution_id: str | None = None
-            if self.identity_lifecycle is not None:
-                profile = selected_agent.profile
-                self.identity_lifecycle.on_resource_bound(
-                    attempt_id=attempt_id,
-                    binding=decision.binding,
-                    agent_id=str(profile.agent_id or decision.binding.resource_id),
-                    model_id=str(profile.model_name or "runtime-default"),
+            step_execution_id = (
+                run.execution_state.setdefault("stepExecutionIds", {}).setdefault(
+                    attempt_key,
+                    new_step_execution_id()
+                    if self.identity_lifecycle is not None
+                    else f"execution:{attempt_id}",
                 )
-                step_execution_id = self.identity_lifecycle.on_step_started(
-                    run_id=run.run_id,
-                    attempt_id=attempt_id,
-                    step_id=step_id,
-                )
+            )
+            profile = selected_agent.profile
+            base_events = [
+                self._lifecycle_event(
+                    f"attempt.ensured:{attempt_id}", "attempt.ensured", run.run_id,
+                    {"runId": run.run_id, "taskId": run.task_id, "stepId": step_id,
+                     "attemptId": attempt_id, "attemptNumber": attempt_number},
+                ),
+                self._lifecycle_event(
+                    f"resource.bound:{attempt_id}", "resource.bound", attempt_id,
+                    {"attemptId": attempt_id,
+                     "binding": decision.binding.model_dump(by_alias=True, mode="json"),
+                     "agentId": str(profile.agent_id or decision.binding.resource_id),
+                     "modelId": str(profile.model_name or "runtime-default")},
+                ),
+                self._lifecycle_event(
+                    f"step.started:{step_execution_id}", "step.started", step_execution_id,
+                    {"runId": run.run_id, "attemptId": attempt_id, "stepId": step_id,
+                     "stepExecutionId": step_execution_id},
+                ),
+            ]
             run.execution_state.setdefault("executionBindings", {})[step_id] = (
                 decision.binding.model_dump(by_alias=True, mode="json")
             )
@@ -767,33 +828,35 @@ class WknWorkflowRuntime:
             run.execution_state.setdefault("resourceBindings", {})[step_id] = (
                 decision.binding.resource_id
             )
+            base_events = self._reuse_persisted_lifecycle_events(base_events)
+            self.workflow_store.save_run_with_events(run, base_events)
+            self._flush_identity_outbox()
             try:
                 result = await runner(step_id, state)
-                if self.identity_lifecycle is not None and step_execution_id is not None:
-                    self.identity_lifecycle.on_step_succeeded(
-                        run_id=run.run_id,
-                        attempt_id=attempt_id,
-                        step_execution_id=step_execution_id,
-                        result=result,
-                    )
+                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
+                    f"step.succeeded:{step_execution_id}", "step.succeeded", step_execution_id,
+                    {"runId": run.run_id, "attemptId": attempt_id,
+                     "stepExecutionId": step_execution_id,
+                     "result": self._safe_lifecycle_result(result)},
+                )])
+                self._flush_identity_outbox()
                 return result
             except asyncio.CancelledError:
-                if self.identity_lifecycle is not None and step_execution_id is not None:
-                    self.identity_lifecycle.on_step_cancelled(
-                        run_id=run.run_id,
-                        attempt_id=attempt_id,
-                        step_execution_id=step_execution_id,
-                        reason="ACG superstep cancelled after sibling failure",
-                    )
+                reason = "ACG superstep cancelled after sibling failure"
+                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
+                    f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
+                    {"runId": run.run_id, "attemptId": attempt_id,
+                     "stepExecutionId": step_execution_id, "reason": reason},
+                )])
+                self._flush_identity_outbox()
                 raise
             except Exception as exc:
-                if self.identity_lifecycle is not None and step_execution_id is not None:
-                    self.identity_lifecycle.on_step_failed(
-                        run_id=run.run_id,
-                        attempt_id=attempt_id,
-                        step_execution_id=step_execution_id,
-                        reason=str(exc),
-                    )
+                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
+                    f"step.failed:{step_execution_id}", "step.failed", step_execution_id,
+                    {"runId": run.run_id, "attemptId": attempt_id,
+                     "stepExecutionId": step_execution_id, "reason": self._safe_error_message(exc)},
+                )])
+                self._flush_identity_outbox()
                 raise
             finally:
                 released = self.scheduler_service.release(decision.lease.lease_id)
@@ -806,7 +869,66 @@ class WknWorkflowRuntime:
                             lease["status"] = "released"
                             break
 
+        execute.prepare_superstep = runner.prepare_superstep
         return execute
+
+    @staticmethod
+    def _lifecycle_event(event_id: str, event_type: str, aggregate_id: str, payload: dict) -> dict:
+        return {"eventId": event_id, "eventType": event_type, "aggregateId": aggregate_id, "payload": payload}
+
+    @staticmethod
+    def _safe_lifecycle_result(result: dict) -> dict:
+        allowed = {
+            "commitId", "outputRef", "outputSummary", "contextRef", "memoryRef",
+            "traceRef", "auditDecisionRef", "auditOutcome", "nodeExecution",
+            "communicationRefs", "evidenceRefs", "provenanceEvents",
+        }
+        return {key: result[key] for key in allowed if result.get(key) is not None}
+
+    def _flush_identity_outbox(self) -> None:
+        if self.identity_lifecycle is None:
+            return
+        from runtime.v2.reconciliation import IdentityProjectionReconciler
+
+        report = IdentityProjectionReconciler(self.identity_lifecycle).reconcile_workflow_store(
+            self.workflow_store,
+            limit=200,
+        )
+        if report.failures:
+            raise RuntimeError("identity inbox consumption failed: " + "; ".join(report.failures))
+
+    def _reuse_persisted_lifecycle_events(self, events: list[dict]) -> list[dict]:
+        """Reuse the first committed event body during an idempotent attempt resume.
+
+        Scheduler leases carry timestamps and scores, so rebuilding the same attempt
+        can otherwise produce a different payload for an already persisted event ID.
+        The store remains authoritative: a different payload is still rejected by
+        ``save_run_with_events`` when no prior event exists in the outbox.
+        """
+        existing = {
+            str(item.get("event_id")): item
+            for item in self.workflow_store.list_outbox(limit=100000)
+            if isinstance(item, dict) and item.get("event_id")
+        }
+        normalized: list[dict] = []
+        for event in events:
+            prior = existing.get(str(event.get("eventId")))
+            if prior is None:
+                normalized.append(event)
+                continue
+            payload = prior.get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = None
+            normalized.append({
+                "eventId": prior["event_id"],
+                "eventType": prior["event_type"],
+                "aggregateId": prior["aggregate_id"],
+                "payload": payload if isinstance(payload, dict) else event.get("payload", {}),
+            })
+        return normalized
 
     @staticmethod
     def _validate_acg_resume_identity(
@@ -1021,6 +1143,11 @@ class WknWorkflowRuntime:
             },
             tool_runtime=scoped_tools,
             communication_broker=communication_broker,
+            reliable_communication_store=self.reliable_communication_store,
+            compiled_package=graph.compiled_package,
+            skill_manifest=graph.compiled_package.skill_manifest,
+            memory_manifest=graph.compiled_package.memory_manifest,
+            evidence_manifest=graph.compiled_package.evidence_manifest,
             agent_invoker=AgentInvocationAdapter(
                 registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
             ),
@@ -1384,6 +1511,7 @@ class WknWorkflowRuntime:
         run: WorkflowRun,
         workflow: WorkflowDefinition,
         scope: RunExecutionScope,
+        binding_manifest,
     ) -> None:
         """登记当前可见 Agent，并将每个 ACG Step 选择结果冻结到运行状态。"""
         for agent in self.agent_registry.all():
@@ -1392,24 +1520,41 @@ class WknWorkflowRuntime:
         requirements: dict[str, dict[str, object]] = {}
         model_bindings: dict[str, dict[str, str] | None] = {}
         for step in run.steps:
+            rule = binding_manifest.for_step(step.step_id)
+            required_capabilities = list(rule.required_capabilities)
+            if not required_capabilities:
+                raise ValueError(
+                    f"BindingManifest has no capability requirement: {step.step_id}"
+                )
+            allowed_agent_ids = list(scope.agent_ids)
+            if rule.allowed_resource_ids:
+                allowed_agent_ids = [
+                    item for item in allowed_agent_ids
+                    if item in set(rule.allowed_resource_ids)
+                ]
             try:
                 selected = self.resource_directory.resolve_agent(
-                    domain=workflow.domain,
+                    domain=rule.domain or workflow.domain,
                     agent_name=step.agent_name,
-                    capability=step.capability,
-                    allowed_agent_ids=scope.agent_ids,
+                    capability=required_capabilities[0],
+                    allowed_agent_ids=allowed_agent_ids,
                 )
             except ResourceNotFoundError as exc:
                 raise ValueError(f"ACG step has no eligible resource: {step.step_id}") from exc
             bindings[step.step_id] = selected.agent_id
-            required_capability = step.capability or f"agent:{step.agent_name.lower()}"
             requirement = BindingRequirement(
-                requiredCapabilities=[required_capability],
-                domain=workflow.domain,
+                requiredCapabilities=required_capabilities,
+                domain=rule.domain or workflow.domain,
                 resourceTypes=[ResourceType.AGENT],
-                allowedResourceIds=list(scope.agent_ids),
+                allowedResourceIds=allowed_agent_ids,
                 preferences={"resourceId": selected.agent_id},
-                policyMetadata={"source": "prepared-run", "stepId": step.step_id},
+                policyMetadata={
+                    "source": "compiled-binding-manifest",
+                    "stepId": step.step_id,
+                    "agentNodeIds": list(rule.agent_node_ids),
+                    "maxConcurrency": rule.max_concurrency,
+                    "compatibilitySource": rule.compatibility_source,
+                },
             )
             requirements[step.step_id] = requirement.model_dump(by_alias=True, mode="json")
             agent = self.agent_registry.resolve_by_id(
@@ -1505,6 +1650,19 @@ class WknWorkflowRuntime:
                 )
             if task_plan.task_id != task.task_id:
                 raise ValueError("TaskPlan taskId does not match AgentTask")
+            binding_keys = [item.plan_node_key for item in task_node_bindings]
+            binding_nodes = [item.acg_node_id for item in task_node_bindings]
+            plan_keys = {node.key for node in task_plan.nodes}
+            executable_ids = {node.node_id for node in blueprint.step_nodes()}
+            if (
+                len(set(binding_keys)) != len(binding_keys)
+                or len(set(binding_nodes)) != len(binding_nodes)
+                or set(binding_keys) != plan_keys
+                or set(binding_nodes) != executable_ids
+            ):
+                raise ValueError(
+                    "Blueprint bindings must cover the complete TaskPlan and executable Blueprint"
+                )
             return blueprint, task_plan, task_node_bindings
 
         planning_mode = str(run.input.get("planningMode") or "").strip().lower()
@@ -2174,24 +2332,61 @@ class WknWorkflowRuntime:
             if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
                 raise ValueError("graph patch requires persisted Planner identity data")
             current_plan = TaskPlan.model_validate(raw_plan)
+            active_old_step_ids = {
+                node.node_id for node in blueprint.step_nodes()
+                if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
+            }
+            active_new_step_ids = {
+                node.node_id for node in outcome.blueprint.step_nodes()
+                if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
+            }
+            semantic_execution_change = active_old_step_ids != active_new_step_ids
+            if semantic_execution_change and patch.task_plan_patch is None:
+                raise ValueError(
+                    "executable Graph Patch changes require Planner TaskPlanPatch"
+                )
+            if not semantic_execution_change and (
+                patch.task_plan_patch is not None
+                or patch.task_node_binding_patch is not None
+            ):
+                raise ValueError(
+                    "pure control Graph Patch cannot change TaskPlan or TaskNode bindings"
+                )
             if patch.task_plan_patch is not None:
                 next_plan = apply_task_plan_patch(current_plan, patch.task_plan_patch)
             else:
                 next_plan = current_plan
             binding_patch = patch.task_node_binding_patch
-            added_step_ids = {
-                step.node_id for step in outcome.blueprint.step_nodes()
-            } - old_step_ids
+            added_step_ids = active_new_step_ids - active_old_step_ids
             if added_step_ids and binding_patch is None:
                 raise ValueError("new executable Graph Patch nodes require TaskNodeBindingPatch")
-            next_bindings = tuple(
+            base_bindings = tuple(
                 TaskNodeImplementationBinding.model_validate(item)
                 for item in raw_bindings
+            )
+            removed_plan_keys = (
+                set(patch.task_plan_patch.retire_keys)
+                | set(patch.task_plan_patch.replace_keys)
+                if patch.task_plan_patch is not None
+                else set()
+            )
+            next_bindings = tuple(
+                item for item in base_bindings
+                if item.plan_node_key not in removed_plan_keys
+                and item.acg_node_id in active_new_step_ids
             ) + (binding_patch.bindings if binding_patch is not None else ())
+            if len({item.plan_node_key for item in next_bindings}) != len(next_bindings):
+                raise ValueError("Graph Patch contains duplicate semantic bindings")
+            if len({item.acg_node_id for item in next_bindings}) != len(next_bindings):
+                raise ValueError("Graph Patch contains duplicate executable bindings")
             if {item.plan_node_key for item in next_bindings} != {
                 node.key for node in next_plan.nodes
             }:
                 raise ValueError("Graph Patch bindings must cover the complete revised TaskPlan")
+            if {item.acg_node_id for item in next_bindings} != active_new_step_ids:
+                raise ValueError(
+                    "Graph Patch bindings must cover every active executable node"
+                )
 
             new_run_id = (
                 self.identity_lifecycle.new_run_id(task.task_id)
@@ -2279,15 +2474,19 @@ class WknWorkflowRuntime:
                 "sourcePatchId": patch.patch_id,
                 "graphPatchRefs": [patch_uri],
             })
-            self.identity_lifecycle.on_graph_patch_prepared(
-                task,
-                run,
-                new_run,
-                outcome.blueprint,
-                next_plan,
-                next_bindings,
-                patch.patch_id,
+            compiled_package = ACGGraphCompiler().compile_package(
+                outcome.blueprint, run_id=new_run.run_id
             )
+            new_run.execution_state.update({
+                "compiledACGPackage": compiled_package.model_dump(
+                    by_alias=True, mode="json"
+                ),
+                "compiledPackageId": compiled_package.package_id,
+                "compiledPackageChecksum": compiled_package.checksum,
+                "compiledPackageVersion": compiled_package.package_version,
+                "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
+                "compilerWarnings": list(compiled_package.compatibility_warnings),
+            })
             run.status = WorkflowStatus.SUPERSEDED
             run.execution_state["supersededByRunId"] = new_run.run_id
             run_graph = deepcopy(run.acg_blueprint or {})
@@ -2307,8 +2506,32 @@ class WknWorkflowRuntime:
                     "newRunId": new_run.run_id,
                 },
             )
-            self.workflow_store.save_run(run)
-            self.workflow_store.save_run(new_run)
+            self.workflow_store.save_graph_patch_transition(
+                run,
+                new_run,
+                {
+                    "eventId": f"graph.patch.prepared:{run.run_id}:{patch.patch_id}",
+                    "eventType": "graph.patch.prepared",
+                    "aggregateId": run.run_id,
+                    "payload": {
+                        "taskId": task.task_id,
+                        "oldRunId": run.run_id,
+                        "newRunId": new_run.run_id,
+                        "workflowId": new_run.workflow_id,
+                        "patchId": patch.patch_id,
+                        "blueprint": outcome.blueprint.model_dump(
+                            by_alias=True, mode="json"
+                        ),
+                        "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
+                        "taskNodeBindings": [
+                            item.model_dump(by_alias=True, mode="json")
+                            for item in next_bindings
+                        ],
+                        "executionState": dict(new_run.execution_state),
+                    },
+                },
+            )
+            self._flush_identity_outbox()
             return GraphPatchResult(
                 applied=True,
                 graphVersion=outcome.blueprint.version,
@@ -2588,7 +2811,7 @@ class WknWorkflowRuntime:
                 self.identity_lifecycle is not None
                 and self._normalize_runtime_engine(run.runtime_engine) == "acg"
             ):
-                self.identity_lifecycle.on_run_finished(run.run_id, "cancelled")
+                self._flush_identity_outbox()
             return run
 
     def _resolve_workflow(

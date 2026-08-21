@@ -21,6 +21,44 @@ from time import time
 from typing import Any, Protocol
 from uuid import uuid4
 
+from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+
+
+_NODE_PHASE_ORDER = {
+    NodeExecutionPhase.PREPARED: 0,
+    NodeExecutionPhase.EXECUTED: 1,
+    NodeExecutionPhase.AUDITED: 2,
+    NodeExecutionPhase.WAITING_REVIEW: 3,
+    NodeExecutionPhase.COMMITTED: 4,
+    NodeExecutionPhase.FAILED: 4,
+    NodeExecutionPhase.CANCELLED: 4,
+}
+_NODE_TERMINAL_PHASES = {
+    NodeExecutionPhase.COMMITTED,
+    NodeExecutionPhase.FAILED,
+    NodeExecutionPhase.CANCELLED,
+}
+
+
+def _record_payload(record: NodeExecutionRecord) -> dict[str, Any]:
+    return record.model_dump(by_alias=True, mode="json")
+
+
+def _record_from_payload(payload: dict[str, Any], *, fallback: NodeExecutionRecord) -> NodeExecutionRecord:
+    if "operationId" not in payload:
+        return fallback.model_copy(update={"phase": NodeExecutionPhase.PREPARED})
+    return NodeExecutionRecord.model_validate(payload)
+
+
+def _validate_node_transition(current: NodeExecutionRecord, incoming: NodeExecutionRecord) -> None:
+    identity = ("operation_id", "execution_instance_id", "run_id", "step_id", "attempt_id", "loop_path")
+    if any(getattr(current, key) != getattr(incoming, key) for key in identity):
+        raise ValueError(f"node execution identity cannot change: {incoming.operation_id}")
+    if current.phase in _NODE_TERMINAL_PHASES and current != incoming:
+        raise ValueError(f"terminal node execution cannot change: {incoming.operation_id}")
+    if incoming.phase is NodeExecutionPhase.COMMITTED and not incoming.commit_id:
+        raise ValueError("committed node execution requires commitId")
+
 
 class ExecutionValueAccessError(ValueError):
     """读取不存在或不属于当前 run 的执行值引用时抛出。"""
@@ -62,13 +100,13 @@ class StoredValueRef:
 class ExecutionValueStore(Protocol):
     """节点执行管线访问受控正文的最小接口。"""
 
-    def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """登记通过输出合同的节点正文，并返回仅供状态保存的引用。"""
 
     def get_output(self, *, run_id: str, output_ref: str) -> dict[str, Any]:
         """按当前 run 读取节点正文；跨 run 与缺失引用必须失败。"""
 
-    def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """登记已装配 ContextPack 的 JSON 正文，并返回其引用。"""
 
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
@@ -95,6 +133,9 @@ class ExecutionValueStore(Protocol):
     def list_node_commits(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
         """列举当前 run 的引用型节点提交记录，不读取输出或 ContextPack 正文。"""
 
+    def transition_node_execution(self, record: NodeExecutionRecord) -> NodeExecutionRecord:
+        """Persist one monotonic node execution phase transition."""
+
     def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
         """列举早于保留阈值的输出与 ContextPack 元数据，绝不返回正文。"""
 
@@ -107,25 +148,26 @@ class InMemoryExecutionValueStore:
 
     def __init__(self) -> None:
         """分别保存节点输出与 ContextPack，避免引用类别互相误读。"""
-        self._outputs: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
-        self._context_packs: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
-        self._graph_patches: dict[str, tuple[str, str, dict[str, Any], datetime]] = {}
+        self._outputs: dict[str, tuple[str, str, dict[str, Any], datetime, str | None]] = {}
+        self._context_packs: dict[str, tuple[str, str, dict[str, Any], datetime, str | None]] = {}
+        self._graph_patches: dict[str, tuple[str, str, dict[str, Any], datetime, str | None]] = {}
         self._node_commits: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._node_executions: dict[str, tuple[str, NodeExecutionRecord]] = {}
 
-    def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """深拷贝已校验输出，防止 Agent 或调用者之后修改原对象。"""
         reference = self._new_reference("output", run_id, step_id)
-        self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now())
+        self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now(), operation_id)
         return reference
 
     def get_output(self, *, run_id: str, output_ref: str) -> dict[str, Any]:
         """返回独立副本，确保读取方不能通过别名篡改仓库记录。"""
         return self._get(self._outputs, run_id=run_id, reference=output_ref)
 
-    def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """深拷贝已装配上下文，使 checkpoint 外的正文仍受服务边界保护。"""
         reference = self._new_reference("context", run_id, step_id)
-        self._context_packs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now())
+        self._context_packs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now(), operation_id)
         return reference
 
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
@@ -139,6 +181,7 @@ class InMemoryExecutionValueStore:
             "__graph__",
             deepcopy(dict(payload)),
             self._now(),
+            None,
         )
         return reference
 
@@ -171,7 +214,7 @@ class InMemoryExecutionValueStore:
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
         committed = {"commitId": commit_id, "stage": "committed", **deepcopy(dict(payload))}
-        if current_payload.get("stage") == "prepared":
+        if current_payload.get("stage") != "committed":
             self._node_commits[commit_id] = (run_id, committed)
             return
         if current_payload != committed:
@@ -195,6 +238,20 @@ class InMemoryExecutionValueStore:
             if owner_run_id == run_id
         )
 
+    def transition_node_execution(self, record: NodeExecutionRecord) -> NodeExecutionRecord:
+        current = self._node_executions.get(record.operation_id)
+        if current is not None:
+            owner_run_id, existing = current
+            if owner_run_id != record.run_id:
+                raise ExecutionValueAccessError(record.operation_id, owner_run_id, record.run_id)
+            _validate_node_transition(existing, record)
+            if _NODE_PHASE_ORDER[record.phase] < _NODE_PHASE_ORDER[existing.phase]:
+                return existing
+            if existing.phase in _NODE_TERMINAL_PHASES:
+                return existing
+        self._node_executions[record.operation_id] = (record.run_id, record)
+        return record
+
     def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
         """按 run 和保留阈值列出可评估的引用元数据，不暴露任何 JSON 正文。"""
         cutoff = self._require_aware_time(older_than)
@@ -204,7 +261,7 @@ class InMemoryExecutionValueStore:
             ("context", self._context_packs),
             ("graph-patch", self._graph_patches),
         ):
-            for reference, (owner_run_id, step_id, _payload, created_at) in values.items():
+            for reference, (owner_run_id, step_id, _payload, created_at, _operation_id) in values.items():
                 if owner_run_id == run_id and created_at < cutoff:
                     records.append(
                         StoredValueRef(
@@ -234,9 +291,9 @@ class InMemoryExecutionValueStore:
         """生成带有类别、归属 run 与来源步骤的可追溯引用。"""
         return f"{kind}:{run_id}:{step_id}:{uuid4().hex}"
 
-    @staticmethod
     def _get(
-        records: Mapping[str, tuple[str, str, dict[str, Any], datetime]],
+        self,
+        records: Mapping[str, tuple[str, str, dict[str, Any], datetime, str | None]],
         *,
         run_id: str,
         reference: str,
@@ -245,12 +302,13 @@ class InMemoryExecutionValueStore:
         record = records.get(reference)
         if record is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, _owner_step_id, payload, _created_at = record
+        owner_run_id, _owner_step_id, payload, _created_at, operation_id = record
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, owner_run_id, run_id)
+        self._assert_committed_operation(run_id=run_id, operation_id=operation_id, reference=reference)
         return deepcopy(payload)
 
-    def _records_for_kind(self, kind: str) -> Mapping[str, tuple[str, str, dict[str, Any], datetime]]:
+    def _records_for_kind(self, kind: str) -> Mapping[str, tuple[str, str, dict[str, Any], datetime, str | None]]:
         if kind == "output":
             return self._outputs
         if kind == "context":
@@ -259,9 +317,9 @@ class InMemoryExecutionValueStore:
             return self._graph_patches
         raise ValueError(f"unsupported execution reference kind: {kind}")
 
-    @staticmethod
     def _assert(
-        records: Mapping[str, tuple[str, str, dict[str, Any], datetime]],
+        self,
+        records: Mapping[str, tuple[str, str, dict[str, Any], datetime, str | None]],
         *,
         run_id: str,
         step_id: str,
@@ -270,13 +328,26 @@ class InMemoryExecutionValueStore:
         record = records.get(reference)
         if record is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, owner_step_id, _payload, _created_at = record
+        owner_run_id, owner_step_id, _payload, _created_at, operation_id = record
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, owner_run_id, run_id)
         if owner_step_id != step_id:
             raise ExecutionValueAccessError(
                 reference,
                 message=f"execution value reference {reference} belongs to step {owner_step_id}, not declared step {step_id}",
+            )
+        self._assert_committed_operation(run_id=run_id, operation_id=operation_id, reference=reference)
+
+    def _assert_committed_operation(
+        self, *, run_id: str, operation_id: str | None, reference: str
+    ) -> None:
+        if operation_id is None:
+            return
+        commit = self.get_node_commit(run_id=run_id, commit_id=operation_id)
+        if commit is None or commit.get("stage") != "committed":
+            raise ExecutionValueAccessError(
+                reference,
+                message=f"execution value reference is not committed: {reference}",
             )
 
     @staticmethod
@@ -315,6 +386,14 @@ class SQLiteExecutionValueStore:
                 created_at REAL NOT NULL
             )"""
         )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS acg_node_executions (
+                operation_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                phase TEXT NOT NULL
+            )"""
+        )
         value_columns = {
             str(row[1]) for row in self._connection.execute("PRAGMA table_info(execution_values)")
         }
@@ -329,6 +408,10 @@ class SQLiteExecutionValueStore:
             self._connection.execute(
                 "UPDATE execution_values SET created_at = ? WHERE created_at IS NULL",
                 (time(),),
+            )
+        if "operation_id" not in value_columns:
+            self._connection.execute(
+                "ALTER TABLE execution_values ADD COLUMN operation_id TEXT"
             )
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS acg_node_commits (
@@ -347,17 +430,17 @@ class SQLiteExecutionValueStore:
             )
         self._connection.commit()
 
-    def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """持久化通过输出合同的节点正文，并返回稳定输出引用。"""
-        return self._put("output", run_id=run_id, step_id=step_id, payload=payload)
+        return self._put("output", run_id=run_id, step_id=step_id, payload=payload, operation_id=operation_id)
 
     def get_output(self, *, run_id: str, output_ref: str) -> dict[str, Any]:
         """按 run 隔离读取输出正文，禁止跨运行回退。"""
         return self._get("output", run_id=run_id, reference=output_ref)
 
-    def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """持久化 ContextPack 正文，仅将其引用交给执行状态与检查点。"""
-        return self._put("context", run_id=run_id, step_id=step_id, payload=payload)
+        return self._put("context", run_id=run_id, step_id=step_id, payload=payload, operation_id=operation_id)
 
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按 run 隔离读取 ContextPack 正文，禁止跨运行回退。"""
@@ -372,12 +455,13 @@ class SQLiteExecutionValueStore:
     def assert_reference(self, *, kind: str, run_id: str, step_id: str, reference: str) -> None:
         """验证持久引用的类型、运行和产生步骤，不读取或返回其正文。"""
         row = self._connection.execute(
-            "SELECT run_id, step_id, kind FROM execution_values WHERE reference = ?",
+            "SELECT run_id, step_id, kind, operation_id FROM execution_values WHERE reference = ?",
             (reference,),
         ).fetchone()
         if row is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, owner_step_id, actual_kind = (str(value) for value in row)
+        owner_run_id, owner_step_id, actual_kind = (str(value) for value in row[:3])
+        operation_id = str(row[3]) if row[3] is not None else None
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, owner_run_id, run_id)
         if actual_kind != kind:
@@ -387,6 +471,7 @@ class SQLiteExecutionValueStore:
                 reference,
                 message=f"execution value reference {reference} belongs to step {owner_step_id}, not declared step {step_id}",
             )
+        self._assert_committed_operation(run_id=run_id, operation_id=operation_id, reference=reference)
 
     def prepare_node_commit(self, *, run_id: str, commit_id: str) -> dict[str, Any]:
         """在 SQLite 中原子创建或读取准备态，进程重启后仍使用同一提交标识。"""
@@ -430,7 +515,7 @@ class SQLiteExecutionValueStore:
             owner_run_id, existing, stage = str(row[0]), str(row[1]), str(row[2])
             if owner_run_id != run_id:
                 raise ExecutionValueAccessError(commit_id, owner_run_id, run_id)
-            if stage == "prepared":
+            if stage != "committed":
                 self._connection.execute(
                     "UPDATE acg_node_commits SET payload_json = ?, stage = 'committed' WHERE commit_id = ?",
                     (encoded, commit_id),
@@ -462,6 +547,41 @@ class SQLiteExecutionValueStore:
             (run_id,),
         ).fetchall()
         return tuple(deepcopy(json.loads(str(row[0]))) for row in rows)
+
+    def transition_node_execution(self, record: NodeExecutionRecord) -> NodeExecutionRecord:
+        encoded = json.dumps(_record_payload(record), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT run_id, payload_json FROM acg_node_executions WHERE operation_id = ?",
+                (record.operation_id,),
+            ).fetchone()
+            if row is not None:
+                owner_run_id, payload_json = str(row[0]), str(row[1])
+                if owner_run_id != record.run_id:
+                    raise ExecutionValueAccessError(record.operation_id, owner_run_id, record.run_id)
+                existing = _record_from_payload(json.loads(payload_json), fallback=record)
+                _validate_node_transition(existing, record)
+                if _NODE_PHASE_ORDER[record.phase] < _NODE_PHASE_ORDER[existing.phase]:
+                    self._connection.commit()
+                    return existing
+                if existing.phase in _NODE_TERMINAL_PHASES:
+                    self._connection.commit()
+                    return existing
+                self._connection.execute(
+                    "UPDATE acg_node_executions SET payload_json = ?, phase = ? WHERE operation_id = ?",
+                    (encoded, record.phase.value, record.operation_id),
+                )
+            else:
+                self._connection.execute(
+                    "INSERT INTO acg_node_executions(operation_id, run_id, payload_json, phase) VALUES (?, ?, ?, ?)",
+                    (record.operation_id, record.run_id, encoded, record.phase.value),
+                )
+            self._connection.commit()
+            return record
+        except Exception:
+            self._connection.rollback()
+            raise
 
     def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
         """只读取候选值的元数据；查询始终带 runId 条件避免跨运行扫描。"""
@@ -509,32 +629,52 @@ class SQLiteExecutionValueStore:
         """关闭当前 SQLite 连接；运行时退出时由装配层负责调用。"""
         self._connection.close()
 
-    def _put(self, kind: str, *, run_id: str, step_id: str, payload: dict[str, Any]) -> str:
+    def _put(self, kind: str, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         reference = self._new_reference(kind, run_id, step_id)
         encoded = json.dumps(deepcopy(dict(payload)), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         self._connection.execute(
             """INSERT INTO execution_values
-               (reference, run_id, step_id, kind, payload_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (reference, run_id, step_id, kind, encoded, time()),
+               (reference, run_id, step_id, kind, payload_json, created_at, operation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (reference, run_id, step_id, kind, encoded, time(), operation_id),
         )
         self._connection.commit()
         return reference
 
     def _get(self, kind: str, *, run_id: str, reference: str) -> dict[str, Any]:
         row = self._connection.execute(
-            "SELECT run_id, kind, payload_json FROM execution_values WHERE reference = ?",
+            "SELECT run_id, kind, payload_json, operation_id FROM execution_values WHERE reference = ?",
             (reference,),
         ).fetchone()
         if row is None:
             raise ExecutionValueAccessError(reference)
-        owner_run_id, actual_kind, payload_json = row
+        owner_run_id, actual_kind, payload_json, operation_id = row
         if owner_run_id != run_id:
             raise ExecutionValueAccessError(reference, str(owner_run_id), run_id)
         if actual_kind != kind:
             raise ExecutionValueAccessError(reference)
+        self._assert_committed_operation(
+            run_id=run_id,
+            operation_id=str(operation_id) if operation_id is not None else None,
+            reference=reference,
+        )
         payload = json.loads(payload_json)
         return deepcopy(payload)
+
+    def _assert_committed_operation(
+        self, *, run_id: str, operation_id: str | None, reference: str
+    ) -> None:
+        if operation_id is None:
+            return
+        row = self._connection.execute(
+            "SELECT run_id, stage FROM acg_node_commits WHERE commit_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if row is None or str(row[0]) != run_id or str(row[1]) != "committed":
+            raise ExecutionValueAccessError(
+                reference,
+                message=f"execution value reference is not committed: {reference}",
+            )
 
     @staticmethod
     def _new_reference(kind: str, run_id: str, step_id: str) -> str:

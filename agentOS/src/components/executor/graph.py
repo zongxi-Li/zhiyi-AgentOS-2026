@@ -52,6 +52,16 @@ class ACGExecutionState(BaseModel):
     # 通信预算只保存已消耗的整数计数，恢复后 Broker 用它继续限制剩余额度。它不含
     # 输出、ContextPack、字段值或任何外部调用正文。
     communication_usage: dict[str, Any] = Field(default_factory=dict, alias="communicationUsage")
+    control_frames: list[dict[str, Any]] = Field(default_factory=list, alias="controlFrames")
+    loop_iterations: dict[str, int] = Field(default_factory=dict, alias="loopIterations")
+    loop_paths: dict[str, list[int]] = Field(default_factory=dict, alias="loopPaths")
+    consensus_results: dict[str, dict[str, Any]] = Field(default_factory=dict, alias="consensusResults")
+    blackboard_snapshots: dict[str, dict[str, Any]] = Field(
+        default_factory=dict, alias="blackboardSnapshots"
+    )
+    debate_sessions: dict[str, dict[str, Any]] = Field(
+        default_factory=dict, alias="debateSessions"
+    )
     checkpoint_id: str | None = Field(default=None, alias="checkpointId")
     review_payload: dict[str, Any] | None = Field(default=None, alias="reviewPayload")
 
@@ -133,9 +143,10 @@ class ACGNodeSpec:
 
     node_id: str
     kind: Literal["step", "control"] = "step"
-    communication_mode: Literal["STRICT_CONTRACT", "EVENT"] = "STRICT_CONTRACT"
+    communication_mode: Literal["STRICT_CONTRACT", "EVENT", "BLACKBOARD", "DEBATE"] = "STRICT_CONTRACT"
     review_required: bool = False
     condition: "ACGConditionalRoute | None" = None
+    control_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -189,11 +200,14 @@ class ACGExecutionGraph:
         edges: tuple[tuple[str, str], ...] = (),
         node_specs: dict[str, ACGNodeSpec] | None = None,
         communication_manifest: object | None = None,
+        compiled_package: object | None = None,
     ) -> None:
         self.nodes = tuple(dict.fromkeys(nodes))
         self.edges = tuple(edges)
         self.node_specs = node_specs or {node_id: ACGNodeSpec(node_id=node_id) for node_id in self.nodes}
         self.communication_manifest = communication_manifest
+        self.compiled_package = compiled_package
+        self.control_manifest = getattr(compiled_package, "control_manifest", None)
         known = set(self.nodes)
         if set(self.node_specs) != known or any(source not in known or target not in known for source, target in self.edges):
             raise ValueError("graph nodes and edges must be declared consistently")
@@ -227,6 +241,7 @@ class ACGExecutionGraph:
         route_values: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """推进满足前驱条件的控制节点，并根据路由结果标记跳过分支。"""
+        self._advance_loop_frames(state, route_values or {})
         completed = set(state.completed_step_ids)
         skipped = set(state.skipped_step_ids)
         changed = True
@@ -242,13 +257,124 @@ class ACGExecutionGraph:
                 if spec.condition is not None:
                     value = (route_values or {}).get(spec.condition.source_step_id, {})
                     target = spec.condition.select(value)
-                    if target is not None:
-                        branch_targets = {target_id for source, target_id in self.edges if source == control_id}
-                        skipped.update(branch_targets - {target})
+                    if target is None:
+                        raise RuntimeError(f"CONTROL_NO_MATCH:{control_id}")
+                    branch_targets = {target_id for source, target_id in self.edges if source == control_id}
+                    skipped.update(branch_targets - {target})
+                if spec.control_type == "consensus":
+                    self._resolve_consensus(state, control_id, route_values or {})
                 state.completed_step_ids.append(control_id)
                 completed.add(control_id)
                 changed = True
         state.skipped_step_ids = [node_id for node_id in self.nodes if node_id in skipped]
+
+    def _advance_loop_frames(self, state: ACGExecutionState, route_values: dict[str, dict[str, Any]]) -> None:
+        if self.control_manifest is None:
+            return
+        completed = set(state.completed_step_ids)
+        for rule in self.control_manifest.rules:
+            loop = rule.loop
+            if loop is None or loop.body_exit_id not in completed:
+                continue
+            current = int(state.loop_iterations.get(rule.control_id, 0))
+            value = route_values.get(loop.condition.source_step_id, {})
+            route = ACGConditionalRoute(
+                source_step_id=loop.condition.source_step_id,
+                json_pointer=loop.condition.json_pointer,
+                operator=loop.condition.operator,
+                targets_by_case=dict(loop.condition.targets_by_case),
+                default_target=loop.condition.default_target,
+            )
+            target = route.select(value)
+            if target != loop.body_entry_id:
+                state.control_frames = [
+                    item for item in state.control_frames if item.get("controlId") != rule.control_id
+                ]
+                continue
+            next_iteration = current + 1
+            if next_iteration >= loop.max_iterations:
+                if loop.on_limit == "review":
+                    state.review_payload = {
+                        "controlId": rule.control_id,
+                        "reasonCode": "LOOP_MAX_ITERATIONS",
+                        "iteration": next_iteration,
+                    }
+                    return
+                raise RuntimeError(f"LOOP_MAX_ITERATIONS:{rule.control_id}")
+            region = self._loop_region(loop.body_entry_id, loop.body_exit_id)
+            state.completed_step_ids = [node_id for node_id in state.completed_step_ids if node_id not in region]
+            state.skipped_step_ids = [node_id for node_id in state.skipped_step_ids if node_id not in region]
+            state.loop_iterations[rule.control_id] = next_iteration
+            for node_id in region:
+                if self.node_specs[node_id].kind == "step":
+                    state.loop_paths[node_id] = [next_iteration]
+            frame = {
+                "controlId": rule.control_id,
+                "controlType": "loop",
+                "iteration": next_iteration,
+                "region": sorted(region),
+            }
+            state.control_frames = [
+                item for item in state.control_frames if item.get("controlId") != rule.control_id
+            ] + [frame]
+
+    def _loop_region(self, entry_id: str, exit_id: str) -> set[str]:
+        region: set[str] = set()
+        frontier = [entry_id]
+        while frontier:
+            node_id = frontier.pop()
+            if node_id in region:
+                continue
+            region.add(node_id)
+            if node_id == exit_id:
+                continue
+            frontier.extend(target for source, target in self.edges if source == node_id)
+        if exit_id not in region:
+            raise RuntimeError(f"loop body exit {exit_id} is unreachable from {entry_id}")
+        return region
+
+    def _resolve_consensus(self, state: ACGExecutionState, control_id: str, route_values: dict[str, dict[str, Any]]) -> None:
+        if self.control_manifest is None:
+            return
+        rule = next((item for item in self.control_manifest.rules if item.control_id == control_id), None)
+        spec = rule.consensus if rule is not None else None
+        if spec is None:
+            return
+        votes: list[bool] = []
+        for participant in spec.participant_step_ids:
+            value = route_values.get(participant, {})
+            raw = value.get("vote", value.get("approved"))
+            if isinstance(raw, bool):
+                votes.append(raw)
+        approvals = sum(votes)
+        committed_participants = sum(
+            participant in state.completed_step_ids
+            for participant in spec.participant_step_ids
+        )
+        if spec.strategy == "auditor":
+            resolved = committed_participants >= spec.quorum
+            accepted = resolved
+        else:
+            resolved = len(votes) >= spec.quorum
+            accepted = (
+                resolved and approvals == len(spec.participant_step_ids)
+                if spec.strategy == "unanimous"
+                else resolved and approvals > len(votes) / 2
+            )
+        result = {
+            "votes": len(votes),
+            "approvals": approvals,
+            "committedParticipants": committed_participants,
+            "quorum": spec.quorum,
+            "accepted": accepted,
+            "strategy": spec.strategy,
+        }
+        state.consensus_results[control_id] = result
+        if not resolved or (len(votes) % 2 == 0 and approvals * 2 == len(votes)):
+            if spec.on_unresolved == "review":
+                state.review_payload = {"controlId": control_id, "reasonCode": "CONSENSUS_UNRESOLVED", **result}
+            else:
+                raise RuntimeError(f"CONSENSUS_UNRESOLVED:{control_id}")
 
     async def run(self, state: ACGExecutionState, execute: NodeRunner) -> ACGExecutionState:
         """执行至完成或审核中断；调用方应持久化每个流事件对应的状态。"""
@@ -288,6 +414,9 @@ class ACGExecutionGraph:
             yield {"type": "nodes_scheduled", "stepIds": list(ready)}
             state.active_step_ids = list(ready)
             state.current_step_id = ready[0] if len(ready) == 1 else None
+            prepare_superstep = getattr(execute, "prepare_superstep", None)
+            if callable(prepare_superstep):
+                prepare_superstep(state, ready)
             tasks = {
                 step_id: asyncio.create_task(execute(step_id, state), name=f"acg:{state.run_id}:{step_id}")
                 for step_id in ready
@@ -396,7 +525,12 @@ class ACGExecutionGraph:
 
                     raise ExecutionInterrupt("execution requires review", state.review_payload)
             state.active_step_ids = []
+            for step_id in ready:
+                state.blackboard_snapshots.pop(step_id, None)
             self._advance_controls(state, route_values)
+            if state.review_payload is not None:
+                from components.recovery.checkpoint import ExecutionInterrupt
+                raise ExecutionInterrupt("control requires review", state.review_payload)
             yield {
                 "type": "superstep_completed",
                 "stepIds": list(ready),

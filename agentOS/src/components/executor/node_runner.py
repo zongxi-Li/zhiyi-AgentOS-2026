@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from components.communicator import CommunicationBroker, CommunicationReader, CommunicatorService
+from components.communicator import CommunicationBroker, CommunicationReader, CommunicatorService, ReliableMessage
 from components.communicator.contracts import ContextPack, estimate_tokens, input_revision
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
@@ -25,6 +25,8 @@ from contracts.communication import validate_contract_payload
 from contracts.governance import AuditRequest
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryManifest, SkillManifest
+from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from service.agents.base import BaseAgent, AgentRunContext
 
 from .graph import ACGExecutionState
@@ -60,6 +62,11 @@ class ACGNodeRunner:
         capability_descriptors: Mapping[str, object] | None = None,
         tool_runtime: object | None = None,
         communication_broker: CommunicationBroker | None = None,
+        skill_manifest: SkillManifest | None = None,
+        memory_manifest: MemoryManifest | None = None,
+        evidence_manifest: EvidenceManifest | None = None,
+        reliable_communication_store: object | None = None,
+        compiled_package: CompiledACGPackage | None = None,
         fault_hook: Callable[[str], None] | None = None,
     ) -> None:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
@@ -92,6 +99,11 @@ class ACGNodeRunner:
         self.capability_descriptors = dict(capability_descriptors or {})
         self.tool_runtime = tool_runtime
         self.communication_broker = communication_broker
+        self.skill_manifest = skill_manifest or SkillManifest()
+        self.memory_manifest = memory_manifest or MemoryManifest()
+        self.evidence_manifest = evidence_manifest or EvidenceManifest()
+        self.reliable_communication_store = reliable_communication_store
+        self.compiled_package = compiled_package
         # 仅由故障恢复测试在运行时对象上临时注入。生产装配不会设置该钩子，业务合同、
         # Blueprint 和持久化状态都不包含故障阶段或异常对象。
         self._fault_hook = fault_hook
@@ -113,12 +125,18 @@ class ACGNodeRunner:
         """
         step = self.steps[step_id]
         agent = self.agents[step_id]
-        commit_id = self._commit_id(state.run_id, step_id, step.attempt)
+        loop_path = tuple(state.loop_paths.get(step_id, ()))
+        commit_id = self._commit_id(state.run_id, step_id, step.attempt, loop_path=loop_path)
         committed = self.value_store.get_node_commit(run_id=state.run_id, commit_id=commit_id)
         if committed is not None and committed.get("stage") == "committed":
             # 重启恢复或投影中断后再次调度同一步骤时，提交记录是唯一真源。它只返回
             # 已保存的安全引用与元数据，不能重新调用 Agent、重复写记忆或制造新 Trace。
             replayed = dict(committed)
+            self._publish_committed_memory(
+                run_id=state.run_id,
+                step_id=step_id,
+                payload=replayed,
+            )
             self._validate_committed_references(
                 run_id=state.run_id,
                 step_id=step_id,
@@ -132,10 +150,36 @@ class ACGNodeRunner:
                     run_id=state.run_id,
                     output_ref=output_ref,
                 )
+                self._publish_advanced_communication(
+                    state=state,
+                    step_id=step_id,
+                    output_ref=output_ref,
+                    commit_id=commit_id,
+                )
+                if self.communication_modes.get(step_id) == "DEBATE":
+                    self._advance_debate_session(
+                        state=state,
+                        step_id=step_id,
+                        output_ref=output_ref,
+                        commit_id=commit_id,
+                    )
             return replayed
         # 先持久化 prepared，再进入 Agent/Tool 适配边界。若中断发生在外部调用期间，
         # 恢复会传递同一 commitId，外部实现可据此幂等重试；不会误认为已完成。
         self.value_store.prepare_node_commit(run_id=state.run_id, commit_id=commit_id)
+        execution_record = NodeExecutionRecord(
+            operationId=commit_id,
+            executionInstanceId=f"{state.run_id}:{step_id}:{step.attempt}:{'.'.join(map(str, loop_path)) or 'root'}",
+            runId=state.run_id,
+            stepId=step_id,
+            attemptId=(
+                f"{state.run_id}:{step_id}:{step.attempt}:"
+                f"{'.'.join(map(str, loop_path)) or 'root'}"
+            ),
+            phase=NodeExecutionPhase.PREPARED,
+            loopPath=loop_path,
+        )
+        execution_record = self.value_store.transition_node_execution(execution_record)
         # State 只有摘要/引用。上游完整 slot 值必须由通信服务根据 outputRef 从受控
         # 仓库读取；运行器不能从摘要推断数据，也不能旁路仓库获取全量 Agent 输出。
         estimated_entropy = sum(estimate_tokens(summary) for summary in state.output_summaries.values())
@@ -144,10 +188,43 @@ class ACGNodeRunner:
                 f"step {step_id} estimated entropy {estimated_entropy} exceeds budget {self.entropy_budget}"
             )
         mode = self.communication_modes.get(step_id, "STRICT_CONTRACT")
-        if mode == "EVENT":
+        consumed_message_ids: list[str] = []
+        if mode in {"EVENT", "DEBATE"}:
             # EVENT 是纯通知：只把 outputRef 转为证据引用，绝不调用仓库读取其正文。
             # 上游列表由编译后的依赖图注入，避免无关步骤的事件引用被额外暴露。
             source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
+            pending_messages = (
+                self.reliable_communication_store.pending(
+                    run_id=state.run_id, consumer_step_id=step_id
+                )
+                if self.reliable_communication_store is not None
+                else ()
+            )
+            consumed_message_ids = [message.message_id for message in pending_messages]
+            debate_phase = ""
+            if mode == "DEBATE" and self.compiled_package is not None:
+                debate_rules = tuple(
+                    rule for rule in self.compiled_package.communication_manifest.rules
+                    if rule.consumer_step_id == step_id and rule.mode.value == "DEBATE"
+                )
+                if not debate_rules:
+                    raise ValueError(f"DEBATE step {step_id} has no manifest rules")
+                spec = debate_rules[0]
+                producer_ids = {
+                    message.producer_step_id for message in pending_messages
+                    if message.producer_step_id in spec.participant_step_ids
+                }
+                if len(producer_ids) < int(spec.quorum or 0):
+                    raise RuntimeError(f"DEBATE_QUORUM_UNREACHED:{step_id}")
+                session = state.debate_sessions.setdefault(step_id, {
+                    "round": 1,
+                    "phase": "propose",
+                    "maxRounds": spec.max_rounds,
+                    "quorum": spec.quorum,
+                    "participants": list(spec.participant_step_ids),
+                    "appliedCommitIds": [],
+                })
+                debate_phase = str(session.get("phase") or "propose")
             pack = ContextPack(
                 runId=state.run_id,
                 stepId=step_id,
@@ -157,8 +234,27 @@ class ACGNodeRunner:
                     f"event:{state.output_refs[source_id]}"
                     for source_id in source_ids
                     if source_id in state.output_refs
+                ] + [
+                    (
+                        f"debate:{debate_phase}:{message.artifact_ref}"
+                        if mode == "DEBATE"
+                        else f"event:{message.artifact_ref}"
+                    )
+                    for message in pending_messages
                 ],
                 sourceStepIds=list(source_ids),
+            )
+        elif mode == "BLACKBOARD":
+            snapshot = state.blackboard_snapshots.get(step_id, {})
+            entries = snapshot.get("entries") if isinstance(snapshot, dict) else {}
+            refs = list(entries.values()) if isinstance(entries, dict) else []
+            pack = ContextPack(
+                runId=state.run_id,
+                stepId=step_id,
+                objective=self.workflow.description,
+                stepGoal=step.name,
+                evidenceRefs=[f"blackboard:{item}" for item in refs],
+                sourceStepIds=list(self.upstream_step_ids.get(step_id, ())),
             )
         elif self.communication_broker is not None:
             pack = await self._assemble_broker_context(
@@ -188,6 +284,14 @@ class ACGNodeRunner:
         input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
         validate_contract_payload(pack.data, input_schema, step_id=step_id, direction="input")
         memory_policy = self._memory_policy(step.input)
+        explicit_memory_rules = self.memory_manifest.for_step(step_id)
+        if explicit_memory_rules:
+            memory_policy["read"] = bool(
+                self.memory_manifest.for_step(step_id, "read")
+            )
+            memory_policy["write"] = bool(
+                self.memory_manifest.for_step(step_id, "write")
+            )
         communication_reader = self._build_communication_reader(
             state=state,
             step_id=step_id,
@@ -228,7 +332,12 @@ class ACGNodeRunner:
         # 视图只能继承既有授权集合，不能在节点内扩大权限。
         step_tool_runtime = self.tool_runtime
         if self.tool_runtime is not None and hasattr(self.tool_runtime, "scoped"):
-            allowed = getattr(self.tool_runtime, "allowed_tools", ())
+            declared_tools = {
+                rule.tool_name
+                for rule in self.skill_manifest.for_step(step_id)
+                if rule.tool_name
+            }
+            allowed = declared_tools or set(getattr(self.tool_runtime, "allowed_tools", ()))
             step_tool_runtime = self.tool_runtime.scoped(allowed)
         agent_context = AgentRunContext(
             task=self.task,
@@ -247,6 +356,9 @@ class ACGNodeRunner:
             await self.agent_invoker.invoke(context=agent_context, agent=agent)
             if self.agent_invoker is not None
             else await agent.run(agent_context)
+        )
+        execution_record = self.value_store.transition_node_execution(
+            execution_record.model_copy(update={"phase": NodeExecutionPhase.EXECUTED})
         )
         if communication_reader is not None:
             for index, dynamic_pack in enumerate(communication_reader.drain_packs()):
@@ -288,12 +400,34 @@ class ACGNodeRunner:
             decision_ref=decision.decision_id,
             outcomes={decision.outcome},
         )
+        execution_record = self.value_store.transition_node_execution(
+            execution_record.model_copy(update={
+                "phase": (
+                    NodeExecutionPhase.WAITING_REVIEW
+                    if persisted_decision.outcome == "review"
+                    else NodeExecutionPhase.AUDITED
+                ),
+                "audit_ref": persisted_decision.decision_id,
+            })
+        )
         requires_review = step.requires_review or persisted_decision.outcome == "review"
         output_evidence = controlled.get("evidence_refs") or controlled.get("evidenceRefs") or []
         evidence_refs = [
             *output.evidence_refs,
             *(output_evidence if isinstance(output_evidence, list) else []),
         ]
+        declared_evidence_ids = {
+            rule.evidence_node_id for rule in self.evidence_manifest.for_step(step_id)
+        }
+        if declared_evidence_ids:
+            undeclared = {
+                str(item) for item in evidence_refs
+                if str(item) not in declared_evidence_ids
+            }
+            if undeclared:
+                raise ValueError(
+                    f"step {step_id} produced undeclared evidence references: {sorted(undeclared)}"
+                )
         memory_event = StructuredMemoryEventBuilder.build(
             run_id=state.run_id,
             step_id=step_id,
@@ -322,11 +456,13 @@ class ACGNodeRunner:
             run_id=state.run_id,
             step_id=step_id,
             payload=controlled,
+            operation_id=commit_id,
         )
         context_ref = self.value_store.put_context_pack(
             run_id=state.run_id,
             step_id=step_id,
             payload=pack.model_dump(by_alias=True, mode="json"),
+            operation_id=commit_id,
         )
         self._inject_fault("after_values")
         self.communicator.record_production(
@@ -336,16 +472,15 @@ class ACGNodeRunner:
             operation_id=commit_id,
         )
         self._inject_fault("after_provenance")
-        memory_record = None
         pending_memory: dict[str, Any] | None = None
         if persisted_decision.outcome == "allow" and not requires_review and memory_policy["write"]:
-            memory_record = self.memory.remember_step_output(
-                run_id=state.run_id,
-                step_id=step_id,
-                output=memory_event_payload,
-                memory_type=memory_policy["writeType"],
-                policy=self._write_memory_policy(memory_policy),
-            )
+            pending_memory = {
+                "outputRef": output_ref,
+                "policyId": str(memory_policy["policyId"]),
+                "writeType": memory_policy["writeType"].value,
+                "auditDecisionRef": persisted_decision.decision_id,
+                "memoryEvent": memory_event_payload,
+            }
         elif requires_review and memory_policy["write"]:
             # 需要人工复核的内容只留下可校验输出引用和策略意图。正文仍在值仓库，
             # 批准前不进入正式 MemoryStore，也不产生可被下游读取的 memoryRef。
@@ -357,7 +492,35 @@ class ACGNodeRunner:
                 "memoryEvent": memory_event_payload,
             }
         self._inject_fault("after_memory")
-        memory_access["written"] = memory_record is not None
+        memory_access["written"] = False
+        communication_reads = (
+            self.communication_broker.drain_events(consumer_step_id=step_id)
+            if self.communication_broker is not None
+            else []
+        )
+        communication_refs = list(dict.fromkeys(
+            str(item["outputRef"])
+            for item in communication_reads
+            if isinstance(item, dict) and item.get("outputRef")
+        ))
+        committed_execution_record = execution_record.model_copy(update={
+            "phase": NodeExecutionPhase.COMMITTED,
+            "artifact_refs": {
+                key: value
+                for key, value in {
+                    "output": output_ref,
+                    "context": context_ref,
+                    "memory": (
+                        f"memory:{state.run_id}:{step_id}"
+                        if pending_memory is not None and not requires_review
+                        else None
+                    ),
+                    "trace": f"trace:{step_id}",
+                }.items()
+                if isinstance(value, str)
+            },
+            "commit_id": commit_id,
+        })
         result = {
             "commitId": commit_id,
             "outputSummary": output.summary or f"completed:{step_id}",
@@ -376,10 +539,11 @@ class ACGNodeRunner:
             "provenanceEvents": self.communicator.drain_provenance_events(step_id=step_id),
             # Broker 的读取事件只含引用、字段名、计数和通道，Runtime 会投影为安全
             # Trace；正文仍只存在于 Value Store 与当前 Agent 调用栈。
-            "communicationReads": (
-                self.communication_broker.drain_events(consumer_step_id=step_id)
-                if self.communication_broker is not None
-                else []
+            "communicationReads": communication_reads,
+            "communicationRefs": communication_refs,
+            "evidenceRefs": list(dict.fromkeys(str(item) for item in evidence_refs)),
+            "nodeExecution": committed_execution_record.model_dump(
+                by_alias=True, mode="json"
             ),
             # 仅含策略、条数和预算统计；记忆正文始终留在 MemoryService/Store 中。
             "memoryAccess": memory_access,
@@ -388,7 +552,11 @@ class ACGNodeRunner:
             "routeValue": controlled,
         }
         if not requires_review:
-            result["memoryRef"] = memory_record.memory_id if memory_record is not None else "memory:none"
+            result["memoryRef"] = (
+                f"memory:{state.run_id}:{step_id}"
+                if pending_memory is not None
+                else "memory:none"
+            )
         if pending_memory is not None:
             result["pendingMemory"] = pending_memory
         # 在图状态投影之前固化不可变提交边界。若后续 Runtime 在 Trace 或 checkpoint
@@ -403,7 +571,160 @@ class ACGNodeRunner:
             commit_id=commit_id,
             payload=commit_record,
         )
+        self._publish_committed_memory(
+            run_id=state.run_id,
+            step_id=step_id,
+            payload=result,
+        )
+        self._publish_advanced_communication(
+            state=state,
+            step_id=step_id,
+            output_ref=output_ref,
+            commit_id=commit_id,
+        )
+        if mode == "DEBATE":
+            self._advance_debate_session(
+                state=state,
+                step_id=step_id,
+                output_ref=output_ref,
+                commit_id=commit_id,
+            )
+        if self.reliable_communication_store is not None:
+            for message_id in consumed_message_ids:
+                self.reliable_communication_store.acknowledge(
+                    run_id=state.run_id, message_id=message_id
+                )
+        self.value_store.transition_node_execution(committed_execution_record)
         return result
+
+    def prepare_superstep(
+        self, state: ACGExecutionState, ready_step_ids: tuple[str, ...]
+    ) -> None:
+        """Freeze advanced communication views before any sibling starts."""
+        store = self.reliable_communication_store
+        package = self.compiled_package
+        if store is None or package is None:
+            return
+        for step_id in ready_step_ids:
+            if self.communication_modes.get(step_id) != "BLACKBOARD":
+                continue
+            rules = tuple(
+                rule
+                for rule in package.communication_manifest.rules
+                if rule.consumer_step_id == step_id and rule.mode.value == "BLACKBOARD"
+            )
+            partitions = tuple(dict.fromkeys(
+                str(rule.partition or rule.channel) for rule in rules
+            ))
+            combined: dict[str, str] = {}
+            versions: dict[str, int] = {}
+            for partition in partitions:
+                version, entries = store.blackboard_snapshot(
+                    run_id=state.run_id, partition=partition
+                )
+                versions[partition] = version
+                for key, reference in entries.items():
+                    combined[f"{partition}:{key}"] = reference
+            state.blackboard_snapshots[step_id] = {
+                "versions": versions,
+                "entries": combined,
+            }
+
+    @staticmethod
+    def _advance_debate_session(
+        *, state: ACGExecutionState, step_id: str, output_ref: str, commit_id: str
+    ) -> None:
+        session = state.debate_sessions.get(step_id)
+        if not isinstance(session, dict):
+            return
+        applied = session.setdefault("appliedCommitIds", [])
+        if commit_id in applied:
+            return
+        applied.append(commit_id)
+        phase = str(session.get("phase") or "propose")
+        current_round = int(session.get("round") or 1)
+        max_rounds = int(session.get("maxRounds") or 1)
+        if phase == "propose":
+            session["phase"] = "critique"
+        elif phase == "critique":
+            session["phase"] = "vote"
+        elif current_round < max_rounds:
+            session["round"] = current_round + 1
+            session["phase"] = "propose"
+        else:
+            session["phase"] = "complete"
+            session["resultArtifactRef"] = output_ref
+
+    def _publish_committed_memory(
+        self, *, run_id: str, step_id: str, payload: dict[str, Any]
+    ) -> None:
+        pending = payload.get("pendingMemory")
+        if not isinstance(pending, dict):
+            return
+        if payload.get("auditOutcome") != "allow" or payload.get("reviewRequired"):
+            return
+        write_type = pending.get("writeType")
+        memory_event = pending.get("memoryEvent")
+        if not isinstance(write_type, str) or not isinstance(memory_event, dict):
+            raise ValueError("committed pending memory intent is incomplete")
+        memory_type = MemoryType(write_type)
+        record = self.memory.remember_step_output(
+            run_id=run_id,
+            step_id=step_id,
+            output=memory_event,
+            memory_type=memory_type,
+            policy=MemoryPolicy(
+                policyId=str(pending.get("policyId") or "default"),
+                allowedTypes=[memory_type],
+            ),
+        )
+        expected = payload.get("memoryRef")
+        if record is None or (expected is not None and record.memory_id != expected):
+            raise ValueError("committed memory publication does not match memoryRef")
+        memory_access = payload.get("memoryAccess")
+        if isinstance(memory_access, dict):
+            memory_access["written"] = True
+        payload.pop("pendingMemory", None)
+
+    def _publish_advanced_communication(self, *, state, step_id: str, output_ref: str, commit_id: str) -> None:
+        store = self.reliable_communication_store
+        if store is None or self.communication_broker is None:
+            return
+        rules = [
+            rule for rule in self.communication_broker.manifest.rules
+            if rule.producer_step_id == step_id
+        ]
+        package_rules = ()
+        package = self.compiled_package
+        if package is not None:
+            package_rules = package.communication_manifest.rules
+        for rule in rules:
+            mode = self.communication_modes.get(rule.consumer_step_id, "STRICT_CONTRACT")
+            if mode not in {"EVENT", "DEBATE", "BLACKBOARD"}:
+                continue
+            spec = next((item for item in package_rules if item.producer_step_id == step_id and item.consumer_step_id == rule.consumer_step_id), None)
+            if mode in {"EVENT", "DEBATE"}:
+                store.publish(
+                    ReliableMessage(
+                        message_id=f"message:{commit_id}:{rule.consumer_step_id}",
+                        run_id=state.run_id,
+                        producer_step_id=step_id,
+                        consumer_step_id=rule.consumer_step_id,
+                        artifact_ref=output_ref,
+                        correlation_id=state.run_id,
+                        causation_id=commit_id,
+                        sequence=len(state.completed_step_ids),
+                        schema_hash=str(getattr(spec, "schema_hash", "") or "0" * 64),
+                    ),
+                    backlog_limit=int(getattr(spec, "backlog_limit", 1000)),
+                )
+            else:
+                partition = str(getattr(spec, "partition", None) or rule.channel)
+                version, _ = store.blackboard_snapshot(run_id=state.run_id, partition=partition)
+                store.blackboard_write(
+                    run_id=state.run_id, partition=partition, key=step_id,
+                    artifact_ref=output_ref, expected_version=version, append=True,
+                )
 
     @staticmethod
     def _safe_model_invocations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -558,9 +879,10 @@ class ACGNodeRunner:
             raise ValueError("audit decision is required before memory write")
 
     @staticmethod
-    def _commit_id(run_id: str, step_id: str, attempt: int) -> str:
+    def _commit_id(run_id: str, step_id: str, attempt: int, *, loop_path: tuple[int, ...] = ()) -> str:
         """生成步骤尝试的稳定提交标识；重试次数变化才会开启新的副作用边界。"""
-        return f"commit:{run_id}:{step_id}:{max(0, attempt)}"
+        suffix = f":loop:{'.'.join(map(str, loop_path))}" if loop_path else ""
+        return f"commit:{run_id}:{step_id}:{max(0, attempt)}{suffix}"
 
     def _inject_fault(self, stage: str) -> None:
         """执行测试专用中断钩子；未注入时是零行为的私有空操作。"""
