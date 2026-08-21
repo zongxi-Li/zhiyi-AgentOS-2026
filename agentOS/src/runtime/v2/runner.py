@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from contracts.identity import AttemptId, BlueprintId, RunId, TaskNodeId, UserTaskId
+from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskNodeId, UserTaskId
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -173,6 +173,7 @@ class AcgIdentityLifecycleService:
         node_id: TaskNodeId,
         resource_binding: dict[str, Any] | None = None,
         attempt_number: int | None = None,
+        attempt_id: AttemptId | None = None,
     ) -> Attempt:
         run = self._run(run_id)
         node = self._node(node_id)
@@ -182,6 +183,7 @@ class AcgIdentityLifecycleService:
             run_id,
             node_id,
             attempt_number=attempt_number,
+            attempt_id=attempt_id,
             resource_binding=resource_binding,
         )
 
@@ -191,6 +193,7 @@ class AcgIdentityLifecycleService:
         *,
         input: dict[str, Any],
         attempt_id: AttemptId | None = None,
+        step_execution_id: StepExecutionId | None = None,
     ) -> StepExecution:
         selected_attempt_id = attempt_id or context.current_attempt
         if selected_attempt_id is None:
@@ -208,6 +211,7 @@ class AcgIdentityLifecycleService:
             attempt.node_id,
             attempt.attempt_id,
             input=input,
+            step_execution_id=step_execution_id,
         )
         if execution.status is StepExecutionStatus.RUNNING:
             context.active_executions = list(dict.fromkeys([

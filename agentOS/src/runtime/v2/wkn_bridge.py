@@ -150,6 +150,7 @@ class WknIdentityLifecycleAdapter:
                 item.model_dump(by_alias=True, mode="json")
                 for item in task_node_bindings
             ],
+            "runProjection": self._safe_run_projection(run),
         }
         with self._projection(
             f"run.prepared:{run.run_id}",
@@ -263,8 +264,33 @@ class WknIdentityLifecycleAdapter:
                 "identityGeneration": "v2",
                 "wknWorkflowId": run.workflow_id,
                 "wknGraphId": blueprint.graph_id,
+                **self._identity_run_metadata(run),
                 **lineage,
             },
+        )
+
+    def on_run_snapshot(self, run_id: str, projection: dict[str, Any]) -> None:
+        """Refresh reference-only operational state without reading WKN."""
+        payload = {"runId": run_id, "projection": dict(projection)}
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self._projection(
+            f"run.snapshot:{run_id}:{digest}",
+            "run.snapshot",
+            run_id,
+            payload,
+        ):
+            self._on_run_snapshot(run_id, projection)
+
+    def _on_run_snapshot(self, run_id: str, projection: dict[str, Any]) -> None:
+        self._run(run_id)
+        self.repositories.runs.merge_metadata(
+            run_id,
+            self._identity_run_metadata(
+                SimpleNamespace(execution_state=dict(projection or {}))
+            ),
         )
 
     def on_blueprint_revised(
@@ -499,7 +525,7 @@ class WknIdentityLifecycleAdapter:
         ):
             return self._ensure_attempt(run, step_id, attempt_number)
 
-    def _ensure_attempt(self, run: Any, step_id: str, attempt_number: int) -> str:
+    def _ensure_attempt(self, run: Any, step_id: str, attempt_number: int, attempt_id: str | None = None) -> str:
         domain_run = self.repositories.runs.get(run.run_id)
         if domain_run is None:
             raise EntityNotFoundError(f"WorkflowRunV2 not found: {run.run_id}")
@@ -508,6 +534,7 @@ class WknIdentityLifecycleAdapter:
             run_id=run.run_id,
             node_id=node.node_id,
             attempt_number=attempt_number,
+            attempt_id=attempt_id,
         ).attempt_id
 
     def on_resource_bound(
@@ -551,7 +578,7 @@ class WknIdentityLifecycleAdapter:
                 step_id=step_id,
             )
 
-    def _on_step_started(self, *, run_id: str, attempt_id: str, step_id: str) -> str:
+    def _on_step_started(self, *, run_id: str, attempt_id: str, step_id: str, step_execution_id: str | None = None) -> str:
         attempt = self.repositories.attempts.get(attempt_id)
         if attempt is None or attempt.run_id != run_id:
             raise IdentityConflictError("Step start does not belong to Attempt run")
@@ -571,6 +598,7 @@ class WknIdentityLifecycleAdapter:
             context,
             attempt_id=attempt_id,
             input={"wknStepId": step_id},
+            step_execution_id=step_execution_id,
         ).step_execution_id
 
     def on_step_succeeded(
@@ -631,6 +659,9 @@ class WknIdentityLifecycleAdapter:
                 "memoryRef",
                 "traceRef",
                 "auditDecisionRef",
+                "nodeExecution",
+                "communicationRefs",
+                "evidenceRefs",
             )
             if result.get(key) is not None
         }
@@ -1101,6 +1132,10 @@ class WknIdentityLifecycleAdapter:
                 applied += 1
         return {"examined": len(events), "applied": applied, "failed": failed}
 
+    def apply_lifecycle_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Apply one event already admitted by the Identity Inbox."""
+        self._replay_event(event_type, payload)
+
     def _replay_event(self, event_type: str, payload: dict[str, Any]) -> None:
         if event_type == "task.created":
             task = SimpleNamespace(
@@ -1126,6 +1161,7 @@ class WknIdentityLifecycleAdapter:
             run = SimpleNamespace(
                 run_id=payload["runId"],
                 workflow_id=payload["workflowId"],
+                execution_state=payload.get("runProjection") or {},
             )
             self.on_run_prepared(
                 task,
@@ -1136,6 +1172,12 @@ class WknIdentityLifecycleAdapter:
                     TaskNodeImplementationBinding.model_validate(item)
                     for item in payload["taskNodeBindings"]
                 ),
+            )
+            return
+        if event_type == "run.snapshot":
+            self.on_run_snapshot(
+                payload["runId"],
+                payload.get("projection") or payload.get("executionState") or {},
             )
             return
         if event_type == "graph.patch.prepared":
@@ -1179,13 +1221,9 @@ class WknIdentityLifecycleAdapter:
             )
             return
         if event_type == "attempt.ensured":
-            self.ensure_attempt(
-                SimpleNamespace(
-                    run_id=payload["runId"],
-                    task_id=payload["taskId"],
-                ),
-                payload["stepId"],
-                int(payload["attemptNumber"]),
+            run = SimpleNamespace(run_id=payload["runId"], task_id=payload["taskId"])
+            self._ensure_attempt(
+                run, payload["stepId"], int(payload["attemptNumber"]), payload.get("attemptId")
             )
             return
         if event_type == "resource.bound":
@@ -1197,10 +1235,11 @@ class WknIdentityLifecycleAdapter:
             )
             return
         if event_type == "step.started":
-            self.on_step_started(
+            self._on_step_started(
                 run_id=payload["runId"],
                 attempt_id=payload["attemptId"],
                 step_id=payload["stepId"],
+                step_execution_id=payload.get("stepExecutionId"),
             )
             return
         if event_type == "step.succeeded":
@@ -1249,10 +1288,66 @@ class WknIdentityLifecycleAdapter:
                 "traceRef",
                 "auditDecisionRef",
                 "provenanceEvents",
+                "nodeExecution",
+                "communicationRefs",
+                "evidenceRefs",
             )
             if result.get(key) is not None
         }
         return allowed
+
+    @staticmethod
+    def _safe_run_projection(run: Any) -> dict[str, Any]:
+        state = dict(getattr(run, "execution_state", {}) or {})
+        allowed = {
+            "activeStepIds",
+            "blackboardSnapshots",
+            "checkpointId",
+            "communicationUsage",
+            "compiledPackageBlueprintHash",
+            "compiledPackageChecksum",
+            "compiledPackageId",
+            "compiledPackageVersion",
+            "consensusResults",
+            "contextRefs",
+            "controlFrames",
+            "debateSessions",
+            "graphPatchRefs",
+            "loopIterations",
+            "loopPaths",
+            "memoryRefs",
+            "outputRefs",
+            "parentRunId",
+            "provenanceRefs",
+            "recoveryOutcome",
+            "schedulingDecisions",
+            "sourcePatchId",
+            "supersedesRunId",
+            "supersededByRunId",
+            "traceRefs",
+        }
+        return {key: state[key] for key in allowed if state.get(key) is not None}
+
+    @classmethod
+    def _identity_run_metadata(cls, run: Any) -> dict[str, Any]:
+        projection = cls._safe_run_projection(run)
+        immutable = {
+            key: projection.pop(key)
+            for key in (
+                "compiledPackageId",
+                "compiledPackageChecksum",
+                "compiledPackageVersion",
+                "compiledPackageBlueprintHash",
+                "parentRunId",
+                "supersedesRunId",
+                "sourcePatchId",
+            )
+            if key in projection
+        }
+        return {
+            **immutable,
+            **({"executionProjection": projection} if projection else {}),
+        }
 
     @staticmethod
     def _task_goal(task: Any) -> str:

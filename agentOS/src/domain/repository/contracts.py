@@ -63,6 +63,7 @@ class RunRepository(Protocol):
         self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int
     ) -> WorkflowRun: ...
     def update_status(self, run_id: RunId, status: RunStatus) -> WorkflowRun: ...
+    def merge_metadata(self, run_id: RunId, metadata: dict[str, Any]) -> WorkflowRun: ...
 
 
 class AttemptRepository(Protocol):
@@ -143,6 +144,7 @@ class RepositorySet(Protocol):
         node_id: TaskNodeId,
         *,
         attempt_number: int | None = None,
+        attempt_id: AttemptId | None = None,
         resource_binding: dict | None = None,
     ) -> Attempt: ...
 
@@ -153,6 +155,7 @@ class RepositorySet(Protocol):
         attempt_id: AttemptId,
         *,
         input: dict,
+        step_execution_id: StepExecutionId | None = None,
     ) -> StepExecution: ...
 
     def finish_execution(

@@ -630,5 +630,11 @@ def test_identity_query_models_use_v2_repositories_as_their_only_source() -> Non
         assert attempt.execution_binding is not None
         assert detail.origin.user_task.task_id == task.task_id
         assert detail.origin.step_execution.step_execution_id == execution.step_execution_id
+        assert tree.operational.package is not None
+        assert tree.operational.package.package_version == 2
+        assert tree.operational.package.package_id
+        assert tree.operational.node_executions[0].phase.value == "committed"
+        assert tree.operational.node_executions[0].commit_id
+        assert query.projection_health().inbox_failed == 0
     finally:
         identity_runtime.close()

@@ -5,9 +5,13 @@ from __future__ import annotations
 from .query_models import (
     AttemptDetail,
     AttemptHistory,
+    CompiledPackageIdentity,
     ExecutionProvenance,
+    IdentityProjectionHealth,
     RunExecutionNode,
     RunExecutionTree,
+    RunLineage,
+    RunOperationalState,
     StepExecutionDetail,
     TaskDetail,
     TaskRunHistory,
@@ -113,7 +117,104 @@ class IdentityQueryService:
                 acgNodeId=(bindings[0].acg_node_id if bindings else None),
                 attempts=attempts_by_node.get(task_node.node_id, []),
             ))
-        return RunExecutionTree(run=run, blueprint=blueprint, nodes=nodes)
+        return RunExecutionTree(
+            run=run,
+            blueprint=blueprint,
+            nodes=nodes,
+            operational=self.run_operational_state(run_id),
+        )
+
+    def run_operational_state(self, run_id: str) -> RunOperationalState:
+        run = self.repositories.runs.get(run_id)
+        if run is None:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+        metadata = dict(run.metadata or {})
+        projection = dict(metadata.get("executionProjection") or {})
+        package = None
+        if all(metadata.get(key) is not None for key in (
+            "compiledPackageId", "compiledPackageVersion", "compiledPackageChecksum"
+        )):
+            package = CompiledPackageIdentity(
+                packageId=str(metadata["compiledPackageId"]),
+                packageVersion=int(metadata["compiledPackageVersion"]),
+                checksum=str(metadata["compiledPackageChecksum"]),
+                blueprintHash=metadata.get("compiledPackageBlueprintHash"),
+            )
+
+        node_executions = []
+        communication_refs: list[str] = []
+        memory_refs: list[str] = []
+        evidence_refs: list[str] = []
+        for attempt in self.repositories.attempts.list_for_run(run_id):
+            for execution in self.repositories.step_executions.list_for_attempt(
+                attempt.attempt_id
+            ):
+                output = dict(execution.output or {})
+                raw_record = output.get("nodeExecution")
+                if isinstance(raw_record, dict):
+                    from contracts.execution import NodeExecutionRecord
+
+                    node_executions.append(NodeExecutionRecord.model_validate(raw_record))
+                communication_refs.extend(
+                    str(item) for item in output.get("communicationRefs") or []
+                )
+                evidence_refs.extend(
+                    str(item) for item in output.get("evidenceRefs") or []
+                )
+                memory_ref = output.get("memoryRef")
+                if isinstance(memory_ref, str) and memory_ref != "memory:none":
+                    memory_refs.append(memory_ref)
+        for value in (projection.get("memoryRefs") or {}).values():
+            if isinstance(value, str) and value != "memory:none":
+                memory_refs.append(value)
+
+        lease_statuses: dict[str, str] = {}
+        for item in projection.get("schedulingDecisions") or []:
+            if not isinstance(item, dict):
+                continue
+            lease = item.get("lease")
+            if isinstance(lease, dict) and lease.get("leaseId"):
+                lease_statuses[str(lease["leaseId"])] = str(
+                    lease.get("status") or "unknown"
+                )
+        return RunOperationalState(
+            package=package,
+            lineage=RunLineage(
+                parentRunId=metadata.get("parentRunId"),
+                supersedesRunId=metadata.get("supersedesRunId"),
+                supersededByRunId=(
+                    metadata.get("supersededByRunId")
+                    or projection.get("supersededByRunId")
+                ),
+                sourcePatchId=metadata.get("sourcePatchId"),
+            ),
+            nodeExecutions=node_executions,
+            controlFrames=list(projection.get("controlFrames") or []),
+            communicationRefs=list(dict.fromkeys(communication_refs)),
+            memoryRefs=list(dict.fromkeys(memory_refs)),
+            evidenceRefs=list(dict.fromkeys(evidence_refs)),
+            leaseStatuses=lease_statuses,
+            loopIterations=dict(projection.get("loopIterations") or {}),
+            consensusResults=dict(projection.get("consensusResults") or {}),
+            debateSessions=dict(projection.get("debateSessions") or {}),
+            recoveryOutcome=projection.get("recoveryOutcome"),
+        )
+
+    def projection_health(self) -> IdentityProjectionHealth:
+        inbox = self.repositories.inbox_events.stats()
+        projection = self.repositories.projection_events.stats()
+        timestamps = [
+            value
+            for value in (inbox.get("oldestEventAt"), projection.get("oldestEventAt"))
+            if value is not None
+        ]
+        return IdentityProjectionHealth(
+            inboxBacklog=int(inbox.get("backlog") or 0),
+            inboxFailed=int(inbox.get("failed") or 0),
+            projectionBacklog=int(projection.get("backlog") or 0),
+            projectionFailed=int(projection.get("failed") or 0),
+            oldestEventAt=min(timestamps) if timestamps else None,
+        )
 
     def step_execution_detail(self, step_execution_id: str) -> StepExecutionDetail:
         origin = self.resolver.resolve_execution_origin(step_execution_id)

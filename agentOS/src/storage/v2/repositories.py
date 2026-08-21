@@ -351,7 +351,7 @@ class SQLiteRunRepository(_SQLiteRepository):
     def list_for_task(self, task_id: UserTaskId) -> list[WorkflowRun]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                "SELECT * FROM workflow_runs_v2 WHERE task_id = ? ORDER BY created_at, run_id",
+                "SELECT * FROM workflow_runs_v2 WHERE task_id = ? ORDER BY rowid",
                 (task_id,),
             ).fetchall()
         return [self._from_row(row) for row in rows]
@@ -393,6 +393,44 @@ class SQLiteRunRepository(_SQLiteRepository):
             )
             if cursor.rowcount != 1:
                 raise EntityNotFoundError(f"WorkflowRunV2 not found: {run_id}")
+        run = self.get(run_id)
+        assert run is not None
+        return run
+
+    def merge_metadata(self, run_id: RunId, metadata: dict[str, Any]) -> WorkflowRun:
+        immutable_keys = {
+            "compiledPackageId",
+            "compiledPackageChecksum",
+            "compiledPackageVersion",
+            "compiledPackageBlueprintHash",
+            "parentRunId",
+            "supersedesRunId",
+            "sourcePatchId",
+        }
+        now = _now()
+        with self.storage.transaction() as conn:
+            row = conn.execute(
+                "SELECT metadata_json FROM workflow_runs_v2 WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise EntityNotFoundError(f"WorkflowRunV2 not found: {run_id}")
+            current = _load_json(row["metadata_json"], {})
+            for key in immutable_keys:
+                if (
+                    key in current
+                    and key in metadata
+                    and current[key] != metadata[key]
+                ):
+                    raise IdentityConflictError(
+                        f"immutable Run metadata changed: {key}"
+                    )
+            merged = {**current, **metadata}
+            conn.execute(
+                """UPDATE workflow_runs_v2
+                   SET metadata_json = ?, updated_at = ? WHERE run_id = ?""",
+                (_json(merged), _iso(now), run_id),
+            )
         run = self.get(run_id)
         assert run is not None
         return run
@@ -1045,6 +1083,7 @@ class SQLiteV2Repositories:
         node_id: TaskNodeId,
         *,
         attempt_number: int | None = None,
+        attempt_id: AttemptId | None = None,
         resource_binding: dict | None = None,
     ) -> Attempt:
         """在一个事务内分配连续编号；相同期望编号的并发重放返回同一 Attempt。"""
@@ -1073,11 +1112,13 @@ class SQLiteV2Repositories:
                 None,
             )
             if existing is not None:
+                if attempt_id is not None and str(existing["attempt_id"]) != attempt_id:
+                    raise IdentityConflictError("Attempt number already uses a different attemptId")
                 return SQLiteAttemptRepository._from_row(existing)
             if expected != len(rows) + 1:
                 raise IdentityConflictError("Attempt number is not contiguous")
             attempt = Attempt(
-                attemptId=new_attempt_id(),
+                attemptId=attempt_id or new_attempt_id(),
                 runId=run_id,
                 nodeId=node_id,
                 attemptNumber=expected,
@@ -1120,6 +1161,7 @@ class SQLiteV2Repositories:
         attempt_id: AttemptId,
         *,
         input: dict,
+        step_execution_id: StepExecutionId | None = None,
     ) -> StepExecution:
         """在 Attempt 状态切换的同一事务内幂等创建唯一 StepExecution。"""
         started_at = _now()
@@ -1147,6 +1189,8 @@ class SQLiteV2Repositories:
             ).fetchone()
             if existing is not None:
                 execution = SQLiteStepExecutionRepository._from_row(existing)
+                if step_execution_id is not None and execution.step_execution_id != step_execution_id:
+                    raise IdentityConflictError("Attempt already uses a different stepExecutionId")
                 if execution.input != input:
                     raise IdentityConflictError(
                         "Attempt already has a StepExecution with different input"
@@ -1157,7 +1201,7 @@ class SQLiteV2Repositories:
                     "only a pending Attempt can start a StepExecution"
                 )
             execution = StepExecution(
-                stepExecutionId=new_step_execution_id(),
+                stepExecutionId=step_execution_id or new_step_execution_id(),
                 runId=run_id,
                 nodeId=node_id,
                 attemptId=attempt_id,

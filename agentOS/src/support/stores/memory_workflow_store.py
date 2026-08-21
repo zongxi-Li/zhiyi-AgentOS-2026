@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from typing import Dict
+import hashlib
+import json
 
 from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
 from support.stores._policy import (
@@ -19,6 +21,7 @@ from support.stores.workflow_store import (
     WorkflowStore,
     WorkflowStorePage,
     paginate_items,
+    lifecycle_run_payload,
     status_value,
     status_values,
 )
@@ -31,10 +34,18 @@ class MemoryWorkflowStore(WorkflowStore):
         self._tasks: Dict[str, AgentTask] = {}
         self._runs: Dict[str, WorkflowRun] = {}
         self._terminal_run_statuses: Dict[str, WorkflowStatus] = {}
+        self._lifecycle_outbox: Dict[str, dict] = {}
 
     def save_task(self, task: AgentTask) -> None:
         """按任务标识保存内存对象；调用方保留传入任务所有权。"""
         self._tasks[task.task_id] = task
+        payload = task.model_dump(by_alias=True, mode="json")
+        self._append_lifecycle_event(
+            event_id=self._snapshot_event_id("task.created", task.task_id, payload),
+            event_type="task.created",
+            aggregate_id=task.task_id,
+            payload=payload,
+        )
 
     def get_task(self, task_id: str) -> AgentTask:
         """读取任务引用；缺失时抛出带上下文的 ``KeyError``。"""
@@ -48,19 +59,125 @@ class MemoryWorkflowStore(WorkflowStore):
 
         失败到重试是唯一允许的终态回退兼容路径；该内存实现不提供线程同步。
         """
+        if not self._save_run_snapshot(run):
+            return
+        event_type = (
+            "run.superseded" if run.status is WorkflowStatus.SUPERSEDED
+            else "run.finished" if run.status in TERMINAL_RUN_STATUSES
+            else "run.prepared" if run.status is WorkflowStatus.PENDING
+            else "run.snapshot"
+        )
+        payload = lifecycle_run_payload(run)
+        self._append_lifecycle_event(
+            event_id=self._snapshot_event_id(event_type, run.run_id, payload),
+            event_type=event_type,
+            aggregate_id=run.run_id,
+            payload=payload,
+        )
+
+    def _save_run_snapshot(self, run: WorkflowRun) -> bool:
         if run.task_id not in self._tasks:
             raise ValueError(f"workflow run task does not exist: {run.task_id}")
         existing = self._runs.get(run.run_id)
         terminal_status = self._terminal_run_statuses.get(run.run_id)
         if terminal_status is not None and _reject_terminal_status_overwrite(terminal_status, run.status):
-            return
+            return False
         if existing is not None and reject_terminal_overwrite(existing, run):
-            return
+            return False
         if run.status in TERMINAL_RUN_STATUSES:
             self._terminal_run_statuses[run.run_id] = run.status
         elif terminal_status == WorkflowStatus.FAILED and run.status == WorkflowStatus.RETRYING:
             self._terminal_run_statuses.pop(run.run_id, None)
         self._runs[run.run_id] = run.model_copy(deep=True)
+        return True
+
+    def save_run_with_events(self, run: WorkflowRun, events) -> None:
+        outbox_snapshot = dict(self._lifecycle_outbox)
+        run_snapshot = dict(self._runs)
+        terminal_snapshot = dict(self._terminal_run_statuses)
+        try:
+            if not self._save_run_snapshot(run):
+                return
+            for event in events:
+                event_id = str(event["eventId"])
+                current = self._lifecycle_outbox.get(event_id)
+                payload = {
+                    "event_id": event_id,
+                    "event_type": str(event["eventType"]),
+                    "aggregate_id": str(event.get("aggregateId") or run.run_id),
+                    "payload": json.dumps(event.get("payload") or {}, ensure_ascii=False, sort_keys=True),
+                    "attempts": 0,
+                }
+                if current is not None and current != payload:
+                    raise ValueError(f"lifecycle event payload conflict: {event_id}")
+                self._lifecycle_outbox[event_id] = payload
+        except Exception:
+            self._lifecycle_outbox = outbox_snapshot
+            self._runs = run_snapshot
+            self._terminal_run_statuses = terminal_snapshot
+            raise
+
+    def save_graph_patch_transition(
+        self, old_run: WorkflowRun, new_run: WorkflowRun, event: dict
+    ) -> None:
+        runs_snapshot = dict(self._runs)
+        terminal_snapshot = dict(self._terminal_run_statuses)
+        outbox_snapshot = dict(self._lifecycle_outbox)
+        try:
+            self._save_run_snapshot(new_run)
+            self._save_run_snapshot(old_run)
+            event_id = str(event["eventId"])
+            payload = {
+                "event_id": event_id,
+                "event_type": str(event["eventType"]),
+                "aggregate_id": str(event.get("aggregateId") or old_run.run_id),
+                "payload": json.dumps(event.get("payload") or {}, ensure_ascii=False, sort_keys=True),
+                "attempts": 0,
+            }
+            current = self._lifecycle_outbox.get(event_id)
+            if current is not None and current != payload:
+                raise ValueError(f"lifecycle event payload conflict: {event_id}")
+            self._lifecycle_outbox[event_id] = payload
+        except Exception:
+            self._runs = runs_snapshot
+            self._terminal_run_statuses = terminal_snapshot
+            self._lifecycle_outbox = outbox_snapshot
+            raise
+
+    def _append_lifecycle_event(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        aggregate_id: str,
+        payload: dict,
+    ) -> None:
+        encoded = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "aggregate_id": aggregate_id,
+            "payload": json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            "attempts": 0,
+        }
+        current = self._lifecycle_outbox.get(event_id)
+        if current is not None and current != encoded:
+            raise ValueError(f"lifecycle event payload conflict: {event_id}")
+        self._lifecycle_outbox[event_id] = encoded
+
+    @staticmethod
+    def _snapshot_event_id(event_type: str, aggregate_id: str, payload: dict) -> str:
+        canonical = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return f"{event_type}:{aggregate_id}:{digest}"
+
+    def list_outbox(self, *, limit: int = 200) -> list[dict]:
+        return [dict(item) for item in list(self._lifecycle_outbox.values())[:max(1, limit)]]
+
+    def mark_outbox(self, event_id: str, *, applied: bool, error: str | None = None) -> None:
+        if applied:
+            self._lifecycle_outbox.pop(event_id, None)
 
     def get_run(self, run_id: str) -> WorkflowRun:
         """返回运行的深复制快照，避免调用方绕过存储修改内部状态。"""

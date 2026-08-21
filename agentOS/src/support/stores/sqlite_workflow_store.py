@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 from pathlib import Path
@@ -15,6 +16,7 @@ from support.stores.workflow_store import (
     WorkflowRunNotTerminalError,
     WorkflowStore,
     WorkflowStorePage,
+    lifecycle_run_payload,
     paginate_items,
     status_value,
     status_values,
@@ -41,7 +43,13 @@ class SQLiteWorkflowStore(WorkflowStore):
                        payload=excluded.payload, updated_at=excluded.updated_at""",
                 (task.task_id, payload, task.updated_at.isoformat()),
             )
-            self._append_outbox(conn, f"task:{task.task_id}:{task.updated_at.isoformat()}", "task.created", task.task_id, payload)
+            self._append_outbox(
+                conn,
+                self._snapshot_event_id("task.created", task.task_id, payload),
+                "task.created",
+                task.task_id,
+                payload,
+            )
             conn.commit()
 
     def get_task(self, task_id: str) -> AgentTask:
@@ -58,40 +66,8 @@ class SQLiteWorkflowStore(WorkflowStore):
         执行 UPSERT 与提交。
         """
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
-            task_row = conn.execute(
-                "SELECT 1 FROM tasks WHERE task_id = ?", (run.task_id,)
-            ).fetchone()
-            if task_row is None:
-                raise ValueError(f"workflow run task does not exist: {run.task_id}")
-            row = conn.execute(
-                "SELECT task_id, payload FROM runs WHERE run_id = ?", (run.run_id,)
-            ).fetchone()
-            if row is not None:
-                if str(row["task_id"]) != run.task_id:
-                    raise ValueError(
-                        f"workflow run taskId cannot change: {run.run_id}"
-                    )
-                existing = WorkflowRun.model_validate(json.loads(row["payload"]))
-                if reject_terminal_overwrite(existing, run):
-                    return
-            _validate_obvious_run_state_conflicts(run)
-            conn.execute(
-                """
-                INSERT INTO runs(run_id, task_id, payload, updated_at)
-                VALUES(?, ?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET
-                    task_id=excluded.task_id,
-                    payload=excluded.payload,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    run.run_id,
-                    run.task_id,
-                    json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
-                    run.updated_at.isoformat(),
-                ),
-            )
+            if not self._upsert_run(conn, run):
+                return
             event_type = (
                 "run.superseded" if run.status is WorkflowStatus.SUPERSEDED
                 else "run.finished" if run.status in {
@@ -102,14 +78,87 @@ class SQLiteWorkflowStore(WorkflowStore):
                 else "run.prepared" if run.status is WorkflowStatus.PENDING
                 else "run.snapshot"
             )
+            lifecycle_payload = json.dumps(
+                lifecycle_run_payload(run), ensure_ascii=False, sort_keys=True
+            )
             self._append_outbox(
                 conn,
-                f"run:{run.run_id}:{run.updated_at.isoformat()}",
+                self._snapshot_event_id(event_type, run.run_id, lifecycle_payload),
                 event_type,
                 run.run_id,
-                json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
+                lifecycle_payload,
             )
             conn.commit()
+
+    def save_run_with_events(self, run: WorkflowRun, events) -> None:
+        """Commit the run snapshot and step lifecycle facts in one WKN transaction."""
+        with self._connect() as conn:
+            if not self._upsert_run(conn, run):
+                return
+            for event in events:
+                event_id = str(event["eventId"])
+                event_type = str(event["eventType"])
+                aggregate_id = str(event.get("aggregateId") or run.run_id)
+                payload = json.dumps(event.get("payload") or {}, ensure_ascii=False, sort_keys=True)
+                existing = conn.execute(
+                    "SELECT event_type, aggregate_id, payload FROM lifecycle_outbox WHERE event_id = ?",
+                    (event_id,),
+                ).fetchone()
+                if existing is not None and tuple(str(item) for item in existing) != (
+                    event_type, aggregate_id, payload
+                ):
+                    raise ValueError(f"lifecycle event payload conflict: {event_id}")
+                self._append_outbox(conn, event_id, event_type, aggregate_id, payload)
+            conn.commit()
+
+    def save_graph_patch_transition(
+        self, old_run: WorkflowRun, new_run: WorkflowRun, event: dict
+    ) -> None:
+        with self._connect() as conn:
+            if not self._upsert_run(conn, new_run):
+                raise ValueError("replacement run already has an incompatible snapshot")
+            if not self._upsert_run(conn, old_run):
+                raise ValueError("superseded run snapshot conflicts with terminal state")
+            event_id = str(event["eventId"])
+            event_type = str(event["eventType"])
+            aggregate_id = str(event.get("aggregateId") or old_run.run_id)
+            payload = json.dumps(event.get("payload") or {}, ensure_ascii=False, sort_keys=True)
+            self._append_outbox(conn, event_id, event_type, aggregate_id, payload)
+            conn.commit()
+
+    @staticmethod
+    def _upsert_run(conn: sqlite3.Connection, run: WorkflowRun) -> bool:
+        conn.row_factory = sqlite3.Row
+        task_row = conn.execute(
+            "SELECT 1 FROM tasks WHERE task_id = ?", (run.task_id,)
+        ).fetchone()
+        if task_row is None:
+            raise ValueError(f"workflow run task does not exist: {run.task_id}")
+        row = conn.execute(
+            "SELECT task_id, payload FROM runs WHERE run_id = ?", (run.run_id,)
+        ).fetchone()
+        if row is not None:
+            if str(row["task_id"]) != run.task_id:
+                raise ValueError(f"workflow run taskId cannot change: {run.run_id}")
+            existing = WorkflowRun.model_validate(json.loads(row["payload"]))
+            if reject_terminal_overwrite(existing, run):
+                return False
+        _validate_obvious_run_state_conflicts(run)
+        conn.execute(
+            """INSERT INTO runs(run_id, task_id, payload, updated_at)
+               VALUES(?, ?, ?, ?)
+               ON CONFLICT(run_id) DO UPDATE SET
+                   task_id=excluded.task_id,
+                   payload=excluded.payload,
+                   updated_at=excluded.updated_at""",
+            (
+                run.run_id,
+                run.task_id,
+                json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
+                run.updated_at.isoformat(),
+            ),
+        )
+        return True
 
     def list_outbox(self, *, limit: int = 200) -> list[dict]:
         rows = self._fetch_all(
@@ -353,13 +402,29 @@ class SQLiteWorkflowStore(WorkflowStore):
         aggregate_id: str,
         payload: str,
     ) -> None:
+        existing = conn.execute(
+            "SELECT event_type, aggregate_id, payload FROM lifecycle_outbox WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        if existing is not None:
+            if tuple(str(item) for item in existing) != (event_type, aggregate_id, payload):
+                raise ValueError(f"lifecycle event payload conflict: {event_id}")
+            return
         conn.execute(
             """INSERT INTO lifecycle_outbox(
                    event_id, event_type, aggregate_id, payload, status, attempts, created_at
                ) VALUES (?, ?, ?, ?, 'pending', 0, datetime('now'))
-               ON CONFLICT(event_id) DO UPDATE SET payload=excluded.payload""",
+               """,
             (event_id, event_type, aggregate_id, payload),
         )
+
+    @staticmethod
+    def _snapshot_event_id(event_type: str, aggregate_id: str, payload: str) -> str:
+        canonical = json.dumps(
+            json.loads(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return f"{event_type}:{aggregate_id}:{digest}"
 
     def _execute(self, sql: str, params: tuple) -> None:
         with self._connect() as conn:

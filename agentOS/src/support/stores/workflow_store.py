@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Generic, Sequence, TypeVar
+from typing import Any, Generic, Sequence, TypeVar
 
 from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
 
@@ -78,6 +78,70 @@ def status_values(statuses: Sequence[WorkflowStatus | str] | None) -> set[str] |
     return {item.value if isinstance(item, WorkflowStatus) else str(item) for item in statuses}
 
 
+_SAFE_EXECUTION_STATE_KEYS = {
+    "activeStepIds",
+    "blackboardSnapshots",
+    "checkpointId",
+    "communicationUsage",
+    "compiledPackageChecksum",
+    "compiledPackageBlueprintHash",
+    "compiledPackageId",
+    "compiledPackageVersion",
+    "consensusResults",
+    "contextRefs",
+    "controlFrames",
+    "debateSessions",
+    "graphId",
+    "graphPatchRefs",
+    "graphVersion",
+    "loopIterations",
+    "loopPaths",
+    "memoryRefs",
+    "outputRefs",
+    "parentRunId",
+    "provenanceRefs",
+    "recoveryOutcome",
+    "schedulingDecisions",
+    "sourceBlueprintVersion",
+    "sourcePatchId",
+    "supersedesRunId",
+    "supersededByRunId",
+    "traceRefs",
+}
+
+
+def lifecycle_run_payload(run: WorkflowRun) -> dict[str, Any]:
+    """Build the reference-only Run fact admitted to the lifecycle Outbox.
+
+    Blueprint and Planner snapshots are control-plane definitions needed to
+    reconstruct Identity after a crash. Runtime input/output bodies, step
+    payloads, checkpoints and trace bodies deliberately stay in WKN.
+    """
+    execution_state = dict(run.execution_state or {})
+    safe_state = {
+        key: execution_state[key]
+        for key in _SAFE_EXECUTION_STATE_KEYS
+        if execution_state.get(key) is not None
+    }
+    for key in ("taskPlan", "taskNodeBindings"):
+        if execution_state.get(key) is not None:
+            safe_state[key] = execution_state[key]
+    return {
+        "runId": run.run_id,
+        "taskId": run.task_id,
+        "workflowId": run.workflow_id,
+        "status": run.status.value,
+        "lifecyclePhase": (
+            run.lifecycle_phase.value if run.lifecycle_phase is not None else None
+        ),
+        "currentStepId": run.current_step_id,
+        "acgBlueprint": run.acg_blueprint,
+        "executionState": safe_state,
+        "createdAt": run.created_at.isoformat(),
+        "updatedAt": run.updated_at.isoformat(),
+    }
+
+
 class WorkflowStore(ABC):
     """AgentTask 和 WorkflowRun 状态的持久化边界。"""
 
@@ -147,6 +211,21 @@ class WorkflowStore(ABC):
     @abstractmethod
     def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[WorkflowRun, ...]:
         """Return an unscoped page for reconciliation, including terminal runs."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_run_with_events(self, run: WorkflowRun, events: Sequence[dict]) -> None:
+        """Atomically save the WKN run snapshot and append lifecycle outbox events."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_graph_patch_transition(
+        self,
+        old_run: WorkflowRun,
+        new_run: WorkflowRun,
+        event: dict,
+    ) -> None:
+        """Atomically supersede one WKN Run, persist its replacement, and append the patch event."""
         raise NotImplementedError
 
     @abstractmethod
