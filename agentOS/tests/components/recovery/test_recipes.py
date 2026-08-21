@@ -1,5 +1,17 @@
-from components.recovery import RecoveryRecipeRegistry, RecoveryService
-from contracts.recovery import FailureEvent, RecoveryNodeTemplate, RecoveryRecipe
+from components.recovery import (
+    RecoveryRecipeRegistry,
+    RecoveryService,
+    failure_event_from_exception,
+)
+from components.communicator.reliable import CommunicationBackpressureError
+from contracts.recovery import (
+    FailureEvent,
+    FailureSource,
+    FailureType,
+    RecoveryAction,
+    RecoveryNodeTemplate,
+    RecoveryRecipe,
+)
 
 
 def _recipe(recipe_id: str, reason: str) -> RecoveryRecipe:
@@ -39,3 +51,20 @@ def test_recipe_registry_selects_stably_and_returns_a_copy() -> None:
         failure,
         application_counts={"a-repair@1": 1, "z-repair@1": 1},
     ) is None
+
+
+def test_failure_boundary_produces_stable_event_and_recovery_action() -> None:
+    failure = failure_event_from_exception(
+        CommunicationBackpressureError("channel queue is full"),
+        subject_ref="run:run-1:step:writer",
+    )
+    replay = failure_event_from_exception(
+        CommunicationBackpressureError("channel queue is full"),
+        subject_ref="run:run-1:step:writer",
+    )
+
+    assert failure.failure_id == replay.failure_id
+    assert failure.source is FailureSource.COMMUNICATION
+    assert failure.failure_type is FailureType.COMMUNICATION
+    assert failure.reason_code == "COMMUNICATION_BACKPRESSURE"
+    assert RecoveryService().propose(failure).strategy is RecoveryAction.RETRY
