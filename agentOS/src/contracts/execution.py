@@ -34,6 +34,33 @@ class StepStatus(str, Enum):
     SKIPPED_BY_CONDITION = "skipped_by_condition"
 
 
+class NodeExecutionPhase(str, Enum):
+    PREPARED = "prepared"
+    EXECUTED = "executed"
+    AUDITED = "audited"
+    COMMITTED = "committed"
+    WAITING_REVIEW = "waiting_review"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class NodeExecutionRecord(BaseModel):
+    """Reference-only durable state for one idempotent node execution."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+    operation_id: StrictStr = Field(alias="operationId", min_length=1)
+    execution_instance_id: StrictStr = Field(alias="executionInstanceId", min_length=1)
+    run_id: StrictStr = Field(alias="runId", min_length=1)
+    step_id: StrictStr = Field(alias="stepId", min_length=1)
+    attempt_id: StrictStr = Field(alias="attemptId", min_length=1)
+    phase: NodeExecutionPhase
+    artifact_refs: dict[str, StrictStr] = Field(default_factory=dict, alias="artifactRefs")
+    audit_ref: StrictStr | None = Field(default=None, alias="auditRef")
+    commit_id: StrictStr | None = Field(default=None, alias="commitId")
+    loop_path: tuple[int, ...] = Field(default=(), alias="loopPath")
+    failure_code: StrictStr | None = Field(default=None, alias="failureCode")
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -62,4 +89,4 @@ class ExecutionOutcomeRef(BaseModel):
     completed_at: datetime | None = Field(default=None, alias="completedAt")
 
 
-__all__ = ["StepStatus", "WorkflowProgressPhase"]
+__all__ = ["NodeExecutionPhase", "NodeExecutionRecord", "StepStatus", "WorkflowProgressPhase"]

@@ -68,6 +68,13 @@ def stable_checksum(value: Any) -> str:
 
 from .acg_lifecycle import AcgIdentityLifecyclePort
 from .communication import ContextPackRef, MessageEnvelope
+from .compiled_acg import (
+    BindingManifest, BindingRule, CommunicationManifestSpec, CommunicationMode,
+    CommunicationRuleSpec, CompiledACGPackage, CompiledEdge, CompiledNodeKind,
+    CompiledNodeSpec, ConditionalControlSpec, ConsensusControlSpec, ControlManifest,
+    ControlRule, EvidenceManifest, EvidenceRule, LoopControlSpec, MemoryManifest,
+    MemoryRule, ParallelControlSpec, SkillManifest, SkillRule,
+)
 from .capability import (
     AgentArchitecture,
     AgentFramework,
@@ -91,7 +98,7 @@ from .evolution import (
     TrajectoryEvaluation,
     TrajectoryStep,
 )
-from .execution import ExecutionOutcomeRef, ExecutionPackageRef
+from .execution import ExecutionOutcomeRef, ExecutionPackageRef, NodeExecutionPhase, NodeExecutionRecord
 from .identity import (
     AttemptId,
     BindingId,
@@ -122,8 +129,8 @@ from .planning import (
     TaskPlanRelation,
 )
 from .recovery import (
-    FailureEvent, GraphPatch, GraphPatchRef, GraphPatchResult,
-    RecoveryNodeTemplate, RecoveryPlan, RecoveryRecipe,
+    FailureEvent, FailureSource, FailureType, GraphPatch, GraphPatchRef, GraphPatchResult,
+    RecoveryAction, RecoveryNodeTemplate, RecoveryPlan, RecoveryRecipe,
 )
 from .resource import (
     BindingRequirement,
@@ -142,9 +149,13 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 
 __all__ = [
     "AcgIdentityLifecyclePort", "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
-    "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind",
+    "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind", "CompiledACGPackage",
+    "CompiledEdge", "CompiledNodeKind", "CompiledNodeSpec", "BindingManifest", "BindingRule",
+    "SkillManifest", "SkillRule", "MemoryManifest", "MemoryRule", "EvidenceManifest", "EvidenceRule",
+    "CommunicationManifestSpec", "CommunicationMode", "CommunicationRuleSpec", "ControlManifest",
+    "ControlRule", "ConditionalControlSpec", "LoopControlSpec", "ParallelControlSpec", "ConsensusControlSpec",
     "AttemptId", "BindingId", "BlueprintId", "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
-    "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphEvolutionProposal",
+    "ExecutionPackageRef", "NodeExecutionPhase", "NodeExecutionRecord", "FailureEvent", "FailureSource", "FailureType", "RecoveryAction", "GraphEdgeRef", "GraphEvolutionProposal",
     "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
     "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent", "PolicyDecision",
