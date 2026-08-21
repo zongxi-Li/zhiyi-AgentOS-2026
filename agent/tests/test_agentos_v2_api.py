@@ -18,9 +18,11 @@ from contracts.workflow import (
     WorkflowStepDefinition,
 )
 from runtime import WorkflowRuntime
+from runtime.v2 import AcgIdentityLifecycleService, WknIdentityLifecycleAdapter
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
+from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 
 
 _SECRET = "REFERENCE-ONLY-OUTPUT-BODY"
@@ -34,7 +36,7 @@ class _ApiAgent(BaseAgent):
         return AgentOutput(output={"report": _SECRET}, summary="safe report summary")
 
 
-def _runtime(tmp_path) -> WorkflowRuntime:
+def _runtime(tmp_path, *, with_identity: bool = False) -> WorkflowRuntime:
     agents = AgentRegistry()
     agents.register(_ApiAgent())
     workflows = WorkflowRegistry()
@@ -58,12 +60,22 @@ def _runtime(tmp_path) -> WorkflowRuntime:
             ],
         )
     )
+    identity_lifecycle = None
+    if with_identity:
+        identity_service = AcgIdentityLifecycleService(
+            SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
+        )
+        identity_lifecycle = WknIdentityLifecycleAdapter(
+            identity_service,
+            identity_service.repositories,
+        )
     return WorkflowRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "api-checkpoints.sqlite3"),
         execution_value_store=InMemoryExecutionValueStore(),
+        identity_lifecycle=identity_lifecycle,
     )
 
 
@@ -343,3 +355,63 @@ async def test_v2_create_run_is_idempotent_and_rejects_fingerprint_conflicts(tmp
             assert conflict.json() == {"detail": "clientRequestId conflict"}
     finally:
         await coordinator.shutdown()
+
+
+async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    task = runtime.create_task("Identity API source", workflow_id="api-workflow")
+    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    repositories = runtime.identity_lifecycle.repositories
+    attempts = repositories.attempts.list_for_run(run.run_id)
+    execution = repositories.step_executions.list_for_attempt(
+        attempts[0].attempt_id
+    )[0]
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            tasks = await client.get("/agentos/v2/tasks")
+            health = await client.get("/agentos/v2/identity/health")
+            detail = await client.get(f"/agentos/v2/tasks/{task.task_id}")
+            history = await client.get(f"/agentos/v2/tasks/{task.task_id}/runs")
+            projected_run = await client.get(f"/agentos/v2/runs/{run.run_id}")
+            graph = await client.get(f"/agentos/v2/runs/{run.run_id}/graph")
+            tree = await client.get(
+                f"/agentos/v2/runs/{run.run_id}/execution-tree"
+            )
+            attempt_history = await client.get(
+                f"/agentos/v2/runs/{run.run_id}/attempts",
+                params={"nodeId": attempts[0].node_id},
+            )
+            attempt = await client.get(
+                f"/agentos/v2/attempts/{attempts[0].attempt_id}"
+            )
+            step = await client.get(
+                f"/agentos/v2/step-executions/{execution.step_execution_id}"
+            )
+            provenance = await client.get(
+                f"/agentos/v2/step-executions/{execution.step_execution_id}/provenance"
+            )
+
+        assert tasks.status_code == 200
+        assert health.json()["status"] == "healthy"
+        assert health.json()["unappliedEventCount"] == 0
+        assert tasks.json()["source"] == "agentos-v2"
+        assert tasks.json()["items"][0]["task"]["taskId"] == task.task_id
+        assert detail.json()["taskNodes"][0]["nodeId"].startswith("node_")
+        assert history.json()["runs"][0]["runId"] == run.run_id
+        assert projected_run.json()["identity"]["blueprintId"].startswith("blueprint_")
+        assert graph.json()["source"] == "agentos-v2"
+        assert graph.json()["blueprintId"].startswith("blueprint_")
+        assert graph.json()["taskNodeBindings"][0]["acgNodeId"] == "report"
+        assert tree.json()["nodes"][0]["attempts"][0]["attempt"]["attemptId"] == attempts[0].attempt_id
+        assert attempt_history.json()["attempts"][0]["attempt"]["attemptId"] == attempts[0].attempt_id
+        assert attempt.json()["executionBinding"]["attemptId"] == attempts[0].attempt_id
+        assert step.json()["origin"]["userTask"]["taskId"] == task.task_id
+        assert provenance.json()["stepExecutionId"] == execution.step_execution_id
+    finally:
+        runtime.identity_lifecycle.lifecycle_service.close()

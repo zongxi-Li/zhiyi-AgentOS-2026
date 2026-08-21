@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
 
 from app.execution.wiring import build_default_runtime, close_runtime
@@ -52,6 +53,36 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
             "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
         },
     )
+    task_plan = TaskPlan(
+        taskId=task.task_id,
+        planVersion=1,
+        nodes=tuple(
+            TaskPlanNode(
+                key=f"step:{step.node_id}",
+                title=step.name or step.node_id,
+                objective=step.goal or step.description or step.node_id,
+                capabilityRequirements=((step.capability,) if step.capability else ()),
+                metadata={"plannerStrategy": "legal_pack_explicit_blueprint"},
+            )
+            for step in blueprint.step_nodes()
+        ),
+    )
+    task_node_bindings = tuple(
+        TaskNodeImplementationBinding(
+            planNodeKey=f"step:{step.node_id}",
+            acgNodeId=step.node_id,
+        )
+        for step in blueprint.step_nodes()
+    )
+    task.input.update({
+        "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
+        "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+        "taskNodeBindings": [
+            item.model_dump(by_alias=True, mode="json")
+            for item in task_node_bindings
+        ],
+    })
+    first.workflow_store.save_task(task)
 
     paused = await first.start(
         task.task_id,

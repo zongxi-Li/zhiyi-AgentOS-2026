@@ -12,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
 from contracts.workflow import ReviewDecision, ReviewDecisionType, WknWorkflowRun
+from domain.models import UserTaskStatus
+from domain.repository import EntityNotFoundError
 from runtime import WknWorkflowRuntime
+from runtime.v2 import IdentityQueryService
 
 
 class RunCreateRequest(BaseModel):
@@ -252,6 +255,41 @@ def create_router(
     coordinator: RunExecutionCoordinator,
 ) -> APIRouter:
     router = APIRouter(prefix="/agentos/v2")
+    identity_adapter = getattr(runtime, "identity_lifecycle", None)
+    identity_repositories = getattr(identity_adapter, "repositories", None)
+    identity_queries = (
+        IdentityQueryService(identity_repositories)
+        if identity_repositories is not None
+        else None
+    )
+
+    def require_identity_queries() -> IdentityQueryService:
+        if identity_queries is None:
+            raise HTTPException(status_code=503, detail="identity query source unavailable")
+        return identity_queries
+
+    def require_task_access(task_id: str):
+        query = require_identity_queries()
+        try:
+            detail = query.get_task(task_id)
+        except EntityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="task not found") from exc
+        actor = current_trusted_user()
+        tenant = str(detail.task.metadata.get("tenantId") or "")
+        if actor is not None and (
+            detail.task.user_id != actor.user_id
+            or (tenant and tenant != actor.tenant_id)
+        ):
+            raise HTTPException(status_code=404, detail="task not found")
+        return detail
+
+    def require_run_access(run_id: str):
+        query = require_identity_queries()
+        run = identity_repositories.runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        require_task_access(run.task_id)
+        return query, run
 
     def load_run(run_id: str) -> WknWorkflowRun:
         try:
@@ -266,7 +304,130 @@ def create_router(
             title = runtime.workflow_store.get_task(run.task_id).title
         except KeyError:
             title = None
-        return project_run(run, title=title)
+        result = project_run(run, title=title)
+        if identity_queries is not None:
+            identity_run = identity_repositories.runs.get(run.run_id)
+            if identity_run is not None:
+                result["identity"] = {
+                    "source": "agentos-v2",
+                    "blueprintId": identity_run.blueprint_id,
+                    "graphVersion": identity_run.graph_version,
+                    "status": identity_run.status.value,
+                }
+        return result
+
+    @router.get("/identity/health")
+    async def get_identity_health():
+        require_identity_queries()
+        unapplied = identity_repositories.projection_events.list_unapplied(limit=200)
+        startup = getattr(runtime, "identity_reconciliation_report", None)
+        startup_failures = list(getattr(startup, "failures", []) or [])
+        return {
+            "status": "healthy" if not unapplied and not startup_failures else "degraded",
+            "source": "agentos-v2",
+            "unappliedEventCount": len(unapplied),
+            "inboxBacklog": int(getattr(startup, "inbox_backlog", 0) or 0),
+            "startupReconciliation": {
+                "examinedTasks": int(getattr(startup, "examined_tasks", 0) or 0),
+                "examinedRuns": int(getattr(startup, "examined_runs", 0) or 0),
+                "repairedTasks": int(getattr(startup, "repaired_tasks", 0) or 0),
+                "repairedRuns": int(getattr(startup, "repaired_runs", 0) or 0),
+                "replayedEvents": int(getattr(startup, "replayed_events", 0) or 0),
+                "failureCount": len(startup_failures),
+            },
+        }
+
+    @router.get("/tasks")
+    async def list_tasks(
+        status_value: str | None = Query(default=None, alias="status"),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+    ):
+        query = require_identity_queries()
+        actor = current_trusted_user()
+        try:
+            task_status = UserTaskStatus(status_value) if status_value else None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="invalid task status") from exc
+        items, total = query.list_tasks(
+            user_id=(actor.user_id if actor else None),
+            tenant_id=(actor.tenant_id if actor else None),
+            status=task_status,
+            page=page,
+            page_size=page_size,
+        )
+        return {
+            "items": [
+                item.model_dump(by_alias=True, mode="json") for item in items
+            ],
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
+            "source": "agentos-v2",
+        }
+
+    @router.get("/tasks/{task_id}")
+    async def get_task(task_id: str):
+        return require_task_access(task_id).model_dump(by_alias=True, mode="json")
+
+    @router.get("/tasks/{task_id}/runs")
+    async def get_task_runs(task_id: str):
+        require_task_access(task_id)
+        history = require_identity_queries().task_run_history(task_id)
+        return history.model_dump(by_alias=True, mode="json")
+
+    @router.get("/runs/{run_id}/execution-tree")
+    async def get_execution_tree(run_id: str):
+        query, _ = require_run_access(run_id)
+        return query.run_execution_tree(run_id).model_dump(
+            by_alias=True,
+            mode="json",
+        )
+
+    @router.get("/runs/{run_id}/attempts")
+    async def get_attempt_history(
+        run_id: str,
+        node_id: str | None = Query(default=None, alias="nodeId"),
+    ):
+        query, _ = require_run_access(run_id)
+        return query.attempt_history(run_id, node_id=node_id).model_dump(
+            by_alias=True,
+            mode="json",
+        )
+
+    @router.get("/attempts/{attempt_id}")
+    async def get_attempt(attempt_id: str):
+        query = require_identity_queries()
+        try:
+            detail = query.get_attempt(attempt_id)
+        except EntityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="attempt not found") from exc
+        run = identity_repositories.runs.get(detail.attempt.run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="attempt not found")
+        require_task_access(run.task_id)
+        return detail.model_dump(by_alias=True, mode="json")
+
+    @router.get("/step-executions/{step_execution_id}")
+    async def get_step_execution(step_execution_id: str):
+        query = require_identity_queries()
+        try:
+            detail = query.step_execution_detail(step_execution_id)
+        except EntityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="step execution not found") from exc
+        require_task_access(detail.origin.user_task.task_id)
+        return detail.model_dump(by_alias=True, mode="json")
+
+    @router.get("/step-executions/{step_execution_id}/provenance")
+    async def get_step_execution_provenance(step_execution_id: str):
+        query = require_identity_queries()
+        try:
+            detail = query.step_execution_detail(step_execution_id)
+            provenance = query.execution_provenance(step_execution_id)
+        except EntityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="step execution not found") from exc
+        require_task_access(detail.origin.user_task.task_id)
+        return provenance.model_dump(by_alias=True, mode="json")
 
     @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
     async def create_run(request: RunCreateRequest):
@@ -353,7 +514,35 @@ def create_router(
 
     @router.get("/runs/{run_id}/graph")
     async def get_graph(run_id: str):
-        return project_graph(load_run(run_id))
+        wkn_run = load_run(run_id)
+        if identity_queries is None:
+            return project_graph(wkn_run)
+        query, _ = require_run_access(run_id)
+        tree = query.run_execution_tree(run_id)
+        graph = tree.blueprint.graph
+        state = _state(wkn_run)
+        return {
+            "runId": run_id,
+            "blueprintId": tree.blueprint.blueprint_id,
+            "graphId": tree.blueprint.graph_id,
+            "graphVersion": tree.run.graph_version,
+            "nodes": list(graph.get("nodes") or []),
+            "edges": list(graph.get("edges") or []),
+            "taskNodeBindings": [
+                {
+                    "nodeId": node.task_node.node_id,
+                    "acgNodeId": node.acg_node_id,
+                }
+                for node in tree.nodes
+                if node.acg_node_id is not None
+            ],
+            "completedStepIds": list(wkn_run.completed_step_ids),
+            "activeStepIds": list(wkn_run.active_step_ids),
+            "skippedStepIds": list(wkn_run.execution_state.get("skippedStepIds") or []),
+            "graphPatchRefs": list(state.get("graphPatchRefs") or []),
+            "resourceBindings": dict(state.get("resourceBindings") or {}),
+            "source": "agentos-v2",
+        }
 
     @router.get("/runs/{run_id}/outputs/{output_ref}")
     async def get_output(run_id: str, output_ref: str):
