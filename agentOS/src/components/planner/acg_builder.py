@@ -16,6 +16,8 @@ from support.acg.models import (
     EdgeType,
     EvidenceNode,
     MemoryNode,
+    ParallelSpec,
+    ConsensusSpec,
     StepNode,
     validate_blueprint,
     promote_workflow_to_acg,
@@ -318,15 +320,26 @@ class ACGBuilder:
         }
         controls: dict[int, tuple[ControlNode, ControlNode]] = {}
         for group_index, group in enumerate(parallel_groups, start=1):
+            branch_ids = [step_by_capability[item].node_id for item in group]
+            join_id = f"ctrl_join_{group_index}"
             parallel = ControlNode(
                 nodeId=f"ctrl_parallel_{group_index}",
                 name=f"PARALLEL:{descriptors[group[0]].planning_stage}",
                 controlType=ControlType.PARALLEL,
+                parallelSpec=ParallelSpec(
+                    branchEntryIds=branch_ids,
+                    joinNodeId=join_id,
+                ),
             )
             join = ControlNode(
-                nodeId=f"ctrl_join_{group_index}",
+                nodeId=join_id,
                 name=f"JOIN:{descriptors[group[0]].planning_stage}",
                 controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=branch_ids,
+                    quorum=len(branch_ids),
+                    strategy="auditor",
+                ),
             )
             controls[group_index] = (parallel, join)
             blueprint.nodes.extend([parallel, join])

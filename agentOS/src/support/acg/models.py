@@ -78,6 +78,36 @@ class ConditionSpec(BaseModel):
     value_type: str = Field(default="string", alias="valueType")
 
 
+class LoopSpec(BaseModel):
+    """A bounded loop region with a restricted exit condition."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    body_entry_id: str = Field(alias="bodyEntryId", min_length=1)
+    body_exit_id: str = Field(alias="bodyExitId", min_length=1)
+    condition: ConditionSpec
+    max_iterations: int = Field(alias="maxIterations", ge=1)
+    on_limit: Literal["review", "fail"] = Field(default="review", alias="onLimit")
+
+
+class ParallelSpec(BaseModel):
+    """A deterministic fork/join region."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    branch_entry_ids: List[str] = Field(alias="branchEntryIds", min_length=2)
+    join_node_id: str = Field(alias="joinNodeId", min_length=1)
+
+
+class ConsensusSpec(BaseModel):
+    """A bounded consensus barrier over committed participant outputs."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    participant_step_ids: List[str] = Field(alias="participantStepIds", min_length=1)
+    quorum: int = Field(ge=1)
+    strategy: Literal["unanimous", "majority", "auditor"] = "majority"
+    timeout_seconds: int = Field(default=300, alias="timeoutSeconds", ge=1)
+    on_unresolved: Literal["review", "fail"] = Field(default="review", alias="onUnresolved")
+
+
 class ConditionEvaluationError(ValueError):
     """图校验发现条件分支配置不合法时返回可识别错误码。"""
 
@@ -307,6 +337,9 @@ class ControlNode(ACGNodeBase):
     condition_spec: Optional[ConditionSpec] = Field(default=None, alias="conditionSpec")
     branch_edge_ids: List[str] = Field(default_factory=list, alias="branchEdgeIds")
     join_node_id: Optional[str] = Field(default=None, alias="joinNodeId")
+    loop_spec: Optional[LoopSpec] = Field(default=None, alias="loopSpec")
+    parallel_spec: Optional[ParallelSpec] = Field(default=None, alias="parallelSpec")
+    consensus_spec: Optional[ConsensusSpec] = Field(default=None, alias="consensusSpec")
 
     @computed_field(alias="controlId", return_type=str)
     @property
@@ -613,7 +646,7 @@ def _validate_edge_endpoints(blueprint: ACGBlueprint) -> None:
         EdgeType.DEPENDENCY: ({NodeType.STEP, NodeType.CONTROL}, {NodeType.STEP, NodeType.CONTROL}),
         EdgeType.COMMUNICATION: ({NodeType.STEP}, {NodeType.STEP}),
         EdgeType.CONTROL_FLOW: ({NodeType.CONTROL}, {NodeType.STEP, NodeType.CONTROL}),
-        EdgeType.EXECUTION: ({NodeType.AGENT}, {NodeType.STEP}),
+        EdgeType.EXECUTION: ({NodeType.AGENT, NodeType.SKILL}, {NodeType.STEP}),
         EdgeType.WRITE: ({NodeType.STEP}, {NodeType.MEMORY}),
         EdgeType.READ: ({NodeType.MEMORY}, {NodeType.STEP}),
         EdgeType.SUPPORT: ({NodeType.EVIDENCE}, {NodeType.STEP}),
@@ -636,25 +669,26 @@ def _validate_edge_endpoints(blueprint: ACGBlueprint) -> None:
 
 
 def _validate_conditional_control(blueprint: ACGBlueprint, node: ControlNode) -> None:
-    if node.condition_spec is None or not node.join_node_id:
-        raise ACGValidationError(f"IF control {node.node_id} requires conditionSpec and joinNodeId")
+    if node.condition_spec is None:
+        raise ACGValidationError(f"IF control {node.node_id} requires conditionSpec")
     if not 2 <= len(node.branch_edge_ids) <= 4:
         raise ACGValidationError(f"IF control {node.node_id} requires 2..4 branch edges")
     if len(set(node.branch_edge_ids)) != len(node.branch_edge_ids):
         raise ACGValidationError(f"IF control {node.node_id} has duplicate branchEdgeIds")
     if not blueprint.has_node(node.condition_spec.source_node_id):
         raise ACGValidationError(f"IF source node missing: {node.condition_spec.source_node_id}")
-    if not blueprint.has_node(node.join_node_id):
+    if node.join_node_id and not blueprint.has_node(node.join_node_id):
         raise ACGValidationError(f"IF join node missing: {node.join_node_id}")
     source_node = blueprint.get_node(node.condition_spec.source_node_id)
     if source_node.node_type != NodeType.STEP:
         raise ACGValidationError(f"IF source must be a Step: {source_node.node_id}")
-    join_node = blueprint.get_node(node.join_node_id)
-    if not isinstance(join_node, ControlNode) or join_node.control_type in {
-        ControlType.IF,
-        ControlType.LOOP,
-    }:
-        raise ACGValidationError(f"IF join must be an unconditional Control: {node.join_node_id}")
+    if node.join_node_id:
+        join_node = blueprint.get_node(node.join_node_id)
+        if not isinstance(join_node, ControlNode) or join_node.control_type in {
+            ControlType.IF,
+            ControlType.LOOP,
+        }:
+            raise ACGValidationError(f"IF join must be an unconditional Control: {node.join_node_id}")
     incoming = blueprint.incoming(node.node_id, EdgeType.DEPENDENCY)
     if len(incoming) != 1 or incoming[0].source_id != node.condition_spec.source_node_id:
         raise ACGValidationError(f"IF control {node.node_id} requires its single declared source")
@@ -676,18 +710,19 @@ def _validate_conditional_control(blueprint: ACGBlueprint, node: ControlNode) ->
     )
     if selectable != declared:
         raise ACGValidationError(f"IF control {node.node_id} has an unreachable branch")
-    try:
-        exclusive = conditional_branch_exclusive_nodes(blueprint, node)
-    except ConditionEvaluationError as exc:
-        raise ACGValidationError(f"{exc.code}: {exc}") from exc
-    for node_ids in exclusive.values():
-        for node_id in node_ids:
-            branch_node = blueprint.get_node(node_id)
-            if isinstance(branch_node, ControlNode) and branch_node.control_type in {
-                ControlType.IF,
-                ControlType.LOOP,
-            }:
-                raise ACGValidationError(f"nested IF/LOOP is unsupported: {branch_node.node_id}")
+    if node.join_node_id:
+        try:
+            exclusive = conditional_branch_exclusive_nodes(blueprint, node)
+        except ConditionEvaluationError as exc:
+            raise ACGValidationError(f"{exc.code}: {exc}") from exc
+        for node_ids in exclusive.values():
+            for node_id in node_ids:
+                branch_node = blueprint.get_node(node_id)
+                if isinstance(branch_node, ControlNode) and branch_node.control_type in {
+                    ControlType.IF,
+                    ControlType.LOOP,
+                }:
+                    raise ACGValidationError(f"nested IF/LOOP is unsupported: {branch_node.node_id}")
 
 
 def validate_blueprint(blueprint: ACGBlueprint) -> None:
@@ -712,15 +747,38 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
 
     for node in blueprint.nodes:
         if isinstance(node, ControlNode) and node.control_type == ControlType.LOOP:
-            raise ACGValidationError(
-                f"unsupported control node: {node.node_id} ({node.control_type.value})"
-            )
+            if node.loop_spec is None:
+                raise ACGValidationError(f"LOOP control {node.node_id} requires loopSpec")
+            for ref in (node.loop_spec.body_entry_id, node.loop_spec.body_exit_id):
+                if not blueprint.has_node(ref):
+                    raise ACGValidationError(f"LOOP control {node.node_id} references missing node: {ref}")
+        if isinstance(node, ControlNode) and node.control_type == ControlType.PARALLEL:
+            if node.parallel_spec is not None:
+                refs = [*node.parallel_spec.branch_entry_ids, node.parallel_spec.join_node_id]
+                if len(set(node.parallel_spec.branch_entry_ids)) != len(node.parallel_spec.branch_entry_ids):
+                    raise ACGValidationError(f"PARALLEL control {node.node_id} has duplicate branches")
+                if any(not blueprint.has_node(ref) for ref in refs):
+                    raise ACGValidationError(f"PARALLEL control {node.node_id} references missing nodes")
+        if isinstance(node, ControlNode) and node.control_type == ControlType.CONSENSUS:
+            if node.consensus_spec is not None:
+                if node.consensus_spec.quorum > len(node.consensus_spec.participant_step_ids):
+                    raise ACGValidationError(f"CONSENSUS control {node.node_id} quorum exceeds participants")
+                if any(not blueprint.has_node(ref) for ref in node.consensus_spec.participant_step_ids):
+                    raise ACGValidationError(f"CONSENSUS control {node.node_id} references missing participants")
         if isinstance(node, ControlNode) and node.control_type == ControlType.IF:
             _validate_conditional_control(blueprint, node)
         if not isinstance(node, StepNode):
             continue
-        if not node.agent_name:
-            raise ACGValidationError(f"Step node {node.node_id} has no executable agentName")
+        explicit_agent_binding = any(
+            edge.edge_type is EdgeType.EXECUTION
+            and edge.target_id == node.node_id
+            and isinstance(blueprint.get_node(edge.source_id), AgentNode)
+            for edge in blueprint.edges
+        )
+        if not node.agent_name and not explicit_agent_binding:
+            raise ACGValidationError(
+                f"Step node {node.node_id} requires AgentNode + EXECUTION or legacy agentName"
+            )
         try:
             check_contract_schema(node.output_spec, label=f"{node.node_id}.outputSpec")
         except ValueError as exc:

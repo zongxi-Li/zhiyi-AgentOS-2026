@@ -64,7 +64,13 @@ def test_prepare_run_freezes_resource_bindings() -> None:
             "labels": {},
             "maxCost": None,
             "preferences": {"resourceId": "agent-primary"},
-            "policyMetadata": {"source": "prepared-run", "stepId": "analyse"},
+            "policyMetadata": {
+                    "source": "compiled-binding-manifest",
+                    "stepId": "analyse",
+                    "agentNodeIds": ["agent::analyse"],
+                    "maxConcurrency": 1,
+                    "compatibilitySource": False,
+            },
         }
     }
 

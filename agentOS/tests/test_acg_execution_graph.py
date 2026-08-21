@@ -100,14 +100,15 @@ def test_parallel_failure_cancels_unfinished_sibling_tasks() -> None:
     assert state.active_step_ids == []
 
 
-def test_compiler_rejects_unimplemented_communication_modes() -> None:
+def test_compiler_preserves_blackboard_communication_mode() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-test",
-        nodes=[StepNode(nodeId="one", metadata={"communicationMode": "BLACKBOARD"})],
+        nodes=[StepNode(nodeId="one", agentName="agent", metadata={"communicationMode": "BLACKBOARD"})],
     )
 
-    with pytest.raises(UnsupportedCommunicationModeError, match="BLACKBOARD"):
-        ACGGraphCompiler().compile(blueprint)
+    graph = ACGGraphCompiler().compile(blueprint)
+
+    assert graph.node_specs["one"].communication_mode == "BLACKBOARD"
 
 
 def test_compiler_accepts_event_mode_without_downgrading_it() -> None:
@@ -141,7 +142,7 @@ def test_compiler_maps_blueprint_budget_to_manifest_run_budget() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-budget",
         metadata={"communicationBudget": 120},
-        nodes=[StepNode(nodeId="produce"), StepNode(nodeId="consume")],
+        nodes=[StepNode(nodeId="produce", agentName="agent"), StepNode(nodeId="consume", agentName="agent")],
         edges=[ACGEdge(sourceId="produce", targetId="consume", edgeType=EdgeType.DEPENDENCY)],
     )
 
