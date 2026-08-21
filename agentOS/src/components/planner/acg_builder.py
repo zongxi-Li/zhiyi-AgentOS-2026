@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from contracts.planning import TaskPlan
+from contracts.planning import TaskNodeImplementationBinding, TaskPlan
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
@@ -17,6 +18,7 @@ from support.acg.models import (
     MemoryNode,
     StepNode,
     validate_blueprint,
+    promote_workflow_to_acg,
 )
 from support.acg.models import CapabilityCatalog
 from .cognitive_router import CollaborationNetwork
@@ -25,6 +27,12 @@ from support.acg.models import TaskSemanticProfile
 
 if TYPE_CHECKING:
     from .algorithms import PlanningVariant
+
+
+@dataclass(frozen=True)
+class ACGBuildResult:
+    blueprint: ACGBlueprint
+    bindings: tuple[TaskNodeImplementationBinding, ...]
 
 
 class ACGBuilder:
@@ -128,6 +136,40 @@ class ACGBuilder:
         blueprint.touch()
         validate_blueprint(blueprint)
         return blueprint
+
+    def build_template(self, *, workflow, task_plan: TaskPlan) -> ACGBuildResult:
+        """Promote an execution template and bind it to declared Planner semantics."""
+        blueprint = promote_workflow_to_acg(workflow, task_id=task_plan.task_id)
+        return self.finalize(blueprint=blueprint, task_plan=task_plan)
+
+    def finalize(
+        self,
+        *,
+        blueprint: ACGBlueprint,
+        task_plan: TaskPlan,
+    ) -> ACGBuildResult:
+        """Publish the Builder-owned, complete semantic-to-execution mapping."""
+        steps = blueprint.step_nodes()
+        if len(steps) != len(task_plan.nodes):
+            raise ValueError(
+                "Blueprint implementation bindings must cover the complete TaskPlan"
+            )
+        for step, node in zip(steps, task_plan.nodes):
+            step.metadata["taskPlanKey"] = node.key
+        bindings = tuple(
+            TaskNodeImplementationBinding(
+                planNodeKey=node.key,
+                acgNodeId=step.node_id,
+            )
+            for step, node in zip(steps, task_plan.nodes)
+        )
+        if {item.plan_node_key for item in bindings} != {
+            node.key for node in task_plan.nodes
+        }:
+            raise ValueError(
+                "Blueprint implementation bindings must cover the complete TaskPlan"
+            )
+        return ACGBuildResult(blueprint=blueprint, bindings=bindings)
 
     def _build_steps(
         self,

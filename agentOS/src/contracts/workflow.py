@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
 from contracts.execution import StepStatus, WorkflowProgressPhase
 from contracts.identity import generate_identity
+from contracts.planning import TaskPlanNode, TaskPlanRelation
 
 
 def utc_now() -> datetime:
@@ -206,6 +207,11 @@ class WorkflowDefinition(CoreModel):
     artifacts: Dict[str, str] = Field(default_factory=dict)
     required_capabilities: List[str] = Field(default_factory=list, alias="requiredCapabilities")
     review_capability: Optional[str] = Field(default=None, alias="reviewCapability")
+    planning_nodes: List[TaskPlanNode] = Field(default_factory=list, alias="planningNodes")
+    planning_relations: List[TaskPlanRelation] = Field(
+        default_factory=list,
+        alias="planningRelations",
+    )
     steps: List[WorkflowStepDefinition] = Field(default_factory=list)
     source: ContributionSource = "native"
     plugin_id: Optional[str] = Field(default=None, alias="pluginId")
