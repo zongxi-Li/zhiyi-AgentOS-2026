@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from domain.identity_graph import ExecutionBinding, TaskNodeBinding
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus, UserTaskStatus
 from domain.repository import IdentityConflictError
 from runtime.v2 import WorkflowRuntimeV2
@@ -25,13 +26,39 @@ def _planned_task(runtime: WorkflowRuntimeV2, *, goal: str = "审查合同"):
         title="识别风险",
         objective="识别高风险合同条款",
     )
+    acg_node_id = "risk-analysis"
     blueprint = runtime.create_blueprint(
         task_id=task.task_id,
         version=1,
-        graph_id="runtime_graph_v1",
-        graph={"nodes": [{"nodeId": node.node_id}], "edges": []},
+        graph_id="acg_0123456789ab",
+        graph={
+            "nodes": [{
+                "nodeId": acg_node_id,
+                "nodeType": "step",
+                "capability": "test.execute",
+            }],
+            "edges": [],
+        },
     )
+    runtime.repositories.task_node_bindings.add(TaskNodeBinding(
+        taskNodeId=node.node_id,
+        blueprintId=blueprint.blueprint_id,
+        acgNodeId=acg_node_id,
+    ))
     return task, node, blueprint
+
+
+def _bind_attempt(runtime: WorkflowRuntimeV2, attempt, blueprint) -> None:
+    acg_node_id = runtime.repositories.task_node_bindings.find_for_task_node(
+        attempt.node_id, blueprint.blueprint_id
+    )[0].acg_node_id
+    runtime.repositories.execution_bindings.add(ExecutionBinding(
+        attemptId=attempt.attempt_id,
+        acgNodeId=acg_node_id,
+        resourceId="resource-test",
+        agentId="agent-test",
+        modelId="model-test",
+    ))
 
 
 def test_task_node_blueprint_lifecycle_is_persisted(runtime_v2: WorkflowRuntimeV2) -> None:
@@ -96,19 +123,28 @@ def test_attempt_retry_and_step_execution_are_persisted(runtime_v2: WorkflowRunt
     task, node, blueprint = _planned_task(runtime_v2)
     run = runtime_v2.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
     attempt_one = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
+    _bind_attempt(runtime_v2, attempt_one, blueprint)
 
-    with pytest.raises(RuntimeError, match="temporary failure"):
-        runtime_v2.execute_step(
-            runtime_v2.create_context(run.run_id),
-            input={"contract": "v1"},
-            operation=lambda _input: (_ for _ in ()).throw(RuntimeError("temporary failure")),
-        )
+    first_context = runtime_v2.create_context(run.run_id)
+    first_execution = runtime_v2.start_step_execution(
+        first_context, input={"contract": "v1"}
+    )
+    runtime_v2.fail_step_execution(
+        first_context,
+        first_execution.step_execution_id,
+        failure_reason="temporary failure",
+    )
 
     attempt_two = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
-    execution = runtime_v2.execute_step(
-        runtime_v2.create_context(run.run_id),
-        input={"contract": "v1"},
-        operation=lambda input: {"reviewed": input["contract"]},
+    _bind_attempt(runtime_v2, attempt_two, blueprint)
+    second_context = runtime_v2.create_context(run.run_id)
+    running = runtime_v2.start_step_execution(
+        second_context, input={"contract": "v1"}
+    )
+    execution = runtime_v2.complete_step_execution(
+        second_context,
+        running.step_execution_id,
+        output={"reviewed": "v1"},
     )
 
     attempts = runtime_v2.repositories.attempts.list_for_run(run.run_id)
@@ -126,17 +162,14 @@ def test_attempt_retry_and_step_execution_are_persisted(runtime_v2: WorkflowRunt
 def test_execution_context_tracks_the_running_step(runtime_v2: WorkflowRuntimeV2) -> None:
     task, node, blueprint = _planned_task(runtime_v2)
     run = runtime_v2.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
-    runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
+    attempt = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
+    _bind_attempt(runtime_v2, attempt, blueprint)
     context = runtime_v2.create_context(run.run_id)
-    observed: list[str] = []
-
-    def operation(_input):
-        observed.extend(context.active_executions)
-        return {"ok": True}
-
-    execution = runtime_v2.execute_step(context, input={}, operation=operation)
-
-    assert observed == [execution.step_execution_id]
+    running = runtime_v2.start_step_execution(context, input={})
+    assert context.active_executions == [running.step_execution_id]
+    execution = runtime_v2.complete_step_execution(
+        context, running.step_execution_id, output={"ok": True}
+    )
     assert context.active_executions == []
 
 
@@ -146,10 +179,13 @@ def test_sqlite_runtime_survives_reopen(tmp_path) -> None:
     task, node, blueprint = _planned_task(first)
     run = first.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
     attempt = first.create_attempt(run_id=run.run_id, node_id=node.node_id)
-    execution = first.execute_step(
-        first.create_context(run.run_id),
-        input={"source": "persisted"},
-        operation=lambda value: {"echo": value["source"]},
+    _bind_attempt(first, attempt, blueprint)
+    context = first.create_context(run.run_id)
+    running = first.start_step_execution(context, input={"source": "persisted"})
+    execution = first.complete_step_execution(
+        context,
+        running.step_execution_id,
+        output={"echo": "persisted"},
     )
     first.close()
 

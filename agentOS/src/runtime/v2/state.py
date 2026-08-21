@@ -17,7 +17,10 @@ _TASK_TRANSITIONS = {
 }
 
 _RUN_TRANSITIONS = {
-    RunStatus.PENDING: {RunStatus.RUNNING, RunStatus.CANCELLED},
+    # A run may fail before its first node starts (for example during graph
+    # validation or scheduler preparation), so FAILED is a valid terminal
+    # outcome directly from PENDING.
+    RunStatus.PENDING: {RunStatus.RUNNING, RunStatus.FAILED, RunStatus.CANCELLED},
     RunStatus.RUNNING: {RunStatus.FAILED, RunStatus.SUCCEEDED, RunStatus.CANCELLED},
     RunStatus.FAILED: set(),
     RunStatus.SUCCEEDED: set(),

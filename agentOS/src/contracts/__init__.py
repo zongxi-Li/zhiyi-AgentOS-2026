@@ -66,6 +66,7 @@ def stable_checksum(value: Any) -> str:
     return sha256(stable_json_dumps(value).encode("utf-8")).hexdigest()
 
 
+from .acg_lifecycle import AcgIdentityLifecyclePort
 from .communication import ContextPackRef, MessageEnvelope
 from .capability import (
     AgentArchitecture,
@@ -93,6 +94,7 @@ from .evolution import (
 from .execution import ExecutionOutcomeRef, ExecutionPackageRef
 from .identity import (
     AttemptId,
+    BindingId,
     BlueprintId,
     RunId,
     StepExecutionId,
@@ -100,6 +102,7 @@ from .identity import (
     UserTaskId,
     generate_identity,
     new_attempt_id,
+    new_binding_id,
     new_blueprint_id,
     new_run_id,
     new_step_execution_id,
@@ -129,9 +132,9 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 
 
 __all__ = [
-    "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
+    "AcgIdentityLifecyclePort", "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind",
-    "AttemptId", "BlueprintId", "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
+    "AttemptId", "BindingId", "BlueprintId", "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
     "ExecutionPackageRef", "FailureEvent", "GraphEdgeRef", "GraphEvolutionProposal",
     "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
@@ -139,7 +142,7 @@ __all__ = [
     "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
     "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
     "RunId", "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
-    "StepExecutionId", "TaskNodeId", "UserTaskId", "generate_identity", "new_attempt_id",
+    "StepExecutionId", "TaskNodeId", "UserTaskId", "generate_identity", "new_attempt_id", "new_binding_id",
     "new_blueprint_id", "new_run_id", "new_step_execution_id", "new_task_node_id",
     "new_user_task_id", "validate_identity",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
