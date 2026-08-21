@@ -5,9 +5,11 @@ import pytest
 from components.executor.graph import ACGExecutionGraph
 from contracts.resource import ExecutionBinding as WknExecutionBinding, ResourceType
 from domain.identity_graph import IdentityRelation, IdentityResolver
+from domain.models import RunStatus, UserTaskStatus
 from domain.repository import IdentityConflictError
 from runtime.v2 import (
     PlannerIdentityBridge,
+    TaskPlan,
     TaskPlanNode,
     AcgIdentityLifecycleService,
     WknIdentityLifecycleAdapter,
@@ -100,13 +102,50 @@ def test_planner_bridge_rejects_nested_execution_identity(foundation) -> None:
     runtime, _bridge = foundation
     task = runtime.create_task(user_id="user-1", goal="审查合同")
 
-    with pytest.raises(IdentityConflictError, match="cannot select execution identities"):
+    with pytest.raises(ValueError, match="cannot contain execution identities"):
         PlannerIdentityBridge(runtime).record_task_tree(task.task_id, [TaskPlanNode(
             key="risk",
             title="分析风险",
             objective="判断风险",
             metadata={"routing": {"agentId": "legal-agent"}},
         )])
+
+
+def test_planner_semantic_keys_are_idempotent_and_reject_meaning_drift(foundation) -> None:
+    runtime, _bridge = foundation
+    task = runtime.create_task(user_id="user-1", goal="审查合同")
+    plan = TaskPlan(
+        taskId=task.task_id,
+        planVersion=1,
+        nodes=(
+            TaskPlanNode(
+                key="capability:contract.extract",
+                title="提取条款",
+                objective="识别付款条款",
+            ),
+        ),
+    )
+    planner = PlannerIdentityBridge(runtime)
+
+    first = planner.record_task_plan(plan)
+    replay = planner.record_task_plan(plan.model_copy(update={"plan_version": 2}))
+
+    assert replay["capability:contract.extract"].node_id == first[
+        "capability:contract.extract"
+    ].node_id
+    assert len(runtime.repositories.task_nodes.list_for_task(task.task_id)) == 1
+
+    changed = plan.model_copy(deep=True, update={
+        "nodes": (
+            TaskPlanNode(
+                key="capability:contract.extract",
+                title="提取条款",
+                objective="改变后的另一项任务",
+            ),
+        ),
+    })
+    with pytest.raises(IdentityConflictError, match="changed meaning"):
+        planner.record_task_plan(changed)
 
 
 def test_bridge_delegates_compilation_to_wkn_kernel(foundation) -> None:
@@ -121,6 +160,66 @@ def test_bridge_delegates_compilation_to_wkn_kernel(foundation) -> None:
     assert graph.edges == (("extract", "risk"),)
     assert extract.node_id != "extract"
     assert blueprint.graph_id == "acg_0123456789ab"
+
+
+def test_run_creation_is_idempotent_but_rejects_identity_redefinition(foundation) -> None:
+    runtime, bridge = foundation
+    task, _extract, _risk, blueprint = _registered_chain(runtime, bridge)
+    first = runtime.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint.blueprint_id,
+    )
+
+    replay = runtime.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint.blueprint_id,
+        run_id=first.run_id,
+    )
+
+    assert replay == first
+    other_task = runtime.create_task(user_id="user-1", goal="另一个目标")
+    other_node = runtime.create_task_node(
+        task_id=other_task.task_id,
+        title="执行",
+        objective="执行另一个目标",
+    )
+    other_blueprint = bridge.register_blueprint(
+        task_id=other_task.task_id,
+        version=1,
+        wkn_blueprint=ACGBlueprint(
+            graphId="acg_other_identity",
+            taskId=other_task.task_id,
+            nodes=[StepNode(nodeId="other", name="执行", agentName="通用智能体")],
+        ),
+        task_node_bindings={other_node.node_id: "other"},
+    )
+    with pytest.raises(IdentityConflictError, match="another UserTask"):
+        runtime.create_run(
+            task_id=other_task.task_id,
+            blueprint_id=other_blueprint.blueprint_id,
+            run_id=first.run_id,
+        )
+
+
+def test_same_task_parallel_runs_use_goal_level_completion_policy(foundation) -> None:
+    runtime, bridge = foundation
+    task, extract, _risk, blueprint = _registered_chain(runtime, bridge)
+    failed_run = runtime.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint.blueprint_id,
+    )
+    successful_run = runtime.create_run(
+        task_id=task.task_id,
+        blueprint_id=blueprint.blueprint_id,
+    )
+    runtime.create_attempt(run_id=failed_run.run_id, node_id=extract.node_id)
+    runtime.create_attempt(run_id=successful_run.run_id, node_id=extract.node_id)
+
+    runtime.finish_run(failed_run.run_id, RunStatus.FAILED)
+    assert runtime.repositories.user_tasks.get(task.task_id).status is UserTaskStatus.RUNNING
+
+    runtime.finish_run(successful_run.run_id, RunStatus.SUCCEEDED)
+    assert runtime.repositories.user_tasks.get(task.task_id).status is UserTaskStatus.COMPLETED
 
 
 def test_wkn_binding_and_lifecycle_resolve_complete_origin(foundation) -> None:

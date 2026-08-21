@@ -48,6 +48,8 @@ class TaskNodeStatus(str, Enum):
     BLOCKED = "blocked"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    RETIRED = "retired"
+    SUPERSEDED = "superseded"
 
 
 class RunStatus(str, Enum):
@@ -56,6 +58,7 @@ class RunStatus(str, Enum):
     FAILED = "failed"
     SUCCEEDED = "succeeded"
     CANCELLED = "cancelled"
+    SUPERSEDED = "superseded"
 
 
 class AttemptStatus(str, Enum):

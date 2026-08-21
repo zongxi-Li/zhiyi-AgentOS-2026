@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskNodeId, UserTaskId
 from domain.models import (
@@ -17,6 +17,8 @@ from domain.models import (
     UserTaskStatus,
     WorkflowRun,
 )
+from domain.lifecycle_projection import LifecycleProjectionEvent
+from contracts.planning import TaskPlan
 if TYPE_CHECKING:
     from domain.identity_graph.bindings import (
         BlueprintNodeBinding,
@@ -29,6 +31,15 @@ if TYPE_CHECKING:
 class UserTaskRepository(Protocol):
     def add(self, task: UserTask) -> None: ...
     def get(self, task_id: UserTaskId) -> UserTask | None: ...
+    def list(
+        self,
+        *,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        status: UserTaskStatus | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[UserTask], int]: ...
     def update_status(self, task_id: UserTaskId, status: UserTaskStatus) -> UserTask: ...
 
 
@@ -100,6 +111,14 @@ class ProvenanceLinkRepository(Protocol):
     def list_to(self, target_id: str) -> list[ProvenanceLink]: ...
 
 
+class LifecycleProjectionEventRepository(Protocol):
+    def begin(self, event: LifecycleProjectionEvent) -> LifecycleProjectionEvent: ...
+    def mark_applied(self, event_id: str) -> LifecycleProjectionEvent: ...
+    def mark_failed(self, event_id: str, error: str) -> LifecycleProjectionEvent: ...
+    def get(self, event_id: str) -> LifecycleProjectionEvent | None: ...
+    def list_unapplied(self, *, limit: int = 200) -> list[LifecycleProjectionEvent]: ...
+
+
 class RepositorySet(Protocol):
     user_tasks: UserTaskRepository
     task_nodes: TaskNodeRepository
@@ -111,6 +130,28 @@ class RepositorySet(Protocol):
     blueprint_node_bindings: BlueprintNodeBindingRepository
     execution_bindings: ExecutionBindingRepository
     provenance_links: ProvenanceLinkRepository
+    projection_events: LifecycleProjectionEventRepository
+    task_plans: Any
+
+    def persist_task_plan(self, plan: TaskPlan) -> dict[str, TaskNode]: ...
+
+    def ensure_attempt(
+        self,
+        run_id: RunId,
+        node_id: TaskNodeId,
+        *,
+        attempt_number: int | None = None,
+        resource_binding: dict | None = None,
+    ) -> Attempt: ...
+
+    def ensure_step_execution(
+        self,
+        run_id: RunId,
+        node_id: TaskNodeId,
+        attempt_id: AttemptId,
+        *,
+        input: dict,
+    ) -> StepExecution: ...
 
     def finish_execution(
         self,
@@ -131,6 +172,7 @@ __all__ = [
     "BlueprintNodeBindingRepository",
     "BlueprintRepository",
     "ExecutionBindingRepository",
+    "LifecycleProjectionEventRepository",
     "ProvenanceLinkRepository",
     "RepositorySet",
     "RunRepository",

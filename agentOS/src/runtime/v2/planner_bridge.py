@@ -3,37 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from contracts.identity import TaskNodeId, UserTaskId
+from contracts.planning import TaskPlan, TaskPlanNode, TaskPlanPatch
 from domain.models import TaskNode
 from domain.repository import IdentityConflictError
+from components.planner.service import apply_task_plan_patch
 
 from .runner import AcgIdentityLifecycleService
-
-
-_EXECUTION_IDENTITY_KEYS = {
-    "acgNodeId",
-    "agentId",
-    "agentName",
-    "modelId",
-    "resourceId",
-}
-
-
-class TaskPlanNode(BaseModel):
-    """Planner 输出的纯语义节点；``key`` 只在本次树登记期间使用。"""
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
-
-    key: str = Field(min_length=1)
-    parent_key: str | None = Field(default=None, alias="parentKey")
-    title: str = Field(min_length=1)
-    objective: str = Field(min_length=1)
-    constraints: list[dict[str, Any]] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlannerIdentityBridge:
@@ -47,56 +24,65 @@ class PlannerIdentityBridge:
         task_id: UserTaskId,
         nodes: Sequence[TaskPlanNode],
     ) -> list[TaskNode]:
-        if not nodes:
-            raise ValueError("Planner task tree cannot be empty")
-        keys = [node.key for node in nodes]
-        if len(keys) != len(set(keys)):
-            raise ValueError("Planner task tree contains duplicate keys")
-        known_keys = set(keys)
-        for node in nodes:
-            if node.parent_key == node.key:
-                raise ValueError("Planner task node cannot be its own parent")
-            if node.parent_key is not None and node.parent_key not in known_keys:
-                raise ValueError(f"Planner task node has unknown parent: {node.parent_key}")
-            self._reject_execution_identity(node.model_dump(by_alias=True))
+        return list(self.record_task_plan(TaskPlan(taskId=task_id, nodes=tuple(nodes))).values())
 
-        remaining = list(nodes)
-        persisted: list[TaskNode] = []
-        identities: dict[str, TaskNodeId] = {}
-        while remaining:
-            ready = [
-                node for node in remaining
-                if node.parent_key is None or node.parent_key in identities
-            ]
-            if not ready:
-                raise ValueError("Planner task tree contains a parent cycle")
-            for node in ready:
-                persisted_node = self.lifecycle_service.create_task_node(
-                    task_id=task_id,
-                    parent_node_id=(identities.get(node.parent_key) if node.parent_key else None),
-                    title=node.title,
-                    objective=node.objective,
-                    constraints=node.constraints,
-                    metadata=node.metadata,
-                )
-                identities[node.key] = persisted_node.node_id
-                persisted.append(persisted_node)
-                remaining.remove(node)
+    def record_task_plan(self, plan: TaskPlan) -> dict[str, TaskNode]:
+        """按稳定语义键幂等登记计划；语义发生漂移时拒绝覆盖历史节点。"""
+        persisted = self.lifecycle_service.repositories.persist_task_plan(plan)
+        if set(persisted) != {node.key for node in plan.nodes}:
+            raise IdentityConflictError("TaskPlan persistence did not cover every semantic node")
         return persisted
 
-    @classmethod
-    def _reject_execution_identity(cls, value: Any) -> None:
-        if isinstance(value, dict):
-            forbidden = _EXECUTION_IDENTITY_KEYS.intersection(value)
-            if forbidden:
-                raise IdentityConflictError(
-                    "Planner cannot select execution identities: " + ", ".join(sorted(forbidden))
-                )
-            for nested in value.values():
-                cls._reject_execution_identity(nested)
-        elif isinstance(value, list):
-            for nested in value:
-                cls._reject_execution_identity(nested)
+    def record_task_plan_patch(self, patch: TaskPlanPatch) -> dict[str, TaskNode]:
+        """把计划增量与既有稳定节点合成新版本后幂等登记。"""
+        existing = self.lifecycle_service.repositories.task_nodes.list_for_task(
+            patch.task_id
+        )
+        by_id = {node.node_id: node for node in existing}
+        by_key = {
+            str(node.metadata.get("plannerSemanticKey")): node
+            for node in existing
+            if node.metadata.get("plannerSemanticKey")
+        }
+        active_existing = [
+            node for node in existing
+            if node.status.value not in {"retired", "superseded"}
+        ]
+        if len(by_key) < len(active_existing):
+            raise IdentityConflictError(
+                "TaskPlanPatch requires stable semantic keys on every existing TaskNode"
+            )
+        current_nodes: list[TaskPlanNode] = []
+        for key, node in by_key.items():
+            if node.status.value in {"retired", "superseded"}:
+                continue
+            parent_key: str | None = None
+            if node.parent_node_id is not None:
+                parent = by_id.get(node.parent_node_id)
+                if parent is None or not parent.metadata.get("plannerSemanticKey"):
+                    raise IdentityConflictError(
+                        "TaskPlanPatch found an unresolved existing parent identity"
+                    )
+                parent_key = str(parent.metadata["plannerSemanticKey"])
+            current_nodes.append(TaskPlanNode(
+                key=key,
+                parentKey=parent_key,
+                title=node.title,
+                objective=node.objective,
+                constraints=node.constraints,
+                metadata={
+                    key: value
+                    for key, value in node.metadata.items()
+                    if key not in {"plannerSemanticKey", "plannerPlanVersion"}
+                },
+            ))
+        plan = TaskPlan(
+            taskId=patch.task_id,
+            planVersion=patch.plan_version,
+            nodes=tuple(current_nodes),
+            metadata={"source": "graph_patch", **patch.metadata},
+        )
+        return self.record_task_plan(apply_task_plan_patch(plan, patch))
 
 
 __all__ = ["PlannerIdentityBridge", "TaskPlanNode"]

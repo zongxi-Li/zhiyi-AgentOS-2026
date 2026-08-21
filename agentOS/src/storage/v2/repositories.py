@@ -1,4 +1,4 @@
-"""六类新领域 Repository 的 SQLite 实现。"""
+"""AgentOS V2 身份图 Repository 的 SQLite 实现。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,18 @@ import json
 import sqlite3
 from typing import Any
 
-from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskNodeId, UserTaskId
+from contracts.identity import (
+    AttemptId,
+    BlueprintId,
+    RunId,
+    StepExecutionId,
+    TaskNodeId,
+    UserTaskId,
+    new_attempt_id,
+    new_task_node_id,
+    new_step_execution_id,
+)
+from contracts.planning import TaskPlan, TaskPlanNode, TaskPlanRelation
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -26,6 +37,7 @@ from domain.identity_graph.bindings import (
     ProvenanceLink,
     TaskNodeBinding,
 )
+from domain.lifecycle_projection import LifecycleProjectionEvent
 from domain.repository.errors import EntityNotFoundError, IdentityConflictError
 
 from .sqlite import SQLiteV2Storage
@@ -60,6 +72,19 @@ class _SQLiteRepository:
 
 
 class SQLiteUserTaskRepository(_SQLiteRepository):
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> UserTask:
+        return UserTask(
+            taskId=row["task_id"],
+            userId=row["user_id"],
+            goal=row["goal"],
+            description=row["description"],
+            status=row["status"],
+            metadata=_load_json(row["metadata_json"], {}),
+            createdAt=row["created_at"],
+            updatedAt=row["updated_at"],
+        )
+
     def add(self, task: UserTask) -> None:
         self._insert(
             """INSERT INTO user_tasks(
@@ -83,16 +108,44 @@ class SQLiteUserTaskRepository(_SQLiteRepository):
             row = conn.execute("SELECT * FROM user_tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
             return None
-        return UserTask(
-            taskId=row["task_id"],
-            userId=row["user_id"],
-            goal=row["goal"],
-            description=row["description"],
-            status=row["status"],
-            metadata=_load_json(row["metadata_json"], {}),
-            createdAt=row["created_at"],
-            updatedAt=row["updated_at"],
-        )
+        return self._from_row(row)
+
+    def list(
+        self,
+        *,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        status: UserTaskStatus | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[UserTask], int]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if user_id is not None:
+            clauses.append("user_id = ?")
+            params.append(user_id)
+        if tenant_id is not None:
+            clauses.append(
+                "(json_extract(metadata_json, '$.tenantId') IS NULL "
+                "OR json_extract(metadata_json, '$.tenantId') = '' "
+                "OR json_extract(metadata_json, '$.tenantId') = ?)"
+            )
+            params.append(tenant_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status.value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.storage.read() as conn:
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM user_tasks{where}",
+                tuple(params),
+            ).fetchone()[0])
+            rows = conn.execute(
+                f"""SELECT * FROM user_tasks{where}
+                    ORDER BY updated_at DESC, task_id DESC LIMIT ? OFFSET ?""",
+                (*params, max(1, limit), max(0, offset)),
+            ).fetchall()
+        return ([self._from_row(row) for row in rows], total)
 
     def update_status(self, task_id: UserTaskId, status: UserTaskStatus) -> UserTask:
         updated_at = _now()
@@ -153,6 +206,72 @@ class SQLiteTaskNodeRepository(_SQLiteRepository):
             metadata=_load_json(row["metadata_json"], {}),
         )
 
+
+class SQLiteTaskPlanRepository(_SQLiteRepository):
+    """Immutable, versioned semantic plan snapshots."""
+
+    def add(self, plan: TaskPlan, node_ids: dict[str, str]) -> None:
+        payload = plan.model_dump(by_alias=True, mode="json")
+        encoded = _json(payload)
+        import hashlib
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.storage.transaction() as conn:
+            conn.execute(
+                """INSERT INTO task_plans(task_id, plan_version, payload_json, content_hash, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (plan.task_id, plan.plan_version, encoded, content_hash, _iso(_now())),
+            )
+            for node in plan.nodes:
+                conn.execute(
+                    """INSERT INTO task_plan_nodes(
+                           task_id, plan_version, semantic_key, task_node_id, payload_json
+                       ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        plan.task_id,
+                        plan.plan_version,
+                        node.key,
+                        node_ids.get(node.key),
+                        _json(node.model_dump(by_alias=True, mode="json")),
+                    ),
+                )
+            for relation in plan.relations:
+                conn.execute(
+                    """INSERT INTO task_plan_relations(
+                           task_id, plan_version, source_key, target_key, relation_type
+                       ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        plan.task_id,
+                        plan.plan_version,
+                        relation.source_key,
+                        relation.target_key,
+                        relation.relation_type.value,
+                    ),
+                )
+
+    def get(self, task_id: UserTaskId, plan_version: int) -> TaskPlan | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM task_plans WHERE task_id = ? AND plan_version = ?",
+                (task_id, plan_version),
+            ).fetchone()
+        return TaskPlan.model_validate(_load_json(row["payload_json"], {})) if row else None
+
+    def latest(self, task_id: UserTaskId) -> TaskPlan | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                """SELECT payload_json FROM task_plans
+                   WHERE task_id = ? ORDER BY plan_version DESC LIMIT 1""",
+                (task_id,),
+            ).fetchone()
+        return TaskPlan.model_validate(_load_json(row["payload_json"], {})) if row else None
+
+    def list_for_task(self, task_id: UserTaskId) -> list[TaskPlan]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                "SELECT payload_json FROM task_plans WHERE task_id = ? ORDER BY plan_version",
+                (task_id,),
+            ).fetchall()
+        return [TaskPlan.model_validate(_load_json(row["payload_json"], {})) for row in rows]
 
 class SQLiteBlueprintRepository(_SQLiteRepository):
     def add(self, blueprint: AcgBlueprint) -> None:
@@ -260,6 +379,7 @@ class SQLiteRunRepository(_SQLiteRepository):
             RunStatus.FAILED,
             RunStatus.SUCCEEDED,
             RunStatus.CANCELLED,
+            RunStatus.SUPERSEDED,
         } else None
         with self.storage.transaction() as conn:
             cursor = conn.execute(
@@ -624,6 +744,114 @@ class SQLiteProvenanceLinkRepository(_SQLiteRepository):
         ]
 
 
+class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
+    """持久化投影意图；相同事件 ID 只能对应完全相同的事实。"""
+
+    def begin(self, event: LifecycleProjectionEvent) -> LifecycleProjectionEvent:
+        with self.storage.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM lifecycle_projection_events WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """INSERT INTO lifecycle_projection_events(
+                        event_id, event_type, aggregate_id, payload_json, payload_hash,
+                        status, attempts, last_error, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        event.event_id,
+                        event.event_type,
+                        event.aggregate_id,
+                        _json(event.payload),
+                        event.payload_hash,
+                        event.status.value,
+                        event.attempts,
+                        event.last_error,
+                        _iso(event.created_at),
+                        _iso(event.updated_at),
+                    ),
+                )
+            else:
+                if (
+                    row["payload_hash"] != event.payload_hash
+                    or row["event_type"] != event.event_type
+                    or row["aggregate_id"] != event.aggregate_id
+                ):
+                    raise IdentityConflictError(
+                        f"projection event id already has different content: {event.event_id}"
+                    )
+                if row["status"] != "applied":
+                    conn.execute(
+                        """UPDATE lifecycle_projection_events
+                           SET status = 'pending', attempts = attempts + 1,
+                               last_error = NULL, updated_at = ?
+                           WHERE event_id = ?""",
+                        (_iso(_now()), event.event_id),
+                    )
+        stored = self.get(event.event_id)
+        assert stored is not None
+        return stored
+
+    def mark_applied(self, event_id: str) -> LifecycleProjectionEvent:
+        return self._mark(event_id, "applied", None)
+
+    def mark_failed(self, event_id: str, error: str) -> LifecycleProjectionEvent:
+        return self._mark(event_id, "failed", error[:2000])
+
+    def get(self, event_id: str) -> LifecycleProjectionEvent | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT * FROM lifecycle_projection_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list_unapplied(self, *, limit: int = 200) -> list[LifecycleProjectionEvent]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                """SELECT * FROM lifecycle_projection_events
+                   WHERE status != 'applied'
+                   ORDER BY created_at, event_id LIMIT ?""",
+                (max(1, limit),),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def _mark(
+        self,
+        event_id: str,
+        status: str,
+        last_error: str | None,
+    ) -> LifecycleProjectionEvent:
+        with self.storage.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE lifecycle_projection_events
+                   SET status = ?, last_error = ?, updated_at = ?
+                   WHERE event_id = ?""",
+                (status, last_error, _iso(_now()), event_id),
+            )
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError(f"projection event not found: {event_id}")
+        stored = self.get(event_id)
+        assert stored is not None
+        return stored
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> LifecycleProjectionEvent:
+        return LifecycleProjectionEvent(
+            eventId=row["event_id"],
+            eventType=row["event_type"],
+            aggregateId=row["aggregate_id"],
+            payload=_load_json(row["payload_json"], {}),
+            payloadHash=row["payload_hash"],
+            status=row["status"],
+            attempts=row["attempts"],
+            lastError=row["last_error"],
+            createdAt=row["created_at"],
+            updatedAt=row["updated_at"],
+        )
+
+
 class SQLiteV2Repositories:
     """显式聚合领域 Repository，供 ACG 身份生命周期服务依赖注入。"""
 
@@ -639,6 +867,304 @@ class SQLiteV2Repositories:
         self.blueprint_node_bindings = SQLiteBlueprintNodeBindingRepository(storage)
         self.execution_bindings = SQLiteExecutionBindingRepository(storage)
         self.provenance_links = SQLiteProvenanceLinkRepository(storage)
+        self.projection_events = SQLiteLifecycleProjectionEventRepository(storage)
+        self.task_plans = SQLiteTaskPlanRepository(storage)
+
+    def persist_task_plan(self, plan: TaskPlan) -> dict[str, TaskNode]:
+        """Atomically persist an immutable plan snapshot and its semantic nodes."""
+        import hashlib
+
+        payload = plan.model_dump(by_alias=True, mode="json")
+        encoded = _json(payload)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        parent_by_key = {
+            relation.target_key: relation.source_key
+            for relation in plan.relations
+            if relation.relation_type.value == "parent"
+        }
+        parent_by_key.update({node.key: node.parent_key for node in plan.nodes if node.parent_key})
+        with self.storage.transaction() as conn:
+            task = conn.execute(
+                "SELECT status FROM user_tasks WHERE task_id = ?", (plan.task_id,)
+            ).fetchone()
+            if task is None:
+                raise EntityNotFoundError(f"UserTask not found: {plan.task_id}")
+            existing_plan = conn.execute(
+                "SELECT content_hash FROM task_plans WHERE task_id = ? AND plan_version = ?",
+                (plan.task_id, plan.plan_version),
+            ).fetchone()
+            if existing_plan is not None:
+                if existing_plan["content_hash"] != content_hash:
+                    raise IdentityConflictError(
+                        "Planner semantic key changed meaning: planVersion already contains a different TaskPlan"
+                    )
+                return {
+                    node.key: self.task_nodes.get(
+                        self._task_plan_node_id(conn, plan, node.key)
+                    )
+                    for node in plan.nodes
+                }
+
+            rows = conn.execute(
+                "SELECT * FROM task_nodes WHERE task_id = ? ORDER BY rowid",
+                (plan.task_id,),
+            ).fetchall()
+            by_key: dict[str, sqlite3.Row] = {}
+            for row in rows:
+                key = _load_json(row["metadata_json"], {}).get("plannerSemanticKey")
+                if key and row["status"] not in {"retired", "superseded"}:
+                    by_key[str(key)] = row
+            node_ids: dict[str, str] = {}
+            pending = list(plan.nodes)
+            while pending:
+                ready = [
+                    node for node in pending
+                    if parent_by_key.get(node.key) is None
+                    or parent_by_key.get(node.key) in node_ids
+                ]
+                if not ready:
+                    raise IdentityConflictError("TaskPlan parent relations cannot be resolved")
+                for node in ready:
+                    parent_id = node_ids.get(parent_by_key.get(node.key))
+                    existing = by_key.get(node.key)
+                    semantic_metadata = {
+                        **node.metadata,
+                        "plannerSemanticKey": node.key,
+                        "plannerPlanVersion": plan.plan_version,
+                        "capabilityRequirements": list(node.capability_requirements),
+                        "acceptanceCriteria": list(node.acceptance_criteria),
+                    }
+                    equivalent = existing is not None and (
+                        existing["parent_node_id"] == parent_id
+                        and existing["title"] == node.title
+                        and existing["objective"] == node.objective
+                        and _load_json(existing["constraints_json"], []) == node.constraints
+                        and _load_json(existing["metadata_json"], {}).get("capabilityRequirements", [])
+                        == list(node.capability_requirements)
+                        and _load_json(existing["metadata_json"], {}).get("acceptanceCriteria", [])
+                        == list(node.acceptance_criteria)
+                    )
+                    if equivalent:
+                        node_id = str(existing["node_id"])
+                    else:
+                        if existing is not None:
+                            semantic_metadata["supersedesNodeId"] = existing["node_id"]
+                            conn.execute(
+                                "UPDATE task_nodes SET status = 'superseded' WHERE node_id = ?",
+                                (existing["node_id"],),
+                            )
+                        node_id = new_task_node_id()
+                        conn.execute(
+                            """INSERT INTO task_nodes(
+                                   node_id, task_id, parent_node_id, title, objective,
+                                   constraints_json, status, metadata_json
+                               ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?)""",
+                            (
+                                node_id, plan.task_id, parent_id, node.title, node.objective,
+                                _json(node.constraints), _json(semantic_metadata),
+                            ),
+                        )
+                    node_ids[node.key] = node_id
+                    pending.remove(node)
+            for key, row in by_key.items():
+                if key not in node_ids:
+                    conn.execute(
+                        "UPDATE task_nodes SET status = 'retired' WHERE node_id = ?",
+                        (row["node_id"],),
+                    )
+            if task["status"] == "created":
+                conn.execute(
+                    "UPDATE user_tasks SET status = 'planning', updated_at = ? WHERE task_id = ?",
+                    (_iso(_now()), plan.task_id),
+                )
+            conn.execute(
+                """INSERT INTO task_plans(task_id, plan_version, payload_json, content_hash, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (plan.task_id, plan.plan_version, encoded, content_hash, _iso(_now())),
+            )
+            for node in plan.nodes:
+                conn.execute(
+                    """INSERT INTO task_plan_nodes(
+                           task_id, plan_version, semantic_key, task_node_id, payload_json
+                       ) VALUES (?, ?, ?, ?, ?)""",
+                    (plan.task_id, plan.plan_version, node.key, node_ids[node.key],
+                     _json(node.model_dump(by_alias=True, mode="json"))),
+                )
+            for relation in plan.relations:
+                conn.execute(
+                    """INSERT INTO task_plan_relations(
+                           task_id, plan_version, source_key, target_key, relation_type
+                       ) VALUES (?, ?, ?, ?, ?)""",
+                    (plan.task_id, plan.plan_version, relation.source_key,
+                     relation.target_key, relation.relation_type.value),
+                )
+        return {
+            key: self.task_nodes.get(node_id)
+            for key, node_id in node_ids.items()
+            if self.task_nodes.get(node_id) is not None
+        }
+
+    @staticmethod
+    def _task_plan_node_id(conn: sqlite3.Connection, plan: TaskPlan, key: str) -> str:
+        row = conn.execute(
+            """SELECT task_node_id FROM task_plan_nodes
+               WHERE task_id = ? AND plan_version = ? AND semantic_key = ?""",
+            (plan.task_id, plan.plan_version, key),
+        ).fetchone()
+        if row is None or row["task_node_id"] is None:
+            raise EntityNotFoundError(f"TaskPlan node not found: {key}")
+        return str(row["task_node_id"])
+
+    def ensure_attempt(
+        self,
+        run_id: RunId,
+        node_id: TaskNodeId,
+        *,
+        attempt_number: int | None = None,
+        resource_binding: dict | None = None,
+    ) -> Attempt:
+        """在一个事务内分配连续编号；相同期望编号的并发重放返回同一 Attempt。"""
+        now = _now()
+        with self.storage.transaction() as conn:
+            owner = conn.execute(
+                """SELECT r.task_id AS run_task_id, n.task_id AS node_task_id
+                   FROM workflow_runs_v2 r, task_nodes n
+                   WHERE r.run_id = ? AND n.node_id = ?""",
+                (run_id, node_id),
+            ).fetchone()
+            if owner is None:
+                raise EntityNotFoundError("Run or TaskNode not found for Attempt")
+            if owner["run_task_id"] != owner["node_task_id"]:
+                raise IdentityConflictError(
+                    "Attempt cannot use another UserTask's TaskNode"
+                )
+            rows = conn.execute(
+                """SELECT * FROM attempts
+                   WHERE run_id = ? AND node_id = ? ORDER BY attempt_number""",
+                (run_id, node_id),
+            ).fetchall()
+            expected = attempt_number or (len(rows) + 1)
+            existing = next(
+                (row for row in rows if int(row["attempt_number"]) == expected),
+                None,
+            )
+            if existing is not None:
+                return SQLiteAttemptRepository._from_row(existing)
+            if expected != len(rows) + 1:
+                raise IdentityConflictError("Attempt number is not contiguous")
+            attempt = Attempt(
+                attemptId=new_attempt_id(),
+                runId=run_id,
+                nodeId=node_id,
+                attemptNumber=expected,
+                resourceBinding=resource_binding,
+            )
+            conn.execute(
+                """INSERT INTO attempts(
+                    attempt_id, run_id, node_id, attempt_number, status, started_at,
+                    finished_at, failure_reason, resource_binding_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    attempt.attempt_id,
+                    attempt.run_id,
+                    attempt.node_id,
+                    attempt.attempt_number,
+                    attempt.status.value,
+                    None,
+                    None,
+                    None,
+                    _json(resource_binding) if resource_binding is not None else None,
+                ),
+            )
+            conn.execute(
+                """UPDATE workflow_runs_v2
+                   SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
+                   WHERE run_id = ? AND status = 'pending'""",
+                (_iso(now), _iso(now), run_id),
+            )
+            conn.execute(
+                """UPDATE user_tasks SET status = 'running', updated_at = ?
+                   WHERE task_id = ? AND status = 'ready'""",
+                (_iso(now), owner["run_task_id"]),
+            )
+            return attempt
+
+    def ensure_step_execution(
+        self,
+        run_id: RunId,
+        node_id: TaskNodeId,
+        attempt_id: AttemptId,
+        *,
+        input: dict,
+    ) -> StepExecution:
+        """在 Attempt 状态切换的同一事务内幂等创建唯一 StepExecution。"""
+        started_at = _now()
+        with self.storage.transaction() as conn:
+            attempt_row = conn.execute(
+                "SELECT * FROM attempts WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if attempt_row is None:
+                raise EntityNotFoundError(f"Attempt not found: {attempt_id}")
+            if attempt_row["run_id"] != run_id or attempt_row["node_id"] != node_id:
+                raise IdentityConflictError(
+                    "StepExecution identity does not match Attempt"
+                )
+            if conn.execute(
+                "SELECT 1 FROM execution_bindings WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone() is None:
+                raise EntityNotFoundError(
+                    "AcgIdentityLifecycleService requires a persisted ExecutionBinding"
+                )
+            existing = conn.execute(
+                "SELECT * FROM step_executions WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if existing is not None:
+                execution = SQLiteStepExecutionRepository._from_row(existing)
+                if execution.input != input:
+                    raise IdentityConflictError(
+                        "Attempt already has a StepExecution with different input"
+                    )
+                return execution
+            if attempt_row["status"] != AttemptStatus.PENDING.value:
+                raise IdentityConflictError(
+                    "only a pending Attempt can start a StepExecution"
+                )
+            execution = StepExecution(
+                stepExecutionId=new_step_execution_id(),
+                runId=run_id,
+                nodeId=node_id,
+                attemptId=attempt_id,
+                status=StepExecutionStatus.RUNNING,
+                input=input,
+                output={},
+                startedAt=started_at,
+            )
+            conn.execute(
+                """INSERT INTO step_executions(
+                    step_execution_id, attempt_id, run_id, node_id, input_json,
+                    output_json, status, started_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    execution.step_execution_id,
+                    attempt_id,
+                    run_id,
+                    node_id,
+                    _json(input),
+                    _json({}),
+                    execution.status.value,
+                    _iso(started_at),
+                    None,
+                ),
+            )
+            conn.execute(
+                """UPDATE attempts SET status = 'running', started_at = ?
+                   WHERE attempt_id = ? AND status = 'pending'""",
+                (_iso(started_at), attempt_id),
+            )
+            return execution
 
     def finish_execution(
         self,
@@ -664,6 +1190,39 @@ class SQLiteV2Repositories:
             raise ValueError("execution transaction requires a terminal Attempt status")
         finished_at = _iso(_now())
         with self.storage.transaction() as conn:
+            current_execution = conn.execute(
+                "SELECT * FROM step_executions WHERE step_execution_id = ? AND attempt_id = ?",
+                (step_execution_id, attempt_id),
+            ).fetchone()
+            current_attempt = conn.execute(
+                "SELECT * FROM attempts WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if current_execution is None or current_attempt is None:
+                raise EntityNotFoundError(
+                    f"StepExecution or Attempt not found: {step_execution_id}"
+                )
+            if (
+                current_execution["status"] == step_status.value
+                and current_attempt["status"] == attempt_status.value
+            ):
+                persisted_output = _load_json(current_execution["output_json"], {})
+                if persisted_output != output:
+                    raise IdentityConflictError(
+                        "terminal StepExecution replay changed its output"
+                    )
+                existing_execution = SQLiteStepExecutionRepository._from_row(
+                    current_execution
+                )
+                existing_attempt = SQLiteAttemptRepository._from_row(current_attempt)
+                return existing_execution, existing_attempt
+            if (
+                current_execution["status"] != StepExecutionStatus.RUNNING.value
+                or current_attempt["status"] != AttemptStatus.RUNNING.value
+            ):
+                raise IdentityConflictError(
+                    "terminal execution state cannot be rewritten"
+                )
             execution_cursor = conn.execute(
                 """UPDATE step_executions
                    SET status = ?, output_json = ?, finished_at = ?
@@ -696,6 +1255,7 @@ __all__ = [
     "SQLiteBlueprintNodeBindingRepository",
     "SQLiteBlueprintRepository",
     "SQLiteExecutionBindingRepository",
+    "SQLiteLifecycleProjectionEventRepository",
     "SQLiteProvenanceLinkRepository",
     "SQLiteRunRepository",
     "SQLiteStepExecutionRepository",

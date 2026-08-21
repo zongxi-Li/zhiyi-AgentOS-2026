@@ -25,6 +25,7 @@ def test_v2_schema_is_independent_and_complete() -> None:
         "blueprint_node_bindings",
         "execution_bindings",
         "provenance_links",
+        "lifecycle_projection_events",
     }.issubset(tables)
     assert "tasks" not in tables
     assert "runs" not in tables

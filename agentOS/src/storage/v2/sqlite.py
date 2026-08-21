@@ -33,12 +33,16 @@ class SQLiteV2Storage:
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
+            nested = self._connection.in_transaction
             try:
-                self._connection.execute("BEGIN IMMEDIATE")
+                if not nested:
+                    self._connection.execute("BEGIN IMMEDIATE")
                 yield self._connection
-                self._connection.commit()
+                if not nested:
+                    self._connection.commit()
             except Exception:
-                self._connection.rollback()
+                if not nested:
+                    self._connection.rollback()
                 raise
 
     @contextmanager

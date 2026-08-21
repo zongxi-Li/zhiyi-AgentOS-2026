@@ -112,6 +112,15 @@ from .identity import (
 )
 from .governance import AuditFinding, AuditRequest, PolicyDecision
 from .memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
+from .planning import (
+    TaskNodeBindingPatch,
+    TaskNodeImplementationBinding,
+    TaskNodeRelationType,
+    TaskPlan,
+    TaskPlanNode,
+    TaskPlanPatch,
+    TaskPlanRelation,
+)
 from .recovery import (
     FailureEvent, GraphPatch, GraphPatchRef, GraphPatchResult,
     RecoveryNodeTemplate, RecoveryPlan, RecoveryRecipe,
@@ -142,7 +151,9 @@ __all__ = [
     "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
     "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
     "RunId", "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
-    "StepExecutionId", "TaskNodeId", "UserTaskId", "generate_identity", "new_attempt_id", "new_binding_id",
+    "StepExecutionId", "TaskNodeId", "TaskNodeBindingPatch", "TaskNodeImplementationBinding",
+    "TaskNodeRelationType", "TaskPlan", "TaskPlanNode", "TaskPlanPatch", "TaskPlanRelation",
+    "UserTaskId", "generate_identity", "new_attempt_id", "new_binding_id",
     "new_blueprint_id", "new_run_id", "new_step_execution_id", "new_task_node_id",
     "new_user_task_id", "validate_identity",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
