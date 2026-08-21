@@ -120,6 +120,21 @@ class SQLiteWorkflowStore(WorkflowStore):
         )
         return [dict(row) for row in rows]
 
+    def outbox_stats(self) -> dict:
+        row = self._fetch_one(
+            """SELECT
+                   SUM(CASE WHEN status != 'applied' THEN 1 ELSE 0 END) AS backlog,
+                   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                   MIN(CASE WHEN status != 'applied' THEN created_at END) AS oldest
+               FROM lifecycle_outbox""",
+            (),
+        )
+        return {
+            "backlog": int(row["backlog"] or 0),
+            "failed": int(row["failed"] or 0),
+            "oldestEventAt": row["oldest"],
+        }
+
     def mark_outbox(self, event_id: str, *, applied: bool, error: str | None = None) -> None:
         with self._connect() as conn:
             conn.execute(

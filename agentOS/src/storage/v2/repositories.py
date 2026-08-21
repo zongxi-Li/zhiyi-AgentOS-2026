@@ -745,17 +745,19 @@ class SQLiteProvenanceLinkRepository(_SQLiteRepository):
 
 
 class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
+    table_name = "lifecycle_projection_events"
+
     """持久化投影意图；相同事件 ID 只能对应完全相同的事实。"""
 
     def begin(self, event: LifecycleProjectionEvent) -> LifecycleProjectionEvent:
         with self.storage.transaction() as conn:
             row = conn.execute(
-                "SELECT * FROM lifecycle_projection_events WHERE event_id = ?",
+                f"SELECT * FROM {self.table_name} WHERE event_id = ?",
                 (event.event_id,),
             ).fetchone()
             if row is None:
                 conn.execute(
-                    """INSERT INTO lifecycle_projection_events(
+                    f"""INSERT INTO {self.table_name}(
                         event_id, event_type, aggregate_id, payload_json, payload_hash,
                         status, attempts, last_error, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -783,7 +785,7 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
                     )
                 if row["status"] != "applied":
                     conn.execute(
-                        """UPDATE lifecycle_projection_events
+                        f"""UPDATE {self.table_name}
                            SET status = 'pending', attempts = attempts + 1,
                                last_error = NULL, updated_at = ?
                            WHERE event_id = ?""",
@@ -802,7 +804,7 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
     def get(self, event_id: str) -> LifecycleProjectionEvent | None:
         with self.storage.read() as conn:
             row = conn.execute(
-                "SELECT * FROM lifecycle_projection_events WHERE event_id = ?",
+                f"SELECT * FROM {self.table_name} WHERE event_id = ?",
                 (event_id,),
             ).fetchone()
         return self._from_row(row) if row is not None else None
@@ -810,12 +812,27 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
     def list_unapplied(self, *, limit: int = 200) -> list[LifecycleProjectionEvent]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                """SELECT * FROM lifecycle_projection_events
+                f"""SELECT * FROM {self.table_name}
                    WHERE status != 'applied'
                    ORDER BY created_at, event_id LIMIT ?""",
                 (max(1, limit),),
             ).fetchall()
         return [self._from_row(row) for row in rows]
+
+    def stats(self) -> dict[str, Any]:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                f"""SELECT
+                        SUM(CASE WHEN status != 'applied' THEN 1 ELSE 0 END) AS backlog,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                        MIN(CASE WHEN status != 'applied' THEN created_at END) AS oldest
+                    FROM {self.table_name}"""
+            ).fetchone()
+        return {
+            "backlog": int(row["backlog"] or 0),
+            "failed": int(row["failed"] or 0),
+            "oldestEventAt": row["oldest"],
+        }
 
     def _mark(
         self,
@@ -825,7 +842,7 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
     ) -> LifecycleProjectionEvent:
         with self.storage.transaction() as conn:
             cursor = conn.execute(
-                """UPDATE lifecycle_projection_events
+                f"""UPDATE {self.table_name}
                    SET status = ?, last_error = ?, updated_at = ?
                    WHERE event_id = ?""",
                 (status, last_error, _iso(_now()), event_id),
@@ -852,6 +869,12 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
         )
 
 
+class SQLiteLifecycleInboxRepository(SQLiteLifecycleProjectionEventRepository):
+    """Durable identity-side receipt log for WKN lifecycle outbox events."""
+
+    table_name = "lifecycle_inbox"
+
+
 class SQLiteV2Repositories:
     """显式聚合领域 Repository，供 ACG 身份生命周期服务依赖注入。"""
 
@@ -868,6 +891,7 @@ class SQLiteV2Repositories:
         self.execution_bindings = SQLiteExecutionBindingRepository(storage)
         self.provenance_links = SQLiteProvenanceLinkRepository(storage)
         self.projection_events = SQLiteLifecycleProjectionEventRepository(storage)
+        self.inbox_events = SQLiteLifecycleInboxRepository(storage)
         self.task_plans = SQLiteTaskPlanRepository(storage)
 
     def persist_task_plan(self, plan: TaskPlan) -> dict[str, TaskNode]:

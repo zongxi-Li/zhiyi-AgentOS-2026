@@ -319,14 +319,37 @@ def create_router(
     @router.get("/identity/health")
     async def get_identity_health():
         require_identity_queries()
-        unapplied = identity_repositories.projection_events.list_unapplied(limit=200)
+        projection_stats = identity_repositories.projection_events.stats()
+        inbox_stats = identity_repositories.inbox_events.stats()
         startup = getattr(runtime, "identity_reconciliation_report", None)
         startup_failures = list(getattr(startup, "failures", []) or [])
+        backlog_count = (
+            projection_stats["backlog"]
+            + inbox_stats["backlog"]
+            + int(getattr(startup, "outbox_backlog", 0) or 0)
+        )
+        failed_count = (
+            projection_stats["failed"]
+            + inbox_stats["failed"]
+            + int(getattr(startup, "outbox_failed_count", 0) or 0)
+        )
+        timestamps = [
+            value for value in (
+                projection_stats["oldestEventAt"],
+                inbox_stats["oldestEventAt"],
+                getattr(startup, "oldest_event_at", None),
+            )
+            if value is not None
+        ]
         return {
-            "status": "healthy" if not unapplied and not startup_failures else "degraded",
+            "status": "healthy" if not backlog_count and not failed_count and not startup_failures else "degraded",
             "source": "agentos-v2",
-            "unappliedEventCount": len(unapplied),
-            "inboxBacklog": int(getattr(startup, "inbox_backlog", 0) or 0),
+            "backlogCount": backlog_count,
+            "failedCount": failed_count,
+            "oldestEventAt": min(timestamps) if timestamps else None,
+            "unappliedEventCount": projection_stats["backlog"],
+            "inboxBacklog": inbox_stats["backlog"],
+            "outboxBacklog": int(getattr(startup, "outbox_backlog", 0) or 0),
             "startupReconciliation": {
                 "examinedTasks": int(getattr(startup, "examined_tasks", 0) or 0),
                 "examinedRuns": int(getattr(startup, "examined_runs", 0) or 0),

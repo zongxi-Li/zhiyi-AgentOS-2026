@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import json
 
 import pytest
 
@@ -33,6 +34,29 @@ from support.acg.models import ACGBlueprint, StepNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
+class _OutboxMemoryWorkflowStore(MemoryWorkflowStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.outbox: list[dict] = []
+
+    def list_outbox(self, *, limit: int = 200) -> list[dict]:
+        return [
+            event for event in self.outbox
+            if event.get("status") != "applied"
+        ][:limit]
+
+    def mark_outbox(
+        self,
+        event_id: str,
+        *,
+        applied: bool,
+        error: str | None = None,
+    ) -> None:
+        event = next(item for item in self.outbox if item["event_id"] == event_id)
+        event["status"] = "applied" if applied else "failed"
+        event["error"] = error
+
+
 class _IdentityAgent(BaseAgent):
     async def run(self, context):
         if context.task.input.get("forceFailure"):
@@ -44,7 +68,12 @@ class _IdentityAgent(BaseAgent):
         )
 
 
-def _runtime(*, force_failure: bool = False, blueprint: ACGBlueprint | None = None):
+def _runtime(
+    *,
+    force_failure: bool = False,
+    blueprint: ACGBlueprint | None = None,
+    workflow_store=None,
+):
     repositories = SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
     identity_runtime = AcgIdentityLifecycleService(repositories)
     bridge = WknIdentityLifecycleAdapter(identity_runtime, repositories)
@@ -72,7 +101,7 @@ def _runtime(*, force_failure: bool = False, blueprint: ACGBlueprint | None = No
     runtime = WorkflowRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
-        workflow_store=MemoryWorkflowStore(),
+        workflow_store=workflow_store or MemoryWorkflowStore(),
         identity_lifecycle=bridge,
     )
     task = runtime.create_task(
@@ -279,6 +308,106 @@ def test_reconciler_restores_a_missing_run_projection_from_wkn_snapshot() -> Non
         identity_runtime.close()
 
 
+def test_inbox_retries_failed_consumption_and_recovers_missing_task(monkeypatch) -> None:
+    workflow_store = _OutboxMemoryWorkflowStore()
+    runtime, identity_runtime, bridge, _task = _runtime(workflow_store=workflow_store)
+    runtime.identity_lifecycle = None
+    missing = runtime.create_task("outbox recovery", workflow_id="identity-acg")
+    runtime.identity_lifecycle = bridge
+    workflow_store.outbox.append({
+        "event_id": f"task:{missing.task_id}:created",
+        "event_type": "task.created",
+        "aggregate_id": missing.task_id,
+        "payload": json.dumps(
+            missing.model_dump(by_alias=True, mode="json"),
+            ensure_ascii=False,
+        ),
+        "attempts": 0,
+        "status": "pending",
+    })
+    original = bridge.on_task_created
+    monkeypatch.setattr(
+        bridge,
+        "on_task_created",
+        lambda _task: (_ for _ in ()).throw(RuntimeError("simulated consumer crash")),
+    )
+    try:
+        failed = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            workflow_store
+        )
+        inbox = identity_runtime.repositories.inbox_events.get(
+            f"task:{missing.task_id}:created"
+        )
+
+        assert any("simulated consumer crash" in item for item in failed.failures)
+        assert inbox.status is ProjectionEventStatus.FAILED
+        assert identity_runtime.repositories.user_tasks.get(missing.task_id) is None
+
+        monkeypatch.setattr(bridge, "on_task_created", original)
+        recovered = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            workflow_store
+        )
+        inbox = identity_runtime.repositories.inbox_events.get(
+            f"task:{missing.task_id}:created"
+        )
+
+        assert recovered.failures == []
+        assert inbox.status is ProjectionEventStatus.APPLIED
+        assert inbox.attempts == 2
+        assert identity_runtime.repositories.user_tasks.get(missing.task_id) is not None
+    finally:
+        identity_runtime.close()
+
+
+def test_applied_inbox_skips_duplicate_projection_and_rejects_payload_drift(
+    monkeypatch,
+) -> None:
+    workflow_store = _OutboxMemoryWorkflowStore()
+    _runtime_instance, identity_runtime, bridge, task = _runtime(
+        workflow_store=workflow_store
+    )
+    event_id = f"task:{task.task_id}:created"
+    event = {
+        "event_id": event_id,
+        "event_type": "task.created",
+        "aggregate_id": task.task_id,
+        "payload": json.dumps(task.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
+        "attempts": 0,
+        "status": "pending",
+    }
+    workflow_store.outbox.append(event)
+    try:
+        first = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            workflow_store
+        )
+        assert first.failures == []
+
+        event["status"] = "pending"
+        monkeypatch.setattr(
+            bridge,
+            "on_task_created",
+            lambda _task: (_ for _ in ()).throw(AssertionError("duplicate projection")),
+        )
+        duplicate = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            workflow_store
+        )
+        assert duplicate.failures == []
+        assert event["status"] == "applied"
+
+        changed = task.model_dump(by_alias=True, mode="json")
+        changed["title"] = "different content"
+        event["payload"] = json.dumps(changed, ensure_ascii=False)
+        event["status"] = "pending"
+        conflict = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            workflow_store
+        )
+
+        assert any("different content" in item for item in conflict.failures)
+        assert event["status"] == "failed"
+    finally:
+        identity_runtime.close()
+
+
 def test_parallel_wkn_nodes_keep_attempt_and_execution_identity_isolated() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-parallel-graph",
@@ -339,6 +468,25 @@ def test_invalid_explicit_bindings_do_not_persist_partial_task_nodes() -> None:
         with pytest.raises(ValueError, match="complete TaskPlan"):
             runtime.prepare_run(task.task_id)
 
+        assert identity_runtime.repositories.task_nodes.list_for_task(task.task_id) == []
+        assert identity_runtime.repositories.blueprints.list_for_task(task.task_id) == []
+        assert identity_runtime.repositories.runs.list_for_task(task.task_id) == []
+    finally:
+        identity_runtime.close()
+
+
+def test_run_creation_failure_rolls_back_plan_blueprint_and_bindings(monkeypatch) -> None:
+    runtime, identity_runtime, _bridge, task = _runtime()
+    monkeypatch.setattr(
+        identity_runtime,
+        "create_run",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated run failure")),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="simulated run failure"):
+            runtime.prepare_run(task.task_id)
+
+        assert identity_runtime.repositories.task_plans.list_for_task(task.task_id) == []
         assert identity_runtime.repositories.task_nodes.list_for_task(task.task_id) == []
         assert identity_runtime.repositories.blueprints.list_for_task(task.task_id) == []
         assert identity_runtime.repositories.runs.list_for_task(task.task_id) == []

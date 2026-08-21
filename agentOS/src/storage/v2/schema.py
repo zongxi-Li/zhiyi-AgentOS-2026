@@ -215,6 +215,8 @@ CREATE INDEX IF NOT EXISTS idx_execution_bindings_attempt ON execution_bindings(
 CREATE INDEX IF NOT EXISTS idx_provenance_links_target ON provenance_links(target_id);
 CREATE INDEX IF NOT EXISTS idx_projection_events_status
     ON lifecycle_projection_events(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_inbox_status
+    ON lifecycle_inbox(status, updated_at);
 
 CREATE TRIGGER IF NOT EXISTS attempts_require_same_task
 BEFORE INSERT ON attempts
