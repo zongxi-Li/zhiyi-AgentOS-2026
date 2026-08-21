@@ -8,6 +8,7 @@ from components.memory import MemoryService, PhaseCapsule
 from components.memory.store import SQLiteMemoryStore
 from components.task_manager.store import WorkflowRegistry
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, WorkflowStatus
+from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode
 from runtime.workflow_runtime import WorkflowRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -103,6 +104,26 @@ def _run(tmp_path):
             "openQuestions": ["human confirmation pending"],
         },
     )
+    task_plan = TaskPlan(
+        taskId=task.task_id,
+        nodes=tuple(TaskPlanNode(
+            key=f"step:{step.node_id}",
+            title=step.name or step.node_id,
+            objective=step.goal or step.description or step.node_id,
+            capabilityRequirements=((step.capability,) if step.capability else ()),
+            metadata={"plannerStrategy": "test_explicit"},
+        ) for step in blueprint.step_nodes()),
+    )
+    task.input.update({
+        "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+        "taskNodeBindings": [
+            TaskNodeImplementationBinding(
+                planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id
+            ).model_dump(by_alias=True, mode="json")
+            for step in blueprint.step_nodes()
+        ],
+    })
+    runtime.workflow_store.save_task(task)
     _, prepared = runtime.prepare_run(task.task_id, workflow_id="golden-memory-runtime")
     return runtime, asyncio.run(runtime.execute_prepared_run(prepared.run_id))
 

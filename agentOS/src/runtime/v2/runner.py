@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +23,6 @@ from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 
 from .context import ExecutionContext
 from .state import require_transition
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
 
 class AcgIdentityLifecycleService:
     """AgentOS V2 身份与生命周期控制面；实际执行始终由 WKN ACG 内核完成。"""
@@ -127,6 +121,21 @@ class AcgIdentityLifecycleService:
         blueprint = self._blueprint(blueprint_id)
         if blueprint.task_id != task_id:
             raise IdentityConflictError("WorkflowRun cannot use another UserTask's Blueprint")
+        if run_id is not None:
+            existing = self.repositories.runs.get(run_id)
+            if existing is not None:
+                if existing.task_id != task_id:
+                    raise IdentityConflictError(
+                        "runId already belongs to another UserTask"
+                    )
+                if (
+                    existing.blueprint_id != blueprint_id
+                    or existing.graph_version != blueprint.version
+                ):
+                    raise IdentityConflictError(
+                        "runId already identifies another execution definition"
+                    )
+                return existing
         run = WorkflowRun(
             **({"runId": run_id} if run_id is not None else {}),
             taskId=task_id,
@@ -163,30 +172,18 @@ class AcgIdentityLifecycleService:
         run_id: RunId,
         node_id: TaskNodeId,
         resource_binding: dict[str, Any] | None = None,
+        attempt_number: int | None = None,
     ) -> Attempt:
         run = self._run(run_id)
         node = self._node(node_id)
         if node.task_id != run.task_id:
             raise IdentityConflictError("Attempt cannot use another UserTask's TaskNode")
-        prior = [
-            item for item in self.repositories.attempts.list_for_run(run_id)
-            if item.node_id == node_id
-        ]
-        attempt = Attempt(
-            runId=run_id,
-            nodeId=node_id,
-            attemptNumber=len(prior) + 1,
-            resourceBinding=resource_binding,
+        return self.repositories.ensure_attempt(
+            run_id,
+            node_id,
+            attempt_number=attempt_number,
+            resource_binding=resource_binding,
         )
-        self.repositories.attempts.add(attempt)
-        if run.status is RunStatus.PENDING:
-            require_transition(run.status, RunStatus.RUNNING)
-            self.repositories.runs.update_status(run_id, RunStatus.RUNNING)
-        task = self._task(run.task_id)
-        if task.status is UserTaskStatus.READY:
-            require_transition(task.status, UserTaskStatus.RUNNING)
-            self.repositories.user_tasks.update_status(task.task_id, UserTaskStatus.RUNNING)
-        return attempt
 
     def start_step_execution(
         self,
@@ -206,24 +203,17 @@ class AcgIdentityLifecycleService:
             or attempt.run_id != context.run_id
         ):
             raise IdentityConflictError("ExecutionContext identity chain is inconsistent")
-        if self.repositories.execution_bindings.get_for_attempt(attempt.attempt_id) is None:
-            raise EntityNotFoundError(
-                "AcgIdentityLifecycleService requires a persisted ExecutionBinding"
-            )
-        require_transition(attempt.status, AttemptStatus.RUNNING)
-        self.repositories.attempts.update_status(attempt.attempt_id, AttemptStatus.RUNNING)
-        started_at = _now()
-        execution = StepExecution(
-            runId=run.run_id,
-            nodeId=attempt.node_id,
-            attemptId=attempt.attempt_id,
-            status=StepExecutionStatus.RUNNING,
+        execution = self.repositories.ensure_step_execution(
+            run.run_id,
+            attempt.node_id,
+            attempt.attempt_id,
             input=input,
-            output={},
-            startedAt=started_at,
         )
-        self.repositories.step_executions.add(execution)
-        context.active_executions.append(execution.step_execution_id)
+        if execution.status is StepExecutionStatus.RUNNING:
+            context.active_executions = list(dict.fromkeys([
+                *context.active_executions,
+                execution.step_execution_id,
+            ]))
         return execution
 
     def complete_step_execution(
@@ -284,7 +274,12 @@ class AcgIdentityLifecycleService:
         return execution
 
     def finish_run(self, run_id: RunId, status: RunStatus) -> WorkflowRun:
-        if status not in {RunStatus.FAILED, RunStatus.SUCCEEDED, RunStatus.CANCELLED}:
+        if status not in {
+            RunStatus.FAILED,
+            RunStatus.SUCCEEDED,
+            RunStatus.CANCELLED,
+            RunStatus.SUPERSEDED,
+        }:
             raise ValueError("finish_run requires a terminal RunStatus")
         run = self._run(run_id)
         require_transition(run.status, status)

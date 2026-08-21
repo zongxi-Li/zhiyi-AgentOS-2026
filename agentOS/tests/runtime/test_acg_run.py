@@ -18,6 +18,7 @@ from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
 from components.task_manager.store import WorkflowRegistry
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, WorkflowRun, WorkflowStepDefinition, WorkflowStatus
+from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -601,10 +602,27 @@ def test_runtime_projects_real_parallel_failure_and_sibling_cancellation() -> No
             StepNode(nodeId="slow", agentName="parallel"),
         ],
     )
-    task = runtime.create_task(
-        "parallel", workflow_id="parallel-run",
-        input={"acgBlueprint": blueprint.model_dump(by_alias=True, mode="json")},
+    task = runtime.create_task("parallel", workflow_id="parallel-run")
+    task_plan = TaskPlan(
+        taskId=task.task_id,
+        nodes=tuple(TaskPlanNode(
+            key=f"step:{step.node_id}",
+            title=step.name or step.node_id,
+            objective=step.goal or step.description or step.node_id,
+            metadata={"plannerStrategy": "test_explicit"},
+        ) for step in blueprint.step_nodes()),
     )
+    task.input.update({
+        "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
+        "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+        "taskNodeBindings": [
+            TaskNodeImplementationBinding(
+                planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id
+            ).model_dump(by_alias=True, mode="json")
+            for step in blueprint.step_nodes()
+        ],
+    })
+    runtime.workflow_store.save_task(task)
     _, run = runtime.prepare_run(task.task_id)
 
     with pytest.raises(RuntimeError, match="ACG superstep failed"):
@@ -908,7 +926,13 @@ def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> N
             )
         ],
     )
-    runtime._build_acg_blueprint = lambda *_args, **_kwargs: invalid
+    task_plan = TaskPlan(taskId=task.task_id, nodes=(TaskPlanNode(key="step:extract", title="extract", objective="extract"),))
+    bindings = (TaskNodeImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
+    runtime._build_acg_blueprint = lambda *_args, **_kwargs: (
+        invalid,
+        task_plan,
+        bindings,
+    )
 
     with pytest.raises(ValueError, match="writeType is required"):
         runtime.prepare_run(task.task_id)
@@ -936,7 +960,13 @@ def test_prepare_run_rejects_null_write_type_when_memory_write_is_enabled() -> N
             )
         ],
     )
-    runtime._build_acg_blueprint = lambda *_args, **_kwargs: invalid
+    task_plan = TaskPlan(taskId=task.task_id, nodes=(TaskPlanNode(key="step:extract", title="extract", objective="extract"),))
+    bindings = (TaskNodeImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
+    runtime._build_acg_blueprint = lambda *_args, **_kwargs: (
+        invalid,
+        task_plan,
+        bindings,
+    )
 
     with pytest.raises(ValueError, match="writeType is required"):
         runtime.prepare_run(task.task_id)
@@ -975,10 +1005,27 @@ def test_runtime_marks_unselected_acg_branch_skipped() -> None:
         ],
     )
     runtime = WorkflowRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
-    task = runtime.create_task(
-        "route", workflow_id="route-run",
-        input={"acgBlueprint": blueprint.model_dump(by_alias=True, mode="json")},
+    task = runtime.create_task("route", workflow_id="route-run")
+    task_plan = TaskPlan(
+        taskId=task.task_id,
+        nodes=tuple(TaskPlanNode(
+            key=f"step:{step.node_id}",
+            title=step.name or step.node_id,
+            objective=step.goal or step.description or step.node_id,
+            metadata={"plannerStrategy": "test_explicit"},
+        ) for step in blueprint.step_nodes()),
     )
+    task.input.update({
+        "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
+        "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+        "taskNodeBindings": [
+            TaskNodeImplementationBinding(
+                planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id
+            ).model_dump(by_alias=True, mode="json")
+            for step in blueprint.step_nodes()
+        ],
+    })
+    runtime.workflow_store.save_task(task)
     _, run = runtime.prepare_run(task.task_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))

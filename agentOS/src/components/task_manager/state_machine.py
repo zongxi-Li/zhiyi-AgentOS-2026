@@ -18,14 +18,15 @@ class StateMachine:
 
     # 状态转移是有限状态机，单次查询与校验均为 O(1)，不随任务数量增长。
     _transitions = {
-        "pending": {"planning", "running", "failed", "cancelled", "skipped_by_condition"},
-        "planning": {"running", "failed", "cancelled"},
-        "running": {"waiting_review", "retrying", "failed", "completed", "cancelled"},
-        "waiting_review": {"running", "retrying", "failed", "completed", "cancelled"},
-        "retrying": {"running", "failed", "cancelled"},
+        "pending": {"planning", "running", "failed", "cancelled", "superseded", "skipped_by_condition"},
+        "planning": {"running", "failed", "cancelled", "superseded"},
+        "running": {"waiting_review", "retrying", "failed", "completed", "cancelled", "superseded"},
+        "waiting_review": {"running", "retrying", "failed", "completed", "cancelled", "superseded"},
+        "retrying": {"running", "failed", "cancelled", "superseded"},
         "failed": {"retrying", "cancelled"},
         "completed": set(),
         "cancelled": set(),
+        "superseded": set(),
         "skipped_by_condition": set(),
     }
 

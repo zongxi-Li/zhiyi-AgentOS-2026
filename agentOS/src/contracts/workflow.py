@@ -80,6 +80,7 @@ class WorkflowStatus(str, Enum):
     FAILED = "failed"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    SUPERSEDED = "superseded"
 
 
 class WorkflowDefinitionType(str, Enum):

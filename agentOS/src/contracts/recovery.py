@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
+from .planning import TaskNodeBindingPatch, TaskPlanPatch
 from .workflow import GraphRef
 
 
@@ -54,6 +55,11 @@ class GraphPatch(BaseModel):
     add_nodes: list[dict[str, Any]] = Field(default_factory=list, alias="addNodes")
     add_edges: list[dict[str, Any]] = Field(default_factory=list, alias="addEdges")
     remove_edge_ids: list[StrictStr] = Field(default_factory=list, alias="removeEdgeIds")
+    task_plan_patch: TaskPlanPatch | None = Field(default=None, alias="taskPlanPatch")
+    task_node_binding_patch: TaskNodeBindingPatch | None = Field(
+        default=None,
+        alias="taskNodeBindingPatch",
+    )
     reason: str = ""
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
 
@@ -71,6 +77,7 @@ class GraphPatchResult(BaseModel):
     applied: bool
     idempotent_replay: bool = Field(default=False, alias="idempotentReplay")
     graph_version: int = Field(alias="graphVersion", ge=1)
+    run_id: str | None = Field(default=None, alias="runId")
     patch_ref: GraphPatchRef = Field(alias="patchRef")
 
 

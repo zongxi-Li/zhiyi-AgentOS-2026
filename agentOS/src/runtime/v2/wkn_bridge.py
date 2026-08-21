@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
+import hashlib
+import json
+from types import SimpleNamespace
 from typing import Any
 
 from components.executor import ACGGraphCompiler
@@ -13,6 +17,12 @@ from contracts.identity import (
     TaskNodeId,
     new_run_id,
     new_user_task_id,
+)
+from contracts.planning import (
+    TaskNodeBindingPatch,
+    TaskNodeImplementationBinding,
+    TaskPlan,
+    TaskPlanPatch,
 )
 from contracts.resource import ExecutionBinding as WknExecutionBinding
 from domain.identity_graph import (
@@ -29,10 +39,13 @@ from domain.models import (
     StepExecution,
     StepExecutionStatus,
 )
+from domain.lifecycle_projection import LifecycleProjectionEvent
 from domain.repository import EntityNotFoundError, IdentityConflictError, RepositorySet
 from support.acg.models import EdgeType, WknBlueprintSpec, validate_blueprint
+from components.planner.service import apply_task_plan_patch
 
 from .context import ExecutionContext
+from .planner_bridge import PlannerIdentityBridge
 from .runner import AcgIdentityLifecycleService
 
 
@@ -66,6 +79,24 @@ class WknIdentityLifecycleAdapter:
 
     def on_task_created(self, task: Any) -> None:
         """使用 WKN 已持久化任务的同一个 taskId 建立 UserTask。"""
+        payload = {
+            "taskId": task.task_id,
+            "goal": self._task_goal(task),
+            "description": str(task.input.get("description") or ""),
+            "domain": task.domain,
+            "intent": task.intent,
+            "userId": str(task.input.get("authenticatedUserId") or "system:agentos"),
+            "tenantId": str(task.input.get("authenticatedTenantId") or ""),
+        }
+        with self._projection(
+            f"task.created:{task.task_id}",
+            "task.created",
+            task.task_id,
+            payload,
+        ):
+            self._on_task_created(task)
+
+    def _on_task_created(self, task: Any) -> None:
         existing = self.repositories.user_tasks.get(task.task_id)
         if existing is not None:
             if existing.goal != self._task_goal(task):
@@ -86,6 +117,11 @@ class WknIdentityLifecycleAdapter:
                     if task.input.get("authenticatedUserId")
                     else "system"
                 ),
+                **(
+                    {"tenantId": str(task.input["authenticatedTenantId"])}
+                    if task.input.get("authenticatedTenantId")
+                    else {}
+                ),
             },
         )
 
@@ -95,14 +131,124 @@ class WknIdentityLifecycleAdapter:
             raise EntityNotFoundError(f"UserTask not found: {task_id}")
         return new_run_id()
 
-    def on_run_prepared(self, task: Any, run: Any, blueprint: WknBlueprintSpec) -> None:
+    def on_run_prepared(
+        self,
+        task: Any,
+        run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan: TaskPlan,
+        task_node_bindings: Sequence[TaskNodeImplementationBinding],
+    ) -> None:
         """登记真实 WKN Blueprint，并用同一 runId 建立 OS 运行身份。"""
+        payload = {
+            "taskId": task.task_id,
+            "runId": run.run_id,
+            "workflowId": run.workflow_id,
+            "blueprint": blueprint.model_dump(by_alias=True, mode="json"),
+            "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+            "taskNodeBindings": [
+                item.model_dump(by_alias=True, mode="json")
+                for item in task_node_bindings
+            ],
+        }
+        with self._projection(
+            f"run.prepared:{run.run_id}",
+            "run.prepared",
+            run.run_id,
+            payload,
+        ):
+            self._on_run_prepared(
+                task,
+                run,
+                blueprint,
+                task_plan,
+                task_node_bindings,
+            )
+
+    def _on_run_prepared(
+        self,
+        task: Any,
+        run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan: TaskPlan,
+        task_node_bindings: Sequence[TaskNodeImplementationBinding],
+    ) -> None:
+        with self.repositories.storage.transaction():
+            self._on_run_prepared_atomic(
+                task,
+                run,
+                blueprint,
+                task_plan,
+                task_node_bindings,
+            )
+
+    def _on_run_prepared_atomic(
+        self,
+        task: Any,
+        run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan: TaskPlan,
+        task_node_bindings: Sequence[TaskNodeImplementationBinding],
+    ) -> None:
         existing_run = self.repositories.runs.get(run.run_id)
         if existing_run is not None:
             if existing_run.task_id != task.task_id:
                 raise IdentityConflictError("runId already belongs to another UserTask")
+            existing_blueprint = self.repositories.blueprints.get(
+                existing_run.blueprint_id
+            )
+            if (
+                existing_blueprint is None
+                or existing_blueprint.graph
+                != blueprint.model_dump(by_alias=True, mode="json")
+            ):
+                raise IdentityConflictError(
+                    "runId already identifies another Blueprint version"
+                )
+        if task_plan.task_id != task.task_id:
+            raise IdentityConflictError("TaskPlan does not belong to WKN AgentTask")
+        bindings_by_key = {
+            binding.plan_node_key: binding.acg_node_id
+            for binding in task_node_bindings
+        }
+        if len(bindings_by_key) != len(task_node_bindings):
+            raise IdentityConflictError("Blueprint contains duplicate TaskNode bindings")
+        if len(set(bindings_by_key.values())) != len(task_node_bindings):
+            raise IdentityConflictError(
+                "Each TaskPlan node requires a distinct executable Blueprint node"
+            )
+        plan_node_keys = {node.key for node in task_plan.nodes}
+        if set(bindings_by_key) != plan_node_keys:
+            raise IdentityConflictError("Blueprint bindings must cover the complete TaskPlan")
+        executable_node_ids = {node.node_id for node in blueprint.step_nodes()}
+        if set(bindings_by_key.values()) != executable_node_ids:
+            raise IdentityConflictError(
+                "Every executable Blueprint node requires an explicit TaskNode binding"
+            )
+
+        # 先完成纯校验，再写入 TaskNode，避免非法绑定留下部分身份数据。
+        planned_nodes = PlannerIdentityBridge(self.lifecycle_service).record_task_plan(
+            task_plan
+        )
+        explicit_bindings = {
+            planned_nodes[key].node_id: acg_node_id
+            for key, acg_node_id in bindings_by_key.items()
+        }
+        domain_blueprint = self._ensure_blueprint(
+            task.task_id,
+            blueprint,
+            explicit_bindings,
+            plan_version=task_plan.plan_version,
+        )
+        if existing_run is not None:
+            if (
+                existing_run.blueprint_id != domain_blueprint.blueprint_id
+                or existing_run.graph_version != domain_blueprint.version
+            ):
+                raise IdentityConflictError(
+                    "runId already identifies another execution definition"
+                )
             return
-        domain_blueprint = self._ensure_blueprint(task.task_id, blueprint)
         self.lifecycle_service.create_run(
             task_id=task.task_id,
             blueprint_id=domain_blueprint.blueprint_id,
@@ -114,12 +260,173 @@ class WknIdentityLifecycleAdapter:
             },
         )
 
-    def on_blueprint_revised(self, run: Any, blueprint: WknBlueprintSpec) -> None:
+    def on_blueprint_revised(
+        self,
+        run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan_patch: TaskPlanPatch | None = None,
+        task_node_binding_patch: TaskNodeBindingPatch | None = None,
+    ) -> str:
         """把 WKN 审核屏障产生的图修订登记为新 Blueprint 版本。"""
+        payload = {
+            "taskId": run.task_id,
+            "runId": run.run_id,
+            "blueprint": blueprint.model_dump(by_alias=True, mode="json"),
+            "taskPlanPatch": (
+                task_plan_patch.model_dump(by_alias=True, mode="json")
+                if task_plan_patch is not None
+                else None
+            ),
+            "taskNodeBindingPatch": (
+                task_node_binding_patch.model_dump(by_alias=True, mode="json")
+                if task_node_binding_patch is not None else None
+            ),
+        }
+        with self._projection(
+            f"blueprint.revised:{run.run_id}:{blueprint.version}",
+            "blueprint.revised",
+            run.run_id,
+            payload,
+        ):
+            return self._on_blueprint_revised_as_new_run(
+                run,
+                blueprint,
+                task_plan_patch,
+                task_node_binding_patch,
+            )
+
+    def _on_blueprint_revised_as_new_run(
+        self,
+        run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan_patch: TaskPlanPatch | None,
+        task_node_binding_patch: TaskNodeBindingPatch | None,
+    ) -> str:
         domain_run = self._run(run.run_id)
         if domain_run.task_id != run.task_id:
             raise IdentityConflictError("revised Blueprint does not belong to Run task")
-        revised = self._ensure_blueprint(run.task_id, blueprint)
+        prior_graph = WknBlueprintSpec.model_validate(
+            self.repositories.blueprints.get(domain_run.blueprint_id).graph
+        )
+        prior_step_ids = {node.node_id for node in prior_graph.step_nodes()}
+        revised_step_ids = {node.node_id for node in blueprint.step_nodes()}
+        if prior_step_ids - revised_step_ids:
+            raise IdentityConflictError("Blueprint revision cannot remove executable nodes")
+        current_plan = self.repositories.task_plans.latest(run.task_id)
+        if current_plan is None:
+            raise EntityNotFoundError("TaskPlan is missing for Blueprint revision")
+        next_plan = current_plan
+        if revised_step_ids - prior_step_ids:
+            if task_plan_patch is None or task_node_binding_patch is None:
+                raise IdentityConflictError("new executable nodes require TaskPlanPatch and TaskNodeBindingPatch")
+            next_plan = apply_task_plan_patch(current_plan, task_plan_patch)
+            binding_patch = task_node_binding_patch.bindings
+        else:
+            if task_plan_patch is not None or task_node_binding_patch is not None:
+                raise IdentityConflictError("patch data is only valid when executable nodes are added")
+            binding_patch = ()
+        by_key = {
+            str(node.metadata.get("plannerSemanticKey")): node
+            for node in self.repositories.task_nodes.list_for_task(run.task_id)
+            if node.metadata.get("plannerSemanticKey")
+        }
+        binding_items: list[TaskNodeImplementationBinding] = []
+        for node in next_plan.nodes:
+            task_node = by_key.get(node.key)
+            if task_node is None:
+                continue
+            existing = self.repositories.task_node_bindings.find_for_task_node(
+                task_node.node_id,
+                domain_run.blueprint_id,
+            )
+            if existing:
+                binding_items.append(TaskNodeImplementationBinding(
+                    planNodeKey=node.key,
+                    acgNodeId=existing[0].acg_node_id,
+                ))
+        binding_items.extend(binding_patch)
+        new_run_id = self.new_run_id(run.task_id)
+        new_run = SimpleNamespace(
+            run_id=new_run_id,
+            task_id=run.task_id,
+            workflow_id=run.workflow_id,
+        )
+        task = SimpleNamespace(task_id=run.task_id)
+        self.on_run_prepared(task, new_run, blueprint, next_plan, tuple(binding_items))
+        self.on_run_superseded(run.run_id, new_run_id, str(getattr(run, "run_id", "blueprint-revision")))
+        return new_run_id
+
+    def _on_blueprint_revised(
+        self,
+        run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan_patch: TaskPlanPatch | None,
+        task_node_binding_patch: TaskNodeBindingPatch | None,
+    ) -> None:
+        domain_run = self._run(run.run_id)
+        if domain_run.task_id != run.task_id:
+            raise IdentityConflictError("revised Blueprint does not belong to Run task")
+        prior_blueprint = self.repositories.blueprints.get(domain_run.blueprint_id)
+        if prior_blueprint is None:
+            raise EntityNotFoundError(
+                f"AcgBlueprint not found: {domain_run.blueprint_id}"
+            )
+        if prior_blueprint.graph == blueprint.model_dump(by_alias=True, mode="json"):
+            return
+        prior_graph = WknBlueprintSpec.model_validate(prior_blueprint.graph)
+        prior_step_ids = {node.node_id for node in prior_graph.step_nodes()}
+        revised_step_ids = {node.node_id for node in blueprint.step_nodes()}
+        added_step_ids = revised_step_ids - prior_step_ids
+        if prior_step_ids - revised_step_ids:
+            raise IdentityConflictError(
+                "Blueprint revision cannot remove executable nodes from the identity graph"
+            )
+        prior_bindings: dict[str, str] = {}
+        for node in self.repositories.task_nodes.list_for_task(run.task_id):
+            matches = self.repositories.task_node_bindings.find_for_task_node(
+                node.node_id,
+                domain_run.blueprint_id,
+            )
+            for binding in matches:
+                prior_bindings[node.node_id] = binding.acg_node_id
+        prior_plan_version = int(prior_blueprint.metadata.get("plannerPlanVersion") or 1)
+        next_plan_version = prior_plan_version
+        if added_step_ids:
+            if task_plan_patch is None:
+                raise IdentityConflictError(
+                    "new executable Blueprint nodes require a TaskPlanPatch"
+                )
+            if task_plan_patch.task_id != run.task_id:
+                raise IdentityConflictError("TaskPlanPatch does not belong to Run task")
+            if task_plan_patch.base_plan_version != prior_plan_version:
+                raise IdentityConflictError(
+                    "TaskPlanPatch basePlanVersion does not match active Blueprint plan"
+                )
+            if task_node_binding_patch is None:
+                raise IdentityConflictError("new executable Blueprint nodes require TaskNodeBindingPatch")
+            patch_binding_ids = {item.acg_node_id for item in task_node_binding_patch.bindings}
+            if patch_binding_ids != added_step_ids:
+                raise IdentityConflictError(
+                    "TaskPlanPatch bindings must cover exactly the added executable nodes"
+                )
+            planned_nodes = PlannerIdentityBridge(
+                self.lifecycle_service
+            ).record_task_plan_patch(task_plan_patch)
+            for binding in task_node_binding_patch.bindings:
+                prior_bindings[
+                    planned_nodes[binding.plan_node_key].node_id
+                ] = binding.acg_node_id
+            next_plan_version = task_plan_patch.plan_version
+        elif task_plan_patch is not None:
+            raise IdentityConflictError(
+                "TaskPlanPatch is only valid when executable Blueprint nodes are added"
+            )
+        revised = self._ensure_blueprint(
+            run.task_id,
+            blueprint,
+            prior_bindings,
+            plan_version=next_plan_version,
+        )
         if domain_run.blueprint_id == revised.blueprint_id:
             return
         self.repositories.runs.update_blueprint(
@@ -130,30 +437,29 @@ class WknIdentityLifecycleAdapter:
 
     def ensure_attempt(self, run: Any, step_id: str, attempt_number: int) -> str:
         """幂等创建 ACGNode 对应的 Attempt，并把其 ID 交回 WKN Scheduler。"""
+        payload = {
+            "runId": run.run_id,
+            "taskId": run.task_id,
+            "stepId": step_id,
+            "attemptNumber": attempt_number,
+        }
+        with self._projection(
+            f"attempt.ensured:{run.run_id}:{step_id}:{attempt_number}",
+            "attempt.ensured",
+            run.run_id,
+            payload,
+        ):
+            return self._ensure_attempt(run, step_id, attempt_number)
+
+    def _ensure_attempt(self, run: Any, step_id: str, attempt_number: int) -> str:
         domain_run = self.repositories.runs.get(run.run_id)
         if domain_run is None:
             raise EntityNotFoundError(f"WorkflowRunV2 not found: {run.run_id}")
         node = self._resolve_task_node(domain_run.blueprint_id, step_id)
-        existing = next(
-            (
-                item
-                for item in self.repositories.attempts.list_for_run(run.run_id)
-                if item.node_id == node.node_id and item.attempt_number == attempt_number
-            ),
-            None,
-        )
-        if existing is not None:
-            return existing.attempt_id
-        prior = [
-            item
-            for item in self.repositories.attempts.list_for_run(run.run_id)
-            if item.node_id == node.node_id
-        ]
-        if attempt_number != len(prior) + 1:
-            raise IdentityConflictError("WKN attempt number is not contiguous")
         return self.lifecycle_service.create_attempt(
             run_id=run.run_id,
             node_id=node.node_id,
+            attempt_number=attempt_number,
         ).attempt_id
 
     def on_resource_bound(
@@ -164,14 +470,40 @@ class WknIdentityLifecycleAdapter:
         agent_id: str,
         model_id: str,
     ) -> None:
-        self.record_scheduling_binding(
-            attempt_id=attempt_id,
-            wkn_binding=binding,
-            agent_id=agent_id,
-            model_id=model_id,
-        )
+        payload = {
+            "attemptId": attempt_id,
+            "binding": binding.model_dump(by_alias=True, mode="json"),
+            "agentId": agent_id,
+            "modelId": model_id,
+        }
+        with self._projection(
+            f"resource.bound:{attempt_id}",
+            "resource.bound",
+            attempt_id,
+            payload,
+        ):
+            self.record_scheduling_binding(
+                attempt_id=attempt_id,
+                wkn_binding=binding,
+                agent_id=agent_id,
+                model_id=model_id,
+            )
 
     def on_step_started(self, *, run_id: str, attempt_id: str, step_id: str) -> str:
+        payload = {"runId": run_id, "attemptId": attempt_id, "stepId": step_id}
+        with self._projection(
+            f"step.started:{attempt_id}",
+            "step.started",
+            attempt_id,
+            payload,
+        ):
+            return self._on_step_started(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                step_id=step_id,
+            )
+
+    def _on_step_started(self, *, run_id: str, attempt_id: str, step_id: str) -> str:
         attempt = self.repositories.attempts.get(attempt_id)
         if attempt is None or attempt.run_id != run_id:
             raise IdentityConflictError("Step start does not belong to Attempt run")
@@ -201,8 +533,43 @@ class WknIdentityLifecycleAdapter:
         step_execution_id: str,
         result: dict[str, Any],
     ) -> None:
+        payload = {
+            "runId": run_id,
+            "attemptId": attempt_id,
+            "stepExecutionId": step_execution_id,
+            "result": self._safe_projection_result(result),
+        }
+        with self._projection(
+            f"step.succeeded:{step_execution_id}",
+            "step.succeeded",
+            step_execution_id,
+            payload,
+        ):
+            self._on_step_succeeded(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                step_execution_id=step_execution_id,
+                result=result,
+            )
+
+    def _on_step_succeeded(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        step_execution_id: str,
+        result: dict[str, Any],
+    ) -> None:
         execution = self._execution(step_execution_id, run_id, attempt_id)
+        evidence_ids = self._provenance_event_ids(result)
+        memory_ref = result.get("memoryRef")
+        memory_ids = (
+            [str(memory_ref)]
+            if isinstance(memory_ref, str) and memory_ref and memory_ref != "memory:none"
+            else []
+        )
         if execution.status is StepExecutionStatus.SUCCEEDED:
+            self._record_provenance(execution, evidence_ids, memory_ids)
             return
         if execution.status is not StepExecutionStatus.RUNNING:
             raise IdentityConflictError("terminal StepExecution cannot become succeeded")
@@ -225,16 +592,36 @@ class WknIdentityLifecycleAdapter:
             step_execution_id,
             output=safe_output,
         )
-        evidence_ids = self._provenance_event_ids(result)
-        memory_ref = result.get("memoryRef")
-        memory_ids = (
-            [str(memory_ref)]
-            if isinstance(memory_ref, str) and memory_ref and memory_ref != "memory:none"
-            else []
-        )
         self._record_provenance(finished, evidence_ids, memory_ids)
 
     def on_step_failed(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        step_execution_id: str,
+        reason: str,
+    ) -> None:
+        payload = {
+            "runId": run_id,
+            "attemptId": attempt_id,
+            "stepExecutionId": step_execution_id,
+            "reason": reason,
+        }
+        with self._projection(
+            f"step.failed:{step_execution_id}",
+            "step.failed",
+            step_execution_id,
+            payload,
+        ):
+            self._on_step_failed(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                step_execution_id=step_execution_id,
+                reason=reason,
+            )
+
+    def _on_step_failed(
         self,
         *,
         run_id: str,
@@ -261,6 +648,33 @@ class WknIdentityLifecycleAdapter:
         step_execution_id: str,
         reason: str,
     ) -> None:
+        payload = {
+            "runId": run_id,
+            "attemptId": attempt_id,
+            "stepExecutionId": step_execution_id,
+            "reason": reason,
+        }
+        with self._projection(
+            f"step.cancelled:{step_execution_id}",
+            "step.cancelled",
+            step_execution_id,
+            payload,
+        ):
+            self._on_step_cancelled(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                step_execution_id=step_execution_id,
+                reason=reason,
+            )
+
+    def _on_step_cancelled(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        step_execution_id: str,
+        reason: str,
+    ) -> None:
         execution = self._execution(step_execution_id, run_id, attempt_id)
         if execution.status is StepExecutionStatus.CANCELLED:
             return
@@ -273,6 +687,40 @@ class WknIdentityLifecycleAdapter:
         )
 
     def on_run_finished(self, run_id: str, status: str) -> None:
+        payload = {"runId": run_id, "status": status}
+        with self._projection(
+            f"run.finished:{run_id}:{status}",
+            "run.finished",
+            run_id,
+            payload,
+        ):
+            self._on_run_finished(run_id, status)
+
+    def on_run_superseded(
+        self,
+        run_id: str,
+        new_run_id: str,
+        patch_id: str,
+    ) -> None:
+        payload = {
+            "runId": run_id,
+            "newRunId": new_run_id,
+            "patchId": patch_id,
+        }
+        with self._projection(
+            f"run.superseded:{run_id}:{patch_id}",
+            "run.superseded",
+            run_id,
+            payload,
+        ):
+            run = self._run(run_id)
+            if run.status is RunStatus.SUPERSEDED:
+                return
+            if run.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+                raise IdentityConflictError("terminal WorkflowRunV2 cannot be superseded")
+            self.lifecycle_service.finish_run(run_id, RunStatus.SUPERSEDED)
+
+    def _on_run_finished(self, run_id: str, status: str) -> None:
         target = {
             "succeeded": RunStatus.SUCCEEDED,
             "failed": RunStatus.FAILED,
@@ -322,15 +770,51 @@ class WknIdentityLifecycleAdapter:
             graph=graph,
             metadata={**(metadata or {}), "kernel": "wkn-acg"},
         )
+        self._ensure_blueprint_relations(
+            blueprint,
+            wkn_blueprint,
+            task_node_bindings,
+        )
+        return blueprint
+
+    def _ensure_blueprint_relations(
+        self,
+        blueprint: AcgBlueprint,
+        wkn_blueprint: WknBlueprintSpec,
+        task_node_bindings: Mapping[TaskNodeId, str],
+    ) -> None:
+        """幂等补齐 Blueprint 关系，供中断后的投影日志重放。"""
         for task_node_id, acg_node_id in task_node_bindings.items():
+            existing = self.repositories.task_node_bindings.find_for_acg_node(
+                acg_node_id,
+                blueprint.blueprint_id,
+            )
+            if existing:
+                if len(existing) != 1 or existing[0].task_node_id != task_node_id:
+                    raise IdentityConflictError(
+                        "Blueprint ACG node already has another primary TaskNode binding"
+                    )
+                continue
             self.repositories.task_node_bindings.add(TaskNodeBinding(
                 taskNodeId=task_node_id,
                 blueprintId=blueprint.blueprint_id,
                 acgNodeId=acg_node_id,
             ))
+        existing_edges = {
+            (
+                item.source_node_id,
+                item.target_node_id,
+                item.relation_type,
+            )
+            for item in self.repositories.blueprint_node_bindings.list_for_blueprint(
+                blueprint.blueprint_id
+            )
+        }
         for edge in wkn_blueprint.edges:
             relation = _EDGE_RELATIONS.get(edge.edge_type)
             if relation is None:
+                continue
+            if (edge.source_id, edge.target_id, relation) in existing_edges:
                 continue
             self.repositories.blueprint_node_bindings.add(BlueprintNodeBinding(
                 blueprintId=blueprint.blueprint_id,
@@ -338,7 +822,6 @@ class WknIdentityLifecycleAdapter:
                 targetNodeId=edge.target_id,
                 relationType=relation,
             ))
-        return blueprint
 
     def compile(self, blueprint_id: BlueprintId, *, run_id: RunId):
         """直接委托 WKN ``ACGGraphCompiler``，返回其原生执行图。"""
@@ -459,39 +942,35 @@ class WknIdentityLifecycleAdapter:
         self,
         task_id: str,
         wkn_blueprint: WknBlueprintSpec,
+        task_node_bindings: Mapping[TaskNodeId, str],
+        *,
+        plan_version: int,
     ) -> AcgBlueprint:
+        step_ids = {step.node_id for step in wkn_blueprint.step_nodes()}
+        if set(task_node_bindings.values()) != step_ids:
+            raise IdentityConflictError(
+                "WKN Blueprint requires explicit TaskNode binding for every executable node"
+            )
         graph = wkn_blueprint.model_dump(by_alias=True, mode="json")
         existing_blueprints = self.repositories.blueprints.list_for_task(task_id)
         for blueprint in existing_blueprints:
             if blueprint.graph == graph:
-                return blueprint
-        existing_nodes = self.repositories.task_nodes.list_for_task(task_id)
-        by_semantic_key = {
-            str(node.metadata.get("wknSemanticKey")): node
-            for node in existing_nodes
-            if node.metadata.get("wknSemanticKey")
-        }
-        bindings: dict[str, str] = {}
-        for step in wkn_blueprint.step_nodes():
-            node = by_semantic_key.get(step.node_id)
-            if node is None:
-                node = self.lifecycle_service.create_task_node(
-                    task_id=task_id,
-                    title=step.name or step.node_id,
-                    objective=step.goal or step.description or step.name or step.node_id,
-                    metadata={
-                        "wknSemanticKey": step.node_id,
-                        **({"capability": step.capability} if step.capability else {}),
-                    },
+                self._ensure_blueprint_relations(
+                    blueprint,
+                    wkn_blueprint,
+                    task_node_bindings,
                 )
-            bindings[node.node_id] = step.node_id
+                return blueprint
         version = max((item.version for item in existing_blueprints), default=0) + 1
         return self.register_blueprint(
             task_id=task_id,
             version=version,
             wkn_blueprint=wkn_blueprint,
-            task_node_bindings=bindings,
-            metadata={"wknSourceGraphVersion": wkn_blueprint.version},
+            task_node_bindings=task_node_bindings,
+            metadata={
+                "plannerPlanVersion": plan_version,
+                "wknSourceGraphVersion": wkn_blueprint.version,
+            },
         )
 
     def _resolve_task_node(self, blueprint_id: BlueprintId, step_id: str):
@@ -526,6 +1005,182 @@ class WknIdentityLifecycleAdapter:
         ):
             return
         self.repositories.provenance_links.add(link)
+
+    @contextmanager
+    def _projection(
+        self,
+        event_id: str,
+        event_type: str,
+        aggregate_id: str,
+        payload: dict[str, Any],
+    ):
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        event = LifecycleProjectionEvent(
+            eventId=event_id,
+            eventType=event_type,
+            aggregateId=aggregate_id,
+            payload=payload,
+            payloadHash=hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        )
+        self.repositories.projection_events.begin(event)
+        try:
+            yield
+        except Exception as exc:
+            self.repositories.projection_events.mark_failed(event_id, str(exc))
+            raise
+        else:
+            self.repositories.projection_events.mark_applied(event_id)
+
+    def replay_unapplied(self, *, limit: int = 200) -> dict[str, int]:
+        """按持久化安全载荷重放失败或中断的身份投影。"""
+        events = self.repositories.projection_events.list_unapplied(limit=limit)
+        applied = 0
+        failed = 0
+        for event in events:
+            try:
+                self._replay_event(event.event_type, event.payload)
+            except Exception:
+                failed += 1
+            else:
+                applied += 1
+        return {"examined": len(events), "applied": applied, "failed": failed}
+
+    def _replay_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if event_type == "task.created":
+            task = SimpleNamespace(
+                task_id=payload["taskId"],
+                title=payload["goal"],
+                domain=payload["domain"],
+                intent=payload["intent"],
+                input={
+                    "taskGoal": payload["goal"],
+                    "description": payload.get("description", ""),
+                    "authenticatedUserId": payload["userId"],
+                    **(
+                        {"authenticatedTenantId": payload["tenantId"]}
+                        if payload.get("tenantId")
+                        else {}
+                    ),
+                },
+            )
+            self.on_task_created(task)
+            return
+        if event_type == "run.prepared":
+            task = SimpleNamespace(task_id=payload["taskId"])
+            run = SimpleNamespace(
+                run_id=payload["runId"],
+                workflow_id=payload["workflowId"],
+            )
+            self.on_run_prepared(
+                task,
+                run,
+                WknBlueprintSpec.model_validate(payload["blueprint"]),
+                TaskPlan.model_validate(payload["taskPlan"]),
+                tuple(
+                    TaskNodeImplementationBinding.model_validate(item)
+                    for item in payload["taskNodeBindings"]
+                ),
+            )
+            return
+        if event_type == "blueprint.revised":
+            self.on_blueprint_revised(
+                SimpleNamespace(
+                    run_id=payload["runId"],
+                    task_id=payload["taskId"],
+                ),
+                WknBlueprintSpec.model_validate(payload["blueprint"]),
+                (
+                    TaskPlanPatch.model_validate(payload["taskPlanPatch"])
+                    if payload.get("taskPlanPatch") is not None
+                    else None
+                ),
+                (
+                    TaskNodeBindingPatch.model_validate(payload["taskNodeBindingPatch"])
+                    if payload.get("taskNodeBindingPatch") is not None
+                    else None
+                ),
+            )
+            return
+        if event_type == "attempt.ensured":
+            self.ensure_attempt(
+                SimpleNamespace(
+                    run_id=payload["runId"],
+                    task_id=payload["taskId"],
+                ),
+                payload["stepId"],
+                int(payload["attemptNumber"]),
+            )
+            return
+        if event_type == "resource.bound":
+            self.on_resource_bound(
+                attempt_id=payload["attemptId"],
+                binding=WknExecutionBinding.model_validate(payload["binding"]),
+                agent_id=payload["agentId"],
+                model_id=payload["modelId"],
+            )
+            return
+        if event_type == "step.started":
+            self.on_step_started(
+                run_id=payload["runId"],
+                attempt_id=payload["attemptId"],
+                step_id=payload["stepId"],
+            )
+            return
+        if event_type == "step.succeeded":
+            self.on_step_succeeded(
+                run_id=payload["runId"],
+                attempt_id=payload["attemptId"],
+                step_execution_id=payload["stepExecutionId"],
+                result=payload["result"],
+            )
+            return
+        if event_type in {"step.failed", "step.cancelled"}:
+            handler = (
+                self.on_step_failed
+                if event_type == "step.failed"
+                else self.on_step_cancelled
+            )
+            handler(
+                run_id=payload["runId"],
+                attempt_id=payload["attemptId"],
+                step_execution_id=payload["stepExecutionId"],
+                reason=payload["reason"],
+            )
+            return
+        if event_type == "run.finished":
+            self.on_run_finished(payload["runId"], payload["status"])
+            return
+        if event_type == "run.superseded":
+            self.on_run_superseded(
+                payload["runId"],
+                payload["newRunId"],
+                payload["patchId"],
+            )
+            return
+        raise ValueError(f"unsupported lifecycle projection event: {event_type}")
+
+    @staticmethod
+    def _safe_projection_result(result: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            key: result[key]
+            for key in (
+                "commitId",
+                "outputRef",
+                "outputSummary",
+                "contextRef",
+                "memoryRef",
+                "traceRef",
+                "auditDecisionRef",
+                "provenanceEvents",
+            )
+            if result.get(key) is not None
+        }
+        return allowed
 
     @staticmethod
     def _task_goal(task: Any) -> str:

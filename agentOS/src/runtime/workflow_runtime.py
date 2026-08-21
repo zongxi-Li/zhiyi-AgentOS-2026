@@ -52,6 +52,11 @@ from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
+from contracts.planning import (
+    TaskNodeBindingPatch,
+    TaskNodeImplementationBinding,
+    TaskPlan,
+)
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.resource.service import ResourceService
 from components.scheduler.service import SchedulerService
@@ -96,6 +101,10 @@ from components.planner.algorithms import (
     normalize_planning_diversity,
     normalize_planning_seed,
 )
+from components.planner.service import (
+    apply_task_plan_patch,
+    build_task_plan_for_workflow,
+)
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
 from adapters.model.native import register_native_runtime
@@ -110,6 +119,7 @@ _TERMINAL_RUN_STATUSES = {
     WorkflowStatus.COMPLETED,
     WorkflowStatus.FAILED,
     WorkflowStatus.CANCELLED,
+    WorkflowStatus.SUPERSEDED,
 }
 
 _LIFECYCLE_MESSAGES = {
@@ -443,7 +453,11 @@ class WknWorkflowRuntime:
             run.execution_state["evolutionPolicyVersion"] = active_evolution.version
             run.execution_state["evolutionPolicy"] = dict(active_evolution.policy)
         if is_acg:
-            blueprint = self._build_acg_blueprint(task, run, workflow)
+            blueprint, task_plan, task_node_bindings = self._build_acg_blueprint(
+                task,
+                run,
+                workflow,
+            )
             self._validate_blueprint_agents(
                 blueprint,
                 domain=workflow.domain or task.domain,
@@ -461,10 +475,22 @@ class WknWorkflowRuntime:
                     "workflowVersion": workflow.version,
                     "graphId": blueprint.graph_id,
                     "sourceBlueprintVersion": blueprint.version,
+                    "taskPlanVersion": task_plan.plan_version,
+                    "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+                    "taskNodeBindings": [
+                        item.model_dump(by_alias=True, mode="json")
+                        for item in task_node_bindings
+                    ],
                 }
             )
             if self.identity_lifecycle is not None:
-                self.identity_lifecycle.on_run_prepared(task, run, blueprint)
+                self.identity_lifecycle.on_run_prepared(
+                    task,
+                    run,
+                    blueprint,
+                    task_plan,
+                    task_node_bindings,
+                )
         self.trace_store.append(
             run=run,
             event_type=TraceEventType.TASK_STATUS_CHANGED,
@@ -1433,7 +1459,11 @@ class WknWorkflowRuntime:
         task: AgentTask,
         run: WorkflowRun,
         workflow: WorkflowDefinition,
-    ) -> WknBlueprintSpec:
+    ) -> tuple[
+        WknBlueprintSpec,
+        TaskPlan,
+        tuple[TaskNodeImplementationBinding, ...],
+    ]:
         """获取 ACG 蓝图，三级优先级：
 
         1. 现成蓝图：run.input['acgBlueprint'] 或 run.acg_blueprint（外部/前序产物）。
@@ -1446,7 +1476,21 @@ class WknWorkflowRuntime:
             blueprint = WknBlueprintSpec.model_validate(provided)
             if not blueprint.task_id:
                 blueprint = blueprint.model_copy(deep=True, update={"task_id": task.task_id})
-            return blueprint
+            raw_plan = run.input.get("taskPlan")
+            raw_bindings = run.input.get("taskNodeBindings")
+            if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
+                raise ValueError(
+                    "explicit ACG Blueprint requires taskPlan and taskNodeBindings"
+                )
+            if isinstance(raw_plan, dict) and isinstance(raw_bindings, list):
+                task_plan = TaskPlan.model_validate(raw_plan)
+                task_node_bindings = tuple(
+                    TaskNodeImplementationBinding.model_validate(item)
+                    for item in raw_bindings
+                )
+            if task_plan.task_id != task.task_id:
+                raise ValueError("TaskPlan taskId does not match AgentTask")
+            return blueprint, task_plan, task_node_bindings
 
         planning_mode = str(run.input.get("planningMode") or "").strip().lower()
         force_dynamic = (
@@ -1535,9 +1579,20 @@ class WknWorkflowRuntime:
                 review_nodes[0].review_required = True
                 review_nodes[0].metadata["reviewBarrier"] = True
                 blueprint.metadata["reviewCapability"] = workflow.review_capability
-            return blueprint
+            return blueprint, plan.task_plan, plan.task_node_bindings
 
-        return promote_workflow_to_acg(workflow, task_id=task.task_id)
+        task_plan = build_task_plan_for_workflow(
+            task_id=task.task_id,
+            workflow=workflow,
+            strategy="static_workflow",
+        )
+        blueprint = promote_workflow_to_acg(workflow, task_id=task.task_id)
+        from components.planner.service import build_task_node_bindings
+        task_node_bindings = build_task_node_bindings(
+            task_plan=task_plan,
+            blueprint=blueprint,
+        )
+        return blueprint, task_plan, task_node_bindings
 
     def _sync_run_steps_to_acg(
         self,
@@ -2076,6 +2131,7 @@ class WknWorkflowRuntime:
                     applied=False,
                     idempotentReplay=True,
                     graphVersion=outcome.blueprint.version,
+                    runId=str(previous.get("newRunId") or "") or None,
                     patchRef=GraphPatchRef(
                         patchId=patch.patch_id,
                         graph=GraphRef(
@@ -2098,12 +2154,113 @@ class WknWorkflowRuntime:
                 scope=scope,
             )
             old_step_ids = {step.step_id for step in run.steps}
-            self._sync_run_steps_to_acg(run, outcome.blueprint)
+            if self.identity_lifecycle is None:
+                self._sync_run_steps_to_acg(run, outcome.blueprint)
+                bindings = dict(run.execution_state.get("resourceBindings") or {})
+                requirements = dict(run.execution_state.get("bindingRequirements") or {})
+                for step in run.steps:
+                    if step.step_id in bindings:
+                        continue
+                    selected = self.resource_directory.resolve_agent(
+                        domain=workflow.domain,
+                        agent_name=step.agent_name,
+                        capability=step.capability,
+                        allowed_agent_ids=scope.agent_ids,
+                    )
+                    bindings[step.step_id] = selected.agent_id
+                    requirements[step.step_id] = BindingRequirement(
+                        requiredCapabilities=[step.capability or f"agent:{step.agent_name.lower()}"],
+                        domain=workflow.domain,
+                        resourceTypes=[ResourceType.AGENT],
+                        allowedResourceIds=list(scope.agent_ids),
+                        preferences={"resourceId": selected.agent_id},
+                        policyMetadata={"source": "graph-patch", "stepId": step.step_id},
+                    ).model_dump(by_alias=True, mode="json")
+                patch_uri = self.execution_value_store.put_graph_patch(
+                    run_id=run.run_id,
+                    payload=patch.model_dump(by_alias=True, mode="json"),
+                )
+                applied_metadata = list(outcome.blueprint.metadata.get("appliedGraphPatches") or [])
+                if applied_metadata:
+                    applied_metadata[-1] = {**applied_metadata[-1], "patchRef": patch_uri}
+                    outcome.blueprint.metadata["appliedGraphPatches"] = applied_metadata
+                run.acg_blueprint = outcome.blueprint.model_dump(by_alias=True, mode="json")
+                state.graph_version = outcome.blueprint.version
+                state.graph_patch_refs = list(dict.fromkeys([*state.graph_patch_refs, patch_uri]))
+                state.checkpoint_id = None
+                run.execution_state["graphVersion"] = outcome.blueprint.version
+                run.execution_state["sourceBlueprintVersion"] = outcome.blueprint.version
+                run.execution_state["resourceBindings"] = bindings
+                run.execution_state["bindingRequirements"] = requirements
+                self._persist_acg_state(run, state)
+                self._save_acg_checkpoint(run, state)
+                self._persist_acg_state(run, state)
+                self.workflow_store.save_run(run)
+                return GraphPatchResult(
+                    applied=True,
+                    graphVersion=outcome.blueprint.version,
+                    patchRef=GraphPatchRef(
+                        patchId=patch.patch_id,
+                        graph=GraphRef(graphId=outcome.blueprint.graph_id, version=str(outcome.blueprint.version)),
+                        uri=patch_uri,
+                        checksum=outcome.checksum,
+                    ),
+                )
+            raw_plan = run.execution_state.get("taskPlan")
+            raw_bindings = run.execution_state.get("taskNodeBindings")
+            if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
+                raise ValueError("graph patch requires persisted Planner identity data")
+            current_plan = TaskPlan.model_validate(raw_plan)
+            if patch.task_plan_patch is not None:
+                next_plan = apply_task_plan_patch(current_plan, patch.task_plan_patch)
+            else:
+                next_plan = current_plan
+            binding_patch = patch.task_node_binding_patch
+            added_step_ids = {
+                step.node_id for step in outcome.blueprint.step_nodes()
+            } - old_step_ids
+            if added_step_ids and binding_patch is None:
+                raise ValueError("new executable Graph Patch nodes require TaskNodeBindingPatch")
+            next_bindings = tuple(
+                TaskNodeImplementationBinding.model_validate(item)
+                for item in raw_bindings
+            ) + (binding_patch.bindings if binding_patch is not None else ())
+            if {item.plan_node_key for item in next_bindings} != {
+                node.key for node in next_plan.nodes
+            }:
+                raise ValueError("Graph Patch bindings must cover the complete revised TaskPlan")
+
+            new_run_id = (
+                self.identity_lifecycle.new_run_id(task.task_id)
+                if self.identity_lifecycle is not None
+                else f"run_{uuid4().hex[:12]}"
+            )
+            new_payload = run.model_dump(by_alias=True, mode="json")
+            new_payload.update({
+                "runId": new_run_id,
+                "status": WorkflowStatus.PENDING.value,
+                "lifecyclePhase": WorkflowProgressPhase.UNDERSTANDING.value,
+                "lifecycleMessage": _LIFECYCLE_MESSAGES[WorkflowProgressPhase.UNDERSTANDING],
+                "startedAt": None,
+                "currentStepId": None,
+                "output": {},
+                "steps": [],
+                "checkpoints": [],
+                "trace": [],
+                "error": None,
+                "completedStepIds": [],
+                "activeStepIds": [],
+                "acgBlueprint": outcome.blueprint.model_dump(by_alias=True, mode="json"),
+                "createdAt": utc_now().isoformat(),
+                "updatedAt": utc_now().isoformat(),
+            })
+            new_run = WorkflowRun.model_validate(new_payload)
+            self._sync_run_steps_to_acg(new_run, outcome.blueprint)
             for agent in self.agent_registry.all():
                 self.resource_directory.register_agent(agent.profile)
             bindings = dict(run.execution_state.get("resourceBindings") or {})
             requirements = dict(run.execution_state.get("bindingRequirements") or {})
-            for step in run.steps:
+            for step in new_run.steps:
                 if step.step_id in old_step_ids:
                     continue
                 selected = self.resource_directory.resolve_agent(
@@ -2125,7 +2282,7 @@ class WknWorkflowRuntime:
                 ).model_dump(by_alias=True, mode="json")
 
             patch_uri = self.execution_value_store.put_graph_patch(
-                run_id=run.run_id,
+                run_id=new_run.run_id,
                 payload=patch.model_dump(by_alias=True, mode="json"),
             )
             patch_ref = GraphPatchRef(
@@ -2138,21 +2295,49 @@ class WknWorkflowRuntime:
                 checksum=outcome.checksum,
             )
             applied_metadata = list(outcome.blueprint.metadata["appliedGraphPatches"])
-            applied_metadata[-1] = {**applied_metadata[-1], "patchRef": patch_uri}
+            applied_metadata[-1] = {
+                **applied_metadata[-1],
+                "patchRef": patch_uri,
+                "sourceRunId": run.run_id,
+                "newRunId": new_run.run_id,
+            }
             outcome.blueprint.metadata["appliedGraphPatches"] = applied_metadata
-            run.acg_blueprint = outcome.blueprint.model_dump(by_alias=True, mode="json")
-            state.graph_version = outcome.blueprint.version
-            state.graph_patch_refs = list(dict.fromkeys([*state.graph_patch_refs, patch_uri]))
-            state.checkpoint_id = None
-            run.execution_state["resourceBindings"] = bindings
-            run.execution_state["bindingRequirements"] = requirements
-            run.execution_state["sourceBlueprintVersion"] = outcome.blueprint.version
-            run.execution_state["graphVersion"] = outcome.blueprint.version
+            new_run.acg_blueprint = outcome.blueprint.model_dump(by_alias=True, mode="json")
+            new_run.execution_state.update({
+                "resourceBindings": bindings,
+                "bindingRequirements": requirements,
+                "sourceBlueprintVersion": outcome.blueprint.version,
+                "graphVersion": outcome.blueprint.version,
+                "taskPlanVersion": next_plan.plan_version,
+                "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
+                "taskNodeBindings": [
+                    item.model_dump(by_alias=True, mode="json") for item in next_bindings
+                ],
+                "parentRunId": run.run_id,
+                "supersedesRunId": run.run_id,
+                "sourcePatchId": patch.patch_id,
+                "graphPatchRefs": [patch_uri],
+            })
             if self.identity_lifecycle is not None:
-                self.identity_lifecycle.on_blueprint_revised(run, outcome.blueprint)
-            self._persist_acg_state(run, state)
-            new_checkpoint_id = self._save_acg_checkpoint(run, state)
-            self._persist_acg_state(run, state)
+                self.identity_lifecycle.on_run_prepared(
+                    task,
+                    new_run,
+                    outcome.blueprint,
+                    next_plan,
+                    next_bindings,
+                )
+                self.identity_lifecycle.on_run_superseded(
+                    run.run_id,
+                    new_run.run_id,
+                    patch.patch_id,
+                )
+            run.status = WorkflowStatus.SUPERSEDED
+            run.execution_state["supersededByRunId"] = new_run.run_id
+            run_graph = deepcopy(run.acg_blueprint or {})
+            run_graph["metadata"] = deepcopy(run_graph.get("metadata") or {})
+            run_graph["metadata"]["appliedGraphPatches"] = applied_metadata
+            run.acg_blueprint = run_graph
+            run.updated_at = utc_now()
             self.trace_store.append(
                 run,
                 TraceEventType.GRAPH_PATCH_APPLIED,
@@ -2162,13 +2347,15 @@ class WknWorkflowRuntime:
                     "patchRef": patch_uri,
                     "baseGraphVersion": patch.base_graph_version,
                     "graphVersion": outcome.blueprint.version,
-                    "checkpointId": new_checkpoint_id,
+                    "newRunId": new_run.run_id,
                 },
             )
             self.workflow_store.save_run(run)
+            self.workflow_store.save_run(new_run)
             return GraphPatchResult(
                 applied=True,
                 graphVersion=outcome.blueprint.version,
+                runId=new_run.run_id,
                 patchRef=patch_ref,
             )
 
