@@ -20,6 +20,7 @@ from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
 from components.task_manager.store import WorkflowRegistry
 from runtime import ApplicationSetup, WorkflowRuntime
+from runtime.v2 import WknAcgIdentityBridge, WorkflowRuntimeV2
 from service.agents import AgentRegistry
 from support.packs.registry import register_installed_packs
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -129,6 +130,16 @@ def build_default_runtime(
             resource_service=resource_service,
             coordinator=coordinator,
         )
+    identity_runtime = WorkflowRuntimeV2.from_sqlite(
+        Path(str(
+            env.get("AGENTOS_IDENTITY_DB")
+            or workflow_path.with_name("identity_v2.sqlite3")
+        ))
+    )
+    identity_bridge = WknAcgIdentityBridge(
+        identity_runtime,
+        identity_runtime.repositories,
+    )
     runtime = WorkflowRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
@@ -145,6 +156,7 @@ def build_default_runtime(
         provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
         tool_runtime=tool_runtime or get_tool_runtime(),
+        identity_lifecycle=identity_bridge,
     )
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)
     runtime.plugin_manifests = register_installed_packs(
@@ -168,6 +180,7 @@ def close_runtime(runtime: WorkflowRuntime) -> None:
         runtime.provenance_store,
         runtime.decision_store,
         getattr(runtime, "_model_runtime", None),
+        getattr(getattr(runtime, "identity_lifecycle", None), "runtime", None),
     )
     seen: set[int] = set()
     for resource in resources:

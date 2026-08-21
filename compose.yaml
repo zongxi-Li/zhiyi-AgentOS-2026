@@ -81,6 +81,7 @@ services:
       AGENTOS_PROVENANCE_DB: /app/data/agentos/provenance.sqlite3
       AGENTOS_AUDIT_DB: /app/data/agentos/audit_decisions.sqlite3
       AGENTOS_EVOLUTION_DB: /app/data/agentos/evolution.sqlite3
+      AGENTOS_IDENTITY_DB: /app/data/agentos/identity_v2.sqlite3
       AGENTOS_SQLITE_BUSY_TIMEOUT_MS: ${AGENTOS_SQLITE_BUSY_TIMEOUT_MS:-5000}
       UVICORN_WORKERS: "1"
       AI_INTERNAL_TOKEN_FILE: /run/kinlin-secrets/ai_internal_token
