@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
 from components.executor import GraphPatchConflictError, InMemoryExecutionValueStore
@@ -112,6 +110,14 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
     try:
         task = runtime.create_task("identity patch", workflow_id="patchable")
         paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
+        original_domain_run = identity.repositories.runs.get(paused.run_id)
+        original_blueprint = identity.repositories.blueprints.get(
+            original_domain_run.blueprint_id
+        )
+        original_attempt_ids = {
+            attempt.attempt_id
+            for attempt in identity.repositories.attempts.list_for_run(paused.run_id)
+        }
         blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
         original_edge = next(
             edge
@@ -175,12 +181,22 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
         assert applied.run_id != paused.run_id
         assert len(bindings) == 1
         assert bindings[0].task_node_id.startswith("node_")
+        assert domain_run.metadata["parentRunId"] == paused.run_id
+        assert domain_run.metadata["supersedesRunId"] == paused.run_id
+        assert domain_run.metadata["sourcePatchId"] == patch.patch_id
+        assert identity.repositories.blueprints.get(
+            old_domain_run.blueprint_id
+        ).graph == original_blueprint.graph
+        assert {
+            attempt.attempt_id
+            for attempt in identity.repositories.attempts.list_for_run(paused.run_id)
+        } == original_attempt_ids
     finally:
         identity.close()
 
 
-def test_runtime_applies_versioned_patch_at_review_barrier_and_executes_new_node(tmp_path):
-    runtime, agent = _runtime(tmp_path)
+def test_graph_patch_without_identity_lifecycle_is_rejected_without_mutation(tmp_path):
+    runtime, _agent = _runtime(tmp_path)
     task = runtime.create_task("patch", workflow_id="patchable")
     paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
     assert paused.status is WorkflowStatus.WAITING_REVIEW
@@ -214,47 +230,93 @@ def test_runtime_applies_versioned_patch_at_review_barrier_and_executes_new_node
     )
     old_checkpoint = paused.execution_state["checkpointId"]
 
-    applied = asyncio.run(runtime.apply_graph_patch(patch))
-    patched = runtime.get_status(paused.run_id)
+    with pytest.raises(ValueError, match="identity lifecycle adapter"):
+        asyncio.run(runtime.apply_graph_patch(patch))
 
-    assert applied.applied is True
-    assert applied.graph_version == 2
-    assert patched.execution_state["graphVersion"] == 2
-    assert patched.execution_state["checkpointId"] != old_checkpoint
-    assert patched.execution_state["graphPatchRefs"] == [applied.patch_ref.uri]
-    assert runtime.execution_value_store.get_graph_patch(
-        run_id=patched.run_id,
-        patch_ref=applied.patch_ref.uri,
-    )["patchId"] == patch.patch_id
-    assert "addNodes" not in patched.execution_state
+    unchanged = runtime.get_status(paused.run_id)
+    assert unchanged.status is WorkflowStatus.WAITING_REVIEW
+    assert unchanged.execution_state["checkpointId"] == old_checkpoint
+    assert unchanged.execution_state["graphVersion"] == blueprint.version
+    assert unchanged.acg_blueprint == paused.acg_blueprint
 
-    replay = asyncio.run(runtime.apply_graph_patch(patch))
-    assert replay.applied is False
-    assert replay.idempotent_replay is True
-    assert replay.patch_ref.uri == applied.patch_ref.uri
 
-    completed = asyncio.run(
-        runtime.apply_review(
-            ReviewDecision(
-                runId=paused.run_id,
-                stepId="review",
-                decision=ReviewDecisionType.APPROVED,
-                operationId="approve-patched-run",
-            )
+def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, monkeypatch):
+    runtime, _agent = _runtime(tmp_path, with_identity=True)
+    identity = runtime.identity_lifecycle.lifecycle_service
+    try:
+        task = runtime.create_task("identity rollback", workflow_id="patchable")
+        paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
+        blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
+        original_edge = next(
+            edge for edge in blueprint.edges
+            if edge.edge_type is EdgeType.DEPENDENCY
+            and edge.source_id == "review"
+            and edge.target_id == "deliver"
         )
-    )
-    assert completed.status is WorkflowStatus.COMPLETED
-    assert agent.calls == ["review", "enrich", "deliver"]
-    assert completed.completed_step_ids == ["review", "enrich", "deliver"]
+        patch = GraphPatch(
+            patchId="patch-identity-rollback",
+            idempotencyKey="patch-identity-rollback:v1",
+            runId=paused.run_id,
+            graphId=blueprint.graph_id,
+            baseGraphVersion=blueprint.version,
+            removeEdgeIds=[original_edge.edge_id],
+            addNodes=[StepNode(
+                nodeId="enrich",
+                name="enrich",
+                goal="enrich result",
+                agentName="runner",
+            ).model_dump(by_alias=True, mode="json")],
+            addEdges=[
+                ACGEdge(
+                    edgeId="rollback-review-to-enrich",
+                    sourceId="review",
+                    targetId="enrich",
+                ).model_dump(by_alias=True, mode="json"),
+                ACGEdge(
+                    edgeId="rollback-enrich-to-deliver",
+                    sourceId="enrich",
+                    targetId="deliver",
+                ).model_dump(by_alias=True, mode="json"),
+            ],
+            taskPlanPatch=TaskPlanPatch(
+                taskId=task.task_id,
+                basePlanVersion=1,
+                planVersion=2,
+                addNodes=(TaskPlanNode(
+                    key="step:enrich",
+                    title="enrich",
+                    objective="enrich result",
+                ),),
+            ),
+            taskNodeBindingPatch=TaskNodeBindingPatch(bindings=(
+                TaskNodeImplementationBinding(
+                    planNodeKey="step:enrich",
+                    acgNodeId="enrich",
+                ),
+            )),
+        )
+        original_finish = identity.finish_run
 
-    runtime.clean_execution_orphans(
-        run_id=completed.run_id,
-        older_than=datetime.now(timezone.utc) + timedelta(seconds=1),
-    )
-    assert runtime.execution_value_store.get_graph_patch(
-        run_id=completed.run_id,
-        patch_ref=applied.patch_ref.uri,
-    )["patchId"] == patch.patch_id
+        def fail_supersede(run_id, status):
+            if status.value == "superseded":
+                raise RuntimeError("simulated supersede failure")
+            return original_finish(run_id, status)
+
+        monkeypatch.setattr(identity, "finish_run", fail_supersede)
+        with pytest.raises(RuntimeError, match="simulated supersede failure"):
+            asyncio.run(runtime.apply_graph_patch(patch))
+
+        runs = identity.repositories.runs.list_for_task(task.task_id)
+        assert [run.run_id for run in runs] == [paused.run_id]
+        assert runs[0].status.value != "superseded"
+        assert len(identity.repositories.blueprints.list_for_task(task.task_id)) == 1
+        assert len(identity.repositories.task_plans.list_for_task(task.task_id)) == 1
+        assert {
+            node.metadata["plannerSemanticKey"]
+            for node in identity.repositories.task_nodes.list_for_task(task.task_id)
+        } == {"step:review", "step:deliver"}
+    finally:
+        identity.close()
 
 
 def test_graph_patch_rejects_stale_version(tmp_path):

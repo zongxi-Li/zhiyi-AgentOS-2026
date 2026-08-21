@@ -2153,59 +2153,11 @@ class WknWorkflowRuntime:
                 domain=workflow.domain or task.domain,
                 scope=scope,
             )
-            old_step_ids = {step.step_id for step in run.steps}
             if self.identity_lifecycle is None:
-                self._sync_run_steps_to_acg(run, outcome.blueprint)
-                bindings = dict(run.execution_state.get("resourceBindings") or {})
-                requirements = dict(run.execution_state.get("bindingRequirements") or {})
-                for step in run.steps:
-                    if step.step_id in bindings:
-                        continue
-                    selected = self.resource_directory.resolve_agent(
-                        domain=workflow.domain,
-                        agent_name=step.agent_name,
-                        capability=step.capability,
-                        allowed_agent_ids=scope.agent_ids,
-                    )
-                    bindings[step.step_id] = selected.agent_id
-                    requirements[step.step_id] = BindingRequirement(
-                        requiredCapabilities=[step.capability or f"agent:{step.agent_name.lower()}"],
-                        domain=workflow.domain,
-                        resourceTypes=[ResourceType.AGENT],
-                        allowedResourceIds=list(scope.agent_ids),
-                        preferences={"resourceId": selected.agent_id},
-                        policyMetadata={"source": "graph-patch", "stepId": step.step_id},
-                    ).model_dump(by_alias=True, mode="json")
-                patch_uri = self.execution_value_store.put_graph_patch(
-                    run_id=run.run_id,
-                    payload=patch.model_dump(by_alias=True, mode="json"),
+                raise ValueError(
+                    "graph patch requires the identity lifecycle adapter"
                 )
-                applied_metadata = list(outcome.blueprint.metadata.get("appliedGraphPatches") or [])
-                if applied_metadata:
-                    applied_metadata[-1] = {**applied_metadata[-1], "patchRef": patch_uri}
-                    outcome.blueprint.metadata["appliedGraphPatches"] = applied_metadata
-                run.acg_blueprint = outcome.blueprint.model_dump(by_alias=True, mode="json")
-                state.graph_version = outcome.blueprint.version
-                state.graph_patch_refs = list(dict.fromkeys([*state.graph_patch_refs, patch_uri]))
-                state.checkpoint_id = None
-                run.execution_state["graphVersion"] = outcome.blueprint.version
-                run.execution_state["sourceBlueprintVersion"] = outcome.blueprint.version
-                run.execution_state["resourceBindings"] = bindings
-                run.execution_state["bindingRequirements"] = requirements
-                self._persist_acg_state(run, state)
-                self._save_acg_checkpoint(run, state)
-                self._persist_acg_state(run, state)
-                self.workflow_store.save_run(run)
-                return GraphPatchResult(
-                    applied=True,
-                    graphVersion=outcome.blueprint.version,
-                    patchRef=GraphPatchRef(
-                        patchId=patch.patch_id,
-                        graph=GraphRef(graphId=outcome.blueprint.graph_id, version=str(outcome.blueprint.version)),
-                        uri=patch_uri,
-                        checksum=outcome.checksum,
-                    ),
-                )
+            old_step_ids = {step.step_id for step in run.steps}
             raw_plan = run.execution_state.get("taskPlan")
             raw_bindings = run.execution_state.get("taskNodeBindings")
             if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
@@ -2232,8 +2184,6 @@ class WknWorkflowRuntime:
 
             new_run_id = (
                 self.identity_lifecycle.new_run_id(task.task_id)
-                if self.identity_lifecycle is not None
-                else f"run_{uuid4().hex[:12]}"
             )
             new_payload = run.model_dump(by_alias=True, mode="json")
             new_payload.update({
@@ -2318,19 +2268,15 @@ class WknWorkflowRuntime:
                 "sourcePatchId": patch.patch_id,
                 "graphPatchRefs": [patch_uri],
             })
-            if self.identity_lifecycle is not None:
-                self.identity_lifecycle.on_run_prepared(
-                    task,
-                    new_run,
-                    outcome.blueprint,
-                    next_plan,
-                    next_bindings,
-                )
-                self.identity_lifecycle.on_run_superseded(
-                    run.run_id,
-                    new_run.run_id,
-                    patch.patch_id,
-                )
+            self.identity_lifecycle.on_graph_patch_prepared(
+                task,
+                run,
+                new_run,
+                outcome.blueprint,
+                next_plan,
+                next_bindings,
+                patch.patch_id,
+            )
             run.status = WorkflowStatus.SUPERSEDED
             run.execution_state["supersededByRunId"] = new_run.run_id
             run_graph = deepcopy(run.acg_blueprint or {})

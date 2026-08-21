@@ -19,6 +19,16 @@ class AcgIdentityLifecyclePort(Protocol):
         task_plan: Any,
         task_node_bindings: Any,
     ) -> None: ...
+    def on_graph_patch_prepared(
+        self,
+        task: Any,
+        old_run: Any,
+        new_run: Any,
+        blueprint: Any,
+        task_plan: Any,
+        task_node_bindings: Any,
+        patch_id: str,
+    ) -> None: ...
     def on_blueprint_revised(
         self,
         run: Any,

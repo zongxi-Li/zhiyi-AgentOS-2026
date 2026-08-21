@@ -249,6 +249,12 @@ class WknIdentityLifecycleAdapter:
                     "runId already identifies another execution definition"
                 )
             return
+        execution_state = getattr(run, "execution_state", {})
+        lineage = {
+            key: execution_state[key]
+            for key in ("parentRunId", "supersedesRunId", "sourcePatchId")
+            if isinstance(execution_state, dict) and execution_state.get(key)
+        }
         self.lifecycle_service.create_run(
             task_id=task.task_id,
             blueprint_id=domain_blueprint.blueprint_id,
@@ -257,6 +263,7 @@ class WknIdentityLifecycleAdapter:
                 "identityGeneration": "v2",
                 "wknWorkflowId": run.workflow_id,
                 "wknGraphId": blueprint.graph_id,
+                **lineage,
             },
         )
 
@@ -294,6 +301,47 @@ class WknIdentityLifecycleAdapter:
                 task_plan_patch,
                 task_node_binding_patch,
             )
+
+    def on_graph_patch_prepared(
+        self,
+        task: Any,
+        old_run: Any,
+        new_run: Any,
+        blueprint: WknBlueprintSpec,
+        task_plan: TaskPlan,
+        task_node_bindings: Sequence[TaskNodeImplementationBinding],
+        patch_id: str,
+    ) -> None:
+        """Atomically create the replacement identity Run and supersede its parent."""
+        payload = {
+            "taskId": task.task_id,
+            "oldRunId": old_run.run_id,
+            "newRunId": new_run.run_id,
+            "workflowId": new_run.workflow_id,
+            "patchId": patch_id,
+            "blueprint": blueprint.model_dump(by_alias=True, mode="json"),
+            "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+            "taskNodeBindings": [
+                item.model_dump(by_alias=True, mode="json")
+                for item in task_node_bindings
+            ],
+            "executionState": dict(getattr(new_run, "execution_state", {}) or {}),
+        }
+        with self._projection(
+            f"graph.patch.prepared:{old_run.run_id}:{patch_id}",
+            "graph.patch.prepared",
+            old_run.run_id,
+            payload,
+        ):
+            with self.repositories.storage.transaction():
+                self._on_run_prepared_atomic(
+                    task,
+                    new_run,
+                    blueprint,
+                    task_plan,
+                    task_node_bindings,
+                )
+                self._on_run_superseded(old_run.run_id)
 
     def _on_blueprint_revised_as_new_run(
         self,
@@ -713,12 +761,15 @@ class WknIdentityLifecycleAdapter:
             run_id,
             payload,
         ):
-            run = self._run(run_id)
-            if run.status is RunStatus.SUPERSEDED:
-                return
-            if run.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
-                raise IdentityConflictError("terminal WorkflowRunV2 cannot be superseded")
-            self.lifecycle_service.finish_run(run_id, RunStatus.SUPERSEDED)
+            self._on_run_superseded(run_id)
+
+    def _on_run_superseded(self, run_id: str) -> None:
+        run = self._run(run_id)
+        if run.status is RunStatus.SUPERSEDED:
+            return
+        if run.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            raise IdentityConflictError("terminal WorkflowRunV2 cannot be superseded")
+        self.lifecycle_service.finish_run(run_id, RunStatus.SUPERSEDED)
 
     def _on_run_finished(self, run_id: str, status: str) -> None:
         target = {
@@ -1085,6 +1136,27 @@ class WknIdentityLifecycleAdapter:
                     TaskNodeImplementationBinding.model_validate(item)
                     for item in payload["taskNodeBindings"]
                 ),
+            )
+            return
+        if event_type == "graph.patch.prepared":
+            task = SimpleNamespace(task_id=payload["taskId"])
+            old_run = SimpleNamespace(run_id=payload["oldRunId"])
+            new_run = SimpleNamespace(
+                run_id=payload["newRunId"],
+                workflow_id=payload["workflowId"],
+                execution_state=payload.get("executionState") or {},
+            )
+            self.on_graph_patch_prepared(
+                task,
+                old_run,
+                new_run,
+                WknBlueprintSpec.model_validate(payload["blueprint"]),
+                TaskPlan.model_validate(payload["taskPlan"]),
+                tuple(
+                    TaskNodeImplementationBinding.model_validate(item)
+                    for item in payload["taskNodeBindings"]
+                ),
+                payload["patchId"],
             )
             return
         if event_type == "blueprint.revised":
