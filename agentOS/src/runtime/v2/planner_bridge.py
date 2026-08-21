@@ -11,7 +11,7 @@ from contracts.identity import TaskNodeId, UserTaskId
 from domain.models import TaskNode
 from domain.repository import IdentityConflictError
 
-from .runner import WorkflowRuntimeV2
+from .runner import AcgIdentityLifecycleService
 
 
 _EXECUTION_IDENTITY_KEYS = {
@@ -39,8 +39,8 @@ class TaskPlanNode(BaseModel):
 class PlannerIdentityBridge:
     """持久化 Planner 语义输出；不选择 Agent、模型、资源或 WKN ACG 节点。"""
 
-    def __init__(self, runtime: WorkflowRuntimeV2) -> None:
-        self.runtime = runtime
+    def __init__(self, lifecycle_service: AcgIdentityLifecycleService) -> None:
+        self.lifecycle_service = lifecycle_service
 
     def record_task_tree(
         self,
@@ -71,7 +71,7 @@ class PlannerIdentityBridge:
             if not ready:
                 raise ValueError("Planner task tree contains a parent cycle")
             for node in ready:
-                persisted_node = self.runtime.create_task_node(
+                persisted_node = self.lifecycle_service.create_task_node(
                     task_id=task_id,
                     parent_node_id=(identities.get(node.parent_key) if node.parent_key else None),
                     title=node.title,

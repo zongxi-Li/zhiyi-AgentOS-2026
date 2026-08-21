@@ -625,7 +625,7 @@ class SQLiteProvenanceLinkRepository(_SQLiteRepository):
 
 
 class SQLiteV2Repositories:
-    """显式聚合六个 Repository，供 WorkflowRuntimeV2 依赖注入。"""
+    """显式聚合领域 Repository，供 ACG 身份生命周期服务依赖注入。"""
 
     def __init__(self, storage: SQLiteV2Storage) -> None:
         self.storage = storage

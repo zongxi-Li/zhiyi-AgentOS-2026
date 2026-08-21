@@ -9,8 +9,8 @@ from domain.repository import IdentityConflictError
 from runtime.v2 import (
     PlannerIdentityBridge,
     TaskPlanNode,
-    WknAcgIdentityBridge,
-    WorkflowRuntimeV2,
+    AcgIdentityLifecycleService,
+    WknIdentityLifecycleAdapter,
 )
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
@@ -18,15 +18,18 @@ from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 @pytest.fixture
 def foundation():
-    runtime = WorkflowRuntimeV2(SQLiteV2Repositories(SQLiteV2Storage(":memory:")))
-    bridge = WknAcgIdentityBridge(runtime, runtime.repositories)
+    runtime = AcgIdentityLifecycleService(SQLiteV2Repositories(SQLiteV2Storage(":memory:")))
+    bridge = WknIdentityLifecycleAdapter(runtime, runtime.repositories)
     try:
         yield runtime, bridge
     finally:
         runtime.close()
 
 
-def _registered_chain(runtime: WorkflowRuntimeV2, bridge: WknAcgIdentityBridge):
+def _registered_chain(
+    runtime: AcgIdentityLifecycleService,
+    bridge: WknIdentityLifecycleAdapter,
+):
     task = runtime.create_task(user_id="user-1", goal="审查软件开发合同")
     extract = runtime.create_task_node(
         task_id=task.task_id, title="提取条款", objective="提取付款相关条款"
@@ -214,8 +217,8 @@ def test_bridge_rejects_task_node_substitution_for_wkn_node(foundation) -> None:
 
 def test_complete_identity_graph_survives_sqlite_reopen(tmp_path) -> None:
     db_path = tmp_path / "identity-graph.sqlite3"
-    first = WorkflowRuntimeV2.from_sqlite(db_path)
-    first_bridge = WknAcgIdentityBridge(first, first.repositories)
+    first = AcgIdentityLifecycleService.from_sqlite(db_path)
+    first_bridge = WknIdentityLifecycleAdapter(first, first.repositories)
     task, extract, _risk, blueprint = _registered_chain(first, first_bridge)
     run = first.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
     attempt = first.create_attempt(run_id=run.run_id, node_id=extract.node_id)
@@ -232,7 +235,7 @@ def test_complete_identity_graph_survives_sqlite_reopen(tmp_path) -> None:
     )
     first.close()
 
-    second = WorkflowRuntimeV2.from_sqlite(db_path)
+    second = AcgIdentityLifecycleService.from_sqlite(db_path)
     try:
         origin = IdentityResolver(second.repositories).resolve_execution_origin(
             execution.step_execution_id

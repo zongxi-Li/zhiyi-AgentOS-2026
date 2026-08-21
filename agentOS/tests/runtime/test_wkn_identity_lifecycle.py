@@ -10,7 +10,7 @@ from components.task_manager.store import WorkflowRegistry
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from domain.identity_graph import IdentityResolver
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
-from runtime.v2 import WknAcgIdentityBridge, WorkflowRuntimeV2
+from runtime.v2 import AcgIdentityLifecycleService, WknIdentityLifecycleAdapter
 from runtime.workflow_runtime import WorkflowRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -32,8 +32,8 @@ class _IdentityAgent(BaseAgent):
 
 def _runtime(*, force_failure: bool = False, blueprint: ACGBlueprint | None = None):
     repositories = SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
-    identity_runtime = WorkflowRuntimeV2(repositories)
-    bridge = WknAcgIdentityBridge(identity_runtime, repositories)
+    identity_runtime = AcgIdentityLifecycleService(repositories)
+    bridge = WknIdentityLifecycleAdapter(identity_runtime, repositories)
     agents = AgentRegistry()
     agents.register(_IdentityAgent(AgentProfile(
         agentId="agent-identity",

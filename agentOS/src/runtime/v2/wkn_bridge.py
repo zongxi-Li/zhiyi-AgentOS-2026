@@ -30,10 +30,10 @@ from domain.models import (
     StepExecutionStatus,
 )
 from domain.repository import EntityNotFoundError, IdentityConflictError, RepositorySet
-from support.acg.models import ACGBlueprint, EdgeType, validate_blueprint
+from support.acg.models import EdgeType, WknBlueprintSpec, validate_blueprint
 
 from .context import ExecutionContext
-from .runner import WorkflowRuntimeV2
+from .runner import AcgIdentityLifecycleService
 
 
 _EDGE_RELATIONS = {
@@ -44,12 +44,21 @@ _EDGE_RELATIONS = {
 }
 
 
-class WknAcgIdentityBridge:
+class WknIdentityLifecycleAdapter:
     """只包装现有 WKN ACG；不实现第二套 Planner、Compiler、Scheduler 或 Executor。"""
 
-    def __init__(self, runtime: WorkflowRuntimeV2, repositories: RepositorySet) -> None:
-        self.runtime = runtime
+    def __init__(
+        self,
+        lifecycle_service: AcgIdentityLifecycleService,
+        repositories: RepositorySet,
+    ) -> None:
+        self.lifecycle_service = lifecycle_service
         self.repositories = repositories
+
+    @property
+    def runtime(self) -> AcgIdentityLifecycleService:
+        """兼容 Phase 3 初版属性名；新代码使用 ``lifecycle_service``。"""
+        return self.lifecycle_service
 
     def new_task_id(self) -> str:
         """由 AgentOS 身份合同为 WKN 新任务分配唯一 taskId。"""
@@ -63,7 +72,7 @@ class WknAcgIdentityBridge:
                 raise IdentityConflictError("taskId already belongs to another UserTask goal")
             return
         owner = str(task.input.get("authenticatedUserId") or "system:agentos")
-        self.runtime.create_task(
+        self.lifecycle_service.create_task(
             task_id=task.task_id,
             user_id=owner,
             goal=self._task_goal(task),
@@ -86,7 +95,7 @@ class WknAcgIdentityBridge:
             raise EntityNotFoundError(f"UserTask not found: {task_id}")
         return new_run_id()
 
-    def on_run_prepared(self, task: Any, run: Any, blueprint: ACGBlueprint) -> None:
+    def on_run_prepared(self, task: Any, run: Any, blueprint: WknBlueprintSpec) -> None:
         """登记真实 WKN Blueprint，并用同一 runId 建立 OS 运行身份。"""
         existing_run = self.repositories.runs.get(run.run_id)
         if existing_run is not None:
@@ -94,7 +103,7 @@ class WknAcgIdentityBridge:
                 raise IdentityConflictError("runId already belongs to another UserTask")
             return
         domain_blueprint = self._ensure_blueprint(task.task_id, blueprint)
-        self.runtime.create_run(
+        self.lifecycle_service.create_run(
             task_id=task.task_id,
             blueprint_id=domain_blueprint.blueprint_id,
             run_id=run.run_id,
@@ -105,7 +114,7 @@ class WknAcgIdentityBridge:
             },
         )
 
-    def on_blueprint_revised(self, run: Any, blueprint: ACGBlueprint) -> None:
+    def on_blueprint_revised(self, run: Any, blueprint: WknBlueprintSpec) -> None:
         """把 WKN 审核屏障产生的图修订登记为新 Blueprint 版本。"""
         domain_run = self._run(run.run_id)
         if domain_run.task_id != run.task_id:
@@ -142,7 +151,7 @@ class WknAcgIdentityBridge:
         ]
         if attempt_number != len(prior) + 1:
             raise IdentityConflictError("WKN attempt number is not contiguous")
-        return self.runtime.create_attempt(
+        return self.lifecycle_service.create_attempt(
             run_id=run.run_id,
             node_id=node.node_id,
         ).attempt_id
@@ -177,8 +186,8 @@ class WknAcgIdentityBridge:
             if len(existing) != 1:
                 raise IdentityConflictError("Attempt has multiple StepExecutions")
             return existing[0].step_execution_id
-        context = self.runtime.create_context(run_id)
-        return self.runtime.start_step_execution(
+        context = self.lifecycle_service.create_context(run_id)
+        return self.lifecycle_service.start_step_execution(
             context,
             attempt_id=attempt_id,
             input={"wknStepId": step_id},
@@ -210,8 +219,8 @@ class WknAcgIdentityBridge:
             )
             if result.get(key) is not None
         }
-        context = self.runtime.create_context(run_id)
-        finished = self.runtime.complete_step_execution(
+        context = self.lifecycle_service.create_context(run_id)
+        finished = self.lifecycle_service.complete_step_execution(
             context,
             step_execution_id,
             output=safe_output,
@@ -238,8 +247,8 @@ class WknAcgIdentityBridge:
             return
         if execution.status is not StepExecutionStatus.RUNNING:
             raise IdentityConflictError("terminal StepExecution cannot become failed")
-        self.runtime.fail_step_execution(
-            self.runtime.create_context(run_id),
+        self.lifecycle_service.fail_step_execution(
+            self.lifecycle_service.create_context(run_id),
             step_execution_id,
             failure_reason=reason,
         )
@@ -257,8 +266,8 @@ class WknAcgIdentityBridge:
             return
         if execution.status is not StepExecutionStatus.RUNNING:
             raise IdentityConflictError("terminal StepExecution cannot become cancelled")
-        self.runtime.cancel_step_execution(
-            self.runtime.create_context(run_id),
+        self.lifecycle_service.cancel_step_execution(
+            self.lifecycle_service.create_context(run_id),
             step_execution_id,
             reason=reason,
         )
@@ -276,14 +285,14 @@ class WknAcgIdentityBridge:
             return
         if run.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
             raise IdentityConflictError("terminal WorkflowRunV2 status cannot be rewritten")
-        self.runtime.finish_run(run_id, target)
+        self.lifecycle_service.finish_run(run_id, target)
 
     def register_blueprint(
         self,
         *,
         task_id: str,
         version: int,
-        wkn_blueprint: ACGBlueprint,
+        wkn_blueprint: WknBlueprintSpec,
         task_node_bindings: Mapping[TaskNodeId, str],
         metadata: dict[str, Any] | None = None,
     ) -> AcgBlueprint:
@@ -306,7 +315,7 @@ class WknAcgIdentityBridge:
                 raise IdentityConflictError("TaskNode does not belong to UserTask")
 
         graph = wkn_blueprint.model_dump(by_alias=True, mode="json")
-        blueprint = self.runtime.create_blueprint(
+        blueprint = self.lifecycle_service.create_blueprint(
             task_id=task_id,
             version=version,
             graph_id=wkn_blueprint.graph_id,
@@ -341,7 +350,7 @@ class WknAcgIdentityBridge:
             raise EntityNotFoundError(f"WorkflowRunV2 not found: {run_id}")
         if run.blueprint_id != blueprint_id or run.task_id != blueprint.task_id:
             raise IdentityConflictError("WKN compilation identities do not belong to the Run")
-        wkn_blueprint = ACGBlueprint.model_validate(blueprint.graph)
+        wkn_blueprint = WknBlueprintSpec.model_validate(blueprint.graph)
         return ACGGraphCompiler().compile(wkn_blueprint, run_id=run_id)
 
     def record_scheduling_binding(
@@ -391,7 +400,7 @@ class WknAcgIdentityBridge:
         input: dict[str, Any],
     ) -> StepExecution:
         """在 WKN NodeRunner 开始工作时创建生命周期投影。"""
-        return self.runtime.start_step_execution(context, input=input)
+        return self.lifecycle_service.start_step_execution(context, input=input)
 
     def finish_execution(
         self,
@@ -403,7 +412,7 @@ class WknAcgIdentityBridge:
         memory_ids: Sequence[str] = (),
     ) -> StepExecution:
         """在 WKN NodeRunner 完成后结束投影并登记产物血缘。"""
-        execution = self.runtime.complete_step_execution(
+        execution = self.lifecycle_service.complete_step_execution(
             context,
             step_execution_id,
             output=output,
@@ -420,7 +429,7 @@ class WknAcgIdentityBridge:
         output: dict[str, Any] | None = None,
     ) -> StepExecution:
         """在 WKN NodeRunner 失败时记录相同 Attempt 的失败生命周期。"""
-        return self.runtime.fail_step_execution(
+        return self.lifecycle_service.fail_step_execution(
             context,
             step_execution_id,
             failure_reason=failure_reason,
@@ -446,7 +455,11 @@ class WknAcgIdentityBridge:
                 relationType=IdentityRelation.WRITES,
             ))
 
-    def _ensure_blueprint(self, task_id: str, wkn_blueprint: ACGBlueprint) -> AcgBlueprint:
+    def _ensure_blueprint(
+        self,
+        task_id: str,
+        wkn_blueprint: WknBlueprintSpec,
+    ) -> AcgBlueprint:
         graph = wkn_blueprint.model_dump(by_alias=True, mode="json")
         existing_blueprints = self.repositories.blueprints.list_for_task(task_id)
         for blueprint in existing_blueprints:
@@ -462,7 +475,7 @@ class WknAcgIdentityBridge:
         for step in wkn_blueprint.step_nodes():
             node = by_semantic_key.get(step.node_id)
             if node is None:
-                node = self.runtime.create_task_node(
+                node = self.lifecycle_service.create_task_node(
                     task_id=task_id,
                     title=step.name or step.node_id,
                     objective=step.goal or step.description or step.name or step.node_id,
@@ -533,4 +546,8 @@ class WknAcgIdentityBridge:
         return list(dict.fromkeys(event_ids))
 
 
-__all__ = ["WknAcgIdentityBridge"]
+# 兼容 Phase 3 初版名称；新代码使用 Adapter 明确其不是新的执行桥内核。
+WknAcgIdentityBridge = WknIdentityLifecycleAdapter
+
+
+__all__ = ["WknAcgIdentityBridge", "WknIdentityLifecycleAdapter"]

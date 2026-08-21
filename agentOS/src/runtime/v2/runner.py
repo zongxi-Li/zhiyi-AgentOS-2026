@@ -1,4 +1,4 @@
-"""只编排新身份链和持久化的 WorkflowRuntimeV2。"""
+"""只编排新身份链和持久化的 ACG 身份生命周期服务。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class WorkflowRuntimeV2:
+class AcgIdentityLifecycleService:
     """AgentOS V2 身份与生命周期控制面；实际执行始终由 WKN ACG 内核完成。"""
 
     def __init__(self, repositories: RepositorySet) -> None:
@@ -40,7 +40,7 @@ class WorkflowRuntimeV2:
     def from_sqlite(
         cls,
         db_path: str | Path = "data/agentos_v2.sqlite3",
-    ) -> "WorkflowRuntimeV2":
+    ) -> "AcgIdentityLifecycleService":
         return cls(SQLiteV2Repositories(SQLiteV2Storage(db_path)))
 
     def close(self) -> None:
@@ -207,7 +207,9 @@ class WorkflowRuntimeV2:
         ):
             raise IdentityConflictError("ExecutionContext identity chain is inconsistent")
         if self.repositories.execution_bindings.get_for_attempt(attempt.attempt_id) is None:
-            raise EntityNotFoundError("WorkflowRuntimeV2 requires a persisted ExecutionBinding")
+            raise EntityNotFoundError(
+                "AcgIdentityLifecycleService requires a persisted ExecutionBinding"
+            )
         require_transition(attempt.status, AttemptStatus.RUNNING)
         self.repositories.attempts.update_status(attempt.attempt_id, AttemptStatus.RUNNING)
         started_at = _now()
@@ -349,4 +351,8 @@ class WorkflowRuntimeV2:
         return execution
 
 
-__all__ = ["WorkflowRuntimeV2"]
+# 兼容既有内部调用；新代码必须使用职责名称，避免被误认为第二套执行内核。
+WorkflowRuntimeV2 = AcgIdentityLifecycleService
+
+
+__all__ = ["AcgIdentityLifecycleService", "WorkflowRuntimeV2"]

@@ -5,21 +5,21 @@ import pytest
 from domain.identity_graph import ExecutionBinding, TaskNodeBinding
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus, UserTaskStatus
 from domain.repository import IdentityConflictError
-from runtime.v2 import WorkflowRuntimeV2
+from runtime.v2 import AcgIdentityLifecycleService
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 
 
 @pytest.fixture
 def runtime_v2():
     storage = SQLiteV2Storage(":memory:")
-    runtime = WorkflowRuntimeV2(SQLiteV2Repositories(storage))
+    runtime = AcgIdentityLifecycleService(SQLiteV2Repositories(storage))
     try:
         yield runtime
     finally:
         runtime.close()
 
 
-def _planned_task(runtime: WorkflowRuntimeV2, *, goal: str = "审查合同"):
+def _planned_task(runtime: AcgIdentityLifecycleService, *, goal: str = "审查合同"):
     task = runtime.create_task(user_id="user-1", goal=goal)
     node = runtime.create_task_node(
         task_id=task.task_id,
@@ -48,7 +48,7 @@ def _planned_task(runtime: WorkflowRuntimeV2, *, goal: str = "审查合同"):
     return task, node, blueprint
 
 
-def _bind_attempt(runtime: WorkflowRuntimeV2, attempt, blueprint) -> None:
+def _bind_attempt(runtime: AcgIdentityLifecycleService, attempt, blueprint) -> None:
     acg_node_id = runtime.repositories.task_node_bindings.find_for_task_node(
         attempt.node_id, blueprint.blueprint_id
     )[0].acg_node_id
@@ -61,7 +61,7 @@ def _bind_attempt(runtime: WorkflowRuntimeV2, attempt, blueprint) -> None:
     ))
 
 
-def test_task_node_blueprint_lifecycle_is_persisted(runtime_v2: WorkflowRuntimeV2) -> None:
+def test_task_node_blueprint_lifecycle_is_persisted(runtime_v2: AcgIdentityLifecycleService) -> None:
     task, node, blueprint = _planned_task(runtime_v2)
 
     persisted_task = runtime_v2.repositories.user_tasks.get(task.task_id)
@@ -74,7 +74,7 @@ def test_task_node_blueprint_lifecycle_is_persisted(runtime_v2: WorkflowRuntimeV
     assert [item.blueprint_id for item in persisted_blueprints] == [blueprint.blueprint_id]
 
 
-def test_one_task_can_have_failed_then_successful_runs(runtime_v2: WorkflowRuntimeV2) -> None:
+def test_one_task_can_have_failed_then_successful_runs(runtime_v2: AcgIdentityLifecycleService) -> None:
     task, node, blueprint = _planned_task(runtime_v2)
     failed_run = runtime_v2.create_run(
         task_id=task.task_id,
@@ -96,7 +96,7 @@ def test_one_task_can_have_failed_then_successful_runs(runtime_v2: WorkflowRunti
     assert runtime_v2.repositories.user_tasks.get(task.task_id).status is UserTaskStatus.COMPLETED
 
 
-def test_blueprint_versions_bind_runs_to_the_selected_version(runtime_v2: WorkflowRuntimeV2) -> None:
+def test_blueprint_versions_bind_runs_to_the_selected_version(runtime_v2: AcgIdentityLifecycleService) -> None:
     task, node, blueprint_v1 = _planned_task(runtime_v2)
     blueprint_v2 = runtime_v2.create_blueprint(
         task_id=task.task_id,
@@ -119,7 +119,7 @@ def test_blueprint_versions_bind_runs_to_the_selected_version(runtime_v2: Workfl
     assert run_v2.graph_version == 2
 
 
-def test_attempt_retry_and_step_execution_are_persisted(runtime_v2: WorkflowRuntimeV2) -> None:
+def test_attempt_retry_and_step_execution_are_persisted(runtime_v2: AcgIdentityLifecycleService) -> None:
     task, node, blueprint = _planned_task(runtime_v2)
     run = runtime_v2.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
     attempt_one = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
@@ -159,7 +159,7 @@ def test_attempt_retry_and_step_execution_are_persisted(runtime_v2: WorkflowRunt
     assert runtime_v2.repositories.step_executions.list_for_attempt(attempt_one.attempt_id)[0].status is StepExecutionStatus.FAILED
 
 
-def test_execution_context_tracks_the_running_step(runtime_v2: WorkflowRuntimeV2) -> None:
+def test_execution_context_tracks_the_running_step(runtime_v2: AcgIdentityLifecycleService) -> None:
     task, node, blueprint = _planned_task(runtime_v2)
     run = runtime_v2.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
     attempt = runtime_v2.create_attempt(run_id=run.run_id, node_id=node.node_id)
@@ -175,7 +175,7 @@ def test_execution_context_tracks_the_running_step(runtime_v2: WorkflowRuntimeV2
 
 def test_sqlite_runtime_survives_reopen(tmp_path) -> None:
     db_path = tmp_path / "new-acg.sqlite3"
-    first = WorkflowRuntimeV2.from_sqlite(db_path)
+    first = AcgIdentityLifecycleService.from_sqlite(db_path)
     task, node, blueprint = _planned_task(first)
     run = first.create_run(task_id=task.task_id, blueprint_id=blueprint.blueprint_id)
     attempt = first.create_attempt(run_id=run.run_id, node_id=node.node_id)
@@ -189,7 +189,7 @@ def test_sqlite_runtime_survives_reopen(tmp_path) -> None:
     )
     first.close()
 
-    second = WorkflowRuntimeV2.from_sqlite(db_path)
+    second = AcgIdentityLifecycleService.from_sqlite(db_path)
     try:
         assert second.repositories.user_tasks.get(task.task_id) is not None
         assert second.repositories.blueprints.get(blueprint.blueprint_id) is not None
@@ -202,7 +202,7 @@ def test_sqlite_runtime_survives_reopen(tmp_path) -> None:
         second.close()
 
 
-def test_run_cannot_use_another_tasks_blueprint(runtime_v2: WorkflowRuntimeV2) -> None:
+def test_run_cannot_use_another_tasks_blueprint(runtime_v2: AcgIdentityLifecycleService) -> None:
     task_a, _node_a, blueprint_a = _planned_task(runtime_v2, goal="目标 A")
     task_b = runtime_v2.create_task(user_id="user-2", goal="目标 B")
     runtime_v2.create_task_node(

@@ -8,13 +8,13 @@ from domain.identity_graph import (
     TaskNodeBinding,
 )
 from domain.repository import IdentityConflictError
-from runtime.v2 import WorkflowRuntimeV2
+from runtime.v2 import AcgIdentityLifecycleService
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 
 
 def test_task_node_binding_rejects_node_outside_blueprint() -> None:
     storage = SQLiteV2Storage(":memory:")
-    runtime = WorkflowRuntimeV2(SQLiteV2Repositories(storage))
+    runtime = AcgIdentityLifecycleService(SQLiteV2Repositories(storage))
     try:
         task = runtime.create_task(user_id="user-1", goal="审查合同")
         node = runtime.create_task_node(
