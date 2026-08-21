@@ -52,6 +52,7 @@ class TaskManager:
         workflow_id: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
         allowed_workflow_ids: Optional[tuple[str, ...]] = None,
+        task_id: str | None = None,
     ) -> AgentTask:
         """创建并持久化任务，同时记录创建轨迹。
 
@@ -68,6 +69,7 @@ class TaskManager:
         )
 
         task = AgentTask(
+            **({"taskId": task_id} if task_id is not None else {}),
             title=title,
             domain=task_domain,
             intent=task_intent,
@@ -142,6 +144,36 @@ class TaskManager:
     def mark_running(self, task: AgentTask | str) -> AgentTask:
         """将任务推进到运行中；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.RUNNING)
+
+    def mark_running_for_new_run(self, task: AgentTask | str, *, run_id: str) -> AgentTask:
+        """为新身份模型的独立 Run 重开旧 AgentTask 状态投影。
+
+        旧状态机仍保持终态不可逆；只有新 ACG 接线明确创建了另一个 Run 时，
+        才把兼容层 AgentTask 投影为该 Run 的当前状态。
+        """
+        resolved_task = self._task(task)
+        if resolved_task.status not in {
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.CANCELLED,
+        }:
+            return self.mark_running(resolved_task)
+        old_status = resolved_task.status
+        resolved_task.status = WorkflowStatus.RUNNING
+        resolved_task.updated_at = utc_now()
+        self.workflow_store.save_task(resolved_task)
+        self._record_task_event(
+            resolved_task,
+            TraceEventType.TASK_STATUS_CHANGED,
+            observation=f"Task status projected for new Run: {old_status.value} -> running",
+            payload={
+                "fromStatus": old_status.value,
+                "toStatus": WorkflowStatus.RUNNING.value,
+                "runId": run_id,
+                "projection": "new-acg-run",
+            },
+        )
+        return resolved_task
 
     def mark_waiting_review(self, task: AgentTask | str) -> AgentTask:
         """将任务推进到等待审核；副作用与合法性校验委托 ``transition``。"""

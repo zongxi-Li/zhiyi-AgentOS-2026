@@ -51,6 +51,7 @@ from contracts.evolution import (
 from components.memory.store import SQLiteMemoryStore
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
+from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.resource.service import ResourceService
 from components.scheduler.service import SchedulerService
@@ -160,6 +161,7 @@ class WorkflowRuntime:
         evolution_service: EvolutionService | None = None,
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
+        identity_lifecycle: AcgIdentityLifecyclePort | None = None,
     ):
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
@@ -181,6 +183,7 @@ class WorkflowRuntime:
         # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
         self.model_registry = model_registry or ModelCompatibilityRegistry()
         self.plugin_manifests = tuple(plugin_manifests)
+        self.identity_lifecycle = identity_lifecycle
         self.workflow_store = workflow_store or MemoryWorkflowStore()
         self.trace_store = trace_store or TraceStore()
         # 融合 ACG 使用独立 SQLite 检查点与正文引用仓库。检查点只保存 State 引用；
@@ -301,7 +304,7 @@ class WorkflowRuntime:
             intent=task_intent,
         )
         scope = self.plugin_scope_resolver.build_scope(resolved_plugins)
-        return self.task_manager.create_task(
+        task = self.task_manager.create_task(
             title=title,
             domain=domain,
             intent=intent,
@@ -313,7 +316,13 @@ class WorkflowRuntime:
             workflow_id=workflow_id,
             enabled_plugin_ids=enabled_plugin_ids,
             allowed_workflow_ids=scope.workflow_ids,
+            task_id=(self.identity_lifecycle.new_task_id() if self.identity_lifecycle else None),
         )
+        if self.identity_lifecycle is not None and task.recommended_workflow:
+            recommended = self.workflow_registry.get(task.recommended_workflow)
+            if recommended.effective_runtime_engine == "acg":
+                self.identity_lifecycle.on_task_created(task)
+        return task
 
     async def start(
         self,
@@ -369,6 +378,10 @@ class WorkflowRuntime:
             allowed_workflow_ids=scope.workflow_ids,
         )
         is_acg = workflow.effective_runtime_engine == "acg"
+        if self.identity_lifecycle is not None and is_acg:
+            # A task may have been created against a legacy/default workflow and
+            # explicitly rebound to ACG only when the run is prepared.
+            self.identity_lifecycle.on_task_created(task)
         planning_diversity = normalize_planning_diversity(
             task.input.get("planningDiversity")
         )
@@ -380,6 +393,11 @@ class WorkflowRuntime:
         if planning_seed is not None:
             run_input["planningSeed"] = planning_seed
         run = WorkflowRun(
+            **(
+                {"runId": self.identity_lifecycle.new_run_id(task.task_id)}
+                if self.identity_lifecycle is not None and is_acg
+                else {}
+            ),
             taskId=task.task_id,
             workflowId=workflow.workflow_id,
             domain=workflow.domain,
@@ -445,6 +463,8 @@ class WorkflowRuntime:
                     "sourceBlueprintVersion": blueprint.version,
                 }
             )
+            if self.identity_lifecycle is not None:
+                self.identity_lifecycle.on_run_prepared(task, run, blueprint)
         self.trace_store.append(
             run=run,
             event_type=TraceEventType.TASK_STATUS_CHANGED,
@@ -579,7 +599,10 @@ class WorkflowRuntime:
             message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.EXECUTING],
             set_started_at=True,
         )
-        self.task_manager.mark_running(task)
+        if self.identity_lifecycle is not None:
+            self.task_manager.mark_running_for_new_run(task, run_id=run.run_id)
+        else:
+            self.task_manager.mark_running(task)
         try:
             stream = (
                 graph.astream(execution_state, scheduled_runner)
@@ -599,6 +622,8 @@ class WorkflowRuntime:
             self.task_manager.mark_completed(task)
             self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
             self.workflow_store.save_run(run)
+            if self.identity_lifecycle is not None:
+                self.identity_lifecycle.on_run_finished(run.run_id, "succeeded")
             return run
         except ExecutionInterrupt as interrupt:
             self._persist_acg_state(run, execution_state)
@@ -626,6 +651,8 @@ class WorkflowRuntime:
                 error_code="acg_execution_failed",
                 error_message=self._safe_error_message(exc),
             )
+            if self.identity_lifecycle is not None:
+                self.identity_lifecycle.on_run_finished(run.run_id, "failed")
             raise
 
     def _ready_node_runner(self, *, run: WorkflowRun, runner: ACGNodeRunner):
@@ -646,7 +673,12 @@ class WorkflowRuntime:
                 raise ValueError(f"READY step has no binding requirement: {step_id}")
             requirement = BindingRequirement.model_validate(payload)
             step = run.get_step(step_id)
-            attempt_id = f"{run.run_id}:{step_id}:{step.attempt}"
+            attempt_number = max(step.attempt, step.retry_count) + 1
+            attempt_id = (
+                self.identity_lifecycle.ensure_attempt(run, step_id, attempt_number)
+                if self.identity_lifecycle is not None
+                else f"{run.run_id}:{step_id}:{step.attempt}"
+            )
             while True:
                 decision = self.scheduler_service.schedule_ready(
                     run_id=run.run_id,
@@ -663,6 +695,20 @@ class WorkflowRuntime:
                 allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
             )
             runner.agents[step_id] = selected_agent
+            step_execution_id: str | None = None
+            if self.identity_lifecycle is not None:
+                profile = selected_agent.profile
+                self.identity_lifecycle.on_resource_bound(
+                    attempt_id=attempt_id,
+                    binding=decision.binding,
+                    agent_id=str(profile.agent_id or decision.binding.resource_id),
+                    model_id=str(profile.model_name or "runtime-default"),
+                )
+                step_execution_id = self.identity_lifecycle.on_step_started(
+                    run_id=run.run_id,
+                    attempt_id=attempt_id,
+                    step_id=step_id,
+                )
             run.execution_state.setdefault("executionBindings", {})[step_id] = (
                 decision.binding.model_dump(by_alias=True, mode="json")
             )
@@ -681,7 +727,33 @@ class WorkflowRuntime:
                 decision.binding.resource_id
             )
             try:
-                return await runner(step_id, state)
+                result = await runner(step_id, state)
+                if self.identity_lifecycle is not None and step_execution_id is not None:
+                    self.identity_lifecycle.on_step_succeeded(
+                        run_id=run.run_id,
+                        attempt_id=attempt_id,
+                        step_execution_id=step_execution_id,
+                        result=result,
+                    )
+                return result
+            except asyncio.CancelledError:
+                if self.identity_lifecycle is not None and step_execution_id is not None:
+                    self.identity_lifecycle.on_step_cancelled(
+                        run_id=run.run_id,
+                        attempt_id=attempt_id,
+                        step_execution_id=step_execution_id,
+                        reason="ACG superstep cancelled after sibling failure",
+                    )
+                raise
+            except Exception as exc:
+                if self.identity_lifecycle is not None and step_execution_id is not None:
+                    self.identity_lifecycle.on_step_failed(
+                        run_id=run.run_id,
+                        attempt_id=attempt_id,
+                        step_execution_id=step_execution_id,
+                        reason=str(exc),
+                    )
+                raise
             finally:
                 released = self.scheduler_service.release(decision.lease.lease_id)
                 if released:
@@ -2072,6 +2144,8 @@ class WorkflowRuntime:
             run.execution_state["bindingRequirements"] = requirements
             run.execution_state["sourceBlueprintVersion"] = outcome.blueprint.version
             run.execution_state["graphVersion"] = outcome.blueprint.version
+            if self.identity_lifecycle is not None:
+                self.identity_lifecycle.on_blueprint_revised(run, outcome.blueprint)
             self._persist_acg_state(run, state)
             new_checkpoint_id = self._save_acg_checkpoint(run, state)
             self._persist_acg_state(run, state)
@@ -2362,6 +2436,11 @@ class WorkflowRuntime:
                 observation="Workflow cancelled.",
             )
             self.workflow_store.save_run(run)
+            if (
+                self.identity_lifecycle is not None
+                and self._normalize_runtime_engine(run.runtime_engine) == "acg"
+            ):
+                self.identity_lifecycle.on_run_finished(run.run_id, "cancelled")
             return run
 
     def _resolve_workflow(
