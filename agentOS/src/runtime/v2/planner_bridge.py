@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from contracts.identity import TaskNodeId, UserTaskId
+from contracts.identity import UserTaskId
 from contracts.planning import TaskPlan, TaskPlanNode, TaskPlanPatch
 from domain.models import TaskNode
 from domain.repository import IdentityConflictError
@@ -34,55 +34,11 @@ class PlannerIdentityBridge:
         return persisted
 
     def record_task_plan_patch(self, patch: TaskPlanPatch) -> dict[str, TaskNode]:
-        """把计划增量与既有稳定节点合成新版本后幂等登记。"""
-        existing = self.lifecycle_service.repositories.task_nodes.list_for_task(
-            patch.task_id
-        )
-        by_id = {node.node_id: node for node in existing}
-        by_key = {
-            str(node.metadata.get("plannerSemanticKey")): node
-            for node in existing
-            if node.metadata.get("plannerSemanticKey")
-        }
-        active_existing = [
-            node for node in existing
-            if node.status.value not in {"retired", "superseded"}
-        ]
-        if len(by_key) < len(active_existing):
-            raise IdentityConflictError(
-                "TaskPlanPatch requires stable semantic keys on every existing TaskNode"
-            )
-        current_nodes: list[TaskPlanNode] = []
-        for key, node in by_key.items():
-            if node.status.value in {"retired", "superseded"}:
-                continue
-            parent_key: str | None = None
-            if node.parent_node_id is not None:
-                parent = by_id.get(node.parent_node_id)
-                if parent is None or not parent.metadata.get("plannerSemanticKey"):
-                    raise IdentityConflictError(
-                        "TaskPlanPatch found an unresolved existing parent identity"
-                    )
-                parent_key = str(parent.metadata["plannerSemanticKey"])
-            current_nodes.append(TaskPlanNode(
-                key=key,
-                parentKey=parent_key,
-                title=node.title,
-                objective=node.objective,
-                constraints=node.constraints,
-                metadata={
-                    key: value
-                    for key, value in node.metadata.items()
-                    if key not in {"plannerSemanticKey", "plannerPlanVersion"}
-                },
-            ))
-        plan = TaskPlan(
-            taskId=patch.task_id,
-            planVersion=patch.plan_version,
-            nodes=tuple(current_nodes),
-            metadata={"source": "graph_patch", **patch.metadata},
-        )
-        return self.record_task_plan(apply_task_plan_patch(plan, patch))
+        """Apply Planner output only against the immutable prior plan snapshot."""
+        current = self.lifecycle_service.repositories.task_plans.latest(patch.task_id)
+        if current is None:
+            raise IdentityConflictError("TaskPlanPatch requires a persisted base TaskPlan")
+        return self.record_task_plan(apply_task_plan_patch(current, patch))
 
 
 __all__ = ["PlannerIdentityBridge", "TaskPlanNode"]

@@ -103,7 +103,6 @@ from components.planner.algorithms import (
 )
 from components.planner.service import (
     apply_task_plan_patch,
-    build_task_plan_for_workflow,
 )
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
@@ -172,6 +171,7 @@ class WknWorkflowRuntime:
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
         identity_lifecycle: AcgIdentityLifecyclePort | None = None,
+        require_planner_identity: bool = False,
     ):
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
@@ -194,6 +194,7 @@ class WknWorkflowRuntime:
         self.model_registry = model_registry or ModelCompatibilityRegistry()
         self.plugin_manifests = tuple(plugin_manifests)
         self.identity_lifecycle = identity_lifecycle
+        self.require_planner_identity = require_planner_identity
         self.workflow_store = workflow_store or MemoryWorkflowStore()
         self.trace_store = trace_store or TraceStore()
         # 融合 ACG 使用独立 SQLite 检查点与正文引用仓库。检查点只保存 State 引用；
@@ -388,6 +389,10 @@ class WknWorkflowRuntime:
             allowed_workflow_ids=scope.workflow_ids,
         )
         is_acg = workflow.effective_runtime_engine == "acg"
+        if is_acg and self.require_planner_identity and self.identity_lifecycle is None:
+            raise ValueError(
+                "production ACG execution requires the identity lifecycle adapter"
+            )
         if self.identity_lifecycle is not None and is_acg:
             # A task may have been created against a legacy/default workflow and
             # explicitly rebound to ACG only when the run is prepared.
@@ -475,15 +480,25 @@ class WknWorkflowRuntime:
                     "workflowVersion": workflow.version,
                     "graphId": blueprint.graph_id,
                     "sourceBlueprintVersion": blueprint.version,
-                    "taskPlanVersion": task_plan.plan_version,
-                    "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-                    "taskNodeBindings": [
-                        item.model_dump(by_alias=True, mode="json")
-                        for item in task_node_bindings
-                    ],
+                    **(
+                        {
+                            "taskPlanVersion": task_plan.plan_version,
+                            "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+                            "taskNodeBindings": [
+                                item.model_dump(by_alias=True, mode="json")
+                                for item in task_node_bindings
+                            ],
+                        }
+                        if task_plan is not None
+                        else {}
+                    ),
                 }
             )
             if self.identity_lifecycle is not None:
+                if task_plan is None:
+                    raise ValueError(
+                        "identity-enabled ACG execution requires Planner output"
+                    )
                 self.identity_lifecycle.on_run_prepared(
                     task,
                     run,
@@ -1461,15 +1476,15 @@ class WknWorkflowRuntime:
         workflow: WorkflowDefinition,
     ) -> tuple[
         WknBlueprintSpec,
-        TaskPlan,
+        TaskPlan | None,
         tuple[TaskNodeImplementationBinding, ...],
     ]:
-        """获取 ACG 蓝图，三级优先级：
+        """Resolve one complete ACG production package.
 
-        1. 现成蓝图：run.input['acgBlueprint'] 或 run.acg_blueprint（外部/前序产物）。
-        2. 认知规划引擎：task.input['usePlanner'] 为真，或工作流未定义 steps，
-           则调 PlanningEngine 走“静态优选、动态补位”生成 ACG，并把规划决策入 Trace。
-        3. 线性升格：默认把静态工作流定义无损升格（行为等价线性执行）。
+        Identity-enabled production accepts either an explicit Blueprint plus
+        TaskPlan/bindings, or Planner output. The final workflow promotion branch
+        is reserved for the identity-free WKN execution-kernel harness and does
+        not manufacture semantic identities from WorkflowStep definitions.
         """
         provided = run.input.get("acgBlueprint") or (run.acg_blueprint if run.acg_blueprint else None)
         if isinstance(provided, dict) and provided.get("nodes"):
@@ -1498,7 +1513,13 @@ class WknWorkflowRuntime:
             or bool(run.input.get("forceDynamicPlanning"))
             or planning_mode == "dynamic"
         )
-        use_planner = force_dynamic or bool(run.input.get("usePlanner")) or not workflow.steps
+        use_planner = (
+            self.require_planner_identity
+            or self.identity_lifecycle is not None
+            or force_dynamic
+            or bool(run.input.get("usePlanner"))
+            or not workflow.steps
+        )
         if use_planner:
             intent_text = str(
                 run.input.get("userIntent")
@@ -1581,18 +1602,8 @@ class WknWorkflowRuntime:
                 blueprint.metadata["reviewCapability"] = workflow.review_capability
             return blueprint, plan.task_plan, plan.task_node_bindings
 
-        task_plan = build_task_plan_for_workflow(
-            task_id=task.task_id,
-            workflow=workflow,
-            strategy="static_workflow",
-        )
         blueprint = promote_workflow_to_acg(workflow, task_id=task.task_id)
-        from components.planner.service import build_task_node_bindings
-        task_node_bindings = build_task_node_bindings(
-            task_plan=task_plan,
-            blueprint=blueprint,
-        )
-        return blueprint, task_plan, task_node_bindings
+        return blueprint, None, ()
 
     def _sync_run_steps_to_acg(
         self,

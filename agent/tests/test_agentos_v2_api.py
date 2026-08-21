@@ -9,6 +9,7 @@ from components.executor import InMemoryExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.task_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
+from contracts.planning import TaskPlanNode
 from contracts.workflow import (
     StepStatus,
     TraceEventType,
@@ -46,6 +47,11 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> WorkflowRuntime:
             name="API workflow",
             domain="general",
             runtimeEngine="acg",
+            planningNodes=[TaskPlanNode(
+                key="report",
+                title="report",
+                objective="produce the requested report",
+            )],
             steps=[
                 WorkflowStepDefinition(
                     stepId="report",

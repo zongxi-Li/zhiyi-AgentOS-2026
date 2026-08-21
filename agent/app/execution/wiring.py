@@ -161,6 +161,7 @@ def build_default_runtime(
         decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
         tool_runtime=tool_runtime or get_tool_runtime(),
         identity_lifecycle=identity_adapter,
+        require_planner_identity=True,
     )
     reconciliation = IdentityProjectionReconciler(
         identity_adapter

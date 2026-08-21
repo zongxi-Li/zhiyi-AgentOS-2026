@@ -65,6 +65,18 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[WorkflowRuntime,
             name="patchable",
             domain="general",
             runtimeEngine="acg",
+            planningNodes=[
+                TaskPlanNode(
+                    key="step:review",
+                    title="review",
+                    objective="review the prepared result",
+                ),
+                TaskPlanNode(
+                    key="step:deliver",
+                    title="deliver",
+                    objective="deliver the approved result",
+                ),
+            ],
             steps=[
                 WorkflowStepDefinition(
                     stepId="review",

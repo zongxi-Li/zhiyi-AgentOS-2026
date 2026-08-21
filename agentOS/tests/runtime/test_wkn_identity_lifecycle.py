@@ -90,6 +90,12 @@ def _runtime(
         name="identity acg",
         domain="general",
         runtimeEngine="acg",
+        planningNodes=[TaskPlanNode(
+            key="analysis",
+            title="分析任务",
+            objective="分析用户任务并产生结果",
+            capabilityRequirements=("analysis",),
+        )],
         steps=[WorkflowStepDefinition(
             stepId="analyse",
             name="分析任务",
@@ -293,6 +299,8 @@ def test_reconciler_restores_a_missing_run_projection_from_wkn_snapshot() -> Non
     runtime, identity_runtime, bridge, task = _runtime()
     try:
         runtime.identity_lifecycle = None
+        task.input["usePlanner"] = True
+        runtime.workflow_store.save_task(task)
         _, run = runtime.prepare_run(task.task_id)
         runtime.identity_lifecycle = bridge
         assert identity_runtime.repositories.runs.get(run.run_id) is None

@@ -75,6 +75,8 @@ def test_application_builds_the_single_wkn_runtime_with_six_stores(tmp_path: Pat
         assert isinstance(runtime._model_runtime, GuardedModelRuntime)
         assert runtime._model_runtime.delegate is model
         assert runtime._intent_llm is intent
+        assert runtime.require_planner_identity is True
+        assert runtime.identity_lifecycle is not None
         assert runtime.agent_registry.all()
         assert runtime.workflow_registry.all()
         assert {manifest.pack_id for manifest in runtime.plugin_manifests} == {
