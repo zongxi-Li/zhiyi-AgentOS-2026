@@ -401,7 +401,7 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class ACGBlueprint(BaseModel):
+class WknBlueprintSpec(BaseModel):
     """智能体计算图蓝图（设计时静态图）。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
@@ -506,6 +506,10 @@ def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
     """
     if not isinstance(schema, dict):
         raise ACGValidationError(f"{label} contract must be an object")
+
+
+# 旧名称保留给已有 Planner、插件与持久化载荷；新边界代码使用 WknBlueprintSpec。
+ACGBlueprint = WknBlueprintSpec
 
 
 class ACGValidationError(ValueError):
@@ -1670,7 +1674,7 @@ class TaskSemanticProfile(BaseModel):
 
 
 __all__ = [
-    "ACGBlueprint", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",
+    "ACGBlueprint", "WknBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",
     "AgentNode", "BlueprintStatus", "CapabilityCandidate", "CapabilityCatalog",
     "ComplexityLevel", "ConditionEvaluationError", "ConditionOperator", "ConditionSpec",
     "ControlNode", "ControlType", "EdgeActivation", "EdgeType", "EvidenceNode",

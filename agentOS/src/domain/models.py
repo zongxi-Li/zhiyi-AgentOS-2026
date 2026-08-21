@@ -119,7 +119,7 @@ class AcgBlueprint(DomainModel):
 
 
 class WorkflowRun(DomainModel):
-    """未来真源中的一次执行身份；不替换当前 Runtime 的 WorkflowRun。"""
+    """AgentOS 中的一次执行身份；区别于 WKN 内核的 WknWorkflowRun。"""
 
     run_id: RunId = Field(default_factory=new_run_id, alias="runId")
     task_id: UserTaskId = Field(alias="taskId")

@@ -137,7 +137,7 @@ class ReviewDecisionType(str, Enum):
     CANCELLED = "cancelled"
 
 
-class AgentTask(CoreModel):
+class LegacyAgentTask(CoreModel):
     """用户请求对应的任务合同。
 
     ``task_id`` 全局标识任务；领域、意图、优先级与安全级别用于规划，
@@ -155,6 +155,10 @@ class AgentTask(CoreModel):
     enabled_plugin_ids: Optional[List[str]] = Field(default=None, alias="enabledPluginIds")
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
     updated_at: datetime = Field(default_factory=utc_now, alias="updatedAt")
+
+
+# 旧名称保留为 JSON/API 兼容入口；领域新代码应使用 UserTask。
+AgentTask = LegacyAgentTask
 
 
 class WorkflowStepDefinition(CoreModel):
@@ -325,7 +329,7 @@ class Checkpoint(CoreModel):
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
 
 
-class WorkflowRun(CoreModel):
+class WknWorkflowRun(CoreModel):
     """一个任务对某工作流的一次执行聚合。
 
     任务、工作流、引擎与插件/能力快照共同固定可见性边界；步骤、检查点、轨迹、
@@ -405,6 +409,10 @@ class WorkflowRun(CoreModel):
             if step.step_id == step_id:
                 return step
         raise KeyError(f"workflow run step not found: {step_id}")
+
+
+# 旧名称保留为 WKN API/存储兼容入口；领域新代码使用 domain.models.WorkflowRun。
+WorkflowRun = WknWorkflowRun
 
 
 class ReviewDecision(CoreModel):

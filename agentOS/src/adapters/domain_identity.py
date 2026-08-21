@@ -1,4 +1,4 @@
-"""把旧 Runtime 合同只读投影到未来真源领域模型。"""
+"""把 WKN 兼容合同只读投影到 AgentOS 身份领域模型。"""
 
 from __future__ import annotations
 

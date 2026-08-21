@@ -2,6 +2,7 @@
 
 from support.acg.models import (
     ACGBlueprint,
+    WknBlueprintSpec,
     ACGEdge,
     ACGNode,
     ACGNodeBase,
@@ -33,6 +34,7 @@ from support.acg.models import (
 
 __all__ = [
     "ACGBlueprint",
+    "WknBlueprintSpec",
     "ACGEdge",
     "ACGNode",
     "ACGNodeBase",
