@@ -258,7 +258,7 @@ Set-Location ..\agent
 py -3.14 -m pytest tests -q
 ```
 
-完整三线收束证据见 [正式集成报告](agentOS/docs/migration/reports/wkn-c4-milan-stable.md)。
+完整三线收束证据见 [正式集成报告](agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md)。
 
 ---
 
