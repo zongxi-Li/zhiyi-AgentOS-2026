@@ -208,39 +208,6 @@ class TestLocalTrainingManager:
 class TestEndToEndWorkflow:
     """端到端工作流测试"""
     
-    @pytest.mark.skip(reason="需要运行服务器")
-    def test_complete_federated_learning_cycle(self):
-        """测试完整的联邦学习周期"""
-        # 1. 初始化全局模型管理器
-        global_manager = GlobalModelManager()
-        
-        # 2. 初始化基础模型
-        global_manager.initialize_base_model(
-            model_type='text_generation',
-            model_params={'param1': [1.0] * 100},
-            training_data_info={'source': 'public', 'size': 10000}
-        )
-        
-        # 3. 创建多个客户端
-        clients = []
-        for i in range(3):
-            client = LocalTrainingManager(
-                client_id=f'client_{i}',
-                server_url='http://localhost:8000'
-            )
-            clients.append(client)
-        
-        # 4. 客户端训练和上传
-        # (需要实际服务器运行,这里省略)
-        
-        # 5. 聚合
-        # global_manager.aggregate_updates(min_clients=3)
-        
-        # 6. 客户端同步新模型
-        # for client in clients:
-        #     client.sync_global_model()
-        
-        pass
 
 
 def test_differential_privacy():
