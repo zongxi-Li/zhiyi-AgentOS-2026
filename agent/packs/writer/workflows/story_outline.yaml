@@ -6,6 +6,9 @@
   "version": "1.0.0",
   "description": "Minimal writer workflow for story outline generation.",
   "runtimeEngine": "acg",
+  "planningNodes": [
+    {"key": "story-outline", "title": "Story Outline", "objective": "Develop a coherent story outline from the requested premise", "capabilityRequirements": ["outline_generate"]}
+  ],
   "steps": [
     {
       "stepId": "outline_generate",

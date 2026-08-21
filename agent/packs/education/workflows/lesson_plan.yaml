@@ -6,6 +6,9 @@
   "version": "1.0.0",
   "description": "Minimal education workflow for lesson planning.",
   "runtimeEngine": "acg",
+  "planningNodes": [
+    {"key": "lesson-plan", "title": "Lesson Plan", "objective": "Design a complete lesson plan for the requested learning goal", "capabilityRequirements": ["lesson_plan"]}
+  ],
   "steps": [
     {
       "stepId": "lesson_plan",

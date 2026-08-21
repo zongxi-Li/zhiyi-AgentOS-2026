@@ -12,6 +12,23 @@
     "evidences": "output.artifacts.legal_evidence_match.evidences",
     "report": "output.artifacts.report_generate.report_markdown"
   },
+  "planningNodes": [
+    {"key": "contract-understanding", "title": "Contract Understanding", "objective": "Extract the contract structure, parties, obligations, and key terms", "capabilityRequirements": ["contract_parse"]},
+    {"key": "clause-classification", "title": "Clause Classification", "objective": "Classify material contract clauses for legal analysis", "capabilityRequirements": ["clause_classify"]},
+    {"key": "risk-analysis", "title": "Risk Analysis", "objective": "Identify and assess material contractual risks", "capabilityRequirements": ["risk_detect"]},
+    {"key": "legal-evidence", "title": "Legal Evidence", "objective": "Match identified risks with relevant legal evidence", "capabilityRequirements": ["legal_evidence_match"]},
+    {"key": "revision-advice", "title": "Revision Advice", "objective": "Produce actionable contract revision recommendations", "capabilityRequirements": ["revision_suggest"]},
+    {"key": "review-decision", "title": "Review Decision", "objective": "Review high-impact conclusions before final delivery", "capabilityRequirements": ["human_review_gate"]},
+    {"key": "review-report", "title": "Review Report", "objective": "Deliver a traceable contract review report", "capabilityRequirements": ["report_generate"]}
+  ],
+  "planningRelations": [
+    {"sourceKey": "contract-understanding", "targetKey": "clause-classification", "relationType": "depends_on"},
+    {"sourceKey": "clause-classification", "targetKey": "risk-analysis", "relationType": "depends_on"},
+    {"sourceKey": "risk-analysis", "targetKey": "legal-evidence", "relationType": "depends_on"},
+    {"sourceKey": "legal-evidence", "targetKey": "revision-advice", "relationType": "depends_on"},
+    {"sourceKey": "revision-advice", "targetKey": "review-decision", "relationType": "depends_on"},
+    {"sourceKey": "review-decision", "targetKey": "review-report", "relationType": "depends_on"}
+  ],
   "steps": [
     {
       "stepId": "parse_contract",

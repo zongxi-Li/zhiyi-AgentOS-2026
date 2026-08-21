@@ -6,6 +6,15 @@
   "version": "1.0.0",
   "description": "Demo workflow for general legal case analysis.",
   "runtimeEngine": "acg",
+  "planningNodes": [
+    {"key": "case-understanding", "title": "Case Understanding", "objective": "Structure the facts and legal questions in the case", "capabilityRequirements": ["case_intake"]},
+    {"key": "legal-research", "title": "Legal Research", "objective": "Retrieve the statutes relevant to the case", "capabilityRequirements": ["statute_retrieval"]},
+    {"key": "risk-assessment", "title": "Risk Assessment", "objective": "Assess the legal risks and required review", "capabilityRequirements": ["risk_assessment"]}
+  ],
+  "planningRelations": [
+    {"sourceKey": "case-understanding", "targetKey": "legal-research", "relationType": "depends_on"},
+    {"sourceKey": "legal-research", "targetKey": "risk-assessment", "relationType": "depends_on"}
+  ],
   "steps": [
     {
       "stepId": "case_intake",
