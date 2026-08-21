@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from contracts.planning import TaskPlan
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
@@ -38,6 +39,7 @@ class ACGBuilder:
         task_id: str,
         profile: TaskSemanticProfile,
         network: CollaborationNetwork,
+        task_plan: TaskPlan,
         variant: "PlanningVariant | None" = None,
     ) -> ACGBlueprint:
         """从语义画像和已解析绑定构造并校验可执行 ACG。
@@ -48,6 +50,18 @@ class ACGBuilder:
         self.capability_catalog.validate()
         if not network.bindings:
             raise ValueError("ACG planning produced no capability bindings")
+        if task_plan.task_id != task_id:
+            raise ValueError("TaskPlan taskId does not match ACG build task")
+        plan_key_by_capability = {
+            str(node.capability_requirements[0]): node.key
+            for node in task_plan.nodes
+            if node.capability_requirements
+        }
+        selected_capabilities = {binding.capability for binding in network.bindings}
+        if set(plan_key_by_capability) != selected_capabilities:
+            raise ValueError(
+                "TaskPlan capabilities must exactly cover ACG capability bindings"
+            )
 
         blueprint = ACGBlueprint(
             taskId=task_id,
@@ -91,6 +105,7 @@ class ACGBuilder:
             network,
             descriptors,
             data_dependencies,
+            plan_key_by_capability,
         )
         self._wire_execution_graph(
             blueprint,
@@ -120,6 +135,7 @@ class ACGBuilder:
         network,
         descriptors,
         data_dependencies,
+        plan_key_by_capability,
     ) -> tuple[list[StepNode], dict[str, StepNode]]:
         used_ids: set[str] = set()
         agent_nodes: dict[str, str] = {}
@@ -171,6 +187,7 @@ class ACGBuilder:
                         "requireAudit": descriptor.writes_memory,
                     },
                     "routerScore": binding.score,
+                    "taskPlanKey": plan_key_by_capability[descriptor.capability_id],
                 },
             )
             blueprint.nodes.append(step)

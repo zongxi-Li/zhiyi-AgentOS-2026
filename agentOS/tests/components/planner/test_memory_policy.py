@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from components.planner.acg_builder import ACGBuilder
+from components.planner.service import build_task_plan_for_capabilities
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from support.acg.models import (
     CapabilityCatalog,
@@ -32,13 +33,21 @@ def test_builder_derives_memory_write_policy_from_capability() -> None:
         CapabilityBinding(capability="conclude", agent_name="agent", score=1.0),
     ])
 
+    task_id = "task_0123456789ab"
+    task_plan = build_task_plan_for_capabilities(
+        task_id=task_id,
+        capabilities=["analyze", "conclude"],
+        capability_catalog=catalog,
+        strategy="test",
+    )
     blueprint = ACGBuilder(catalog).build(
-        task_id="task-1",
+        task_id=task_id,
         profile=TaskSemanticProfile(
             primaryGoal="test",
             requiredCapabilities=["analyze", "conclude"],
         ),
         network=network,
+        task_plan=task_plan,
     )
 
     policies = {

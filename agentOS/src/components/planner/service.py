@@ -17,6 +17,14 @@ import random
 import secrets
 from typing import Any, Dict, Optional, Sequence
 
+from contracts.planning import (
+    TaskNodeImplementationBinding,
+    TaskPlan,
+    TaskPlanNode,
+    TaskPlanRelation,
+    TaskPlanPatch,
+    TaskNodeRelationType,
+)
 from service.agents import AgentRegistry
 from support.acg.models import ACGBlueprint, CapabilityCandidate, promote_workflow_to_acg
 from .acg_builder import ACGBuilder
@@ -48,6 +56,8 @@ class PlanResult:
     """
     blueprint: ACGBlueprint
     profile: TaskSemanticProfile
+    task_plan: TaskPlan
+    task_node_bindings: tuple[TaskNodeImplementationBinding, ...]
     strategy: str  # "static_template" | "dynamic_generation"
     template_id: Optional[str] = None
     template_score: float = 0.0
@@ -83,6 +93,8 @@ class PlanResult:
             "stochasticFallback": self.stochastic_fallback,
             "profile": self.profile.model_dump(by_alias=True),
             "graphId": self.blueprint.graph_id,
+            "taskPlanVersion": self.task_plan.plan_version,
+            "taskNodeCount": len(self.task_plan.nodes),
             "nodeCount": self.blueprint.node_count,
             "edgeCount": self.blueprint.edge_count,
             "notes": self.notes,
@@ -164,11 +176,22 @@ class PlanningEngine:
             # 静态优选
             match = self.template_matcher.match(profile)
             if self.template_matcher.is_hit(match):
+                task_plan = build_task_plan_for_workflow(
+                    task_id=task_id,
+                    workflow=match.workflow,
+                    strategy="static_template",
+                )
                 blueprint = promote_workflow_to_acg(match.workflow, task_id=task_id)
                 blueprint.objective = profile.primary_goal or blueprint.objective
+                task_node_bindings = build_task_node_bindings(
+                    task_plan=task_plan,
+                    blueprint=blueprint,
+                )
                 return PlanResult(
                     blueprint=blueprint,
                     profile=profile,
+                    task_plan=task_plan,
+                    task_node_bindings=task_node_bindings,
                     strategy="static_template",
                     template_id=match.workflow.workflow_id,
                     template_score=match.score,
@@ -192,6 +215,12 @@ class PlanningEngine:
                 f"Estimated entropy {stable_network.estimated_entropy} exceeds budget "
                 f"{stable_network.entropy_budget}"
             )
+        task_plan = build_task_plan_for_capabilities(
+            task_id=task_id,
+            capabilities=[binding.capability for binding in stable_network.bindings],
+            capability_catalog=self.capability_catalog,
+            strategy="dynamic_generation",
+        )
         variant_set = self.variant_generator.generate(
             profile=profile,
             domain=domain,
@@ -209,6 +238,7 @@ class PlanningEngine:
                     task_id=task_id,
                     profile=profile,
                     network=variant.network,
+                    task_plan=task_plan,
                     variant=variant,
                 )
                 self._validate_agents(candidate, domain=domain)
@@ -235,6 +265,7 @@ class PlanningEngine:
                 task_id=task_id,
                 profile=profile,
                 network=selected_variant.network,
+                task_plan=task_plan,
                 variant=selected_variant,
             )
             self._validate_agents(blueprint, domain=domain)
@@ -259,9 +290,15 @@ class PlanningEngine:
         ]
         notes.extend(selected_variant.network.notes)
         notes.extend(rejected)
+        task_node_bindings = build_task_node_bindings(
+            task_plan=task_plan,
+            blueprint=blueprint,
+        )
         return PlanResult(
             blueprint=blueprint,
             profile=profile,
+            task_plan=task_plan,
+            task_node_bindings=task_node_bindings,
             strategy="dynamic_generation",
             template_score=match.score if match else 0.0,
             thinking_mode=thinking_mode,
@@ -301,4 +338,188 @@ class PlanningEngine:
 # Facade 和引擎共用一个实现，避免迁移期间分裂规划入口。
 PlannerService = PlanningEngine
 
-__all__ = ["PlannerService", "PlanningEngine", "PlanResult", "ACGPlanningError"]
+
+def build_task_plan_for_capabilities(
+    *,
+    task_id: str,
+    capabilities: Sequence[str],
+    capability_catalog: CapabilityCatalog,
+    strategy: str,
+    plan_version: int = 1,
+) -> TaskPlan:
+    """Planner 在选择执行资源前，先把能力需求发布为纯语义任务计划。"""
+    ordered = list(dict.fromkeys(capabilities))
+    if not ordered:
+        raise ACGPlanningError("Planner produced no semantic capabilities")
+    selected = set(ordered)
+    nodes: list[TaskPlanNode] = []
+    for capability in ordered:
+        descriptor = capability_catalog.get(capability)
+        dependencies = [item for item in descriptor.depends_on if item in selected]
+        parent_key = (
+            f"capability:{dependencies[0]}" if len(dependencies) == 1 else None
+        )
+        nodes.append(TaskPlanNode(
+            key=f"capability:{descriptor.capability_id}",
+            title=descriptor.display_name,
+            objective=descriptor.description or f"完成 {descriptor.display_name}",
+            constraints=[
+                {"type": "required_capability", "value": descriptor.capability_id},
+                *(
+                    [{"type": "depends_on", "values": dependencies}]
+                    if dependencies
+                    else []
+                ),
+            ],
+            capabilityRequirements=(descriptor.capability_id,),
+            metadata={
+                "plannerStrategy": strategy,
+            },
+        ))
+    relations = tuple(
+        TaskPlanRelation(
+            sourceKey=f"capability:{dependency}",
+            targetKey=f"capability:{capability}",
+            relationType=TaskNodeRelationType.DEPENDS_ON,
+        )
+        for capability in ordered
+        for dependency in (
+            capability_catalog.get(capability).depends_on
+            if capability_catalog.get(capability).depends_on
+            else ()
+        )
+        if dependency in selected
+    )
+    return TaskPlan(
+        taskId=task_id,
+        planVersion=plan_version,
+        nodes=tuple(nodes),
+        relations=relations,
+        metadata={"strategy": strategy},
+    )
+
+
+def build_task_plan_for_workflow(
+    *,
+    task_id: str,
+    workflow: Any,
+    strategy: str,
+    plan_version: int = 1,
+) -> TaskPlan:
+    """Build semantic planning data from a workflow definition, never a Blueprint."""
+    steps = tuple(getattr(workflow, "steps", ()) or ())
+    if not steps:
+        raise ACGPlanningError("Planner produced no semantic workflow nodes")
+    nodes: list[TaskPlanNode] = []
+    relations: list[TaskPlanRelation] = []
+    keys = {str(getattr(step, "step_id", "")): f"step:{getattr(step, 'step_id', '')}" for step in steps}
+    for step in steps:
+        step_id = str(getattr(step, "step_id", "")).strip()
+        if not step_id:
+            raise ACGPlanningError("Workflow step is missing a stable semantic identifier")
+        capability = str(getattr(step, "capability", "") or "").strip()
+        parent_id = str(getattr(step, "parent_step_id", "") or "").strip()
+        next_id = str(getattr(step, "next_step_id", "") or "").strip()
+        nodes.append(TaskPlanNode(
+            key=keys[step_id],
+            title=str(getattr(step, "name", "") or step_id),
+            objective=str(
+                getattr(step, "goal", "")
+                or getattr(step, "description", "")
+                or getattr(step, "name", "")
+                or step_id
+            ),
+            constraints=[],
+            capabilityRequirements=((capability,) if capability else ()),
+            acceptanceCriteria=tuple(
+                str(item) for item in (getattr(step, "acceptance_criteria", ()) or ())
+            ),
+            metadata={"plannerStrategy": strategy},
+        ))
+        if parent_id and parent_id in keys:
+            relations.append(TaskPlanRelation(
+                sourceKey=keys[parent_id],
+                targetKey=keys[step_id],
+                relationType=TaskNodeRelationType.PARENT,
+            ))
+        if next_id and next_id in keys:
+            relations.append(TaskPlanRelation(
+                sourceKey=keys[step_id],
+                targetKey=keys[next_id],
+                relationType=TaskNodeRelationType.DEPENDS_ON,
+            ))
+    return TaskPlan(
+        taskId=task_id,
+        planVersion=plan_version,
+        nodes=tuple(nodes),
+        relations=tuple(relations),
+        metadata={"strategy": strategy},
+    )
+
+
+def build_task_node_bindings(
+    *,
+    task_plan: TaskPlan,
+    blueprint: ACGBlueprint,
+) -> tuple[TaskNodeImplementationBinding, ...]:
+    """Builder 发布 TaskNode 到 WKN Step 的显式、全覆盖实现映射。"""
+    plan_keys = {node.key for node in task_plan.nodes}
+    steps = blueprint.step_nodes()
+    if len(steps) != len(task_plan.nodes):
+        raise ACGPlanningError(
+            "Blueprint implementation bindings must cover the complete TaskPlan"
+        )
+    for step, node in zip(steps, task_plan.nodes):
+        step.metadata["taskPlanKey"] = node.key
+    bindings = tuple(
+        TaskNodeImplementationBinding(
+            planNodeKey=node.key,
+            acgNodeId=step.node_id,
+        )
+        for step, node in zip(steps, task_plan.nodes)
+    )
+    binding_keys = {item.plan_node_key for item in bindings}
+    if binding_keys != plan_keys or len(bindings) != len(plan_keys):
+        raise ACGPlanningError(
+            "Blueprint implementation bindings must cover the complete TaskPlan"
+        )
+    return bindings
+
+
+def apply_task_plan_patch(current: TaskPlan, patch: TaskPlanPatch) -> TaskPlan:
+    """Planner-owned immutable semantic plan revision."""
+    if current.task_id != patch.task_id:
+        raise ACGPlanningError("TaskPlanPatch belongs to another UserTask")
+    if current.plan_version != patch.base_plan_version:
+        raise ACGPlanningError("TaskPlanPatch basePlanVersion is stale")
+    nodes = {node.key: node for node in current.nodes}
+    for key in (*patch.retire_keys, *patch.replace_keys):
+        nodes.pop(key, None)
+    for node in patch.add_nodes:
+        if node.key in nodes:
+            raise ACGPlanningError(f"TaskPlanPatch duplicates active semantic key: {node.key}")
+        nodes[node.key] = node
+    relations = [
+        relation for relation in current.relations
+        if relation.source_key in nodes and relation.target_key in nodes
+    ]
+    relations.extend(patch.relations)
+    return TaskPlan(
+        taskId=current.task_id,
+        planVersion=patch.plan_version,
+        nodes=tuple(nodes.values()),
+        relations=tuple(relations),
+        metadata={**current.metadata, **patch.metadata},
+    )
+
+
+__all__ = [
+    "ACGPlanningError",
+    "PlanResult",
+    "PlannerService",
+    "PlanningEngine",
+    "build_task_node_bindings",
+    "build_task_plan_for_capabilities",
+    "build_task_plan_for_workflow",
+    "apply_task_plan_patch",
+]
