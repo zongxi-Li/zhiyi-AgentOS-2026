@@ -33,6 +33,7 @@ class IdentityEnvelope(BaseModel):
         ("blueprint", r"blueprint_[0-9a-f]{12}"),
         ("run", r"run_[0-9a-f]{12}"),
         ("attempt", r"attempt_[0-9a-f]{12}"),
+        ("binding", r"binding_[0-9a-f]{12}"),
         ("step_execution", r"step_execution_[0-9a-f]{12}"),
     ],
 )

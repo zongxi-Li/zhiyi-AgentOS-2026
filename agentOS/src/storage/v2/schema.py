@@ -96,11 +96,63 @@ CREATE TABLE IF NOT EXISTS step_executions (
         REFERENCES attempts(attempt_id, run_id, node_id) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS task_node_bindings (
+    binding_id TEXT PRIMARY KEY,
+    task_node_id TEXT NOT NULL,
+    blueprint_id TEXT NOT NULL,
+    acg_node_id TEXT NOT NULL,
+    binding_type TEXT NOT NULL CHECK (binding_type IN ('primary', 'supporting')),
+    created_at TEXT NOT NULL,
+    UNIQUE (task_node_id, blueprint_id, acg_node_id),
+    FOREIGN KEY (task_node_id) REFERENCES task_nodes(node_id) ON DELETE RESTRICT,
+    FOREIGN KEY (blueprint_id) REFERENCES acg_blueprints(blueprint_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS blueprint_node_bindings (
+    binding_id TEXT PRIMARY KEY,
+    blueprint_id TEXT NOT NULL,
+    source_node_id TEXT NOT NULL,
+    target_node_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL CHECK (relation_type IN (
+        'dependency', 'communication', 'control'
+    )),
+    UNIQUE (blueprint_id, source_node_id, target_node_id, relation_type),
+    FOREIGN KEY (blueprint_id) REFERENCES acg_blueprints(blueprint_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS execution_bindings (
+    binding_id TEXT PRIMARY KEY,
+    attempt_id TEXT NOT NULL UNIQUE,
+    acg_node_id TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (attempt_id) REFERENCES attempts(attempt_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS provenance_links (
+    source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source_id, target_id, relation_type)
+);
+
 CREATE INDEX IF NOT EXISTS idx_task_nodes_task ON task_nodes(task_id);
 CREATE INDEX IF NOT EXISTS idx_blueprints_task ON acg_blueprints(task_id, version);
 CREATE INDEX IF NOT EXISTS idx_runs_v2_task ON workflow_runs_v2(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_attempts_run ON attempts(run_id, attempt_number);
 CREATE INDEX IF NOT EXISTS idx_step_executions_attempt ON step_executions(attempt_id);
+CREATE INDEX IF NOT EXISTS idx_task_node_bindings_task ON task_node_bindings(task_node_id, blueprint_id);
+CREATE INDEX IF NOT EXISTS idx_task_node_bindings_acg ON task_node_bindings(acg_node_id, blueprint_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_task_node_bindings_primary_acg
+    ON task_node_bindings(blueprint_id, acg_node_id)
+    WHERE binding_type = 'primary';
+CREATE INDEX IF NOT EXISTS idx_execution_bindings_attempt ON execution_bindings(attempt_id);
+CREATE INDEX IF NOT EXISTS idx_provenance_links_target ON provenance_links(target_id);
 
 CREATE TRIGGER IF NOT EXISTS attempts_require_same_task
 BEFORE INSERT ON attempts
@@ -112,6 +164,35 @@ WHEN (
 )
 BEGIN
     SELECT RAISE(ABORT, 'Attempt run and TaskNode must belong to the same UserTask');
+END;
+
+CREATE TRIGGER IF NOT EXISTS task_node_binding_requires_same_task
+BEFORE INSERT ON task_node_bindings
+FOR EACH ROW
+WHEN (
+    SELECT task_id FROM task_nodes WHERE node_id = NEW.task_node_id
+) IS NOT (
+    SELECT task_id FROM acg_blueprints WHERE blueprint_id = NEW.blueprint_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'TaskNodeBinding identities must belong to the same UserTask');
+END;
+
+CREATE TRIGGER IF NOT EXISTS execution_binding_requires_realization
+BEFORE INSERT ON execution_bindings
+FOR EACH ROW
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM attempts a
+    JOIN workflow_runs_v2 r ON r.run_id = a.run_id
+    JOIN task_node_bindings b
+      ON b.task_node_id = a.node_id
+     AND b.blueprint_id = r.blueprint_id
+     AND b.acg_node_id = NEW.acg_node_id
+    WHERE a.attempt_id = NEW.attempt_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'ExecutionBinding requires a matching TaskNodeBinding');
 END;
 """
 

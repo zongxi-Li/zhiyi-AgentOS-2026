@@ -21,6 +21,10 @@ def test_v2_schema_is_independent_and_complete() -> None:
         "workflow_runs_v2",
         "attempts",
         "step_executions",
+        "task_node_bindings",
+        "blueprint_node_bindings",
+        "execution_bindings",
+        "provenance_links",
     }.issubset(tables)
     assert "tasks" not in tables
     assert "runs" not in tables

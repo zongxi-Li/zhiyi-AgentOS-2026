@@ -16,6 +16,7 @@ _PREFIXES = {
     "blueprint",
     "run",
     "attempt",
+    "binding",
     "step_execution",
 }
 
@@ -48,6 +49,7 @@ TaskNodeId: TypeAlias = Annotated[str, _validator("node")]
 BlueprintId: TypeAlias = Annotated[str, _validator("blueprint")]
 RunId: TypeAlias = Annotated[str, _validator("run")]
 AttemptId: TypeAlias = Annotated[str, _validator("attempt")]
+BindingId: TypeAlias = Annotated[str, _validator("binding")]
 StepExecutionId: TypeAlias = Annotated[str, _validator("step_execution")]
 
 
@@ -71,12 +73,17 @@ def new_attempt_id() -> str:
     return generate_identity("attempt")
 
 
+def new_binding_id() -> str:
+    return generate_identity("binding")
+
+
 def new_step_execution_id() -> str:
     return generate_identity("step_execution")
 
 
 __all__ = [
     "AttemptId",
+    "BindingId",
     "BlueprintId",
     "RunId",
     "StepExecutionId",
@@ -84,6 +91,7 @@ __all__ = [
     "UserTaskId",
     "generate_identity",
     "new_attempt_id",
+    "new_binding_id",
     "new_blueprint_id",
     "new_run_id",
     "new_step_execution_id",

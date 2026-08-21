@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskNodeId, UserTaskId
 from domain.models import (
@@ -17,6 +17,13 @@ from domain.models import (
     UserTaskStatus,
     WorkflowRun,
 )
+if TYPE_CHECKING:
+    from domain.identity_graph.bindings import (
+        BlueprintNodeBinding,
+        ExecutionBinding,
+        ProvenanceLink,
+        TaskNodeBinding,
+    )
 
 
 class UserTaskRepository(Protocol):
@@ -41,6 +48,9 @@ class RunRepository(Protocol):
     def add(self, run: WorkflowRun) -> None: ...
     def get(self, run_id: RunId) -> WorkflowRun | None: ...
     def list_for_task(self, task_id: UserTaskId) -> list[WorkflowRun]: ...
+    def update_blueprint(
+        self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int
+    ) -> WorkflowRun: ...
     def update_status(self, run_id: RunId, status: RunStatus) -> WorkflowRun: ...
 
 
@@ -63,6 +73,33 @@ class StepExecutionRepository(Protocol):
     def list_for_attempt(self, attempt_id: AttemptId) -> list[StepExecution]: ...
 
 
+class TaskNodeBindingRepository(Protocol):
+    def add(self, binding: TaskNodeBinding) -> None: ...
+    def get(self, binding_id: str) -> TaskNodeBinding | None: ...
+    def find_for_task_node(
+        self, task_node_id: TaskNodeId, blueprint_id: BlueprintId
+    ) -> list[TaskNodeBinding]: ...
+    def find_for_acg_node(
+        self, acg_node_id: str, blueprint_id: BlueprintId
+    ) -> list[TaskNodeBinding]: ...
+
+
+class BlueprintNodeBindingRepository(Protocol):
+    def add(self, binding: BlueprintNodeBinding) -> None: ...
+    def list_for_blueprint(self, blueprint_id: BlueprintId) -> list[BlueprintNodeBinding]: ...
+
+
+class ExecutionBindingRepository(Protocol):
+    def add(self, binding: ExecutionBinding) -> None: ...
+    def get_for_attempt(self, attempt_id: AttemptId) -> ExecutionBinding | None: ...
+
+
+class ProvenanceLinkRepository(Protocol):
+    def add(self, link: ProvenanceLink) -> None: ...
+    def list_from(self, source_id: str) -> list[ProvenanceLink]: ...
+    def list_to(self, target_id: str) -> list[ProvenanceLink]: ...
+
+
 class RepositorySet(Protocol):
     user_tasks: UserTaskRepository
     task_nodes: TaskNodeRepository
@@ -70,6 +107,10 @@ class RepositorySet(Protocol):
     runs: RunRepository
     attempts: AttemptRepository
     step_executions: StepExecutionRepository
+    task_node_bindings: TaskNodeBindingRepository
+    blueprint_node_bindings: BlueprintNodeBindingRepository
+    execution_bindings: ExecutionBindingRepository
+    provenance_links: ProvenanceLinkRepository
 
     def finish_execution(
         self,
@@ -87,10 +128,14 @@ class RepositorySet(Protocol):
 
 __all__ = [
     "AttemptRepository",
+    "BlueprintNodeBindingRepository",
     "BlueprintRepository",
+    "ExecutionBindingRepository",
+    "ProvenanceLinkRepository",
     "RepositorySet",
     "RunRepository",
     "StepExecutionRepository",
     "TaskNodeRepository",
+    "TaskNodeBindingRepository",
     "UserTaskRepository",
 ]

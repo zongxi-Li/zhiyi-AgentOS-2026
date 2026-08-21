@@ -20,6 +20,12 @@ from domain.models import (
     UserTaskStatus,
     WorkflowRun,
 )
+from domain.identity_graph.bindings import (
+    BlueprintNodeBinding,
+    ExecutionBinding,
+    ProvenanceLink,
+    TaskNodeBinding,
+)
 from domain.repository.errors import EntityNotFoundError, IdentityConflictError
 
 from .sqlite import SQLiteV2Storage
@@ -231,6 +237,22 @@ class SQLiteRunRepository(_SQLiteRepository):
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
+    def update_blueprint(
+        self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int
+    ) -> WorkflowRun:
+        with self.storage.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE workflow_runs_v2
+                   SET blueprint_id = ?, graph_version = ?, updated_at = ?
+                   WHERE run_id = ?""",
+                (blueprint_id, graph_version, _iso(_now()), run_id),
+            )
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError(f"WorkflowRunV2 not found: {run_id}")
+        run = self.get(run_id)
+        assert run is not None
+        return run
+
     def update_status(self, run_id: RunId, status: RunStatus) -> WorkflowRun:
         now = _now()
         started_at = _iso(now) if status is RunStatus.RUNNING else None
@@ -405,6 +427,203 @@ class SQLiteStepExecutionRepository(_SQLiteRepository):
         )
 
 
+def _blueprint_node_ids(conn: sqlite3.Connection, blueprint_id: BlueprintId) -> set[str]:
+    row = conn.execute(
+        "SELECT graph_json FROM acg_blueprints WHERE blueprint_id = ?", (blueprint_id,)
+    ).fetchone()
+    if row is None:
+        return set()
+    graph = _load_json(row["graph_json"], {})
+    return {
+        str(node.get("nodeId") or "")
+        for node in graph.get("nodes", [])
+        if isinstance(node, dict) and node.get("nodeId")
+    }
+
+
+class SQLiteTaskNodeBindingRepository(_SQLiteRepository):
+    def add(self, binding: TaskNodeBinding) -> None:
+        try:
+            with self.storage.transaction() as conn:
+                if binding.acg_node_id not in _blueprint_node_ids(conn, binding.blueprint_id):
+                    raise IdentityConflictError("ACGNode is not contained by the Blueprint")
+                conn.execute(
+                    """INSERT INTO task_node_bindings(
+                        binding_id, task_node_id, blueprint_id, acg_node_id,
+                        binding_type, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        binding.binding_id,
+                        binding.task_node_id,
+                        binding.blueprint_id,
+                        binding.acg_node_id,
+                        binding.binding_type.value,
+                        _iso(binding.created_at),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise IdentityConflictError(f"cannot persist TaskNodeBinding: {exc}") from exc
+
+    def get(self, binding_id: str) -> TaskNodeBinding | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT * FROM task_node_bindings WHERE binding_id = ?", (binding_id,)
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def find_for_task_node(
+        self, task_node_id: TaskNodeId, blueprint_id: BlueprintId
+    ) -> list[TaskNodeBinding]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                """SELECT * FROM task_node_bindings
+                   WHERE task_node_id = ? AND blueprint_id = ? ORDER BY created_at, binding_id""",
+                (task_node_id, blueprint_id),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def find_for_acg_node(
+        self, acg_node_id: str, blueprint_id: BlueprintId
+    ) -> list[TaskNodeBinding]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                """SELECT * FROM task_node_bindings
+                   WHERE acg_node_id = ? AND blueprint_id = ? ORDER BY created_at, binding_id""",
+                (acg_node_id, blueprint_id),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> TaskNodeBinding:
+        return TaskNodeBinding(
+            bindingId=row["binding_id"],
+            taskNodeId=row["task_node_id"],
+            blueprintId=row["blueprint_id"],
+            acgNodeId=row["acg_node_id"],
+            bindingType=row["binding_type"],
+            createdAt=row["created_at"],
+        )
+
+
+class SQLiteBlueprintNodeBindingRepository(_SQLiteRepository):
+    def add(self, binding: BlueprintNodeBinding) -> None:
+        try:
+            with self.storage.transaction() as conn:
+                nodes = _blueprint_node_ids(conn, binding.blueprint_id)
+                if binding.source_node_id not in nodes or binding.target_node_id not in nodes:
+                    raise IdentityConflictError("Blueprint relation endpoint is not contained by Blueprint")
+                conn.execute(
+                    """INSERT INTO blueprint_node_bindings(
+                        binding_id, blueprint_id, source_node_id, target_node_id, relation_type
+                    ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        binding.binding_id,
+                        binding.blueprint_id,
+                        binding.source_node_id,
+                        binding.target_node_id,
+                        binding.relation_type.value,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise IdentityConflictError(f"cannot persist BlueprintNodeBinding: {exc}") from exc
+
+    def list_for_blueprint(self, blueprint_id: BlueprintId) -> list[BlueprintNodeBinding]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                "SELECT * FROM blueprint_node_bindings WHERE blueprint_id = ? ORDER BY rowid",
+                (blueprint_id,),
+            ).fetchall()
+        return [
+            BlueprintNodeBinding(
+                bindingId=row["binding_id"],
+                blueprintId=row["blueprint_id"],
+                sourceNodeId=row["source_node_id"],
+                targetNodeId=row["target_node_id"],
+                relationType=row["relation_type"],
+            )
+            for row in rows
+        ]
+
+
+class SQLiteExecutionBindingRepository(_SQLiteRepository):
+    def add(self, binding: ExecutionBinding) -> None:
+        self._insert(
+            """INSERT INTO execution_bindings(
+                binding_id, attempt_id, acg_node_id, resource_id, agent_id,
+                model_id, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                binding.binding_id,
+                binding.attempt_id,
+                binding.acg_node_id,
+                binding.resource_id,
+                binding.agent_id,
+                binding.model_id,
+                _json(binding.metadata),
+                _iso(binding.created_at),
+            ),
+            entity="ExecutionBinding",
+        )
+
+    def get_for_attempt(self, attempt_id: AttemptId) -> ExecutionBinding | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT * FROM execution_bindings WHERE attempt_id = ?", (attempt_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return ExecutionBinding(
+            bindingId=row["binding_id"],
+            attemptId=row["attempt_id"],
+            acgNodeId=row["acg_node_id"],
+            resourceId=row["resource_id"],
+            agentId=row["agent_id"],
+            modelId=row["model_id"],
+            metadata=_load_json(row["metadata_json"], {}),
+            createdAt=row["created_at"],
+        )
+
+
+class SQLiteProvenanceLinkRepository(_SQLiteRepository):
+    def add(self, link: ProvenanceLink) -> None:
+        self._insert(
+            """INSERT INTO provenance_links(
+                source_id, target_id, relation_type, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?)""",
+            (
+                link.source_id,
+                link.target_id,
+                link.relation_type.value,
+                _json(link.metadata),
+                _iso(link.created_at),
+            ),
+            entity="ProvenanceLink",
+        )
+
+    def list_from(self, source_id: str) -> list[ProvenanceLink]:
+        return self._list("source_id", source_id)
+
+    def list_to(self, target_id: str) -> list[ProvenanceLink]:
+        return self._list("target_id", target_id)
+
+    def _list(self, column: str, identity: str) -> list[ProvenanceLink]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM provenance_links WHERE {column} = ? ORDER BY created_at, rowid",
+                (identity,),
+            ).fetchall()
+        return [
+            ProvenanceLink(
+                sourceId=row["source_id"],
+                targetId=row["target_id"],
+                relationType=row["relation_type"],
+                metadata=_load_json(row["metadata_json"], {}),
+                createdAt=row["created_at"],
+            )
+            for row in rows
+        ]
+
+
 class SQLiteV2Repositories:
     """显式聚合六个 Repository，供 WorkflowRuntimeV2 依赖注入。"""
 
@@ -416,6 +635,10 @@ class SQLiteV2Repositories:
         self.runs = SQLiteRunRepository(storage)
         self.attempts = SQLiteAttemptRepository(storage)
         self.step_executions = SQLiteStepExecutionRepository(storage)
+        self.task_node_bindings = SQLiteTaskNodeBindingRepository(storage)
+        self.blueprint_node_bindings = SQLiteBlueprintNodeBindingRepository(storage)
+        self.execution_bindings = SQLiteExecutionBindingRepository(storage)
+        self.provenance_links = SQLiteProvenanceLinkRepository(storage)
 
     def finish_execution(
         self,
@@ -427,9 +650,17 @@ class SQLiteV2Repositories:
         output: dict,
         failure_reason: str | None = None,
     ) -> tuple[StepExecution, Attempt]:
-        if step_status not in {StepExecutionStatus.FAILED, StepExecutionStatus.SUCCEEDED}:
+        if step_status not in {
+            StepExecutionStatus.FAILED,
+            StepExecutionStatus.SUCCEEDED,
+            StepExecutionStatus.CANCELLED,
+        }:
             raise ValueError("execution transaction requires a terminal StepExecution status")
-        if attempt_status not in {AttemptStatus.FAILED, AttemptStatus.SUCCEEDED}:
+        if attempt_status not in {
+            AttemptStatus.FAILED,
+            AttemptStatus.SUCCEEDED,
+            AttemptStatus.CANCELLED,
+        }:
             raise ValueError("execution transaction requires a terminal Attempt status")
         finished_at = _iso(_now())
         with self.storage.transaction() as conn:
@@ -462,10 +693,14 @@ class SQLiteV2Repositories:
 
 __all__ = [
     "SQLiteAttemptRepository",
+    "SQLiteBlueprintNodeBindingRepository",
     "SQLiteBlueprintRepository",
+    "SQLiteExecutionBindingRepository",
+    "SQLiteProvenanceLinkRepository",
     "SQLiteRunRepository",
     "SQLiteStepExecutionRepository",
     "SQLiteTaskNodeRepository",
+    "SQLiteTaskNodeBindingRepository",
     "SQLiteUserTaskRepository",
     "SQLiteV2Repositories",
 ]

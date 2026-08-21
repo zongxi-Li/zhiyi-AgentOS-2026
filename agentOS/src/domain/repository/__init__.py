@@ -2,10 +2,14 @@
 
 from .contracts import (
     AttemptRepository,
+    BlueprintNodeBindingRepository,
     BlueprintRepository,
+    ExecutionBindingRepository,
+    ProvenanceLinkRepository,
     RepositorySet,
     RunRepository,
     StepExecutionRepository,
+    TaskNodeBindingRepository,
     TaskNodeRepository,
     UserTaskRepository,
 )
@@ -13,12 +17,16 @@ from .errors import EntityNotFoundError, IdentityConflictError
 
 __all__ = [
     "AttemptRepository",
+    "BlueprintNodeBindingRepository",
     "BlueprintRepository",
     "EntityNotFoundError",
+    "ExecutionBindingRepository",
     "IdentityConflictError",
+    "ProvenanceLinkRepository",
     "RepositorySet",
     "RunRepository",
     "StepExecutionRepository",
     "TaskNodeRepository",
+    "TaskNodeBindingRepository",
     "UserTaskRepository",
 ]
