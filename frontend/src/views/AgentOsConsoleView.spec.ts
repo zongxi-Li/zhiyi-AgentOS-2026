@@ -15,7 +15,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
     ...actual,
     workflowApi: {
       ...actual.workflowApi,
-      listRuns: vi.fn(), getWorkflowProgress: vi.fn(), getRun: vi.fn(), getAcgView: vi.fn(),
+      listRuns: vi.fn(), getWorkflowProgress: vi.fn(), getRun: vi.fn(), getAcgView: vi.fn(), getIdentityHealth: vi.fn(),
       listReviews: vi.fn(), getTrace: vi.fn(), listCheckpoints: vi.fn(), startWorkflowAsync: vi.fn(),
       deleteRun: vi.fn()
     }
@@ -23,7 +23,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
 })
 
 const summary = (overrides: Partial<WorkflowRunSummary> = {}): WorkflowRunSummary => ({
-  taskId: 'task_1', runId: 'run_1', workflowId: 'workflow_1', status: 'running',
+  missionId: 'mission_1', runId: 'run_1', workflowId: 'workflow_1', status: 'running',
   phase: 'executing', message: '正在执行', percent: 50, totalSteps: 4, pendingSteps: 1,
   runningSteps: 1, waitingReviewSteps: 0, retryingSteps: 0, failedSteps: 0,
   completedSteps: 2, cancelledSteps: 0, currentStepId: 'step_3', activeStepIds: ['step_3'],
@@ -34,7 +34,7 @@ const progress = (overrides: Partial<WorkflowProgress> = {}): WorkflowProgress =
   ...summary(), ...overrides
 })
 const run: WorkflowRun = {
-  runId: 'run_1', taskId: 'task_1', workflowId: 'workflow_1', domain: 'test', status: 'completed',
+  runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'test', status: 'completed',
   reviewMode: 'human_in_loop', input: {}, output: {}, steps: [], checkpoints: [], trace: []
 }
 const acg: AcgView = {
@@ -66,13 +66,18 @@ describe('AgentOsConsoleView control plane', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(workflowApi.listRuns).mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 50 })
+    vi.mocked(workflowApi.getIdentityHealth).mockResolvedValue({
+      status: 'healthy', source: 'agentos-v2', backlogCount: 0, failedCount: 0,
+      oldestEventAt: null, unappliedEventCount: 0, inboxBacklog: 0, outboxBacklog: 0,
+      startupReconciliation: { examinedTasks: 0, examinedRuns: 0, repairedTasks: 0, repairedRuns: 0, replayedEvents: 0, failureCount: 0 }
+    })
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress())
     vi.mocked(workflowApi.getRun).mockResolvedValue(run)
     vi.mocked(workflowApi.getAcgView).mockResolvedValue(acg)
     vi.mocked(workflowApi.listReviews).mockResolvedValue({ items: [], total: 0, runId: 'run_1' })
-    vi.mocked(workflowApi.getTrace).mockResolvedValue({ runId: 'run_1', taskId: 'task_1', workflowId: 'workflow_1', domain: 'test', status: 'completed', eventCount: 0, events: [] })
+    vi.mocked(workflowApi.getTrace).mockResolvedValue({ runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'test', status: 'completed', eventCount: 0, events: [] })
     vi.mocked(workflowApi.listCheckpoints).mockResolvedValue({ items: [], total: 0, runId: 'run_1' })
-    vi.mocked(workflowApi.deleteRun).mockResolvedValue({ runId: 'run_1', taskId: 'task_1', deleted: true, taskDeleted: true })
+    vi.mocked(workflowApi.deleteRun).mockResolvedValue({ runId: 'run_1', missionId: 'mission_1', deleted: true, missionDeleted: true })
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   })
 
@@ -92,6 +97,7 @@ describe('AgentOsConsoleView control plane', () => {
     const { wrapper } = await mountConsole()
 
     expect(workflowApi.listRuns).toHaveBeenCalledOnce()
+    expect(workflowApi.getIdentityHealth).toHaveBeenCalledOnce()
     expect(workflowApi.listRuns).toHaveBeenCalledWith(expect.objectContaining({
       statuses: expect.stringContaining('waiting_review'), summary: true, pageSize: 50
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
@@ -138,7 +144,7 @@ describe('AgentOsConsoleView control plane', () => {
       }))
       .mockResolvedValue(acg)
     vi.mocked(workflowApi.getTrace).mockResolvedValue({
-      runId: 'run_1', taskId: 'task_1', workflowId: 'workflow_1', domain: 'test', status: 'completed',
+      runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'test', status: 'completed',
       eventCount: 1, events: [{ eventId: 'trace_1', eventType: 'run_completed', payload: {} }]
     })
     const { wrapper } = await mountConsole('?runId=run_1')
@@ -177,6 +183,7 @@ describe('AgentOsConsoleView control plane', () => {
     vi.useFakeTimers()
     const { wrapper } = await mountConsole()
     expect(workflowApi.listRuns).toHaveBeenCalledTimes(1)
+    expect(workflowApi.getIdentityHealth).toHaveBeenCalledTimes(1)
 
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
     document.dispatchEvent(new Event('visibilitychange'))
@@ -187,6 +194,7 @@ describe('AgentOsConsoleView control plane', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     await flushPromises()
     expect(vi.mocked(workflowApi.listRuns).mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(vi.mocked(workflowApi.getIdentityHealth).mock.calls.length).toBeGreaterThanOrEqual(2)
     wrapper.unmount()
   })
 

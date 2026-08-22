@@ -67,6 +67,8 @@
         </header>
         <dl>
           <div><dt>节点 ID</dt><dd><code>{{ selectedNode.nodeId }}</code></dd></div>
+          <div v-if="selectedStepState?.task"><dt>子任务号</dt><dd><code>{{ selectedStepState.task.taskId }}</code></dd></div>
+          <div v-if="selectedStepState?.task"><dt>语义标题</dt><dd>{{ selectedStepState.task.title }}</dd></div>
           <div v-if="selectedNodeStatus"><dt>运行状态</dt><dd class="node-status" :class="selectedNodeStatus">{{ selectedNodeStatus }}</dd></div>
           <div v-if="selectedStepState?.agentName || selectedNode.agentName"><dt>Agent</dt><dd>{{ selectedStepState?.agentName || selectedNode.agentName }}</dd></div>
           <div v-if="selectedNode.capability"><dt>能力</dt><dd>{{ selectedNode.capability }}</dd></div>
@@ -83,11 +85,31 @@
             <dt>可用技能</dt>
             <dd class="skill-list"><code v-for="skill in selectedAllowedSkills" :key="skill">{{ skill }}</code></dd>
           </div>
-          <div v-if="selectedNode.controlType"><dt>控制类型</dt><dd>{{ selectedNode.controlType }}</dd></div>
+          <div v-if="selectedNode.controlType"><dt>控制类型</dt><dd>{{ controlTypeLabel(selectedNode.controlType) }}</dd></div>
         </dl>
-        <p v-if="selectedNode.goal || selectedNode.description" class="node-description">
-          {{ selectedNode.goal || selectedNode.description }}
+        <p v-if="selectedStepState?.task?.objective || selectedNode.goal || selectedNode.description" class="node-description">
+          {{ selectedStepState?.task?.objective || selectedNode.goal || selectedNode.description }}
         </p>
+        <div v-if="selectedStepState?.nodeExecutions?.length" class="runtime-detail-group execution-history">
+          <strong>节点生命周期 · {{ selectedStepState.nodeExecutions.length }}</strong>
+          <article v-for="record in selectedStepState.nodeExecutions" :key="record.executionInstanceId">
+            <span><b>{{ phaseLabel(record.phase) }}</b><template v-if="record.loopPath.length"> · Loop {{ record.loopPath.join('.') }}</template></span>
+            <code :title="record.executionInstanceId">Instance {{ record.executionInstanceId }}</code>
+            <code>Operation {{ record.operationId }}</code>
+            <code>Attempt {{ record.attemptId }}</code>
+            <code v-if="record.commitId">Commit {{ record.commitId }}</code>
+            <code v-if="record.auditRef">Audit {{ record.auditRef }}</code>
+            <code v-for="(artifactRef, name) in record.artifactRefs" :key="name">{{ name }} · {{ artifactRef }}</code>
+            <span v-if="record.failureCode" class="failure">{{ record.failureCode }}</span>
+          </article>
+        </div>
+        <p v-else-if="selectedNode.nodeType === 'step'" class="projection-pending">Identity 执行记录尚未投影</p>
+        <div v-if="selectedStepState?.stepExecutions?.length" class="runtime-detail-group">
+          <strong>StepExecution · {{ selectedStepState.stepExecutions.length }}</strong>
+          <span v-for="execution in selectedStepState.stepExecutions" :key="execution.stepExecutionId">
+            {{ execution.stepExecutionId }} · {{ execution.status }}
+          </span>
+        </div>
         <div v-if="selectedStepState?.attempts?.length" class="runtime-detail-group">
           <strong>Attempt 历史 · {{ selectedStepState.attempts.length }}</strong>
           <span v-for="attempt in selectedStepState.attempts" :key="attempt.attemptId">
@@ -242,6 +264,14 @@ const bindingLabel = (binding: Record<string, any>) =>
   String(binding.agentName || binding.bindingId || binding.assignedAgentId || '默认绑定')
 const bindingSourceLabel = (binding: Record<string, any>) =>
   binding.source === 'plugin' ? 'Plugin' : 'Native'
+const phaseLabel = (phase: string) => ({
+  prepared: '已准备', executed: '已执行', audited: '已审计', committed: '已提交',
+  waiting_review: '待审核', failed: '失败', cancelled: '已取消'
+}[phase] || phase)
+const controlTypeLabel = (value: string) => ({
+  start: 'START', end: 'END', if: 'IF', parallel: 'PARALLEL', loop: 'LOOP',
+  consensus: 'CONSENSUS', debate: 'DEBATE'
+}[value.toLowerCase()] || `${value}（未识别）`)
 const incomingConnections = computed(() =>
   visibleBlueprint.value?.edges.filter(edge => edge.targetId === selectedNodeId.value) || []
 )
@@ -790,6 +820,12 @@ onBeforeUnmount(() => {
 .runtime-detail-group { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; padding: 8px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-input); }
 .runtime-detail-group strong { color: var(--text-primary); font-size: 10px; }
 .runtime-detail-group span { color: var(--text-secondary); font: 10px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.execution-history article { display: grid; gap: 3px; padding: 7px 0; border-top: 1px solid var(--border-light); }
+.execution-history article:first-of-type { border-top: 0; }
+.execution-history article code { overflow-wrap: anywhere; color: var(--text-secondary); font-size: 9px; }
+.execution-history article b { color: var(--primary-color); }
+.execution-history .failure { color: var(--danger); }
+.projection-pending { margin: 8px 0; padding: 7px; border-radius: 5px; background: var(--warning-fade); color: var(--warning); font-size: 10px; }
 .runtime-summary { max-height: 90px; margin: 8px 0; padding: 7px; overflow: auto; border-radius: 5px; background: var(--bg-input); color: var(--text-secondary); font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .runtime-summary.is-error { color: var(--danger); }
 .connection-group { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; }

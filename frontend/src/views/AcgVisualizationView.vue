@@ -7,13 +7,10 @@
         <h3>ACG 动态群体智能引擎</h3>
       </div>
       <div class="hero-right">
-        <span class="hero-run-chip" :title="activeRunId || '尚未创建运行'">
-          <span>RUN</span>
-          <code>{{ activeRunId || '—' }}</code>
+        <span v-if="activeRun?.missionId" class="hero-run-chip" :title="`任务号: ${activeRun.missionId}`">
+          <span>任务号</span>
+          <code>{{ activeRun.missionId }}</code>
         </span>
-        <button class="hero-icon-action" type="button" title="复制 Run ID" aria-label="复制 Run ID" :disabled="!activeRunId" @click="copyRunId">
-          <el-icon><CopyDocument /></el-icon>
-        </button>
         <button class="hero-operations" type="button" @click="openOperations">
           <el-icon><Monitor /></el-icon>
           <span>运维查看</span>
@@ -163,7 +160,7 @@
       aria-label="ACG 运行概览"
     >
     <section v-if="activeRunId" class="run-scope">
-      <header><strong>运行状态来自 WorkflowRuntime</strong><el-tag effect="plain" type="info">引用式只读</el-tag></header>
+      <header><strong>运行状态来自执行运行时</strong><el-tag effect="plain" type="info">引用式只读</el-tag></header>
       <div class="snapshot-list">
         <span>{{ activePluginSummary }}</span>
         <code v-if="activeRun?.executionState?.checkpointId">Checkpoint {{ activeRun.executionState.checkpointId }}</code>
@@ -183,6 +180,11 @@
       :run="activeRun"
       :view="acgView"
       :events="acgAuditEvents"
+    />
+    <AcgExecutionContractBar
+      v-if="acgView"
+      :view="acgView"
+      @open-run="openRelatedRun"
     />
     </section>
 
@@ -255,22 +257,11 @@
           <el-icon><ArrowRight /></el-icon>
           <span>收起运行详情</span>
         </button>
-        <div class="grid-side__metrics">
-        <AcgLowEntropyMetrics :metrics="acgView.lowEntropyMetrics" />
-        </div>
-        <div class="grid-side__audit">
-        <AcgProvenancePanel
-          :consumptions="acgView.provenance.consumptions"
-          :interactions="acgView.interactions"
-          :recovery-trace="acgView.recoveryTrace"
-          :contract-violations="acgView.contractViolations"
-          @export-json="exportAudit('json')"
-          @export-csv="exportAudit('csv')"
-        />
-        </div>
-        <RuntimeAuditTimeline
-          :events="acgAuditEvents"
+        <AcgOperationalInspector
+          :view="acgView"
+          :audit-events="acgAuditEvents"
           :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+          @export-audit="exportAudit"
         />
       </aside>
     </div>
@@ -284,7 +275,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type DeepReadonly } from 'vue'
 import axios from 'axios'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CopyDocument, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -294,12 +285,11 @@ import {
   type WorkflowProgress
 } from '@/services/api/workflow'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
-import AcgLowEntropyMetrics from '@/components/agentos/AcgLowEntropyMetrics.vue'
-import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
+import AcgExecutionContractBar from '@/components/agentos/AcgExecutionContractBar.vue'
+import AcgOperationalInspector from '@/components/agentos/AcgOperationalInspector.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
-import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
@@ -844,8 +834,10 @@ async function handleTerminal(value: WorkflowProgress): Promise<void> {
     const hasFinalResult = Boolean(
       acgView.value?.finalArtifacts?.length || acgView.value?.finalReport
     )
+    const identityProjectionComplete = acgView.value?.identityProjection?.status === 'available'
     const projectionComplete = projectedStepCount >= value.completedSteps
       && (value.phase !== 'completed' || hasFinalResult)
+      && identityProjectionComplete
     if (projectionComplete) break
     await new Promise(resolve => window.setTimeout(resolve, 300))
   }
@@ -914,21 +906,16 @@ watch(
   { immediate: true }
 )
 
-const copyRunId = async () => {
-  if (!activeRunId.value) return
-  try {
-    await navigator.clipboard.writeText(activeRunId.value)
-    ElMessage.success('Run ID 已复制')
-  } catch {
-    ElMessage.warning('浏览器未授权剪贴板，请直接选择 Run ID')
-  }
-}
 
 const openOperations = () => {
   void router.push({
     path: '/agentos-console',
     query: activeRunId.value ? { runId: activeRunId.value, source: 'acg' } : { source: 'acg' }
   })
+}
+
+const openRelatedRun = (runId: string) => {
+  void router.push({ path: '/agentos/acg', query: { runId } })
 }
 
 const scrollToSection = (selector: string) => {
@@ -1035,7 +1022,7 @@ const startRun = async () => {
     advancedSettingsExpanded.value = false
     workflowRunsStore.register({
       runId: res.runId,
-      taskId: res.taskId,
+      missionId: res.missionId,
       workflowId: res.workflowId || request.workflowId || 'native_acg_runtime_v1',
       source: 'acg',
       status: res.status,

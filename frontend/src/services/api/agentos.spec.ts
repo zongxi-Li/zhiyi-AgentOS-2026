@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, agentosRequest, WorkflowApiContractError } from './agentos'
 
 const run = {
-  runId: 'run_1', taskId: 'task_1', workflowId: 'legal.contract_review', domain: 'legal',
+  runId: 'run_1', missionId: 'mission_1', workflowId: 'legal.contract_review', domain: 'legal',
   status: 'completed' as const,
   steps: [{
     stepId: 'deliver', name: 'Deliver', agentName: 'legal.drafter', status: 'completed' as const,
@@ -15,6 +15,17 @@ const run = {
   }
 }
 
+const executionTree = (nodes: Array<Record<string, unknown>> = [], nodeExecutions: Array<Record<string, unknown>> = []) => ({
+  run: { runId: 'run_1', missionId: 'mission_1', blueprintId: 'blueprint_1', status: 'succeeded', graphVersion: 2, metadata: {} },
+  blueprint: { blueprintId: 'blueprint_1', missionId: 'mission_1', version: 2, graphId: 'graph_1', graph: {}, metadata: {} },
+  nodes,
+  operational: {
+    package: { packageId: 'package_1', packageVersion: 2, checksum: 'abc', blueprintHash: 'def' },
+    lineage: {}, nodeExecutions, controlFrames: [], communicationRefs: [], memoryRefs: [], evidenceRefs: [],
+    leaseStatuses: {}, loopIterations: {}, consensusResults: {}, debateSessions: {}, recoveryOutcome: null
+  }
+})
+
 describe('AgentOS v2 application API', () => {
   beforeEach(() => vi.restoreAllMocks())
 
@@ -24,7 +35,7 @@ describe('AgentOS v2 application API', () => {
     await expect(agentosApi.startWorkflowAsync({
       title: 'Contract review', domain: 'legal', intent: 'contract_review', clientRequestId: 'request_1'
     }, { signal })).resolves.toEqual(run)
-    expect(post).toHaveBeenCalledWith('/runs', expect.objectContaining({ clientRequestId: 'request_1' }), { signal })
+    expect(post).toHaveBeenCalledWith('/missions', expect.objectContaining({ clientRequestId: 'request_1' }), { signal })
   })
 
   it('rejects a successful-looking create response without run identity', async () => {
@@ -72,14 +83,14 @@ describe('AgentOS v2 application API', () => {
 
     await agentosApi.listWorkflowRuns({
       statuses: 'running,waiting_review', domain: 'legal', workflowId: 'workflow_1',
-      taskId: 'task_1', lifecyclePhase: 'review', source: 'acg', sources: 'acg,chat',
+      missionId: 'mission_1', lifecyclePhase: 'review', source: 'acg', sources: 'acg,chat',
       summary: true, page: 2, pageSize: 50
     })
 
     expect(get).toHaveBeenCalledWith('/runs', expect.objectContaining({
       params: expect.objectContaining({
         statuses: 'running,waiting_review', domain: 'legal', workflowId: 'workflow_1',
-        taskId: 'task_1', lifecyclePhase: 'review', source: 'acg', sources: 'acg,chat',
+        missionId: 'mission_1', lifecyclePhase: 'review', source: 'acg', sources: 'acg,chat',
         summary: true, page: 2, pageSize: 50
       })
     }))
@@ -95,6 +106,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
       .mockResolvedValueOnce({ data: { content: { final_answer: '# Final', artifact } } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
@@ -110,12 +122,13 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
       .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
 
     await agentosApi.getAcgView('run_1', { run })
 
     expect(get).not.toHaveBeenCalledWith('/runs/run_1', expect.anything())
-    expect(get).toHaveBeenCalledTimes(4)
+    expect(get).toHaveBeenCalledTimes(5)
   })
 
   it('loads inline outputs through the guarded compatibility resource for legacy runs', async () => {
@@ -129,6 +142,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { graphId: 'graph_legacy', graphVersion: 1, nodes: [], edges: [] } } as never)
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
       .mockResolvedValueOnce({
         data: {
           items: [{ stepId: 'deliver', name: 'Deliver', status: 'completed', content: { final_answer: '# Legacy' } }]
@@ -156,6 +170,7 @@ describe('AgentOS v2 application API', () => {
         interactions: [{ eventId: 'int_000003', interactionId: 'int_000003', consumerStepId: 'deliver', producerStepIds: ['research'], tokensAvailable: 100, tokensDelivered: 40, savingRatio: 0.6 }]
       } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
       .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
 
     const result = await agentosApi.getAcgView('run_legacy_provenance')
@@ -171,6 +186,54 @@ describe('AgentOS v2 application API', () => {
       interactionCount: 1,
       integrityStatus: 'valid'
     })
+  })
+
+  it('merges Identity nodes and orders loop executions by attempt and loop path', async () => {
+    const identityNode = {
+      task: { nodeId: 'semantic_task_1', taskId: 'task_1', missionId: 'mission_1', title: 'Deliver', objective: 'Ship result', constraints: [], status: 'running', metadata: {} },
+      acgNodeId: 'deliver',
+      attempts: [{
+        attempt: { attemptId: 'attempt_1', runId: 'run_1', nodeId: 'semantic_task_1', status: 'running', attemptNumber: 1 },
+        executionBinding: { bindingId: 'binding_1', attemptId: 'attempt_1', acgNodeId: 'deliver', resourceId: 'resource_1', agentId: 'agent_1', modelId: 'model_1', metadata: {} },
+        executions: [{ stepExecutionId: 'step_execution_1', runId: 'run_1', nodeId: 'semantic_task_1', attemptId: 'attempt_1', status: 'running' }]
+      }]
+    }
+    const records = [2, 1].map(iteration => ({
+      operationId: `operation_${iteration}`, executionInstanceId: `instance_${iteration}`, runId: 'run_1', stepId: 'deliver',
+      attemptId: 'attempt_1', phase: iteration === 2 ? 'committed' : 'audited', artifactRefs: {}, loopPath: [iteration]
+    }))
+    vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: run } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree([identityNode], records) } as never)
+      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_1')
+
+    expect(result.identityProjection?.status).toBe('available')
+    expect(result.stepStates[0].task?.nodeId).toBe('semantic_task_1')
+    expect(result.stepStates[0].currentBinding).toMatchObject({ bindingId: 'binding_1', resourceId: 'resource_1' })
+    expect(result.stepStates[0].stepExecutions?.[0].stepExecutionId).toBe('step_execution_1')
+    expect(result.stepStates[0].nodeExecutions?.map(item => item.loopPath)).toEqual([[1], [2]])
+    expect(result.stepStates[0].status).toBe('completed')
+  })
+
+  it('keeps the 执行运行时 view available while an Identity projection is pending', async () => {
+    vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: run } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 404 } })
+      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_1')
+
+    expect(result.identityProjection).toMatchObject({ status: 'pending' })
+    expect(result.executionTree).toBeNull()
+    expect(result.stepStates[0].currentBinding).toEqual({ resourceId: 'legal.drafter' })
   })
 
   it('forwards review concurrency fields and does not swallow conflicts', async () => {

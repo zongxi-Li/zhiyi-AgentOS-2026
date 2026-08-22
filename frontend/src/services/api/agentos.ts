@@ -223,6 +223,167 @@ export interface RuntimeAttemptProjection {
   errorSummary?: string | null
 }
 
+export type NodeExecutionPhase =
+  | 'prepared'
+  | 'executed'
+  | 'audited'
+  | 'committed'
+  | 'waiting_review'
+  | 'failed'
+  | 'cancelled'
+
+export interface NodeExecutionRecord {
+  operationId: string
+  executionInstanceId: string
+  runId: string
+  stepId: string
+  attemptId: string
+  phase: NodeExecutionPhase
+  artifactRefs: Record<string, string>
+  auditRef?: string | null
+  commitId?: string | null
+  loopPath: number[]
+  failureCode?: string | null
+}
+
+export interface IdentitySemanticTask {
+  taskId: string
+  missionId: string
+  parentTaskId?: string | null
+  title: string
+  objective: string
+  constraints: Array<Record<string, unknown>>
+  status: string
+  metadata: Record<string, unknown>
+}
+
+export interface IdentityAttempt {
+  attemptId: string
+  runId: string
+  taskId: string
+  status: string
+  attemptNumber: number
+  startedAt?: string | null
+  finishedAt?: string | null
+  failureReason?: string | null
+}
+
+export interface IdentityStepExecution {
+  stepExecutionId: string
+  runId: string
+  taskId: string
+  attemptId: string
+  status: string
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface ExecutionBinding {
+  bindingId: string
+  attemptId: string
+  acgNodeId: string
+  resourceId: string
+  agentId: string
+  modelId: string
+  metadata: Record<string, unknown>
+  createdAt?: string
+}
+
+export interface IdentityAttemptDetail {
+  attempt: IdentityAttempt
+  executionBinding?: ExecutionBinding | null
+  executions: IdentityStepExecution[]
+}
+
+export interface RunExecutionNode {
+  task: IdentitySemanticTask
+  acgNodeId?: string | null
+  attempts: IdentityAttemptDetail[]
+}
+
+export interface CompiledPackageIdentity {
+  packageId: string
+  packageVersion: number
+  checksum: string
+  blueprintHash?: string | null
+}
+
+export interface RunLineage {
+  parentRunId?: string | null
+  supersedesRunId?: string | null
+  supersededByRunId?: string | null
+  sourcePatchId?: string | null
+}
+
+export interface RunOperationalState {
+  package?: CompiledPackageIdentity | null
+  lineage: RunLineage
+  nodeExecutions: NodeExecutionRecord[]
+  controlFrames: Array<Record<string, unknown>>
+  communicationRefs: string[]
+  memoryRefs: string[]
+  evidenceRefs: string[]
+  leaseStatuses: Record<string, string>
+  loopIterations: Record<string, number>
+  consensusResults: Record<string, Record<string, unknown>>
+  debateSessions: Record<string, Record<string, unknown>>
+  recoveryOutcome?: Record<string, unknown> | null
+}
+
+export interface IdentityBlueprint {
+  blueprintId: string
+  missionId: string
+  version: number
+  graphId: string
+  graph: Record<string, unknown>
+  createdAt?: string
+  metadata: Record<string, unknown>
+}
+
+export interface IdentityWorkflowRun {
+  runId: string
+  missionId: string
+  blueprintId: string
+  status: string
+  graphVersion: number
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt?: string
+  updatedAt?: string
+  metadata: Record<string, unknown>
+}
+
+export interface RunExecutionTree {
+  run: IdentityWorkflowRun
+  blueprint: IdentityBlueprint
+  nodes: RunExecutionNode[]
+  operational: RunOperationalState
+}
+
+export interface IdentityProjectionHealth {
+  status: 'healthy' | 'degraded'
+  source: string
+  backlogCount: number
+  failedCount: number
+  oldestEventAt?: string | null
+  unappliedEventCount: number
+  inboxBacklog: number
+  outboxBacklog: number
+  startupReconciliation: {
+    examinedMissions: number
+    examinedRuns: number
+    repairedMissions: number
+    repairedRuns: number
+    replayedEvents: number
+    failureCount: number
+  }
+}
+
+export interface IdentityProjectionState {
+  status: 'available' | 'pending' | 'unavailable'
+  message?: string
+}
+
 export interface ReviewRecord {
   reviewId: string
   runId: string
@@ -387,6 +548,11 @@ export interface AcgStepState {
   outputVersion?: number
   outputSummary?: string
   errorSummary?: string | null
+  task?: IdentitySemanticTask
+  acgNodeId?: string
+  identityAttempts?: IdentityAttemptDetail[]
+  stepExecutions?: IdentityStepExecution[]
+  nodeExecutions?: NodeExecutionRecord[]
 }
 
 export interface AcgLowEntropyMetrics {
@@ -445,6 +611,9 @@ export interface AcgView {
   finalArtifacts?: AcgFinalArtifact[]
   finalReport: string | null
   lowEntropyMetrics: AcgLowEntropyMetrics
+  executionTree?: RunExecutionTree | null
+  operational?: RunOperationalState | null
+  identityProjection?: IdentityProjectionState
 }
 
 const runPath = (runId: string) => `/runs/${encodeURIComponent(runId)}`
@@ -518,6 +687,72 @@ const provenanceProjection = (raw: {
   return { schemaVersion: raw.schemaVersion, integrityStatus: raw.integrityStatus, productions, consumptions, interactions }
 }
 
+const identityStepStatus = (phase: NodeExecutionPhase): StepStatus => ({
+  prepared: 'running',
+  executed: 'running',
+  audited: 'running',
+  committed: 'completed',
+  waiting_review: 'waiting_review',
+  failed: 'failed',
+  cancelled: 'cancelled'
+}[phase] as StepStatus)
+
+const compareLoopPath = (left: number[], right: number[]) => {
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    const difference = (left[index] ?? -1) - (right[index] ?? -1)
+    if (difference) return difference
+  }
+  return 0
+}
+
+const projectIdentityStepState = (
+  base: AcgStepState,
+  identityNode: RunExecutionNode | undefined,
+  operational: RunOperationalState | null
+): AcgStepState => {
+  if (!identityNode || !operational) return base
+  const attempts = [...identityNode.attempts].sort((left, right) =>
+    left.attempt.attemptNumber - right.attempt.attemptNumber
+  )
+  const attemptNumberById = new Map(attempts.map(item => [item.attempt.attemptId, item.attempt.attemptNumber]))
+  const nodeIds = new Set([base.stepId, identityNode.task.taskId, identityNode.acgNodeId].filter(Boolean))
+  const nodeExecutions = operational.nodeExecutions
+    .filter(item => nodeIds.has(item.stepId))
+    .sort((left, right) => {
+      const attemptDifference = (attemptNumberById.get(left.attemptId) || 0) - (attemptNumberById.get(right.attemptId) || 0)
+      return attemptDifference || compareLoopPath(left.loopPath, right.loopPath)
+        || left.executionInstanceId.localeCompare(right.executionInstanceId)
+    })
+  const latestAttempt = attempts[attempts.length - 1]
+  const latestExecution = nodeExecutions[nodeExecutions.length - 1]
+  const stepExecutions = attempts.flatMap(item => item.executions || [])
+  return {
+    ...base,
+    status: latestExecution ? identityStepStatus(latestExecution.phase) : base.status,
+    attempt: latestAttempt?.attempt.attemptNumber ?? base.attempt,
+    retryCount: Math.max(0, attempts.length - 1),
+    currentBinding: latestAttempt?.executionBinding || base.currentBinding,
+    attempts: attempts.map(item => ({
+      attemptId: item.attempt.attemptId,
+      attemptNumber: item.attempt.attemptNumber,
+      bindingId: item.executionBinding?.bindingId,
+      agentName: item.executionBinding?.agentId,
+      modelName: item.executionBinding?.modelId,
+      status: item.attempt.status === 'succeeded' ? 'completed' : item.attempt.status as StepStatus,
+      startedAt: item.attempt.startedAt || undefined,
+      endedAt: item.attempt.finishedAt,
+      errorSummary: item.attempt.failureReason
+    })),
+    task: identityNode.task,
+    acgNodeId: identityNode.acgNodeId || base.stepId,
+    identityAttempts: attempts,
+    stepExecutions,
+    nodeExecutions,
+    errorSummary: latestExecution?.failureCode || latestAttempt?.attempt.failureReason || base.errorSummary
+  }
+}
+
 export interface WorkflowHistoryConfig {
   runId: string
   title?: string | null
@@ -587,6 +822,20 @@ export const agentosApi = {
     return response.data
   },
 
+  async getExecutionTree(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunExecutionTree> {
+    const response = await agentosRequest.get<RunExecutionTree>(`${runPath(runId)}/execution-tree`, {
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async getIdentityHealth(options: { signal?: AbortSignal } = {}): Promise<IdentityProjectionHealth> {
+    const response = await agentosRequest.get<IdentityProjectionHealth>('/identity/health', {
+      signal: options.signal
+    })
+    return response.data
+  },
+
   async getWorkflowHistoryConfig(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowHistoryConfig> {
     const response = await agentosRequest.get<WorkflowHistoryConfig>(`${runPath(runId)}/history-config`, {
       signal: options.signal
@@ -623,11 +872,29 @@ export const agentosApi = {
   },
 
   async getAcgView(runId: string, options: { signal?: AbortSignal; run?: WorkflowRun | Promise<WorkflowRun> } = {}): Promise<AcgView> {
-    const [run, graphResponse, provenanceResponse, trace] = await Promise.all([
+    const coreRequests = [
       options.run || this.getWorkflowRun(runId, options),
       agentosRequest.get<any>(`${runPath(runId)}/graph`, { signal: options.signal }),
       agentosRequest.get<any>(`${runPath(runId)}/provenance`, { signal: options.signal }),
       this.getWorkflowTrace(runId, options)
+    ] as const
+    const coreRequest = Promise.all(coreRequests)
+    const identityRequest = this.getExecutionTree(runId, options)
+      .then(executionTree => ({ executionTree, projection: { status: 'available' as const } }))
+      .catch((error: unknown) => {
+        if (axios.isCancel(error)) throw error
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined
+        return {
+          executionTree: null,
+          projection: {
+            status: status === 404 ? 'pending' as const : 'unavailable' as const,
+            message: status === 404 ? 'Identity 投影同步中' : 'Identity 投影暂时不可用'
+          }
+        }
+      })
+    const [[run, graphResponse, provenanceResponse, trace], identityResult] = await Promise.all([
+      coreRequest,
+      identityRequest
     ])
     const graph = graphResponse.data
     const provenance = provenanceProjection(provenanceResponse.data)
@@ -671,6 +938,19 @@ export const agentosApi = {
         stepId: item.stepId
       } satisfies AcgFinalArtifact]
     })
+    const executionTree = identityResult.executionTree
+    const identityNodesByAcgId = new Map<string, RunExecutionNode>(
+      (executionTree?.nodes || []).filter(item => item.acgNodeId).map(item => [item.acgNodeId as string, item] as const)
+    )
+    const stepStates = run.steps.map(step => projectIdentityStepState({
+      stepId: step.stepId,
+      status: step.status,
+      agentName: step.agentName,
+      attempt: step.attempt || 0,
+      retryCount: step.retryCount || 0,
+      currentBinding: run.executionState?.resourceBindings?.[step.stepId] || null,
+      outputSummary: step.outputSummary
+    }, identityNodesByAcgId.get(step.stepId), executionTree?.operational || null))
     return {
       runId,
       status: run.status,
@@ -679,15 +959,7 @@ export const agentosApi = {
       graphVersion: graph.graphVersion,
       completedStepIds: run.completedStepIds || [],
       activeStepIds: run.activeStepIds || [],
-      stepStates: run.steps.map(step => ({
-        stepId: step.stepId,
-        status: step.status,
-        agentName: step.agentName,
-        attempt: step.attempt || 0,
-        retryCount: step.retryCount || 0,
-        currentBinding: run.executionState?.resourceBindings?.[step.stepId] || null,
-        outputSummary: step.outputSummary
-      })),
+      stepStates,
       provenance,
       interactions,
       contractViolations: trace.events.filter(event => event.eventType === 'contract_violation'),
@@ -707,7 +979,10 @@ export const agentosApi = {
         interactionCount: interactions.length,
         contractViolationCount: trace.events.filter(event => event.eventType === 'contract_violation').length,
         integrityStatus: provenance.integrityStatus || 'invalid'
-      }
+      },
+      executionTree,
+      operational: executionTree?.operational || null,
+      identityProjection: identityResult.projection
     }
   }
 }

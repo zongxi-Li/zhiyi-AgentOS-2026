@@ -28,7 +28,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
 })
 
 const progress = (overrides: Partial<WorkflowProgress> = {}): WorkflowProgress => ({
-  taskId: 'task_1', runId: 'run_1', workflowId: 'native_acg_runtime_v1', status: 'running',
+  missionId: 'mission_1', runId: 'run_1', workflowId: 'native_acg_runtime_v1', status: 'running',
   phase: 'executing', message: '正在执行节点', percent: 50, totalSteps: 4, pendingSteps: 1,
   runningSteps: 1, waitingReviewSteps: 0, retryingSteps: 0, failedSteps: 0,
   completedSteps: 2, cancelledSteps: 0, currentStepId: 'step_3', activeStepIds: ['step_3'],
@@ -37,7 +37,7 @@ const progress = (overrides: Partial<WorkflowProgress> = {}): WorkflowProgress =
 })
 
 const run = (overrides: Partial<WorkflowRun> = {}): WorkflowRun => ({
-  runId: 'run_1', taskId: 'task_1', workflowId: 'native_acg_runtime_v1', domain: 'general',
+  runId: 'run_1', missionId: 'mission_1', workflowId: 'native_acg_runtime_v1', domain: 'general',
   title: '测试 ACG 任务', status: 'running', steps: [], activeStepIds: ['step_3'],
   lifecyclePhase: 'executing', lifecycleMessage: '正在执行节点', ...overrides
 })
@@ -93,7 +93,7 @@ const mountPage = async (query = ''): Promise<{ wrapper: VueWrapper; router: Rou
   return { wrapper, router }
 }
 
-describe('AcgVisualizationView WKN page wiring', () => {
+describe('AcgVisualizationView 执行运行时 page wiring', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
@@ -115,14 +115,14 @@ describe('AcgVisualizationView WKN page wiring', () => {
     const { wrapper } = await mountPage()
 
     expect(wrapper.find('.hero-left').text()).toContain('ACG 动态群体智能引擎')
-    expect(wrapper.find('.hero-run-chip').text()).toContain('RUN—')
+    expect(wrapper.find('.hero-run-chip').exists()).toBe(false)
     expect(wrapper.text()).toContain('知弈OS 原生任务工作台')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
     expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('restores a URL Run and keeps the progress and WKN summary visible', async () => {
+  it('restores a URL Run and keeps the progress and 执行运行时 summary visible', async () => {
     const { wrapper } = await mountPage('?runId=run_1')
 
     expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith(
@@ -131,7 +131,7 @@ describe('AcgVisualizationView WKN page wiring', () => {
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
     expect(wrapper.findComponent(AgentOsRunSummaryCard).exists()).toBe(true)
-    expect(wrapper.find('.hero-run-chip').text()).toContain('run_1')
+    expect(wrapper.text()).toContain('mission_1')
     wrapper.unmount()
   })
 

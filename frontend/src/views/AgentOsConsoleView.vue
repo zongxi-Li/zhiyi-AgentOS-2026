@@ -13,6 +13,13 @@
       </button>
     </header>
 
+    <IdentityHealthStrip
+      :health="identityHealth"
+      :loading="healthLoading"
+      :error="healthError"
+      :last-updated-at="healthLastUpdatedAt"
+    />
+
     <section ref="consoleLayoutRef" class="console-layout" :style="consoleLayoutStyle">
       <aside class="run-sidebar ui-surface ui-surface--pad" aria-label="Workflow 运行列表">
         <div class="filter-panel">
@@ -66,8 +73,11 @@
                   <span class="run-status" :class="run.phase || run.status">{{ phaseLabel(run.phase, run.status) }}</span>
                   <time>{{ formatRelativeTime(run.updatedAt) }}</time>
                 </span>
-                <strong>{{ run.workflowId }}</strong>
-                <small :title="run.runId">{{ shortRunId(run.runId) }}</small>
+                <strong>{{ run.title || run.workflowId }}</strong>
+                <span class="run-item__identities">
+                  <small :title="`Task ID: ${run.missionId}`">任务 · {{ shortIdentity(run.missionId) }}</small>
+                  <small :title="`Run ID: ${run.runId}`">运行 · {{ shortIdentity(run.runId) }}</small>
+                </span>
                 <p>{{ run.message }}</p>
                 <span v-if="run.percent != null" class="run-mini-progress" aria-hidden="true">
                   <span :style="{ width: `${clampPercent(run.percent)}%` }"></span>
@@ -114,7 +124,7 @@
           <div class="run-toolbar ui-surface">
             <div>
               <span>当前 Run</span>
-              <code :title="selectedRunId">{{ shortRunId(selectedRunId) }}</code>
+              <code :title="`Run ID: ${selectedRunId}`">{{ shortIdentity(selectedRunId) }}</code>
             </div>
             <nav aria-label="运行页面导航">
               <button type="button" @click="openAcg">进入 ACG</button>
@@ -232,6 +242,7 @@ import WorkflowRunPanel from '@/components/agentos/WorkflowRunPanel.vue'
 import WorkflowStepList from '@/components/agentos/WorkflowStepList.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
+import IdentityHealthStrip from '@/components/agentos/IdentityHealthStrip.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import {
   workflowApi,
@@ -239,6 +250,7 @@ import {
   type Checkpoint,
   type ReviewRecord,
   type TraceEvent,
+  type IdentityProjectionHealth,
   type WorkflowProgress,
   type WorkflowRun,
   type WorkflowRunSummary,
@@ -289,6 +301,10 @@ const detailLoading = ref(false)
 const detailExpanded = ref(false)
 const listError = ref('')
 const runError = ref('')
+const identityHealth = ref<IdentityProjectionHealth | null>(null)
+const healthLoading = ref(false)
+const healthError = ref('')
+const healthLastUpdatedAt = ref<string | null>(null)
 const consoleLayoutStyle = computed(() => ({
   '--console-left-width': `${leftPanelWidth.value}px`,
   '--console-right-width': `${rightPanelWidth.value}px`
@@ -366,6 +382,8 @@ const filters = reactive({
 let listTimer: ReturnType<typeof setTimeout> | null = null
 let listController: AbortController | null = null
 let listGeneration = 0
+let healthController: AbortController | null = null
+let healthGeneration = 0
 const detailControllers = new Set<AbortController>()
 let detailRequestCount = 0
 let detailGeneration = 0
@@ -410,7 +428,7 @@ const listParams = () => {
     status: filters.status,
     statuses: filters.status ? undefined : DEFAULT_STATUSES.join(','),
     workflowId: query.startsWith('task_') ? undefined : query || undefined,
-    taskId: query.startsWith('task_') ? query : undefined,
+    missionId: query.startsWith('mission_') ? query : undefined,
     sources: ACG_HISTORY_SOURCES,
     domain: acgHistoryRoleDomain(filters.role),
     summary: true,
@@ -427,7 +445,35 @@ const clearListTimer = () => {
 const scheduleListRefresh = () => {
   clearListTimer()
   if (document.visibilityState === 'hidden') return
-  listTimer = window.setTimeout(() => void loadRuns(false), LIST_INTERVAL_MS)
+  listTimer = window.setTimeout(() => void refreshOverview(false), LIST_INTERVAL_MS)
+}
+
+const loadIdentityHealth = async (force = false) => {
+  if (healthLoading.value && !force) return
+  const generation = ++healthGeneration
+  healthController?.abort()
+  healthController = new AbortController()
+  healthLoading.value = true
+  try {
+    const result = await workflowApi.getIdentityHealth({ signal: healthController.signal })
+    if (generation !== healthGeneration) return
+    identityHealth.value = result
+    healthLastUpdatedAt.value = new Date().toISOString()
+    healthError.value = ''
+  } catch (error: unknown) {
+    if (!axios.isCancel(error) && generation === healthGeneration) {
+      healthError.value = 'Identity 健康度暂时无法同步'
+    }
+  } finally {
+    if (generation === healthGeneration) {
+      healthController = null
+      healthLoading.value = false
+    }
+  }
+}
+
+const refreshOverview = async (force = false) => {
+  await Promise.allSettled([loadRuns(force), loadIdentityHealth(force)])
 }
 
 const loadRuns = async (force = false) => {
@@ -518,7 +564,7 @@ const activateRun = async (runId: string, syncRoute: boolean) => {
   const summary = runs.value.find(item => item.runId === runId)
   workflowRunsStore.register({
     runId,
-    taskId: summary?.taskId,
+    missionId: summary?.missionId,
     workflowId: summary?.workflowId,
     source: 'console',
     status: summary?.status,
@@ -553,7 +599,7 @@ const loadSelectedDetail = async (options: { full?: boolean; acg?: boolean; revi
       : Promise.resolve({ items: [] as ReviewRecord[], total: 0, runId })
     const tracePromise = options.full
       ? workflowApi.getTrace(runId, { signal })
-      : Promise.resolve({ runId, taskId: '', workflowId: '', domain: '', status: 'pending' as WorkflowStatus, eventCount: 0, events: [] })
+      : Promise.resolve({ runId, missionId: '', workflowId: '', domain: '', status: 'pending' as WorkflowStatus, eventCount: 0, events: [] })
     const checkpointsPromise = options.full
       ? workflowApi.listCheckpoints(runId, { signal })
       : Promise.resolve({ items: [] as Checkpoint[], total: 0, runId })
@@ -639,7 +685,7 @@ const exportTrace = async () => {
 }
 
 const refreshAll = async () => {
-  await loadRuns(true)
+  await refreshOverview(true)
   if (selectedRunId.value) await progressTracker.refresh()
 }
 const openAcg = () => void router.push({ path: '/agentos/acg', query: { runId: selectedRunId.value } })
@@ -651,7 +697,7 @@ const openChat = () => {
 
 const handleVisibility = () => {
   if (document.visibilityState === 'hidden') clearListTimer()
-  else void loadRuns(true)
+  else void refreshOverview(true)
 }
 
 watch(
@@ -672,7 +718,7 @@ watch(() => progressTracker.syncError.value, error => {
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibility)
   window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
-  void loadRuns(true)
+  void refreshOverview(true)
 })
 
 onBeforeUnmount(() => {
@@ -682,6 +728,8 @@ onBeforeUnmount(() => {
   clearListTimer()
   listGeneration += 1
   listController?.abort()
+  healthGeneration += 1
+  healthController?.abort()
   detailGeneration += 1
   for (const controller of detailControllers) controller.abort()
   detailControllers.clear()
@@ -692,7 +740,7 @@ const phaseLabel = (phase: string, status: string) => ({
   understanding: '理解任务', planning: '规划任务', graph_building: '构建 ACG', executing: '执行节点',
   recovery: '恢复执行', review: '等待审核', completed: '执行完成', failed: '执行失败', cancelled: '已取消'
 }[phase] || ({ pending: '等待中', running: '运行中', retrying: '恢复中', waiting_review: '等待审核' }[status] || status))
-const shortRunId = (value: string) => value.length > 22 ? `${value.slice(0, 11)}...${value.slice(-7)}` : value
+const shortIdentity = (value: string) => value.length > 22 ? `${value.slice(0, 11)}...${value.slice(-7)}` : value
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value))
 const formatTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '准备中'
 const formatRelativeTime = (value?: string | null) => value ? new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''
@@ -763,6 +811,8 @@ select:focus, input:focus { border-color: var(--primary-line); box-shadow: 0 0 0
 .run-item__top { justify-content: space-between; gap: 8px; padding-right: 30px; }
 .run-item__top time, .run-item small, .run-item p, .run-item__metrics { color: var(--text-secondary); font-size: 11px; }
 .run-item strong, .run-item small, .run-item p { overflow-wrap: anywhere; }
+.run-item__identities { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px 10px; }
+.run-item__identities small { min-width: 0; font-family: var(--font-mono, monospace); }
 .run-item p { margin: 0; line-height: 1.4; }
 .run-status { padding: 2px 6px; border-radius: 999px; background: var(--bg-input); color: var(--info); font-size: 10px; font-weight: 750; }
 .run-status.review, .run-status.recovery { color: var(--warning); }

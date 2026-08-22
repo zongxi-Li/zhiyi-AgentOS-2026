@@ -11,6 +11,11 @@ import {
   type ProvenanceProduction,
   type RuntimeInteraction,
   type AcgStepState,
+  type RunExecutionTree,
+  type RunOperationalState,
+  type NodeExecutionRecord,
+  type NodeExecutionPhase,
+  type IdentityProjectionHealth,
   type Checkpoint,
   type PageResponse,
   type ReviewRecord,
@@ -45,6 +50,11 @@ export type {
   ProvenanceProduction,
   RuntimeInteraction,
   AcgStepState,
+  RunExecutionTree,
+  RunOperationalState,
+  NodeExecutionRecord,
+  NodeExecutionPhase,
+  IdentityProjectionHealth,
   Checkpoint,
   PageResponse,
   ReviewRecord,
@@ -95,6 +105,14 @@ export const workflowApi = {
 
   getRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     return agentosApi.getWorkflowRun(runId, options)
+  },
+
+  getExecutionTree(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunExecutionTree> {
+    return agentosApi.getExecutionTree(runId, options)
+  },
+
+  getIdentityHealth(options: { signal?: AbortSignal } = {}): Promise<IdentityProjectionHealth> {
+    return agentosApi.getIdentityHealth(options)
   },
 
   getRunHistoryConfig(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowHistoryConfig> {
