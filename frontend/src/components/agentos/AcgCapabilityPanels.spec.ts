@@ -46,6 +46,36 @@ describe('ACG capability panels', () => {
     expect(wrapper.text()).toContain('恢复审计')
   })
 
+  it('summarizes control and context capabilities without hiding their details', async () => {
+    const wrapper = mount(AcgOperationalInspector, {
+      props: { view, auditEvents: [], patchRefs: [] }, global: { plugins: [ElementPlus] }
+    })
+
+    await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('控制协同'))!.trigger('click')
+    expect(wrapper.findAll('.summary-card').slice(0, 4).map(item => item.text())).toEqual([
+      '1Control Frame', '1Loop', '1Consensus', '1Debate'
+    ])
+    expect(wrapper.text()).toContain('"type": "parallel"')
+
+    await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('通信上下文'))!.trigger('click')
+    expect(wrapper.findAll('.summary-card').slice(4).map(item => item.text())).toEqual([
+      '1Communication', '1Memory', '1Evidence', '1Lease'
+    ])
+    expect(wrapper.text()).toContain('message_1')
+    expect(wrapper.text()).toContain('lease_1')
+  })
+
+  it('uses a consistent zero-state summary when operational data is absent', async () => {
+    const emptyView = { ...view, operational: null }
+    const wrapper = mount(AcgOperationalInspector, {
+      props: { view: emptyView, auditEvents: [], patchRefs: [] }, global: { plugins: [ElementPlus] }
+    })
+
+    await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('控制协同'))!.trigger('click')
+    expect(wrapper.findAll('.summary-card strong').map(item => item.text())).toEqual(['0', '0', '0', '0', '0', '0', '0', '0'])
+    expect(wrapper.findAll('.empty').length).toBeGreaterThanOrEqual(4)
+  })
+
   it('marks retained health data stale without hiding backlog facts', () => {
     const wrapper = mount(IdentityHealthStrip, {
       props: {
