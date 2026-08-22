@@ -212,7 +212,7 @@ volumes:
     name: ${KINLIN_DEPLOYMENT_ID}_redis_data_v11
     labels: {com.kinlin.deployment-id: "${KINLIN_DEPLOYMENT_ID}"}
   agentos-data:
-    name: ${KINLIN_DEPLOYMENT_ID}_agentos_data_v11
+    name: ${KINLIN_DEPLOYMENT_ID}_agentos_data_v12
     labels: {com.kinlin.deployment-id: "${KINLIN_DEPLOYMENT_ID}"}
   backend-uploads:
     name: ${KINLIN_DEPLOYMENT_ID}_backend_uploads_v11
