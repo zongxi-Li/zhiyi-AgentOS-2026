@@ -7,16 +7,14 @@
         <h3>ACG 动态群体智能引擎</h3>
       </div>
       <div class="hero-right">
-        <span v-if="activeRun?.missionId" class="hero-run-chip" :title="`任务号: ${activeRun.missionId}`">
-          <span>任务号</span>
-          <code>{{ activeRun.missionId }}</code>
+        <span v-if="displayedMissionId" class="hero-run-chip" :title="`任务 ID: ${displayedMissionId}`">
+          <span>任务 ID</span>
+          <code>{{ displayedMissionId }}</code>
         </span>
         <button class="hero-operations" type="button" @click="openOperations">
           <el-icon><Monitor /></el-icon>
           <span>运维查看</span>
         </button>
-        <el-tag :type="statusTagType" effect="plain">{{ statusLabel }}</el-tag>
-        <el-tag class="hero-engine" effect="plain">engine: acg</el-tag>
       </div>
     </header>
 
@@ -51,7 +49,6 @@
         <div v-show="inputPanelExpanded" class="input-panel-expandable">
       <div class="workbench-identity">
         <div><strong>知弈OS 原生任务工作台</strong><small>默认只使用 Native 能力；专业能力包按 Run 显式启用</small></div>
-        <el-tag effect="plain">Native Core</el-tag>
       </div>
       <div class="input-fields">
         <div class="input-pane contract-pane">
@@ -263,6 +260,16 @@
           :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
           @export-audit="exportAudit"
         />
+        <section class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
+          <AcgProvenancePanel
+            :consumptions="acgView.provenance.consumptions"
+            :interactions="acgView.interactions"
+            :recovery-trace="acgView.recoveryTrace"
+            :contract-violations="acgView.contractViolations"
+            @export-json="exportAudit('json')"
+            @export-csv="exportAudit('csv')"
+          />
+        </section>
       </aside>
     </div>
 
@@ -287,6 +294,7 @@ import {
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import AcgExecutionContractBar from '@/components/agentos/AcgExecutionContractBar.vue'
 import AcgOperationalInspector from '@/components/agentos/AcgOperationalInspector.vue'
+import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
@@ -482,6 +490,9 @@ const progressTracker = useWorkflowProgress({
   ),
   onTerminal: handleTerminal
 })
+const displayedMissionId = computed(() =>
+  activeRun.value?.missionId || progressTracker.progress.value?.missionId || ''
+)
 const reviewPending = computed(() => Boolean(
   activeRunId.value && isWorkflowReviewPending(progressTracker.progress.value, activeRun.value)
 ))
@@ -763,17 +774,23 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
       workflowApi.getRunHistoryConfig(runId, { signal })
     ])
     if (requestGeneration !== topologyGeneration || runId !== activeRunId.value) return
-    if (viewResult.status === 'rejected') throw viewResult.reason
-
-    const view = viewResult.value
     if (runResult.status === 'rejected') {
-      acgView.value = view
-      loadedRunId.value = runId
-      lastTopologyRefreshAt = Date.now()
-      lastTopologyUpdatedAt = progressTracker.progress.value?.updatedAt ?? null
+      if (axios.isAxiosError(runResult.reason) && runResult.reason.response?.status === 404) {
+        await removeMissingAcgRun(runId)
+      } else if (!axios.isCancel(runResult.reason) && force) {
+        ElMessage.warning('运行信息暂时未能加载，请稍后刷新')
+      }
+      return
+    }
+    activeRun.value = runResult.value
+    if (viewResult.status === 'rejected') {
+      if (!axios.isCancel(viewResult.reason) && force) {
+        ElMessage.warning('最终 ACG 数据暂时未能加载，请稍后刷新')
+      }
       return
     }
 
+    const view = viewResult.value
     const run = runResult.value
     acgView.value = view
     activeRun.value = run
@@ -787,9 +804,7 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
     lastTopologyRefreshAt = Date.now()
     lastTopologyUpdatedAt = progressTracker.progress.value?.updatedAt ?? null
   } catch (error: unknown) {
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
-      await removeMissingAcgRun(runId)
-    } else if (!axios.isCancel(error) && requestGeneration === topologyGeneration && force) {
+    if (!axios.isCancel(error) && requestGeneration === topologyGeneration && force) {
       ElMessage.warning('最终 ACG 数据暂时未能加载，请稍后刷新')
     }
   } finally {
@@ -1093,6 +1108,7 @@ onBeforeUnmount(() => {
 .acg-view > .ui-hero { border-bottom: 0; border-radius: 8px 8px 0 0; }
 .acg-view > .control-bar { border-top: 0; border-radius: 0 0 8px 8px; }
 .acg-view.is-draft > .control-bar { flex: 1 1 auto; }
+.acg-view.is-draft > .control-bar.collapsed { flex: 0 0 auto; min-height: 58px; }
 .acg-view.has-progress:not(.has-run) > .control-bar { border-bottom: 0; border-radius: 0; box-shadow: none; }
 .acg-view.has-progress:not(.has-run) > .run-overview { border-top: 0; border-radius: 0 0 8px 8px; }
 .run-overview { margin-top: 12px; overflow: hidden; }
@@ -1113,12 +1129,11 @@ onBeforeUnmount(() => {
 .hero-icon-action:hover:not(:disabled), .hero-operations:hover { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); }
 .hero-icon-action:disabled { cursor: not-allowed; opacity: .5; }
 .hero-icon-action:focus-visible, .hero-operations:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-.hero-engine { color: var(--primary-color); }
-
 .control-bar { position: relative; display: flex; flex-direction: column; gap: var(--space-md); padding-right: 52px; padding-bottom: 10px; }
-.control-bar.collapsed { flex-direction: row; align-items: center; gap: 12px; padding: 9px 52px 9px 14px; }
+.control-bar.collapsed { flex-direction: row; align-items: center; gap: 14px; padding: 10px 52px 10px 14px; }
 .control-bar.collapsed .input-summary { flex: 1 1 auto; }
 .control-bar.collapsed .ctrl-options { flex: 0 0 auto; padding: 0; border: 0; }
+.control-bar.collapsed .ctrl-options > :deep(.el-button:last-child) { margin-left: 0; }
 .workbench-identity, .plugin-selector header, .run-scope header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .workbench-identity div, .plugin-selector header div { display:flex; flex-direction:column; gap:3px; }
 .workbench-identity small, .plugin-selector small, .plugin-selector header span { color:var(--text-secondary); font-size:11px; }
@@ -1175,11 +1190,11 @@ onBeforeUnmount(() => {
 }
 .pane-heading { color: var(--text-primary); font-size: 13px; font-weight: 750; }
 .pane-heading small { margin-left: 4px; color: var(--text-disabled); font-size: 10px; font-weight: 600; }
-.input-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
-.input-summary__copy { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text-secondary); }
-.input-summary__copy .el-icon { flex: 0 0 auto; color: var(--primary-color); }
-.input-summary__copy strong { flex: 0 1 auto; overflow: hidden; max-width: min(320px, 34vw); color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.input-summary__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.input-summary { display: flex; align-items: center; min-width: 0; }
+.input-summary__copy { display: grid; grid-template-columns: 28px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; color: var(--text-secondary); }
+.input-summary__copy .el-icon { width: 28px; height: 28px; display: inline-grid; place-items: center; border: 1px solid var(--primary-line); border-radius: 7px; background: var(--primary-fade); color: var(--primary-color); }
+.input-summary__copy strong { overflow: hidden; max-width: min(240px, 28vw); color: var(--text-primary); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.input-summary__copy small { overflow: hidden; padding-left: 9px; border-left: 1px solid var(--border-light); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .run-error {
   margin: 0;
   padding: 10px 12px;
@@ -1291,6 +1306,11 @@ onBeforeUnmount(() => {
   position: relative; align-self: stretch; box-sizing: border-box; height: 100%; min-width: 0; min-height: 0;
   display: flex; flex-direction: column; gap: var(--space-lg);
 }
+.side-provenance { min-width: 0; overflow: hidden; }
+.side-provenance :deep(.acg-provenance) { border: 0; border-radius: 0; box-shadow: none; }
+.side-provenance :deep(.panel-head) { padding: 14px 16px 10px; }
+.side-provenance :deep(.tabs) { padding: 0 16px; }
+.side-provenance :deep(.tab-body) { padding: 0 16px 14px; }
 .is-side-collapsed .grid-side { display: none; }
 .grid-side :deep(.acg-provenance) { flex: 1 1 auto; min-height: 0; }
 .grid-side__metrics { flex: 0 0 auto; min-width: 0; }
