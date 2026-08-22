@@ -1,10 +1,10 @@
-"""Golden integration tests for the Legal Pack on the single wkn runtime."""
+"""Golden integration tests for the Legal Pack on the execution runtime."""
 
 from __future__ import annotations
 
 import json
 
-from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode
+from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
 
 from app.execution.wiring import build_default_runtime, close_runtime
@@ -38,7 +38,7 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
     first = build_default_runtime(environment=environment)
     workflow = first.workflow_registry.get("legal_contract_review_v1")
     blueprint = build_contract_review_blueprint(workflow)
-    task = first.create_task(
+    mission = first.create_mission(
         title="Legal contract review golden run",
         domain="legal",
         intent="contract_review",
@@ -54,10 +54,10 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
         },
     )
     task_plan = TaskPlan(
-        taskId=task.task_id,
+        missionId=mission.mission_id,
         planVersion=1,
         nodes=tuple(
-            TaskPlanNode(
+            PlannedTask(
                 key=f"step:{step.node_id}",
                 title=step.name or step.node_id,
                 objective=step.goal or step.description or step.node_id,
@@ -67,25 +67,25 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
             for step in blueprint.step_nodes()
         ),
     )
-    task_node_bindings = tuple(
-        TaskNodeImplementationBinding(
+    task_bindings = tuple(
+        TaskImplementationBinding(
             planNodeKey=f"step:{step.node_id}",
             acgNodeId=step.node_id,
         )
         for step in blueprint.step_nodes()
     )
-    task.input.update({
+    mission.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
         "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-        "taskNodeBindings": [
+        "taskBindings": [
             item.model_dump(by_alias=True, mode="json")
-            for item in task_node_bindings
+            for item in task_bindings
         ],
     })
-    first.workflow_store.save_task(task)
+    first.workflow_store.save_mission(mission)
 
     paused = await first.start(
-        task.task_id,
+        mission.mission_id,
         workflow_id=workflow.workflow_id,
         review_mode="human_in_loop",
     )
@@ -149,7 +149,7 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
     }
     provenance_before = first.provenance_store.load_ledger(
         run_id=paused.run_id,
-        task_id=paused.task_id,
+        mission_id=paused.mission_id,
     )
     provenance_ids_before = {
         event.event_id
@@ -209,7 +209,7 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
 
     provenance_after = second.provenance_store.load_ledger(
         run_id=completed.run_id,
-        task_id=completed.task_id,
+        mission_id=completed.mission_id,
     )
     provenance_ids_after = [
         event.event_id
@@ -224,9 +224,9 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
     close_runtime(second)
 
 
-async def test_legal_planner_uses_real_wkn_capability_catalog(tmp_path):
+async def test_legal_planner_uses_real_execution_capability_catalog(tmp_path):
     runtime = build_default_runtime(environment=_environment(tmp_path))
-    task = runtime.create_task(
+    mission = runtime.create_mission(
         title="Review a software services contract and produce a legal report",
         domain="legal",
         intent="contract_review",
@@ -240,7 +240,7 @@ async def test_legal_planner_uses_real_wkn_capability_catalog(tmp_path):
     )
 
     _, prepared = runtime.prepare_run(
-        task.task_id,
+        mission.mission_id,
         workflow_id="legal_contract_review_v1",
         review_mode="human_in_loop",
     )

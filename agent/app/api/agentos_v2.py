@@ -1,4 +1,4 @@
-"""Reference-first HTTP projection of the single ``WknWorkflowRuntime``."""
+"""Reference-first HTTP projection of the single ``ExecutionRuntime``."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
-from contracts.workflow import ReviewDecision, ReviewDecisionType, WknWorkflowRun
-from domain.models import UserTaskStatus
+from contracts.workflow import ReviewDecision, ReviewDecisionType, RuntimeRunRecord
+from domain.models import MissionStatus
 from domain.repository import EntityNotFoundError
-from runtime import WknWorkflowRuntime
+from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
 
 
-class RunCreateRequest(BaseModel):
+class MissionCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=500)
@@ -101,7 +101,7 @@ def _csv_values(value: str | None) -> tuple[str, ...] | None:
     return values or None
 
 
-def _require_access(run: WknWorkflowRun) -> None:
+def _require_access(run: RuntimeRunRecord) -> None:
     owner = str(run.input.get("authenticatedUserId") or "")
     if not owner:
         return
@@ -111,7 +111,7 @@ def _require_access(run: WknWorkflowRun) -> None:
         raise HTTPException(status_code=404, detail="run not found")
 
 
-def _state(run: WknWorkflowRun) -> dict[str, Any]:
+def _state(run: RuntimeRunRecord) -> dict[str, Any]:
     raw = run.execution_state if isinstance(run.execution_state, dict) else {}
     allowed = (
         "graphId", "graphVersion", "checkpointId", "outputRefs", "contextRefs",
@@ -148,7 +148,7 @@ def _history_value(value: Any) -> Any:
 
 
 def project_history_config(
-    run: WknWorkflowRun,
+    run: RuntimeRunRecord,
     *,
     title: str | None = None,
 ) -> dict[str, Any]:
@@ -177,12 +177,12 @@ def _legacy_provenance_items(value: Any, allowed: set[str]) -> list[dict[str, An
     ]
 
 
-def project_run(run: WknWorkflowRun, *, title: str | None = None) -> dict[str, Any]:
+def project_run(run: RuntimeRunRecord, *, title: str | None = None) -> dict[str, Any]:
     """Project lifecycle and references without task input or output bodies."""
     state = _state(run)
     return {
         "runId": run.run_id,
-        "taskId": run.task_id,
+        "missionId": run.mission_id,
         "title": title,
         "workflowId": run.workflow_id,
         "domain": run.domain,
@@ -220,7 +220,7 @@ def project_run(run: WknWorkflowRun, *, title: str | None = None) -> dict[str, A
     }
 
 
-def project_graph(run: WknWorkflowRun) -> dict[str, Any]:
+def project_graph(run: RuntimeRunRecord) -> dict[str, Any]:
     blueprint = dict(run.acg_blueprint or {})
     state = _state(run)
     return {
@@ -237,7 +237,7 @@ def project_graph(run: WknWorkflowRun) -> dict[str, Any]:
     }
 
 
-def _idempotency(request: RunCreateRequest) -> tuple[str | None, str | None]:
+def _idempotency(request: MissionCreateRequest) -> tuple[str | None, str | None]:
     if not request.client_request_id:
         return None, None
     actor = current_trusted_user()
@@ -251,7 +251,7 @@ def _idempotency(request: RunCreateRequest) -> tuple[str | None, str | None]:
 
 
 def create_router(
-    runtime: WknWorkflowRuntime,
+    runtime: ExecutionRuntime,
     coordinator: RunExecutionCoordinator,
 ) -> APIRouter:
     router = APIRouter(prefix="/agentos/v2")
@@ -268,19 +268,19 @@ def create_router(
             raise HTTPException(status_code=503, detail="identity query source unavailable")
         return identity_queries
 
-    def require_task_access(task_id: str):
+    def require_mission_access(mission_id: str):
         query = require_identity_queries()
         try:
-            detail = query.get_task(task_id)
+            detail = query.get_mission(mission_id)
         except EntityNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="task not found") from exc
+            raise HTTPException(status_code=404, detail="mission not found") from exc
         actor = current_trusted_user()
-        tenant = str(detail.task.metadata.get("tenantId") or "")
+        tenant = str(detail.mission.metadata.get("tenantId") or "")
         if actor is not None and (
-            detail.task.user_id != actor.user_id
+            detail.mission.user_id != actor.user_id
             or (tenant and tenant != actor.tenant_id)
         ):
-            raise HTTPException(status_code=404, detail="task not found")
+            raise HTTPException(status_code=404, detail="mission not found")
         return detail
 
     def require_run_access(run_id: str):
@@ -288,10 +288,10 @@ def create_router(
         run = identity_repositories.runs.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
-        require_task_access(run.task_id)
+        require_mission_access(run.mission_id)
         return query, run
 
-    def load_run(run_id: str) -> WknWorkflowRun:
+    def load_run(run_id: str) -> RuntimeRunRecord:
         try:
             run = runtime.get_status(run_id)
         except KeyError as exc:
@@ -299,9 +299,9 @@ def create_router(
         _require_access(run)
         return run
 
-    def project(run: WknWorkflowRun) -> dict[str, Any]:
+    def project(run: RuntimeRunRecord) -> dict[str, Any]:
         try:
-            title = runtime.workflow_store.get_task(run.task_id).title
+            title = runtime.workflow_store.get_mission(run.mission_id).title
         except KeyError:
             title = None
         result = project_run(run, title=title)
@@ -351,17 +351,17 @@ def create_router(
             "inboxBacklog": inbox_stats["backlog"],
             "outboxBacklog": int(getattr(startup, "outbox_backlog", 0) or 0),
             "startupReconciliation": {
-                "examinedTasks": int(getattr(startup, "examined_tasks", 0) or 0),
+                "examinedMissions": int(getattr(startup, "examined_tasks", 0) or 0),
                 "examinedRuns": int(getattr(startup, "examined_runs", 0) or 0),
-                "repairedTasks": int(getattr(startup, "repaired_tasks", 0) or 0),
+                "repairedMissions": int(getattr(startup, "repaired_tasks", 0) or 0),
                 "repairedRuns": int(getattr(startup, "repaired_runs", 0) or 0),
                 "replayedEvents": int(getattr(startup, "replayed_events", 0) or 0),
                 "failureCount": len(startup_failures),
             },
         }
 
-    @router.get("/tasks")
-    async def list_tasks(
+    @router.get("/missions")
+    async def list_missions(
         status_value: str | None = Query(default=None, alias="status"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
@@ -369,13 +369,13 @@ def create_router(
         query = require_identity_queries()
         actor = current_trusted_user()
         try:
-            task_status = UserTaskStatus(status_value) if status_value else None
+            mission_status = MissionStatus(status_value) if status_value else None
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail="invalid task status") from exc
-        items, total = query.list_tasks(
+            raise HTTPException(status_code=422, detail="invalid mission status") from exc
+        items, total = query.list_missions(
             user_id=(actor.user_id if actor else None),
             tenant_id=(actor.tenant_id if actor else None),
-            status=task_status,
+            status=mission_status,
             page=page,
             page_size=page_size,
         )
@@ -389,14 +389,14 @@ def create_router(
             "source": "agentos-v2",
         }
 
-    @router.get("/tasks/{task_id}")
-    async def get_task(task_id: str):
-        return require_task_access(task_id).model_dump(by_alias=True, mode="json")
+    @router.get("/missions/{mission_id}")
+    async def get_mission(mission_id: str):
+        return require_mission_access(mission_id).model_dump(by_alias=True, mode="json")
 
-    @router.get("/tasks/{task_id}/runs")
-    async def get_task_runs(task_id: str):
-        require_task_access(task_id)
-        history = require_identity_queries().task_run_history(task_id)
+    @router.get("/missions/{mission_id}/runs")
+    async def get_mission_runs(mission_id: str):
+        require_mission_access(mission_id)
+        history = require_identity_queries().mission_run_history(mission_id)
         return history.model_dump(by_alias=True, mode="json")
 
     @router.get("/runs/{run_id}/execution-tree")
@@ -410,10 +410,10 @@ def create_router(
     @router.get("/runs/{run_id}/attempts")
     async def get_attempt_history(
         run_id: str,
-        node_id: str | None = Query(default=None, alias="nodeId"),
+        task_id: str | None = Query(default=None, alias="taskId"),
     ):
         query, _ = require_run_access(run_id)
-        return query.attempt_history(run_id, node_id=node_id).model_dump(
+        return query.attempt_history(run_id, task_id=task_id).model_dump(
             by_alias=True,
             mode="json",
         )
@@ -428,7 +428,7 @@ def create_router(
         run = identity_repositories.runs.get(detail.attempt.run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="attempt not found")
-        require_task_access(run.task_id)
+        require_mission_access(run.mission_id)
         return detail.model_dump(by_alias=True, mode="json")
 
     @router.get("/step-executions/{step_execution_id}")
@@ -438,7 +438,7 @@ def create_router(
             detail = query.step_execution_detail(step_execution_id)
         except EntityNotFoundError as exc:
             raise HTTPException(status_code=404, detail="step execution not found") from exc
-        require_task_access(detail.origin.user_task.task_id)
+        require_mission_access(detail.origin.mission.mission_id)
         return detail.model_dump(by_alias=True, mode="json")
 
     @router.get("/step-executions/{step_execution_id}/provenance")
@@ -449,11 +449,11 @@ def create_router(
             provenance = query.execution_provenance(step_execution_id)
         except EntityNotFoundError as exc:
             raise HTTPException(status_code=404, detail="step execution not found") from exc
-        require_task_access(detail.origin.user_task.task_id)
+        require_mission_access(detail.origin.mission.mission_id)
         return provenance.model_dump(by_alias=True, mode="json")
 
-    @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
-    async def create_run(request: RunCreateRequest):
+    @router.post("/missions", status_code=status.HTTP_202_ACCEPTED)
+    async def create_mission(request: MissionCreateRequest):
         key, fingerprint = _idempotency(request)
         if key:
             existing = runtime.workflow_store.find_run_by_idempotency_key(key)
@@ -463,7 +463,7 @@ def create_router(
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
                 return project(existing)
         try:
-            task = runtime.create_task(
+            task = runtime.create_mission(
                 title=request.title,
                 domain=request.domain,
                 intent=request.intent,
@@ -474,7 +474,7 @@ def create_router(
                 enabled_plugin_ids=request.enabled_plugin_ids,
             )
             _, run = runtime.prepare_run(
-                task.task_id,
+                task.mission_id,
                 workflow_id=request.workflow_id,
                 review_mode=request.review_mode,
                 idempotency_key=key,
@@ -492,7 +492,7 @@ def create_router(
         statuses_value: str | None = Query(default=None, alias="statuses"),
         domain: str | None = None,
         workflow_id: str | None = Query(default=None, alias="workflowId"),
-        task_id: str | None = Query(default=None, alias="taskId"),
+        mission_id: str | None = Query(default=None, alias="missionId"),
         lifecycle_phase: str | None = Query(default=None, alias="lifecyclePhase"),
         source: str | None = None,
         sources_value: str | None = Query(default=None, alias="sources"),
@@ -506,7 +506,7 @@ def create_router(
             statuses=_csv_values(statuses_value),
             domain=domain,
             workflow_id=workflow_id,
-            task_id=task_id,
+            mission_id=mission_id,
             lifecycle_phase=lifecycle_phase,
             source=source,
             sources=_csv_values(sources_value),
@@ -530,20 +530,20 @@ def create_router(
     async def get_history_config(run_id: str):
         run = load_run(run_id)
         try:
-            title = runtime.workflow_store.get_task(run.task_id).title
+            title = runtime.workflow_store.get_mission(run.mission_id).title
         except KeyError:
             title = None
         return project_history_config(run, title=title)
 
     @router.get("/runs/{run_id}/graph")
     async def get_graph(run_id: str):
-        wkn_run = load_run(run_id)
+        runtime_run = load_run(run_id)
         if identity_queries is None:
-            return project_graph(wkn_run)
+            return project_graph(runtime_run)
         query, _ = require_run_access(run_id)
         tree = query.run_execution_tree(run_id)
         graph = tree.blueprint.graph
-        state = _state(wkn_run)
+        state = _state(runtime_run)
         return {
             "runId": run_id,
             "blueprintId": tree.blueprint.blueprint_id,
@@ -551,17 +551,17 @@ def create_router(
             "graphVersion": tree.run.graph_version,
             "nodes": list(graph.get("nodes") or []),
             "edges": list(graph.get("edges") or []),
-            "taskNodeBindings": [
+            "taskBindings": [
                 {
-                    "nodeId": node.task_node.node_id,
+                    "nodeId": node.semantic_task.node_id,
                     "acgNodeId": node.acg_node_id,
                 }
                 for node in tree.nodes
                 if node.acg_node_id is not None
             ],
-            "completedStepIds": list(wkn_run.completed_step_ids),
-            "activeStepIds": list(wkn_run.active_step_ids),
-            "skippedStepIds": list(wkn_run.execution_state.get("skippedStepIds") or []),
+            "completedStepIds": list(runtime_run.completed_step_ids),
+            "activeStepIds": list(runtime_run.active_step_ids),
+            "skippedStepIds": list(runtime_run.execution_state.get("skippedStepIds") or []),
             "graphPatchRefs": list(state.get("graphPatchRefs") or []),
             "resourceBindings": dict(state.get("resourceBindings") or {}),
             "source": "agentos-v2",
@@ -608,11 +608,11 @@ def create_router(
     @router.get("/runs/{run_id}/provenance")
     async def get_provenance(run_id: str):
         run = load_run(run_id)
-        ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, task_id=run.task_id)
+        ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, mission_id=run.mission_id)
         events = ledger.trace_events()
         legacy = run.provenance if isinstance(run.provenance, dict) else {}
         if not events and any(isinstance(legacy.get(key), list) and legacy[key] for key in ("productions", "consumptions", "interactions")):
-            common = {"eventId", "runId", "taskId", "attempt", "previousHash", "eventHash", "createdAt"}
+            common = {"eventId", "runId", "missionId", "attempt", "previousHash", "eventHash", "createdAt"}
             return {
                 "runId": run.run_id,
                 "schemaVersion": legacy.get("schemaVersion"),
@@ -760,4 +760,4 @@ def create_router(
     return router
 
 
-__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "RunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
+__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "MissionCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]

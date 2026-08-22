@@ -1,4 +1,4 @@
-"""Composition root for the single wkn AgentOS runtime."""
+"""Composition root for the single AgentOS execution runtime."""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
-from components.task_manager.store import WorkflowRegistry
-from runtime import ApplicationSetup, WknWorkflowRuntime
+from components.mission_manager.store import WorkflowRegistry
+from runtime import ApplicationSetup, ExecutionRuntime
 from runtime.v2 import (
     AcgIdentityLifecycleService,
     IdentityProjectionReconciler,
-    WknIdentityLifecycleAdapter,
+    IdentityProjectionBridge,
 )
 from service.agents import AgentRegistry
 from support.packs.registry import register_installed_packs
@@ -84,18 +84,18 @@ def _build_coordination_client(environment: Mapping[str, str]):
 
 
 def configure_runtime(
-    runtime: WknWorkflowRuntime,
+    runtime: ExecutionRuntime,
     *,
     intent_llm: object | None = None,
     model_runtime: object | None = None,
-) -> WknWorkflowRuntime:
+) -> ExecutionRuntime:
     runtime.set_intent_llm(intent_llm or GatewayIntentLLM())
     runtime.set_model_runtime(model_runtime or GatewayStructuredGenerationRuntime())
     return runtime
 
 
 def build_model_setup(
-    runtime: WknWorkflowRuntime,
+    runtime: ExecutionRuntime,
     *,
     environment: Mapping[str, str] | None = None,
 ) -> ApplicationSetup:
@@ -113,7 +113,7 @@ def build_default_runtime(
     model_runtime: object | None = None,
     tool_runtime: object | None = None,
     coordination_client: object | None = None,
-) -> WknWorkflowRuntime:
+) -> ExecutionRuntime:
     """Construct all registries, stores, and external adapters in the application."""
     env = environment or os.environ
     workflow_path = _workflow_db_path(env)
@@ -140,11 +140,11 @@ def build_default_runtime(
             or workflow_path.with_name("identity_v2.sqlite3")
         ))
     )
-    identity_adapter = WknIdentityLifecycleAdapter(
+    identity_adapter = IdentityProjectionBridge(
         identity_service,
         identity_service.repositories,
     )
-    runtime = WknWorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
         workflow_store=SQLiteWorkflowStore(workflow_path),
@@ -176,7 +176,7 @@ def build_default_runtime(
     return configure_runtime(runtime, intent_llm=intent_llm, model_runtime=model_runtime)
 
 
-def close_runtime(runtime: WknWorkflowRuntime) -> None:
+def close_runtime(runtime: ExecutionRuntime) -> None:
     """Close resources created by this composition root without changing workflow state."""
     resources = (
         runtime.workflow_store,

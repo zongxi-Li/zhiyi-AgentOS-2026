@@ -292,7 +292,7 @@ class RAGToolsIntegration:
             
             # 执行搜索
             # RAGService 仍提供同步搜索接口；在线程中调用，避免其向量化桥接
-            # 在当前 WorkflowRuntime 事件循环内再次驱动同一个 loop。
+            # 在当前 ExecutionRuntime 事件循环内再次驱动同一个 loop。
             results = await asyncio.to_thread(
                 rag_service.search,
                 query=query,

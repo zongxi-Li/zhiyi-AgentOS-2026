@@ -21,7 +21,7 @@ def _environment(tmp_path) -> dict[str, str]:
 
 
 async def _complete_general_run(runtime):
-    task = runtime.create_task(
+    mission = runtime.create_mission(
         title="Compare two deployment designs and cite the release evidence",
         domain="general",
         intent="evidence_decision",
@@ -36,7 +36,7 @@ async def _complete_general_run(runtime):
         },
     )
     paused = await runtime.start(
-        task.task_id,
+        mission.mission_id,
         workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
         review_mode="human_in_loop",
     )
@@ -96,7 +96,7 @@ async def test_approved_real_run_proposal_only_changes_future_general_runs(tmp_p
         assert version.version == 1
         assert version.policy["budget_adjustment:memory_token_budget"] == 768
 
-        next_task = runtime.create_task(
+        next_mission = runtime.create_mission(
             title="Evaluate the follow-up architecture decision",
             domain="general",
             intent="evidence_decision",
@@ -104,7 +104,7 @@ async def test_approved_real_run_proposal_only_changes_future_general_runs(tmp_p
             input={"userIntent": "Produce a verified evidence decision."},
         )
         _, next_run = runtime.prepare_run(
-            next_task.task_id,
+            next_mission.mission_id,
             workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
         )
         persisted_old = runtime.get_status(old_run_id)

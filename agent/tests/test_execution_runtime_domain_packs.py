@@ -1,4 +1,4 @@
-"""Ordered integration coverage for Packs migrated to the single wkn runtime."""
+"""Ordered integration coverage for Packs migrated to the execution runtime."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ class _PackToolRuntime:
 async def test_01_general_native_pack_runs_planner_model_and_reference_output(tmp_path) -> None:
     runtime = build_default_runtime(environment=_environment(tmp_path, "native"), tool_runtime=_PackToolRuntime())
     try:
-        task = runtime.create_task(
+        mission = runtime.create_mission(
             title="Analyze a release plan and provide a verified deliverable",
             domain="general",
             intent="analysis",
@@ -91,7 +91,7 @@ async def test_01_general_native_pack_runs_planner_model_and_reference_output(tm
                 "planningDiversity": "stable",
             },
         )
-        run = await runtime.start(task.task_id, workflow_id="native_acg_runtime_v1")
+        run = await runtime.start(mission.mission_id, workflow_id="native_acg_runtime_v1")
 
         assert run.status is WorkflowStatus.COMPLETED
         assert run.execution_state["selectedCapabilities"]
@@ -108,14 +108,14 @@ async def test_02_programmer_pack_runs_tool_context_memory_and_output_contracts(
         tool_runtime=_PackToolRuntime(),
     )
     try:
-        task = runtime.create_task(
+        mission = runtime.create_mission(
             title="Implement a secure FastAPI authentication endpoint",
             domain="programmer",
             intent="requirement_analysis",
             workflow_id="programmer_requirement_analysis_v1",
             input={"requirement": "Implement secure FastAPI authentication", "targetLanguage": "python"},
         )
-        run = await runtime.start(task.task_id, workflow_id="programmer_requirement_analysis_v1")
+        run = await runtime.start(mission.mission_id, workflow_id="programmer_requirement_analysis_v1")
 
         assert run.status is WorkflowStatus.COMPLETED
         assert [step.step_id for step in run.steps] == [
@@ -134,14 +134,14 @@ async def test_02_programmer_pack_runs_tool_context_memory_and_output_contracts(
 async def test_03_education_pack_runs_declared_profile_memory_and_output_contract(tmp_path) -> None:
     runtime = build_default_runtime(environment=_environment(tmp_path, "education"), tool_runtime=_PackToolRuntime())
     try:
-        task = runtime.create_task(
+        mission = runtime.create_mission(
             title="Design a lesson about linear equations",
             domain="education",
             intent="lesson_plan",
             workflow_id="education_lesson_plan_v1",
             input={"topic": "linear equations", "subject": "mathematics", "grade": "grade 7"},
         )
-        run = await runtime.start(task.task_id, workflow_id="education_lesson_plan_v1")
+        run = await runtime.start(mission.mission_id, workflow_id="education_lesson_plan_v1")
 
         output = _output(runtime, run, "lesson_plan")
         assert run.status is WorkflowStatus.COMPLETED
@@ -155,14 +155,14 @@ async def test_03_education_pack_runs_declared_profile_memory_and_output_contrac
 async def test_04_writer_pack_runs_declared_profile_memory_and_output_contract(tmp_path) -> None:
     runtime = build_default_runtime(environment=_environment(tmp_path, "writer"), tool_runtime=_PackToolRuntime())
     try:
-        task = runtime.create_task(
+        mission = runtime.create_mission(
             title="A detective discovers a city that forgets one day every year",
             domain="writer",
             intent="story_outline",
             workflow_id="writer_story_outline_v1",
             input={"premise": "A detective discovers a city that forgets one day every year", "genre": "mystery"},
         )
-        run = await runtime.start(task.task_id, workflow_id="writer_story_outline_v1")
+        run = await runtime.start(mission.mission_id, workflow_id="writer_story_outline_v1")
 
         output = _output(runtime, run, "outline_generate")
         assert run.status is WorkflowStatus.COMPLETED

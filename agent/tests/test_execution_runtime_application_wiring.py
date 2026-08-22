@@ -11,7 +11,7 @@ from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from adapters.guarded_model import GuardedModelRuntime
-from runtime import WorkflowRuntime
+from runtime import ExecutionRuntime
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 from app.execution.wiring import build_default_runtime, build_model_setup, close_runtime
@@ -51,7 +51,7 @@ def _environment(root: Path) -> dict[str, str]:
     }
 
 
-def test_application_builds_the_single_wkn_runtime_with_six_stores(tmp_path: Path) -> None:
+def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_path: Path) -> None:
     tools = _InjectedToolRuntime()
     model = _InjectedModelRuntime()
     intent = _InjectedIntentLLM()
@@ -62,7 +62,7 @@ def test_application_builds_the_single_wkn_runtime_with_six_stores(tmp_path: Pat
         intent_llm=intent,
     )
     try:
-        assert type(runtime) is WorkflowRuntime
+        assert type(runtime) is ExecutionRuntime
         assert isinstance(runtime.workflow_store, SQLiteWorkflowStore)
         assert isinstance(runtime.checkpoint_store, ACGCheckpointStore)
         assert isinstance(runtime.execution_value_store, SQLiteExecutionValueStore)

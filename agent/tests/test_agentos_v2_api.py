@@ -7,9 +7,9 @@ from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from components.executor import InMemoryExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
-from contracts.planning import TaskPlanNode
+from contracts.planning import PlannedTask
 from contracts.workflow import (
     StepStatus,
     TraceEventType,
@@ -18,8 +18,8 @@ from contracts.workflow import (
     WorkflowStatus,
     WorkflowStepDefinition,
 )
-from runtime import WorkflowRuntime
-from runtime.v2 import AcgIdentityLifecycleService, WknIdentityLifecycleAdapter
+from runtime import ExecutionRuntime
+from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -37,7 +37,7 @@ class _ApiAgent(BaseAgent):
         return AgentOutput(output={"report": _SECRET}, summary="safe report summary")
 
 
-def _runtime(tmp_path, *, with_identity: bool = False) -> WorkflowRuntime:
+def _runtime(tmp_path, *, with_identity: bool = False) -> ExecutionRuntime:
     agents = AgentRegistry()
     agents.register(_ApiAgent())
     workflows = WorkflowRegistry()
@@ -47,7 +47,7 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> WorkflowRuntime:
             name="API workflow",
             domain="general",
             runtimeEngine="acg",
-            planningNodes=[TaskPlanNode(
+            planningNodes=[PlannedTask(
                 key="report",
                 title="report",
                 objective="produce the requested report",
@@ -71,11 +71,11 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> WorkflowRuntime:
         identity_service = AcgIdentityLifecycleService(
             SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
         )
-        identity_lifecycle = WknIdentityLifecycleAdapter(
+        identity_lifecycle = IdentityProjectionBridge(
             identity_service,
             identity_service.repositories,
         )
-    return WorkflowRuntime(
+    return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -87,12 +87,12 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> WorkflowRuntime:
 
 async def test_v2_run_state_is_reference_only_and_output_requires_owned_reference(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    task = runtime.create_task(
+    task = runtime.create_mission(
         "API projection must not leak input",
         workflow_id="api-workflow",
         input={"contractText": "PRIVATE-TASK-INPUT"},
     )
-    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
     runtime.trace_store.append(
         run,
         TraceEventType.RUNTIME_EVENT_CLASSIFIED,
@@ -129,23 +129,23 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
 
 async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    visible_task = runtime.create_task(
+    visible_task = runtime.create_mission(
         "Visible ACG run",
         workflow_id="api-workflow",
         input={"source": "acg"},
     )
-    _, visible_run = runtime.prepare_run(visible_task.task_id, workflow_id="api-workflow")
+    _, visible_run = runtime.prepare_run(visible_task.mission_id, workflow_id="api-workflow")
     visible_run.status = WorkflowStatus.WAITING_REVIEW
     visible_run.lifecycle_phase = WorkflowProgressPhase.REVIEW
     visible_run.steps[0].status = StepStatus.WAITING_REVIEW
     runtime.workflow_store.save_run(visible_run)
 
-    hidden_task = runtime.create_task(
+    hidden_task = runtime.create_mission(
         "Owned by another user",
         workflow_id="api-workflow",
         input={"source": "acg", "authenticatedUserId": "other-user"},
     )
-    _, hidden_run = runtime.prepare_run(hidden_task.task_id, workflow_id="api-workflow")
+    _, hidden_run = runtime.prepare_run(hidden_task.mission_id, workflow_id="api-workflow")
     runtime.workflow_store.save_run(hidden_run)
 
     app = FastAPI()
@@ -157,7 +157,7 @@ async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(
                 "statuses": "running,waiting_review",
                 "domain": "general",
                 "workflowId": "api-workflow",
-                "taskId": visible_task.task_id,
+                "missionId": visible_task.mission_id,
                 "lifecyclePhase": "review",
                 "sources": "acg,chat",
                 "summary": "true",
@@ -172,10 +172,44 @@ async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(
     assert hidden_detail.status_code == 404
 
 
+async def test_v2_run_history_does_not_apply_removed_architecture_heuristics(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    current_task = runtime.create_mission(
+        "Current architecture run",
+        workflow_id="api-workflow",
+        input={"source": "acg"},
+    )
+    _, current_run = runtime.prepare_run(current_task.mission_id, workflow_id="api-workflow")
+
+    legacy_task = runtime.create_mission(
+        "Pre-compiled architecture run",
+        workflow_id="api-workflow",
+        input={"source": "acg"},
+    )
+    _, legacy_run = runtime.prepare_run(legacy_task.mission_id, workflow_id="api-workflow")
+    legacy_run.execution_state.pop("compiledPackageId", None)
+    runtime.workflow_store.save_run(legacy_run)
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/agentos/v2/runs",
+            params={"sources": "acg"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+    assert {item["runId"] for item in response.json()["items"]} == {
+        current_run.run_id,
+        legacy_run.run_id,
+    }
+
+
 async def test_v2_projects_scheduling_and_versioned_evolution_without_bodies(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    task = runtime.create_task("Scheduling projection", workflow_id="api-workflow")
-    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    task = runtime.create_mission("Scheduling projection", workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
     proposal = runtime.evolution_service.propose(
         [
             Trajectory(
@@ -211,8 +245,8 @@ async def test_v2_projects_scheduling_and_versioned_evolution_without_bodies(tmp
 
 async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    task = runtime.create_task("Legacy API projection", workflow_id="api-workflow")
-    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    task = runtime.create_mission("Legacy API projection", workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
     run.execution_state.pop("outputRefs", None)
     run.output = {"final_answer": _SECRET}
     run.steps[0].output = {"report": _SECRET}
@@ -240,7 +274,7 @@ async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(t
 
 async def test_v2_history_config_returns_only_owner_visible_workbench_fields(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    task = runtime.create_task(
+    task = runtime.create_mission(
         "Historical workbench",
         workflow_id="api-workflow",
         input={
@@ -252,7 +286,7 @@ async def test_v2_history_config_returns_only_owner_visible_workbench_fields(tmp
             "apiKey": _SECRET,
         },
     )
-    _, run = runtime.prepare_run(task.task_id, workflow_id="api-workflow", review_mode="human_in_loop")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow", review_mode="human_in_loop")
     run.enabled_plugin_ids = ["kinlin.legal"]
     runtime.workflow_store.save_run(run)
     app = FastAPI()
@@ -277,8 +311,8 @@ async def test_v2_history_config_returns_only_owner_visible_workbench_fields(tmp
 
 async def test_v2_provenance_falls_back_to_read_only_legacy_snapshot(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    task = runtime.create_task("Legacy provenance projection", workflow_id="api-workflow")
-    _, run = runtime.prepare_run(task.task_id, workflow_id="api-workflow")
+    task = runtime.create_mission("Legacy provenance projection", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
     run.provenance = {
         "schemaVersion": 2,
         "integrityStatus": "valid",
@@ -304,8 +338,8 @@ async def test_v2_provenance_falls_back_to_read_only_legacy_snapshot(tmp_path) -
 
 async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    task = runtime.create_task("API resources", workflow_id="api-workflow")
-    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    task = runtime.create_mission("API resources", workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
 
@@ -331,7 +365,7 @@ async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tm
         assert f"/agentos/v2/runs/{{run_id}}/reviews" in paths
 
 
-async def test_v2_create_run_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
+async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     coordinator = RunExecutionCoordinator(runtime)
     app = FastAPI()
@@ -345,16 +379,16 @@ async def test_v2_create_run_is_idempotent_and_rejects_fingerprint_conflicts(tmp
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            first = await client.post("/agentos/v2/runs", json=payload)
+            first = await client.post("/agentos/v2/missions", json=payload)
             assert first.status_code == 202
             assert "PRIVATE-CREATE-INPUT" not in first.text
 
-            repeated = await client.post("/agentos/v2/runs", json=payload)
+            repeated = await client.post("/agentos/v2/missions", json=payload)
             assert repeated.status_code == 202
             assert repeated.json()["runId"] == first.json()["runId"]
 
             conflict = await client.post(
-                "/agentos/v2/runs",
+                "/agentos/v2/missions",
                 json={**payload, "title": "Different request body"},
             )
             assert conflict.status_code == 409
@@ -365,8 +399,8 @@ async def test_v2_create_run_is_idempotent_and_rejects_fingerprint_conflicts(tmp
 
 async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path) -> None:
     runtime = _runtime(tmp_path, with_identity=True)
-    task = runtime.create_task("Identity API source", workflow_id="api-workflow")
-    run = await runtime.start(task.task_id, workflow_id="api-workflow")
+    task = runtime.create_mission("Identity API source", workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
     repositories = runtime.identity_lifecycle.repositories
     attempts = repositories.attempts.list_for_run(run.run_id)
     execution = repositories.step_executions.list_for_attempt(
@@ -380,10 +414,10 @@ async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path)
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as client:
-            tasks = await client.get("/agentos/v2/tasks")
+            tasks = await client.get("/agentos/v2/missions")
             health = await client.get("/agentos/v2/identity/health")
-            detail = await client.get(f"/agentos/v2/tasks/{task.task_id}")
-            history = await client.get(f"/agentos/v2/tasks/{task.task_id}/runs")
+            detail = await client.get(f"/agentos/v2/missions/{task.mission_id}")
+            history = await client.get(f"/agentos/v2/missions/{task.mission_id}/runs")
             projected_run = await client.get(f"/agentos/v2/runs/{run.run_id}")
             graph = await client.get(f"/agentos/v2/runs/{run.run_id}/graph")
             tree = await client.get(
@@ -391,7 +425,7 @@ async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path)
             )
             attempt_history = await client.get(
                 f"/agentos/v2/runs/{run.run_id}/attempts",
-                params={"nodeId": attempts[0].node_id},
+                params={"taskId": attempts[0].task_id},
             )
             attempt = await client.get(
                 f"/agentos/v2/attempts/{attempts[0].attempt_id}"
@@ -407,17 +441,17 @@ async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path)
         assert health.json()["status"] == "healthy"
         assert health.json()["unappliedEventCount"] == 0
         assert tasks.json()["source"] == "agentos-v2"
-        assert tasks.json()["items"][0]["task"]["taskId"] == task.task_id
-        assert detail.json()["taskNodes"][0]["nodeId"].startswith("node_")
+        assert tasks.json()["items"][0]["mission"]["missionId"] == task.mission_id
+        assert detail.json()["tasks"][0]["taskId"].startswith("task_")
         assert history.json()["runs"][0]["runId"] == run.run_id
         assert projected_run.json()["identity"]["blueprintId"].startswith("blueprint_")
         assert graph.json()["source"] == "agentos-v2"
         assert graph.json()["blueprintId"].startswith("blueprint_")
-        assert graph.json()["taskNodeBindings"][0]["acgNodeId"] == "report"
+        assert graph.json()["taskBindings"][0]["acgNodeId"] == "report"
         assert tree.json()["nodes"][0]["attempts"][0]["attempt"]["attemptId"] == attempts[0].attempt_id
         assert attempt_history.json()["attempts"][0]["attempt"]["attemptId"] == attempts[0].attempt_id
         assert attempt.json()["executionBinding"]["attemptId"] == attempts[0].attempt_id
-        assert step.json()["origin"]["userTask"]["taskId"] == task.task_id
+        assert step.json()["origin"]["mission"]["missionId"] == task.mission_id
         assert provenance.json()["stepExecutionId"] == execution.step_execution_id
     finally:
         runtime.identity_lifecycle.lifecycle_service.close()

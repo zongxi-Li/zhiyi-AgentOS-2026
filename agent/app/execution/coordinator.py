@@ -8,7 +8,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from runtime import WknWorkflowRuntime
+    from runtime import ExecutionRuntime
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class RunExecutionCoordinator:
     """Own asyncio tasks without becoming a second workflow state machine."""
 
-    def __init__(self, runtime: "WknWorkflowRuntime") -> None:
+    def __init__(self, runtime: "ExecutionRuntime") -> None:
         self.runtime = runtime
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()

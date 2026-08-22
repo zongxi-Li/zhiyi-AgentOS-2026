@@ -26,7 +26,7 @@ def _environment(tmp_path) -> dict[str, str]:
 
 
 def _provenance_ids(runtime, run) -> list[str]:
-    ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, task_id=run.task_id)
+    ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, mission_id=run.mission_id)
     return [
         event.event_id
         for event in [*ledger.productions, *ledger.consumptions, *ledger.interactions]
@@ -36,7 +36,7 @@ def _provenance_ids(runtime, run) -> list[str]:
 async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_path) -> None:
     environment = _environment(tmp_path)
     first = build_default_runtime(environment=environment)
-    task = first.create_task(
+    mission = first.create_mission(
         title="Evaluate an AgentOS release decision with cited evidence",
         domain="general",
         intent="evidence_decision",
@@ -51,7 +51,7 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
         },
     )
     paused = await first.start(
-        task.task_id,
+        mission.mission_id,
         workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
         review_mode="human_in_loop",
     )
@@ -153,7 +153,7 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
     )
     assert policy.version == 1
 
-    next_task = third.create_task(
+    next_mission = third.create_mission(
         title="Verify the evolved General policy snapshot",
         domain="general",
         intent="evidence_decision",
@@ -161,7 +161,7 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
         input={"userIntent": "Prepare a new evidence decision run."},
     )
     _, next_run = third.prepare_run(
-        next_task.task_id,
+        next_mission.mission_id,
         workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
     )
     assert third.get_status(run_id).execution_state["evolutionPolicyVersion"] == 0
