@@ -138,6 +138,11 @@ async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(
     visible_run.status = WorkflowStatus.WAITING_REVIEW
     visible_run.lifecycle_phase = WorkflowProgressPhase.REVIEW
     visible_run.steps[0].status = StepStatus.WAITING_REVIEW
+    visible_run.current_step_id = visible_run.steps[0].step_id
+    visible_run.execution_state.update({
+        "checkpointId": "acgckpt_api_history",
+        "reviewPayload": {"stepId": visible_run.steps[0].step_id},
+    })
     runtime.workflow_store.save_run(visible_run)
 
     hidden_task = runtime.create_mission(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -11,11 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
-from contracts.workflow import ReviewDecision, ReviewDecisionType, RuntimeRunRecord
+from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus
 from domain.models import MissionStatus
 from domain.repository import EntityNotFoundError
 from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
+from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 
 
 class MissionCreateRequest(BaseModel):
@@ -41,6 +43,12 @@ class ReviewApplyRequest(BaseModel):
     reviewer: str = "system"
     comment: str = Field(default="", max_length=2000)
     operation_id: str = Field(alias="operationId", min_length=1)
+    expected_run_updated_at: datetime | None = Field(
+        default=None, alias="expectedRunUpdatedAt"
+    )
+    expected_step_status: StepStatus | None = Field(
+        default=None, alias="expectedStepStatus"
+    )
 
 
 class EvolutionRollbackRequest(BaseModel):
@@ -119,8 +127,23 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
         "outputSummaries", "resourceBindings", "bindingHistory",
         "bindingRequirements", "executionBindings", "schedulingDecisions",
         "evolutionPolicyVersion",
+        "consensusResults", "controlFrames", "loopIterations",
+        "loopPaths", "debateSessions", "recoveryOutcome",
     )
-    return {key: raw[key] for key in allowed if key in raw}
+    state = {key: raw[key] for key in allowed if key in raw}
+    review_payload = raw.get("reviewPayload")
+    if isinstance(review_payload, dict):
+        review_fields = {
+            "subjectType", "subjectId", "stepId", "controlId", "reasonCode",
+            "iteration", "votes", "approvals", "committedParticipants", "quorum",
+            "accepted", "strategy", "auditDecisionRef", "auditOutcome", "traceRef",
+        }
+        state["reviewPayload"] = {
+            key: review_payload[key]
+            for key in review_fields
+            if review_payload.get(key) is not None
+        }
+    return state
 
 
 _HISTORY_INPUT_KEYS = (
@@ -399,6 +422,36 @@ def create_router(
         history = require_identity_queries().mission_run_history(mission_id)
         return history.model_dump(by_alias=True, mode="json")
 
+    def change_mission_record_state(mission_id: str, state: MissionRecordState) -> dict[str, Any]:
+        require_mission_access(mission_id)
+        try:
+            task, affected_runs = runtime.workflow_store.set_mission_record_state(mission_id, state)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mission not found") from exc
+        except RuntimeRunRecordNotTerminalError as exc:
+            raise HTTPException(status_code=409, detail="mission has active runs") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "missionId": task.mission_id,
+            "recordState": task.record_state.value,
+            "affectedRunCount": affected_runs,
+            "archivedAt": task.archived_at,
+            "deletedAt": task.deleted_at,
+        }
+
+    @router.post("/missions/{mission_id}/archive")
+    async def archive_mission(mission_id: str):
+        return change_mission_record_state(mission_id, MissionRecordState.ARCHIVED)
+
+    @router.post("/missions/{mission_id}/restore")
+    async def restore_mission(mission_id: str):
+        return change_mission_record_state(mission_id, MissionRecordState.ACTIVE)
+
+    @router.delete("/missions/{mission_id}")
+    async def delete_mission(mission_id: str):
+        return change_mission_record_state(mission_id, MissionRecordState.DELETED)
+
     @router.get("/runs/{run_id}/execution-tree")
     async def get_execution_tree(run_id: str):
         query, _ = require_run_access(run_id)
@@ -496,6 +549,7 @@ def create_router(
         lifecycle_phase: str | None = Query(default=None, alias="lifecyclePhase"),
         source: str | None = None,
         sources_value: str | None = Query(default=None, alias="sources"),
+        record_state: MissionRecordState = Query(default=MissionRecordState.ACTIVE, alias="recordState"),
         _summary: bool = Query(default=True, alias="summary"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
@@ -510,6 +564,7 @@ def create_router(
             lifecycle_phase=lifecycle_phase,
             source=source,
             sources=_csv_values(sources_value),
+            mission_record_state=record_state,
             owner_user_id=(actor.user_id if actor else None),
             owner_tenant_id=(actor.tenant_id if actor else None),
             page=page,
@@ -553,7 +608,7 @@ def create_router(
             "edges": list(graph.get("edges") or []),
             "taskBindings": [
                 {
-                    "nodeId": node.semantic_task.node_id,
+                    "nodeId": node.task.task_id,
                     "acgNodeId": node.acg_node_id,
                 }
                 for node in tree.nodes
@@ -751,6 +806,8 @@ def create_router(
                     reviewer=request.reviewer,
                     comment=request.comment,
                     operationId=request.operation_id,
+                    expectedRunUpdatedAt=request.expected_run_updated_at,
+                    expectedStepStatus=request.expected_step_status,
                 )
             )
         except (KeyError, ValueError) as exc:

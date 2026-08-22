@@ -1,4 +1,4 @@
-"""Executable wkn ACG blueprint for the Legal contract-review vertical slice."""
+"""Executable ACG blueprint for the Legal contract-review vertical slice."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def build_contract_review_blueprint(
     """Promote the canonical Legal workflow into its audited non-linear ACG.
 
     The function lives in the domain Pack: it declares Legal ordering and data
-    contracts while the wkn executor remains the sole scheduler.  It adds one
+    contracts while the execution runtime remains the sole scheduler. It adds one
     real tool-backed retrieval step, a parallel barrier, and a bounded IF route.
     """
 
