@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Validated transport DTO; workflow state remains owned by Python. */
-public record AgentOsRunCreateRequest(
+public record AgentOsMissionCreateRequest(
         @NotBlank @Size(max = 500) String title,
         String domain,
         String intent,
@@ -19,7 +19,7 @@ public record AgentOsRunCreateRequest(
         List<String> enabledPluginIds,
         @Size(max = 200) String clientRequestId
 ) {
-    public AgentOsRunCreateRequest {
+    public AgentOsMissionCreateRequest {
         domain = domain == null ? "general" : domain;
         intent = intent == null ? "general" : intent;
         reviewMode = reviewMode == null ? "auto" : reviewMode;

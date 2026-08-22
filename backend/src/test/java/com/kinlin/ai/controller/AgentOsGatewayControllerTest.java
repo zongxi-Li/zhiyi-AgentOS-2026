@@ -2,7 +2,7 @@ package com.kinlin.ai.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.config.AgentProperties;
-import com.kinlin.ai.dto.agentos.AgentOsRunCreateRequest;
+import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,12 +36,12 @@ class AgentOsGatewayControllerTest {
     }
 
     @Test
-    void createRunForwardsOnlyTheV2ContractAndPreservesAccepted() throws Exception {
-        gateway.postResponses.put("/ai/agentos/v2/runs", response(202, Map.of(
+    void createMissionForwardsOnlyTheV2ContractAndPreservesAccepted() throws Exception {
+        gateway.postResponses.put("/ai/agentos/v2/missions", response(202, Map.of(
                 "runId", "run_001", "status", "pending", "executionState", Map.of("outputRefs", Map.of())
         )));
 
-        mockMvc.perform(post("/api/agentos/v2/runs")
+        mockMvc.perform(post("/api/agentos/v2/missions")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "title", "合同审查",
@@ -52,8 +52,8 @@ class AgentOsGatewayControllerTest {
                 .andExpect(jsonPath("$.runId").value("run_001"))
                 .andExpect(jsonPath("$._httpStatus").doesNotExist());
 
-        assertEquals("/ai/agentos/v2/runs", gateway.lastPostPath);
-        AgentOsRunCreateRequest request = (AgentOsRunCreateRequest) gateway.lastPostBody;
+        assertEquals("/ai/agentos/v2/missions", gateway.lastPostPath);
+        AgentOsMissionCreateRequest request = (AgentOsMissionCreateRequest) gateway.lastPostBody;
         assertEquals("general", request.domain());
         assertEquals("auto", request.reviewMode());
         assertEquals(Map.of(), request.input());
@@ -85,7 +85,7 @@ class AgentOsGatewayControllerTest {
     @Test
     void listRunsForwardsTheCompleteHistoryFilterContract() throws Exception {
         String upstream = "/ai/agentos/v2/runs?statuses=running,waiting_review&domain=legal"
-                + "&workflowId=workflow_1&taskId=task_1&lifecyclePhase=review&source=acg"
+                + "&workflowId=workflow_1&missionId=mission_1&lifecyclePhase=review&source=acg"
                 + "&sources=acg,chat&summary=true&page=2&pageSize=50";
         gateway.getResponses.put(upstream, response(200, Map.of(
                 "items", java.util.List.of(), "total", 0, "page", 2, "pageSize", 50
@@ -95,7 +95,7 @@ class AgentOsGatewayControllerTest {
                         .param("statuses", "running,waiting_review")
                         .param("domain", "legal")
                         .param("workflowId", "workflow_1")
-                        .param("taskId", "task_1")
+                        .param("missionId", "mission_1")
                         .param("lifecyclePhase", "review")
                         .param("source", "acg")
                         .param("sources", "acg,chat")

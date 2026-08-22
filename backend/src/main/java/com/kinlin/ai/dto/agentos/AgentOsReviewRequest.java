@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-/** Review command validated at the HTTP boundary and interpreted only by WorkflowRuntime. */
+/** Review command validated at the HTTP boundary and interpreted only by ExecutionRuntime. */
 public record AgentOsReviewRequest(
         @NotBlank String stepId,
         @NotBlank @Pattern(regexp = "approved|rejected|need_more_info|rerun|cancelled") String decision,

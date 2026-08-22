@@ -1,7 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.dto.agentos.AgentOsReviewRequest;
-import com.kinlin.ai.dto.agentos.AgentOsRunCreateRequest;
+import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,9 +28,32 @@ public class AgentOsGatewayController {
     private static final String UPSTREAM_ROOT = "/ai/agentos/v2";
     private final AgentOsGatewayService gateway;
 
-    @PostMapping("/runs")
-    public ResponseEntity<Map<String, Object>> createRun(@Valid @RequestBody AgentOsRunCreateRequest body) {
-        return response(gateway.post(UPSTREAM_ROOT + "/runs", body));
+    @PostMapping("/missions")
+    public ResponseEntity<Map<String, Object>> createMission(@Valid @RequestBody AgentOsMissionCreateRequest body) {
+        return response(gateway.post(UPSTREAM_ROOT + "/missions", body));
+    }
+
+    @GetMapping("/missions")
+    public ResponseEntity<Map<String, Object>> listMissions(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("status", status);
+        params.put("page", String.valueOf(page));
+        params.put("pageSize", String.valueOf(pageSize));
+        return response(gateway.get(query(UPSTREAM_ROOT + "/missions", params)));
+    }
+
+    @GetMapping("/missions/{missionId}")
+    public ResponseEntity<Map<String, Object>> getMission(@PathVariable String missionId) {
+        return response(gateway.get(missionPath(missionId)));
+    }
+
+    @GetMapping("/missions/{missionId}/runs")
+    public ResponseEntity<Map<String, Object>> getMissionRuns(@PathVariable String missionId) {
+        return response(gateway.get(missionPath(missionId) + "/runs"));
     }
 
     @GetMapping("/runs")
@@ -39,7 +62,7 @@ public class AgentOsGatewayController {
             @RequestParam(required = false) String statuses,
             @RequestParam(required = false) String domain,
             @RequestParam(required = false) String workflowId,
-            @RequestParam(required = false) String taskId,
+            @RequestParam(required = false) String missionId,
             @RequestParam(required = false) String lifecyclePhase,
             @RequestParam(required = false) String source,
             @RequestParam(required = false) String sources,
@@ -52,7 +75,7 @@ public class AgentOsGatewayController {
         params.put("statuses", statuses);
         params.put("domain", domain);
         params.put("workflowId", workflowId);
-        params.put("taskId", taskId);
+        params.put("missionId", missionId);
         params.put("lifecyclePhase", lifecyclePhase);
         params.put("source", source);
         params.put("sources", sources);
@@ -120,6 +143,10 @@ public class AgentOsGatewayController {
 
     private String runPath(String runId) {
         return UPSTREAM_ROOT + "/runs/" + segment(runId);
+    }
+
+    private String missionPath(String missionId) {
+        return UPSTREAM_ROOT + "/missions/" + segment(missionId);
     }
 
     private String segment(String value) {
