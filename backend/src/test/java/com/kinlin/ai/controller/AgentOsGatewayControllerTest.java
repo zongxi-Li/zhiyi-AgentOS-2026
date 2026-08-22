@@ -78,6 +78,22 @@ class AgentOsGatewayControllerTest {
                 .andExpect(jsonPath("$.input.taskGoal").value("Restore task"));
         assertEquals("/ai/agentos/v2/runs/run_001/history-config", gateway.lastGetPath);
 
+        gateway.getResponses.put("/ai/agentos/v2/runs/run%20001/execution-tree", response(200, Map.of(
+                "run", Map.of("runId", "run 001"), "nodes", java.util.List.of()
+        )));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/execution-tree", "run 001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.run.runId").value("run 001"));
+        assertEquals("/ai/agentos/v2/runs/run%20001/execution-tree", gateway.lastGetPath);
+
+        gateway.getResponses.put("/ai/agentos/v2/identity/health", response(503, Map.of(
+                "detail", "identity query source unavailable"
+        )));
+        mockMvc.perform(get("/api/agentos/v2/identity/health"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.detail").value("identity query source unavailable"));
+        assertEquals("/ai/agentos/v2/identity/health", gateway.lastGetPath);
+
         mockMvc.perform(get("/api/agentos/core/workflows/runs/run_001/acg"))
                 .andExpect(status().isNotFound());
     }

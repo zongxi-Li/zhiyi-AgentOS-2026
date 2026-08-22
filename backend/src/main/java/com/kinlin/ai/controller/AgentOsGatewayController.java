@@ -100,6 +100,16 @@ public class AgentOsGatewayController {
         return response(gateway.get(runPath(runId) + "/graph"));
     }
 
+    @GetMapping("/runs/{runId}/execution-tree")
+    public ResponseEntity<Map<String, Object>> getExecutionTree(@PathVariable String runId) {
+        return response(gateway.get(runPath(runId) + "/execution-tree"));
+    }
+
+    @GetMapping("/identity/health")
+    public ResponseEntity<Map<String, Object>> getIdentityHealth() {
+        return response(gateway.get(UPSTREAM_ROOT + "/identity/health"));
+    }
+
     @GetMapping("/runs/{runId}/outputs/{outputRef}")
     public ResponseEntity<Map<String, Object>> getOutput(
             @PathVariable String runId,
