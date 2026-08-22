@@ -67,6 +67,48 @@ def test_broker_returns_only_manifest_allowed_fields() -> None:
     }]
 
 
+def test_broker_projects_manifest_allowed_evidence_references() -> None:
+    """已获准读取的证据引用必须进入 ContextPack 的证据授权域。"""
+    values = InMemoryExecutionValueStore()
+    output_ref = values.put_output(
+        run_id="run-1",
+        step_id="retrieve",
+        payload={
+            "evidence_refs": ["src-task-1", "src-task-1"],
+            "secret": "must-not-read",
+        },
+    )
+    manifest = CommunicationManifest(
+        run_id="run-1",
+        rules=(CommunicationRule(
+            producer_step_id="retrieve",
+            consumer_step_id="analyze",
+            allowed_fields=("evidence_refs",),
+            channel="retrieve:analyze",
+            max_tokens=100,
+        ),),
+        run_budget=100,
+        step_budgets={"analyze": 100},
+        channel_budgets={"retrieve:analyze": 100},
+    )
+    broker = CommunicationBroker(manifest=manifest, value_store=values)
+
+    pack = asyncio.run(
+        broker.read_reference(
+            run_id="run-1",
+            consumer_step_id="analyze",
+            output_ref=output_ref,
+            requested_fields=["evidence_refs"],
+            max_tokens=100,
+            reason="analyze retrieved evidence",
+        )
+    )
+
+    assert pack.data == {"evidence_refs": ["src-task-1", "src-task-1"]}
+    assert pack.evidence_refs == ["src-task-1"]
+    assert "secret" not in pack.model_dump_json()
+
+
 def test_broker_rejects_reference_without_topology_edge() -> None:
     """没有 producer -> consumer 拓扑边时不得因知道引用而读取正文。"""
     broker, output_ref = _broker()

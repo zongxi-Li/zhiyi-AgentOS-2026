@@ -86,6 +86,19 @@ class CommunicationBroker:
         # 来源步骤归属已在 _resolve_rule 无正文验证；通过全部权限检查后才读取该输出。
         output = self.value_store.get_output(run_id=run_id, output_ref=output_ref)
         data = {field: output[field] for field in fields if field in output}
+        evidence_refs: list[str] = []
+        raw_evidence = data.get("evidence_refs") or data.get("evidenceRefs") or []
+        if isinstance(raw_evidence, list):
+            for item in raw_evidence:
+                value = (
+                    item
+                    if isinstance(item, str)
+                    else item.get("id")
+                    if isinstance(item, Mapping)
+                    else None
+                )
+                if value and str(value) not in evidence_refs:
+                    evidence_refs.append(str(value))
         tokens = estimate_tokens(data)
         if tokens > max_tokens or tokens > rule.max_tokens:
             raise EntropyBudgetExceededError("communication read exceeds request or rule token limit")
@@ -95,6 +108,7 @@ class CommunicationBroker:
             stepId=consumer_step_id,
             data=data,
             sourceData={rule.producer_step_id: dict(data)},
+            evidenceRefs=evidence_refs,
             tokensDelivered=tokens,
             tokensAvailable=estimate_tokens(output),
             savingRatio=self._saving_ratio(tokens, estimate_tokens(output)),

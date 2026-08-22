@@ -418,7 +418,11 @@ class ACGGraphCompiler:
                 properties = source.output_spec.get("properties", {}) if isinstance(source.output_spec, dict) else {}
                 declared = list(properties) if isinstance(properties, dict) else []
             target_metadata = target.metadata if isinstance(target.metadata, dict) else {}
-            max_tokens = self._budget(target_metadata.get("communicationBudget", 4096), f"communication budget for {target_id}")
+            explicit_step_budget = self._budget(
+                target_metadata.get("communicationBudget"),
+                f"communication budget for {target_id}",
+            )
+            max_tokens = explicit_step_budget if explicit_step_budget is not None else 4096
             assert max_tokens is not None
             channel = f"{source_id}:{target_id}"
             mode = self._communication_mode(target)
@@ -450,7 +454,14 @@ class ACGGraphCompiler:
                 quorum=quorum,
                 participantStepIds=participants,
             ))
-            step_budgets[target_id] = max_tokens
+            # 显式预算是该节点跨所有入站通道的总上限；未显式配置时，每条已冻结
+            # 通道取得一个默认额度，节点总上限由这些通道额度之和推导。否则多源
+            # fan-in 会在第二条合法通道上把“单通道默认值”误当成“节点总预算”。
+            step_budgets[target_id] = (
+                explicit_step_budget
+                if explicit_step_budget is not None
+                else step_budgets.get(target_id, 0) + max_tokens
+            )
             channel_budgets[channel] = max_tokens
         return CommunicationManifestSpec(
             runId=run_id, rules=tuple(rules), runBudget=run_budget,

@@ -154,6 +154,31 @@ def test_compiler_maps_blueprint_budget_to_manifest_run_budget() -> None:
     assert graph.communication_manifest.run_budget == 120
 
 
+def test_compiler_derives_default_fan_in_step_budget_from_channels() -> None:
+    """无显式节点预算时，多源节点总额度应覆盖所有已冻结的入站通道。"""
+    blueprint = ACGBlueprint(
+        graphId="acg-fan-in-budget",
+        nodes=[
+            StepNode(nodeId="left", agentName="agent"),
+            StepNode(nodeId="right", agentName="agent"),
+            StepNode(nodeId="join", agentName="agent"),
+        ],
+        edges=[
+            ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
+        ],
+    )
+
+    graph = ACGGraphCompiler().compile(blueprint, run_id="run-fan-in")
+
+    assert graph.communication_manifest is not None
+    assert graph.communication_manifest.step_budgets["join"] == 8192
+    assert graph.communication_manifest.channel_budgets == {
+        "left:join": 4096,
+        "right:join": 4096,
+    }
+
+
 def test_compiler_maps_step_dependencies_and_review_interrupt() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-review",
