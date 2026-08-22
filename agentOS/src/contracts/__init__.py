@@ -1,7 +1,7 @@
 """AgentOS 部件化迁移的共享数据合同。
 
 本包只提供跨部件可序列化的数据结构、枚举和稳定校验工具。它不依赖
-task_manager、planner、executor 等业务部件，因此可由任意部件安全导入。
+mission_manager、planner、executor 等业务部件，因此可由任意部件安全导入。
 """
 
 from __future__ import annotations
@@ -105,26 +105,26 @@ from .identity import (
     BlueprintId,
     RunId,
     StepExecutionId,
-    TaskNodeId,
-    UserTaskId,
+    TaskId,
+    MissionId,
     generate_identity,
     new_attempt_id,
     new_binding_id,
     new_blueprint_id,
     new_run_id,
     new_step_execution_id,
-    new_task_node_id,
-    new_user_task_id,
+    new_task_id,
+    new_mission_id,
     validate_identity,
 )
 from .governance import AuditFinding, AuditRequest, PolicyDecision
 from .memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
 from .planning import (
-    TaskNodeBindingPatch,
-    TaskNodeImplementationBinding,
-    TaskNodeRelationType,
+    TaskBindingPatch,
+    TaskImplementationBinding,
+    SemanticTaskRelationType,
     TaskPlan,
-    TaskPlanNode,
+    PlannedTask,
     TaskPlanPatch,
     TaskPlanRelation,
 )
@@ -162,11 +162,11 @@ __all__ = [
     "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
     "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
     "RunId", "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
-    "StepExecutionId", "TaskNodeId", "TaskNodeBindingPatch", "TaskNodeImplementationBinding",
-    "TaskNodeRelationType", "TaskPlan", "TaskPlanNode", "TaskPlanPatch", "TaskPlanRelation",
-    "UserTaskId", "generate_identity", "new_attempt_id", "new_binding_id",
-    "new_blueprint_id", "new_run_id", "new_step_execution_id", "new_task_node_id",
-    "new_user_task_id", "validate_identity",
+    "StepExecutionId", "TaskId", "TaskBindingPatch", "TaskImplementationBinding",
+    "SemanticTaskRelationType", "TaskPlan", "PlannedTask", "TaskPlanPatch", "TaskPlanRelation",
+    "MissionId", "generate_identity", "new_attempt_id", "new_binding_id",
+    "new_blueprint_id", "new_run_id", "new_step_execution_id", "new_task_id",
+    "new_mission_id", "validate_identity",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
     "Trajectory", "TrajectoryEvaluation", "TrajectoryStep", "stable_checksum",
     "stable_json_dumps",

@@ -33,14 +33,14 @@ def test_builder_derives_memory_write_policy_from_capability() -> None:
         CapabilityBinding(capability="conclude", agent_name="agent", score=1.0),
     ])
 
-    task_id = "task_0123456789ab"
+    mission_id = "mission_0123456789ab"
     task_plan = SemanticPlanner(catalog).plan_capabilities(
-        task_id=task_id,
+        mission_id=mission_id,
         capabilities=["analyze", "conclude"],
         strategy="test",
     )
     blueprint = ACGBuilder(catalog).build(
-        task_id=task_id,
+        mission_id=mission_id,
         profile=TaskSemanticProfile(
             primaryGoal="test",
             requiredCapabilities=["analyze", "conclude"],

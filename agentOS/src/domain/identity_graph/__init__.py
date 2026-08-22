@@ -1,8 +1,8 @@
 """AgentOS Identity Graph 协议与解析入口。"""
 
-from .bindings import BlueprintNodeBinding, ExecutionBinding, ProvenanceLink, TaskNodeBinding
+from .bindings import BlueprintNodeBinding, ExecutionBinding, ProvenanceLink, TaskBinding
 from .contracts import ExecutionOrigin
-from .relations import BlueprintRelationType, IdentityRelation, TaskNodeBindingType
+from .relations import BlueprintRelationType, IdentityRelation, TaskBindingType
 from .resolver import IdentityResolver
 
 __all__ = [
@@ -13,6 +13,6 @@ __all__ = [
     "IdentityRelation",
     "IdentityResolver",
     "ProvenanceLink",
-    "TaskNodeBinding",
-    "TaskNodeBindingType",
+    "TaskBinding",
+    "TaskBindingType",
 ]

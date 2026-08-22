@@ -13,14 +13,14 @@ from contracts.identity import (
     BlueprintId,
     RunId,
     StepExecutionId,
-    TaskNodeId,
-    UserTaskId,
+    TaskId,
+    MissionId,
     new_attempt_id,
     new_blueprint_id,
     new_run_id,
     new_step_execution_id,
-    new_task_node_id,
-    new_user_task_id,
+    new_task_id,
+    new_mission_id,
 )
 
 
@@ -32,7 +32,7 @@ class DomainModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", validate_assignment=True)
 
 
-class UserTaskStatus(str, Enum):
+class MissionStatus(str, Enum):
     CREATED = "created"
     PLANNING = "planning"
     READY = "ready"
@@ -41,7 +41,7 @@ class UserTaskStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class TaskNodeStatus(str, Enum):
+class SemanticTaskStatus(str, Enum):
     CREATED = "created"
     READY = "ready"
     RUNNING = "running"
@@ -77,35 +77,35 @@ class StepExecutionStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class UserTask(DomainModel):
+class Mission(DomainModel):
     """用户希望长期完成的目标，不承载 Run、Attempt 或 Step 生命周期。"""
 
-    task_id: UserTaskId = Field(default_factory=new_user_task_id, alias="taskId")
+    mission_id: MissionId = Field(default_factory=new_mission_id, alias="missionId")
     user_id: str = Field(alias="userId", min_length=1)
     goal: str = Field(min_length=1)
     description: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
     updated_at: datetime = Field(default_factory=utc_now, alias="updatedAt")
-    status: UserTaskStatus = UserTaskStatus.CREATED
+    status: MissionStatus = MissionStatus.CREATED
 
 
-class TaskNode(DomainModel):
+class SemanticTask(DomainModel):
     """Planner 产生的任务分解节点；它不是 ACG 图节点或执行记录。"""
 
-    node_id: TaskNodeId = Field(default_factory=new_task_node_id, alias="nodeId")
-    task_id: UserTaskId = Field(alias="taskId")
-    parent_node_id: TaskNodeId | None = Field(default=None, alias="parentNodeId")
+    task_id: TaskId = Field(default_factory=new_task_id, alias="taskId")
+    mission_id: MissionId = Field(alias="missionId")
+    parent_task_id: TaskId | None = Field(default=None, alias="parentTaskId")
     title: str = Field(min_length=1)
     objective: str = Field(min_length=1)
     constraints: list[dict[str, Any]] = Field(default_factory=list)
-    status: TaskNodeStatus = TaskNodeStatus.CREATED
+    status: SemanticTaskStatus = SemanticTaskStatus.CREATED
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def reject_self_parent(self) -> "TaskNode":
-        if self.parent_node_id == self.node_id:
-            raise ValueError("TaskNode cannot be its own parent")
+    def reject_self_parent(self) -> "SemanticTask":
+        if self.parent_task_id == self.task_id:
+            raise ValueError("SemanticTask cannot be its own parent")
         return self
 
 
@@ -113,7 +113,7 @@ class AcgBlueprint(DomainModel):
     """版本化设计产物；blueprintId 与 Runtime graphId 是不同身份。"""
 
     blueprint_id: BlueprintId = Field(default_factory=new_blueprint_id, alias="blueprintId")
-    task_id: UserTaskId = Field(alias="taskId")
+    mission_id: MissionId = Field(alias="missionId")
     version: int = Field(default=1, ge=1)
     graph_id: str = Field(alias="graphId", min_length=1)
     graph: dict[str, Any]
@@ -122,10 +122,10 @@ class AcgBlueprint(DomainModel):
 
 
 class WorkflowRun(DomainModel):
-    """AgentOS 中的一次执行身份；区别于 WKN 内核的 WknWorkflowRun。"""
+    """AgentOS 中的一次执行身份；区别于 Execution Runtime 内核的 RuntimeRunRecord。"""
 
     run_id: RunId = Field(default_factory=new_run_id, alias="runId")
-    task_id: UserTaskId = Field(alias="taskId")
+    mission_id: MissionId = Field(alias="missionId")
     blueprint_id: BlueprintId = Field(alias="blueprintId")
     status: RunStatus = RunStatus.PENDING
     graph_version: int = Field(default=1, alias="graphVersion", ge=1)
@@ -142,7 +142,7 @@ class Attempt(DomainModel):
 
     attempt_id: AttemptId = Field(default_factory=new_attempt_id, alias="attemptId")
     run_id: RunId = Field(alias="runId")
-    node_id: TaskNodeId = Field(alias="nodeId")
+    task_id: TaskId = Field(alias="taskId")
     status: AttemptStatus = AttemptStatus.PENDING
     attempt_number: int = Field(alias="attemptNumber", ge=1)
     started_at: datetime | None = Field(default=None, alias="startedAt")
@@ -159,7 +159,7 @@ class StepExecution(DomainModel):
         alias="stepExecutionId",
     )
     run_id: RunId = Field(alias="runId")
-    node_id: TaskNodeId = Field(alias="nodeId")
+    task_id: TaskId = Field(alias="taskId")
     attempt_id: AttemptId = Field(alias="attemptId")
     status: StepExecutionStatus = StepExecutionStatus.PENDING
     input: dict[str, Any] = Field(default_factory=dict)
@@ -172,25 +172,25 @@ class IdentityOwnership:
     """在持久化迁移前提供显式的内存身份归属检查。"""
 
     def __init__(self) -> None:
-        self._blueprint_tasks: dict[BlueprintId, UserTaskId] = {}
-        self._run_tasks: dict[RunId, UserTaskId] = {}
+        self._blueprint_tasks: dict[BlueprintId, MissionId] = {}
+        self._run_tasks: dict[RunId, MissionId] = {}
         self._attempt_runs: dict[AttemptId, RunId] = {}
         self._blueprint_runs: dict[BlueprintId, set[RunId]] = {}
 
     def bind_blueprint(self, blueprint: AcgBlueprint) -> None:
         owner = self._blueprint_tasks.get(blueprint.blueprint_id)
-        if owner is not None and owner != blueprint.task_id:
-            raise ValueError("blueprintId cannot be shared by different taskIds")
-        self._blueprint_tasks[blueprint.blueprint_id] = blueprint.task_id
+        if owner is not None and owner != blueprint.mission_id:
+            raise ValueError("blueprintId cannot be shared by different missionIds")
+        self._blueprint_tasks[blueprint.blueprint_id] = blueprint.mission_id
 
     def bind_run(self, run: WorkflowRun) -> None:
         owner = self._run_tasks.get(run.run_id)
-        if owner is not None and owner != run.task_id:
-            raise ValueError("runId cannot be shared by different taskIds")
+        if owner is not None and owner != run.mission_id:
+            raise ValueError("runId cannot be shared by different missionIds")
         blueprint_owner = self._blueprint_tasks.get(run.blueprint_id)
-        if blueprint_owner is not None and blueprint_owner != run.task_id:
-            raise ValueError("WorkflowRun taskId must match its Blueprint taskId")
-        self._run_tasks[run.run_id] = run.task_id
+        if blueprint_owner is not None and blueprint_owner != run.mission_id:
+            raise ValueError("WorkflowRun missionId must match its Blueprint missionId")
+        self._run_tasks[run.run_id] = run.mission_id
         self._blueprint_runs.setdefault(run.blueprint_id, set()).add(run.run_id)
 
     def bind_attempt(self, attempt: Attempt) -> None:
@@ -211,9 +211,9 @@ __all__ = [
     "RunStatus",
     "StepExecution",
     "StepExecutionStatus",
-    "TaskNode",
-    "TaskNodeStatus",
-    "UserTask",
-    "UserTaskStatus",
+    "SemanticTask",
+    "SemanticTaskStatus",
+    "Mission",
+    "MissionStatus",
     "WorkflowRun",
 ]

@@ -4,7 +4,7 @@
 from collections import Counter
 from typing import Iterable, Optional
 
-from contracts.workflow import EvaluationRun, TraceEventType, WorkflowMetric, WorkflowRun, WorkflowStatus
+from contracts.workflow import EvaluationRun, RuntimeRunRecord, TraceEventType, WorkflowMetric, WorkflowStatus
 
 
 class WorkflowEvaluator:
@@ -16,7 +16,7 @@ class WorkflowEvaluator:
 
     def evaluate(
         self,
-        runs: Iterable[WorkflowRun],
+        runs: Iterable[RuntimeRunRecord],
         *,
         domain: Optional[str] = None,
         workflow_id: Optional[str] = None,

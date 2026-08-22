@@ -15,7 +15,7 @@ class IdentityRelation(str, Enum):
     DERIVED_FROM = "derived_from"
 
 
-class TaskNodeBindingType(str, Enum):
+class TaskBindingType(str, Enum):
     PRIMARY = "primary"
     SUPPORTING = "supporting"
 
@@ -27,8 +27,8 @@ class BlueprintRelationType(str, Enum):
 
 
 RELATION_MATRIX = {
-    ("UserTask", "TaskNode"): IdentityRelation.HAS_NODE,
-    ("TaskNode", "ACGNode"): IdentityRelation.REALIZED_BY,
+    ("Mission", "SemanticTask"): IdentityRelation.HAS_NODE,
+    ("SemanticTask", "ACGNode"): IdentityRelation.REALIZED_BY,
     ("AcgBlueprint", "ACGNode"): IdentityRelation.CONTAINS,
     ("ACGNode", "Resource"): IdentityRelation.BOUND_TO,
     ("WorkflowRun", "Attempt"): IdentityRelation.HAS_ATTEMPT,
@@ -41,5 +41,5 @@ __all__ = [
     "BlueprintRelationType",
     "IdentityRelation",
     "RELATION_MATRIX",
-    "TaskNodeBindingType",
+    "TaskBindingType",
 ]

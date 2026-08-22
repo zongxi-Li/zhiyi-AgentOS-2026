@@ -7,10 +7,10 @@ import asyncio
 from adapters.guarded_tool import ToolInvocationError
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
 from contracts.workflow import WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -73,7 +73,7 @@ class _ToolAgent(BaseAgent):
         return AgentOutput(output=result)
 
 
-def _runtime(*, agent: BaseAgent, tool_runtime=None) -> WorkflowRuntime:
+def _runtime(*, agent: BaseAgent, tool_runtime=None) -> ExecutionRuntime:
     """创建一个只包含单个受控 Agent 的最小 ACG 运行时。"""
     agents = AgentRegistry()
     agents.register(agent)
@@ -90,7 +90,7 @@ def _runtime(*, agent: BaseAgent, tool_runtime=None) -> WorkflowRuntime:
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )],
     ))
-    return WorkflowRuntime(
+    return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -103,8 +103,8 @@ def test_runtime_retries_model_with_the_same_commit_id() -> None:
     model = _FlakyModel()
     runtime = _runtime(agent=_ModelAgent(AgentProfile(agentName="model", domain="general")))
     runtime.set_model_runtime(model)
-    task = runtime.create_task("model", workflow_id="guard-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("model", workflow_id="guard-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -119,8 +119,8 @@ def test_runtime_retries_tool_with_the_same_commit_id() -> None:
         agent=_ToolAgent(AgentProfile(agentName="tool", domain="general", allowedTools=["search"])),
         tool_runtime=tool,
     )
-    task = runtime.create_task("tool", workflow_id="guard-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("tool", workflow_id="guard-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 

@@ -3,7 +3,7 @@
 
 from typing import List
 
-from contracts.workflow import ReviewDecision, ReviewDecisionType, ReviewRecord, TraceEventType, WorkflowRun
+from contracts.workflow import ReviewDecision, ReviewDecisionType, ReviewRecord, RuntimeRunRecord, TraceEventType
 from components.auditor.governance.trace import TraceStore
 
 
@@ -17,7 +17,7 @@ class ReviewManager:
     def __init__(self, trace_store: TraceStore):
         self.trace_store = trace_store
 
-    def record(self, run: WorkflowRun, decision: ReviewDecision) -> ReviewRecord:
+    def record(self, run: RuntimeRunRecord, decision: ReviewDecision) -> ReviewRecord:
         """把 ``decision`` 追加为审核 Trace 并返回对应的审核记录。
 
         返回记录与刚写入事件共享运行、步骤和时间信息；写入 ``run.trace`` 是
@@ -41,7 +41,7 @@ class ReviewManager:
             createdAt=event.created_at,
         )
 
-    def list(self, run: WorkflowRun) -> List[ReviewRecord]:
+    def list(self, run: RuntimeRunRecord) -> List[ReviewRecord]:
         """从 ``run.trace`` 重建并稳定排序全部人工审核记录。
 
         仅处理 ``REVIEW_DECIDED`` 事件，缺省载荷字段按兼容默认值填充；返回新

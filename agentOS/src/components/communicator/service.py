@@ -27,12 +27,12 @@ class CommunicatorService:
         self,
         *,
         run_id: str = "",
-        task_id: str = "",
+        mission_id: str = "",
         ledger: ProvenanceLedger | None = None,
     ) -> None:
         """服务使用 run 隔离账本；注入账本时先确认其归属，避免恢复串线。"""
-        active_ledger = ledger or ProvenanceLedger(run_id=run_id, task_id=task_id)
-        if active_ledger.run_id != run_id or active_ledger.task_id != task_id:
+        active_ledger = ledger or ProvenanceLedger(run_id=run_id, mission_id=mission_id)
+        if active_ledger.run_id != run_id or active_ledger.mission_id != mission_id:
             raise ValueError("provenance ledger ownership does not match communicator run")
         self._assembler = ContextAssembler(active_ledger)
         # 事件按步骤归属领取，而非使用全局游标。并行步骤在 Agent 调用期间会交错
@@ -72,7 +72,7 @@ class CommunicatorService:
         upstream_refs: Mapping[str, str],
         value_store: "ExecutionValueStore",
         token_budget: int | None = None,
-        task_id: str = "",
+        mission_id: str = "",
         objective: str = "",
         step_goal: str = "",
         operation_id: str = "",
@@ -90,7 +90,7 @@ class CommunicatorService:
         }
         return self.assemble_context(
             run_id=run_id,
-            task_id=task_id,
+            mission_id=mission_id,
             step_id=step_id,
             input_spec=input_spec,
             upstream_outputs=upstream_outputs,

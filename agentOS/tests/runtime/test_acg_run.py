@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 from components.executor.value_store import InMemoryExecutionValueStore, SQLiteExecutionValueStore
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
@@ -16,9 +16,9 @@ from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
-from components.task_manager.store import WorkflowRegistry
-from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, WorkflowRun, WorkflowStepDefinition, WorkflowStatus
-from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode
+from components.mission_manager.store import WorkflowRegistry
+from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, RuntimeRunRecord, WorkflowStepDefinition, WorkflowStatus
+from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -45,7 +45,7 @@ class _ReviewAgent(BaseAgent):
         )
 
 
-def _runtime() -> WorkflowRuntime:
+def _runtime() -> ExecutionRuntime:
     """建立含两步严格合同 ACG 的独立内存运行时。"""
     agents = AgentRegistry()
     agents.register(_RunAgent(AgentProfile(agentName="runner", domain="general")))
@@ -73,7 +73,7 @@ def _runtime() -> WorkflowRuntime:
             ],
         )
     )
-    return WorkflowRuntime(
+    return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -83,8 +83,8 @@ def _runtime() -> WorkflowRuntime:
 def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     """新 ACG run 应完成，运行投影只能含引用而不能含节点输出正文。"""
     runtime = _runtime()
-    task = runtime.create_task("run", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("run", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -102,8 +102,8 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
 def test_runtime_persists_broker_communication_usage_without_output_body() -> None:
     """严格链路应经 Broker 读取上游引用，并把预算统计而非正文写入运行状态。"""
     runtime = _runtime()
-    task = runtime.create_task("broker usage", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("broker usage", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -133,14 +133,14 @@ def test_runtime_persists_broker_communication_usage_without_output_body() -> No
 def test_runtime_cleanup_keeps_committed_and_review_references(tmp_path) -> None:
     """运行时清理必须汇总提交与审核保护引用，Trace 只能记录无正文统计。"""
     values = InMemoryExecutionValueStore()
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
         workflow_store=MemoryWorkflowStore(),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
         execution_value_store=values,
     )
-    task = runtime.create_task("clean execution values")
+    task = runtime.create_mission("clean execution values")
     committed_ref = values.put_output(run_id="run-clean", step_id="done", payload={"body": "committed"})
     review_ref = values.put_output(run_id="run-clean", step_id="review", payload={"body": "review"})
     orphan_ref = values.put_context_pack(run_id="run-clean", step_id="draft", payload={"body": "orphan"})
@@ -150,9 +150,9 @@ def test_runtime_cleanup_keeps_committed_and_review_references(tmp_path) -> None
         commit_id="commit:run-clean:done:0",
         payload={"outputRef": committed_ref},
     )
-    run = WorkflowRun(
+    run = RuntimeRunRecord(
         runId="run-clean",
-        taskId=task.task_id,
+        missionId=task.mission_id,
         workflowId="workflow-clean",
         domain="general",
         runtimeEngine="acg",
@@ -196,7 +196,7 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
     store = MemoryWorkflowStore()
     checkpoint_db = tmp_path / "checkpoints.sqlite3"
     value_db = tmp_path / "values.sqlite3"
-    first = WorkflowRuntime(
+    first = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -204,14 +204,14 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
         execution_value_store=SQLiteExecutionValueStore(db_path=value_db),
         memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
     )
-    task = first.create_task("review", workflow_id="acg-review")
-    _, run = first.prepare_run(task.task_id)
+    task = first.create_mission("review", workflow_id="acg-review")
+    _, run = first.prepare_run(task.mission_id)
 
     paused = asyncio.run(first.execute_prepared_run(run.run_id))
 
     assert paused.status is WorkflowStatus.WAITING_REVIEW
     assert paused.execution_state["checkpointId"].startswith("acgckpt_")
-    recreated = WorkflowRuntime(
+    recreated = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -248,7 +248,7 @@ def test_review_approval_commits_deferred_memory_after_recreation(tmp_path) -> N
     value_db = tmp_path / "values.sqlite3"
     memory_db = tmp_path / "memory.sqlite3"
     decision_db = tmp_path / "decisions.sqlite3"
-    first = WorkflowRuntime(
+    first = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -257,8 +257,8 @@ def test_review_approval_commits_deferred_memory_after_recreation(tmp_path) -> N
         memory_store=SQLiteMemoryStore(db_path=memory_db),
         decision_store=SQLiteDecisionStore(db_path=decision_db),
     )
-    task = first.create_task("review", workflow_id="audit-review")
-    _, run = first.prepare_run(task.task_id)
+    task = first.create_mission("review", workflow_id="audit-review")
+    _, run = first.prepare_run(task.mission_id)
 
     paused = asyncio.run(first.execute_prepared_run(run.run_id))
 
@@ -267,7 +267,7 @@ def test_review_approval_commits_deferred_memory_after_recreation(tmp_path) -> N
         MemoryQuery(query="review", scope=run.run_id)
     ) == []
 
-    recreated = WorkflowRuntime(
+    recreated = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -307,7 +307,7 @@ def test_review_rejection_discards_deferred_memory(tmp_path) -> None:
         steps=[WorkflowStepDefinition(stepId="review", name="review", agentName="reviewer")],
     ))
     memory_db = tmp_path / "memory.sqlite3"
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -316,8 +316,8 @@ def test_review_rejection_discards_deferred_memory(tmp_path) -> None:
         memory_store=SQLiteMemoryStore(db_path=memory_db),
         decision_store=SQLiteDecisionStore(db_path=tmp_path / "decisions.sqlite3"),
     )
-    task = runtime.create_task("reject", workflow_id="audit-reject")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("reject", workflow_id="audit-reject")
+    _, run = runtime.prepare_run(task.mission_id)
     asyncio.run(runtime.execute_prepared_run(run.run_id))
 
     rejected = asyncio.run(runtime.apply_review(ReviewDecision(
@@ -344,7 +344,7 @@ def test_review_resume_rejects_tampered_audit_decision_ownership(tmp_path) -> No
     ))
     store = MemoryWorkflowStore()
     decision_db = tmp_path / "decisions.sqlite3"
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -353,8 +353,8 @@ def test_review_resume_rejects_tampered_audit_decision_ownership(tmp_path) -> No
         memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
         decision_store=SQLiteDecisionStore(db_path=decision_db),
     )
-    task = runtime.create_task("tampered", workflow_id="audit-tampered")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("tampered", workflow_id="audit-tampered")
+    _, run = runtime.prepare_run(task.mission_id)
     paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
     runtime.decision_store.close()
 
@@ -364,7 +364,7 @@ def test_review_resume_rejects_tampered_audit_decision_ownership(tmp_path) -> No
     connection.commit()
     connection.close()
 
-    recreated = WorkflowRuntime(
+    recreated = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -398,7 +398,7 @@ def test_runtime_restores_persistent_provenance_before_review_resume(tmp_path) -
         ],
     ))
     store = MemoryWorkflowStore()
-    first = WorkflowRuntime(
+    first = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -407,11 +407,11 @@ def test_runtime_restores_persistent_provenance_before_review_resume(tmp_path) -
         memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
         provenance_store=SQLiteProvenanceStore(db_path=tmp_path / "provenance.sqlite3"),
     )
-    task = first.create_task("review", workflow_id="acg-provenance-review")
-    _, run = first.prepare_run(task.task_id)
+    task = first.create_mission("review", workflow_id="acg-provenance-review")
+    _, run = first.prepare_run(task.mission_id)
     paused = asyncio.run(first.execute_prepared_run(run.run_id))
 
-    recreated = WorkflowRuntime(
+    recreated = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -427,7 +427,7 @@ def test_runtime_restores_persistent_provenance_before_review_resume(tmp_path) -
         decision=ReviewDecisionType.APPROVED,
     )))
 
-    ledger = recreated.provenance_store.load_ledger(run_id=run.run_id, task_id=task.task_id)
+    ledger = recreated.provenance_store.load_ledger(run_id=run.run_id, mission_id=task.mission_id)
     assert result.status is WorkflowStatus.COMPLETED
     assert ledger.verify_integrity() is True
     assert len(ledger.productions) == 2
@@ -444,7 +444,7 @@ def test_runtime_refuses_review_resume_when_provenance_chain_is_tampered(tmp_pat
     ))
     store = MemoryWorkflowStore()
     provenance_path = tmp_path / "provenance.sqlite3"
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -453,8 +453,8 @@ def test_runtime_refuses_review_resume_when_provenance_chain_is_tampered(tmp_pat
         memory_store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3"),
         provenance_store=SQLiteProvenanceStore(db_path=provenance_path),
     )
-    task = runtime.create_task("review", workflow_id="acg-provenance-tampered")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("review", workflow_id="acg-provenance-tampered")
+    _, run = runtime.prepare_run(task.mission_id)
     paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
     runtime.provenance_store.close()
 
@@ -467,7 +467,7 @@ def test_runtime_refuses_review_resume_when_provenance_chain_is_tampered(tmp_pat
     connection.commit()
     connection.close()
 
-    recreated = WorkflowRuntime(
+    recreated = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -495,8 +495,8 @@ def test_execute_prepared_run_does_not_restart_waiting_review_run() -> None:
         workflowId="acg-wait", name="wait", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="review", name="review", agentName="runner", reviewRequired=True)],
     ))
-    task = runtime.create_task("wait", workflow_id="acg-wait")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("wait", workflow_id="acg-wait")
+    _, run = runtime.prepare_run(task.mission_id)
     paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
     repeated = asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -528,9 +528,9 @@ def test_runtime_projects_model_metadata_without_generated_content() -> None:
         workflowId="model-run", name="model", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="one", name="one", agentName="runner")],
     ))
-    runtime = WorkflowRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
-    task = runtime.create_task("model", workflow_id="model-run")
-    _, run = runtime.prepare_run(task.task_id)
+    runtime = ExecutionRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
+    task = runtime.create_mission("model", workflow_id="model-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -541,8 +541,8 @@ def test_runtime_projects_model_metadata_without_generated_content() -> None:
 def test_runtime_persists_completed_node_without_tool_calls_before_run_end() -> None:
     """没有工具调用时，节点完成事件也必须立即写回 WorkflowStore。"""
     runtime = _runtime()
-    task = runtime.create_task("persist", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("persist", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     state = ACGExecutionState(runId=run.run_id, completedStepIds=["extract"])
 
     runtime._project_acg_event(
@@ -558,8 +558,8 @@ def test_runtime_persists_completed_node_without_tool_calls_before_run_end() -> 
 def test_runtime_marks_parallel_failed_and_cancelled_steps_before_run_failure() -> None:
     """并行超步失败时，失败与取消节点必须在最终 run 失败前留下准确状态。"""
     runtime = _runtime()
-    task = runtime.create_task("parallel", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("parallel", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     run.steps[1].step_id = "cancelled"
     run.steps[0].step_id = "failed"
     run.current_step_id = "failed"
@@ -594,7 +594,7 @@ def test_runtime_projects_real_parallel_failure_and_sibling_cancellation() -> No
         workflowId="parallel-run", name="parallel", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="placeholder", name="placeholder", agentName="parallel")],
     ))
-    runtime = WorkflowRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
+    runtime = ExecutionRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
     blueprint = ACGBlueprint(
         graphId="parallel-graph",
         nodes=[
@@ -602,10 +602,10 @@ def test_runtime_projects_real_parallel_failure_and_sibling_cancellation() -> No
             StepNode(nodeId="slow", agentName="parallel"),
         ],
     )
-    task = runtime.create_task("parallel", workflow_id="parallel-run")
+    task = runtime.create_mission("parallel", workflow_id="parallel-run")
     task_plan = TaskPlan(
-        taskId=task.task_id,
-        nodes=tuple(TaskPlanNode(
+        missionId=task.mission_id,
+        nodes=tuple(PlannedTask(
             key=f"step:{step.node_id}",
             title=step.name or step.node_id,
             objective=step.goal or step.description or step.node_id,
@@ -615,15 +615,15 @@ def test_runtime_projects_real_parallel_failure_and_sibling_cancellation() -> No
     task.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
         "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-        "taskNodeBindings": [
-            TaskNodeImplementationBinding(
+        "taskBindings": [
+            TaskImplementationBinding(
                 planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id
             ).model_dump(by_alias=True, mode="json")
             for step in blueprint.step_nodes()
         ],
     })
-    runtime.workflow_store.save_task(task)
-    _, run = runtime.prepare_run(task.task_id)
+    runtime.workflow_store.save_mission(task)
+    _, run = runtime.prepare_run(task.mission_id)
 
     with pytest.raises(RuntimeError, match="ACG superstep failed"):
         asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -638,8 +638,8 @@ def test_runtime_rejects_checkpoint_from_different_graph_version(tmp_path) -> No
     """恢复前必须确认 checkpoint 与运行时冻结的图及版本完全一致。"""
     runtime = _runtime()
     runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
-    task = runtime.create_task("version", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("version", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     checkpoint_id = runtime.checkpoint_store.save(
         run_id=run.run_id,
         state=ACGExecutionState(runId=run.run_id, graphId="different-graph").model_dump(by_alias=True),
@@ -655,8 +655,8 @@ def test_runtime_rejects_checkpoint_output_reference_from_another_run(tmp_path) 
     """恢复前必须拒绝跨运行输出引用，且不能把原运行误标记为执行中。"""
     runtime = _runtime()
     runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
-    task = runtime.create_task("foreign reference", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("foreign reference", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     foreign_ref = runtime.execution_value_store.put_output(
         run_id="run-foreign",
         step_id="extract",
@@ -682,8 +682,8 @@ def test_runtime_rejects_checkpoint_output_reference_from_another_step(tmp_path)
     """检查点把输出引用挂到错误步骤时也必须拒绝，避免 run 内数据串位。"""
     runtime = _runtime()
     runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
-    task = runtime.create_task("wrong step reference", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("wrong step reference", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     output_ref = runtime.execution_value_store.put_output(
         run_id=run.run_id,
         step_id="extract",
@@ -709,8 +709,8 @@ def test_runtime_rejects_checkpoint_memory_reference_from_another_step(tmp_path)
     """恢复时 memoryRef 不能只凭字符串格式通过，必须匹配真实的来源步骤。"""
     runtime = _runtime()
     runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
-    task = runtime.create_task("wrong memory step", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("wrong memory step", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     record = MemoryService(store=runtime.memory_store).remember_step_output(
         run_id=run.run_id,
         step_id="extract",
@@ -736,8 +736,8 @@ def test_runtime_rejects_checkpoint_trace_without_real_step_trace(tmp_path) -> N
     """恢复的 traceRef 必须能在同一运行的该步骤 Trace 中找到，不能接受伪造字符串。"""
     runtime = _runtime()
     runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
-    task = runtime.create_task("forged trace", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("forged trace", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     checkpoint_id = runtime.checkpoint_store.save(
         run_id=run.run_id,
         state=ACGExecutionState(
@@ -757,8 +757,8 @@ def test_runtime_rejects_checkpoint_provenance_and_unknown_step_keys(tmp_path) -
     """伪造血缘 ID 或 Blueprint 外步骤键都必须在恢复调度前被拒绝。"""
     runtime = _runtime()
     runtime.checkpoint_store = ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3")
-    task = runtime.create_task("forged provenance", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("forged provenance", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     checkpoint_id = runtime.checkpoint_store.save(
         run_id=run.run_id,
         state=ACGExecutionState(
@@ -795,9 +795,9 @@ def test_runtime_projects_safe_tool_call_metadata() -> None:
         workflowId="tool-run", name="tool", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="one", name="one", agentName="runner")],
     ))
-    runtime = WorkflowRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
-    task = runtime.create_task("tool", workflow_id="tool-run")
-    _, run = runtime.prepare_run(task.task_id)
+    runtime = ExecutionRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
+    task = runtime.create_mission("tool", workflow_id="tool-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -808,8 +808,8 @@ def test_runtime_projects_safe_tool_call_metadata() -> None:
 def test_runtime_projects_safe_communication_provenance_trace() -> None:
     """运行 Trace 应持久化通信血缘元数据，但不得复制节点输出正文。"""
     runtime = _runtime()
-    task = runtime.create_task("provenance", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("provenance", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -827,8 +827,8 @@ def test_runtime_projects_safe_communication_provenance_trace() -> None:
 def test_runtime_projects_memory_policy_access_without_memory_body() -> None:
     """运行 Trace 要记录步骤记忆策略的执行事实，但不能复制任何记忆正文。"""
     runtime = _runtime()
-    task = runtime.create_task("memory trace", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("memory trace", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -845,8 +845,8 @@ def test_runtime_projects_memory_policy_access_without_memory_body() -> None:
 def test_runtime_does_not_duplicate_trace_for_replayed_node_commit() -> None:
     """崩溃恢复重放同一节点提交时，Trace 只能保留一次提交记录。"""
     runtime = _runtime()
-    task = runtime.create_task("commit replay", workflow_id="acg-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("commit replay", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
     state = ACGExecutionState(runId=run.run_id)
     event = {
         "type": "node_completed",
@@ -868,8 +868,8 @@ def test_runtime_does_not_duplicate_trace_for_replayed_node_commit() -> None:
 def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
     """Blueprint 的记忆策略必须复制到本次运行步骤，避免执行期重新读取可变蓝图。"""
     runtime = _runtime()
-    run = WorkflowRun(
-        taskId="task-1",
+    run = RuntimeRunRecord(
+        missionId="mission_000000000001",
         workflowId="acg-run",
         domain="general",
         runtimeEngine="acg",
@@ -914,7 +914,7 @@ def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
 def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> None:
     """新策略若声明写入却缺少 writeType，必须在准备运行时就阻断。"""
     runtime = _runtime()
-    task = runtime.create_task("invalid memory policy", workflow_id="acg-run")
+    task = runtime.create_mission("invalid memory policy", workflow_id="acg-run")
     invalid = ACGBlueprint(
         graphId="invalid-memory-policy",
         nodes=[
@@ -926,8 +926,8 @@ def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> N
             )
         ],
     )
-    task_plan = TaskPlan(taskId=task.task_id, nodes=(TaskPlanNode(key="step:extract", title="extract", objective="extract"),))
-    bindings = (TaskNodeImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
+    task_plan = TaskPlan(missionId=task.mission_id, nodes=(PlannedTask(key="step:extract", title="extract", objective="extract"),))
+    bindings = (TaskImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
     runtime._build_acg_blueprint = lambda *_args, **_kwargs: (
         invalid,
         task_plan,
@@ -935,7 +935,7 @@ def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> N
     )
 
     with pytest.raises(ValueError, match="writeType is required"):
-        runtime.prepare_run(task.task_id)
+        runtime.prepare_run(task.mission_id)
 
     assert runtime.workflow_store.list_runs().total == 0
 
@@ -943,7 +943,7 @@ def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> N
 def test_prepare_run_rejects_null_write_type_when_memory_write_is_enabled() -> None:
     """writeType 显式为 null 仍等同缺失，不能让写入在节点期才失败。"""
     runtime = _runtime()
-    task = runtime.create_task("null memory write type", workflow_id="acg-run")
+    task = runtime.create_mission("null memory write type", workflow_id="acg-run")
     invalid = ACGBlueprint(
         graphId="null-memory-policy",
         nodes=[
@@ -960,8 +960,8 @@ def test_prepare_run_rejects_null_write_type_when_memory_write_is_enabled() -> N
             )
         ],
     )
-    task_plan = TaskPlan(taskId=task.task_id, nodes=(TaskPlanNode(key="step:extract", title="extract", objective="extract"),))
-    bindings = (TaskNodeImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
+    task_plan = TaskPlan(missionId=task.mission_id, nodes=(PlannedTask(key="step:extract", title="extract", objective="extract"),))
+    bindings = (TaskImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
     runtime._build_acg_blueprint = lambda *_args, **_kwargs: (
         invalid,
         task_plan,
@@ -969,7 +969,7 @@ def test_prepare_run_rejects_null_write_type_when_memory_write_is_enabled() -> N
     )
 
     with pytest.raises(ValueError, match="writeType is required"):
-        runtime.prepare_run(task.task_id)
+        runtime.prepare_run(task.mission_id)
 
 
 def test_runtime_marks_unselected_acg_branch_skipped() -> None:
@@ -989,7 +989,7 @@ def test_runtime_marks_unselected_acg_branch_skipped() -> None:
         steps=[WorkflowStepDefinition(stepId="placeholder", name="placeholder", agentName="runner")],
     ))
     blueprint = ACGBlueprint(
-        graphId="route-runtime", taskId="task-route",
+        graphId="route-runtime", missionId="mission_000000000002",
         nodes=[
             StepNode(nodeId="source", agentName="runner", outputSpec={"type": "object", "properties": {"approved": {"type": "boolean"}}}),
             ControlNode(nodeId="if", controlType=ControlType.IF,
@@ -1004,11 +1004,11 @@ def test_runtime_marks_unselected_acg_branch_skipped() -> None:
             ACGEdge(edgeId="no-edge", sourceId="if", targetId="no", edgeType=EdgeType.DEPENDENCY),
         ],
     )
-    runtime = WorkflowRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
-    task = runtime.create_task("route", workflow_id="route-run")
+    runtime = ExecutionRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
+    task = runtime.create_mission("route", workflow_id="route-run")
     task_plan = TaskPlan(
-        taskId=task.task_id,
-        nodes=tuple(TaskPlanNode(
+        missionId=task.mission_id,
+        nodes=tuple(PlannedTask(
             key=f"step:{step.node_id}",
             title=step.name or step.node_id,
             objective=step.goal or step.description or step.node_id,
@@ -1018,15 +1018,15 @@ def test_runtime_marks_unselected_acg_branch_skipped() -> None:
     task.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
         "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-        "taskNodeBindings": [
-            TaskNodeImplementationBinding(
+        "taskBindings": [
+            TaskImplementationBinding(
                 planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id
             ).model_dump(by_alias=True, mode="json")
             for step in blueprint.step_nodes()
         ],
     })
-    runtime.workflow_store.save_task(task)
-    _, run = runtime.prepare_run(task.task_id)
+    runtime.workflow_store.save_mission(task)
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 

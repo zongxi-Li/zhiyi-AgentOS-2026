@@ -6,7 +6,7 @@ import pytest
 
 from components.planner.acg_builder import ACGBuilder
 from components.planner.semantic_planner import SemanticPlanner, SemanticPlanningError
-from contracts.planning import TaskPlanNode
+from contracts.planning import PlannedTask
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from support.acg.models import build_default_capability_catalog
 
@@ -32,7 +32,7 @@ def test_template_planning_requires_an_explicit_semantic_declaration() -> None:
 
     with pytest.raises(SemanticPlanningError, match="no Planner semantic declaration"):
         planner.plan_template(
-            task_id="task_0123456789ab",
+            mission_id="mission_0123456789ab",
             workflow=_workflow(),
             strategy="static_template",
         )
@@ -40,7 +40,7 @@ def test_template_planning_requires_an_explicit_semantic_declaration() -> None:
 
 def test_template_planner_does_not_derive_semantics_from_workflow_steps() -> None:
     planner = SemanticPlanner(build_default_capability_catalog())
-    workflow = _workflow(planning_nodes=[TaskPlanNode(
+    workflow = _workflow(planning_nodes=[PlannedTask(
         key="semantic-outcome",
         title="Semantic outcome",
         objective="Satisfy the user-visible outcome",
@@ -48,7 +48,7 @@ def test_template_planner_does_not_derive_semantics_from_workflow_steps() -> Non
     )])
 
     task_plan = planner.plan_template(
-        task_id="task_0123456789ab",
+        mission_id="mission_0123456789ab",
         workflow=workflow,
         strategy="static_template",
     )

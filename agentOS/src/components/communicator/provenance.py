@@ -30,7 +30,7 @@ class _Event(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     event_id: str = Field(alias="eventId")
     run_id: str = Field(default="", alias="runId")
-    task_id: str = Field(default="", alias="taskId")
+    mission_id: str = Field(default="", alias="missionId")
     # operationId 绑定节点提交。为空表示普通非执行期记账；非空时同一账本只接受
     # 一份语义完全相同的事件，用于进程在节点提交前中断后的安全重试。
     operation_id: str = Field(default="", alias="operationId")
@@ -101,10 +101,10 @@ class ProvenanceLedger:
         self,
         *,
         run_id: str = "",
-        task_id: str = "",
+        mission_id: str = "",
         event_sink: Callable[[_Event], None] | None = None,
     ) -> None:
-        self.run_id, self.task_id, self._seq, self._tail_hash = run_id, task_id, 0, ""
+        self.run_id, self.mission_id, self._seq, self._tail_hash = run_id, mission_id, 0, ""
         self.productions: list[DataProductionEvent] = []
         self.consumptions: list[DataConsumptionEvent] = []
         self.interactions: list[RuntimeInteraction] = []
@@ -175,7 +175,7 @@ class ProvenanceLedger:
             raise ProvenanceIntegrityError(
                 f"provenance operation {operation_id} already exists with different payload"
             )
-        event = DataProductionEvent(eventId=self._next_id("prod"), runId=self.run_id, taskId=self.task_id, operationId=operation_id, producerStepId=step_id, agentName=agent_name, attempt=attempt, checksum=checksum, fieldNames=sorted(output), tokenSize=token_size, evidenceRefs=normalized_evidence)
+        event = DataProductionEvent(eventId=self._next_id("prod"), runId=self.run_id, missionId=self.mission_id, operationId=operation_id, producerStepId=step_id, agentName=agent_name, attempt=attempt, checksum=checksum, fieldNames=sorted(output), tokenSize=token_size, evidenceRefs=normalized_evidence)
         self._seal(event); self._append(event, self.productions)
         return event
 
@@ -209,7 +209,7 @@ class ProvenanceLedger:
             raise ProvenanceIntegrityError(
                 f"provenance operation {operation_id} already exists with different payload"
             )
-        event = DataConsumptionEvent(eventId=self._next_id("cons"), runId=self.run_id, taskId=self.task_id, operationId=operation_id, consumerStepId=step_id, producerStepIds=producer_ids, producerEventIds=producer_event_ids, fieldsByProducer=fields_by_producer, consumedFields=normalized_fields, tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio, checksum=checksum, contractStatus=contract_status)
+        event = DataConsumptionEvent(eventId=self._next_id("cons"), runId=self.run_id, missionId=self.mission_id, operationId=operation_id, consumerStepId=step_id, producerStepIds=producer_ids, producerEventIds=producer_event_ids, fieldsByProducer=fields_by_producer, consumedFields=normalized_fields, tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio, checksum=checksum, contractStatus=contract_status)
         self._seal(event); self._append(event, self.consumptions)
         return event
 
@@ -238,7 +238,7 @@ class ProvenanceLedger:
                 f"provenance operation {operation_id} already exists with different payload"
             )
         event_id = self._next_id("int")
-        event = RuntimeInteraction(eventId=event_id, interactionId=event_id, runId=self.run_id, taskId=self.task_id, operationId=operation_id, producerStepIds=normalized_producers, consumerStepId=consumer_step_id, fieldsByProducer=fields_by_producer, evidenceRefs=normalized_evidence, tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio)
+        event = RuntimeInteraction(eventId=event_id, interactionId=event_id, runId=self.run_id, missionId=self.mission_id, operationId=operation_id, producerStepIds=normalized_producers, consumerStepId=consumer_step_id, fieldsByProducer=fields_by_producer, evidenceRefs=normalized_evidence, tokensDelivered=tokens_delivered, tokensAvailable=tokens_available, savingRatio=saving_ratio)
         self._seal(event); self._append(event, self.interactions)
         return event
 
@@ -261,7 +261,7 @@ class ProvenanceLedger:
         """确认事件存在且由 ``step_id`` 生产或消费。
 
         本方法只用于恢复前校验 State 中的 ``provenanceRefs``。账本由存储层重建时
-        已确认 runId、taskId 和哈希链，此处再把事件与步骤绑定，避免攻击者把同一
+        已确认 runId、missionId 和哈希链，此处再把事件与步骤绑定，避免攻击者把同一
         运行内另一个步骤的事件挂到当前步骤上。
         """
         event = next(
@@ -288,12 +288,12 @@ class ProvenanceLedger:
         cls,
         *,
         run_id: str,
-        task_id: str,
+        mission_id: str,
         events: Iterable[dict[str, Any]],
         event_sink: Callable[[_Event], None] | None = None,
     ) -> "ProvenanceLedger":
         """从安全持久 JSON 重建账本，并在交给调用方前验证链条和归属。"""
-        ledger = cls(run_id=run_id, task_id=task_id, event_sink=event_sink)
+        ledger = cls(run_id=run_id, mission_id=mission_id, event_sink=event_sink)
         parsed: list[_Event] = []
         for payload in events:
             try:
@@ -310,7 +310,7 @@ class ProvenanceLedger:
                 raise
             except Exception as exc:
                 raise ProvenanceIntegrityError("provenance persisted event is malformed") from exc
-            if event.run_id != run_id or event.task_id != task_id:
+            if event.run_id != run_id or event.mission_id != mission_id:
                 raise ProvenanceIntegrityError("provenance event run or task ownership does not match")
             parsed.append(event)
         ordered = sorted(parsed, key=cls._event_sequence)

@@ -24,7 +24,7 @@ from adapters.agent_invocation import AgentInvocationAdapter
 from contracts.communication import validate_contract_payload
 from contracts.governance import AuditRequest
 from contracts.memory import MemoryPolicy, MemoryType
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryManifest, SkillManifest
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from service.agents.base import BaseAgent, AgentRunContext
@@ -43,8 +43,8 @@ class ACGNodeRunner:
     def __init__(
         self,
         *,
-        task: AgentTask,
-        run: WorkflowRun,
+        task: RuntimeMissionRecord,
+        run: RuntimeRunRecord,
         workflow: WorkflowDefinition,
         steps: Mapping[str, WorkflowStep],
         agents: Mapping[str, BaseAgent],
@@ -88,7 +88,7 @@ class ACGNodeRunner:
         }
         self.execution_audit = execution_audit or ExecutionAuditService()
         # 审计决定必须先于输出、记忆和提交记录落入独立真源。最小运行器使用内存
-        # 实现；WorkflowRuntime 会注入可跨进程恢复的 SQLite 实现。
+        # 实现；ExecutionRuntime 会注入可跨进程恢复的 SQLite 实现。
         self.decision_store = decision_store or InMemoryDecisionStore()
         self.agent_invoker = agent_invoker
         self.model_runtime = model_runtime
@@ -111,11 +111,11 @@ class ACGNodeRunner:
     @classmethod
     def minimal(cls, *, agent: BaseAgent, entropy_budget: int | None = None) -> "ACGNodeRunner":
         """构造测试用最小节点运行器，生产运行时应显式注入全部运行范围。"""
-        task = AgentTask(taskId="task", title="ACG node")
-        run = WorkflowRun(taskId=task.task_id, workflowId="workflow", domain="general", runtimeEngine="acg")
+        task = RuntimeMissionRecord(missionId="mission_000000000000", title="ACG node")
+        run = RuntimeRunRecord(missionId=task.mission_id, workflowId="workflow", domain="general", runtimeEngine="acg")
         workflow = WorkflowDefinition(workflowId="workflow", name="workflow", domain="general", intent="general", runtimeEngine="acg")
         step = WorkflowStep(stepId="one", name="one", agentName=agent.profile.agent_name)
-        return cls(task=task, run=run, workflow=workflow, steps={"one": step}, agents={"one": agent}, communicator=CommunicatorService(run_id=run.run_id, task_id=task.task_id), memory=MemoryService(), entropy_budget=entropy_budget)
+        return cls(task=task, run=run, workflow=workflow, steps={"one": step}, agents={"one": agent}, communicator=CommunicatorService(run_id=run.run_id, mission_id=task.mission_id), memory=MemoryService(), entropy_budget=entropy_budget)
 
     async def __call__(self, step_id: str, state: ACGExecutionState) -> dict[str, Any]:
         """执行一个 Step，并返回 Pregel 轮次可消费的受控结果。
@@ -269,7 +269,7 @@ class ACGNodeRunner:
         else:
             pack = self.communicator.assemble_execution_context(
                 run_id=state.run_id,
-                task_id=self.task.task_id,
+                mission_id=self.task.mission_id,
                 step_id=step_id,
                 input_spec=step.input,
                 upstream_refs=state.output_refs,

@@ -11,8 +11,8 @@ from pydantic import AfterValidator
 
 _HEX_LENGTH = 12
 _PREFIXES = {
+    "mission",
     "task",
-    "node",
     "blueprint",
     "run",
     "attempt",
@@ -44,8 +44,8 @@ def _validator(prefix: str):
     return AfterValidator(lambda value: validate_identity(value, prefix=prefix))
 
 
-UserTaskId: TypeAlias = Annotated[str, _validator("task")]
-TaskNodeId: TypeAlias = Annotated[str, _validator("node")]
+MissionId: TypeAlias = Annotated[str, _validator("mission")]
+TaskId: TypeAlias = Annotated[str, _validator("task")]
 BlueprintId: TypeAlias = Annotated[str, _validator("blueprint")]
 RunId: TypeAlias = Annotated[str, _validator("run")]
 AttemptId: TypeAlias = Annotated[str, _validator("attempt")]
@@ -53,12 +53,12 @@ BindingId: TypeAlias = Annotated[str, _validator("binding")]
 StepExecutionId: TypeAlias = Annotated[str, _validator("step_execution")]
 
 
-def new_user_task_id() -> str:
+def new_mission_id() -> str:
+    return generate_identity("mission")
+
+
+def new_task_id() -> str:
     return generate_identity("task")
-
-
-def new_task_node_id() -> str:
-    return generate_identity("node")
 
 
 def new_blueprint_id() -> str:
@@ -87,15 +87,15 @@ __all__ = [
     "BlueprintId",
     "RunId",
     "StepExecutionId",
-    "TaskNodeId",
-    "UserTaskId",
+    "TaskId",
+    "MissionId",
     "generate_identity",
     "new_attempt_id",
     "new_binding_id",
     "new_blueprint_id",
     "new_run_id",
     "new_step_execution_id",
-    "new_task_node_id",
-    "new_user_task_id",
+    "new_task_id",
+    "new_mission_id",
     "validate_identity",
 ]

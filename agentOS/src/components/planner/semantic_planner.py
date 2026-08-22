@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from contracts.planning import (
-    TaskNodeRelationType,
+    SemanticTaskRelationType,
     TaskPlan,
-    TaskPlanNode,
+    PlannedTask,
     TaskPlanRelation,
 )
 from support.acg.models import CapabilityCatalog
@@ -25,7 +25,7 @@ class SemanticPlanner:
     def plan_capabilities(
         self,
         *,
-        task_id: str,
+        mission_id: str,
         capabilities: Sequence[str],
         strategy: str,
         plan_version: int = 1,
@@ -34,11 +34,11 @@ class SemanticPlanner:
         if not ordered:
             raise SemanticPlanningError("Planner produced no semantic capabilities")
         selected = set(ordered)
-        nodes: list[TaskPlanNode] = []
+        nodes: list[PlannedTask] = []
         for capability in ordered:
             descriptor = self.capability_catalog.get(capability)
             dependencies = [item for item in descriptor.depends_on if item in selected]
-            nodes.append(TaskPlanNode(
+            nodes.append(PlannedTask(
                 key=f"capability:{descriptor.capability_id}",
                 title=descriptor.display_name,
                 objective=descriptor.description or f"Complete {descriptor.display_name}",
@@ -56,14 +56,14 @@ class SemanticPlanner:
             TaskPlanRelation(
                 sourceKey=f"capability:{dependency}",
                 targetKey=f"capability:{capability}",
-                relationType=TaskNodeRelationType.DEPENDS_ON,
+                relationType=SemanticTaskRelationType.DEPENDS_ON,
             )
             for capability in ordered
             for dependency in self.capability_catalog.get(capability).depends_on
             if dependency in selected
         )
         return TaskPlan(
-            taskId=task_id,
+            missionId=mission_id,
             planVersion=plan_version,
             nodes=tuple(nodes),
             relations=relations,
@@ -73,7 +73,7 @@ class SemanticPlanner:
     def plan_template(
         self,
         *,
-        task_id: str,
+        mission_id: str,
         workflow: Any,
         strategy: str,
         plan_version: int = 1,
@@ -90,7 +90,7 @@ class SemanticPlanner:
             for node in declared_nodes
         )
         return TaskPlan(
-            taskId=task_id,
+            missionId=mission_id,
             planVersion=plan_version,
             nodes=nodes,
             relations=tuple(getattr(workflow, "planning_relations", ()) or ()),

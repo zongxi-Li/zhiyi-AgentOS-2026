@@ -1,25 +1,15 @@
-"""架构职责名称与兼容别名不变量。"""
+"""架构职责名称不变量。"""
 
-from contracts.workflow import (
-    AgentTask,
-    LegacyAgentTask,
-    WknWorkflowRun,
-    WorkflowRun,
-)
-from runtime import WknWorkflowRuntime, WorkflowRuntime
-from runtime.v2 import (
-    AcgIdentityLifecycleService,
-    WknAcgIdentityBridge,
-    WknIdentityLifecycleAdapter,
-    WorkflowRuntimeV2,
-)
-from support.acg import ACGBlueprint, WknBlueprintSpec
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
+from runtime import ExecutionRuntime
+from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
+from support.acg import RuntimeBlueprintSpec
 
 
-def test_architecture_uses_responsibility_names_with_compatible_aliases() -> None:
-    assert WorkflowRuntime is WknWorkflowRuntime
-    assert WorkflowRuntimeV2 is AcgIdentityLifecycleService
-    assert WknAcgIdentityBridge is WknIdentityLifecycleAdapter
-    assert AgentTask is LegacyAgentTask
-    assert WorkflowRun is WknWorkflowRun
-    assert ACGBlueprint is WknBlueprintSpec
+def test_architecture_exports_only_responsibility_names() -> None:
+    assert ExecutionRuntime.__name__ == "ExecutionRuntime"
+    assert AcgIdentityLifecycleService.__name__ == "AcgIdentityLifecycleService"
+    assert IdentityProjectionBridge.__name__ == "IdentityProjectionBridge"
+    assert RuntimeMissionRecord.__name__ == "RuntimeMissionRecord"
+    assert RuntimeRunRecord.__name__ == "RuntimeRunRecord"
+    assert RuntimeBlueprintSpec.__name__ == "RuntimeBlueprintSpec"

@@ -18,7 +18,7 @@ import secrets
 from typing import Any, Dict, Optional, Sequence
 
 from contracts.planning import (
-    TaskNodeImplementationBinding,
+    TaskImplementationBinding,
     TaskPlan,
     TaskPlanPatch,
 )
@@ -38,7 +38,7 @@ from .algorithms import (
     PlanningVariantGenerator,
     normalize_planning_diversity,
 )
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 
 
 class ACGPlanningError(ValueError):
@@ -55,7 +55,7 @@ class PlanResult:
     blueprint: ACGBlueprint
     profile: TaskSemanticProfile
     task_plan: TaskPlan
-    task_node_bindings: tuple[TaskNodeImplementationBinding, ...]
+    task_bindings: tuple[TaskImplementationBinding, ...]
     strategy: str  # "static_template" | "dynamic_generation"
     template_id: Optional[str] = None
     template_score: float = 0.0
@@ -125,7 +125,7 @@ class PlanningEngine:
     def plan(
         self,
         *,
-        task_id: str,
+        mission_id: str,
         intent: str,
         domain: str = "general",
         task_type: str = "general",
@@ -176,7 +176,7 @@ class PlanningEngine:
             match = self.template_matcher.match(profile)
             if self.template_matcher.is_hit(match):
                 task_plan = self.semantic_planner.plan_template(
-                    task_id=task_id,
+                    mission_id=mission_id,
                     workflow=match.workflow,
                     strategy="static_template",
                 )
@@ -190,7 +190,7 @@ class PlanningEngine:
                     blueprint=blueprint,
                     profile=profile,
                     task_plan=task_plan,
-                    task_node_bindings=built.bindings,
+                    task_bindings=built.bindings,
                     strategy="static_template",
                     template_id=match.workflow.workflow_id,
                     template_score=match.score,
@@ -215,7 +215,7 @@ class PlanningEngine:
                 f"{stable_network.entropy_budget}"
             )
         task_plan = self.semantic_planner.plan_capabilities(
-            task_id=task_id,
+            mission_id=mission_id,
             capabilities=[binding.capability for binding in stable_network.bindings],
             strategy="dynamic_generation",
         )
@@ -233,7 +233,7 @@ class PlanningEngine:
                 continue
             try:
                 candidate = self.acg_builder.build(
-                    task_id=task_id,
+                    mission_id=mission_id,
                     profile=profile,
                     network=variant.network,
                     task_plan=task_plan,
@@ -260,7 +260,7 @@ class PlanningEngine:
             )
             selected_variant = stable_set.variants[0]
             blueprint = self.acg_builder.build(
-                task_id=task_id,
+                mission_id=mission_id,
                 profile=profile,
                 network=selected_variant.network,
                 task_plan=task_plan,
@@ -296,7 +296,7 @@ class PlanningEngine:
             blueprint=blueprint,
             profile=profile,
             task_plan=task_plan,
-            task_node_bindings=built.bindings,
+            task_bindings=built.bindings,
             strategy="dynamic_generation",
             template_score=match.score if match else 0.0,
             thinking_mode=thinking_mode,
@@ -339,8 +339,8 @@ PlannerService = PlanningEngine
 
 def apply_task_plan_patch(current: TaskPlan, patch: TaskPlanPatch) -> TaskPlan:
     """Planner-owned immutable semantic plan revision."""
-    if current.task_id != patch.task_id:
-        raise ACGPlanningError("TaskPlanPatch belongs to another UserTask")
+    if current.mission_id != patch.mission_id:
+        raise ACGPlanningError("TaskPlanPatch belongs to another Mission")
     if current.plan_version != patch.base_plan_version:
         raise ACGPlanningError("TaskPlanPatch basePlanVersion is stale")
     nodes = {node.key: node for node in current.nodes}
@@ -356,7 +356,7 @@ def apply_task_plan_patch(current: TaskPlan, patch: TaskPlanPatch) -> TaskPlan:
     ]
     relations.extend(patch.relations)
     return TaskPlan(
-        taskId=current.task_id,
+        missionId=current.mission_id,
         planVersion=patch.plan_version,
         nodes=tuple(nodes.values()),
         relations=tuple(relations),

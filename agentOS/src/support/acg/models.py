@@ -434,13 +434,13 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class WknBlueprintSpec(BaseModel):
+class RuntimeBlueprintSpec(BaseModel):
     """智能体计算图蓝图（设计时静态图）。"""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     graph_id: str = Field(default_factory=lambda: f"acg_{uuid4().hex[:12]}", alias="graphId")
-    task_id: Optional[str] = Field(default=None, alias="taskId")
+    mission_id: Optional[str] = Field(default=None, alias="missionId")
     version: int = 1
     objective: str = ""
     complexity_level: ComplexityLevel = Field(default=ComplexityLevel.SIMPLE, alias="complexityLevel")
@@ -541,8 +541,8 @@ def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
         raise ACGValidationError(f"{label} contract must be an object")
 
 
-# 旧名称保留给已有 Planner、插件与持久化载荷；新边界代码使用 WknBlueprintSpec。
-ACGBlueprint = WknBlueprintSpec
+# 旧名称保留给已有 Planner、插件与持久化载荷；新边界代码使用 RuntimeBlueprintSpec。
+ACGBlueprint = RuntimeBlueprintSpec
 
 
 class ACGValidationError(ValueError):
@@ -869,7 +869,7 @@ def _matches(text: str, keywords: tuple[str, ...]) -> bool:
 def promote_workflow_to_acg(
     workflow: "WorkflowDefinition",
     *,
-    task_id: str | None = None,
+    mission_id: str | None = None,
     enrich: bool = True,
 ) -> ACGBlueprint:
     """把线性 WorkflowDefinition 升格为 ACGBlueprint。
@@ -886,7 +886,7 @@ def promote_workflow_to_acg(
     """
     steps = list(workflow.steps)
     blueprint = ACGBlueprint(
-        taskId=task_id,
+        missionId=mission_id,
         objective=workflow.description or workflow.name,
         complexityLevel=_complexity_from_step_count(len(steps)),
         metadata={
@@ -1732,7 +1732,7 @@ class TaskSemanticProfile(BaseModel):
 
 
 __all__ = [
-    "ACGBlueprint", "WknBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",
+    "ACGBlueprint", "RuntimeBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",
     "AgentNode", "BlueprintStatus", "CapabilityCandidate", "CapabilityCatalog",
     "ComplexityLevel", "ConditionEvaluationError", "ConditionOperator", "ConditionSpec",
     "ControlNode", "ControlType", "EdgeActivation", "EdgeType", "EvidenceNode",

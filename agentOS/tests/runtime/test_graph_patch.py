@@ -7,8 +7,8 @@ import pytest
 
 from components.executor import GraphPatchConflictError, InMemoryExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.task_manager.store import WorkflowRegistry
-from contracts.planning import TaskNodeBindingPatch, TaskNodeImplementationBinding, TaskPlanNode, TaskPlanPatch
+from components.mission_manager.store import WorkflowRegistry
+from contracts.planning import TaskBindingPatch, TaskImplementationBinding, PlannedTask, TaskPlanPatch
 from contracts.recovery import GraphPatch
 from contracts.workflow import (
     ReviewDecision,
@@ -17,8 +17,8 @@ from contracts.workflow import (
     WorkflowStatus,
     WorkflowStepDefinition,
 )
-from runtime import WorkflowRuntime
-from runtime.v2 import AcgIdentityLifecycleService, WknIdentityLifecycleAdapter
+from runtime import ExecutionRuntime
+from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
@@ -54,7 +54,7 @@ class _BoundAgent(BaseAgent):
         return AgentOutput(output={"value": self.profile.agent_id})
 
 
-def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[WorkflowRuntime, _PatchAgent]:
+def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[ExecutionRuntime, _PatchAgent]:
     agents = AgentRegistry()
     agent = _PatchAgent()
     agents.register(agent)
@@ -66,12 +66,12 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[WorkflowRuntime,
             domain="general",
             runtimeEngine="acg",
             planningNodes=[
-                TaskPlanNode(
+                PlannedTask(
                     key="step:review",
                     title="review",
                     objective="review the prepared result",
                 ),
-                TaskPlanNode(
+                PlannedTask(
                     key="step:deliver",
                     title="deliver",
                     objective="deliver the approved result",
@@ -99,12 +99,12 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[WorkflowRuntime,
         identity_service = AcgIdentityLifecycleService(
             SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
         )
-        identity_lifecycle = WknIdentityLifecycleAdapter(
+        identity_lifecycle = IdentityProjectionBridge(
             identity_service,
             identity_service.repositories,
         )
     return (
-        WorkflowRuntime(
+        ExecutionRuntime(
             agent_registry=agents,
             workflow_registry=workflows,
             workflow_store=MemoryWorkflowStore(),
@@ -120,8 +120,8 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
     runtime, _agent = _runtime(tmp_path, with_identity=True)
     identity = runtime.identity_lifecycle.lifecycle_service
     try:
-        task = runtime.create_task("identity patch", workflow_id="patchable")
-        paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
+        task = runtime.create_mission("identity patch", workflow_id="patchable")
+        paused = asyncio.run(runtime.start(task.mission_id, workflow_id="patchable"))
         original_domain_run = identity.repositories.runs.get(paused.run_id)
         original_blueprint = identity.repositories.blueprints.get(
             original_domain_run.blueprint_id
@@ -164,16 +164,16 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
                 ).model_dump(by_alias=True, mode="json"),
             ],
             taskPlanPatch=TaskPlanPatch(
-                taskId=task.task_id,
+                missionId=task.mission_id,
                 basePlanVersion=1,
                 planVersion=2,
-                addNodes=(TaskPlanNode(
+                addNodes=(PlannedTask(
                     key="step:enrich",
                     title="enrich",
                     objective="enrich result",
                 ),),
             ),
-            taskNodeBindingPatch=TaskNodeBindingPatch(bindings=(TaskNodeImplementationBinding(
+            taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
                     planNodeKey="step:enrich",
                     acgNodeId="enrich",
                 ),)),
@@ -182,7 +182,7 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
         applied = asyncio.run(runtime.apply_graph_patch(patch))
         old_domain_run = identity.repositories.runs.get(paused.run_id)
         domain_run = identity.repositories.runs.get(applied.run_id)
-        bindings = identity.repositories.task_node_bindings.find_for_acg_node(
+        bindings = identity.repositories.task_bindings.find_for_acg_node(
             "enrich",
             domain_run.blueprint_id,
         )
@@ -192,7 +192,7 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
         assert domain_run.graph_version == 2
         assert applied.run_id != paused.run_id
         assert len(bindings) == 1
-        assert bindings[0].task_node_id.startswith("node_")
+        assert bindings[0].task_id.startswith("task_")
         assert domain_run.metadata["parentRunId"] == paused.run_id
         assert domain_run.metadata["supersedesRunId"] == paused.run_id
         assert domain_run.metadata["sourcePatchId"] == patch.patch_id
@@ -209,8 +209,8 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
 
 def test_graph_patch_without_identity_lifecycle_is_rejected_without_mutation(tmp_path):
     runtime, _agent = _runtime(tmp_path)
-    task = runtime.create_task("patch", workflow_id="patchable")
-    paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
+    task = runtime.create_mission("patch", workflow_id="patchable")
+    paused = asyncio.run(runtime.start(task.mission_id, workflow_id="patchable"))
     assert paused.status is WorkflowStatus.WAITING_REVIEW
     blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
     original_edge = next(
@@ -256,8 +256,8 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
     runtime, _agent = _runtime(tmp_path, with_identity=True)
     identity = runtime.identity_lifecycle.lifecycle_service
     try:
-        task = runtime.create_task("identity rollback", workflow_id="patchable")
-        paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
+        task = runtime.create_mission("identity rollback", workflow_id="patchable")
+        paused = asyncio.run(runtime.start(task.mission_id, workflow_id="patchable"))
         blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
         original_edge = next(
             edge for edge in blueprint.edges
@@ -291,17 +291,17 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
                 ).model_dump(by_alias=True, mode="json"),
             ],
             taskPlanPatch=TaskPlanPatch(
-                taskId=task.task_id,
+                missionId=task.mission_id,
                 basePlanVersion=1,
                 planVersion=2,
-                addNodes=(TaskPlanNode(
+                addNodes=(PlannedTask(
                     key="step:enrich",
                     title="enrich",
                     objective="enrich result",
                 ),),
             ),
-            taskNodeBindingPatch=TaskNodeBindingPatch(bindings=(
-                TaskNodeImplementationBinding(
+            taskNodeBindingPatch=TaskBindingPatch(bindings=(
+                TaskImplementationBinding(
                     planNodeKey="step:enrich",
                     acgNodeId="enrich",
                 ),
@@ -318,14 +318,14 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
         with pytest.raises(RuntimeError, match="simulated supersede failure"):
             asyncio.run(runtime.apply_graph_patch(patch))
 
-        runs = identity.repositories.runs.list_for_task(task.task_id)
+        runs = identity.repositories.runs.list_for_mission(task.mission_id)
         assert [run.run_id for run in runs] == [paused.run_id]
         assert runs[0].status.value != "superseded"
-        assert len(identity.repositories.blueprints.list_for_task(task.task_id)) == 1
-        assert len(identity.repositories.task_plans.list_for_task(task.task_id)) == 1
+        assert len(identity.repositories.blueprints.list_for_mission(task.mission_id)) == 1
+        assert len(identity.repositories.task_plans.list_for_mission(task.mission_id)) == 1
         assert {
             node.metadata["plannerSemanticKey"]
-            for node in identity.repositories.task_nodes.list_for_task(task.task_id)
+            for node in identity.repositories.semantic_tasks.list_for_mission(task.mission_id)
         } == {"step:review", "step:deliver"}
     finally:
         identity.close()
@@ -333,8 +333,8 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
 
 def test_graph_patch_rejects_stale_version(tmp_path):
     runtime, _ = _runtime(tmp_path)
-    task = runtime.create_task("patch", workflow_id="patchable")
-    paused = asyncio.run(runtime.start(task.task_id, workflow_id="patchable"))
+    task = runtime.create_mission("patch", workflow_id="patchable")
+    paused = asyncio.run(runtime.start(task.mission_id, workflow_id="patchable"))
     blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
 
     with pytest.raises(GraphPatchConflictError, match="version"):
@@ -381,15 +381,15 @@ def test_runtime_rebinds_pending_step_to_scoped_healthy_alternate(tmp_path):
             ],
         )
     )
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "rebind-checkpoints.sqlite3"),
         execution_value_store=InMemoryExecutionValueStore(),
     )
-    task = runtime.create_task("rebind", workflow_id="rebindable")
-    paused = asyncio.run(runtime.start(task.task_id, workflow_id="rebindable"))
+    task = runtime.create_mission("rebind", workflow_id="rebindable")
+    paused = asyncio.run(runtime.start(task.mission_id, workflow_id="rebindable"))
     assert paused.execution_state["resourceBindings"]["deliver"] == "primary"
     assert calls == []
 

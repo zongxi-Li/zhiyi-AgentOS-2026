@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from contracts.identity import UserTaskId
+from contracts.identity import MissionId
 
 
 _FORBIDDEN_IDENTITY_KEYS = {
@@ -38,7 +38,7 @@ def _reject_execution_identity(value: Any) -> None:
             _reject_execution_identity(nested)
 
 
-class TaskNodeRelationType(str, Enum):
+class SemanticTaskRelationType(str, Enum):
     PARENT = "parent"
     DEPENDS_ON = "depends_on"
 
@@ -48,7 +48,7 @@ class TaskPlanRelation(BaseModel):
 
     source_key: str = Field(alias="sourceKey", min_length=1)
     target_key: str = Field(alias="targetKey", min_length=1)
-    relation_type: TaskNodeRelationType = Field(alias="relationType")
+    relation_type: SemanticTaskRelationType = Field(alias="relationType")
 
     @model_validator(mode="after")
     def validate_not_self(self) -> "TaskPlanRelation":
@@ -57,7 +57,7 @@ class TaskPlanRelation(BaseModel):
         return self
 
 
-class TaskPlanNode(BaseModel):
+class PlannedTask(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
     key: str = Field(min_length=1)
@@ -76,22 +76,22 @@ class TaskPlanNode(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_semantic_only(self) -> "TaskPlanNode":
+    def validate_semantic_only(self) -> "PlannedTask":
         if self.parent_key == self.key:
-            raise ValueError("TaskPlanNode cannot be its own parent")
+            raise ValueError("PlannedTask cannot be its own parent")
         _reject_execution_identity(self.model_dump(by_alias=True))
         unknown = set(self.metadata) - _ALLOWED_METADATA_KEYS
         if unknown:
-            raise ValueError("TaskPlanNode metadata contains non-planning keys: " + ", ".join(sorted(unknown)))
+            raise ValueError("PlannedTask metadata contains non-planning keys: " + ", ".join(sorted(unknown)))
         return self
 
 
 class TaskPlan(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
-    task_id: UserTaskId = Field(alias="taskId")
+    mission_id: MissionId = Field(alias="missionId")
     plan_version: int = Field(default=1, alias="planVersion", ge=1)
-    nodes: tuple[TaskPlanNode, ...] = Field(min_length=1)
+    nodes: tuple[PlannedTask, ...] = Field(min_length=1)
     relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -126,8 +126,8 @@ class TaskPlan(BaseModel):
         return self
 
 
-class TaskNodeImplementationBinding(BaseModel):
-    """Builder-owned mapping from semantic plan key to WKN executable node."""
+class TaskImplementationBinding(BaseModel):
+    """Builder-owned mapping from a semantic plan key to an executable ACG node."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
@@ -135,10 +135,10 @@ class TaskNodeImplementationBinding(BaseModel):
     acg_node_id: str = Field(alias="acgNodeId", min_length=1)
 
 
-class TaskNodeBindingPatch(BaseModel):
+class TaskBindingPatch(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
-    bindings: tuple[TaskNodeImplementationBinding, ...] = Field(min_length=1)
+    bindings: tuple[TaskImplementationBinding, ...] = Field(min_length=1)
 
 
 class TaskPlanPatch(BaseModel):
@@ -146,10 +146,10 @@ class TaskPlanPatch(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
-    task_id: UserTaskId = Field(alias="taskId")
+    mission_id: MissionId = Field(alias="missionId")
     base_plan_version: int = Field(alias="basePlanVersion", ge=1)
     plan_version: int = Field(alias="planVersion", ge=2)
-    add_nodes: tuple[TaskPlanNode, ...] = Field(default_factory=tuple, alias="addNodes")
+    add_nodes: tuple[PlannedTask, ...] = Field(default_factory=tuple, alias="addNodes")
     retire_keys: tuple[str, ...] = Field(default_factory=tuple, alias="retireKeys")
     replace_keys: tuple[str, ...] = Field(default_factory=tuple, alias="replaceKeys")
     relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
@@ -171,11 +171,11 @@ class TaskPlanPatch(BaseModel):
 
 
 __all__ = [
-    "TaskNodeBindingPatch",
-    "TaskNodeImplementationBinding",
-    "TaskNodeRelationType",
+    "TaskBindingPatch",
+    "TaskImplementationBinding",
+    "SemanticTaskRelationType",
     "TaskPlan",
-    "TaskPlanNode",
+    "PlannedTask",
     "TaskPlanPatch",
     "TaskPlanRelation",
 ]

@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 
 from components.executor.graph import ACGExecutionGraph
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -26,7 +26,7 @@ def _defined_classes(root: Path) -> set[str]:
 
 def test_workflow_runtime_and_acg_graph_remain_the_only_execution_truth() -> None:
     """Capability work must not introduce a parallel DAG runtime/state machine."""
-    assert WorkflowRuntime.__module__ == "runtime.workflow_runtime"
+    assert ExecutionRuntime.__module__ == "runtime.workflow_runtime"
     assert ACGExecutionGraph.__module__ == "components.executor.graph"
     forbidden = {"RuntimeGraph", "SchedulerGraph", "EvolutionRuntime", "LongTermMemoryRuntime"}
     assert _defined_classes(SRC).isdisjoint(forbidden)

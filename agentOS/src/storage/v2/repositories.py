@@ -12,13 +12,13 @@ from contracts.identity import (
     BlueprintId,
     RunId,
     StepExecutionId,
-    TaskNodeId,
-    UserTaskId,
+    TaskId,
+    MissionId,
     new_attempt_id,
-    new_task_node_id,
+    new_task_id,
     new_step_execution_id,
 )
-from contracts.planning import TaskPlan, TaskPlanNode, TaskPlanRelation
+from contracts.planning import TaskPlan, PlannedTask, TaskPlanRelation
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -26,16 +26,16 @@ from domain.models import (
     RunStatus,
     StepExecution,
     StepExecutionStatus,
-    TaskNode,
-    UserTask,
-    UserTaskStatus,
+    SemanticTask,
+    Mission,
+    MissionStatus,
     WorkflowRun,
 )
 from domain.identity_graph.bindings import (
     BlueprintNodeBinding,
     ExecutionBinding,
     ProvenanceLink,
-    TaskNodeBinding,
+    TaskBinding,
 )
 from domain.lifecycle_projection import LifecycleProjectionEvent
 from domain.repository.errors import EntityNotFoundError, IdentityConflictError
@@ -71,11 +71,11 @@ class _SQLiteRepository:
             raise IdentityConflictError(f"cannot persist {entity}: {exc}") from exc
 
 
-class SQLiteUserTaskRepository(_SQLiteRepository):
+class SQLiteMissionRepository(_SQLiteRepository):
     @staticmethod
-    def _from_row(row: sqlite3.Row) -> UserTask:
-        return UserTask(
-            taskId=row["task_id"],
+    def _from_row(row: sqlite3.Row) -> Mission:
+        return Mission(
+            missionId=row["mission_id"],
             userId=row["user_id"],
             goal=row["goal"],
             description=row["description"],
@@ -85,13 +85,13 @@ class SQLiteUserTaskRepository(_SQLiteRepository):
             updatedAt=row["updated_at"],
         )
 
-    def add(self, task: UserTask) -> None:
+    def add(self, task: Mission) -> None:
         self._insert(
-            """INSERT INTO user_tasks(
-                task_id, user_id, goal, description, status, metadata_json, created_at, updated_at
+            """INSERT INTO missions(
+                mission_id, user_id, goal, description, status, metadata_json, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                task.task_id,
+                task.mission_id,
                 task.user_id,
                 task.goal,
                 task.description,
@@ -100,12 +100,12 @@ class SQLiteUserTaskRepository(_SQLiteRepository):
                 _iso(task.created_at),
                 _iso(task.updated_at),
             ),
-            entity="UserTask",
+            entity="Mission",
         )
 
-    def get(self, task_id: UserTaskId) -> UserTask | None:
+    def get(self, mission_id: MissionId) -> Mission | None:
         with self.storage.read() as conn:
-            row = conn.execute("SELECT * FROM user_tasks WHERE task_id = ?", (task_id,)).fetchone()
+            row = conn.execute("SELECT * FROM missions WHERE mission_id = ?", (mission_id,)).fetchone()
         if row is None:
             return None
         return self._from_row(row)
@@ -115,10 +115,10 @@ class SQLiteUserTaskRepository(_SQLiteRepository):
         *,
         user_id: str | None = None,
         tenant_id: str | None = None,
-        status: UserTaskStatus | None = None,
+        status: MissionStatus | None = None,
         offset: int = 0,
         limit: int = 20,
-    ) -> tuple[list[UserTask], int]:
+    ) -> tuple[list[Mission], int]:
         clauses: list[str] = []
         params: list[Any] = []
         if user_id is not None:
@@ -137,68 +137,68 @@ class SQLiteUserTaskRepository(_SQLiteRepository):
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self.storage.read() as conn:
             total = int(conn.execute(
-                f"SELECT COUNT(*) FROM user_tasks{where}",
+                f"SELECT COUNT(*) FROM missions{where}",
                 tuple(params),
             ).fetchone()[0])
             rows = conn.execute(
-                f"""SELECT * FROM user_tasks{where}
-                    ORDER BY updated_at DESC, task_id DESC LIMIT ? OFFSET ?""",
+                f"""SELECT * FROM missions{where}
+                    ORDER BY updated_at DESC, mission_id DESC LIMIT ? OFFSET ?""",
                 (*params, max(1, limit), max(0, offset)),
             ).fetchall()
         return ([self._from_row(row) for row in rows], total)
 
-    def update_status(self, task_id: UserTaskId, status: UserTaskStatus) -> UserTask:
+    def update_status(self, mission_id: MissionId, status: MissionStatus) -> Mission:
         updated_at = _now()
         with self.storage.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE user_tasks SET status = ?, updated_at = ? WHERE task_id = ?",
-                (status.value, _iso(updated_at), task_id),
+                "UPDATE missions SET status = ?, updated_at = ? WHERE mission_id = ?",
+                (status.value, _iso(updated_at), mission_id),
             )
             if cursor.rowcount != 1:
-                raise EntityNotFoundError(f"UserTask not found: {task_id}")
-        task = self.get(task_id)
+                raise EntityNotFoundError(f"Mission not found: {mission_id}")
+        task = self.get(mission_id)
         assert task is not None
         return task
 
 
-class SQLiteTaskNodeRepository(_SQLiteRepository):
-    def add(self, node: TaskNode) -> None:
+class SQLiteSemanticTaskRepository(_SQLiteRepository):
+    def add(self, node: SemanticTask) -> None:
         self._insert(
-            """INSERT INTO task_nodes(
-                node_id, task_id, parent_node_id, title, objective,
+            """INSERT INTO semantic_tasks(
+                task_id, mission_id, parent_task_id, title, objective,
                 constraints_json, status, metadata_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                node.node_id,
                 node.task_id,
-                node.parent_node_id,
+                node.mission_id,
+                node.parent_task_id,
                 node.title,
                 node.objective,
                 _json(node.constraints),
                 node.status.value,
                 _json(node.metadata),
             ),
-            entity="TaskNode",
+            entity="SemanticTask",
         )
 
-    def get(self, node_id: TaskNodeId) -> TaskNode | None:
+    def get(self, task_id: TaskId) -> SemanticTask | None:
         with self.storage.read() as conn:
-            row = conn.execute("SELECT * FROM task_nodes WHERE node_id = ?", (node_id,)).fetchone()
+            row = conn.execute("SELECT * FROM semantic_tasks WHERE task_id = ?", (task_id,)).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def list_for_task(self, task_id: UserTaskId) -> list[TaskNode]:
+    def list_for_mission(self, mission_id: MissionId) -> list[SemanticTask]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                "SELECT * FROM task_nodes WHERE task_id = ? ORDER BY rowid", (task_id,)
+                "SELECT * FROM semantic_tasks WHERE mission_id = ? ORDER BY rowid", (mission_id,)
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
     @staticmethod
-    def _from_row(row: sqlite3.Row) -> TaskNode:
-        return TaskNode(
-            nodeId=row["node_id"],
+    def _from_row(row: sqlite3.Row) -> SemanticTask:
+        return SemanticTask(
             taskId=row["task_id"],
-            parentNodeId=row["parent_node_id"],
+            missionId=row["mission_id"],
+            parentTaskId=row["parent_task_id"],
             title=row["title"],
             objective=row["objective"],
             constraints=_load_json(row["constraints_json"], []),
@@ -217,17 +217,17 @@ class SQLiteTaskPlanRepository(_SQLiteRepository):
         content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         with self.storage.transaction() as conn:
             conn.execute(
-                """INSERT INTO task_plans(task_id, plan_version, payload_json, content_hash, created_at)
+                """INSERT INTO task_plans(mission_id, plan_version, payload_json, content_hash, created_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (plan.task_id, plan.plan_version, encoded, content_hash, _iso(_now())),
+                (plan.mission_id, plan.plan_version, encoded, content_hash, _iso(_now())),
             )
             for node in plan.nodes:
                 conn.execute(
                     """INSERT INTO task_plan_nodes(
-                           task_id, plan_version, semantic_key, task_node_id, payload_json
+                           mission_id, plan_version, semantic_key, task_id, payload_json
                        ) VALUES (?, ?, ?, ?, ?)""",
                     (
-                        plan.task_id,
+                        plan.mission_id,
                         plan.plan_version,
                         node.key,
                         node_ids.get(node.key),
@@ -237,10 +237,10 @@ class SQLiteTaskPlanRepository(_SQLiteRepository):
             for relation in plan.relations:
                 conn.execute(
                     """INSERT INTO task_plan_relations(
-                           task_id, plan_version, source_key, target_key, relation_type
+                           mission_id, plan_version, source_key, target_key, relation_type
                        ) VALUES (?, ?, ?, ?, ?)""",
                     (
-                        plan.task_id,
+                        plan.mission_id,
                         plan.plan_version,
                         relation.source_key,
                         relation.target_key,
@@ -248,28 +248,28 @@ class SQLiteTaskPlanRepository(_SQLiteRepository):
                     ),
                 )
 
-    def get(self, task_id: UserTaskId, plan_version: int) -> TaskPlan | None:
+    def get(self, mission_id: MissionId, plan_version: int) -> TaskPlan | None:
         with self.storage.read() as conn:
             row = conn.execute(
-                "SELECT payload_json FROM task_plans WHERE task_id = ? AND plan_version = ?",
-                (task_id, plan_version),
+                "SELECT payload_json FROM task_plans WHERE mission_id = ? AND plan_version = ?",
+                (mission_id, plan_version),
             ).fetchone()
         return TaskPlan.model_validate(_load_json(row["payload_json"], {})) if row else None
 
-    def latest(self, task_id: UserTaskId) -> TaskPlan | None:
+    def latest(self, mission_id: MissionId) -> TaskPlan | None:
         with self.storage.read() as conn:
             row = conn.execute(
                 """SELECT payload_json FROM task_plans
-                   WHERE task_id = ? ORDER BY plan_version DESC LIMIT 1""",
-                (task_id,),
+                   WHERE mission_id = ? ORDER BY plan_version DESC LIMIT 1""",
+                (mission_id,),
             ).fetchone()
         return TaskPlan.model_validate(_load_json(row["payload_json"], {})) if row else None
 
-    def list_for_task(self, task_id: UserTaskId) -> list[TaskPlan]:
+    def list_for_mission(self, mission_id: MissionId) -> list[TaskPlan]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                "SELECT payload_json FROM task_plans WHERE task_id = ? ORDER BY plan_version",
-                (task_id,),
+                "SELECT payload_json FROM task_plans WHERE mission_id = ? ORDER BY plan_version",
+                (mission_id,),
             ).fetchall()
         return [TaskPlan.model_validate(_load_json(row["payload_json"], {})) for row in rows]
 
@@ -277,11 +277,11 @@ class SQLiteBlueprintRepository(_SQLiteRepository):
     def add(self, blueprint: AcgBlueprint) -> None:
         self._insert(
             """INSERT INTO acg_blueprints(
-                blueprint_id, task_id, version, graph_id, graph_json, created_at, metadata_json
+                blueprint_id, mission_id, version, graph_id, graph_json, created_at, metadata_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 blueprint.blueprint_id,
-                blueprint.task_id,
+                blueprint.mission_id,
                 blueprint.version,
                 blueprint.graph_id,
                 _json(blueprint.graph),
@@ -298,10 +298,10 @@ class SQLiteBlueprintRepository(_SQLiteRepository):
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def list_for_task(self, task_id: UserTaskId) -> list[AcgBlueprint]:
+    def list_for_mission(self, mission_id: MissionId) -> list[AcgBlueprint]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                "SELECT * FROM acg_blueprints WHERE task_id = ? ORDER BY version", (task_id,)
+                "SELECT * FROM acg_blueprints WHERE mission_id = ? ORDER BY version", (mission_id,)
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
@@ -309,7 +309,7 @@ class SQLiteBlueprintRepository(_SQLiteRepository):
     def _from_row(row: sqlite3.Row) -> AcgBlueprint:
         return AcgBlueprint(
             blueprintId=row["blueprint_id"],
-            taskId=row["task_id"],
+            missionId=row["mission_id"],
             version=row["version"],
             graphId=row["graph_id"],
             graph=_load_json(row["graph_json"], {}),
@@ -322,12 +322,12 @@ class SQLiteRunRepository(_SQLiteRepository):
     def add(self, run: WorkflowRun) -> None:
         self._insert(
             """INSERT INTO workflow_runs_v2(
-                run_id, task_id, blueprint_id, status, graph_version, checkpoint_json,
+                run_id, mission_id, blueprint_id, status, graph_version, checkpoint_json,
                 started_at, finished_at, created_at, updated_at, metadata_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run.run_id,
-                run.task_id,
+                run.mission_id,
                 run.blueprint_id,
                 run.status.value,
                 run.graph_version,
@@ -348,11 +348,11 @@ class SQLiteRunRepository(_SQLiteRepository):
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def list_for_task(self, task_id: UserTaskId) -> list[WorkflowRun]:
+    def list_for_mission(self, mission_id: MissionId) -> list[WorkflowRun]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                "SELECT * FROM workflow_runs_v2 WHERE task_id = ? ORDER BY rowid",
-                (task_id,),
+                "SELECT * FROM workflow_runs_v2 WHERE mission_id = ? ORDER BY rowid",
+                (mission_id,),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
@@ -439,7 +439,7 @@ class SQLiteRunRepository(_SQLiteRepository):
     def _from_row(row: sqlite3.Row) -> WorkflowRun:
         return WorkflowRun(
             runId=row["run_id"],
-            taskId=row["task_id"],
+            missionId=row["mission_id"],
             blueprintId=row["blueprint_id"],
             status=row["status"],
             graphVersion=row["graph_version"],
@@ -456,13 +456,13 @@ class SQLiteAttemptRepository(_SQLiteRepository):
     def add(self, attempt: Attempt) -> None:
         self._insert(
             """INSERT INTO attempts(
-                attempt_id, run_id, node_id, attempt_number, status, started_at,
+                attempt_id, run_id, task_id, attempt_number, status, started_at,
                 finished_at, failure_reason, resource_binding_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 attempt.attempt_id,
                 attempt.run_id,
-                attempt.node_id,
+                attempt.task_id,
                 attempt.attempt_number,
                 attempt.status.value,
                 _iso(attempt.started_at),
@@ -523,7 +523,7 @@ class SQLiteAttemptRepository(_SQLiteRepository):
         return Attempt(
             attemptId=row["attempt_id"],
             runId=row["run_id"],
-            nodeId=row["node_id"],
+            taskId=row["task_id"],
             attemptNumber=row["attempt_number"],
             status=row["status"],
             startedAt=row["started_at"],
@@ -537,14 +537,14 @@ class SQLiteStepExecutionRepository(_SQLiteRepository):
     def add(self, execution: StepExecution) -> None:
         self._insert(
             """INSERT INTO step_executions(
-                step_execution_id, attempt_id, run_id, node_id, input_json,
+                step_execution_id, attempt_id, run_id, task_id, input_json,
                 output_json, status, started_at, finished_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 execution.step_execution_id,
                 execution.attempt_id,
                 execution.run_id,
-                execution.node_id,
+                execution.task_id,
                 _json(execution.input),
                 _json(execution.output),
                 execution.status.value,
@@ -576,7 +576,7 @@ class SQLiteStepExecutionRepository(_SQLiteRepository):
             stepExecutionId=row["step_execution_id"],
             attemptId=row["attempt_id"],
             runId=row["run_id"],
-            nodeId=row["node_id"],
+            taskId=row["task_id"],
             input=_load_json(row["input_json"], {}),
             output=_load_json(row["output_json"], {}),
             status=row["status"],
@@ -599,20 +599,20 @@ def _blueprint_node_ids(conn: sqlite3.Connection, blueprint_id: BlueprintId) -> 
     }
 
 
-class SQLiteTaskNodeBindingRepository(_SQLiteRepository):
-    def add(self, binding: TaskNodeBinding) -> None:
+class SQLiteTaskBindingRepository(_SQLiteRepository):
+    def add(self, binding: TaskBinding) -> None:
         try:
             with self.storage.transaction() as conn:
                 if binding.acg_node_id not in _blueprint_node_ids(conn, binding.blueprint_id):
                     raise IdentityConflictError("ACGNode is not contained by the Blueprint")
                 conn.execute(
-                    """INSERT INTO task_node_bindings(
-                        binding_id, task_node_id, blueprint_id, acg_node_id,
+                    """INSERT INTO task_bindings(
+                        binding_id, task_id, blueprint_id, acg_node_id,
                         binding_type, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?)""",
                     (
                         binding.binding_id,
-                        binding.task_node_id,
+                        binding.task_id,
                         binding.blueprint_id,
                         binding.acg_node_id,
                         binding.binding_type.value,
@@ -620,42 +620,42 @@ class SQLiteTaskNodeBindingRepository(_SQLiteRepository):
                     ),
                 )
         except sqlite3.IntegrityError as exc:
-            raise IdentityConflictError(f"cannot persist TaskNodeBinding: {exc}") from exc
+            raise IdentityConflictError(f"cannot persist TaskBinding: {exc}") from exc
 
-    def get(self, binding_id: str) -> TaskNodeBinding | None:
+    def get(self, binding_id: str) -> TaskBinding | None:
         with self.storage.read() as conn:
             row = conn.execute(
-                "SELECT * FROM task_node_bindings WHERE binding_id = ?", (binding_id,)
+                "SELECT * FROM task_bindings WHERE binding_id = ?", (binding_id,)
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def find_for_task_node(
-        self, task_node_id: TaskNodeId, blueprint_id: BlueprintId
-    ) -> list[TaskNodeBinding]:
+    def find_for_task(
+        self, task_id: TaskId, blueprint_id: BlueprintId
+    ) -> list[TaskBinding]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                """SELECT * FROM task_node_bindings
-                   WHERE task_node_id = ? AND blueprint_id = ? ORDER BY created_at, binding_id""",
-                (task_node_id, blueprint_id),
+                """SELECT * FROM task_bindings
+                   WHERE task_id = ? AND blueprint_id = ? ORDER BY created_at, binding_id""",
+                (task_id, blueprint_id),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
     def find_for_acg_node(
         self, acg_node_id: str, blueprint_id: BlueprintId
-    ) -> list[TaskNodeBinding]:
+    ) -> list[TaskBinding]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                """SELECT * FROM task_node_bindings
+                """SELECT * FROM task_bindings
                    WHERE acg_node_id = ? AND blueprint_id = ? ORDER BY created_at, binding_id""",
                 (acg_node_id, blueprint_id),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
     @staticmethod
-    def _from_row(row: sqlite3.Row) -> TaskNodeBinding:
-        return TaskNodeBinding(
+    def _from_row(row: sqlite3.Row) -> TaskBinding:
+        return TaskBinding(
             bindingId=row["binding_id"],
-            taskNodeId=row["task_node_id"],
+            taskId=row["task_id"],
             blueprintId=row["blueprint_id"],
             acgNodeId=row["acg_node_id"],
             bindingType=row["binding_type"],
@@ -908,7 +908,7 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
 
 
 class SQLiteLifecycleInboxRepository(SQLiteLifecycleProjectionEventRepository):
-    """Durable identity-side receipt log for WKN lifecycle outbox events."""
+    """Durable identity-side receipt log for Execution Runtime lifecycle outbox events."""
 
     table_name = "lifecycle_inbox"
 
@@ -918,13 +918,13 @@ class SQLiteV2Repositories:
 
     def __init__(self, storage: SQLiteV2Storage) -> None:
         self.storage = storage
-        self.user_tasks = SQLiteUserTaskRepository(storage)
-        self.task_nodes = SQLiteTaskNodeRepository(storage)
+        self.missions = SQLiteMissionRepository(storage)
+        self.semantic_tasks = SQLiteSemanticTaskRepository(storage)
         self.blueprints = SQLiteBlueprintRepository(storage)
         self.runs = SQLiteRunRepository(storage)
         self.attempts = SQLiteAttemptRepository(storage)
         self.step_executions = SQLiteStepExecutionRepository(storage)
-        self.task_node_bindings = SQLiteTaskNodeBindingRepository(storage)
+        self.task_bindings = SQLiteTaskBindingRepository(storage)
         self.blueprint_node_bindings = SQLiteBlueprintNodeBindingRepository(storage)
         self.execution_bindings = SQLiteExecutionBindingRepository(storage)
         self.provenance_links = SQLiteProvenanceLinkRepository(storage)
@@ -932,7 +932,7 @@ class SQLiteV2Repositories:
         self.inbox_events = SQLiteLifecycleInboxRepository(storage)
         self.task_plans = SQLiteTaskPlanRepository(storage)
 
-    def persist_task_plan(self, plan: TaskPlan) -> dict[str, TaskNode]:
+    def persist_task_plan(self, plan: TaskPlan) -> dict[str, SemanticTask]:
         """Atomically persist an immutable plan snapshot and its semantic nodes."""
         import hashlib
 
@@ -946,14 +946,14 @@ class SQLiteV2Repositories:
         }
         parent_by_key.update({node.key: node.parent_key for node in plan.nodes if node.parent_key})
         with self.storage.transaction() as conn:
-            task = conn.execute(
-                "SELECT status FROM user_tasks WHERE task_id = ?", (plan.task_id,)
+            mission = conn.execute(
+                "SELECT status FROM missions WHERE mission_id = ?", (plan.mission_id,)
             ).fetchone()
-            if task is None:
-                raise EntityNotFoundError(f"UserTask not found: {plan.task_id}")
+            if mission is None:
+                raise EntityNotFoundError(f"Mission not found: {plan.mission_id}")
             existing_plan = conn.execute(
-                "SELECT content_hash FROM task_plans WHERE task_id = ? AND plan_version = ?",
-                (plan.task_id, plan.plan_version),
+                "SELECT content_hash FROM task_plans WHERE mission_id = ? AND plan_version = ?",
+                (plan.mission_id, plan.plan_version),
             ).fetchone()
             if existing_plan is not None:
                 if existing_plan["content_hash"] != content_hash:
@@ -961,15 +961,15 @@ class SQLiteV2Repositories:
                         "Planner semantic key changed meaning: planVersion already contains a different TaskPlan"
                     )
                 return {
-                    node.key: self.task_nodes.get(
+                    node.key: self.semantic_tasks.get(
                         self._task_plan_node_id(conn, plan, node.key)
                     )
                     for node in plan.nodes
                 }
 
             rows = conn.execute(
-                "SELECT * FROM task_nodes WHERE task_id = ? ORDER BY rowid",
-                (plan.task_id,),
+                "SELECT * FROM semantic_tasks WHERE mission_id = ? ORDER BY rowid",
+                (plan.mission_id,),
             ).fetchall()
             by_key: dict[str, sqlite3.Row] = {}
             for row in rows:
@@ -997,7 +997,7 @@ class SQLiteV2Repositories:
                         "acceptanceCriteria": list(node.acceptance_criteria),
                     }
                     equivalent = existing is not None and (
-                        existing["parent_node_id"] == parent_id
+                        existing["parent_task_id"] == parent_id
                         and existing["title"] == node.title
                         and existing["objective"] == node.objective
                         and _load_json(existing["constraints_json"], []) == node.constraints
@@ -1007,22 +1007,22 @@ class SQLiteV2Repositories:
                         == list(node.acceptance_criteria)
                     )
                     if equivalent:
-                        node_id = str(existing["node_id"])
+                        node_id = str(existing["task_id"])
                     else:
                         if existing is not None:
-                            semantic_metadata["supersedesNodeId"] = existing["node_id"]
+                            semantic_metadata["supersedesTaskId"] = existing["task_id"]
                             conn.execute(
-                                "UPDATE task_nodes SET status = 'superseded' WHERE node_id = ?",
-                                (existing["node_id"],),
+                                "UPDATE semantic_tasks SET status = 'superseded' WHERE task_id = ?",
+                                (existing["task_id"],),
                             )
-                        node_id = new_task_node_id()
+                        node_id = new_task_id()
                         conn.execute(
-                            """INSERT INTO task_nodes(
-                                   node_id, task_id, parent_node_id, title, objective,
+                            """INSERT INTO semantic_tasks(
+                                   task_id, mission_id, parent_task_id, title, objective,
                                    constraints_json, status, metadata_json
                                ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?)""",
                             (
-                                node_id, plan.task_id, parent_id, node.title, node.objective,
+                                node_id, plan.mission_id, parent_id, node.title, node.objective,
                                 _json(node.constraints), _json(semantic_metadata),
                             ),
                         )
@@ -1031,56 +1031,56 @@ class SQLiteV2Repositories:
             for key, row in by_key.items():
                 if key not in node_ids:
                     conn.execute(
-                        "UPDATE task_nodes SET status = 'retired' WHERE node_id = ?",
-                        (row["node_id"],),
+                        "UPDATE semantic_tasks SET status = 'retired' WHERE task_id = ?",
+                        (row["task_id"],),
                     )
-            if task["status"] == "created":
+            if mission["status"] == "created":
                 conn.execute(
-                    "UPDATE user_tasks SET status = 'planning', updated_at = ? WHERE task_id = ?",
-                    (_iso(_now()), plan.task_id),
+                    "UPDATE missions SET status = 'planning', updated_at = ? WHERE mission_id = ?",
+                    (_iso(_now()), plan.mission_id),
                 )
             conn.execute(
-                """INSERT INTO task_plans(task_id, plan_version, payload_json, content_hash, created_at)
+                """INSERT INTO task_plans(mission_id, plan_version, payload_json, content_hash, created_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (plan.task_id, plan.plan_version, encoded, content_hash, _iso(_now())),
+                (plan.mission_id, plan.plan_version, encoded, content_hash, _iso(_now())),
             )
             for node in plan.nodes:
                 conn.execute(
                     """INSERT INTO task_plan_nodes(
-                           task_id, plan_version, semantic_key, task_node_id, payload_json
+                           mission_id, plan_version, semantic_key, task_id, payload_json
                        ) VALUES (?, ?, ?, ?, ?)""",
-                    (plan.task_id, plan.plan_version, node.key, node_ids[node.key],
+                    (plan.mission_id, plan.plan_version, node.key, node_ids[node.key],
                      _json(node.model_dump(by_alias=True, mode="json"))),
                 )
             for relation in plan.relations:
                 conn.execute(
                     """INSERT INTO task_plan_relations(
-                           task_id, plan_version, source_key, target_key, relation_type
+                           mission_id, plan_version, source_key, target_key, relation_type
                        ) VALUES (?, ?, ?, ?, ?)""",
-                    (plan.task_id, plan.plan_version, relation.source_key,
+                    (plan.mission_id, plan.plan_version, relation.source_key,
                      relation.target_key, relation.relation_type.value),
                 )
         return {
-            key: self.task_nodes.get(node_id)
+            key: self.semantic_tasks.get(node_id)
             for key, node_id in node_ids.items()
-            if self.task_nodes.get(node_id) is not None
+            if self.semantic_tasks.get(node_id) is not None
         }
 
     @staticmethod
     def _task_plan_node_id(conn: sqlite3.Connection, plan: TaskPlan, key: str) -> str:
         row = conn.execute(
-            """SELECT task_node_id FROM task_plan_nodes
-               WHERE task_id = ? AND plan_version = ? AND semantic_key = ?""",
-            (plan.task_id, plan.plan_version, key),
+            """SELECT task_id FROM task_plan_nodes
+               WHERE mission_id = ? AND plan_version = ? AND semantic_key = ?""",
+            (plan.mission_id, plan.plan_version, key),
         ).fetchone()
-        if row is None or row["task_node_id"] is None:
+        if row is None or row["task_id"] is None:
             raise EntityNotFoundError(f"TaskPlan node not found: {key}")
-        return str(row["task_node_id"])
+        return str(row["task_id"])
 
     def ensure_attempt(
         self,
         run_id: RunId,
-        node_id: TaskNodeId,
+        task_id: TaskId,
         *,
         attempt_number: int | None = None,
         attempt_id: AttemptId | None = None,
@@ -1090,21 +1090,21 @@ class SQLiteV2Repositories:
         now = _now()
         with self.storage.transaction() as conn:
             owner = conn.execute(
-                """SELECT r.task_id AS run_task_id, n.task_id AS node_task_id
-                   FROM workflow_runs_v2 r, task_nodes n
-                   WHERE r.run_id = ? AND n.node_id = ?""",
-                (run_id, node_id),
+                """SELECT r.mission_id AS run_mission_id, n.mission_id AS task_mission_id
+                   FROM workflow_runs_v2 r, semantic_tasks n
+                   WHERE r.run_id = ? AND n.task_id = ?""",
+                (run_id, task_id),
             ).fetchone()
             if owner is None:
-                raise EntityNotFoundError("Run or TaskNode not found for Attempt")
-            if owner["run_task_id"] != owner["node_task_id"]:
+                raise EntityNotFoundError("Run or SemanticTask not found for Attempt")
+            if owner["run_mission_id"] != owner["task_mission_id"]:
                 raise IdentityConflictError(
-                    "Attempt cannot use another UserTask's TaskNode"
+                    "Attempt cannot use another Mission's SemanticTask"
                 )
             rows = conn.execute(
                 """SELECT * FROM attempts
-                   WHERE run_id = ? AND node_id = ? ORDER BY attempt_number""",
-                (run_id, node_id),
+                   WHERE run_id = ? AND task_id = ? ORDER BY attempt_number""",
+                (run_id, task_id),
             ).fetchall()
             expected = attempt_number or (len(rows) + 1)
             existing = next(
@@ -1120,19 +1120,19 @@ class SQLiteV2Repositories:
             attempt = Attempt(
                 attemptId=attempt_id or new_attempt_id(),
                 runId=run_id,
-                nodeId=node_id,
+                taskId=task_id,
                 attemptNumber=expected,
                 resourceBinding=resource_binding,
             )
             conn.execute(
                 """INSERT INTO attempts(
-                    attempt_id, run_id, node_id, attempt_number, status, started_at,
+                    attempt_id, run_id, task_id, attempt_number, status, started_at,
                     finished_at, failure_reason, resource_binding_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     attempt.attempt_id,
                     attempt.run_id,
-                    attempt.node_id,
+                    attempt.task_id,
                     attempt.attempt_number,
                     attempt.status.value,
                     None,
@@ -1148,16 +1148,16 @@ class SQLiteV2Repositories:
                 (_iso(now), _iso(now), run_id),
             )
             conn.execute(
-                """UPDATE user_tasks SET status = 'running', updated_at = ?
-                   WHERE task_id = ? AND status = 'ready'""",
-                (_iso(now), owner["run_task_id"]),
+                """UPDATE missions SET status = 'running', updated_at = ?
+                   WHERE mission_id = ? AND status = 'ready'""",
+                (_iso(now), owner["run_mission_id"]),
             )
             return attempt
 
     def ensure_step_execution(
         self,
         run_id: RunId,
-        node_id: TaskNodeId,
+        task_id: TaskId,
         attempt_id: AttemptId,
         *,
         input: dict,
@@ -1172,7 +1172,7 @@ class SQLiteV2Repositories:
             ).fetchone()
             if attempt_row is None:
                 raise EntityNotFoundError(f"Attempt not found: {attempt_id}")
-            if attempt_row["run_id"] != run_id or attempt_row["node_id"] != node_id:
+            if attempt_row["run_id"] != run_id or attempt_row["task_id"] != task_id:
                 raise IdentityConflictError(
                     "StepExecution identity does not match Attempt"
                 )
@@ -1203,7 +1203,7 @@ class SQLiteV2Repositories:
             execution = StepExecution(
                 stepExecutionId=step_execution_id or new_step_execution_id(),
                 runId=run_id,
-                nodeId=node_id,
+                taskId=task_id,
                 attemptId=attempt_id,
                 status=StepExecutionStatus.RUNNING,
                 input=input,
@@ -1212,14 +1212,14 @@ class SQLiteV2Repositories:
             )
             conn.execute(
                 """INSERT INTO step_executions(
-                    step_execution_id, attempt_id, run_id, node_id, input_json,
+                    step_execution_id, attempt_id, run_id, task_id, input_json,
                     output_json, status, started_at, finished_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     execution.step_execution_id,
                     attempt_id,
                     run_id,
-                    node_id,
+                    task_id,
                     _json(input),
                     _json({}),
                     execution.status.value,
@@ -1327,8 +1327,8 @@ __all__ = [
     "SQLiteProvenanceLinkRepository",
     "SQLiteRunRepository",
     "SQLiteStepExecutionRepository",
-    "SQLiteTaskNodeRepository",
-    "SQLiteTaskNodeBindingRepository",
-    "SQLiteUserTaskRepository",
+    "SQLiteSemanticTaskRepository",
+    "SQLiteTaskBindingRepository",
+    "SQLiteMissionRepository",
     "SQLiteV2Repositories",
 ]

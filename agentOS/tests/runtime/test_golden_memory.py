@@ -1,4 +1,4 @@
-"""Real WorkflowRuntime coverage for structured memory events and phase capsules."""
+"""Real ExecutionRuntime coverage for structured memory events and phase capsules."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import asyncio
 
 from components.memory import MemoryService, PhaseCapsule
 from components.memory.store import SQLiteMemoryStore
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, WorkflowStatus
-from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode
-from runtime.workflow_runtime import WorkflowRuntime
+from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
@@ -76,7 +76,7 @@ def _run(tmp_path):
         runtimeEngine="acg",
         definitionType=WorkflowDefinitionType.NATIVE_BOOTSTRAP,
     ))
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -95,7 +95,7 @@ def _run(tmp_path):
             ACGEdge(sourceId="research-b", targetId="synthesize", edgeType=EdgeType.DEPENDENCY),
         ],
     )
-    task = runtime.create_task(
+    task = runtime.create_mission(
         "Golden memory integration",
         workflow_id="golden-memory-runtime",
         input={
@@ -105,8 +105,8 @@ def _run(tmp_path):
         },
     )
     task_plan = TaskPlan(
-        taskId=task.task_id,
-        nodes=tuple(TaskPlanNode(
+        missionId=task.mission_id,
+        nodes=tuple(PlannedTask(
             key=f"step:{step.node_id}",
             title=step.name or step.node_id,
             objective=step.goal or step.description or step.node_id,
@@ -116,15 +116,15 @@ def _run(tmp_path):
     )
     task.input.update({
         "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-        "taskNodeBindings": [
-            TaskNodeImplementationBinding(
+        "taskBindings": [
+            TaskImplementationBinding(
                 planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id
             ).model_dump(by_alias=True, mode="json")
             for step in blueprint.step_nodes()
         ],
     })
-    runtime.workflow_store.save_task(task)
-    _, prepared = runtime.prepare_run(task.task_id, workflow_id="golden-memory-runtime")
+    runtime.workflow_store.save_mission(task)
+    _, prepared = runtime.prepare_run(task.mission_id, workflow_id="golden-memory-runtime")
     return runtime, asyncio.run(runtime.execute_prepared_run(prepared.run_id))
 
 

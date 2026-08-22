@@ -10,17 +10,17 @@ from .store import WorkflowRegistry
 from .scheduler import ProgressCalculator, WorkflowProgress
 from .state_machine import StateMachine
 from contracts.workflow import (
-    AgentTask,
+    RuntimeMissionRecord,
     TraceEventType,
     WorkflowDefinition,
-    WorkflowRun,
+    RuntimeRunRecord,
     WorkflowStatus,
     utc_now,
 )
 from support.stores.workflow_store import WorkflowStore, WorkflowStorePage
 
 
-class TaskManager:
+class MissionManager:
     """任务控制面服务，负责任务创建、工作流绑定和生命周期状态。"""
 
     def __init__(
@@ -38,7 +38,7 @@ class TaskManager:
         self.trace_store = trace_store
         self.progress_calculator = progress_calculator or ProgressCalculator()
 
-    def create_task(
+    def create_mission(
         self,
         title: str,
         domain: str = "general",
@@ -52,8 +52,8 @@ class TaskManager:
         workflow_id: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
         allowed_workflow_ids: Optional[tuple[str, ...]] = None,
-        task_id: str | None = None,
-    ) -> AgentTask:
+        mission_id: str | None = None,
+    ) -> RuntimeMissionRecord:
         """创建并持久化任务，同时记录创建轨迹。
 
         ``role_type``/``task_type`` 优先覆盖领域/意图；可选工作流在给定作用域内解析为推荐值。
@@ -68,8 +68,8 @@ class TaskManager:
             allowed_workflow_ids=allowed_workflow_ids,
         )
 
-        task = AgentTask(
-            **({"taskId": task_id} if task_id is not None else {}),
+        task = RuntimeMissionRecord(
+            **({"missionId": mission_id} if mission_id is not None else {}),
             title=title,
             domain=task_domain,
             intent=task_intent,
@@ -81,7 +81,7 @@ class TaskManager:
                 list(enabled_plugin_ids) if enabled_plugin_ids is not None else None
             ),
         )
-        self.workflow_store.save_task(task)
+        self.workflow_store.save_mission(task)
         self._record_task_event(
             task,
             TraceEventType.TASK_CREATED,
@@ -90,11 +90,11 @@ class TaskManager:
         )
         return task
 
-    def get_task(self, task_id: str) -> AgentTask:
+    def get_mission(self, mission_id: str) -> RuntimeMissionRecord:
         """按任务标识从存储读取任务；缺失异常由底层存储保持原样抛出。"""
-        return self.workflow_store.get_task(task_id)
+        return self.workflow_store.get_mission(mission_id)
 
-    def list_tasks(
+    def list_missions(
         self,
         *,
         status: WorkflowStatus | str | None = None,
@@ -102,9 +102,9 @@ class TaskManager:
         source: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> WorkflowStorePage[AgentTask]:
+    ) -> WorkflowStorePage[RuntimeMissionRecord]:
         """分页读取任务，可按状态、领域和来源筛选；排序与页码语义由存储实现定义。"""
-        return self.workflow_store.list_tasks(
+        return self.workflow_store.list_missions(
             status=status,
             domain=domain,
             source=source,
@@ -114,7 +114,7 @@ class TaskManager:
 
     def bind_workflow(
         self,
-        task: AgentTask | str,
+        task: RuntimeMissionRecord | str,
         workflow_id: Optional[str] = None,
         *,
         allowed_workflow_ids: Optional[tuple[str, ...]] = None,
@@ -138,18 +138,18 @@ class TaskManager:
         if resolved_task.recommended_workflow != workflow.workflow_id:
             resolved_task.recommended_workflow = workflow.workflow_id
             resolved_task.updated_at = utc_now()
-            self.workflow_store.save_task(resolved_task)
+            self.workflow_store.save_mission(resolved_task)
         return workflow
 
-    def mark_running(self, task: AgentTask | str) -> AgentTask:
+    def mark_running(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到运行中；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.RUNNING)
 
-    def mark_running_for_new_run(self, task: AgentTask | str, *, run_id: str) -> AgentTask:
-        """为新身份模型的独立 Run 重开旧 AgentTask 状态投影。
+    def mark_running_for_new_run(self, task: RuntimeMissionRecord | str, *, run_id: str) -> RuntimeMissionRecord:
+        """为新身份模型的独立 Run 重开旧 RuntimeMissionRecord 状态投影。
 
         旧状态机仍保持终态不可逆；只有新 ACG 接线明确创建了另一个 Run 时，
-        才把兼容层 AgentTask 投影为该 Run 的当前状态。
+        才把兼容层 RuntimeMissionRecord 投影为该 Run 的当前状态。
         """
         resolved_task = self._task(task)
         if resolved_task.status not in {
@@ -161,7 +161,7 @@ class TaskManager:
         old_status = resolved_task.status
         resolved_task.status = WorkflowStatus.RUNNING
         resolved_task.updated_at = utc_now()
-        self.workflow_store.save_task(resolved_task)
+        self.workflow_store.save_mission(resolved_task)
         self._record_task_event(
             resolved_task,
             TraceEventType.TASK_STATUS_CHANGED,
@@ -175,27 +175,27 @@ class TaskManager:
         )
         return resolved_task
 
-    def mark_waiting_review(self, task: AgentTask | str) -> AgentTask:
+    def mark_waiting_review(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到等待审核；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.WAITING_REVIEW)
 
-    def mark_retrying(self, task: AgentTask | str) -> AgentTask:
+    def mark_retrying(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到重试中；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.RETRYING)
 
-    def mark_failed(self, task: AgentTask | str) -> AgentTask:
+    def mark_failed(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到失败；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.FAILED)
 
-    def mark_completed(self, task: AgentTask | str) -> AgentTask:
+    def mark_completed(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到完成；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.COMPLETED)
 
-    def mark_cancelled(self, task: AgentTask | str) -> AgentTask:
+    def mark_cancelled(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到取消；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.CANCELLED)
 
-    def transition(self, task: AgentTask | str, status: WorkflowStatus | str) -> AgentTask:
+    def transition(self, task: RuntimeMissionRecord | str, status: WorkflowStatus | str) -> RuntimeMissionRecord:
         """执行合法状态迁移并持久化任务。
 
         成功时更新 ``updated_at`` 并记录状态变更轨迹；失败时保留原任务状态、追加错误轨迹
@@ -216,7 +216,7 @@ class TaskManager:
             )
             raise
         resolved_task.updated_at = utc_now()
-        self.workflow_store.save_task(resolved_task)
+        self.workflow_store.save_mission(resolved_task)
         if old_status != resolved_task.status:
             self._record_task_event(
                 resolved_task,
@@ -231,9 +231,9 @@ class TaskManager:
 
     def calculate_progress(
         self,
-        task: AgentTask | str,
+        task: RuntimeMissionRecord | str,
         *,
-        run: WorkflowRun | None = None,
+        run: RuntimeRunRecord | None = None,
         workflow: Optional[WorkflowDefinition] = None,
     ) -> WorkflowProgress:
         """计算任务当前进度；优先使用给定运行快照，否则从任务推荐工作流推断初始进度。"""
@@ -245,10 +245,10 @@ class TaskManager:
             workflow=resolved_workflow,
         )
 
-    def _task(self, task: AgentTask | str) -> AgentTask:
-        if isinstance(task, AgentTask):
+    def _task(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
+        if isinstance(task, RuntimeMissionRecord):
             return task
-        return self.workflow_store.get_task(task)
+        return self.workflow_store.get_mission(task)
 
     def _select_workflow(
         self,
@@ -278,9 +278,9 @@ class TaskManager:
 
     def _resolve_progress_workflow(
         self,
-        task: AgentTask,
+        task: RuntimeMissionRecord,
         *,
-        run: WorkflowRun | None = None,
+        run: RuntimeRunRecord | None = None,
     ) -> Optional[WorkflowDefinition]:
         workflow_id = getattr(run, "workflow_id", None) or task.recommended_workflow
         if not workflow_id:
@@ -292,7 +292,7 @@ class TaskManager:
 
     def _record_task_event(
         self,
-        task: AgentTask,
+        task: RuntimeMissionRecord,
         event_type: TraceEventType,
         *,
         observation: str = "",
@@ -309,7 +309,7 @@ class TaskManager:
 
     def _record_task_error(
         self,
-        task: AgentTask,
+        task: RuntimeMissionRecord,
         *,
         from_status: str,
         to_status: str,
@@ -328,6 +328,4 @@ class TaskManager:
 
 
 # Facade 与领域服务共用同一实现，避免迁移期出现两套任务状态真相源。
-TaskManagerService = TaskManager
-
-__all__ = ["TaskManager", "TaskManagerService"]
+__all__ = ["MissionManager"]

@@ -2,19 +2,19 @@
 
 from pydantic import Field
 
-from domain.models import AcgBlueprint, Attempt, DomainModel, StepExecution, TaskNode, UserTask, WorkflowRun
+from domain.models import AcgBlueprint, Attempt, DomainModel, StepExecution, SemanticTask, Mission, WorkflowRun
 
-from .bindings import ExecutionBinding, TaskNodeBinding
+from .bindings import ExecutionBinding, TaskBinding
 
 
 class ExecutionOrigin(DomainModel):
-    user_task: UserTask = Field(alias="userTask")
-    task_node: TaskNode = Field(alias="taskNode")
+    mission: Mission
+    semantic_task: SemanticTask = Field(alias="task")
     blueprint: AcgBlueprint
     run: WorkflowRun
     attempt: Attempt
     step_execution: StepExecution = Field(alias="stepExecution")
-    task_node_binding: TaskNodeBinding = Field(alias="taskNodeBinding")
+    task_binding: TaskBinding = Field(alias="taskBinding")
     execution_binding: ExecutionBinding = Field(alias="executionBinding")
 
 

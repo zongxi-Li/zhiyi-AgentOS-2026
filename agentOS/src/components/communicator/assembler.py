@@ -29,7 +29,7 @@ class ContextAssembler:
     def __init__(self, ledger: ProvenanceLedger | None = None) -> None:
         self.ledger = ledger or ProvenanceLedger()
 
-    def assemble(self, *, run_id: str, step_id: str | None = None, input_spec: Mapping[str, Any] | None = None, upstream_outputs: Mapping[str, Mapping[str, Any]], objective: str = "", step_goal: str = "", task_id: str = "", attempt_id: str = "", binding_id: str = "", graph_version: int = 0, token_budget: int | None = None, step_node: object | None = None, operation_id: str = "", **_: Any) -> ContextPack:
+    def assemble(self, *, run_id: str, step_id: str | None = None, input_spec: Mapping[str, Any] | None = None, upstream_outputs: Mapping[str, Mapping[str, Any]], objective: str = "", step_goal: str = "", mission_id: str = "", attempt_id: str = "", binding_id: str = "", graph_version: int = 0, token_budget: int | None = None, step_node: object | None = None, operation_id: str = "", **_: Any) -> ContextPack:
         """从上游输出装配满足 ``input_spec`` 的最小充分 ``ContextPack``。
 
         只投递白名单字段并按预算选择，缺少必填字段会使返回包标记为 invalid；
@@ -37,7 +37,7 @@ class ContextAssembler:
         字段数为 n，主要排序成本为 O(n log n)，输入映射不被修改。
         """
         if not self.ledger.run_id:
-            self.ledger.run_id, self.ledger.task_id = run_id, task_id
+            self.ledger.run_id, self.ledger.mission_id = run_id, mission_id
         if step_node is not None:
             step_id = step_id or str(getattr(step_node, "node_id", ""))
             input_spec = input_spec or getattr(step_node, "input_spec", {})

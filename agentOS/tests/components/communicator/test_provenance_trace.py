@@ -10,7 +10,7 @@ from components.communicator.provenance import ProvenanceIntegrityError, Provena
 
 def test_ledger_trace_projection_excludes_payload_body() -> None:
     """血缘 Trace 必须保留字段和校验和，但不得复制任何真实正文。"""
-    ledger = ProvenanceLedger(run_id="run-1", task_id="task-1")
+    ledger = ProvenanceLedger(run_id="run-1", mission_id="task-1")
     ledger.record_production("extract", {"title": "AgentOS secret"}, 5)
     ledger.record_consumption(
         "summarize",
@@ -34,7 +34,7 @@ def test_ledger_trace_projection_excludes_payload_body() -> None:
 
 def test_service_drains_provenance_events_by_step_ownership() -> None:
     """并行步骤交错记账时，每个节点只能领取归属自己的生产或消费事件。"""
-    service = CommunicatorService(run_id="run-1", task_id="task-1")
+    service = CommunicatorService(run_id="run-1", mission_id="task-1")
     service.record_production("left", {"left": "secret-left"})
     service.record_production("right", {"right": "secret-right"})
 
@@ -47,7 +47,7 @@ def test_service_drains_provenance_events_by_step_ownership() -> None:
 
 def test_ledger_rejects_event_reference_owned_by_another_step() -> None:
     """恢复的 provenanceRefs 只能指向当前步骤生产或消费的真实账本事件。"""
-    ledger = ProvenanceLedger(run_id="run-1", task_id="task-1")
+    ledger = ProvenanceLedger(run_id="run-1", mission_id="task-1")
     event = ledger.record_production("extract", {"title": "safe"}, 1)
 
     ledger.assert_event_owner(event_id=event.event_id, step_id="extract")
@@ -59,7 +59,7 @@ def test_ledger_rejects_event_reference_owned_by_another_step() -> None:
 
 def test_ledger_reuses_same_commit_production_without_appending_event() -> None:
     """节点在提交前异常重试时，同一 commitId 的血缘只能保留一条不可变事件。"""
-    ledger = ProvenanceLedger(run_id="run-1", task_id="task-1")
+    ledger = ProvenanceLedger(run_id="run-1", mission_id="task-1")
 
     first = ledger.record_production(
         "extract",

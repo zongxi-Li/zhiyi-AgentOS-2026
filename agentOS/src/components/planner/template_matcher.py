@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, List, Optional
 
 from support.acg.models import TaskSemanticProfile
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 
 # 工作流对象由任务管理器提供；规划器只读取其公开字段。
 WorkflowDefinition = Any

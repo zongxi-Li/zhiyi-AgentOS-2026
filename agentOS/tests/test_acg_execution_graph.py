@@ -15,7 +15,7 @@ from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCo
 from components.auditor import InMemoryDecisionStore
 from components.auditor.governance.trace import TraceStore
 from contracts.memory import MemoryQuery, MemoryRecord, MemoryType
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from components.communicator import CommunicatorService
 from components.memory import MemoryService
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -295,7 +295,7 @@ def test_resume_command_isolated_to_its_run() -> None:
 
 
 def test_execution_stream_is_projected_to_existing_trace_events() -> None:
-    run = WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")
+    run = RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")
 
     event = TraceStore().append_execution_event(
         run,
@@ -337,12 +337,12 @@ def test_node_runner_uses_contract_context_memory_and_returns_references_only() 
     memory.remember(MemoryRecord(memoryId="memory-1", memoryType=MemoryType.EPISODIC, content={"fact": "known"}, scope="run-1"))
     value_store = InMemoryExecutionValueStore()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(stepId="one", name="one", agentName="agent", input={"fields": ["source"]}, outputSpec={"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}})},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         entropy_budget=100,
         value_store=value_store,
@@ -404,12 +404,12 @@ def test_node_runner_assembles_declared_upstream_slots_from_output_references() 
         payload={"title": "public", "secret": "must-not-pass"},
     )
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"summarize": WorkflowStep(stepId="summarize", name="summarize", agentName="agent", input={"from": {"extract": ["title"]}}, outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}})},
         agents={"summarize": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=MemoryService(),
         value_store=value_store,
     )
@@ -431,12 +431,12 @@ def test_node_runner_recalls_and_persists_run_scoped_controlled_memory() -> None
     memory.remember(MemoryRecord(memoryId="memory:run-1:known", memoryType=MemoryType.EPISODIC, content={"fact": "run-one"}, scope="run-1"))
     memory.remember(MemoryRecord(memoryId="memory:run-2:hidden", memoryType=MemoryType.EPISODIC, content={"fact": "run-two"}, scope="run-2"))
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(stepId="one", name="one", agentName="agent", outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}})},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=InMemoryExecutionValueStore(),
     )
@@ -467,8 +467,8 @@ def test_node_runner_obeys_step_memory_policy_and_returns_safe_access_metadata()
         )
     )
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(
             stepId="one",
@@ -478,7 +478,7 @@ def test_node_runner_obeys_step_memory_policy_and_returns_safe_access_metadata()
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=InMemoryExecutionValueStore(),
     )
@@ -526,8 +526,8 @@ def test_node_runner_separates_memory_read_types_from_write_type() -> None:
         )
     )
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(
             stepId="one",
@@ -543,7 +543,7 @@ def test_node_runner_separates_memory_read_types_from_write_type() -> None:
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=InMemoryExecutionValueStore(),
     )
@@ -592,8 +592,8 @@ def test_node_runner_rejects_explicit_empty_memory_type_whitelist() -> None:
     """显式空白名单不能被解释为允许全部记忆类型，避免策略配置放大权限。"""
     agent = _RecordingAgent()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(
             stepId="one",
@@ -602,7 +602,7 @@ def test_node_runner_rejects_explicit_empty_memory_type_whitelist() -> None:
             input={"memoryPolicy": {"allowedTypes": []}},
         )},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=MemoryService(),
         value_store=InMemoryExecutionValueStore(),
     )
@@ -631,12 +631,12 @@ def test_node_runner_projects_high_risk_output_to_review_interrupt() -> None:
     """节点审计只返回 review 事实，由图消费该事实触发既有审核中断。"""
     agent = _HighRiskAgent()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(stepId="one", name="one", agentName="agent", outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}})},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=MemoryService(),
         value_store=InMemoryExecutionValueStore(),
     )
@@ -651,8 +651,8 @@ def test_review_decision_defers_memory_write_until_human_approval() -> None:
     decision_store = InMemoryDecisionStore()
     memory = MemoryService()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(
             stepId="one",
@@ -667,7 +667,7 @@ def test_review_decision_defers_memory_write_until_human_approval() -> None:
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )},
         agents={"one": _HighRiskAgent()},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=InMemoryExecutionValueStore(),
         decision_store=decision_store,
@@ -697,8 +697,8 @@ def test_blueprint_review_gate_defers_memory_when_output_audit_allows() -> None:
     """A declared review gate must defer memory even for an audit-allowed output."""
     memory = MemoryService()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(
             stepId="one",
@@ -714,7 +714,7 @@ def test_blueprint_review_gate_defers_memory_when_output_audit_allows() -> None:
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )},
         agents={"one": _RecordingAgent()},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=InMemoryExecutionValueStore(),
     )
@@ -757,12 +757,12 @@ def test_deny_result_is_not_persisted_to_value_store_or_memory() -> None:
     value_store = InMemoryExecutionValueStore()
     memory = MemoryService()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(stepId="one", name="one", agentName="agent", outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}})},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=value_store,
     )
@@ -786,8 +786,8 @@ def test_node_runner_requires_auditable_decision_before_required_memory_write() 
     value_store = InMemoryExecutionValueStore()
     memory = MemoryService()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="test"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="test"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"one": WorkflowStep(
             stepId="one",
@@ -802,7 +802,7 @@ def test_node_runner_requires_auditable_decision_before_required_memory_write() 
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )},
         agents={"one": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=memory,
         value_store=value_store,
         execution_audit=MissingAudit(),

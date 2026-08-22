@@ -10,13 +10,13 @@ LangChain, Inc.，完整 MIT 文本见 ``docs/THIRD_PARTY_NOTICES.md``。
 
 from typing import Any, Dict, List, Optional
 
-from contracts.workflow import AgentTask, TraceEvent, TraceEventType, WorkflowRun
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, TraceEvent, TraceEventType
 
 
 class TraceStore:
     """向运行或孤立任务写入内存 Trace，并提供确定性导出。
 
-    运行事件附着在传入 ``WorkflowRun``，任务事件保存在实例私有字典；该实现
+    运行事件附着在传入 ``RuntimeRunRecord``，任务事件保存在实例私有字典；该实现
     没有锁或持久化层，跨线程/进程写入与保留策略由调用方负责。
     """
 
@@ -25,7 +25,7 @@ class TraceStore:
 
     def append(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         event_type: TraceEventType,
         observation: str = "",
         step_id: Optional[str] = None,
@@ -52,7 +52,7 @@ class TraceStore:
 
     def build_event(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         *,
         event_type: TraceEventType,
         observation: str = "",
@@ -77,7 +77,7 @@ class TraceStore:
             durationMs=max(0, int(duration_ms)),
         )
 
-    def append_batch(self, run: WorkflowRun, events: List[TraceEvent]) -> List[TraceEvent]:
+    def append_batch(self, run: RuntimeRunRecord, events: List[TraceEvent]) -> List[TraceEvent]:
         """整体追加已经验证的 Trace 事件，返回独立列表。
 
         调用方必须先完成全部事件构造；Python 列表的单次 ``extend`` 是这里的最小
@@ -87,7 +87,7 @@ class TraceStore:
         run.trace.extend(batch)
         return batch
 
-    def append_execution_event(self, run: WorkflowRun, event: Dict[str, Any]) -> TraceEvent:
+    def append_execution_event(self, run: RuntimeRunRecord, event: Dict[str, Any]) -> TraceEvent:
         """将融合执行器事件投影到既有 AgentOS Trace 词表。
 
         执行底座只能发送紧凑字典。本方法刻意拒绝未知事件，确保上游实现内部的
@@ -97,7 +97,7 @@ class TraceStore:
         run.trace.append(trace)
         return trace
 
-    def build_execution_event(self, run: WorkflowRun, event: Dict[str, Any]) -> TraceEvent:
+    def build_execution_event(self, run: RuntimeRunRecord, event: Dict[str, Any]) -> TraceEvent:
         """将紧凑执行事件构造成尚未追加的 Trace 合同。"""
         event_type = str(event.get("type") or "")
         projection = {
@@ -125,7 +125,7 @@ class TraceStore:
 
     def append_task(
         self,
-        task: AgentTask,
+        task: RuntimeMissionRecord,
         event_type: TraceEventType,
         observation: str = "",
         payload: Optional[Dict[str, Any]] = None,
@@ -141,7 +141,7 @@ class TraceStore:
             observation=observation,
             payload=payload or {},
         )
-        self._task_events.setdefault(task.task_id, []).append(event)
+        self._task_events.setdefault(task.mission_id, []).append(event)
         return event
 
     def task_events(self, task_id: str) -> List[TraceEvent]:
@@ -161,7 +161,7 @@ class TraceStore:
 
         self._task_events.pop(task_id, None)
 
-    def export_json(self, run: WorkflowRun) -> Dict[str, Any]:
+    def export_json(self, run: RuntimeRunRecord) -> Dict[str, Any]:
         """把运行 Trace 导出为仅含 JSON 兼容值的可移植字典。
 
         事件经 :meth:`events` 排序后序列化，返回值可供 API、审计或报告使用；
@@ -170,7 +170,7 @@ class TraceStore:
 
         return {
             "runId": run.run_id,
-            "taskId": run.task_id,
+            "missionId": run.mission_id,
             "workflowId": run.workflow_id,
             "domain": run.domain,
             "status": run.status.value,
@@ -178,7 +178,7 @@ class TraceStore:
             "events": [event.model_dump(by_alias=True, mode="json") for event in self.events(run)],
         }
 
-    def export_markdown(self, run: WorkflowRun) -> str:
+    def export_markdown(self, run: RuntimeRunRecord) -> str:
         """渲染按时间稳定排序的人类可读 Markdown Trace 报告。
 
         返回以换行结尾的字符串，包含运行元数据和每个事件的关键字段，不输出
@@ -188,7 +188,7 @@ class TraceStore:
         lines: List[str] = [
             f"# Workflow Trace: {run.run_id}",
             "",
-            f"- Task: {run.task_id}",
+            f"- Mission: {run.mission_id}",
             f"- Workflow: {run.workflow_id}",
             f"- Domain: {run.domain}",
             f"- Status: {run.status.value}",
@@ -211,7 +211,7 @@ class TraceStore:
                 lines.append(f"   - durationMs: {event.duration_ms}")
         return "\n".join(lines).rstrip() + "\n"
 
-    def events(self, run: WorkflowRun) -> List[TraceEvent]:
+    def events(self, run: RuntimeRunRecord) -> List[TraceEvent]:
         """按创建时间、事件标识返回运行事件的新列表。
 
         原始 ``run.trace`` 顺序不会被改写；排序复杂度 O(n log n)、额外空间

@@ -7,18 +7,18 @@ from pydantic import Field
 from contracts.execution import NodeExecutionRecord
 from domain.identity_graph import ExecutionBinding, ProvenanceLink
 from domain.identity_graph.contracts import ExecutionOrigin
-from domain.models import AcgBlueprint, Attempt, DomainModel, StepExecution, TaskNode, UserTask, WorkflowRun
+from domain.models import AcgBlueprint, Attempt, DomainModel, StepExecution, SemanticTask, Mission, WorkflowRun
 
 
-class TaskDetail(DomainModel):
-    task: UserTask
-    task_nodes: list[TaskNode] = Field(alias="taskNodes")
+class MissionDetail(DomainModel):
+    mission: Mission
+    tasks: list[SemanticTask]
     blueprints: list[AcgBlueprint]
     runs: list[WorkflowRun]
 
 
-class TaskRunHistory(DomainModel):
-    task_id: str = Field(alias="taskId")
+class MissionRunHistory(DomainModel):
+    mission_id: str = Field(alias="missionId")
     runs: list[WorkflowRun]
 
 
@@ -33,12 +33,12 @@ class AttemptDetail(DomainModel):
 
 class AttemptHistory(DomainModel):
     run_id: str = Field(alias="runId")
-    node_id: str | None = Field(default=None, alias="nodeId")
+    task_id: str | None = Field(default=None, alias="taskId")
     attempts: list[AttemptDetail]
 
 
 class RunExecutionNode(DomainModel):
-    task_node: TaskNode = Field(alias="taskNode")
+    task: SemanticTask
     acg_node_id: str | None = Field(default=None, alias="acgNodeId")
     attempts: list[AttemptDetail]
 
@@ -117,6 +117,6 @@ __all__ = [
     "CompiledPackageIdentity",
     "IdentityProjectionHealth",
     "StepExecutionDetail",
-    "TaskDetail",
-    "TaskRunHistory",
+    "MissionDetail",
+    "MissionRunHistory",
 ]

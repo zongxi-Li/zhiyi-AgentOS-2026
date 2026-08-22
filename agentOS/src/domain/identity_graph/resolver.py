@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from contracts.identity import BlueprintId, StepExecutionId, TaskNodeId
-from domain.models import TaskNode
+from contracts.identity import BlueprintId, StepExecutionId, TaskId
+from domain.models import SemanticTask
 from domain.repository.contracts import RepositorySet
 from domain.repository.errors import EntityNotFoundError, IdentityConflictError
 
@@ -15,36 +15,36 @@ class IdentityResolver:
     def __init__(self, repositories: RepositorySet) -> None:
         self.repositories = repositories
 
-    def resolve_task_node(
+    def resolve_semantic_task(
         self,
         *,
         blueprint_id: BlueprintId,
         acg_node_id: str,
-    ) -> TaskNode:
-        bindings = self.repositories.task_node_bindings.find_for_acg_node(
+    ) -> SemanticTask:
+        bindings = self.repositories.task_bindings.find_for_acg_node(
             acg_node_id, blueprint_id
         )
         if not bindings:
-            raise EntityNotFoundError(f"TaskNodeBinding not found for ACGNode: {acg_node_id}")
+            raise EntityNotFoundError(f"TaskBinding not found for ACGNode: {acg_node_id}")
         primary = [item for item in bindings if item.binding_type.value == "primary"]
         selected = primary[0] if len(primary) == 1 else bindings[0]
         if len(primary) > 1:
-            raise IdentityConflictError("ACGNode has multiple primary TaskNode bindings")
-        node = self.repositories.task_nodes.get(selected.task_node_id)
+            raise IdentityConflictError("ACGNode has multiple primary SemanticTask bindings")
+        node = self.repositories.semantic_tasks.get(selected.task_id)
         if node is None:
-            raise EntityNotFoundError(f"TaskNode not found: {selected.task_node_id}")
+            raise EntityNotFoundError(f"SemanticTask not found: {selected.task_id}")
         return node
 
     def resolve_acg_node(
         self,
         *,
-        task_node_id: TaskNodeId,
+        semantic_task_id: TaskId,
         blueprint_id: BlueprintId,
     ) -> list[str]:
         return [
             binding.acg_node_id
-            for binding in self.repositories.task_node_bindings.find_for_task_node(
-                task_node_id, blueprint_id
+            for binding in self.repositories.task_bindings.find_for_task(
+                semantic_task_id, blueprint_id
             )
         ]
 
@@ -66,28 +66,28 @@ class IdentityResolver:
             raise EntityNotFoundError(
                 f"ExecutionBinding not found for Attempt: {attempt.attempt_id}"
             )
-        task_bindings = self.repositories.task_node_bindings.find_for_acg_node(
+        task_bindings = self.repositories.task_bindings.find_for_acg_node(
             binding.acg_node_id, run.blueprint_id
         )
         task_binding = next(
-            (item for item in task_bindings if item.task_node_id == attempt.node_id),
+            (item for item in task_bindings if item.task_id == attempt.task_id),
             None,
         )
         if task_binding is None:
-            raise IdentityConflictError("ExecutionBinding is detached from its TaskNode")
-        task_node = self.repositories.task_nodes.get(attempt.node_id)
+            raise IdentityConflictError("ExecutionBinding is detached from its SemanticTask")
+        semantic_task = self.repositories.semantic_tasks.get(attempt.task_id)
         blueprint = self.repositories.blueprints.get(run.blueprint_id)
-        user_task = self.repositories.user_tasks.get(run.task_id)
-        if task_node is None or blueprint is None or user_task is None:
+        mission = self.repositories.missions.get(run.mission_id)
+        if semantic_task is None or blueprint is None or mission is None:
             raise EntityNotFoundError("execution origin contains a missing identity")
         return ExecutionOrigin(
-            userTask=user_task,
-            taskNode=task_node,
+            mission=mission,
+            task=semantic_task,
             blueprint=blueprint,
             run=run,
             attempt=attempt,
             stepExecution=execution,
-            taskNodeBinding=task_binding,
+            taskBinding=task_binding,
             executionBinding=binding,
         )
 

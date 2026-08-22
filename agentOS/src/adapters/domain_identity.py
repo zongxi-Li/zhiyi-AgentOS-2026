@@ -1,13 +1,11 @@
-"""把 WKN 兼容合同只读投影到 AgentOS 身份领域模型。"""
+"""把执行运行时合同只读投影到 AgentOS 身份领域模型。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from contracts.identity import AttemptId, BlueprintId, RunId, TaskNodeId
-from contracts.workflow import AgentTask as LegacyAgentTask
-from contracts.workflow import WorkflowRun as LegacyWorkflowRun
-from contracts.workflow import WorkflowStep as LegacyWorkflowStep
+from contracts.identity import AttemptId, BlueprintId, RunId, TaskId
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStep
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -15,31 +13,31 @@ from domain.models import (
     RunStatus,
     StepExecution,
     StepExecutionStatus,
-    UserTask,
-    UserTaskStatus,
+    Mission,
+    MissionStatus,
     WorkflowRun,
 )
-from support.acg.models import ACGBlueprint as LegacyACGBlueprint
+from support.acg.models import ACGBlueprint
 
 
-def _legacy_status(value: Any) -> str:
+def _runtime_status(value: Any) -> str:
     return str(getattr(value, "value", value)).lower()
 
 
-def _user_task_status(value: Any) -> UserTaskStatus:
-    status = _legacy_status(value)
+def _mission_status(value: Any) -> MissionStatus:
+    status = _runtime_status(value)
     if status == "pending":
-        return UserTaskStatus.CREATED
+        return MissionStatus.CREATED
     if status == "completed":
-        return UserTaskStatus.COMPLETED
+        return MissionStatus.COMPLETED
     if status == "cancelled":
-        return UserTaskStatus.ARCHIVED
+        return MissionStatus.ARCHIVED
     # 一次 Run 失败不意味着用户目标失败，目标仍可通过新 Run 继续完成。
-    return UserTaskStatus.RUNNING
+    return MissionStatus.RUNNING
 
 
 def _run_status(value: Any) -> RunStatus:
-    status = _legacy_status(value)
+    status = _runtime_status(value)
     aliases = {
         "planning": "pending",
         "retrying": "running",
@@ -50,7 +48,7 @@ def _run_status(value: Any) -> RunStatus:
 
 
 def _attempt_status(value: Any) -> AttemptStatus:
-    status = _legacy_status(value)
+    status = _runtime_status(value)
     aliases = {
         "completed": "succeeded",
         "success": "succeeded",
@@ -65,23 +63,23 @@ def _step_execution_status(value: Any) -> StepExecutionStatus:
     return StepExecutionStatus(_attempt_status(value).value)
 
 
-def agent_task_to_user_task(task: LegacyAgentTask, *, user_id: str | None = None) -> UserTask:
+def mission_record_to_domain(task: RuntimeMissionRecord, *, user_id: str | None = None) -> Mission:
     """投影 AgentTask；用户身份必须来自可信参数或已认证旧输入。"""
     resolved_user_id = str(user_id or task.input.get("authenticatedUserId") or "").strip()
     if not resolved_user_id:
-        raise ValueError("legacy AgentTask has no trusted user identity")
+        raise ValueError("RuntimeMissionRecord has no trusted user identity")
     goal = str(
         task.input.get("taskGoal")
         or task.input.get("userIntent")
         or task.title
     ).strip()
-    return UserTask(
-        taskId=task.task_id,
+    return Mission(
+        missionId=task.mission_id,
         userId=resolved_user_id,
         goal=goal,
         description=str(task.input.get("description") or ""),
         metadata={
-            "legacy": {
+            "runtime": {
                 "domain": task.domain,
                 "intent": task.intent,
                 "securityLevel": task.security_level,
@@ -92,32 +90,32 @@ def agent_task_to_user_task(task: LegacyAgentTask, *, user_id: str | None = None
         },
         createdAt=task.created_at,
         updatedAt=task.updated_at,
-        status=_user_task_status(task.status),
+        status=_mission_status(task.status),
     )
 
 
 def acg_blueprint_to_domain(
-    blueprint: LegacyACGBlueprint,
+    blueprint: ACGBlueprint,
     *,
     blueprint_id: BlueprintId,
 ) -> AcgBlueprint:
     """保留旧 graphId 作为 Runtime Graph 身份，并显式注入 Blueprint 身份。"""
-    if blueprint.task_id is None:
-        raise ValueError("legacy ACGBlueprint has no taskId")
+    if blueprint.mission_id is None:
+        raise ValueError("runtime ACGBlueprint has no missionId")
     graph = blueprint.model_dump(by_alias=True, mode="json")
     return AcgBlueprint(
         blueprintId=blueprint_id,
-        taskId=blueprint.task_id,
+        missionId=blueprint.mission_id,
         version=blueprint.version,
         graphId=blueprint.graph_id,
         graph=graph,
         createdAt=blueprint.created_at,
-        metadata={"legacyUpdatedAt": blueprint.updated_at.isoformat()},
+        metadata={"runtimeUpdatedAt": blueprint.updated_at.isoformat()},
     )
 
 
-def workflow_run_to_domain(
-    run: LegacyWorkflowRun,
+def runtime_run_to_domain(
+    run: RuntimeRunRecord,
     *,
     blueprint_id: BlueprintId,
 ) -> WorkflowRun:
@@ -128,7 +126,7 @@ def workflow_run_to_domain(
         checkpoint = run.checkpoints[-1].model_dump(by_alias=True, mode="json")
     return WorkflowRun(
         runId=run.run_id,
-        taskId=run.task_id,
+        missionId=run.mission_id,
         blueprintId=blueprint_id,
         status=_run_status(run.status),
         graphVersion=graph_version,
@@ -136,17 +134,17 @@ def workflow_run_to_domain(
         createdAt=run.created_at,
         updatedAt=run.updated_at,
         metadata={
-            "legacyWorkflowId": run.workflow_id,
+            "workflowId": run.workflow_id,
             "runtimeEngine": run.runtime_engine,
         },
     )
 
 
 def workflow_step_to_attempt(
-    step: LegacyWorkflowStep,
+    step: WorkflowStep,
     *,
     run_id: RunId,
-    node_id: TaskNodeId,
+    task_id: TaskId,
     attempt_id: AttemptId,
     resource_binding: dict[str, Any] | None = None,
 ) -> Attempt:
@@ -154,7 +152,7 @@ def workflow_step_to_attempt(
     return Attempt(
         attemptId=attempt_id,
         runId=run_id,
-        nodeId=node_id,
+        taskId=task_id,
         status=_attempt_status(step.status),
         attemptNumber=max(step.attempt, 0) + 1,
         startedAt=step.started_at,
@@ -165,16 +163,16 @@ def workflow_step_to_attempt(
 
 
 def workflow_step_to_execution(
-    step: LegacyWorkflowStep,
+    step: WorkflowStep,
     *,
     run_id: RunId,
-    node_id: TaskNodeId,
+    task_id: TaskId,
     attempt_id: AttemptId,
 ) -> StepExecution:
     """把旧可变 WorkflowStep 投影为一次 StepExecution 快照。"""
     return StepExecution(
         runId=run_id,
-        nodeId=node_id,
+        taskId=task_id,
         attemptId=attempt_id,
         status=_step_execution_status(step.status),
         input=dict(step.resolved_input or step.input),
@@ -186,8 +184,8 @@ def workflow_step_to_execution(
 
 __all__ = [
     "acg_blueprint_to_domain",
-    "agent_task_to_user_task",
-    "workflow_run_to_domain",
+    "mission_record_to_domain",
+    "runtime_run_to_domain",
     "workflow_step_to_attempt",
     "workflow_step_to_execution",
 ]

@@ -15,13 +15,13 @@ def test_v2_schema_is_independent_and_complete() -> None:
             foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
 
     assert {
-        "user_tasks",
-        "task_nodes",
+        "missions",
+        "semantic_tasks",
         "acg_blueprints",
         "workflow_runs_v2",
         "attempts",
         "step_executions",
-        "task_node_bindings",
+        "task_bindings",
         "blueprint_node_bindings",
         "execution_bindings",
         "provenance_links",

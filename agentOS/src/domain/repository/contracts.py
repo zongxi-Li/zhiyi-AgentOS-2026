@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskNodeId, UserTaskId
+from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskId, MissionId
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -12,9 +12,9 @@ from domain.models import (
     RunStatus,
     StepExecution,
     StepExecutionStatus,
-    TaskNode,
-    UserTask,
-    UserTaskStatus,
+    SemanticTask,
+    Mission,
+    MissionStatus,
     WorkflowRun,
 )
 from domain.lifecycle_projection import LifecycleProjectionEvent
@@ -24,41 +24,41 @@ if TYPE_CHECKING:
         BlueprintNodeBinding,
         ExecutionBinding,
         ProvenanceLink,
-        TaskNodeBinding,
+        TaskBinding,
     )
 
 
-class UserTaskRepository(Protocol):
-    def add(self, task: UserTask) -> None: ...
-    def get(self, task_id: UserTaskId) -> UserTask | None: ...
+class MissionRepository(Protocol):
+    def add(self, mission: Mission) -> None: ...
+    def get(self, mission_id: MissionId) -> Mission | None: ...
     def list(
         self,
         *,
         user_id: str | None = None,
         tenant_id: str | None = None,
-        status: UserTaskStatus | None = None,
+        status: MissionStatus | None = None,
         offset: int = 0,
         limit: int = 20,
-    ) -> tuple[list[UserTask], int]: ...
-    def update_status(self, task_id: UserTaskId, status: UserTaskStatus) -> UserTask: ...
+    ) -> tuple[list[Mission], int]: ...
+    def update_status(self, mission_id: MissionId, status: MissionStatus) -> Mission: ...
 
 
-class TaskNodeRepository(Protocol):
-    def add(self, node: TaskNode) -> None: ...
-    def get(self, node_id: TaskNodeId) -> TaskNode | None: ...
-    def list_for_task(self, task_id: UserTaskId) -> list[TaskNode]: ...
+class SemanticTaskRepository(Protocol):
+    def add(self, task: SemanticTask) -> None: ...
+    def get(self, task_id: TaskId) -> SemanticTask | None: ...
+    def list_for_mission(self, mission_id: MissionId) -> list[SemanticTask]: ...
 
 
 class BlueprintRepository(Protocol):
     def add(self, blueprint: AcgBlueprint) -> None: ...
     def get(self, blueprint_id: BlueprintId) -> AcgBlueprint | None: ...
-    def list_for_task(self, task_id: UserTaskId) -> list[AcgBlueprint]: ...
+    def list_for_mission(self, mission_id: MissionId) -> list[AcgBlueprint]: ...
 
 
 class RunRepository(Protocol):
     def add(self, run: WorkflowRun) -> None: ...
     def get(self, run_id: RunId) -> WorkflowRun | None: ...
-    def list_for_task(self, task_id: UserTaskId) -> list[WorkflowRun]: ...
+    def list_for_mission(self, mission_id: MissionId) -> list[WorkflowRun]: ...
     def update_blueprint(
         self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int
     ) -> WorkflowRun: ...
@@ -85,15 +85,15 @@ class StepExecutionRepository(Protocol):
     def list_for_attempt(self, attempt_id: AttemptId) -> list[StepExecution]: ...
 
 
-class TaskNodeBindingRepository(Protocol):
-    def add(self, binding: TaskNodeBinding) -> None: ...
-    def get(self, binding_id: str) -> TaskNodeBinding | None: ...
-    def find_for_task_node(
-        self, task_node_id: TaskNodeId, blueprint_id: BlueprintId
-    ) -> list[TaskNodeBinding]: ...
+class TaskBindingRepository(Protocol):
+    def add(self, binding: TaskBinding) -> None: ...
+    def get(self, binding_id: str) -> TaskBinding | None: ...
+    def find_for_task(
+        self, task_id: TaskId, blueprint_id: BlueprintId
+    ) -> list[TaskBinding]: ...
     def find_for_acg_node(
         self, acg_node_id: str, blueprint_id: BlueprintId
-    ) -> list[TaskNodeBinding]: ...
+    ) -> list[TaskBinding]: ...
 
 
 class BlueprintNodeBindingRepository(Protocol):
@@ -122,13 +122,13 @@ class LifecycleProjectionEventRepository(Protocol):
 
 
 class RepositorySet(Protocol):
-    user_tasks: UserTaskRepository
-    task_nodes: TaskNodeRepository
+    missions: MissionRepository
+    semantic_tasks: SemanticTaskRepository
     blueprints: BlueprintRepository
     runs: RunRepository
     attempts: AttemptRepository
     step_executions: StepExecutionRepository
-    task_node_bindings: TaskNodeBindingRepository
+    task_bindings: TaskBindingRepository
     blueprint_node_bindings: BlueprintNodeBindingRepository
     execution_bindings: ExecutionBindingRepository
     provenance_links: ProvenanceLinkRepository
@@ -136,12 +136,12 @@ class RepositorySet(Protocol):
     inbox_events: LifecycleProjectionEventRepository
     task_plans: Any
 
-    def persist_task_plan(self, plan: TaskPlan) -> dict[str, TaskNode]: ...
+    def persist_task_plan(self, plan: TaskPlan) -> dict[str, SemanticTask]: ...
 
     def ensure_attempt(
         self,
         run_id: RunId,
-        node_id: TaskNodeId,
+        node_id: TaskId,
         *,
         attempt_number: int | None = None,
         attempt_id: AttemptId | None = None,
@@ -151,7 +151,7 @@ class RepositorySet(Protocol):
     def ensure_step_execution(
         self,
         run_id: RunId,
-        node_id: TaskNodeId,
+        node_id: TaskId,
         attempt_id: AttemptId,
         *,
         input: dict,
@@ -182,7 +182,7 @@ __all__ = [
     "RepositorySet",
     "RunRepository",
     "StepExecutionRepository",
-    "TaskNodeRepository",
-    "TaskNodeBindingRepository",
-    "UserTaskRepository",
+    "SemanticTaskRepository",
+    "TaskBindingRepository",
+    "MissionRepository",
 ]

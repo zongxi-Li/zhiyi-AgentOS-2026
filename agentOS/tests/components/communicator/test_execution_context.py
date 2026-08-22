@@ -77,12 +77,12 @@ def test_execution_context_reuses_consumption_and_interaction_for_same_commit() 
         step_id="extract",
         payload={"title": "safe"},
     )
-    service = CommunicatorService(run_id="run-1", task_id="task-1")
+    service = CommunicatorService(run_id="run-1", mission_id="task-1")
 
     for _ in range(2):
         service.assemble_execution_context(
             run_id="run-1",
-            task_id="task-1",
+            mission_id="task-1",
             step_id="summarize",
             input_spec={"from": {"extract": ["title"]}},
             upstream_refs={"extract": source_ref},

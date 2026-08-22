@@ -10,15 +10,15 @@ from contracts.identity import (
     BlueprintId,
     RunId,
     StepExecutionId,
-    TaskNodeId,
-    UserTaskId,
+    TaskId,
+    MissionId,
     generate_identity,
 )
 
 
 class IdentityEnvelope(BaseModel):
-    task_id: UserTaskId
-    node_id: TaskNodeId
+    mission_id: MissionId
+    task_id: TaskId
     blueprint_id: BlueprintId
     run_id: RunId
     attempt_id: AttemptId
@@ -29,7 +29,7 @@ class IdentityEnvelope(BaseModel):
     ("prefix", "pattern"),
     [
         ("task", r"task_[0-9a-f]{12}"),
-        ("node", r"node_[0-9a-f]{12}"),
+        ("mission", r"mission_[0-9a-f]{12}"),
         ("blueprint", r"blueprint_[0-9a-f]{12}"),
         ("run", r"run_[0-9a-f]{12}"),
         ("attempt", r"attempt_[0-9a-f]{12}"),
@@ -44,8 +44,8 @@ def test_generate_identity_uses_canonical_format(prefix: str, pattern: str) -> N
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("task_id", "run_0123456789ab"),
-        ("node_id", "node_0123456789a"),
+        ("mission_id", "run_0123456789ab"),
+        ("task_id", "task_0123456789a"),
         ("blueprint_id", "blueprint_0123456789ag"),
         ("run_id", "run_0123456789AB"),
         ("attempt_id", "run-clean"),
@@ -54,8 +54,8 @@ def test_generate_identity_uses_canonical_format(prefix: str, pattern: str) -> N
 )
 def test_identity_validator_rejects_wrong_prefix_length_and_non_hex(field: str, value: str) -> None:
     valid = {
+        "mission_id": "mission_0123456789ab",
         "task_id": "task_0123456789ab",
-        "node_id": "node_0123456789ab",
         "blueprint_id": "blueprint_0123456789ab",
         "run_id": "run_0123456789ab",
         "attempt_id": "attempt_0123456789ab",

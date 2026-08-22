@@ -6,7 +6,7 @@ import asyncio
 
 from adapters.model.native import NativeGeneralAgent
 from components.communicator.contracts import ContextPack
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents import AgentRunContext
 
 
@@ -33,8 +33,8 @@ def test_native_retrieval_forwards_snake_case_commit_id() -> None:
     """原生检索必须与工具保护层使用同一 ``commit_id`` 参数名。"""
     agent = NativeGeneralAgent()
     tool = _SearchTool()
-    task = AgentTask(taskId="task-1", title="retrieve")
-    run = WorkflowRun(taskId=task.task_id, workflowId="native", domain="general", runtimeEngine="acg")
+    task = RuntimeMissionRecord(missionId="task-1", title="retrieve")
+    run = RuntimeRunRecord(missionId=task.mission_id, workflowId="native", domain="general", runtimeEngine="acg")
     workflow = WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg")
     context = AgentRunContext(
         task=task,

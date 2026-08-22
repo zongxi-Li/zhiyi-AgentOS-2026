@@ -26,7 +26,7 @@ from components.executor.value_store import (
     InMemoryExecutionValueStore,
 )
 from components.memory import MemoryService
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
@@ -187,12 +187,12 @@ def test_blackboard_snapshot_is_frozen_before_sibling_writes(tmp_path) -> None:
     )
     agent = _Agent()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="blackboard"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="blackboard"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"sink": WorkflowStep(stepId="sink", name="sink", agentName="advanced-agent")},
         agents={"sink": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=MemoryService(),
         communication_modes={"sink": "BLACKBOARD"},
         reliable_communication_store=communication,

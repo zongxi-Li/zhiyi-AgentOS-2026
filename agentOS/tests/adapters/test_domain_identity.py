@@ -2,36 +2,36 @@ from __future__ import annotations
 
 from adapters.domain_identity import (
     acg_blueprint_to_domain,
-    agent_task_to_user_task,
-    workflow_run_to_domain,
+    mission_record_to_domain,
+    runtime_run_to_domain,
     workflow_step_to_attempt,
     workflow_step_to_execution,
 )
 from contracts.execution import StepStatus
-from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus, WorkflowStep
-from domain.models import AttemptStatus, RunStatus, StepExecutionStatus, UserTaskStatus
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, WorkflowStep
+from domain.models import AttemptStatus, RunStatus, StepExecutionStatus, MissionStatus
 from support.acg.models import ACGBlueprint
 
 
 def test_agent_task_adapter_does_not_turn_failed_run_state_into_failed_user_goal() -> None:
-    legacy = AgentTask(
-        taskId="task_0123456789ab",
+    legacy = RuntimeMissionRecord(
+        missionId="mission_0123456789ab",
         title="合同审查",
         input={"authenticatedUserId": "user-1", "taskGoal": "审查软件开发合同"},
         status=WorkflowStatus.FAILED,
     )
 
-    projected = agent_task_to_user_task(legacy)
+    projected = mission_record_to_domain(legacy)
 
-    assert projected.task_id == legacy.task_id
+    assert projected.mission_id == legacy.mission_id
     assert projected.goal == "审查软件开发合同"
-    assert projected.status is UserTaskStatus.RUNNING
+    assert projected.status is MissionStatus.RUNNING
 
 
 def test_blueprint_adapter_keeps_blueprint_and_runtime_graph_id_separate() -> None:
     legacy = ACGBlueprint(
         graphId="acg_runtime_graph_1",
-        taskId="task_0123456789ab",
+        missionId="mission_0123456789ab",
         nodes=[],
         edges=[],
     )
@@ -47,9 +47,9 @@ def test_blueprint_adapter_keeps_blueprint_and_runtime_graph_id_separate() -> No
 
 
 def test_workflow_run_adapter_requires_explicit_blueprint_identity() -> None:
-    legacy = WorkflowRun(
+    legacy = RuntimeRunRecord(
         runId="run_0123456789ab",
-        taskId="task_0123456789ab",
+        missionId="mission_0123456789ab",
         workflowId="legacy-workflow",
         domain="general",
         runtimeEngine="acg",
@@ -57,7 +57,7 @@ def test_workflow_run_adapter_requires_explicit_blueprint_identity() -> None:
         executionState={"graphVersion": 3},
     )
 
-    projected = workflow_run_to_domain(
+    projected = runtime_run_to_domain(
         legacy,
         blueprint_id="blueprint_0123456789ab",
     )
@@ -80,7 +80,7 @@ def test_workflow_step_adapter_creates_attempt_and_step_execution_identities() -
     )
     kwargs = {
         "run_id": "run_0123456789ab",
-        "node_id": "node_0123456789ab",
+        "task_id": "task_0123456789ab",
         "attempt_id": "attempt_0123456789ab",
     }
 
@@ -91,5 +91,5 @@ def test_workflow_step_adapter_creates_attempt_and_step_execution_identities() -
     assert attempt.attempt_number == 2
     assert execution.status is StepExecutionStatus.SUCCEEDED
     assert execution.step_execution_id.startswith("step_execution_")
-    assert execution.node_id == kwargs["node_id"]
+    assert execution.task_id == kwargs["task_id"]
     assert execution.attempt_id == kwargs["attempt_id"]

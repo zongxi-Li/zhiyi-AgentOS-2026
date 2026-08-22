@@ -1,4 +1,4 @@
-"""AgentOS 身份控制面的领域模型；WKN 内核使用独立运行投影合同。"""
+"""AgentOS 身份控制面的领域模型；Execution Runtime 内核使用独立运行投影合同。"""
 
 from .models import (
     AcgBlueprint,
@@ -8,10 +8,10 @@ from .models import (
     RunStatus,
     StepExecution,
     StepExecutionStatus,
-    TaskNode,
-    TaskNodeStatus,
-    UserTask,
-    UserTaskStatus,
+    SemanticTask,
+    SemanticTaskStatus,
+    Mission,
+    MissionStatus,
     WorkflowRun,
 )
 
@@ -23,9 +23,9 @@ __all__ = [
     "RunStatus",
     "StepExecution",
     "StepExecutionStatus",
-    "TaskNode",
-    "TaskNodeStatus",
-    "UserTask",
-    "UserTaskStatus",
+    "SemanticTask",
+    "SemanticTaskStatus",
+    "Mission",
+    "MissionStatus",
     "WorkflowRun",
 ]

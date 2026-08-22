@@ -1,11 +1,11 @@
 """New ACG Runtime Foundation 公共入口。"""
 
 from .context import ExecutionContext
-from contracts.planning import TaskNodeImplementationBinding, TaskPlan, TaskPlanNode, TaskPlanPatch
+from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask, TaskPlanPatch
 from .planner_bridge import PlannerIdentityBridge
 from .queries import IdentityQueryService
-from .runner import AcgIdentityLifecycleService, WorkflowRuntimeV2
-from .wkn_bridge import WknAcgIdentityBridge, WknIdentityLifecycleAdapter
+from .runner import AcgIdentityLifecycleService
+from .identity_projection import IdentityProjectionBridge
 from .reconciliation import IdentityProjectionReconciler, IdentityReconciliationReport
 
 __all__ = [
@@ -15,11 +15,9 @@ __all__ = [
     "IdentityProjectionReconciler",
     "IdentityReconciliationReport",
     "PlannerIdentityBridge",
-    "TaskNodeImplementationBinding",
+    "TaskImplementationBinding",
     "TaskPlan",
-    "TaskPlanNode",
+    "PlannedTask",
     "TaskPlanPatch",
-    "WknAcgIdentityBridge",
-    "WknIdentityLifecycleAdapter",
-    "WorkflowRuntimeV2",
+    "IdentityProjectionBridge",
 ]

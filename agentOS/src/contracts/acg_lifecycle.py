@@ -1,4 +1,4 @@
-"""WKN ACG 向 AgentOS 身份控制面发布生命周期事实的最小端口。"""
+"""Execution Runtime ACG 向 AgentOS 身份控制面发布生命周期事实的最小端口。"""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ from typing import Any, Protocol
 class AcgIdentityLifecyclePort(Protocol):
     """执行内核只依赖此端口，不依赖 V2 Repository 或具体数据库。"""
 
-    def new_task_id(self) -> str: ...
-    def on_task_created(self, task: Any) -> None: ...
-    def new_run_id(self, task_id: str) -> str: ...
+    def new_mission_id(self) -> str: ...
+    def on_mission_created(self, task: Any) -> None: ...
+    def new_run_id(self, mission_id: str) -> str: ...
     def on_run_prepared(
         self,
         task: Any,
         run: Any,
         blueprint: Any,
         task_plan: Any,
-        task_node_bindings: Any,
+        task_bindings: Any,
     ) -> None: ...
     def on_graph_patch_prepared(
         self,
@@ -26,7 +26,7 @@ class AcgIdentityLifecyclePort(Protocol):
         new_run: Any,
         blueprint: Any,
         task_plan: Any,
-        task_node_bindings: Any,
+        task_bindings: Any,
         patch_id: str,
     ) -> None: ...
     def on_blueprint_revised(

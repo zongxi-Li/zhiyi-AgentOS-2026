@@ -56,7 +56,7 @@ class SQLiteProvenanceStore:
             self._connection.rollback()
             raise
 
-    def load_ledger(self, *, run_id: str, task_id: str) -> ProvenanceLedger:
+    def load_ledger(self, *, run_id: str, mission_id: str) -> ProvenanceLedger:
         """加载 run 的事件，重建并验证哈希链后返回可继续追加的账本。"""
         rows = self._connection.execute(
             "SELECT event_json FROM acg_provenance_events WHERE run_id = ? ORDER BY event_id",
@@ -65,7 +65,7 @@ class SQLiteProvenanceStore:
         events: list[dict[str, Any]] = [json.loads(str(row[0])) for row in rows]
         return ProvenanceLedger.from_events(
             run_id=run_id,
-            task_id=task_id,
+            mission_id=mission_id,
             events=events,
             event_sink=self.append,
         )

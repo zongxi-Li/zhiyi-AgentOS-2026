@@ -13,55 +13,55 @@ from .query_models import (
     RunLineage,
     RunOperationalState,
     StepExecutionDetail,
-    TaskDetail,
-    TaskRunHistory,
+    MissionDetail,
+    MissionRunHistory,
 )
 from domain.identity_graph import IdentityResolver
-from domain.models import UserTaskStatus
+from domain.models import MissionStatus
 from domain.repository import EntityNotFoundError, RepositorySet
 
 
 class IdentityQueryService:
-    """Phase 4 查询真源；只组合 Repository，不读取 WKN 运行快照。"""
+    """Phase 4 查询真源；只组合 Repository，不读取 Execution Runtime 运行快照。"""
 
     def __init__(self, repositories: RepositorySet) -> None:
         self.repositories = repositories
         self.resolver = IdentityResolver(repositories)
 
-    def list_tasks(
+    def list_missions(
         self,
         *,
         user_id: str | None = None,
         tenant_id: str | None = None,
-        status: UserTaskStatus | None = None,
+        status: MissionStatus | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> tuple[list[TaskDetail], int]:
-        tasks, total = self.repositories.user_tasks.list(
+    ) -> tuple[list[MissionDetail], int]:
+        missions, total = self.repositories.missions.list(
             user_id=user_id,
             tenant_id=tenant_id,
             status=status,
             offset=(max(1, page) - 1) * max(1, page_size),
             limit=page_size,
         )
-        return ([self.get_task(task.task_id) for task in tasks], total)
+        return ([self.get_mission(mission.mission_id) for mission in missions], total)
 
-    def get_task(self, task_id: str) -> TaskDetail:
-        task = self.repositories.user_tasks.get(task_id)
-        if task is None:
-            raise EntityNotFoundError(f"UserTask not found: {task_id}")
-        return TaskDetail(
-            task=task,
-            taskNodes=self.repositories.task_nodes.list_for_task(task_id),
-            blueprints=self.repositories.blueprints.list_for_task(task_id),
-            runs=self.repositories.runs.list_for_task(task_id),
+    def get_mission(self, mission_id: str) -> MissionDetail:
+        mission = self.repositories.missions.get(mission_id)
+        if mission is None:
+            raise EntityNotFoundError(f"Mission not found: {mission_id}")
+        return MissionDetail(
+            mission=mission,
+            tasks=self.repositories.semantic_tasks.list_for_mission(mission_id),
+            blueprints=self.repositories.blueprints.list_for_mission(mission_id),
+            runs=self.repositories.runs.list_for_mission(mission_id),
         )
 
-    def task_run_history(self, task_id: str) -> TaskRunHistory:
-        self.get_task(task_id)
-        return TaskRunHistory(
-            taskId=task_id,
-            runs=self.repositories.runs.list_for_task(task_id),
+    def mission_run_history(self, mission_id: str) -> MissionRunHistory:
+        self.get_mission(mission_id)
+        return MissionRunHistory(
+            missionId=mission_id,
+            runs=self.repositories.runs.list_for_mission(mission_id),
         )
 
     def get_attempt(self, attempt_id: str) -> AttemptDetail:
@@ -80,16 +80,16 @@ class IdentityQueryService:
         self,
         run_id: str,
         *,
-        node_id: str | None = None,
+        task_id: str | None = None,
     ) -> AttemptHistory:
         if self.repositories.runs.get(run_id) is None:
             raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
         attempts = self.repositories.attempts.list_for_run(run_id)
-        if node_id is not None:
-            attempts = [attempt for attempt in attempts if attempt.node_id == node_id]
+        if task_id is not None:
+            attempts = [attempt for attempt in attempts if attempt.task_id == task_id]
         return AttemptHistory(
             runId=run_id,
-            nodeId=node_id,
+            taskId=task_id,
             attempts=[self.get_attempt(attempt.attempt_id) for attempt in attempts],
         )
 
@@ -103,19 +103,19 @@ class IdentityQueryService:
         attempts = self.repositories.attempts.list_for_run(run_id)
         attempts_by_node: dict[str, list[AttemptDetail]] = {}
         for attempt in attempts:
-            attempts_by_node.setdefault(attempt.node_id, []).append(
+            attempts_by_node.setdefault(attempt.task_id, []).append(
                 self.get_attempt(attempt.attempt_id)
             )
         nodes: list[RunExecutionNode] = []
-        for task_node in self.repositories.task_nodes.list_for_task(run.task_id):
-            bindings = self.repositories.task_node_bindings.find_for_task_node(
-                task_node.node_id,
+        for semantic_task in self.repositories.semantic_tasks.list_for_mission(run.mission_id):
+            bindings = self.repositories.task_bindings.find_for_task(
+                semantic_task.task_id,
                 run.blueprint_id,
             )
             nodes.append(RunExecutionNode(
-                taskNode=task_node,
+                task=semantic_task,
                 acgNodeId=(bindings[0].acg_node_id if bindings else None),
-                attempts=attempts_by_node.get(task_node.node_id, []),
+                attempts=attempts_by_node.get(semantic_task.task_id, []),
             ))
         return RunExecutionTree(
             run=run,

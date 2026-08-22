@@ -8,7 +8,7 @@ import pytest
 
 from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
 from components.communicator.contracts import ContextPack
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from service.agents.registry import AgentRegistry
 
@@ -22,8 +22,8 @@ class _Agent(BaseAgent):
 
 def _context(agent_name: str) -> AgentRunContext:
     """构造最小的受控 Agent 调用上下文。"""
-    task = AgentTask(taskId="task-1", title="agent invocation")
-    run = WorkflowRun(taskId=task.task_id, workflowId="workflow-1", domain="general", runtimeEngine="acg")
+    task = RuntimeMissionRecord(missionId="task-1", title="agent invocation")
+    run = RuntimeRunRecord(missionId=task.mission_id, workflowId="workflow-1", domain="general", runtimeEngine="acg")
     workflow = WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg")
     step = WorkflowStep(stepId="one", name="one", agentName=agent_name)
     return AgentRunContext(task=task, run=run, workflow=workflow, step=step, memory=[], contextPack=ContextPack(runId=run.run_id, stepId="one"))

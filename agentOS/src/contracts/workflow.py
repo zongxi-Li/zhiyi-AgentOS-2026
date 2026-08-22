@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
 from contracts.execution import StepStatus, WorkflowProgressPhase
 from contracts.identity import generate_identity
-from contracts.planning import TaskPlanNode, TaskPlanRelation
+from contracts.planning import PlannedTask, TaskPlanRelation
 
 
 def utc_now() -> datetime:
@@ -139,13 +139,13 @@ class ReviewDecisionType(str, Enum):
     CANCELLED = "cancelled"
 
 
-class LegacyAgentTask(CoreModel):
+class RuntimeMissionRecord(CoreModel):
     """用户请求对应的任务合同。
 
     ``task_id`` 全局标识任务；领域、意图、优先级与安全级别用于规划，
     ``recommended_workflow`` 仅是推荐而非已绑定的工作流。
     """
-    task_id: str = Field(default_factory=lambda: new_id("task"), alias="taskId")
+    mission_id: str = Field(default_factory=lambda: new_id("mission"), alias="missionId")
     title: str
     domain: str = "general"
     intent: str = "general"
@@ -159,8 +159,7 @@ class LegacyAgentTask(CoreModel):
     updated_at: datetime = Field(default_factory=utc_now, alias="updatedAt")
 
 
-# 旧名称保留为 JSON/API 兼容入口；领域新代码应使用 UserTask。
-AgentTask = LegacyAgentTask
+# 旧名称保留为 JSON/API 兼容入口；领域新代码应使用 Mission。
 
 
 class WorkflowStepDefinition(CoreModel):
@@ -207,7 +206,7 @@ class WorkflowDefinition(CoreModel):
     artifacts: Dict[str, str] = Field(default_factory=dict)
     required_capabilities: List[str] = Field(default_factory=list, alias="requiredCapabilities")
     review_capability: Optional[str] = Field(default=None, alias="reviewCapability")
-    planning_nodes: List[TaskPlanNode] = Field(default_factory=list, alias="planningNodes")
+    planning_nodes: List[PlannedTask] = Field(default_factory=list, alias="planningNodes")
     planning_relations: List[TaskPlanRelation] = Field(
         default_factory=list,
         alias="planningRelations",
@@ -336,14 +335,14 @@ class Checkpoint(CoreModel):
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
 
 
-class WknWorkflowRun(CoreModel):
+class RuntimeRunRecord(CoreModel):
     """一个任务对某工作流的一次执行聚合。
 
     任务、工作流、引擎与插件/能力快照共同固定可见性边界；步骤、检查点、轨迹、
     运行图与执行状态是可持久化快照，``updated_at`` 应随任何状态性修改更新。
     """
     run_id: str = Field(default_factory=lambda: new_id("run"), alias="runId")
-    task_id: str = Field(alias="taskId")
+    mission_id: str = Field(alias="missionId")
     workflow_id: str = Field(alias="workflowId")
     domain: str
     runtime_engine: str = Field(alias="runtimeEngine")
@@ -418,8 +417,7 @@ class WknWorkflowRun(CoreModel):
         raise KeyError(f"workflow run step not found: {step_id}")
 
 
-# 旧名称保留为 WKN API/存储兼容入口；领域新代码使用 domain.models.WorkflowRun。
-WorkflowRun = WknWorkflowRun
+# 旧名称保留为 Execution Runtime API/存储兼容入口；领域新代码使用 domain.models.WorkflowRun。
 
 
 class ReviewDecision(CoreModel):

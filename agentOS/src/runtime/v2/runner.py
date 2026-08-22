@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskNodeId, UserTaskId
+from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskId, MissionId
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -13,9 +13,9 @@ from domain.models import (
     RunStatus,
     StepExecution,
     StepExecutionStatus,
-    TaskNode,
-    UserTask,
-    UserTaskStatus,
+    SemanticTask,
+    Mission,
+    MissionStatus,
     WorkflowRun,
 )
 from domain.repository import EntityNotFoundError, IdentityConflictError, RepositorySet
@@ -25,7 +25,7 @@ from .context import ExecutionContext
 from .state import require_transition
 
 class AcgIdentityLifecycleService:
-    """AgentOS V2 身份与生命周期控制面；实际执行始终由 WKN ACG 内核完成。"""
+    """AgentOS V2 身份与生命周期控制面；实际执行始终由 Execution Runtime ACG 内核完成。"""
 
     def __init__(self, repositories: RepositorySet) -> None:
         self.repositories = repositories
@@ -40,93 +40,93 @@ class AcgIdentityLifecycleService:
     def close(self) -> None:
         self.repositories.close()
 
-    def create_task(
+    def create_mission(
         self,
         *,
         user_id: str,
         goal: str,
         description: str = "",
         metadata: dict[str, Any] | None = None,
-        task_id: UserTaskId | None = None,
-    ) -> UserTask:
-        task = UserTask(
-            **({"taskId": task_id} if task_id is not None else {}),
+        mission_id: MissionId | None = None,
+    ) -> Mission:
+        task = Mission(
+            **({"missionId": mission_id} if mission_id is not None else {}),
             userId=user_id,
             goal=goal,
             description=description,
             metadata=metadata or {},
         )
-        self.repositories.user_tasks.add(task)
+        self.repositories.missions.add(task)
         return task
 
-    def create_task_node(
+    def create_task(
         self,
         *,
-        task_id: UserTaskId,
+        mission_id: MissionId,
         title: str,
         objective: str,
-        parent_node_id: TaskNodeId | None = None,
+        parent_task_id: TaskId | None = None,
         constraints: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> TaskNode:
-        task = self._task(task_id)
-        if task.status is UserTaskStatus.CREATED:
-            require_transition(task.status, UserTaskStatus.PLANNING)
-            self.repositories.user_tasks.update_status(task_id, UserTaskStatus.PLANNING)
-        node = TaskNode(
-            taskId=task_id,
-            parentNodeId=parent_node_id,
+    ) -> SemanticTask:
+        task = self._mission(mission_id)
+        if task.status is MissionStatus.CREATED:
+            require_transition(task.status, MissionStatus.PLANNING)
+            self.repositories.missions.update_status(mission_id, MissionStatus.PLANNING)
+        node = SemanticTask(
+            missionId=mission_id,
+            parentTaskId=parent_task_id,
             title=title,
             objective=objective,
             constraints=constraints or [],
             metadata=metadata or {},
         )
-        self.repositories.task_nodes.add(node)
+        self.repositories.semantic_tasks.add(node)
         return node
 
     def create_blueprint(
         self,
         *,
-        task_id: UserTaskId,
+        mission_id: MissionId,
         version: int,
         graph_id: str,
         graph: dict[str, Any],
         metadata: dict[str, Any] | None = None,
     ) -> AcgBlueprint:
-        task = self._task(task_id)
-        if not self.repositories.task_nodes.list_for_task(task_id):
-            raise ValueError("AcgBlueprint requires at least one TaskNode")
+        task = self._mission(mission_id)
+        if not self.repositories.semantic_tasks.list_for_mission(mission_id):
+            raise ValueError("AcgBlueprint requires at least one SemanticTask")
         blueprint = AcgBlueprint(
-            taskId=task_id,
+            missionId=mission_id,
             version=version,
             graphId=graph_id,
             graph=graph,
             metadata=metadata or {},
         )
         self.repositories.blueprints.add(blueprint)
-        if task.status is UserTaskStatus.PLANNING:
-            require_transition(task.status, UserTaskStatus.READY)
-            self.repositories.user_tasks.update_status(task_id, UserTaskStatus.READY)
+        if task.status is MissionStatus.PLANNING:
+            require_transition(task.status, MissionStatus.READY)
+            self.repositories.missions.update_status(mission_id, MissionStatus.READY)
         return blueprint
 
     def create_run(
         self,
         *,
-        task_id: UserTaskId,
+        mission_id: MissionId,
         blueprint_id: BlueprintId,
         metadata: dict[str, Any] | None = None,
         run_id: RunId | None = None,
     ) -> WorkflowRun:
-        self._task(task_id)
+        self._mission(mission_id)
         blueprint = self._blueprint(blueprint_id)
-        if blueprint.task_id != task_id:
-            raise IdentityConflictError("WorkflowRun cannot use another UserTask's Blueprint")
+        if blueprint.mission_id != mission_id:
+            raise IdentityConflictError("WorkflowRun cannot use another Mission's Blueprint")
         if run_id is not None:
             existing = self.repositories.runs.get(run_id)
             if existing is not None:
-                if existing.task_id != task_id:
+                if existing.mission_id != mission_id:
                     raise IdentityConflictError(
-                        "runId already belongs to another UserTask"
+                        "runId already belongs to another Mission"
                     )
                 if (
                     existing.blueprint_id != blueprint_id
@@ -138,7 +138,7 @@ class AcgIdentityLifecycleService:
                 return existing
         run = WorkflowRun(
             **({"runId": run_id} if run_id is not None else {}),
-            taskId=task_id,
+            missionId=mission_id,
             blueprintId=blueprint_id,
             graphVersion=blueprint.version,
             metadata=metadata or {},
@@ -160,7 +160,7 @@ class AcgIdentityLifecycleService:
         ]
         return ExecutionContext(
             runId=run.run_id,
-            taskId=run.task_id,
+            missionId=run.mission_id,
             blueprintId=run.blueprint_id,
             currentAttempt=current,
             activeExecutions=active,
@@ -170,18 +170,18 @@ class AcgIdentityLifecycleService:
         self,
         *,
         run_id: RunId,
-        node_id: TaskNodeId,
+        task_id: TaskId,
         resource_binding: dict[str, Any] | None = None,
         attempt_number: int | None = None,
         attempt_id: AttemptId | None = None,
     ) -> Attempt:
         run = self._run(run_id)
-        node = self._node(node_id)
-        if node.task_id != run.task_id:
-            raise IdentityConflictError("Attempt cannot use another UserTask's TaskNode")
+        node = self._task(task_id)
+        if node.mission_id != run.mission_id:
+            raise IdentityConflictError("Attempt cannot use another Mission's SemanticTask")
         return self.repositories.ensure_attempt(
             run_id,
-            node_id,
+            task_id,
             attempt_number=attempt_number,
             attempt_id=attempt_id,
             resource_binding=resource_binding,
@@ -201,14 +201,14 @@ class AcgIdentityLifecycleService:
         run = self._run(context.run_id)
         attempt = self._attempt(selected_attempt_id)
         if (
-            run.task_id != context.task_id
+            run.mission_id != context.mission_id
             or run.blueprint_id != context.blueprint_id
             or attempt.run_id != context.run_id
         ):
             raise IdentityConflictError("ExecutionContext identity chain is inconsistent")
         execution = self.repositories.ensure_step_execution(
             run.run_id,
-            attempt.node_id,
+            attempt.task_id,
             attempt.attempt_id,
             input=input,
             step_execution_id=step_execution_id,
@@ -288,33 +288,33 @@ class AcgIdentityLifecycleService:
         run = self._run(run_id)
         require_transition(run.status, status)
         finished = self.repositories.runs.update_status(run_id, status)
-        task = self._task(run.task_id)
-        if status is RunStatus.SUCCEEDED and task.status is UserTaskStatus.RUNNING:
-            require_transition(task.status, UserTaskStatus.COMPLETED)
-            self.repositories.user_tasks.update_status(task.task_id, UserTaskStatus.COMPLETED)
+        task = self._mission(run.mission_id)
+        if status is RunStatus.SUCCEEDED and task.status is MissionStatus.RUNNING:
+            require_transition(task.status, MissionStatus.COMPLETED)
+            self.repositories.missions.update_status(task.mission_id, MissionStatus.COMPLETED)
         elif (
             status in {RunStatus.FAILED, RunStatus.CANCELLED}
-            and task.status is UserTaskStatus.RUNNING
+            and task.status is MissionStatus.RUNNING
         ):
             other_active_runs = any(
                 item.run_id != run_id and item.status is RunStatus.RUNNING
-                for item in self.repositories.runs.list_for_task(task.task_id)
+                for item in self.repositories.runs.list_for_mission(task.mission_id)
             )
             if not other_active_runs:
-                require_transition(task.status, UserTaskStatus.READY)
-                self.repositories.user_tasks.update_status(task.task_id, UserTaskStatus.READY)
+                require_transition(task.status, MissionStatus.READY)
+                self.repositories.missions.update_status(task.mission_id, MissionStatus.READY)
         return finished
 
-    def _task(self, task_id: UserTaskId) -> UserTask:
-        task = self.repositories.user_tasks.get(task_id)
+    def _mission(self, mission_id: MissionId) -> Mission:
+        task = self.repositories.missions.get(mission_id)
         if task is None:
-            raise EntityNotFoundError(f"UserTask not found: {task_id}")
+            raise EntityNotFoundError(f"Mission not found: {mission_id}")
         return task
 
-    def _node(self, node_id: TaskNodeId) -> TaskNode:
-        node = self.repositories.task_nodes.get(node_id)
+    def _task(self, task_id: TaskId) -> SemanticTask:
+        node = self.repositories.semantic_tasks.get(task_id)
         if node is None:
-            raise EntityNotFoundError(f"TaskNode not found: {node_id}")
+            raise EntityNotFoundError(f"SemanticTask not found: {task_id}")
         return node
 
     def _blueprint(self, blueprint_id: BlueprintId) -> AcgBlueprint:
@@ -351,7 +351,4 @@ class AcgIdentityLifecycleService:
 
 
 # 兼容既有内部调用；新代码必须使用职责名称，避免被误认为第二套执行内核。
-WorkflowRuntimeV2 = AcgIdentityLifecycleService
-
-
-__all__ = ["AcgIdentityLifecycleService", "WorkflowRuntimeV2"]
+__all__ = ["AcgIdentityLifecycleService"]

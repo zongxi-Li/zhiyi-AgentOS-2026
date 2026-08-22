@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from contracts.workflow import WorkflowRun
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
@@ -18,8 +18,8 @@ from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 )
 def test_store_rejects_run_without_saved_parent_task(store_factory, tmp_path: Path) -> None:
     store = store_factory(tmp_path)
-    run = WorkflowRun(
-        taskId="missing-task",
+    run = RuntimeRunRecord(
+        missionId="mission_000000000003",
         workflowId="workflow-1",
         domain="general",
         runtimeEngine="acg",

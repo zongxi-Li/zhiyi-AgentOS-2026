@@ -10,9 +10,9 @@ from .contracts import (
     RepositorySet,
     RunRepository,
     StepExecutionRepository,
-    TaskNodeBindingRepository,
-    TaskNodeRepository,
-    UserTaskRepository,
+    TaskBindingRepository,
+    SemanticTaskRepository,
+    MissionRepository,
 )
 from .errors import EntityNotFoundError, IdentityConflictError
 
@@ -28,7 +28,7 @@ __all__ = [
     "RepositorySet",
     "RunRepository",
     "StepExecutionRepository",
-    "TaskNodeRepository",
-    "TaskNodeBindingRepository",
-    "UserTaskRepository",
+    "SemanticTaskRepository",
+    "TaskBindingRepository",
+    "MissionRepository",
 ]

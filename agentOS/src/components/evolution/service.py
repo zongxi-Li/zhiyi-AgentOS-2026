@@ -14,7 +14,7 @@ from contracts.evolution import (
     TrajectoryEvaluation,
     TrajectoryStep,
 )
-from contracts.workflow import WorkflowRun
+from contracts.workflow import RuntimeRunRecord
 
 from .store import EvolutionStore, InMemoryEvolutionStore
 
@@ -46,7 +46,7 @@ class EvolutionService:
 
     def project_run(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         *,
         provenance_events: list[dict],
     ) -> Trajectory:
@@ -170,7 +170,7 @@ class EvolutionService:
 
     def propose_from_run(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         *,
         provenance_events: list[dict],
     ) -> tuple[Trajectory, TrajectoryEvaluation, EvolutionProposal]:

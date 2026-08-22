@@ -1,25 +1,25 @@
-from contracts.workflow import AgentTask, WorkflowRun
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 def test_run_snapshot_outbox_excludes_execution_bodies() -> None:
     store = MemoryWorkflowStore()
-    task = AgentTask(
-        taskId="task-1",
+    task = RuntimeMissionRecord(
+        missionId="mission_000000000001",
         title="Task",
         domain="general",
         intent="execute",
         input={"taskGoal": "Task"},
     )
-    store.save_task(task)
-    run = WorkflowRun(
+    store.save_mission(task)
+    run = RuntimeRunRecord(
         runId="run-1",
-        taskId=task.task_id,
+        missionId=task.mission_id,
         workflowId="workflow-1",
         domain="general",
         runtimeEngine="acg",
-        input={"secret": "must-not-leave-wkn"},
-        output={"body": "must-not-leave-wkn"},
+        input={"secret": "must-not-leave-runtime"},
+        output={"body": "must-not-leave-runtime"},
         trace=[],
         executionState={
             "compiledPackageId": "pkg-1",
@@ -32,7 +32,7 @@ def test_run_snapshot_outbox_excludes_execution_bodies() -> None:
     store.save_run(run)
 
     event = next(item for item in store.list_outbox() if item["aggregate_id"] == "run-1")
-    assert "must-not-leave-wkn" not in event["payload"]
+    assert "must-not-leave-runtime" not in event["payload"]
     assert "artifact:output:1" in event["payload"]
     assert '"input"' not in event["payload"]
     assert '"output"' not in event["payload"]

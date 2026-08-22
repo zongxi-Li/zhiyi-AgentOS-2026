@@ -12,7 +12,7 @@ from components.executor.graph import ACGExecutionState
 from components.executor.node_runner import ACGNodeRunner
 from components.executor.value_store import InMemoryExecutionValueStore
 from components.memory import MemoryService
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from support.acg.models import ACGBlueprint, StepNode
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 
@@ -39,12 +39,12 @@ def test_event_step_receives_reference_without_upstream_payload() -> None:
     )
     agent = _EventRecordingAgent()
     runner = ACGNodeRunner(
-        task=AgentTask(taskId="task-1", title="event"),
-        run=WorkflowRun(taskId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+        task=RuntimeMissionRecord(missionId="task-1", title="event"),
+        run=RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
         workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
         steps={"sink": WorkflowStep(stepId="sink", name="sink", agentName="event-agent")},
         agents={"sink": agent},
-        communicator=CommunicatorService(run_id="run-1", task_id="task-1"),
+        communicator=CommunicatorService(run_id="run-1", mission_id="task-1"),
         memory=MemoryService(),
         value_store=store,
         communication_modes={"sink": "EVENT"},

@@ -11,21 +11,21 @@ from contracts.identity import (
     AttemptId,
     BindingId,
     BlueprintId,
-    TaskNodeId,
+    TaskId,
     new_binding_id,
 )
 from domain.models import DomainModel, utc_now
 
-from .relations import BlueprintRelationType, IdentityRelation, TaskNodeBindingType
+from .relations import BlueprintRelationType, IdentityRelation, TaskBindingType
 
 
-class TaskNodeBinding(DomainModel):
+class TaskBinding(DomainModel):
     binding_id: BindingId = Field(default_factory=new_binding_id, alias="bindingId")
-    task_node_id: TaskNodeId = Field(alias="taskNodeId")
+    task_id: TaskId = Field(alias="taskId")
     blueprint_id: BlueprintId = Field(alias="blueprintId")
     acg_node_id: str = Field(alias="acgNodeId", min_length=1)
-    binding_type: TaskNodeBindingType = Field(
-        default=TaskNodeBindingType.PRIMARY,
+    binding_type: TaskBindingType = Field(
+        default=TaskBindingType.PRIMARY,
         alias="bindingType",
     )
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
@@ -74,5 +74,5 @@ __all__ = [
     "BlueprintNodeBinding",
     "ExecutionBinding",
     "ProvenanceLink",
-    "TaskNodeBinding",
+    "TaskBinding",
 ]

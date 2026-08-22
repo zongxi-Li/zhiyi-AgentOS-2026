@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from enum import Enum
 
-from domain.models import AttemptStatus, RunStatus, UserTaskStatus
+from domain.models import AttemptStatus, RunStatus, MissionStatus
 
 
 _TASK_TRANSITIONS = {
-    UserTaskStatus.CREATED: {UserTaskStatus.PLANNING, UserTaskStatus.ARCHIVED},
-    UserTaskStatus.PLANNING: {UserTaskStatus.READY, UserTaskStatus.ARCHIVED},
-    UserTaskStatus.READY: {UserTaskStatus.RUNNING, UserTaskStatus.ARCHIVED},
-    UserTaskStatus.RUNNING: {UserTaskStatus.COMPLETED, UserTaskStatus.READY, UserTaskStatus.ARCHIVED},
-    UserTaskStatus.COMPLETED: {UserTaskStatus.ARCHIVED},
-    UserTaskStatus.ARCHIVED: set(),
+    MissionStatus.CREATED: {MissionStatus.PLANNING, MissionStatus.ARCHIVED},
+    MissionStatus.PLANNING: {MissionStatus.READY, MissionStatus.ARCHIVED},
+    MissionStatus.READY: {MissionStatus.RUNNING, MissionStatus.ARCHIVED},
+    MissionStatus.RUNNING: {MissionStatus.COMPLETED, MissionStatus.READY, MissionStatus.ARCHIVED},
+    MissionStatus.COMPLETED: {MissionStatus.ARCHIVED},
+    MissionStatus.ARCHIVED: set(),
 }
 
 _RUN_TRANSITIONS = {
@@ -43,7 +43,7 @@ _ATTEMPT_TRANSITIONS = {
 
 def require_transition(current: Enum, target: Enum) -> None:
     tables = {
-        UserTaskStatus: _TASK_TRANSITIONS,
+        MissionStatus: _TASK_TRANSITIONS,
         RunStatus: _RUN_TRANSITIONS,
         AttemptStatus: _ATTEMPT_TRANSITIONS,
     }

@@ -1,4 +1,4 @@
-"""WKN 唯一执行内核与 AgentOS V2 身份链的真实纵向接线。"""
+"""唯一执行运行时与 AgentOS V2 身份链的真实纵向接线。"""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ import json
 
 import pytest
 
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from contracts.planning import (
-    TaskNodeBindingPatch,
-    TaskNodeImplementationBinding,
+    TaskBindingPatch,
+    TaskImplementationBinding,
     TaskPlan,
-    TaskPlanNode,
+    PlannedTask,
     TaskPlanPatch,
 )
-from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
+from contracts.workflow import WorkflowDefinition, RuntimeRunRecord, WorkflowStepDefinition, WorkflowStatus
 from domain.identity_graph import IdentityResolver
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
 from domain.lifecycle_projection import ProjectionEventStatus
@@ -24,9 +24,9 @@ from runtime.v2 import (
     AcgIdentityLifecycleService,
     IdentityProjectionReconciler,
     IdentityQueryService,
-    WknIdentityLifecycleAdapter,
+    IdentityProjectionBridge,
 )
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
@@ -76,7 +76,7 @@ def _runtime(
 ):
     repositories = SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
     identity_runtime = AcgIdentityLifecycleService(repositories)
-    bridge = WknIdentityLifecycleAdapter(identity_runtime, repositories)
+    bridge = IdentityProjectionBridge(identity_runtime, repositories)
     agents = AgentRegistry()
     agents.register(_IdentityAgent(AgentProfile(
         agentId="agent-identity",
@@ -90,7 +90,7 @@ def _runtime(
         name="identity acg",
         domain="general",
         runtimeEngine="acg",
-        planningNodes=[TaskPlanNode(
+        planningNodes=[PlannedTask(
             key="analysis",
             title="分析任务",
             objective="分析用户任务并产生结果",
@@ -104,13 +104,13 @@ def _runtime(
             outputSpec={"type": "object", "properties": {"result": {"type": "string"}}},
         )],
     ))
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=workflow_store or MemoryWorkflowStore(),
         identity_lifecycle=bridge,
     )
-    task = runtime.create_task(
+    task = runtime.create_mission(
         "身份纵向测试",
         workflow_id="identity-acg",
         input={
@@ -125,10 +125,10 @@ def _runtime(
     )
     if blueprint is not None:
         task_plan = TaskPlan(
-            taskId=task.task_id,
+            missionId=task.mission_id,
             planVersion=1,
             nodes=tuple(
-                TaskPlanNode(
+                PlannedTask(
                     key=f"step:{step.node_id}",
                     title=step.name or step.node_id,
                     objective=step.goal or step.description or step.node_id,
@@ -138,30 +138,30 @@ def _runtime(
                 for step in blueprint.step_nodes()
             ),
         )
-        task_node_bindings = tuple(
-            TaskNodeImplementationBinding(planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id)
+        task_bindings = tuple(
+            TaskImplementationBinding(planNodeKey=f"step:{step.node_id}", acgNodeId=step.node_id)
             for step in blueprint.step_nodes()
         )
         task.input.update({
             "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
             "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-            "taskNodeBindings": [
+            "taskBindings": [
                 item.model_dump(by_alias=True, mode="json")
-                for item in task_node_bindings
+                for item in task_bindings
             ],
         })
-        runtime.workflow_store.save_task(task)
+        runtime.workflow_store.save_mission(task)
     return runtime, identity_runtime, bridge, task
 
 
-def test_wkn_execution_reuses_agentos_task_run_and_attempt_ids() -> None:
+def test_execution_runtime_reuses_agentos_task_run_and_attempt_ids() -> None:
     runtime, identity_runtime, _bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
         repositories = identity_runtime.repositories
-        domain_task = repositories.user_tasks.get(task.task_id)
+        domain_task = repositories.missions.get(task.mission_id)
         domain_run = repositories.runs.get(run.run_id)
         attempts = repositories.attempts.list_for_run(run.run_id)
         executions = repositories.step_executions.list_for_attempt(attempts[0].attempt_id)
@@ -170,10 +170,10 @@ def test_wkn_execution_reuses_agentos_task_run_and_attempt_ids() -> None:
             executions[0].step_execution_id
         )
 
-        assert task.task_id.startswith("task_")
+        assert task.mission_id.startswith("mission_")
         assert run.run_id.startswith("run_")
         assert result.status is WorkflowStatus.COMPLETED
-        assert domain_task is not None and domain_task.task_id == task.task_id
+        assert domain_task is not None and domain_task.mission_id == task.mission_id
         assert domain_run is not None and domain_run.run_id == run.run_id
         assert domain_run.status is RunStatus.SUCCEEDED
         assert len(attempts) == 1
@@ -182,20 +182,20 @@ def test_wkn_execution_reuses_agentos_task_run_and_attempt_ids() -> None:
         assert executions[0].status is StepExecutionStatus.SUCCEEDED
         assert executions[0].output["outputRef"].startswith("output:")
         assert binding is not None
-        assert binding.metadata["wknBindingId"].startswith("binding:")
+        assert binding.metadata["runtimeBindingId"].startswith("binding:")
         assert result.execution_state["schedulingDecisions"][0]["attemptId"] == attempts[0].attempt_id
-        assert origin.user_task.task_id == task.task_id
+        assert origin.mission.mission_id == task.mission_id
         assert origin.run.run_id == run.run_id
-        assert origin.task_node_binding.acg_node_id == "analyse"
+        assert origin.task_binding.acg_node_id == "analyse"
         assert origin.execution_binding.agent_id == "agent-identity"
     finally:
         identity_runtime.close()
 
 
-def test_wkn_failure_finishes_same_attempt_and_run_identity() -> None:
+def test_runtime_failure_finishes_same_attempt_and_run_identity() -> None:
     runtime, identity_runtime, _bridge, task = _runtime(force_failure=True)
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         with pytest.raises(Exception):
             asyncio.run(runtime.execute_prepared_run(run.run_id))
 
@@ -214,7 +214,7 @@ def test_wkn_failure_finishes_same_attempt_and_run_identity() -> None:
 def test_identity_attempt_and_binding_hooks_are_idempotent() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         first = bridge.ensure_attempt(run, "analyse", 1)
         second = bridge.ensure_attempt(run, "analyse", 1)
         assert first == second
@@ -226,7 +226,7 @@ def test_identity_attempt_and_binding_hooks_are_idempotent() -> None:
 def test_attempt_allocation_is_concurrency_safe_and_idempotent() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         with ThreadPoolExecutor(max_workers=8) as pool:
             attempt_ids = list(pool.map(
                 lambda _: bridge.ensure_attempt(run, "analyse", 1),
@@ -242,7 +242,7 @@ def test_attempt_allocation_is_concurrency_safe_and_idempotent() -> None:
 def test_projection_journal_replays_an_interrupted_idempotent_event() -> None:
     _runtime_instance, identity_runtime, bridge, task = _runtime()
     try:
-        event_id = f"task.created:{task.task_id}"
+        event_id = f"mission.created:{task.mission_id}"
         identity_runtime.repositories.projection_events.mark_failed(
             event_id,
             "simulated crash after domain commit",
@@ -254,14 +254,14 @@ def test_projection_journal_replays_an_interrupted_idempotent_event() -> None:
         assert report == {"examined": 1, "applied": 1, "failed": 0}
         assert event.status is ProjectionEventStatus.APPLIED
         assert event.attempts == 2
-        assert identity_runtime.repositories.user_tasks.get(task.task_id) is not None
+        assert identity_runtime.repositories.missions.get(task.mission_id) is not None
     finally:
         identity_runtime.close()
 
 
 def test_projection_replay_repairs_partial_blueprint_registration(monkeypatch) -> None:
     runtime, identity_runtime, bridge, task = _runtime()
-    repository = identity_runtime.repositories.task_node_bindings
+    repository = identity_runtime.repositories.task_bindings
     original_add = repository.add
     failed = False
 
@@ -275,7 +275,7 @@ def test_projection_replay_repairs_partial_blueprint_registration(monkeypatch) -
     monkeypatch.setattr(repository, "add", fail_once)
     try:
         with pytest.raises(RuntimeError, match="simulated relation"):
-            runtime.prepare_run(task.task_id)
+            runtime.prepare_run(task.mission_id)
         pending = identity_runtime.repositories.projection_events.list_unapplied()
         run_event = next(item for item in pending if item.event_type == "run.prepared")
         monkeypatch.setattr(repository, "add", original_add)
@@ -287,7 +287,7 @@ def test_projection_replay_repairs_partial_blueprint_registration(monkeypatch) -
 
         assert report["failed"] == 0
         assert domain_run is not None
-        assert len(identity_runtime.repositories.task_node_bindings.find_for_acg_node(
+        assert len(identity_runtime.repositories.task_bindings.find_for_acg_node(
             "analyse",
             domain_run.blueprint_id,
         )) == 1
@@ -295,13 +295,13 @@ def test_projection_replay_repairs_partial_blueprint_registration(monkeypatch) -
         identity_runtime.close()
 
 
-def test_reconciler_restores_a_missing_run_projection_from_wkn_snapshot() -> None:
+def test_reconciler_restores_a_missing_run_projection_from_runtime_snapshot() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
         runtime.identity_lifecycle = None
         task.input["usePlanner"] = True
-        runtime.workflow_store.save_task(task)
-        _, run = runtime.prepare_run(task.task_id)
+        runtime.workflow_store.save_mission(task)
+        _, run = runtime.prepare_run(task.mission_id)
         runtime.identity_lifecycle = bridge
         assert identity_runtime.repositories.runs.get(run.run_id) is None
 
@@ -320,12 +320,12 @@ def test_inbox_retries_failed_consumption_and_recovers_missing_task(monkeypatch)
     workflow_store = _OutboxMemoryWorkflowStore()
     runtime, identity_runtime, bridge, _task = _runtime(workflow_store=workflow_store)
     runtime.identity_lifecycle = None
-    missing = runtime.create_task("outbox recovery", workflow_id="identity-acg")
+    missing = runtime.create_mission("outbox recovery", workflow_id="identity-acg")
     runtime.identity_lifecycle = bridge
     workflow_store.outbox.append({
-        "event_id": f"task:{missing.task_id}:created",
-        "event_type": "task.created",
-        "aggregate_id": missing.task_id,
+        "event_id": f"task:{missing.mission_id}:created",
+        "event_type": "mission.created",
+        "aggregate_id": missing.mission_id,
         "payload": json.dumps(
             missing.model_dump(by_alias=True, mode="json"),
             ensure_ascii=False,
@@ -333,10 +333,10 @@ def test_inbox_retries_failed_consumption_and_recovers_missing_task(monkeypatch)
         "attempts": 0,
         "status": "pending",
     })
-    original = bridge.on_task_created
+    original = bridge.on_mission_created
     monkeypatch.setattr(
         bridge,
-        "on_task_created",
+        "on_mission_created",
         lambda _task: (_ for _ in ()).throw(RuntimeError("simulated consumer crash")),
     )
     try:
@@ -344,25 +344,25 @@ def test_inbox_retries_failed_consumption_and_recovers_missing_task(monkeypatch)
             workflow_store
         )
         inbox = identity_runtime.repositories.inbox_events.get(
-            f"task:{missing.task_id}:created"
+            f"task:{missing.mission_id}:created"
         )
 
         assert any("simulated consumer crash" in item for item in failed.failures)
         assert inbox.status is ProjectionEventStatus.FAILED
-        assert identity_runtime.repositories.user_tasks.get(missing.task_id) is None
+        assert identity_runtime.repositories.missions.get(missing.mission_id) is None
 
-        monkeypatch.setattr(bridge, "on_task_created", original)
+        monkeypatch.setattr(bridge, "on_mission_created", original)
         recovered = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
             workflow_store
         )
         inbox = identity_runtime.repositories.inbox_events.get(
-            f"task:{missing.task_id}:created"
+            f"task:{missing.mission_id}:created"
         )
 
         assert recovered.failures == []
         assert inbox.status is ProjectionEventStatus.APPLIED
         assert inbox.attempts == 2
-        assert identity_runtime.repositories.user_tasks.get(missing.task_id) is not None
+        assert identity_runtime.repositories.missions.get(missing.mission_id) is not None
     finally:
         identity_runtime.close()
 
@@ -374,11 +374,11 @@ def test_applied_inbox_skips_duplicate_projection_and_rejects_payload_drift(
     _runtime_instance, identity_runtime, bridge, task = _runtime(
         workflow_store=workflow_store
     )
-    event_id = f"task:{task.task_id}:created"
+    event_id = f"task:{task.mission_id}:created"
     event = {
         "event_id": event_id,
-        "event_type": "task.created",
-        "aggregate_id": task.task_id,
+        "event_type": "mission.created",
+        "aggregate_id": task.mission_id,
         "payload": json.dumps(task.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
         "attempts": 0,
         "status": "pending",
@@ -393,7 +393,7 @@ def test_applied_inbox_skips_duplicate_projection_and_rejects_payload_drift(
         event["status"] = "pending"
         monkeypatch.setattr(
             bridge,
-            "on_task_created",
+            "on_mission_created",
             lambda _task: (_ for _ in ()).throw(AssertionError("duplicate projection")),
         )
         duplicate = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
@@ -416,7 +416,7 @@ def test_applied_inbox_skips_duplicate_projection_and_rejects_payload_drift(
         identity_runtime.close()
 
 
-def test_parallel_wkn_nodes_keep_attempt_and_execution_identity_isolated() -> None:
+def test_parallel_runtime_nodes_keep_attempt_and_execution_identity_isolated() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-parallel-graph",
         nodes=[
@@ -426,7 +426,7 @@ def test_parallel_wkn_nodes_keep_attempt_and_execution_identity_isolated() -> No
     )
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
         attempts = identity_runtime.repositories.attempts.list_for_run(run.run_id)
@@ -438,8 +438,8 @@ def test_parallel_wkn_nodes_keep_attempt_and_execution_identity_isolated() -> No
             )
         ]
         assert result.status is WorkflowStatus.COMPLETED
-        assert {attempt.node_id for attempt in attempts} == {
-            execution.node_id for execution in executions
+        assert {attempt.task_id for attempt in attempts} == {
+            execution.task_id for execution in executions
         }
         assert len({attempt.attempt_id for attempt in attempts}) == 2
         assert len({execution.step_execution_id for execution in executions}) == 2
@@ -455,30 +455,30 @@ def test_explicit_blueprint_without_task_plan_is_rejected() -> None:
     )
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     task.input.pop("taskPlan")
-    task.input.pop("taskNodeBindings")
-    runtime.workflow_store.save_task(task)
+    task.input.pop("taskBindings")
+    runtime.workflow_store.save_mission(task)
     try:
-        with pytest.raises(ValueError, match="requires taskPlan and taskNodeBindings"):
-            runtime.prepare_run(task.task_id)
+        with pytest.raises(ValueError, match="requires taskPlan and taskBindings"):
+            runtime.prepare_run(task.mission_id)
     finally:
         identity_runtime.close()
 
 
-def test_invalid_explicit_bindings_do_not_persist_partial_task_nodes() -> None:
+def test_invalid_explicit_bindings_do_not_persist_partial_semantic_tasks() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-invalid-bindings-graph",
         nodes=[StepNode(nodeId="analyse", agentName="identity-agent")],
     )
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
-    task.input["taskNodeBindings"] = []
-    runtime.workflow_store.save_task(task)
+    task.input["taskBindings"] = []
+    runtime.workflow_store.save_mission(task)
     try:
         with pytest.raises(ValueError, match="complete TaskPlan"):
-            runtime.prepare_run(task.task_id)
+            runtime.prepare_run(task.mission_id)
 
-        assert identity_runtime.repositories.task_nodes.list_for_task(task.task_id) == []
-        assert identity_runtime.repositories.blueprints.list_for_task(task.task_id) == []
-        assert identity_runtime.repositories.runs.list_for_task(task.task_id) == []
+        assert identity_runtime.repositories.semantic_tasks.list_for_mission(task.mission_id) == []
+        assert identity_runtime.repositories.blueprints.list_for_mission(task.mission_id) == []
+        assert identity_runtime.repositories.runs.list_for_mission(task.mission_id) == []
     finally:
         identity_runtime.close()
 
@@ -492,20 +492,20 @@ def test_run_creation_failure_rolls_back_plan_blueprint_and_bindings(monkeypatch
     )
     try:
         with pytest.raises(RuntimeError, match="simulated run failure"):
-            runtime.prepare_run(task.task_id)
+            runtime.prepare_run(task.mission_id)
 
-        assert identity_runtime.repositories.task_plans.list_for_task(task.task_id) == []
-        assert identity_runtime.repositories.task_nodes.list_for_task(task.task_id) == []
-        assert identity_runtime.repositories.blueprints.list_for_task(task.task_id) == []
-        assert identity_runtime.repositories.runs.list_for_task(task.task_id) == []
+        assert identity_runtime.repositories.task_plans.list_for_mission(task.mission_id) == []
+        assert identity_runtime.repositories.semantic_tasks.list_for_mission(task.mission_id) == []
+        assert identity_runtime.repositories.blueprints.list_for_mission(task.mission_id) == []
+        assert identity_runtime.repositories.runs.list_for_mission(task.mission_id) == []
     finally:
         identity_runtime.close()
 
 
-def test_cancelling_prepared_wkn_run_projects_cancelled_terminal_state() -> None:
+def test_cancelling_prepared_runtime_run_projects_cancelled_terminal_state() -> None:
     runtime, identity_runtime, _bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         cancelled = runtime.cancel(run.run_id)
 
         assert cancelled.status is WorkflowStatus.CANCELLED
@@ -514,10 +514,10 @@ def test_cancelling_prepared_wkn_run_projects_cancelled_terminal_state() -> None
         identity_runtime.close()
 
 
-def test_wkn_graph_revision_rejects_unplanned_executable_node() -> None:
+def test_runtime_graph_revision_rejects_unplanned_executable_node() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         original = identity_runtime.repositories.runs.get(run.run_id)
         revised = ACGBlueprint.model_validate(run.acg_blueprint).model_copy(deep=True)
         revised.version += 1
@@ -534,15 +534,15 @@ def test_wkn_graph_revision_rejects_unplanned_executable_node() -> None:
 
         updated = identity_runtime.repositories.runs.get(run.run_id)
         assert updated.blueprint_id == original.blueprint_id
-        assert len(identity_runtime.repositories.blueprints.list_for_task(task.task_id)) == 1
+        assert len(identity_runtime.repositories.blueprints.list_for_mission(task.mission_id)) == 1
     finally:
         identity_runtime.close()
 
 
-def test_wkn_graph_revision_accepts_explicit_task_plan_patch() -> None:
+def test_runtime_graph_revision_accepts_explicit_task_plan_patch() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         original = identity_runtime.repositories.runs.get(run.run_id)
         revised = ACGBlueprint.model_validate(run.acg_blueprint).model_copy(deep=True)
         revised.version += 1
@@ -556,10 +556,10 @@ def test_wkn_graph_revision_accepts_explicit_task_plan_patch() -> None:
             )
         )
         plan_patch = TaskPlanPatch(
-            taskId=task.task_id,
+            missionId=task.mission_id,
             basePlanVersion=1,
             planVersion=2,
-            addNodes=(TaskPlanNode(
+            addNodes=(PlannedTask(
                 key="step:verify",
                 title="复核结果",
                 objective="复核分析结果",
@@ -571,7 +571,7 @@ def test_wkn_graph_revision_accepts_explicit_task_plan_patch() -> None:
             run,
             revised,
             plan_patch,
-            TaskNodeBindingPatch(bindings=(TaskNodeImplementationBinding(
+            TaskBindingPatch(bindings=(TaskImplementationBinding(
                 planNodeKey="step:verify",
                 acgNodeId="verify",
             ),)),
@@ -582,29 +582,29 @@ def test_wkn_graph_revision_accepts_explicit_task_plan_patch() -> None:
         assert updated.blueprint_id != original.blueprint_id
         assert updated.graph_version == original.graph_version + 1
         assert superseded.status is RunStatus.SUPERSEDED
-        assert len(identity_runtime.repositories.blueprints.list_for_task(task.task_id)) == 2
+        assert len(identity_runtime.repositories.blueprints.list_for_mission(task.mission_id)) == 2
         assert bridge.ensure_attempt(type(run).model_validate({**run.model_dump(by_alias=True), "runId": new_run_id}), "verify", 1).startswith("attempt_")
     finally:
         identity_runtime.close()
 
 
-def test_same_user_task_can_execute_another_run_after_success() -> None:
+def test_same_mission_can_execute_another_run_after_success() -> None:
     runtime, identity_runtime, _bridge, task = _runtime()
     try:
-        _, first = runtime.prepare_run(task.task_id)
+        _, first = runtime.prepare_run(task.mission_id)
         asyncio.run(runtime.execute_prepared_run(first.run_id))
-        first_nodes = identity_runtime.repositories.task_nodes.list_for_task(task.task_id)
+        first_nodes = identity_runtime.repositories.semantic_tasks.list_for_mission(task.mission_id)
 
-        _, second = runtime.prepare_run(task.task_id)
+        _, second = runtime.prepare_run(task.mission_id)
         result = asyncio.run(runtime.execute_prepared_run(second.run_id))
 
-        runs = identity_runtime.repositories.runs.list_for_task(task.task_id)
-        second_nodes = identity_runtime.repositories.task_nodes.list_for_task(task.task_id)
+        runs = identity_runtime.repositories.runs.list_for_mission(task.mission_id)
+        second_nodes = identity_runtime.repositories.semantic_tasks.list_for_mission(task.mission_id)
         assert first.run_id != second.run_id
         assert result.status is WorkflowStatus.COMPLETED
         assert [item.status for item in runs] == [RunStatus.SUCCEEDED, RunStatus.SUCCEEDED]
-        assert [node.node_id for node in second_nodes] == [
-            node.node_id for node in first_nodes
+        assert [node.task_id for node in second_nodes] == [
+            node.task_id for node in first_nodes
         ]
     finally:
         identity_runtime.close()
@@ -613,22 +613,22 @@ def test_same_user_task_can_execute_another_run_after_success() -> None:
 def test_identity_query_models_use_v2_repositories_as_their_only_source() -> None:
     runtime, identity_runtime, _bridge, task = _runtime()
     try:
-        _, run = runtime.prepare_run(task.task_id)
+        _, run = runtime.prepare_run(task.mission_id)
         asyncio.run(runtime.execute_prepared_run(run.run_id))
         query = IdentityQueryService(identity_runtime.repositories)
 
-        task_detail = query.get_task(task.task_id)
+        task_detail = query.get_mission(task.mission_id)
         tree = query.run_execution_tree(run.run_id)
         attempt = tree.nodes[0].attempts[0]
         execution = attempt.executions[0]
         detail = query.step_execution_detail(execution.step_execution_id)
 
-        assert task_detail.task.task_id == task.task_id
+        assert task_detail.mission.mission_id == task.mission_id
         assert tree.run.run_id == run.run_id
         assert tree.blueprint.blueprint_id == tree.run.blueprint_id
         assert tree.nodes[0].acg_node_id == "analyse"
         assert attempt.execution_binding is not None
-        assert detail.origin.user_task.task_id == task.task_id
+        assert detail.origin.mission.mission_id == task.mission_id
         assert detail.origin.step_execution.step_execution_id == execution.step_execution_id
         assert tree.operational.package is not None
         assert tree.operational.package.package_version == 2

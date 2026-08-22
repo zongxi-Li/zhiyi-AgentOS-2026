@@ -13,10 +13,10 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from contracts.memory import MemoryQuery
 from contracts.workflow import TraceEventType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -38,7 +38,7 @@ class _FaultAgent(BaseAgent):
         return AgentOutput(output={"answer": "safe"}, summary="safe")
 
 
-def _runtime(tmp_path, *, store, agents) -> WorkflowRuntime:
+def _runtime(tmp_path, *, store, agents) -> ExecutionRuntime:
     workflows = WorkflowRegistry()
     workflows.register(WorkflowDefinition(
         workflowId="fault-run",
@@ -52,7 +52,7 @@ def _runtime(tmp_path, *, store, agents) -> WorkflowRuntime:
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )],
     ))
-    return WorkflowRuntime(
+    return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=store,
@@ -75,8 +75,8 @@ def test_restart_reuses_commit_and_does_not_duplicate_persistence(stage: str, tm
     agent = _FaultAgent()
     agents.register(agent)
     first = _runtime(tmp_path, store=store, agents=agents)
-    task = first.create_task("fault recovery", workflow_id="fault-run")
-    _, run = first.prepare_run(task.task_id)
+    task = first.create_mission("fault recovery", workflow_id="fault-run")
+    _, run = first.prepare_run(task.mission_id)
 
     def interrupt(actual: str) -> None:
         if actual == stage:
@@ -93,7 +93,7 @@ def test_restart_reuses_commit_and_does_not_duplicate_persistence(stage: str, tm
     assert set(agent.commit_ids) == {"commit:" + run.run_id + ":one:0"}
     assert sum(event.event_type is TraceEventType.STEP_SUCCEEDED for event in result.trace) == 1
     assert recovered.checkpoint_store.latest_version(run_id=run.run_id) == 1
-    assert len(recovered.provenance_store.load_ledger(run_id=run.run_id, task_id=task.task_id).productions) == 1
+    assert len(recovered.provenance_store.load_ledger(run_id=run.run_id, mission_id=task.mission_id).productions) == 1
     records = MemoryService(store=SQLiteMemoryStore(db_path=tmp_path / "memory.sqlite3")).search(
         MemoryQuery(query="safe", scope=run.run_id)
     )

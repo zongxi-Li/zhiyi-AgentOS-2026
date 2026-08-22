@@ -15,7 +15,7 @@ from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
 )
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents.base import AgentProfile, AgentRunContext
 
 
@@ -44,14 +44,14 @@ class _FrameworkAdapter:
 
 
 def _context() -> AgentRunContext:
-    task = AgentTask(
-        taskId="task-1",
+    task = RuntimeMissionRecord(
+        missionId="mission_000000000001",
         title="framework",
         intent="write",
         input={"topic": "x"},
     )
-    run = WorkflowRun(
-        taskId="task-1",
+    run = RuntimeRunRecord(
+        missionId="mission_000000000001",
         workflowId="workflow-1",
         domain="general",
         runtimeEngine="acg",

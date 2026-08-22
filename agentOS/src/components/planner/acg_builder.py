@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from contracts.planning import TaskNodeImplementationBinding, TaskPlan
+from contracts.planning import TaskImplementationBinding, TaskPlan
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class ACGBuildResult:
     blueprint: ACGBlueprint
-    bindings: tuple[TaskNodeImplementationBinding, ...]
+    bindings: tuple[TaskImplementationBinding, ...]
 
 
 class ACGBuilder:
@@ -46,7 +46,7 @@ class ACGBuilder:
     def build(
         self,
         *,
-        task_id: str,
+        mission_id: str,
         profile: TaskSemanticProfile,
         network: CollaborationNetwork,
         task_plan: TaskPlan,
@@ -60,8 +60,8 @@ class ACGBuilder:
         self.capability_catalog.validate()
         if not network.bindings:
             raise ValueError("ACG planning produced no capability bindings")
-        if task_plan.task_id != task_id:
-            raise ValueError("TaskPlan taskId does not match ACG build task")
+        if task_plan.mission_id != mission_id:
+            raise ValueError("TaskPlan missionId does not match ACG build Mission")
         plan_key_by_capability = {
             str(node.capability_requirements[0]): node.key
             for node in task_plan.nodes
@@ -74,7 +74,7 @@ class ACGBuilder:
             )
 
         blueprint = ACGBlueprint(
-            taskId=task_id,
+            missionId=mission_id,
             objective=profile.primary_goal,
             complexityLevel=profile.estimated_complexity,
             metadata={
@@ -141,7 +141,7 @@ class ACGBuilder:
 
     def build_template(self, *, workflow, task_plan: TaskPlan) -> ACGBuildResult:
         """Promote an execution template and bind it to declared Planner semantics."""
-        blueprint = promote_workflow_to_acg(workflow, task_id=task_plan.task_id)
+        blueprint = promote_workflow_to_acg(workflow, mission_id=task_plan.mission_id)
         return self.finalize(blueprint=blueprint, task_plan=task_plan)
 
     def finalize(
@@ -159,7 +159,7 @@ class ACGBuilder:
         for step, node in zip(steps, task_plan.nodes):
             step.metadata["taskPlanKey"] = node.key
         bindings = tuple(
-            TaskNodeImplementationBinding(
+            TaskImplementationBinding(
                 planNodeKey=node.key,
                 acgNodeId=step.node_id,
             )

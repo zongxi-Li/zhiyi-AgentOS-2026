@@ -16,14 +16,14 @@ def test_provenance_store_restores_hash_chain_and_event_sequence(tmp_path) -> No
     first_store = SQLiteProvenanceStore(db_path=db_path)
     first = ProvenanceLedger(
         run_id="run-a",
-        task_id="task-a",
+        mission_id="task-a",
         event_sink=first_store.append,
     )
     first.record_production("extract", {"title": "secret"}, 3)
     first_store.close()
 
     reopened_store = SQLiteProvenanceStore(db_path=db_path)
-    restored = reopened_store.load_ledger(run_id="run-a", task_id="task-a")
+    restored = reopened_store.load_ledger(run_id="run-a", mission_id="task-a")
     restored.record_production("summarize", {"summary": "safe"}, 2)
 
     assert restored.verify_integrity() is True
@@ -40,7 +40,7 @@ def test_provenance_store_rejects_tampered_persisted_event(tmp_path) -> None:
     store = SQLiteProvenanceStore(db_path=db_path)
     ledger = ProvenanceLedger(
         run_id="run-a",
-        task_id="task-a",
+        mission_id="task-a",
         event_sink=store.append,
     )
     ledger.record_production("extract", {"title": "secret"}, 3)
@@ -49,14 +49,14 @@ def test_provenance_store_rejects_tampered_persisted_event(tmp_path) -> None:
     connection = sqlite3.connect(db_path)
     connection.execute(
         "UPDATE acg_provenance_events SET event_json = ? WHERE run_id = ?",
-        ('{"eventId":"prod_000001","runId":"run-a","taskId":"task-a","previousHash":"","eventHash":"broken","producerStepId":"extract","fieldNames":["title"]}', "run-a"),
+        ('{"eventId":"prod_000001","runId":"run-a","missionId":"task-a","previousHash":"","eventHash":"broken","producerStepId":"extract","fieldNames":["title"]}', "run-a"),
     )
     connection.commit()
     connection.close()
 
     reopened = SQLiteProvenanceStore(db_path=db_path)
     with pytest.raises(ProvenanceIntegrityError, match="integrity"):
-        reopened.load_ledger(run_id="run-a", task_id="task-a")
+        reopened.load_ledger(run_id="run-a", mission_id="task-a")
     reopened.close()
 
 
@@ -65,7 +65,7 @@ def test_ledger_restores_legacy_event_without_operation_id() -> None:
     legacy = {
         "eventId": "prod_000001",
         "runId": "run-a",
-        "taskId": "task-a",
+        "missionId": "task-a",
         "previousHash": "",
         "createdAt": "2026-01-01T00:00:00Z",
         "producerStepId": "extract",
@@ -80,7 +80,7 @@ def test_ledger_restores_legacy_event_without_operation_id() -> None:
 
     restored = ProvenanceLedger.from_events(
         run_id="run-a",
-        task_id="task-a",
+        mission_id="task-a",
         events=[legacy],
     )
 

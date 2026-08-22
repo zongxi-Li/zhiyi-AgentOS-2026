@@ -10,11 +10,11 @@ from pydantic import Field
 
 from contracts.execution import WorkflowProgressPhase
 from contracts.workflow import (
-    AgentTask,
+    RuntimeMissionRecord,
     CoreModel,
     StepStatus,
     WorkflowDefinition,
-    WorkflowRun,
+    RuntimeRunRecord,
     WorkflowStatus,
     WorkflowStep,
 )
@@ -27,7 +27,7 @@ class WorkflowProgress(CoreModel):
     执行进度，兼容字段由组装器同步生成。
     """
 
-    task_id: str = Field(alias="taskId")
+    mission_id: str = Field(alias="missionId")
     run_id: Optional[str] = Field(default=None, alias="runId")
     workflow_id: Optional[str] = Field(default=None, alias="workflowId")
     status: WorkflowStatus = WorkflowStatus.PENDING
@@ -56,9 +56,9 @@ class WorkflowProgress(CoreModel):
 
 
 class ProgressAssembler:
-    """把 ``WorkflowRun`` 纯投影为面向用户的进度快照。
+    """把 ``RuntimeRunRecord`` 纯投影为面向用户的进度快照。
 
-    ``WorkflowRun.lifecycle_message`` 是可选基础生命周期描述。投影 ``message`` 是显示
+    ``RuntimeRunRecord.lifecycle_message`` 是可选基础生命周期描述。投影 ``message`` 是显示
     权威值：显式 ``phase_message`` 优先；执行、审核、恢复阶段显示当前步骤；其余场景保留
     对应基础生命周期消息。该类不读取外部状态，也不修改运行对象。
     """
@@ -83,7 +83,7 @@ class ProgressAssembler:
 
     def assemble(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         explicit_phase: WorkflowProgressPhase | str | None = None,
         phase_message: str | None = None,
     ) -> WorkflowProgress:
@@ -126,7 +126,7 @@ class ProgressAssembler:
         graph_version = int(graph_version_value) if graph_version_value is not None else None
 
         return WorkflowProgress(
-            taskId=run.task_id,
+            missionId=run.mission_id,
             runId=run.run_id,
             workflowId=run.workflow_id,
             status=run.status,
@@ -159,7 +159,7 @@ class ProgressAssembler:
 
     def _infer_phase(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         counts: Counter[StepStatus],
         active_step_ids: list[str],
     ) -> WorkflowProgressPhase:
@@ -186,7 +186,7 @@ class ProgressAssembler:
 
     def _resolve_phase(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         counts: Counter[StepStatus],
         active_step_ids: list[str],
         explicit_phase: WorkflowProgressPhase | str | None,
@@ -210,7 +210,7 @@ class ProgressAssembler:
 
     def _active_step_ids(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         step_by_id: dict[str, WorkflowStep],
         definition_active_ids: list[str],
     ) -> list[str]:
@@ -275,8 +275,8 @@ class ProgressCalculator(ProgressAssembler):
     def calculate(
         self,
         *,
-        task: AgentTask,
-        run: WorkflowRun | None = None,
+        task: RuntimeMissionRecord,
+        run: RuntimeRunRecord | None = None,
         workflow: WorkflowDefinition | None = None,
     ) -> WorkflowProgress:
         """生成任务/运行进度快照。
@@ -291,7 +291,7 @@ class ProgressCalculator(ProgressAssembler):
         counts = Counter(step_statuses)
         total_steps = len(step_statuses)
         return WorkflowProgress(
-            taskId=task.task_id,
+            missionId=task.mission_id,
             workflowId=workflow.workflow_id if workflow is not None else task.recommended_workflow,
             status=task.status,
             phase=WorkflowProgressPhase.UNDERSTANDING,

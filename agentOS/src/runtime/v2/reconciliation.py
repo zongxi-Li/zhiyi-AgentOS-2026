@@ -1,4 +1,4 @@
-"""WKN 快照与 AgentOS 身份投影的启动对账。"""
+"""Execution Runtime 快照与 AgentOS 身份投影的启动对账。"""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ import hashlib
 import json
 from typing import Any
 
-from contracts.planning import TaskNodeImplementationBinding, TaskPlan
-from contracts.workflow import AgentTask
+from contracts.planning import TaskImplementationBinding, TaskPlan
+from contracts.workflow import RuntimeMissionRecord
 from domain.lifecycle_projection import LifecycleProjectionEvent, ProjectionEventStatus
 from domain.models import RunStatus
-from support.acg.models import WknBlueprintSpec
+from support.acg.models import RuntimeBlueprintSpec
 from types import SimpleNamespace
 
-from .wkn_bridge import WknIdentityLifecycleAdapter
+from .identity_projection import IdentityProjectionBridge
 
 
 @dataclass
@@ -34,9 +34,9 @@ class IdentityReconciliationReport:
 
 
 class IdentityProjectionReconciler:
-    """只恢复身份投影，不改变 WKN WorkflowRun 的执行状态。"""
+    """只恢复身份投影，不改变 Execution Runtime WorkflowRun 的执行状态。"""
 
-    def __init__(self, adapter: WknIdentityLifecycleAdapter) -> None:
+    def __init__(self, adapter: IdentityProjectionBridge) -> None:
         self.adapter = adapter
 
     def reconcile_workflow_store(
@@ -55,20 +55,20 @@ class IdentityProjectionReconciler:
             report.failures.append(
                 f"{replay['failed']} lifecycle projection events could not be replayed"
             )
-        self._consume_wkn_outbox(workflow_store, report, limit=limit)
+        self._consume_execution_outbox(workflow_store, report, limit=limit)
         page = 1
         while True:
-            task_page = workflow_store.list_tasks(page=page, page_size=max(1, limit))
+            task_page = workflow_store.list_missions(page=page, page_size=max(1, limit))
             for task in task_page.items:
-                if task.task_id in report.failed_aggregate_ids:
+                if task.mission_id in report.failed_aggregate_ids:
                     continue
                 report.examined_tasks += 1
                 try:
-                    if self.adapter.repositories.user_tasks.get(task.task_id) is None:
-                        self.adapter.on_task_created(task)
+                    if self.adapter.repositories.missions.get(task.mission_id) is None:
+                        self.adapter.on_mission_created(task)
                         report.repaired_tasks += 1
                 except Exception as exc:
-                    report.failures.append(f"{task.task_id}: {exc}")
+                    report.failures.append(f"{task.mission_id}: {exc}")
             if page * task_page.page_size >= task_page.total:
                 break
             page += 1
@@ -85,25 +85,25 @@ class IdentityProjectionReconciler:
                 continue
             report.examined_runs += 1
             try:
-                task = workflow_store.get_task(run.task_id)
+                task = workflow_store.get_mission(run.mission_id)
                 if self.adapter.repositories.runs.get(run.run_id) is None:
                     raw_plan = run.execution_state.get("taskPlan")
-                    raw_bindings = run.execution_state.get("taskNodeBindings")
+                    raw_bindings = run.execution_state.get("taskBindings")
                     if (
                         not isinstance(run.acg_blueprint, dict)
                         or not isinstance(raw_plan, dict)
                         or not isinstance(raw_bindings, list)
                     ):
                         raise ValueError(
-                            "WKN run lacks persisted TaskPlan identity projection data"
+                            "execution run lacks persisted TaskPlan identity projection data"
                         )
                     self.adapter.on_run_prepared(
                         task,
                         run,
-                        WknBlueprintSpec.model_validate(run.acg_blueprint),
+                        RuntimeBlueprintSpec.model_validate(run.acg_blueprint),
                         TaskPlan.model_validate(raw_plan),
                         tuple(
-                            TaskNodeImplementationBinding.model_validate(item)
+                            TaskImplementationBinding.model_validate(item)
                             for item in raw_bindings
                         ),
                     )
@@ -148,7 +148,7 @@ class IdentityProjectionReconciler:
         report.oldest_event_at = min(timestamps) if timestamps else None
         return report
 
-    def _consume_wkn_outbox(
+    def _consume_execution_outbox(
         self,
         workflow_store: Any,
         report: IdentityReconciliationReport,
@@ -179,16 +179,16 @@ class IdentityProjectionReconciler:
                 if inbox_event.status is ProjectionEventStatus.APPLIED:
                     workflow_store.mark_outbox(event["event_id"], applied=True)
                     continue
-                if event["event_type"] in {"task.snapshot", "task.created"}:
-                    missing_before = self.adapter.repositories.user_tasks.get(
+                if event["event_type"] in {"mission.snapshot", "mission.created"}:
+                    missing_before = self.adapter.repositories.missions.get(
                         event["aggregate_id"]
                     ) is None
-                    self.adapter.on_task_created(AgentTask.model_validate(payload))
+                    self.adapter.on_mission_created(RuntimeMissionRecord.model_validate(payload))
                     if missing_before:
                         report.repaired_tasks += 1
                 elif event["event_type"] == "graph.patch.prepared":
                     payload = dict(payload)
-                    task = SimpleNamespace(task_id=payload["taskId"])
+                    task = SimpleNamespace(mission_id=payload["missionId"])
                     old_run = SimpleNamespace(run_id=payload["oldRunId"])
                     new_run = SimpleNamespace(
                         run_id=payload["newRunId"],
@@ -199,43 +199,43 @@ class IdentityProjectionReconciler:
                         task,
                         old_run,
                         new_run,
-                        WknBlueprintSpec.model_validate(payload["blueprint"]),
+                        RuntimeBlueprintSpec.model_validate(payload["blueprint"]),
                         TaskPlan.model_validate(payload["taskPlan"]),
                         tuple(
-                            TaskNodeImplementationBinding.model_validate(item)
-                            for item in payload["taskNodeBindings"]
+                            TaskImplementationBinding.model_validate(item)
+                            for item in payload["taskBindings"]
                         ),
                         payload["patchId"],
                     )
                 elif event["event_type"] in {"run.snapshot", "run.prepared", "run.finished", "run.superseded"}:
-                    wkn_run = workflow_store.get_run(event["aggregate_id"])
+                    runtime_run = workflow_store.get_run(event["aggregate_id"])
                     missing_before = self.adapter.repositories.runs.get(
-                        wkn_run.run_id
+                        runtime_run.run_id
                     ) is None
-                    task = workflow_store.get_task(wkn_run.task_id)
-                    raw_plan = wkn_run.execution_state.get("taskPlan")
-                    raw_bindings = wkn_run.execution_state.get("taskNodeBindings")
-                    if not isinstance(wkn_run.acg_blueprint, dict) or not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
-                        raise ValueError("WKN run snapshot lacks Planner identity data")
+                    task = workflow_store.get_mission(runtime_run.mission_id)
+                    raw_plan = runtime_run.execution_state.get("taskPlan")
+                    raw_bindings = runtime_run.execution_state.get("taskBindings")
+                    if not isinstance(runtime_run.acg_blueprint, dict) or not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
+                        raise ValueError("execution run snapshot lacks Planner identity data")
                     if missing_before:
                         self.adapter.on_run_prepared(
                             task,
-                            wkn_run,
-                            WknBlueprintSpec.model_validate(wkn_run.acg_blueprint),
+                            runtime_run,
+                            RuntimeBlueprintSpec.model_validate(runtime_run.acg_blueprint),
                             TaskPlan.model_validate(raw_plan),
-                            tuple(TaskNodeImplementationBinding.model_validate(item) for item in raw_bindings),
+                            tuple(TaskImplementationBinding.model_validate(item) for item in raw_bindings),
                         )
                     self.adapter.on_run_snapshot(
-                        wkn_run.run_id,
+                        runtime_run.run_id,
                         dict(payload.get("executionState") or {}),
                     )
-                    status = str(getattr(wkn_run.status, "value", wkn_run.status))
+                    status = str(getattr(runtime_run.status, "value", runtime_run.status))
                     if event["event_type"] == "run.superseded":
-                        replacement = str(wkn_run.execution_state.get("supersededByRunId") or "")
+                        replacement = str(runtime_run.execution_state.get("supersededByRunId") or "")
                         if replacement:
-                            self.adapter.on_run_superseded(wkn_run.run_id, replacement, str(wkn_run.execution_state.get("sourcePatchId") or "outbox"))
+                            self.adapter.on_run_superseded(runtime_run.run_id, replacement, str(runtime_run.execution_state.get("sourcePatchId") or "outbox"))
                     elif status in {"completed", "failed", "cancelled"}:
-                        self.adapter.on_run_finished(wkn_run.run_id, {
+                        self.adapter.on_run_finished(runtime_run.run_id, {
                             "completed": "succeeded",
                             "failed": "failed",
                             "cancelled": "cancelled",
@@ -263,27 +263,27 @@ class IdentityProjectionReconciler:
                 workflow_store.mark_outbox(event["event_id"], applied=False, error=str(exc))
                 report.failures.append(f"outbox {event['event_id']}: {exc}")
 
-    def _audit_run(self, wkn_run: Any) -> None:
-        run = self.adapter.repositories.runs.get(wkn_run.run_id)
+    def _audit_run(self, runtime_run: Any) -> None:
+        run = self.adapter.repositories.runs.get(runtime_run.run_id)
         if run is None:
             raise ValueError("identity WorkflowRun is missing after reconciliation")
-        if run.task_id != wkn_run.task_id:
-            raise ValueError("WKN and identity Run belong to different tasks")
+        if run.mission_id != runtime_run.mission_id:
+            raise ValueError("execution and identity Run belong to different Missions")
         blueprint = self.adapter.repositories.blueprints.get(run.blueprint_id)
         if blueprint is None:
             raise ValueError("identity Run Blueprint is missing")
         if int(blueprint.version) != int(run.graph_version):
             raise ValueError("identity Run graphVersion is inconsistent")
-        wkn_terminal = str(getattr(wkn_run.status, "value", wkn_run.status)) in {
+        runtime_terminal = str(getattr(runtime_run.status, "value", runtime_run.status)) in {
             "completed", "failed", "cancelled", "superseded"
         }
-        if not wkn_terminal and run.status in {
+        if not runtime_terminal and run.status in {
             RunStatus.FAILED,
             RunStatus.SUCCEEDED,
             RunStatus.CANCELLED,
             RunStatus.SUPERSEDED,
         }:
-            raise ValueError("non-terminal WKN Run points to terminal identity Run")
+            raise ValueError("non-terminal execution Run points to terminal identity Run")
 
 
 __all__ = ["IdentityProjectionReconciler", "IdentityReconciliationReport"]

@@ -9,9 +9,9 @@ import pytest
 from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID, register_native_runtime
 from runtime.execution_migration import ExecutionEngineMigratingError
 from runtime.workflow_runtime import ReviewConflictError
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.acg.models import ACGBlueprint
 
@@ -20,13 +20,13 @@ def _prepared_acg_run():
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     register_native_runtime(agent_registry=agents, workflow_registry=workflows)
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
     )
-    task = runtime.create_task("migration boundary")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("migration boundary")
+    _, run = runtime.prepare_run(task.mission_id)
     return runtime, run
 
 
@@ -45,17 +45,17 @@ def test_core_general_evidence_template_builds_required_dynamic_acg() -> None:
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     register_native_runtime(agent_registry=agents, workflow_registry=workflows)
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
     )
-    task = runtime.create_task(
+    task = runtime.create_mission(
         "Assess a complex technical proposal",
         workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID,
     )
 
-    _, run = runtime.prepare_run(task.task_id, workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID)
+    _, run = runtime.prepare_run(task.mission_id, workflow_id=GENERAL_EVIDENCE_WORKFLOW_ID)
 
     assert run.acg_blueprint is not None
     blueprint = ACGBlueprint.model_validate(run.acg_blueprint)

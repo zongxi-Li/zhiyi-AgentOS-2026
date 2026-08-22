@@ -18,14 +18,14 @@ from uuid import uuid4
 
 from service.agents import AgentRegistry
 from support.acg.models import (
-    WknBlueprintSpec,
+    RuntimeBlueprintSpec,
     promote_workflow_to_acg,
 )
 from components.auditor.governance.evaluation import WorkflowEvaluator
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from components.auditor.governance.review import ReviewManager
-from components.task_manager.state_machine import StateMachine
-from components.task_manager.service import TaskManager
+from components.mission_manager.state_machine import StateMachine
+from components.mission_manager.service import MissionManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
 from components.communicator import CommunicationBroker, CommunicatorService, ReliableMessage, SQLiteReliableCommunicationStore
@@ -54,8 +54,8 @@ from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
-    TaskNodeBindingPatch,
-    TaskNodeImplementationBinding,
+    TaskBindingPatch,
+    TaskImplementationBinding,
     TaskPlan,
 )
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
@@ -74,7 +74,7 @@ from adapters.model_compatibility import ModelCompatibilityRegistry, ModelProvid
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.tool_adapter import configured_tool_runtime
 from contracts.workflow import (
-    AgentTask,
+    RuntimeMissionRecord,
     Checkpoint,
     EvaluationRun,
     ReviewDecision,
@@ -84,7 +84,7 @@ from contracts.workflow import (
     TraceEvent,
     TraceEventType,
     WorkflowDefinition,
-    WorkflowRun,
+    RuntimeRunRecord,
     WorkflowStatus,
     WorkflowStep,
     RunExecutionScope,
@@ -142,8 +142,8 @@ class ReviewConflictError(ValueError):
     """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
 
 
-class WknWorkflowRuntime:
-    """唯一 WKN 执行内核，串联规划、调度、节点执行、审核与恢复。"""
+class ExecutionRuntime:
+    """唯一 Execution Runtime 执行内核，串联规划、调度、节点执行、审核与恢复。"""
 
     def __init__(
         self,
@@ -160,7 +160,7 @@ class WknWorkflowRuntime:
         tool_runtime: object | None = None,
         review_manager: Optional[ReviewManager] = None,
         evaluator: Optional[WorkflowEvaluator] = None,
-        task_manager: Optional[TaskManager] = None,
+        mission_manager: Optional[MissionManager] = None,
         execution_adapter_factories: Optional[Mapping[str, ExecutionAdapterFactory]] = None,
         run_lock_manager: Optional[RunLockManager] = None,
         recovery_recipe_registry: Optional[object] = None,
@@ -229,7 +229,7 @@ class WknWorkflowRuntime:
         self.evaluator = evaluator or WorkflowEvaluator()
         self.state_machine = StateMachine()
         self._model_runtime = None
-        self.task_manager = task_manager or TaskManager(
+        self.mission_manager = mission_manager or MissionManager(
             workflow_store=self.workflow_store,
             workflow_registry=self.workflow_registry,
             state_machine=self.state_machine,
@@ -295,7 +295,7 @@ class WknWorkflowRuntime:
             raise ValueError(f"{engine} runtime engine is built into AgentOS Core")
         self.execution_adapter_factories[engine] = factory
 
-    def create_task(
+    def create_mission(
         self,
         title: str,
         domain: str = "general",
@@ -308,7 +308,7 @@ class WknWorkflowRuntime:
         task_type: Optional[str] = None,
         workflow_id: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
-    ) -> AgentTask:
+    ) -> RuntimeMissionRecord:
         """校验请求、解析插件范围并创建任务；合同或插件异常会向调用方明确传播。"""
         task_domain = (role_type or domain or "general").strip()
         task_intent = (task_type or intent or "general").strip()
@@ -319,7 +319,7 @@ class WknWorkflowRuntime:
             intent=task_intent,
         )
         scope = self.plugin_scope_resolver.build_scope(resolved_plugins)
-        task = self.task_manager.create_task(
+        task = self.mission_manager.create_mission(
             title=title,
             domain=domain,
             intent=intent,
@@ -331,7 +331,7 @@ class WknWorkflowRuntime:
             workflow_id=workflow_id,
             enabled_plugin_ids=enabled_plugin_ids,
             allowed_workflow_ids=scope.workflow_ids,
-            task_id=(self.identity_lifecycle.new_task_id() if self.identity_lifecycle else None),
+            mission_id=(self.identity_lifecycle.new_mission_id() if self.identity_lifecycle else None),
         )
         if self.identity_lifecycle is not None and task.recommended_workflow:
             recommended = self.workflow_registry.get(task.recommended_workflow)
@@ -341,14 +341,14 @@ class WknWorkflowRuntime:
 
     async def start(
         self,
-        task_id: str,
+        mission_id: str,
         workflow_id: Optional[str] = None,
         review_mode: str = "auto",
         enabled_plugin_ids: Optional[list[str]] = None,
-    ) -> WorkflowRun:
+    ) -> RuntimeRunRecord:
         """为任务选择工作流并启动运行；持久化和同运行互斥由内部运行锁协调。"""
         _, run = self.prepare_run(
-            task_id=task_id,
+            mission_id=mission_id,
             workflow_id=workflow_id,
             review_mode=review_mode,
             enabled_plugin_ids=enabled_plugin_ids,
@@ -357,14 +357,14 @@ class WknWorkflowRuntime:
 
     def prepare_run(
         self,
-        task_id: str,
+        mission_id: str,
         workflow_id: Optional[str] = None,
         review_mode: str = "auto",
         *,
         idempotency_key: Optional[str] = None,
         idempotency_fingerprint: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
-    ) -> tuple[AgentTask, WorkflowRun]:
+    ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
         """在规划或节点执行前持久化可查询运行；幂等键冲突时抛出 ``ValueError``。"""
 
         if idempotency_key:
@@ -372,9 +372,9 @@ class WknWorkflowRuntime:
             if existing is not None:
                 if existing.idempotency_fingerprint != idempotency_fingerprint:
                     raise ValueError("idempotency key conflicts with the workflow start request")
-                return self.task_manager.get_task(existing.task_id), existing
+                return self.mission_manager.get_mission(existing.mission_id), existing
 
-        task = self.task_manager.get_task(task_id)
+        task = self.mission_manager.get_mission(mission_id)
         requested_plugins = (
             enabled_plugin_ids
             if enabled_plugin_ids is not None
@@ -400,7 +400,7 @@ class WknWorkflowRuntime:
         if self.identity_lifecycle is not None and is_acg:
             # A task may have been created against a legacy/default workflow and
             # explicitly rebound to ACG only when the run is prepared.
-            self.workflow_store.save_task(task)
+            self.workflow_store.save_mission(task)
             self._flush_identity_outbox()
         planning_diversity = normalize_planning_diversity(
             task.input.get("planningDiversity")
@@ -412,13 +412,13 @@ class WknWorkflowRuntime:
         run_input["planningDiversity"] = planning_diversity
         if planning_seed is not None:
             run_input["planningSeed"] = planning_seed
-        run = WorkflowRun(
+        run = RuntimeRunRecord(
             **(
-                {"runId": self.identity_lifecycle.new_run_id(task.task_id)}
+                {"runId": self.identity_lifecycle.new_run_id(task.mission_id)}
                 if self.identity_lifecycle is not None and is_acg
                 else {}
             ),
-            taskId=task.task_id,
+            missionId=task.mission_id,
             workflowId=workflow.workflow_id,
             domain=workflow.domain,
             runtimeEngine=workflow.effective_runtime_engine,
@@ -463,7 +463,7 @@ class WknWorkflowRuntime:
             run.execution_state["evolutionPolicyVersion"] = active_evolution.version
             run.execution_state["evolutionPolicy"] = dict(active_evolution.policy)
         if is_acg:
-            blueprint, task_plan, task_node_bindings = self._build_acg_blueprint(
+            blueprint, task_plan, task_bindings = self._build_acg_blueprint(
                 task,
                 run,
                 workflow,
@@ -500,9 +500,9 @@ class WknWorkflowRuntime:
                         {
                             "taskPlanVersion": task_plan.plan_version,
                             "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-                            "taskNodeBindings": [
+                            "taskBindings": [
                                 item.model_dump(by_alias=True, mode="json")
-                                for item in task_node_bindings
+                                for item in task_bindings
                             ],
                         }
                         if task_plan is not None
@@ -540,7 +540,7 @@ class WknWorkflowRuntime:
         logger.info(
             "run_prepared",
             extra={
-                "taskId": task.task_id,
+                "missionId": task.mission_id,
                 "runId": run.run_id,
                 "workflowId": workflow.workflow_id,
                 "phase": run.lifecycle_phase.value,
@@ -548,7 +548,7 @@ class WknWorkflowRuntime:
         )
         return task, run
 
-    async def execute_prepared_run(self, run_id: str) -> WorkflowRun:
+    async def execute_prepared_run(self, run_id: str) -> RuntimeRunRecord:
         """执行已持久化运行并保持终态不回退；插件范围失效时安全标记失败后继续抛错。"""
 
         run = self.workflow_store.get_run(run_id)
@@ -559,7 +559,7 @@ class WknWorkflowRuntime:
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
 
-        task = self.task_manager.get_task(run.task_id)
+        task = self.mission_manager.get_mission(run.mission_id)
         try:
             workflow = self._workflow_for_run(run)
         except PluginScopeError as exc:
@@ -578,7 +578,7 @@ class WknWorkflowRuntime:
             set_started_at=True,
         )
         try:
-            self.task_manager.mark_running(task)
+            self.mission_manager.mark_running(task)
             adapter = self._workflow_adapter(workflow)
             return await adapter.start(task=task, run=run, workflow=workflow)
         except asyncio.CancelledError:
@@ -591,31 +591,31 @@ class WknWorkflowRuntime:
             )
             logger.exception(
                 "run_execution_failed",
-                extra={"taskId": run.task_id, "runId": run.run_id, "elapsedMs": int((monotonic() - started) * 1000)},
+                extra={"missionId": run.mission_id, "runId": run.run_id, "elapsedMs": int((monotonic() - started) * 1000)},
             )
             raise
 
     async def _execute_acg(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         *,
         state: ACGExecutionState | None = None,
         command: ExecutionResumeCommand | None = None,
-    ) -> WorkflowRun:
+    ) -> RuntimeRunRecord:
         """执行或续跑融合 ACG，并把图状态投影为既有运行合同。
 
         图、值仓库和检查点均只传递引用型状态。此方法是 Runtime 唯一的 ACG 接线点：
-        通信、记忆、审计、Agent 适配由 ``ACGNodeRunner`` 组合，WorkflowRun 只保存
+        通信、记忆、审计、Agent 适配由 ``ACGNodeRunner`` 组合，RuntimeRunRecord 只保存
         生命周期、步骤状态、摘要和引用，绝不写入 Agent 的完整输出正文。
         """
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
-        task = self.task_manager.get_task(run.task_id)
+        task = self.mission_manager.get_mission(run.mission_id)
         workflow = self._workflow_for_run(run)
         blueprint_data = run.acg_blueprint
         if not isinstance(blueprint_data, dict):
             raise ExecutionEngineMigratingError(run.run_id)
-        blueprint = WknBlueprintSpec.model_validate(blueprint_data)
+        blueprint = RuntimeBlueprintSpec.model_validate(blueprint_data)
         raw_package = run.execution_state.get("compiledACGPackage")
         if not isinstance(raw_package, dict):
             raise ExecutionEngineMigratingError(run.run_id)
@@ -640,7 +640,7 @@ class WknWorkflowRuntime:
             blueprint=blueprint,
             state=execution_state,
         )
-        ledger = self.provenance_store.load_ledger(run_id=run.run_id, task_id=task.task_id)
+        ledger = self.provenance_store.load_ledger(run_id=run.run_id, mission_id=task.mission_id)
         self._validate_acg_state_references(run=run, state=execution_state, ledger=ledger)
         runner = self._build_acg_runner(
             task=task,
@@ -662,9 +662,9 @@ class WknWorkflowRuntime:
             set_started_at=True,
         )
         if self.identity_lifecycle is not None:
-            self.task_manager.mark_running_for_new_run(task, run_id=run.run_id)
+            self.mission_manager.mark_running_for_new_run(task, run_id=run.run_id)
         else:
-            self.task_manager.mark_running(task)
+            self.mission_manager.mark_running(task)
         try:
             stream = (
                 graph.astream(execution_state, scheduled_runner)
@@ -681,7 +681,7 @@ class WknWorkflowRuntime:
                 phase=WorkflowProgressPhase.COMPLETED,
                 message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.COMPLETED],
             )
-            self.task_manager.mark_completed(task)
+            self.mission_manager.mark_completed(task)
             self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
             self.workflow_store.save_run(run)
             if self.identity_lifecycle is not None:
@@ -704,7 +704,7 @@ class WknWorkflowRuntime:
                 phase=WorkflowProgressPhase.REVIEW,
                 message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.REVIEW],
             )
-            self.task_manager.mark_waiting_review(task)
+            self.mission_manager.mark_waiting_review(task)
             self.workflow_store.save_run(run)
             return run
         except Exception as exc:
@@ -739,7 +739,7 @@ class WknWorkflowRuntime:
                 self._flush_identity_outbox()
             raise
 
-    def _ready_node_runner(self, *, run: WorkflowRun, runner: ACGNodeRunner):
+    def _ready_node_runner(self, *, run: RuntimeRunRecord, runner: ACGNodeRunner):
         """Decorate NodeRunner after Executor readiness with binding and lease coordination."""
         raw_requirements = run.execution_state.get("bindingRequirements")
         if not isinstance(raw_requirements, dict):
@@ -795,7 +795,7 @@ class WknWorkflowRuntime:
             base_events = [
                 self._lifecycle_event(
                     f"attempt.ensured:{attempt_id}", "attempt.ensured", run.run_id,
-                    {"runId": run.run_id, "taskId": run.task_id, "stepId": step_id,
+                    {"runId": run.run_id, "missionId": run.mission_id, "stepId": step_id,
                      "attemptId": attempt_id, "attemptNumber": attempt_number},
                 ),
                 self._lifecycle_event(
@@ -933,9 +933,9 @@ class WknWorkflowRuntime:
     @staticmethod
     def _validate_acg_resume_identity(
         *,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         workflow: WorkflowDefinition,
-        blueprint: WknBlueprintSpec,
+        blueprint: RuntimeBlueprintSpec,
         state: ACGExecutionState,
     ) -> None:
         """恢复前校验运行、蓝图、工作流和 checkpoint 的版本身份。"""
@@ -960,7 +960,7 @@ class WknWorkflowRuntime:
     def _validate_acg_state_references(
         self,
         *,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         state: ACGExecutionState,
         ledger: ProvenanceLedger | None = None,
     ) -> None:
@@ -1014,7 +1014,7 @@ class WknWorkflowRuntime:
                 raise ValueError(f"trace reference {trace_ref} has no completed trace for step {step_id}")
         active_ledger = ledger or self.provenance_store.load_ledger(
             run_id=run.run_id,
-            task_id=run.task_id,
+            mission_id=run.mission_id,
         )
         for step_id, event_ids in state.provenance_refs.items():
             for event_id in event_ids:
@@ -1035,8 +1035,8 @@ class WknWorkflowRuntime:
     def _build_acg_runner(
         self,
         *,
-        task: AgentTask,
-        run: WorkflowRun,
+        task: RuntimeMissionRecord,
+        run: RuntimeRunRecord,
         workflow: WorkflowDefinition,
         graph,
         state: ACGExecutionState,
@@ -1122,7 +1122,7 @@ class WknWorkflowRuntime:
             agents=agents,
             communicator=CommunicatorService(
                 run_id=run.run_id,
-                task_id=task.task_id,
+                mission_id=task.mission_id,
                 ledger=ledger,
             ),
             memory=MemoryService(store=self.memory_store),
@@ -1155,7 +1155,7 @@ class WknWorkflowRuntime:
             fault_hook=self._fault_hook,
         )
 
-    def _project_acg_event(self, run: WorkflowRun, state: ACGExecutionState, event: dict) -> None:
+    def _project_acg_event(self, run: RuntimeRunRecord, state: ACGExecutionState, event: dict) -> None:
         """投影单个图事件与步骤状态；事件正文只含步骤标识、摘要或引用。"""
         event_type = event.get("type")
         commit_id = event.get("commitId")
@@ -1201,7 +1201,7 @@ class WknWorkflowRuntime:
                     step.error = "ACG superstep cancelled after sibling failure"
             run.active_step_ids = []
         # 条件控制节点由图在超步边界内部推进，不会产生独立的节点事件。这里根据
-        # 已持久化的 skippedStepIds 补齐 WorkflowRun 的可见步骤状态，供查询、
+        # 已持久化的 skippedStepIds 补齐 RuntimeRunRecord 的可见步骤状态，供查询、
         # 审计和取消逻辑一致地区分“未执行”与“条件明确跳过”。
         for step_id in state.skipped_step_ids:
             step = run.get_step(step_id)
@@ -1369,13 +1369,13 @@ class WknWorkflowRuntime:
     def _project_completed_phase_capsules(
         self,
         *,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         state: ACGExecutionState,
     ) -> None:
         """Persist one deterministic capsule when every step in a planning stage completed."""
         if not isinstance(run.acg_blueprint, dict):
             return
-        blueprint = WknBlueprintSpec.model_validate(run.acg_blueprint)
+        blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
         stages: dict[str, list[str]] = {}
         for node in blueprint.step_nodes():
             stage = str(node.metadata.get("planningStage") or "execution")
@@ -1384,7 +1384,7 @@ class WknWorkflowRuntime:
         capsule_refs = run.execution_state.setdefault("phaseCapsuleRefs", {})
         if not isinstance(capsule_refs, dict):
             raise ValueError("phaseCapsuleRefs must be an object")
-        task = self.task_manager.get_task(run.task_id)
+        task = self.mission_manager.get_mission(run.mission_id)
         raw_constraints = task.input.get("constraints")
         constraints = raw_constraints if isinstance(raw_constraints, list) else []
         raw_questions = task.input.get("openQuestions")
@@ -1429,7 +1429,7 @@ class WknWorkflowRuntime:
             )
 
     @staticmethod
-    def _is_projected_commit(run: WorkflowRun, commit_id: str) -> bool:
+    def _is_projected_commit(run: RuntimeRunRecord, commit_id: str) -> bool:
         """通过既有步骤完成 Trace 判断提交是否已被投影，不额外保存正文状态。"""
         return any(
             event.event_type == TraceEventType.STEP_SUCCEEDED
@@ -1437,7 +1437,7 @@ class WknWorkflowRuntime:
             for event in run.trace
         )
 
-    def _persist_acg_state(self, run: WorkflowRun, state: ACGExecutionState) -> None:
+    def _persist_acg_state(self, run: RuntimeRunRecord, state: ACGExecutionState) -> None:
         """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""
         state_data = state.model_dump(by_alias=True, mode="json")
         run.execution_state.update(state_data)
@@ -1445,7 +1445,7 @@ class WknWorkflowRuntime:
         run.active_step_ids = list(state.active_step_ids)
         self.workflow_store.save_run(run)
 
-    def _save_acg_checkpoint(self, run: WorkflowRun, state: ACGExecutionState) -> str:
+    def _save_acg_checkpoint(self, run: RuntimeRunRecord, state: ACGExecutionState) -> str:
         """按运行当前 checkpoint 版本保存下一份引用型状态。"""
         expected_version = self.checkpoint_store.latest_version(run_id=run.run_id)
         # 检查点标识来自不含既有 checkpointId 的状态摘要。同一超步在“保存成功、
@@ -1486,7 +1486,7 @@ class WknWorkflowRuntime:
 
     def _validate_blueprint_agents(
         self,
-        blueprint: WknBlueprintSpec,
+        blueprint: RuntimeBlueprintSpec,
         *,
         domain: str,
         scope: RunExecutionScope | None = None,
@@ -1508,7 +1508,7 @@ class WknWorkflowRuntime:
     def _register_and_freeze_resources(
         self,
         *,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         workflow: WorkflowDefinition,
         scope: RunExecutionScope,
         binding_manifest,
@@ -1616,42 +1616,42 @@ class WknWorkflowRuntime:
 
     def _build_acg_blueprint(
         self,
-        task: AgentTask,
-        run: WorkflowRun,
+        task: RuntimeMissionRecord,
+        run: RuntimeRunRecord,
         workflow: WorkflowDefinition,
     ) -> tuple[
-        WknBlueprintSpec,
+        RuntimeBlueprintSpec,
         TaskPlan | None,
-        tuple[TaskNodeImplementationBinding, ...],
+        tuple[TaskImplementationBinding, ...],
     ]:
         """Resolve one complete ACG production package.
 
         Identity-enabled production accepts either an explicit Blueprint plus
         TaskPlan/bindings, or Planner output. The final workflow promotion branch
-        is reserved for the identity-free WKN execution-kernel harness and does
+        is reserved for the identity-free Execution Runtime execution-kernel harness and does
         not manufacture semantic identities from WorkflowStep definitions.
         """
         provided = run.input.get("acgBlueprint") or (run.acg_blueprint if run.acg_blueprint else None)
         if isinstance(provided, dict) and provided.get("nodes"):
-            blueprint = WknBlueprintSpec.model_validate(provided)
-            if not blueprint.task_id:
-                blueprint = blueprint.model_copy(deep=True, update={"task_id": task.task_id})
+            blueprint = RuntimeBlueprintSpec.model_validate(provided)
+            if not blueprint.mission_id:
+                blueprint = blueprint.model_copy(deep=True, update={"mission_id": task.mission_id})
             raw_plan = run.input.get("taskPlan")
-            raw_bindings = run.input.get("taskNodeBindings")
+            raw_bindings = run.input.get("taskBindings")
             if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
                 raise ValueError(
-                    "explicit ACG Blueprint requires taskPlan and taskNodeBindings"
+                    "explicit ACG Blueprint requires taskPlan and taskBindings"
                 )
             if isinstance(raw_plan, dict) and isinstance(raw_bindings, list):
                 task_plan = TaskPlan.model_validate(raw_plan)
-                task_node_bindings = tuple(
-                    TaskNodeImplementationBinding.model_validate(item)
+                task_bindings = tuple(
+                    TaskImplementationBinding.model_validate(item)
                     for item in raw_bindings
                 )
-            if task_plan.task_id != task.task_id:
-                raise ValueError("TaskPlan taskId does not match AgentTask")
-            binding_keys = [item.plan_node_key for item in task_node_bindings]
-            binding_nodes = [item.acg_node_id for item in task_node_bindings]
+            if task_plan.mission_id != task.mission_id:
+                raise ValueError("TaskPlan missionId does not match RuntimeMissionRecord")
+            binding_keys = [item.plan_node_key for item in task_bindings]
+            binding_nodes = [item.acg_node_id for item in task_bindings]
             plan_keys = {node.key for node in task_plan.nodes}
             executable_ids = {node.node_id for node in blueprint.step_nodes()}
             if (
@@ -1663,7 +1663,7 @@ class WknWorkflowRuntime:
                 raise ValueError(
                     "Blueprint bindings must cover the complete TaskPlan and executable Blueprint"
                 )
-            return blueprint, task_plan, task_node_bindings
+            return blueprint, task_plan, task_bindings
 
         planning_mode = str(run.input.get("planningMode") or "").strip().lower()
         force_dynamic = (
@@ -1687,7 +1687,7 @@ class WknWorkflowRuntime:
             )
             planning_engine = self._planning_engine_for_run(run)
             plan = planning_engine.plan(
-                task_id=task.task_id,
+                mission_id=task.mission_id,
                 intent=intent_text,
                 domain=workflow.domain or task.domain,
                 task_type=task.intent or workflow.intent,
@@ -1758,17 +1758,17 @@ class WknWorkflowRuntime:
                 review_nodes[0].review_required = True
                 review_nodes[0].metadata["reviewBarrier"] = True
                 blueprint.metadata["reviewCapability"] = workflow.review_capability
-            return blueprint, plan.task_plan, plan.task_node_bindings
+            return blueprint, plan.task_plan, plan.task_bindings
 
-        blueprint = promote_workflow_to_acg(workflow, task_id=task.task_id)
+        blueprint = promote_workflow_to_acg(workflow, mission_id=task.mission_id)
         return blueprint, None, ()
 
     def _sync_run_steps_to_acg(
         self,
-        run: WorkflowRun,
-        blueprint: WknBlueprintSpec,
+        run: RuntimeRunRecord,
+        blueprint: RuntimeBlueprintSpec,
     ) -> None:
-        """让 WorkflowRun 的步骤列表与最终 ACG 蓝图保持一致。"""
+        """让 RuntimeRunRecord 的步骤列表与最终 ACG 蓝图保持一致。"""
         existing = {step.step_id: step for step in run.steps}
         synced: list[WorkflowStep] = []
         for node in blueprint.step_nodes():
@@ -1842,11 +1842,11 @@ class WknWorkflowRuntime:
         if run.current_step_id not in step_ids:
             run.current_step_id = synced[0].step_id if synced else None
 
-    def _transition_run_if_needed(self, run: WorkflowRun, status: WorkflowStatus) -> None:
+    def _transition_run_if_needed(self, run: RuntimeRunRecord, status: WorkflowStatus) -> None:
         if run.status != status:
             self._transition_run(run, status)
 
-    def get_status(self, run_id: str) -> WorkflowRun:
+    def get_status(self, run_id: str) -> RuntimeRunRecord:
         """读取指定运行的最新状态投影；不存在时由存储层抛出 ``KeyError``。"""
         return self.workflow_store.get_run(run_id)
 
@@ -1859,7 +1859,7 @@ class WknWorkflowRuntime:
         message: str | None = None,
         error: object = _ERROR_UNSET,
         set_started_at: bool = False,
-    ) -> WorkflowRun:
+    ) -> RuntimeRunRecord:
         """重新读取、校验并持久化生命周期字段，返回最新投影；终态非法迁移会被拒绝。"""
 
         run = self.workflow_store.get_run(run_id)
@@ -1874,14 +1874,14 @@ class WknWorkflowRuntime:
 
     def _set_run_lifecycle(
         self,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         *,
         status: WorkflowStatus | None = None,
         phase: WorkflowProgressPhase | None = None,
         message: str | None = None,
         error: object = _ERROR_UNSET,
         set_started_at: bool = False,
-    ) -> WorkflowRun:
+    ) -> RuntimeRunRecord:
         try:
             persisted = self.workflow_store.get_run(run.run_id)
         except KeyError:
@@ -1931,7 +1931,7 @@ class WknWorkflowRuntime:
         *,
         error_code: str,
         error_message: str,
-    ) -> WorkflowRun:
+    ) -> RuntimeRunRecord:
         """在受管执行边界尽力收敛为失败终态，并写入有界错误信息和追踪事件。"""
 
         run = self.workflow_store.get_run(run_id)
@@ -1950,11 +1950,11 @@ class WknWorkflowRuntime:
             error=error,
         )
         try:
-            self.task_manager.mark_failed(run.task_id)
+            self.mission_manager.mark_failed(run.mission_id)
         except Exception:
             logger.exception(
                 "Failed to align task status after run failure",
-                extra={"taskId": run.task_id, "runId": run.run_id},
+                extra={"missionId": run.mission_id, "runId": run.run_id},
             )
         self.trace_store.append(
             run=run,
@@ -1968,7 +1968,7 @@ class WknWorkflowRuntime:
 
     @staticmethod
     def _terminalize_active_execution(
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         error_message: str,
         *,
         include_current_pending: bool = False,
@@ -2011,7 +2011,7 @@ class WknWorkflowRuntime:
             logger.warning(
                 "interrupted_run_closed_after_restart",
                 extra={
-                    "taskId": run.task_id,
+                    "missionId": run.mission_id,
                     "runId": run.run_id,
                     "workflowId": run.workflow_id,
                     "phase": run.lifecycle_phase.value if run.lifecycle_phase else None,
@@ -2020,7 +2020,7 @@ class WknWorkflowRuntime:
         return closed
 
     @staticmethod
-    def _normalize_waiting_review_after_restart(run: WorkflowRun) -> bool:
+    def _normalize_waiting_review_after_restart(run: RuntimeRunRecord) -> bool:
         """Align both persisted step projections without leaving review state."""
 
         changed = False
@@ -2041,7 +2041,7 @@ class WknWorkflowRuntime:
             changed = True
         return changed
 
-    def _fail_interrupted_run_after_restart(self, run: WorkflowRun) -> None:
+    def _fail_interrupted_run_after_restart(self, run: RuntimeRunRecord) -> None:
         """Mutate every run projection first, then persist one consistent snapshot."""
 
         interruption_message = "任务因服务重启而中断。"
@@ -2058,11 +2058,11 @@ class WknWorkflowRuntime:
             "message": interruption_message,
         }
         try:
-            self.task_manager.mark_failed(run.task_id)
+            self.mission_manager.mark_failed(run.mission_id)
         except Exception:
             logger.exception(
                 "Failed to align task status after interrupted run",
-                extra={"taskId": run.task_id, "runId": run.run_id},
+                extra={"missionId": run.mission_id, "runId": run.run_id},
             )
         self.trace_store.append(
             run=run,
@@ -2117,7 +2117,7 @@ class WknWorkflowRuntime:
             self.workflow_store.save_run(run)
             return stats
 
-    def _protected_execution_references(self, run: WorkflowRun) -> set[str]:
+    def _protected_execution_references(self, run: RuntimeRunRecord) -> set[str]:
         """从所有可恢复入口提取已知正文引用，不递归读取或复制任何正文。"""
         references: set[str] = set()
         self._collect_value_references(run.execution_state, references)
@@ -2174,7 +2174,7 @@ class WknWorkflowRuntime:
         run = self.workflow_store.get_run(run_id)
         if run.status is not WorkflowStatus.COMPLETED:
             raise ValueError("only a completed workflow run can produce an evolution proposal")
-        ledger = self.provenance_store.load_ledger(run_id=run.run_id, task_id=run.task_id)
+        ledger = self.provenance_store.load_ledger(run_id=run.run_id, mission_id=run.mission_id)
         return self.evolution_service.propose_from_run(
             run,
             provenance_events=ledger.trace_events(),
@@ -2214,7 +2214,7 @@ class WknWorkflowRuntime:
             source=source,
         )
 
-    async def apply_review(self, decision: ReviewDecision) -> WorkflowRun:
+    async def apply_review(self, decision: ReviewDecision) -> RuntimeRunRecord:
         """在运行锁内校验并应用审核决定；过期、冲突或终态运行抛出 ``ReviewConflictError``。"""
         initial_run = self.workflow_store.get_run(decision.run_id)
         if self._normalize_runtime_engine(initial_run.runtime_engine) == "acg":
@@ -2255,7 +2255,7 @@ class WknWorkflowRuntime:
     async def apply_graph_patch(self, patch: GraphPatch) -> GraphPatchResult:
         """Apply one audited graph revision at a persisted review barrier.
 
-        Patch bodies live in ``ExecutionValueStore``; WorkflowRun and the
+        Patch bodies live in ``ExecutionValueStore``; RuntimeRunRecord and the
         checkpoint retain only the resulting revision and patch reference.
         Running or terminal graphs are never mutated in place.
         """
@@ -2277,7 +2277,7 @@ class WknWorkflowRuntime:
             if checkpoint_data is None:
                 raise ValueError("graph patch requires a persisted checkpoint")
             state = ACGExecutionState.model_validate(checkpoint_data)
-            blueprint = WknBlueprintSpec.model_validate(run.acg_blueprint)
+            blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
             outcome = GraphPatchService().apply(
                 blueprint,
                 patch,
@@ -2312,7 +2312,7 @@ class WknWorkflowRuntime:
                     ),
                 )
 
-            task = self.task_manager.get_task(run.task_id)
+            task = self.mission_manager.get_mission(run.mission_id)
             workflow = self._workflow_for_run(run)
             scope = run.execution_scope
             if scope is None:
@@ -2328,7 +2328,7 @@ class WknWorkflowRuntime:
                 )
             old_step_ids = {step.step_id for step in run.steps}
             raw_plan = run.execution_state.get("taskPlan")
-            raw_bindings = run.execution_state.get("taskNodeBindings")
+            raw_bindings = run.execution_state.get("taskBindings")
             if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
                 raise ValueError("graph patch requires persisted Planner identity data")
             current_plan = TaskPlan.model_validate(raw_plan)
@@ -2347,21 +2347,21 @@ class WknWorkflowRuntime:
                 )
             if not semantic_execution_change and (
                 patch.task_plan_patch is not None
-                or patch.task_node_binding_patch is not None
+                or patch.task_binding_patch is not None
             ):
                 raise ValueError(
-                    "pure control Graph Patch cannot change TaskPlan or TaskNode bindings"
+                    "pure control Graph Patch cannot change TaskPlan or SemanticTask bindings"
                 )
             if patch.task_plan_patch is not None:
                 next_plan = apply_task_plan_patch(current_plan, patch.task_plan_patch)
             else:
                 next_plan = current_plan
-            binding_patch = patch.task_node_binding_patch
+            binding_patch = patch.task_binding_patch
             added_step_ids = active_new_step_ids - active_old_step_ids
             if added_step_ids and binding_patch is None:
-                raise ValueError("new executable Graph Patch nodes require TaskNodeBindingPatch")
+                raise ValueError("new executable Graph Patch nodes require TaskBindingPatch")
             base_bindings = tuple(
-                TaskNodeImplementationBinding.model_validate(item)
+                TaskImplementationBinding.model_validate(item)
                 for item in raw_bindings
             )
             removed_plan_keys = (
@@ -2389,7 +2389,7 @@ class WknWorkflowRuntime:
                 )
 
             new_run_id = (
-                self.identity_lifecycle.new_run_id(task.task_id)
+                self.identity_lifecycle.new_run_id(task.mission_id)
             )
             new_payload = run.model_dump(by_alias=True, mode="json")
             new_payload.update({
@@ -2410,7 +2410,7 @@ class WknWorkflowRuntime:
                 "createdAt": utc_now().isoformat(),
                 "updatedAt": utc_now().isoformat(),
             })
-            new_run = WorkflowRun.model_validate(new_payload)
+            new_run = RuntimeRunRecord.model_validate(new_payload)
             self._sync_run_steps_to_acg(new_run, outcome.blueprint)
             for agent in self.agent_registry.all():
                 self.resource_directory.register_agent(agent.profile)
@@ -2466,7 +2466,7 @@ class WknWorkflowRuntime:
                 "graphVersion": outcome.blueprint.version,
                 "taskPlanVersion": next_plan.plan_version,
                 "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
-                "taskNodeBindings": [
+                "taskBindings": [
                     item.model_dump(by_alias=True, mode="json") for item in next_bindings
                 ],
                 "parentRunId": run.run_id,
@@ -2514,7 +2514,7 @@ class WknWorkflowRuntime:
                     "eventType": "graph.patch.prepared",
                     "aggregateId": run.run_id,
                     "payload": {
-                        "taskId": task.task_id,
+                        "missionId": task.mission_id,
                         "oldRunId": run.run_id,
                         "newRunId": new_run.run_id,
                         "workflowId": new_run.workflow_id,
@@ -2523,7 +2523,7 @@ class WknWorkflowRuntime:
                             by_alias=True, mode="json"
                         ),
                         "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
-                        "taskNodeBindings": [
+                        "taskBindings": [
                             item.model_dump(by_alias=True, mode="json")
                             for item in next_bindings
                         ],
@@ -2617,7 +2617,7 @@ class WknWorkflowRuntime:
             self.workflow_store.save_run(run)
             return selected.agent_id
 
-    async def _apply_acg_review(self, decision: ReviewDecision) -> WorkflowRun:
+    async def _apply_acg_review(self, decision: ReviewDecision) -> RuntimeRunRecord:
         """校验审核决定并从同一 run 的 SQLite 检查点恢复融合 ACG。"""
         async with self.run_lock_manager.lock_for(decision.run_id):
             run = self.workflow_store.get_run(decision.run_id)
@@ -2658,7 +2658,7 @@ class WknWorkflowRuntime:
                     },
                 )
                 run = self._set_run_lifecycle(run, status=WorkflowStatus.FAILED, phase=WorkflowProgressPhase.FAILED)
-                self.task_manager.mark_failed(run.task_id)
+                self.mission_manager.mark_failed(run.mission_id)
                 self.workflow_store.save_run(run)
                 return run
             self._commit_deferred_memory(run=run, step=step, state=restored)
@@ -2690,7 +2690,7 @@ class WknWorkflowRuntime:
     def _commit_deferred_memory(
         self,
         *,
-        run: WorkflowRun,
+        run: RuntimeRunRecord,
         step: WorkflowStep,
         state: ACGExecutionState,
     ) -> None:
@@ -2768,7 +2768,7 @@ class WknWorkflowRuntime:
         )
 
     @staticmethod
-    def _find_review_operation(run: WorkflowRun, operation_id: str | None) -> dict | None:
+    def _find_review_operation(run: RuntimeRunRecord, operation_id: str | None) -> dict | None:
         if not operation_id:
             return None
         for event in run.trace:
@@ -2779,7 +2779,7 @@ class WknWorkflowRuntime:
                 return payload
         return None
 
-    async def resume_from_checkpoint(self, *, run_id: str, checkpoint_id: str) -> WorkflowRun:
+    async def resume_from_checkpoint(self, *, run_id: str, checkpoint_id: str) -> RuntimeRunRecord:
         """从同版本检查点恢复 ACG 运行；范围、图或工作流版本不匹配时明确拒绝。"""
         initial_run = self.workflow_store.get_run(run_id)
         if self._normalize_runtime_engine(initial_run.runtime_engine) == "acg":
@@ -2794,13 +2794,13 @@ class WknWorkflowRuntime:
             )
         raise ValueError("Checkpoint resume is only available for the ACG execution engine")
 
-    def cancel(self, run_id: str) -> WorkflowRun:
+    def cancel(self, run_id: str) -> RuntimeRunRecord:
         """在运行锁内取消可继续步骤并持久化终态；已终态的迁移规则由状态机校验。"""
         with self.run_lock_manager.lock_for(run_id):
             latest = self.workflow_store.get_run(run_id)
             run = latest.model_copy(deep=True)
             self._transition_run(run, WorkflowStatus.CANCELLED)
-            self.task_manager.mark_cancelled(run.task_id)
+            self.mission_manager.mark_cancelled(run.mission_id)
             self.trace_store.append(
                 run=run,
                 event_type=TraceEventType.RUN_CANCELLED,
@@ -2816,18 +2816,18 @@ class WknWorkflowRuntime:
 
     def _resolve_workflow(
         self,
-        task: AgentTask,
+        task: RuntimeMissionRecord,
         workflow_id: Optional[str],
         *,
         allowed_workflow_ids: tuple[str, ...] | None = None,
     ) -> WorkflowDefinition:
-        return self.task_manager.bind_workflow(
+        return self.mission_manager.bind_workflow(
             task,
             workflow_id=workflow_id,
             allowed_workflow_ids=allowed_workflow_ids,
         )
 
-    def _planning_engine_for_run(self, run: WorkflowRun):
+    def _planning_engine_for_run(self, run: RuntimeRunRecord):
         if run.execution_scope is None:
             return self.planning_engine
         from components.planner.service import PlanningEngine
@@ -2845,7 +2845,7 @@ class WknWorkflowRuntime:
             intent_llm=self._intent_llm,
         )
 
-    def _workflow_for_run(self, run: WorkflowRun) -> WorkflowDefinition:
+    def _workflow_for_run(self, run: RuntimeRunRecord) -> WorkflowDefinition:
         if run.execution_scope is None:
             if run.legacy_plugin_scope:
                 raise PluginScopeError(
@@ -2885,8 +2885,8 @@ class WknWorkflowRuntime:
 
     def _mark_step_failed(
         self,
-        run: WorkflowRun,
-        task: AgentTask,
+        run: RuntimeRunRecord,
+        task: RuntimeMissionRecord,
         step: WorkflowStep,
         exc: Exception,
     ) -> None:
@@ -2895,11 +2895,11 @@ class WknWorkflowRuntime:
             step.retry_count += 1
             self._transition_step(step, StepStatus.RETRYING)
             self._transition_run(run, WorkflowStatus.RETRYING)
-            self.task_manager.mark_retrying(task)
+            self.mission_manager.mark_retrying(task)
         else:
             self._transition_step(step, StepStatus.FAILED)
             self._transition_run(run, WorkflowStatus.FAILED)
-            self.task_manager.mark_failed(task)
+            self.mission_manager.mark_failed(task)
         run.current_step_id = step.step_id
         run.error = str(exc)
         run.updated_at = utc_now()
@@ -2918,13 +2918,13 @@ class WknWorkflowRuntime:
         )
         self.workflow_store.save_run(run)
 
-    def _transition_run(self, run: WorkflowRun, status: WorkflowStatus) -> None:
+    def _transition_run(self, run: RuntimeRunRecord, status: WorkflowStatus) -> None:
         try:
             persisted = self.workflow_store.get_run(run.run_id)
         except KeyError:
             persisted = run
         if persisted.status in _TERMINAL_RUN_STATUSES and persisted.status != run.status:
-            for field_name in WorkflowRun.model_fields:
+            for field_name in RuntimeRunRecord.model_fields:
                 setattr(run, field_name, deepcopy(getattr(persisted, field_name)))
             return
         run.status = self.state_machine.transition(run.status, status)
@@ -2957,7 +2957,7 @@ class WknWorkflowRuntime:
             step.completed_at = step.completed_at or utc_now()
 
 
-def build_default_runtime() -> WknWorkflowRuntime:
+def build_default_runtime() -> ExecutionRuntime:
     """按环境变量装配默认运行时并登记原生与已安装插件；缺少数据库路径时抛出错误。"""
     agent_registry = AgentRegistry()
     workflow_registry = WorkflowRegistry()
@@ -2968,7 +2968,7 @@ def build_default_runtime() -> WknWorkflowRuntime:
         raise RuntimeError("Workflow database path is required outside test mode.")
     workflow_store = SQLiteWorkflowStore(db_path)
 
-    runtime = WknWorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agent_registry,
         workflow_registry=workflow_registry,
         workflow_store=workflow_store,
@@ -2985,8 +2985,8 @@ def build_default_runtime() -> WknWorkflowRuntime:
     return runtime
 
 
-# 兼容既有 API 与第三方导入；新代码使用 WknWorkflowRuntime 明确唯一执行内核。
-WorkflowRuntime = WknWorkflowRuntime
+# 兼容既有 API 与第三方导入；新代码使用 ExecutionRuntime 明确唯一执行内核。
+RuntimeRunRecordtime = ExecutionRuntime
 
 
-__all__ = ["WknWorkflowRuntime", "WorkflowRuntime", "build_default_runtime"]
+__all__ = ["ExecutionRuntime", "RuntimeRunRecordtime", "build_default_runtime"]

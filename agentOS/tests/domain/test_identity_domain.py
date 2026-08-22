@@ -7,26 +7,26 @@ from domain.models import (
     Attempt,
     IdentityOwnership,
     RunStatus,
-    TaskNode,
-    UserTask,
+    SemanticTask,
+    Mission,
     WorkflowRun,
 )
 
 
-def test_user_task_can_own_multiple_workflow_runs() -> None:
-    task = UserTask(userId="user-1", goal="审查软件开发合同")
+def test_mission_can_own_multiple_workflow_runs() -> None:
+    task = Mission(userId="user-1", goal="审查软件开发合同")
     blueprint = AcgBlueprint(
-        taskId=task.task_id,
+        missionId=task.mission_id,
         graphId="acg_runtime_graph_1",
         graph={"nodes": [], "edges": []},
     )
     failed = WorkflowRun(
-        taskId=task.task_id,
+        missionId=task.mission_id,
         blueprintId=blueprint.blueprint_id,
         status=RunStatus.FAILED,
     )
     succeeded = WorkflowRun(
-        taskId=task.task_id,
+        missionId=task.mission_id,
         blueprintId=blueprint.blueprint_id,
         status=RunStatus.SUCCEEDED,
     )
@@ -43,62 +43,62 @@ def test_user_task_can_own_multiple_workflow_runs() -> None:
     }
 
 
-def test_task_node_is_distinct_from_runtime_graph_node() -> None:
-    task = UserTask(userId="user-1", goal="合同审查")
-    node = TaskNode(
-        taskId=task.task_id,
+def test_semantic_task_is_distinct_from_runtime_graph_node() -> None:
+    task = Mission(userId="user-1", goal="合同审查")
+    node = SemanticTask(
+        missionId=task.mission_id,
         title="识别风险",
         objective="识别所有高风险合同条款",
         metadata={"acgNodeRef": "risk_detect"},
     )
 
-    assert node.node_id.startswith("node_")
-    assert node.metadata["acgNodeRef"] != node.node_id
+    assert node.task_id.startswith("task_")
+    assert node.metadata["acgNodeRef"] != node.task_id
 
 
 def test_different_tasks_cannot_share_a_run_id() -> None:
-    task_one = UserTask(userId="user-1", goal="目标一")
-    task_two = UserTask(userId="user-2", goal="目标二")
+    task_one = Mission(userId="user-1", goal="目标一")
+    task_two = Mission(userId="user-2", goal="目标二")
     blueprint_id = "blueprint_0123456789ab"
     shared_run_id = "run_0123456789ab"
     first = WorkflowRun(
         runId=shared_run_id,
-        taskId=task_one.task_id,
+        missionId=task_one.mission_id,
         blueprintId=blueprint_id,
     )
     second = WorkflowRun(
         runId=shared_run_id,
-        taskId=task_two.task_id,
+        missionId=task_two.mission_id,
         blueprintId=blueprint_id,
     )
     ownership = IdentityOwnership()
     ownership.bind_run(first)
 
-    with pytest.raises(ValueError, match="different taskIds"):
+    with pytest.raises(ValueError, match="different missionIds"):
         ownership.bind_run(second)
 
 
 def test_different_runs_cannot_share_an_attempt_id() -> None:
-    task = UserTask(userId="user-1", goal="目标")
+    task = Mission(userId="user-1", goal="目标")
     blueprint = AcgBlueprint(
-        taskId=task.task_id,
+        missionId=task.mission_id,
         graphId="acg_runtime_graph_1",
         graph={"nodes": [], "edges": []},
     )
-    run_one = WorkflowRun(taskId=task.task_id, blueprintId=blueprint.blueprint_id)
-    run_two = WorkflowRun(taskId=task.task_id, blueprintId=blueprint.blueprint_id)
-    node = TaskNode(taskId=task.task_id, title="节点", objective="完成节点")
+    run_one = WorkflowRun(missionId=task.mission_id, blueprintId=blueprint.blueprint_id)
+    run_two = WorkflowRun(missionId=task.mission_id, blueprintId=blueprint.blueprint_id)
+    node = SemanticTask(missionId=task.mission_id, title="节点", objective="完成节点")
     shared_attempt_id = "attempt_0123456789ab"
     first = Attempt(
         attemptId=shared_attempt_id,
         runId=run_one.run_id,
-        nodeId=node.node_id,
+        taskId=node.task_id,
         attemptNumber=1,
     )
     second = Attempt(
         attemptId=shared_attempt_id,
         runId=run_two.run_id,
-        nodeId=node.node_id,
+        taskId=node.task_id,
         attemptNumber=1,
     )
     ownership = IdentityOwnership()
@@ -109,15 +109,15 @@ def test_different_runs_cannot_share_an_attempt_id() -> None:
 
 
 def test_run_task_must_match_registered_blueprint_task() -> None:
-    task_one = UserTask(userId="user-1", goal="目标一")
-    task_two = UserTask(userId="user-2", goal="目标二")
+    task_one = Mission(userId="user-1", goal="目标一")
+    task_two = Mission(userId="user-2", goal="目标二")
     blueprint = AcgBlueprint(
-        taskId=task_one.task_id,
+        missionId=task_one.mission_id,
         graphId="acg_runtime_graph_1",
         graph={"nodes": [], "edges": []},
     )
     wrong_run = WorkflowRun(
-        taskId=task_two.task_id,
+        missionId=task_two.mission_id,
         blueprintId=blueprint.blueprint_id,
     )
     ownership = IdentityOwnership()

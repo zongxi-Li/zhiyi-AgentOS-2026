@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Generic, Sequence, TypeVar
 
-from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 
 
 T = TypeVar("T")
@@ -30,15 +30,15 @@ class WorkflowStorePage(Generic[T]):
 
 
 @dataclass(frozen=True)
-class WorkflowRunDeleteResult:
-    """删除一次运行及其孤立父任务后的结果；``task_deleted`` 明确是否发生级联删除。"""
+class RuntimeRunRecordDeleteResult:
+    """删除一次运行及其孤立父任务后的结果；``mission_deleted`` 明确是否发生级联删除。"""
 
     run_id: str
-    task_id: str
-    task_deleted: bool
+    mission_id: str
+    mission_deleted: bool
 
 
-class WorkflowRunNotTerminalError(ValueError):
+class RuntimeRunRecordNotTerminalError(ValueError):
     """在运行未到终态时请求物理删除所抛出的错误，携带运行标识与当前状态。"""
 
     def __init__(self, run_id: str, status: WorkflowStatus):
@@ -110,12 +110,12 @@ _SAFE_EXECUTION_STATE_KEYS = {
 }
 
 
-def lifecycle_run_payload(run: WorkflowRun) -> dict[str, Any]:
+def lifecycle_run_payload(run: RuntimeRunRecord) -> dict[str, Any]:
     """Build the reference-only Run fact admitted to the lifecycle Outbox.
 
     Blueprint and Planner snapshots are control-plane definitions needed to
     reconstruct Identity after a crash. Runtime input/output bodies, step
-    payloads, checkpoints and trace bodies deliberately stay in WKN.
+    payloads, checkpoints and trace bodies deliberately stay in Execution Runtime.
     """
     execution_state = dict(run.execution_state or {})
     safe_state = {
@@ -123,12 +123,12 @@ def lifecycle_run_payload(run: WorkflowRun) -> dict[str, Any]:
         for key in _SAFE_EXECUTION_STATE_KEYS
         if execution_state.get(key) is not None
     }
-    for key in ("taskPlan", "taskNodeBindings"):
+    for key in ("taskPlan", "taskBindings"):
         if execution_state.get(key) is not None:
             safe_state[key] = execution_state[key]
     return {
         "runId": run.run_id,
-        "taskId": run.task_id,
+        "missionId": run.mission_id,
         "workflowId": run.workflow_id,
         "status": run.status.value,
         "lifecyclePhase": (
@@ -143,35 +143,35 @@ def lifecycle_run_payload(run: WorkflowRun) -> dict[str, Any]:
 
 
 class WorkflowStore(ABC):
-    """AgentTask 和 WorkflowRun 状态的持久化边界。"""
+    """RuntimeMissionRecord 和 RuntimeRunRecord 状态的持久化边界。"""
 
     @abstractmethod
-    def save_task(self, task: AgentTask) -> None:
+    def save_mission(self, task: RuntimeMissionRecord) -> None:
         """持久化任务；实现应定义覆盖和并发语义。"""
         raise NotImplementedError
 
     @abstractmethod
-    def get_task(self, task_id: str) -> AgentTask:
+    def get_mission(self, mission_id: str) -> RuntimeMissionRecord:
         """按标识读取任务；不存在时应抛出 ``KeyError``。"""
         raise NotImplementedError
 
     @abstractmethod
-    def save_run(self, run: WorkflowRun) -> None:
+    def save_run(self, run: RuntimeRunRecord) -> None:
         """持久化运行；实现必须维护终态不可被旧快照覆盖的不变量。"""
         raise NotImplementedError
 
     @abstractmethod
-    def get_run(self, run_id: str) -> WorkflowRun:
+    def get_run(self, run_id: str) -> RuntimeRunRecord:
         """按标识读取运行；不存在时应抛出 ``KeyError``。"""
         raise NotImplementedError
 
     @abstractmethod
-    def delete_run(self, run_id: str, *, delete_orphan_task: bool = True) -> WorkflowRunDeleteResult:
+    def delete_run(self, run_id: str, *, delete_orphan_mission: bool = True) -> RuntimeRunRecordDeleteResult:
         """删除终态运行，可选清除无其他运行引用的任务；未终态时抛出专用错误。"""
         raise NotImplementedError
 
     @abstractmethod
-    def list_tasks(
+    def list_missions(
         self,
         *,
         status: WorkflowStatus | str | None = None,
@@ -179,7 +179,7 @@ class WorkflowStore(ABC):
         source: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> WorkflowStorePage[AgentTask]:
+    ) -> WorkflowStorePage[RuntimeMissionRecord]:
         """按条件分页列出任务；返回排序、复制与并发快照策略由实现定义。"""
         raise NotImplementedError
 
@@ -191,7 +191,7 @@ class WorkflowStore(ABC):
         statuses: Sequence[WorkflowStatus | str] | None = None,
         domain: str | None = None,
         workflow_id: str | None = None,
-        task_id: str | None = None,
+        mission_id: str | None = None,
         lifecycle_phase: str | None = None,
         source: str | None = None,
         sources: Sequence[str] | None = None,
@@ -199,36 +199,36 @@ class WorkflowStore(ABC):
         owner_tenant_id: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> WorkflowStorePage[WorkflowRun]:
+    ) -> WorkflowStorePage[RuntimeRunRecord]:
         """按状态、归属和来源条件分页列出运行；筛选条件共同取交集。"""
         raise NotImplementedError
 
     @abstractmethod
-    def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[WorkflowRun, ...]:
+    def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """返回数量受限、最新优先的未完成运行快照；实现不得返回终态运行。"""
         raise NotImplementedError
 
     @abstractmethod
-    def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[WorkflowRun, ...]:
+    def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """Return an unscoped page for reconciliation, including terminal runs."""
         raise NotImplementedError
 
     @abstractmethod
-    def save_run_with_events(self, run: WorkflowRun, events: Sequence[dict]) -> None:
-        """Atomically save the WKN run snapshot and append lifecycle outbox events."""
+    def save_run_with_events(self, run: RuntimeRunRecord, events: Sequence[dict]) -> None:
+        """Atomically save the execution Run snapshot and append lifecycle Outbox events."""
         raise NotImplementedError
 
     @abstractmethod
     def save_graph_patch_transition(
         self,
-        old_run: WorkflowRun,
-        new_run: WorkflowRun,
+        old_run: RuntimeRunRecord,
+        new_run: RuntimeRunRecord,
         event: dict,
     ) -> None:
-        """Atomically supersede one WKN Run, persist its replacement, and append the patch event."""
+        """Atomically supersede one execution Run, persist its replacement, and append the patch event."""
         raise NotImplementedError
 
     @abstractmethod
-    def find_run_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
+    def find_run_by_idempotency_key(self, idempotency_key: str) -> RuntimeRunRecord | None:
         """按幂等键查找最近运行；无匹配时返回 ``None``。"""
         raise NotImplementedError

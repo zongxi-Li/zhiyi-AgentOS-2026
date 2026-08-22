@@ -12,8 +12,8 @@ from contracts.capability import (
     ModelInvocationResponse,
 )
 from contracts.workflow import WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
-from components.task_manager.store import WorkflowRegistry
-from runtime.workflow_runtime import WorkflowRuntime
+from components.mission_manager.store import WorkflowRegistry
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -99,14 +99,14 @@ def test_runtime_selects_registered_model_from_agent_profile() -> None:
             ],
         )
     )
-    runtime = WorkflowRuntime(
+    runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
         model_registry=model_registry,
     )
-    task = runtime.create_task("profile", workflow_id="profile-model")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("profile", workflow_id="profile-model")
+    _, run = runtime.prepare_run(task.mission_id)
 
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
 

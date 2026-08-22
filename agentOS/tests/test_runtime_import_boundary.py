@@ -4,9 +4,9 @@ import importlib
 
 
 def test_runtime_constructs_the_current_planning_engine() -> None:
-    from runtime.workflow_runtime import WorkflowRuntime
+    from runtime.workflow_runtime import ExecutionRuntime
 
-    runtime = WorkflowRuntime()
+    runtime = ExecutionRuntime()
 
     assert runtime.planning_engine.__class__.__name__ == "PlanningEngine"
 

@@ -1,7 +1,7 @@
 """Serializable contracts used by ACG planning.
 
 Scheduling, persistence, and recovery remain responsibilities of the single
-execution graph and ``WorkflowRuntime``; this module defines data shapes only.
+execution graph and ``ExecutionRuntime``; this module defines data shapes only.
 """
 
 from __future__ import annotations

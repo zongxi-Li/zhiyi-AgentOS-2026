@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contracts.workflow import AgentTask, WorkflowRun, WorkflowStatus
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 
 
 TERMINAL_RUN_STATUSES = frozenset(
@@ -15,8 +15,8 @@ TERMINAL_RUN_STATUSES = frozenset(
 )
 
 
-def matches_task(
-    task: AgentTask,
+def matches_mission(
+    task: RuntimeMissionRecord,
     *,
     status: str | None,
     domain: str | None,
@@ -30,13 +30,13 @@ def matches_task(
 
 
 def matches_run(
-    run: WorkflowRun,
+    run: RuntimeRunRecord,
     *,
     status: str | None,
     statuses: set[str] | None,
     domain: str | None,
     workflow_id: str | None,
-    task_id: str | None,
+    mission_id: str | None,
     lifecycle_phase: str | None,
     source: str | None,
     sources: set[str] | None,
@@ -51,7 +51,7 @@ def matches_run(
         return False
     if workflow_id is not None and run.workflow_id != workflow_id:
         return False
-    if task_id is not None and run.task_id != task_id:
+    if mission_id is not None and run.mission_id != mission_id:
         return False
     phase = run.lifecycle_phase.value if run.lifecycle_phase is not None else None
     if lifecycle_phase is not None and phase != lifecycle_phase:
@@ -69,7 +69,7 @@ def matches_run(
     return True
 
 
-def run_priority(run: WorkflowRun) -> int:
+def run_priority(run: RuntimeRunRecord) -> int:
     if run.status == WorkflowStatus.WAITING_REVIEW:
         return 2
     if run.status not in TERMINAL_RUN_STATUSES:
@@ -77,7 +77,7 @@ def run_priority(run: WorkflowRun) -> int:
     return 0
 
 
-def reject_terminal_overwrite(existing: WorkflowRun, incoming: WorkflowRun) -> bool:
+def reject_terminal_overwrite(existing: RuntimeRunRecord, incoming: RuntimeRunRecord) -> bool:
     if existing.status == WorkflowStatus.FAILED and incoming.status == WorkflowStatus.RETRYING:
         return False
     if existing.status in TERMINAL_RUN_STATUSES and incoming.status != existing.status:

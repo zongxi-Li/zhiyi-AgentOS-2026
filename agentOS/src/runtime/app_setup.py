@@ -40,7 +40,7 @@ class ModelSetup:
 class ApplicationSetup:
     """持有进程级模型适配器生命周期，不创建 Workflow Runtime。
 
-    生产装配必须注入现有 ``WorkflowRuntime.model_registry``。保留依赖容器入口是为了
+    生产装配必须注入现有 ``ExecutionRuntime.model_registry``。保留依赖容器入口是为了
     独立适配器测试，但同一实例内只允许一个 registry，避免模型路由出现双事实源。
     """
 

@@ -1,4 +1,4 @@
-"""WKN 生命周期事实投影到身份库时使用的持久化日志。"""
+"""Execution Runtime 生命周期事实投影到身份库时使用的持久化日志。"""
 
 from __future__ import annotations
 

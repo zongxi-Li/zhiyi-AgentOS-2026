@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
-from .planning import TaskNodeBindingPatch, TaskPlanPatch
+from .planning import TaskBindingPatch, TaskPlanPatch
 from .workflow import GraphRef
 
 
@@ -113,7 +113,7 @@ class GraphPatch(BaseModel):
     retire_node_ids: list[StrictStr] = Field(default_factory=list, alias="retireNodeIds")
     replace_nodes: dict[StrictStr, dict[str, Any]] = Field(default_factory=dict, alias="replaceNodes")
     task_plan_patch: TaskPlanPatch | None = Field(default=None, alias="taskPlanPatch")
-    task_node_binding_patch: TaskNodeBindingPatch | None = Field(default=None, alias="taskNodeBindingPatch")
+    task_binding_patch: TaskBindingPatch | None = Field(default=None, alias="taskNodeBindingPatch")
     reason: str = ""
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
 

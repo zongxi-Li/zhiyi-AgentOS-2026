@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from contracts.workflow import AgentTask, WorkflowDefinition, WorkflowRun, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 
 
 class AgentProfile(BaseModel):
@@ -56,8 +56,8 @@ class AgentRunContext(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    task: AgentTask
-    run: WorkflowRun
+    task: RuntimeMissionRecord
+    run: RuntimeRunRecord
     workflow: WorkflowDefinition
     step: WorkflowStep
     memory: Any

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 
-from components.task_manager.store import WorkflowRegistry
+from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
-from runtime.workflow_runtime import WorkflowRuntime
+from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -25,7 +25,7 @@ class _BoundAgent(BaseAgent):
         return AgentOutput(output={"agent": self.profile.agent_id})
 
 
-def _runtime(calls: list[str]) -> tuple[WorkflowRuntime, AgentRegistry]:
+def _runtime(calls: list[str]) -> tuple[ExecutionRuntime, AgentRegistry]:
     """建立一个按 capability 解析 Agent 的最小 ACG Runtime。"""
     agents = AgentRegistry()
     agents.register(_BoundAgent(AgentProfile(
@@ -37,7 +37,7 @@ def _runtime(calls: list[str]) -> tuple[WorkflowRuntime, AgentRegistry]:
         workflowId="resource-run", name="resource", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="analyse", name="analyse", agentName="", capability="analysis")],
     ))
-    return WorkflowRuntime(
+    return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -47,9 +47,9 @@ def _runtime(calls: list[str]) -> tuple[WorkflowRuntime, AgentRegistry]:
 def test_prepare_run_freezes_resource_bindings() -> None:
     """每个 ACG Step 必须在准备期固定对应的 agentId。"""
     runtime, _ = _runtime([])
-    task = runtime.create_task("resource", workflow_id="resource-run")
+    task = runtime.create_mission("resource", workflow_id="resource-run")
 
-    _, run = runtime.prepare_run(task.task_id)
+    _, run = runtime.prepare_run(task.mission_id)
 
     assert run.execution_state["resourceBindings"] == {"analyse": "agent-primary"}
     assert run.execution_state["bindingRequirements"] == {
@@ -79,8 +79,8 @@ def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> Non
     """准备后新增更高优先级 Agent 不能改变已准备运行的执行绑定。"""
     calls: list[str] = []
     runtime, agents = _runtime(calls)
-    task = runtime.create_task("resource", workflow_id="resource-run")
-    _, run = runtime.prepare_run(task.task_id)
+    task = runtime.create_mission("resource", workflow_id="resource-run")
+    _, run = runtime.prepare_run(task.mission_id)
     agents.register(_BoundAgent(AgentProfile(
         agentId="agent-new", agentName="new", domain="general",
         capabilities=["analysis"], bindingPriority=99,
@@ -95,8 +95,8 @@ def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> Non
 
 def test_approved_evolution_version_only_changes_future_general_runs() -> None:
     runtime, _ = _runtime([])
-    old_task = runtime.create_task("old", workflow_id="resource-run")
-    _, old_run = runtime.prepare_run(old_task.task_id)
+    old_task = runtime.create_mission("old", workflow_id="resource-run")
+    _, old_run = runtime.prepare_run(old_task.mission_id)
     proposal = runtime.evolution_service.propose(
         [
             Trajectory(
@@ -110,8 +110,8 @@ def test_approved_evolution_version_only_changes_future_general_runs() -> None:
     )
     assert proposal is not None
     runtime.evolution_service.approve(proposal, approved_by="reviewer")
-    new_task = runtime.create_task("new", workflow_id="resource-run")
-    _, new_run = runtime.prepare_run(new_task.task_id)
+    new_task = runtime.create_mission("new", workflow_id="resource-run")
+    _, new_run = runtime.prepare_run(new_task.mission_id)
 
     assert old_run.execution_state["evolutionPolicyVersion"] == 0
     assert new_run.execution_state["evolutionPolicyVersion"] == 1

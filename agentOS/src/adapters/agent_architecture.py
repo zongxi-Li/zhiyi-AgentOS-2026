@@ -122,7 +122,7 @@ class FrameworkAgent(BaseAgent):
         evidence_refs = getattr(pack, "evidence_refs", []) if pack is not None else []
         return {
             "task": {
-                "taskId": context.task.task_id,
+                "missionId": context.task.mission_id,
                 "intent": context.task.intent,
                 "input": dict(context.task.input),
             },
