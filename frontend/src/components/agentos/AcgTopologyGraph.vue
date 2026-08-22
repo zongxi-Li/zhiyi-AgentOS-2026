@@ -8,53 +8,57 @@
       </div>
       <div class="head-right">
         <span class="meta" v-if="hasData">{{ stats }}</span>
-        <button v-if="hasData" class="action-btn" type="button" @click="resetView()" title="复位视图" aria-label="复位拓扑视图">
-          <el-icon><RefreshRight /></el-icon>
-        </button>
-        <button
-          v-if="hasData && fullscreenSupported"
-          class="action-btn"
-          :class="{ active: isFullscreen }"
-          type="button"
-          :title="isFullscreen ? '退出全屏' : '全屏显示'"
-          :aria-label="isFullscreen ? '退出全屏显示' : '全屏显示拓扑'"
-          @click="toggleFullscreen"
-        >
-          <el-icon><Close v-if="isFullscreen" /><FullScreen v-else /></el-icon>
-        </button>
-        <button
-          v-if="collapsible"
-          class="action-btn"
-          type="button"
-          aria-label="收起 ACG 拓扑"
-          title="收起 ACG 拓扑"
-          @click="emit('collapse')"
-        >
-          <el-icon><ArrowDownBold /></el-icon>
-        </button>
+        <div class="action-group">
+          <button v-if="hasData" class="action-btn" type="button" @click="resetView()" title="复位视图" aria-label="复位拓扑视图">
+            <el-icon><RefreshRight /></el-icon>
+          </button>
+          <button
+            v-if="hasData && fullscreenSupported"
+            class="action-btn"
+            :class="{ active: isFullscreen }"
+            type="button"
+            :title="isFullscreen ? '退出全屏' : '全屏显示'"
+            :aria-label="isFullscreen ? '退出全屏显示' : '全屏显示拓扑'"
+            @click="toggleFullscreen"
+          >
+            <el-icon><Close v-if="isFullscreen" /><FullScreen v-else /></el-icon>
+          </button>
+          <button
+            v-if="collapsible"
+            class="action-btn"
+            type="button"
+            aria-label="收起 ACG 拓扑"
+            title="收起 ACG 拓扑"
+            @click="emit('collapse')"
+          >
+            <el-icon><ArrowDownBold /></el-icon>
+          </button>
+        </div>
       </div>
     </header>
 
-    <div v-if="hasData" class="graph-toolbar">
-      <div class="view-mode" aria-label="拓扑视图模式">
-        <button type="button" :class="{ active: !focusMainPath }" @click="setFocusMainPath(false)">全图</button>
-        <button type="button" :class="{ active: focusMainPath }" @click="setFocusMainPath(true)">
-          <el-icon><Aim /></el-icon>
-          主执行链
-        </button>
-      </div>
-      <div v-if="!focusMainPath" class="edge-filters" aria-label="边类型筛选">
-        <label v-for="item in EDGE_TYPES" :key="item.value" :class="{ checked: selectedEdgeTypes.includes(item.value) }">
-          <input v-model="selectedEdgeTypes" type="checkbox" :value="item.value" />
-          <i :style="{ backgroundColor: edgeColor(item.value) }" />
-          {{ item.label }}
-        </label>
-      </div>
-    </div>
-
     <div v-if="!hasData" class="empty">暂无 ACG 拓扑数据，请先运行一个 ACG 引擎工作流</div>
     <div v-else class="graph-stage" :class="{ 'has-detail': selectedNode }">
+      <div class="graph-toolbar" aria-label="拓扑分析视图">
+        <div class="view-mode">
+          <button type="button" :class="{ active: viewMode === 'main' }" @click="setViewMode('main')">主执行链</button>
+          <button type="button" :class="{ active: viewMode === 'full' }" @click="setViewMode('full')">完整拓扑</button>
+          <button type="button" :class="{ active: viewMode === 'exceptions' }" @click="setViewMode('exceptions')">异常路径</button>
+          <button type="button" :class="{ active: viewMode === 'dataflow' }" @click="setViewMode('dataflow')">数据流</button>
+        </div>
+        <div class="filter-menu">
+          <button type="button" class="filter-trigger" :class="{ active: filtersExpanded }" @click="filtersExpanded = !filtersExpanded">关系筛选</button>
+          <div v-if="filtersExpanded" class="edge-filters" aria-label="边类型筛选">
+            <label v-for="item in EDGE_TYPES" :key="item.value" :class="{ checked: selectedEdgeTypes.includes(item.value) }">
+              <input v-model="selectedEdgeTypes" type="checkbox" :value="item.value" />
+              <i :style="{ backgroundColor: edgeColor(item.value) }" />
+              {{ item.label }}
+            </label>
+          </div>
+        </div>
+      </div>
       <div ref="graphRef" class="graph-canvas" />
+      <p v-if="viewHint" class="view-hint">{{ viewHint }}</p>
       <aside v-if="selectedNode" class="node-detail" aria-label="节点详情">
         <header>
           <div>
@@ -139,29 +143,48 @@
           </button>
         </div>
       </aside>
-    </div>
-
-    <div v-if="hasData" class="legend">
-      <span class="legend-item"><i class="dot step"></i>步骤</span>
-      <span class="legend-item"><i class="dot agent"></i>智能体</span>
-      <span class="legend-item"><i class="dot skill"></i>技能</span>
-      <span class="legend-item"><i class="dot memory"></i>记忆</span>
-      <span class="legend-item"><i class="dot evidence"></i>证据</span>
-      <span class="legend-item"><i class="dot control"></i>控制</span>
-      <span class="legend-item"><i class="ring done"></i>已完成</span>
-      <span class="legend-item"><i class="ring running"></i>执行中</span>
-      <span class="legend-item"><i class="ring waiting"></i>待审核/重试</span>
-      <span class="legend-item"><i class="ring failed"></i>失败</span>
-      <span class="legend-item"><b class="badge runtime">+</b>运行时新增</span>
-      <span class="legend-item"><b class="badge binding">⇄</b>切换 Binding</span>
-      <span class="legend-item"><b class="badge skipped">Skipped</b>条件跳过</span>
+      <div class="legend" :class="{ expanded: legendExpanded }">
+        <button type="button" class="legend-toggle" :aria-expanded="legendExpanded" @click="legendExpanded = !legendExpanded">
+          <span>{{ legendExpanded ? '收起图例' : '图例' }}</span>
+          <b aria-hidden="true">{{ legendExpanded ? '−' : '+' }}</b>
+        </button>
+        <template v-if="legendExpanded">
+          <div class="legend-group">
+            <span class="legend-label">节点类型</span>
+            <span class="legend-item"><i class="dot step"></i>步骤</span>
+            <span class="legend-item"><i class="dot agent"></i>智能体</span>
+            <span class="legend-item"><i class="dot skill"></i>技能</span>
+            <span class="legend-item"><i class="dot memory"></i>记忆</span>
+            <span class="legend-item"><i class="dot evidence"></i>证据</span>
+            <span class="legend-item"><i class="dot control"></i>控制</span>
+          </div>
+          <div class="legend-group">
+            <span class="legend-label">运行状态</span>
+            <span class="legend-item"><i class="ring done"></i>已完成</span>
+            <span class="legend-item"><i class="ring running"></i>执行中</span>
+            <span class="legend-item"><i class="ring waiting"></i>待审核/重试</span>
+            <span class="legend-item"><i class="ring failed"></i>失败</span>
+          </div>
+          <div class="legend-group legend-group--notes">
+            <span class="legend-label">运行注记</span>
+            <span class="legend-item"><b class="badge runtime">+</b>运行时新增</span>
+            <span class="legend-item"><b class="badge binding">⇄</b>切换 Binding</span>
+            <span class="legend-item"><b class="badge skipped">Skipped</b>条件跳过</span>
+          </div>
+        </template>
+      </div>
+      <div class="canvas-controls" aria-label="画布控制">
+        <button type="button" title="缩小" aria-label="缩小拓扑" @click="zoomGraph(0.86)"><el-icon><Minus /></el-icon></button>
+        <button type="button" title="适应画布" aria-label="适应画布" @click="resetView()"><el-icon><Aim /></el-icon></button>
+        <button type="button" title="放大" aria-label="放大拓扑" @click="zoomGraph(1.16)"><el-icon><Plus /></el-icon></button>
+      </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Aim, ArrowDownBold, Close, FullScreen, RefreshRight, Share } from '@element-plus/icons-vue'
+import { Aim, ArrowDownBold, Close, FullScreen, Minus, Plus, RefreshRight, Share } from '@element-plus/icons-vue'
 import { DataSet } from 'vis-data'
 import { Network } from 'vis-network'
 import type { AcgBlueprint, AcgNode, AcgEdge, AcgStepState } from '@/services/api/agentos'
@@ -182,7 +205,11 @@ const emit = defineEmits<{
 const graphRef = ref<HTMLElement | null>(null)
 const sectionRef = ref<HTMLElement | null>(null)
 const selectedNodeId = ref('')
-const focusMainPath = ref(false)
+type GraphViewMode = 'main' | 'full' | 'exceptions' | 'dataflow'
+const viewMode = ref<GraphViewMode>('main')
+const focusMainPath = computed(() => viewMode.value === 'main')
+const filtersExpanded = ref(false)
+const legendExpanded = ref(false)
 const isFullscreen = ref(false)
 const fullscreenSupported = typeof document !== 'undefined' && typeof document.documentElement.requestFullscreen === 'function'
 let network: Network | null = null
@@ -196,7 +223,9 @@ let pendingViewState: { position: { x: number; y: number }; scale: number } | nu
 
 const ENDPOINT_MIN_GAP = 190
 const ENDPOINT_MAX_GAP = 280
-const SAFE_VIEW_SCALE = 0.86
+// vis-network.fit() already keeps the full graph inside the canvas. Retain only
+// a slight optical inset so the topology reads as the primary canvas content.
+const SAFE_VIEW_SCALE = 0.98
 
 const EDGE_TYPES: Array<{ value: AcgEdge['edgeType']; label: string }> = [
   { value: 'dependency', label: '依赖' },
@@ -227,7 +256,7 @@ const renderableBlueprint = computed<AcgBlueprint | null>(() => {
 const visibleBlueprint = computed<AcgBlueprint | null>(() => {
   const blueprint = renderableBlueprint.value
   if (!blueprint) return null
-  if (focusMainPath.value) {
+  if (viewMode.value === 'main') {
     const nodes = blueprint.nodes.filter(node => node.nodeType === 'step' || node.nodeType === 'control')
     const nodeIds = new Set(nodes.map(node => node.nodeId))
     const edges = blueprint.edges.filter(edge =>
@@ -238,12 +267,39 @@ const visibleBlueprint = computed<AcgBlueprint | null>(() => {
     return { ...blueprint, nodes, edges }
   }
 
+  if (viewMode.value === 'exceptions') {
+    const abnormalStatuses = new Set(['failed', 'waiting_review', 'retrying', 'cancelled'])
+    const abnormalIds = new Set(
+      (props.stepStates || [])
+        .filter(state => abnormalStatuses.has(String(state.status || '')) || Boolean(state.errorSummary))
+        .map(state => state.stepId)
+    )
+    const edges = blueprint.edges.filter(edge => abnormalIds.has(edge.sourceId) || abnormalIds.has(edge.targetId))
+    const nodeIds = new Set([...abnormalIds, ...edges.flatMap(edge => [edge.sourceId, edge.targetId])])
+    const nodes = blueprint.nodes.filter(node => nodeIds.has(node.nodeId))
+    return { ...blueprint, nodes, edges }
+  }
+
+  if (viewMode.value === 'dataflow') {
+    const dataEdgeTypes = new Set<AcgEdge['edgeType']>(['communication', 'write', 'read', 'support'])
+    const edges = blueprint.edges.filter(edge => dataEdgeTypes.has(edge.edgeType))
+    const nodeIds = new Set(edges.flatMap(edge => [edge.sourceId, edge.targetId]))
+    const nodes = blueprint.nodes.filter(node => nodeIds.has(node.nodeId))
+    return { ...blueprint, nodes, edges }
+  }
+
   const selected = new Set(selectedEdgeTypes.value)
   const edges = blueprint.edges.filter(edge => selected.has(edge.edgeType))
   if (selected.size === EDGE_TYPES.length) return blueprint
   const connectedNodeIds = new Set(edges.flatMap(edge => [edge.sourceId, edge.targetId]))
   const nodes = blueprint.nodes.filter(node => node.nodeType === 'step' || connectedNodeIds.has(node.nodeId))
   return { ...blueprint, nodes, edges }
+})
+
+const viewHint = computed(() => {
+  if (viewMode.value === 'exceptions' && !visibleBlueprint.value?.nodes.length) return '当前运行没有异常路径'
+  if (viewMode.value === 'dataflow' && !visibleBlueprint.value?.edges.length) return '当前运行没有可展示的数据流关系'
+  return ''
 })
 
 const selectedNode = computed(() =>
@@ -370,6 +426,14 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
   const info = '#4d7fdf'
   const warning = '#a97626'
   const danger = '#c94e54'
+  const selectedId = selectedNodeId.value
+  const relatedNodeIds = new Set<string>(selectedId ? [selectedId] : [])
+  if (selectedId) {
+    for (const edge of visibleBlueprint.value?.edges || []) {
+      if (edge.sourceId === selectedId) relatedNodeIds.add(edge.targetId)
+      if (edge.targetId === selectedId) relatedNodeIds.add(edge.sourceId)
+    }
+  }
   return nodes.map((node) => {
     const style = NODE_STYLE[node.nodeType] || NODE_STYLE.step
     const stepState = states.get(node.nodeId)
@@ -418,7 +482,9 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
       },
       borderWidth: isEndpoint ? 3.5 : status || visual.runtimeAdded ? 2.6 : 1.8,
       borderWidthSelected: isEndpoint ? 5 : 4,
-      opacity: visual.conditionalSkipped ? 0.42 : status === 'cancelled' ? 0.58 : 1,
+      opacity: selectedId && !relatedNodeIds.has(node.nodeId)
+        ? 0.16
+        : visual.conditionalSkipped ? 0.42 : status === 'cancelled' ? 0.58 : 1,
       shadow: isEndpoint
         ? { enabled: true, color: endpointColor, size: 12, x: 0, y: 2 }
         : statusColor
@@ -452,6 +518,9 @@ const buildEdgeRows = (edges: AcgEdge[]) => {
   return edges.map((edge, index) => {
     const style = EDGE_STYLE[edge.edgeType] || EDGE_STYLE.dependency
     const activation = mapEdgeVisualState(edge.activation)
+    const relatedToSelection = !selectedNodeId.value
+      || edge.sourceId === selectedNodeId.value
+      || edge.targetId === selectedNodeId.value
     const length = ({
       dependency: 190,
       communication: 165,
@@ -472,13 +541,13 @@ const buildEdgeRows = (edges: AcgEdge[]) => {
         color: style.color,
         highlight: style.color,
         hover: style.color,
-        opacity: edgeActivationOpacity(activation)
+        opacity: edgeActivationOpacity(activation) * (relatedToSelection ? 1 : 0.1)
       },
       dashes: activation === 'inactive' ? [6, 5] : activation === 'terminated' ? [2, 6] : style.dashes,
       label: activation === 'active' ? undefined : activation.toUpperCase(),
       smooth: { enabled: true, type: 'continuous' },
       // 依赖主干边更粗更短（强弹簧），认知关联边更细
-      width: graphEdgeWidth(edge.edgeType),
+      width: graphEdgeWidth(edge.edgeType) * (selectedNodeId.value && relatedToSelection ? 1.45 : 1),
       selectionWidth: 1.4,
       hoverWidth: 0.8,
       length
@@ -558,9 +627,17 @@ const placeEndpointsSafely = () => {
 
 const fitWithSafePadding = (animation = true) => {
   if (!network) return
+  if (!visibleBlueprint.value?.nodes.length) return
   network.fit({ animation: false })
   const fittedScale = network.getScale()
-  const position = network.getViewPosition()
+  const nodeIds = visibleBlueprint.value?.nodes.map(node => node.nodeId) || []
+  const positions = Object.values(network.getPositions(nodeIds))
+  const position = positions.length
+    ? {
+        x: positions.reduce((sum, item) => sum + item.x, 0) / positions.length,
+        y: positions.reduce((sum, item) => sum + item.y, 0) / positions.length
+      }
+    : network.getViewPosition()
   network.moveTo({
     position,
     scale: fittedScale * SAFE_VIEW_SCALE,
@@ -624,11 +701,11 @@ const render = async () => {
   if (selectedNodeId.value) network.selectNodes([selectedNodeId.value])
   network.on('selectNode', params => {
     selectedNodeId.value = String(params.nodes[0] || '')
-    window.setTimeout(() => resetView(false), 140)
+    void render()
   })
   network.on('deselectNode', () => {
     selectedNodeId.value = ''
-    window.setTimeout(() => resetView(false), 140)
+    void render()
   })
 
   // 布局展开成形后，完全冻结 physics —— 节点定住不再漂移抖动。
@@ -645,6 +722,15 @@ const render = async () => {
 const resetView = (animation = true) => {
   placeEndpointsSafely()
   fitWithSafePadding(animation)
+}
+
+const zoomGraph = (factor: number) => {
+  if (!network) return
+  network.moveTo({
+    position: network.getViewPosition(),
+    scale: Math.min(2.4, Math.max(0.18, network.getScale() * factor)),
+    animation: { duration: 180, easingFunction: 'easeInOutQuad' }
+  })
 }
 
 const syncFullscreenState = () => {
@@ -679,6 +765,7 @@ const handleFullscreenEscape = (event: KeyboardEvent) => {
 const clearSelection = () => {
   selectedNodeId.value = ''
   network?.unselectAll()
+  void render()
 }
 
 const selectRelatedNode = (nodeId: string) => {
@@ -686,15 +773,25 @@ const selectRelatedNode = (nodeId: string) => {
   selectedNodeId.value = nodeId
   network?.selectNodes([nodeId])
   network?.focus(nodeId, { scale: 1.2, animation: true })
+  void render()
 }
 
-const setFocusMainPath = (value: boolean) => {
-  focusMainPath.value = value
-  clearSelection()
+const setViewMode = (mode: GraphViewMode) => {
+  if (viewMode.value === mode) return
+  viewMode.value = mode
+  filtersExpanded.value = false
+  selectedNodeId.value = ''
+  stopPhysics()
+  network?.destroy()
+  network = null
+  nodesData = null
+  edgesData = null
+  graphStructureKey = ''
+  pendingViewState = null
 }
 
 watch(
-  () => [props.blueprint, props.completedStepIds, props.stepStates, selectedEdgeTypes.value, focusMainPath.value],
+  () => [props.blueprint, props.completedStepIds, props.stepStates, selectedEdgeTypes.value, viewMode.value],
   () => render(),
   { deep: true }
 )
@@ -740,58 +837,87 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  box-sizing: border-box;
+  padding: 12px;
   overflow: hidden;
   color: var(--text-primary);
-  background: #fcfdfd;
+  background: color-mix(in srgb, var(--bg-input) 48%, var(--bg-panel));
   border-color: var(--border-light);
   box-shadow: 0 1px 3px rgba(34, 61, 52, 0.08);
 }
 .panel-head {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  margin-bottom: var(--space-sm);
+  gap: 12px;
+  position: relative;
+  min-height: 30px;
+  margin-bottom: 6px;
 }
-.head-left { display: flex; align-items: center; gap: 6px; }
+.head-left { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .head-icon { font-size: 15px; color: var(--primary-color); }
-.panel-head h4 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text-primary); }
-.head-right { display: flex; align-items: center; gap: 8px; }
-.meta { font-size: 11px; color: var(--text-secondary); font-weight: 600; }
+.panel-head h4 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-primary); }
+.head-right { position: absolute; right: 0; display: flex; align-items: center; gap: 7px; }
+.meta { padding: 4px 7px; border-radius: 5px; background: var(--bg-input); color: var(--text-secondary); font-size: 10px; font-weight: 650; white-space: nowrap; }
+.action-group { display: inline-flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-input); }
 .action-btn {
-  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  border: none; background: var(--primary-fade); color: var(--primary-color);
-  border-radius: 6px; cursor: pointer; transition: all .2s ease;
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; background: transparent; color: var(--text-secondary);
+  border-radius: 5px; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, color .16s ease;
 }
-.action-btn:hover { background: var(--primary-color); color: #fff; }
-.action-btn.active { background: var(--primary-color); color: #fff; }
+.action-btn:hover { border-color: color-mix(in srgb, var(--primary-color) 20%, var(--border-light)); background: var(--bg-panel); color: var(--primary-color); }
+.action-btn.active { border-color: var(--primary-line); background: var(--bg-panel); color: var(--primary-color); }
 .graph-toolbar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 0 0 var(--space-sm); margin-bottom: var(--space-sm);
-  border-bottom: 1px solid var(--border-light);
+  position: absolute; z-index: 5; top: 14px; left: 14px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 6px;
+  width: max-content; max-width: calc(100% - 28px); padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 86%, transparent); border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent); box-shadow: 0 8px 24px rgba(38, 51, 47, .08);
+  backdrop-filter: blur(16px);
 }
-.view-mode { display: inline-flex; padding: 2px; background: var(--bg-input); border-radius: 6px; }
+.view-mode { display: inline-flex; gap: 2px; }
 .view-mode button {
-  min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 9px;
-  border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary);
-  font-size: 11px; cursor: pointer;
+  min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-secondary);
+  font-size: 10px; font-weight: 600; cursor: pointer;
 }
-.view-mode button.active { background: var(--primary-color); color: #fff; }
-.edge-filters { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.view-mode button:hover { background: var(--bg-input); color: var(--text-primary); }
+.view-mode button.active { border-color: color-mix(in srgb, var(--primary-color) 22%, var(--border-light)); background: var(--primary-fade); color: var(--primary-color); }
+.filter-menu { position: relative; }
+.filter-trigger {
+  min-height: 30px; padding: 0 9px; border: 0; border-left: 1px solid var(--border-light); background: transparent;
+  color: var(--text-secondary); font-size: 10px; font-weight: 600; cursor: pointer;
+}
+.filter-trigger:hover, .filter-trigger.active { color: var(--primary-color); }
+.edge-filters {
+  position: absolute; z-index: 8; top: calc(100% + 8px); right: 0; width: 210px; box-sizing: border-box;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 8px;
+  border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-panel); box-shadow: 0 12px 30px rgba(38, 51, 47, .12);
+}
 .edge-filters label {
-  min-height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px;
-  border: 1px solid var(--border-light); border-radius: 6px; color: var(--text-disabled);
-  font-size: 10px; cursor: pointer; transition: border-color .18s ease, color .18s ease;
+  min-height: 25px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px;
+  border: 1px solid transparent; border-radius: 5px; color: var(--text-disabled);
+  font-size: 10px; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, color .16s ease;
 }
-.edge-filters label.checked { color: var(--text-secondary); border-color: var(--border-strong); }
+.edge-filters label:hover { background: var(--bg-panel); color: var(--text-secondary); }
+.edge-filters label.checked { color: var(--text-secondary); border-color: var(--border-light); background: var(--bg-panel); }
 .edge-filters input { position: absolute; opacity: 0; pointer-events: none; }
 .edge-filters i { width: 12px; height: 2px; border-radius: 1px; opacity: .35; }
 .edge-filters label.checked i { opacity: 1; }
 .empty { padding: 32px 12px; text-align: center; color: var(--text-secondary); font-size: 13px; }
-.graph-stage { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 460px; }
+.graph-stage {
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 540px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-light) 88%, var(--bg-panel)); border-radius: 10px; background: var(--bg-panel);
+}
 .graph-stage.has-detail { grid-template-columns: minmax(0, 1fr) 280px; }
-.graph-canvas { width: 100%; max-width: 100%; min-width: 0; height: 460px; min-height: 360px; }
+.graph-canvas { width: 100%; max-width: 100%; min-width: 0; height: 540px; min-height: 400px; }
+.view-hint {
+  position: absolute; z-index: 4; inset: 50% auto auto 50%; transform: translate(-50%, -50%); margin: 0;
+  padding: 9px 12px; border: 1px solid var(--border-light); border-radius: 8px; background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  color: var(--text-secondary); font-size: 11px; box-shadow: var(--shadow-sm);
+}
 .node-detail {
-  height: 460px; min-width: 0; overflow-y: auto; padding: 12px;
+  position: relative; z-index: 6; height: 540px; min-width: 0; overflow-y: auto; padding: 12px;
   border-left: 1px solid var(--border-light); background: var(--bg-panel);
 }
 .node-detail header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -839,10 +965,25 @@ onBeforeUnmount(() => {
 .connection-group button:hover { border-color: var(--primary-color); color: var(--text-primary); }
 .connection-group small { flex: 0 0 auto; color: var(--primary-color); font: 9px sans-serif; }
 .legend {
-  display: flex; flex-wrap: wrap; gap: 12px; padding-top: var(--space-sm);
-  border-top: 1px solid var(--border-light); margin-top: var(--space-sm);
+  position: absolute; z-index: 5; left: 14px; bottom: 14px;
+  display: flex; align-items: flex-start; flex-direction: column; gap: 7px; width: auto; max-width: calc(100% - 132px); padding: 4px;
+  border: 1px solid var(--border-light); border-radius: 9px; background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: 0 8px 24px rgba(38, 51, 47, .08); backdrop-filter: blur(16px);
 }
-.legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
+.legend.expanded {
+  width: min(520px, calc(100% - 132px)); max-height: min(300px, calc(100% - 96px)); padding: 9px 11px;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.legend-toggle {
+  min-height: 26px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: space-between; gap: 9px;
+  border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font-size: 10px; font-weight: 700; cursor: pointer;
+}
+.legend-toggle b { font-size: 14px; font-weight: 500; line-height: 1; }
+.legend-toggle:hover { background: var(--bg-input); color: var(--primary-color); }
+.legend-group { width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 9px; }
+.legend-group + .legend-group { padding-top: 7px; border-top: 1px solid var(--border-light); }
+.legend-label { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: .04em; }
+.legend-item { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
 .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 .dot.step { background: color-mix(in srgb, var(--success) 18%, var(--bg-input)); border: 1.5px solid var(--success); }
 .dot.agent { background: color-mix(in srgb, var(--info) 15%, var(--bg-panel)); border: 1.5px solid var(--info); border-radius: 50%; }
@@ -858,6 +999,13 @@ onBeforeUnmount(() => {
 .badge.runtime { background: var(--primary-color); }
 .badge.binding { background: var(--info); }
 .badge.skipped { background: var(--text-muted); }
+.canvas-controls {
+  position: absolute; z-index: 5; right: 14px; bottom: 14px; display: inline-flex; gap: 2px; padding: 4px;
+  border: 1px solid var(--border-light); border-radius: 9px; background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  box-shadow: 0 8px 24px rgba(38, 51, 47, .08); backdrop-filter: blur(16px);
+}
+.canvas-controls button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.canvas-controls button:hover { background: var(--bg-input); color: var(--primary-color); }
 
 .acg-topology:fullscreen {
   width: 100vw;
@@ -875,6 +1023,13 @@ onBeforeUnmount(() => {
 @media (max-width: 760px) {
   .graph-stage.has-detail { grid-template-columns: 1fr; }
   .node-detail { height: auto; max-height: 320px; border-left: 0; border-top: 1px solid var(--border-light); }
+  .head-right { position: static; }
+  .panel-head { justify-content: space-between; }
   .meta { display: none; }
+  .graph-toolbar { top: 10px; left: 10px; width: calc(100% - 20px); box-sizing: border-box; overflow-x: auto; justify-content: flex-start; }
+  .view-mode { flex: 0 0 auto; }
+  .view-mode button { padding: 0 7px; }
+  .filter-menu { flex: 0 0 auto; }
+  .legend.expanded { right: 14px; width: auto; max-width: none; max-height: 260px; }
 }
 </style>

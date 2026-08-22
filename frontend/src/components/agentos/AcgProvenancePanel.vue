@@ -17,10 +17,10 @@
         </button>
       </div>
     </header>
-    <div class="tabs">
-      <button :class="{ active: tab === 'lineage' }" @click="tab = 'lineage'">数据血缘</button>
-      <button :class="{ active: tab === 'interaction' }" @click="tab = 'interaction'">运行交互</button>
-      <button :class="{ active: tab === 'recovery' }" @click="tab = 'recovery'">恢复轨迹</button>
+    <div class="tabs" role="tablist" aria-label="数据血缘视图">
+      <button type="button" role="tab" :aria-selected="tab === 'lineage'" :class="{ active: tab === 'lineage' }" @click="tab = 'lineage'">数据血缘</button>
+      <button type="button" role="tab" :aria-selected="tab === 'interaction'" :class="{ active: tab === 'interaction' }" @click="tab = 'interaction'">运行交互</button>
+      <button type="button" role="tab" :aria-selected="tab === 'recovery'" :class="{ active: tab === 'recovery' }" @click="tab = 'recovery'">恢复轨迹</button>
     </div>
 
     <!-- 数据血缘 -->
@@ -151,20 +151,29 @@ const recoveryLabel = (t: string) => {
 }
 .export-actions button:hover { color: var(--primary-color); border-color: var(--primary-line); background: var(--primary-fade); }
 .tabs {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px;
-  margin-bottom: var(--space-sm); padding: 3px;
-  border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-input);
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+  margin: 0 0 var(--space-sm); padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 8%, var(--border-light)); border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-input) 88%, var(--bg-card));
 }
 .tabs button {
-  min-width: 0; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 6px;
-  background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer;
-  transition: background-color .18s ease, color .18s ease, box-shadow .18s ease;
+  min-width: 0; min-height: 34px; padding: 0 8px; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--text-secondary); font-family: var(--font-sans); font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
-.tabs button:hover:not(.active) { color: var(--text-primary); background: var(--surface-solid); }
-.tabs button.active { background: var(--primary-color); color: var(--on-primary); box-shadow: var(--shadow-sm); }
+.tabs button:hover:not(.active) {
+  border-color: color-mix(in srgb, var(--primary-color) 10%, var(--border-light));
+  background: color-mix(in srgb, var(--surface-solid) 82%, transparent); color: var(--text-primary);
+}
+.tabs button.active {
+  border-color: color-mix(in srgb, var(--primary-color) 28%, var(--border-light));
+  background: var(--surface-solid); color: var(--primary-color); font-weight: 700;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 7%, transparent), 0 0 0 1px color-mix(in srgb, var(--primary-color) 4%, transparent);
+}
+.tabs button:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary-color) 55%, transparent); outline-offset: 1px; }
 
 .tab-body {
-  flex: 1 1 320px; min-width: 0; min-height: 320px;
+  flex: 1 1 auto; min-width: 0; min-height: 0;
   box-sizing: border-box; overflow-x: hidden; overflow-y: auto;
   padding: 2px 8px 10px; scrollbar-gutter: stable;
 }

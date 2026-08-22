@@ -8,18 +8,21 @@
       </div>
     </header>
 
-    <div class="metric-grid">
-      <div class="metric-card metric-card--primary">
-        <span class="metric-value">{{ savingPercent }}</span>
-        <span class="metric-label">平均 Token 节省率</span>
+    <div class="metric-overview">
+      <div class="metric-hero">
+        <div>
+          <span class="metric-value">{{ savingPercent }}</span>
+          <span class="metric-label">平均 Token 节省率</span>
+        </div>
+        <div class="saved-summary">
+          <span class="metric-label">累计节省</span>
+          <strong>{{ formatNum(metrics.tokensSaved) }}</strong>
+          <span class="saved-unit">Token</span>
+        </div>
       </div>
-      <div class="metric-card metric-card--saved">
-        <span class="metric-value">{{ formatNum(metrics.tokensSaved) }}</span>
-        <span class="metric-label">累计节省 Token</span>
-      </div>
-      <div class="metric-card metric-card--delivery">
-        <span class="metric-value">{{ formatNum(metrics.tokensDelivered) }} / {{ formatNum(metrics.tokensAvailable) }}</span>
+      <div class="delivery-summary">
         <span class="metric-label">投递 / 可获取</span>
+        <strong>{{ formatNum(metrics.tokensDelivered) }} <i>/</i> {{ formatNum(metrics.tokensAvailable) }}</strong>
       </div>
     </div>
 
@@ -97,51 +100,57 @@ const formatNum = (n: number) => {
 <style scoped>
 .acg-metrics {
   box-sizing: border-box; display: flex; flex-direction: column; min-width: 0;
-  padding: var(--space-lg); overflow: hidden;
+  padding: 8px 0 6px; overflow: hidden;
 }
-.panel-head { display: flex; align-items: center; margin-bottom: 12px; }
+.panel-head { display: flex; align-items: center; margin-bottom: 9px; }
 .head-left { display: flex; align-items: center; gap: 6px; }
 .head-icon { font-size: 15px; color: var(--primary-color); }
-.panel-head h4 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.panel-head h4 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-primary); }
 
-.metric-grid {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+.metric-overview {
+  display: grid; gap: 8px;
 }
-.metric-card {
-  min-width: 0; min-height: 78px; display: flex; flex-direction: column; justify-content: center; gap: 5px;
-  padding: 12px 14px; border: 1px solid var(--border-light); border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-input) 78%, var(--bg-card));
+.metric-hero {
+  min-width: 0; min-height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 14px; border: 1px solid var(--primary-line); border-radius: 10px;
+  background: color-mix(in srgb, var(--primary-fade) 58%, var(--bg-card));
 }
-.metric-card--primary {
-  border-color: var(--primary-line);
-  background: linear-gradient(145deg, var(--primary-fade), color-mix(in srgb, var(--bg-card) 88%, var(--primary-color)));
+.metric-hero > div:first-child { display: grid; gap: 3px; }
+.saved-summary {
+  display: grid; justify-items: end; gap: 1px; padding-left: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--primary-color) 18%, var(--border-light));
 }
-.metric-card--saved { background: color-mix(in srgb, var(--success-fade) 62%, var(--bg-card)); }
-.metric-card--delivery { grid-column: 1 / -1; min-height: 68px; }
+.saved-summary strong { color: var(--success); font-size: 22px; font-weight: 750; line-height: 1.05; }
+.saved-unit { color: var(--text-muted); font-size: 10px; }
+.delivery-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px;
+  border: 1px solid var(--border-light); border-radius: 8px; background: color-mix(in srgb, var(--bg-input) 64%, var(--bg-card));
+}
+.delivery-summary strong { color: var(--text-primary); font-size: 17px; font-weight: 750; line-height: 1; white-space: nowrap; }
+.delivery-summary i { color: var(--text-muted); font-style: normal; font-weight: 500; }
 .metric-value {
-  min-width: 0; color: var(--text-primary); font-size: 22px; font-weight: 780;
+  min-width: 0; color: var(--primary-color); font-size: 28px; font-weight: 780;
   line-height: 1.05; letter-spacing: -.025em; overflow-wrap: anywhere;
 }
-.metric-card--primary .metric-value { color: var(--primary-color); font-size: 26px; }
-.metric-card--saved .metric-value { color: var(--success); }
-.metric-label { color: var(--text-secondary); font-size: 11px; line-height: 1.3; }
+.metric-label { color: var(--text-secondary); font-size: 10px; line-height: 1.35; }
 
 .signal-grid {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
-  margin-top: 8px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0;
+  margin-top: 8px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-panel); overflow: hidden;
 }
 .signal-card {
-  min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 9px 10px;
-  border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-panel);
+  min-width: 0; min-height: 54px; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 8px 10px;
+  border: 0; border-right: 1px solid var(--border-light); border-radius: 0; background: transparent;
 }
-.signal-card .metric-value { font-size: 17px; }
-.signal-card.warn { border-color: color-mix(in srgb, var(--warning) 45%, var(--border-light)); background: var(--warning-fade); }
+.signal-card:last-child { border-right: 0; }
+.signal-card .metric-value { color: var(--text-primary); font-size: 17px; }
+.signal-card.warn { background: color-mix(in srgb, var(--warning-fade) 50%, transparent); }
 .signal-card.warn .metric-value { color: var(--warning); }
-.signal-card.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border-light)); background: var(--danger-fade); }
+.signal-card.danger { background: color-mix(in srgb, var(--danger-fade) 50%, transparent); }
 .signal-card.danger .metric-value { color: var(--danger); }
 
-.metrics-footer { display: grid; gap: 10px; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border-light); }
-.ledger-status { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; }
+.metrics-footer { display: grid; gap: 8px; margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--border-light); }
+.ledger-status { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 10px; }
 .ledger-status strong { margin-left: auto; color: var(--success); font-weight: 700; }
 .ledger-dot {
   width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--success);
@@ -149,8 +158,8 @@ const formatNum = (n: number) => {
 }
 .ledger-status.invalid strong { color: var(--warning); }
 .ledger-status.invalid .ledger-dot { background: var(--warning); box-shadow: 0 0 0 3px var(--warning-fade); }
-.bar-wrap { display: grid; gap: 6px; }
-.bar-heading { display: flex; justify-content: space-between; gap: 10px; color: var(--text-secondary); font-size: 11px; }
+.bar-wrap { display: grid; gap: 5px; }
+.bar-heading { display: flex; justify-content: space-between; gap: 10px; color: var(--text-secondary); font-size: 10px; }
 .bar-heading strong { color: var(--success); font-weight: 700; }
 .bar-track {
   height: 7px; overflow: hidden; border-radius: 999px;
@@ -161,7 +170,7 @@ const formatNum = (n: number) => {
   background: linear-gradient(90deg, color-mix(in srgb, var(--bg-card) 30%, var(--primary-color)), var(--primary-color));
   transition: width .4s ease;
 }
-.bar-caption { color: var(--text-muted); font-size: 10px; }
+.bar-caption { color: var(--text-muted); font-size: 9px; }
 
 @media (max-width: 360px) {
   .acg-metrics { padding: var(--space-md); }

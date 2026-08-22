@@ -241,35 +241,41 @@
           <el-icon><ArrowLeft /></el-icon>
         </button>
       </aside>
-      <aside id="acg-run-details" class="grid-side" :aria-hidden="sidePanelCollapsed">
-        <button
-          class="grid-side__collapse"
-          type="button"
-          title="收起运行详情"
-          aria-label="收起运行详情"
-          :aria-expanded="true"
-          aria-controls="acg-run-details"
-          @click="setSidePanelCollapsed(true)"
-        >
-          <el-icon><ArrowRight /></el-icon>
-          <span>收起运行详情</span>
-        </button>
-        <AcgOperationalInspector
-          :view="acgView"
-          :audit-events="acgAuditEvents"
-          :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
-          @export-audit="exportAudit"
-        />
-        <section class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
-          <AcgProvenancePanel
-            :consumptions="acgView.provenance.consumptions"
-            :interactions="acgView.interactions"
-            :recovery-trace="acgView.recoveryTrace"
-            :contract-violations="acgView.contractViolations"
-            @export-json="exportAudit('json')"
-            @export-csv="exportAudit('csv')"
+      <aside
+        id="acg-run-details"
+        class="grid-side"
+        :aria-hidden="sidePanelCollapsed"
+      >
+        <div class="grid-side__content">
+          <button
+            class="grid-side__collapse"
+            type="button"
+            title="收起运行详情"
+            aria-label="收起运行详情"
+            :aria-expanded="true"
+            aria-controls="acg-run-details"
+            @click="setSidePanelCollapsed(true)"
+          >
+            <el-icon><ArrowRight /></el-icon>
+            <span>收起运行详情</span>
+          </button>
+          <AcgOperationalInspector
+            :view="acgView"
+            :audit-events="acgAuditEvents"
+            :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+            @export-audit="exportAudit"
           />
-        </section>
+          <section class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
+            <AcgProvenancePanel
+              :consumptions="acgView.provenance.consumptions"
+              :interactions="acgView.interactions"
+              :recovery-trace="acgView.recoveryTrace"
+              :contract-violations="acgView.contractViolations"
+              @export-json="exportAudit('json')"
+              @export-csv="exportAudit('csv')"
+            />
+          </section>
+        </div>
       </aside>
     </div>
 
@@ -1301,18 +1307,23 @@ onBeforeUnmount(() => {
 .acg-view > :deep(.workflow-review) { margin-top: var(--space-lg); }
 .acg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 11px; margin-top: 16px; align-items: stretch; min-width: 0; transition: grid-template-columns 180ms ease; }
 .acg-grid.is-side-collapsed { grid-template-columns: minmax(0, 1fr) 44px; }
-.grid-main { display: flex; flex-direction: column; gap: var(--space-lg); min-width: 0; }
+.grid-main { align-self: start; display: flex; flex-direction: column; gap: var(--space-lg); min-width: 0; }
 .grid-side {
-  position: relative; align-self: stretch; box-sizing: border-box; height: 100%; min-width: 0; min-height: 0;
-  display: flex; flex-direction: column; gap: var(--space-lg);
+  position: sticky; top: 12px; align-self: start; box-sizing: border-box;
+  height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); min-width: 0; min-height: 0;
+  overflow: hidden;
 }
-.side-provenance { min-width: 0; overflow: hidden; }
-.side-provenance :deep(.acg-provenance) { border: 0; border-radius: 0; box-shadow: none; }
+.grid-side__content {
+  box-sizing: border-box; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: var(--space-lg);
+  overflow-y: auto; overscroll-behavior-y: auto; scrollbar-gutter: stable; scrollbar-width: thin;
+}
+.side-provenance { flex: 1 0 auto; min-height: 0; display: flex; min-width: 0; overflow: hidden; }
+.side-provenance :deep(.acg-provenance) { flex: 1 1 auto; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
 .side-provenance :deep(.panel-head) { padding: 14px 16px 10px; }
-.side-provenance :deep(.tabs) { padding: 0 16px; }
+.side-provenance :deep(.tabs) { margin-right: 16px; margin-left: 16px; }
 .side-provenance :deep(.tab-body) { padding: 0 16px 14px; }
 .is-side-collapsed .grid-side { display: none; }
-.grid-side :deep(.acg-provenance) { flex: 1 1 auto; min-height: 0; }
+.grid-side :deep(.acg-provenance) { min-height: 0; }
 .grid-side__metrics { flex: 0 0 auto; min-width: 0; }
 .grid-side__audit { flex: 1 1 auto; min-width: 0; min-height: 360px; display: flex; }
 .grid-side__audit :deep(.acg-provenance) { width: 100%; height: 100%; }
@@ -1361,7 +1372,10 @@ onBeforeUnmount(() => {
   .acg-grid { grid-template-columns: minmax(0, 1fr); }
   .acg-grid.is-side-collapsed { grid-template-columns: minmax(0, 1fr); }
   .side-rail { display: none; }
-  .grid-side, .is-side-collapsed .grid-side { display: flex; height: auto; }
+  .grid-side, .is-side-collapsed .grid-side { position: static; display: block; height: auto; max-height: none; overflow: visible; }
+  .grid-side__content { height: auto; overflow: visible; }
+  .side-provenance { flex: 0 0 auto; display: block; }
+  .side-provenance :deep(.acg-provenance) { display: flex; }
   .grid-side__audit { min-height: 0; display: block; }
   .grid-side__audit :deep(.acg-provenance) { height: auto; }
   .grid-side__collapse { display: none; }
