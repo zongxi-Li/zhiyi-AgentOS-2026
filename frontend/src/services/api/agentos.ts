@@ -79,6 +79,11 @@ export interface WorkflowExecutionState {
   resourceBindings?: Record<string, Record<string, unknown>>
   checkpointId?: string | null
   graphVersion?: number
+  reviewPayload?: Record<string, unknown> | null
+  consensusResults?: Record<string, Record<string, unknown>>
+  controlFrames?: Array<Record<string, unknown>>
+  loopIterations?: Record<string, number>
+  loopPaths?: Record<string, number[]>
 }
 
 export type StepStatus =
@@ -421,6 +426,7 @@ export interface WorkflowRunQuery {
   lifecyclePhase?: WorkflowProgressPhase | ''
   source?: string
   sources?: string
+  recordState?: 'active' | 'archived'
   summary?: boolean
   page?: number
   pageSize?: number
@@ -553,6 +559,14 @@ export interface AcgStepState {
   identityAttempts?: IdentityAttemptDetail[]
   stepExecutions?: IdentityStepExecution[]
   nodeExecutions?: NodeExecutionRecord[]
+}
+
+export interface MissionRecordMutation {
+  missionId: string
+  recordState: 'active' | 'archived' | 'deleted'
+  affectedRunCount: number
+  archivedAt?: string | null
+  deletedAt?: string | null
 }
 
 export interface AcgLowEntropyMetrics {
@@ -776,6 +790,7 @@ export const agentosApi = {
         lifecyclePhase: params.lifecyclePhase || undefined,
         source: params.source,
         sources: params.sources,
+        recordState: params.recordState,
         summary: params.summary,
         page: params.page,
         pageSize: params.pageSize
@@ -819,6 +834,27 @@ export const agentosApi = {
     const response = await agentosRequest.get<WorkflowRun>(runPath(runId), {
       signal: options.signal
     })
+    return response.data
+  },
+
+  async archiveMission(missionId: string): Promise<MissionRecordMutation> {
+    const response = await agentosRequest.post<MissionRecordMutation>(
+      `/missions/${encodeURIComponent(missionId)}/archive`, {}
+    )
+    return response.data
+  },
+
+  async restoreMission(missionId: string): Promise<MissionRecordMutation> {
+    const response = await agentosRequest.post<MissionRecordMutation>(
+      `/missions/${encodeURIComponent(missionId)}/restore`, {}
+    )
+    return response.data
+  },
+
+  async deleteMission(missionId: string): Promise<MissionRecordMutation> {
+    const response = await agentosRequest.delete<MissionRecordMutation>(
+      `/missions/${encodeURIComponent(missionId)}`
+    )
     return response.data
   },
 
@@ -908,14 +944,7 @@ export const agentosApi = {
         const step = run.steps.find(item => item.stepId === stepId)
         return { stepId, name: step?.name || stepId, status: step?.status || 'completed', output: response.data.content }
       }))
-      : (await agentosRequest.get<{
-          items: Array<{ stepId: string; name: string; status: StepStatus; content: Record<string, any> }>
-        }>(`${runPath(runId)}/legacy-outputs`, { signal: options.signal })).data.items.map(item => ({
-          stepId: item.stepId,
-          name: item.name,
-          status: item.status,
-          output: item.content
-        }))
+      : []
     const interactions = provenance.interactions
     const tokensAvailable = interactions.reduce((sum, item) => sum + Number(item.tokensAvailable || 0), 0)
     const tokensDelivered = interactions.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)

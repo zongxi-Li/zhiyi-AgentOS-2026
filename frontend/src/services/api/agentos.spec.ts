@@ -131,31 +131,26 @@ describe('AgentOS v2 application API', () => {
     expect(get).toHaveBeenCalledTimes(5)
   })
 
-  it('loads inline outputs through the guarded compatibility resource for legacy runs', async () => {
-    const legacyRun = {
+  it('does not probe removed legacy outputs when a run has no committed output references', async () => {
+    const pendingRun = {
       ...run,
+      status: 'running' as const,
       steps: [{ ...run.steps[0], outputRef: undefined }],
       executionState: { resourceBindings: {} }
     }
     const get = vi.spyOn(agentosRequest, 'get')
-      .mockResolvedValueOnce({ data: legacyRun } as never)
-      .mockResolvedValueOnce({ data: { graphId: 'graph_legacy', graphVersion: 1, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: pendingRun } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 1, nodes: [], edges: [] } } as never)
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({
-        data: {
-          items: [{ stepId: 'deliver', name: 'Deliver', status: 'completed', content: { final_answer: '# Legacy' } }]
-        }
-      } as never)
 
-    const result = await agentosApi.getAcgView('run_legacy')
+    const result = await agentosApi.getAcgView('run_1')
 
-    expect(result.stepOutputs).toEqual([
-      { stepId: 'deliver', name: 'Deliver', status: 'completed', output: { final_answer: '# Legacy' } }
-    ])
-    expect(result.finalReport).toBe('# Legacy')
-    expect(get).toHaveBeenLastCalledWith('/runs/run_legacy/legacy-outputs', { signal: undefined })
+    expect(result.stepOutputs).toEqual([])
+    expect(result.finalReport).toBeNull()
+    expect(get).toHaveBeenCalledTimes(5)
+    expect(get).not.toHaveBeenCalledWith(expect.stringContaining('legacy-outputs'), expect.anything())
   })
 
   it('projects low-entropy metrics and lineage from legacy provenance snapshots', async () => {

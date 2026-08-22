@@ -13,7 +13,10 @@ vi.mock('@/services/api/workflow', async (importOriginal) => {
     workflowApi: {
       ...actual.workflowApi,
       listRuns: vi.fn(),
-      deleteRun: vi.fn()
+      deleteRun: vi.fn(),
+      archiveMission: vi.fn(),
+      restoreMission: vi.fn(),
+      deleteMission: vi.fn()
     }
   }
 })
@@ -48,6 +51,9 @@ describe('AcgRunManager', () => {
       deleted: true,
       taskDeleted: true
     })
+    vi.mocked(workflowApi.archiveMission).mockResolvedValue({ missionId: 'mission_run_done_1', recordState: 'archived', affectedRunCount: 1 })
+    vi.mocked(workflowApi.restoreMission).mockResolvedValue({ missionId: 'mission_run_done_1', recordState: 'active', affectedRunCount: 1 })
+    vi.mocked(workflowApi.deleteMission).mockResolvedValue({ missionId: 'mission_run_done_1', recordState: 'deleted', affectedRunCount: 1 })
   })
 
   afterEach(() => {
@@ -172,6 +178,22 @@ describe('AcgRunManager', () => {
     wrapper.unmount()
   })
 
+  it('ends the initial loading state when the run history service does not respond', async () => {
+    vi.mocked(workflowApi.listRuns).mockImplementationOnce((_params, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject({ code: 'ERR_CANCELED' }), { once: true })
+    }))
+    const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('正在加载运行记录')
+    await vi.advanceTimersByTimeAsync(12_000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('运行服务响应超时，请重试')
+    expect(wrapper.text()).not.toContain('正在加载运行记录')
+    wrapper.unmount()
+  })
+
   it('schedules the next poll only after the current request settles', async () => {
     const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
     await flushPromises()
@@ -210,7 +232,23 @@ describe('AcgRunManager', () => {
     wrapper.unmount()
   })
 
-  it('removes a run immediately after its detail resource is invalidated', async () => {
+  it('mutates the Mission identity from the context menu instead of the displayed Run', async () => {
+    const wrapper = mount(AcgRunManager, { attachTo: document.body, global: { stubs: { 'el-icon': true } } })
+    await flushPromises()
+
+    await wrapper.find('.acg-run-item.status-completed').trigger('contextmenu', { clientX: 30, clientY: 30 })
+    await flushPromises()
+    const archive = [...document.body.querySelectorAll<HTMLButtonElement>('.acg-run-context-menu button')]
+      .find(button => button.textContent?.includes('归档任务'))
+    archive?.click()
+    await flushPromises()
+
+    expect(workflowApi.archiveMission).toHaveBeenCalledWith('mission_run_done_1')
+    expect(workflowApi.archiveMission).not.toHaveBeenCalledWith('run_done_1')
+    wrapper.unmount()
+  })
+
+  it('removes a run after invalidation and restores it when the authoritative list confirms it', async () => {
     const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
     await flushPromises()
 
@@ -224,7 +262,7 @@ describe('AcgRunManager', () => {
 
     window.dispatchEvent(new Event('acg-runs-refresh'))
     await flushPromises()
-    expect(wrapper.text()).not.toContain('软件开发合同审查')
+    expect(wrapper.text()).toContain('软件开发合同审查')
     wrapper.unmount()
   })
 

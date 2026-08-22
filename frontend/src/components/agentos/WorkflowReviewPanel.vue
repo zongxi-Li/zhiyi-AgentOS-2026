@@ -10,8 +10,8 @@
 
     <template v-if="canReview">
       <div class="workflow-review__summary" aria-live="polite">
-        <span>当前步骤</span>
-        <strong>{{ reviewStep?.name || reviewStepId }}</strong>
+        <span>{{ reviewSubjectType === 'control' ? '控制审核节点' : '当前步骤' }}</span>
+        <strong>{{ reviewSubjectLabel }}</strong>
         <p>{{ reviewReason }}</p>
       </div>
 
@@ -106,16 +106,33 @@ const review = useWorkflowReview({
 
 const reviewStep = computed(() => props.run?.steps.find(step => step.status === 'waiting_review')
   || props.run?.steps.find(step => step.stepId === props.progress?.currentStepId))
-const reviewStepId = computed(() => reviewStep.value?.stepId
+const reviewPayload = computed(() => props.run?.executionState?.reviewPayload || null)
+const reviewSubjectType = computed(() => reviewPayload.value?.subjectType === 'control' ? 'control' : 'step')
+const persistedSubjectId = computed(() => {
+  const payload = reviewPayload.value
+  if (typeof payload?.subjectId === 'string') return payload.subjectId
+  if (typeof payload?.controlId === 'string') return payload.controlId
+  if (typeof payload?.stepId === 'string') return payload.stepId
+  return ''
+})
+const reviewStepId = computed(() => persistedSubjectId.value
+  || reviewStep.value?.stepId
   || props.progress?.currentStepId
   || props.progress?.activeStepIds[0]
   || '')
+const reviewSubjectLabel = computed(() => reviewStep.value?.name
+  || (reviewSubjectType.value === 'control' ? `控制审核屏障 · ${reviewStepId.value}` : reviewStepId.value))
 const canReview = computed(() => Boolean(
   props.runId
   && reviewStepId.value
   && isWorkflowReviewPending(props.progress, props.run)
 ))
 const reviewReason = computed(() => {
+  if (reviewSubjectType.value === 'control') {
+    const reasonCode = reviewPayload.value?.reasonCode
+    if (reasonCode === 'CONSENSUS_UNRESOLVED') return '共识未决，需要人工确认后才能继续执行。'
+    if (reasonCode === 'LOOP_MAX_ITERATIONS') return '循环已达到上限，需要人工确认后才能继续执行。'
+  }
   return props.progress?.message || '该节点需要人工确认后才能继续执行。'
 })
 
@@ -126,7 +143,8 @@ const submit = async (decision: 'approved' | 'rejected') => {
     stepId: reviewStepId.value,
     decision,
     comment: comment.value.trim(),
-    expectedRunUpdatedAt: props.run?.updatedAt || props.progress?.updatedAt || undefined
+    expectedRunUpdatedAt: props.run?.updatedAt || props.progress?.updatedAt || undefined,
+    expectedStepStatus: reviewStep.value ? 'waiting_review' : null
   })
   if (!result && review.error.value) emit('error', review.error.value)
 }

@@ -17,6 +17,10 @@
         <option value="failed">需处理</option>
         <option value="completed">已完成</option>
       </select>
+      <select v-model="recordStateFilter" class="acg-run-filter" aria-label="筛选任务记录" @change="handleRecordStateChange">
+        <option value="active">当前任务</option>
+        <option value="archived">已归档任务</option>
+      </select>
       <select
         v-model="roleFilter"
         class="acg-run-filter"
@@ -48,6 +52,7 @@
           :key="run.runId"
           class="acg-run-item"
           :class="[`status-${group.key}`, { active: run.runId === activeRunId }]"
+          @contextmenu.prevent="openContextMenu($event, run)"
         >
           <button
             class="acg-run-item__select"
@@ -80,14 +85,23 @@
               </span>
             </span>
           </button>
-          <span class="acg-run-actions">
-            <button class="acg-run-action" type="button" title="复制完整任务 ID" :aria-label="`复制任务 ID：${missionIdentity(run)}`" @click="copyMissionId(missionIdentity(run))">
-              <el-icon><CopyDocument /></el-icon>
-            </button>
-          </span>
         </div>
       </section>
     </div>
+
+    <Teleport to="body">
+      <div v-if="contextMenu.run" ref="contextMenuElement" class="acg-run-context-menu" role="menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }">
+        <button type="button" role="menuitem" @click="selectContextRun"><el-icon><View /></el-icon><span>打开任务</span></button>
+        <button type="button" role="menuitem" @click="copyContextMissionId"><el-icon><CopyDocument /></el-icon><span>复制任务 ID</span></button>
+        <div class="acg-run-context-menu__separator"></div>
+        <button v-if="recordStateFilter === 'archived'" type="button" role="menuitem" @click="restoreContextMission"><el-icon><FolderOpened /></el-icon><span>移出归档</span></button>
+        <template v-else>
+          <button type="button" role="menuitem" :disabled="!isTerminalMission(contextMenu.run)" @click="archiveContextMission"><el-icon><FolderAdd /></el-icon><span>归档任务</span></button>
+          <button class="is-danger" type="button" role="menuitem" :disabled="!isTerminalMission(contextMenu.run)" @click="deleteContextMission"><el-icon><DeleteIcon /></el-icon><span>删除任务</span></button>
+        </template>
+      </div>
+    </Teleport>
+
 
     <button class="acg-run-manage" type="button" @click="emit('manage')">
       <span class="acg-run-manage__icon"><el-icon><Clock /></el-icon></span>
@@ -101,9 +115,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ArrowRight, Clock, CopyDocument, Delete as DeleteIcon, Plus, Search } from '@element-plus/icons-vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { ArrowRight, Clock, CopyDocument, Delete as DeleteIcon, FolderAdd, FolderOpened, Plus, Search, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import axios from 'axios'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
@@ -135,7 +150,10 @@ const refreshing = ref(false)
 const loadError = ref('')
 const searchKeyword = ref('')
 const statusFilter = ref<'all' | RunGroupKey>('all')
+const recordStateFilter = ref<'active' | 'archived'>('active')
 const roleFilter = ref<AcgHistoryRole>(loadAcgHistoryRole())
+const contextMenuElement = ref<HTMLElement | null>(null)
+const contextMenu = reactive<{ run: WorkflowRunSummary | null; x: number; y: number }>({ run: null, x: 0, y: 0 })
 const workflowRunsStore = useWorkflowRunsStore()
 let loadController: AbortController | null = null
 let loadPromise: Promise<void> | null = null
@@ -144,6 +162,7 @@ let unmounted = false
 const invalidatedRunIds = new Set<string>()
 const ACTIVE_REFRESH_INTERVAL_MS = 8_000
 const IDLE_REFRESH_INTERVAL_MS = 30_000
+const RUN_LIST_TIMEOUT_MS = 12_000
 const RUN_LIST_PAGE_SIZE = 20
 const RUN_LIST_STATUSES = 'pending,planning,running,waiting_review,retrying,failed,completed,cancelled'
 
@@ -153,6 +172,7 @@ const groupKey = (run: WorkflowRunSummary): RunGroupKey => {
   if (run.status === 'completed' || run.phase === 'completed') return 'completed'
   return 'active'
 }
+
 
 const filteredRuns = computed(() => {
   const keyword = searchKeyword.value.toLocaleLowerCase('zh-CN')
@@ -193,6 +213,7 @@ const visibleGroups = computed(() => {
 const displayTitle = (run: WorkflowRunSummary) => resolveAcgTaskTitle(run)
 
 const missionIdentity = (run: WorkflowRunSummary) => run.missionId || run.runId
+const isTerminalMission = (run: WorkflowRunSummary) => ['completed', 'failed', 'cancelled'].includes(run.status)
 const runActivityTime = (run: WorkflowRunSummary) => run.updatedAt || run.startedAt || run.createdAt || ''
 const runTimestamp = (run: WorkflowRunSummary) => Date.parse(runActivityTime(run)) || 0
 const runTimeLabel = (run: WorkflowRunSummary) => {
@@ -264,6 +285,11 @@ const loadRuns = (silent = false): Promise<void> => {
   if (!silent && !runs.value.length) loading.value = true
   refreshing.value = true
   loadError.value = ''
+  let timedOut = false
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, RUN_LIST_TIMEOUT_MS)
   const pending = (async () => {
     try {
       const page = await workflowApi.listRuns(
@@ -273,18 +299,24 @@ const loadRuns = (silent = false): Promise<void> => {
           domain: acgHistoryRoleDomain(roleFilter.value),
           summary: true,
           page: 1,
-          pageSize: RUN_LIST_PAGE_SIZE
+          pageSize: RUN_LIST_PAGE_SIZE,
+          recordState: recordStateFilter.value
         },
         { signal: controller.signal }
       )
       if (!controller.signal.aborted) {
-        runs.value = (page.items || []).filter(run => !invalidatedRunIds.has(run.runId))
+        const authoritativeRuns = page.items || []
+        for (const run of authoritativeRuns) invalidatedRunIds.delete(run.runId)
+        runs.value = authoritativeRuns
       }
     } catch (error: unknown) {
-      if ((error as { code?: string })?.code !== 'ERR_CANCELED' && !controller.signal.aborted) {
+      if (timedOut) {
+        loadError.value = '运行服务响应超时，请重试'
+      } else if ((error as { code?: string })?.code !== 'ERR_CANCELED' && !controller.signal.aborted) {
         loadError.value = '运行记录暂时无法加载'
       }
     } finally {
+      window.clearTimeout(timeoutId)
       if (loadController === controller) {
         loadController = null
         loadPromise = null
@@ -297,8 +329,70 @@ const loadRuns = (silent = false): Promise<void> => {
   return pending
 }
 
+const closeContextMenu = () => { contextMenu.run = null }
+const openContextMenu = async (event: MouseEvent, run: WorkflowRunSummary) => {
+  contextMenu.run = run; contextMenu.x = event.clientX; contextMenu.y = event.clientY
+  await nextTick()
+  const menu = contextMenuElement.value
+  if (!menu) return
+  contextMenu.x = Math.max(8, Math.min(contextMenu.x, window.innerWidth - menu.offsetWidth - 8))
+  contextMenu.y = Math.max(8, Math.min(contextMenu.y, window.innerHeight - menu.offsetHeight - 8))
+}
+const selectContextRun = () => { if (contextMenu.run) emit('select', contextMenu.run.runId); closeContextMenu() }
+const copyContextMissionId = () => { if (contextMenu.run) void copyMissionId(missionIdentity(contextMenu.run)); closeContextMenu() }
+const missionMutationError = (error: unknown, action: string) => {
+  if (axios.isAxiosError(error)) {
+    if (error.response?.status === 409) return `任务仍有活动执行，暂时不能${action}`
+    if (error.response?.status === 404) return '任务不存在或当前账户无权操作'
+    const data = error.response?.data as { message?: unknown; detail?: unknown } | undefined
+    const detail = [data?.message, data?.detail].find(value => typeof value === 'string' && value.trim())
+    if (typeof detail === 'string') return `${action}失败：${detail.slice(0, 160)}`
+  }
+  return `任务${action}失败，请稍后重试`
+}
+const archiveContextMission = async () => {
+  const run = contextMenu.run
+  if (!run || !isTerminalMission(run)) return
+  try { await workflowApi.archiveMission(missionIdentity(run)); ElMessage.success('任务已归档'); closeContextMenu(); await loadRuns(true) }
+  catch (error: unknown) { ElMessage.error(missionMutationError(error, '归档')) }
+}
+const restoreContextMission = async () => {
+  const run = contextMenu.run
+  if (!run) return
+  try { await workflowApi.restoreMission(missionIdentity(run)); ElMessage.success('任务已恢复'); closeContextMenu(); await loadRuns(true) }
+  catch (error: unknown) { ElMessage.error(missionMutationError(error, '恢复')) }
+}
+const deleteContextMission = async () => {
+  const run = contextMenu.run
+  if (!run || !isTerminalMission(run)) return
+  try {
+    await ElMessageBox.confirm(
+      `“${displayTitle(run)}”将从任务列表永久移除，执行审计事实仍会保留。`,
+      '删除任务',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch { return }
+  try {
+    await workflowApi.deleteMission(missionIdentity(run))
+    ElMessage.success('任务已删除')
+    closeContextMenu()
+    emit('deleted', run.runId)
+    await loadRuns(true)
+  }
+  catch (error: unknown) { ElMessage.error(missionMutationError(error, '删除')) }
+}
+const handleContextDismiss = (event: PointerEvent) => { if (!contextMenuElement.value?.contains(event.target as Node)) closeContextMenu() }
+const handleContextKeydown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeContextMenu() }
+
 const handleRoleFilterChange = () => {
   saveAcgHistoryRole(roleFilter.value)
+  loadController?.abort()
+  loadPromise = null
+  void loadRuns()
+}
+
+const handleRecordStateChange = () => {
+  closeContextMenu()
   loadController?.abort()
   loadPromise = null
   void loadRuns()
@@ -344,6 +438,8 @@ onMounted(() => {
   window.addEventListener('acg-runs-refresh', handleRunsRefresh)
   window.addEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
   window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
+  window.addEventListener('pointerdown', handleContextDismiss)
+  window.addEventListener('keydown', handleContextKeydown)
   void loadRuns().finally(scheduleRefresh)
 })
 
@@ -354,6 +450,8 @@ onUnmounted(() => {
   window.removeEventListener('acg-runs-refresh', handleRunsRefresh)
   window.removeEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
   window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
+  window.removeEventListener('pointerdown', handleContextDismiss)
+  window.removeEventListener('keydown', handleContextKeydown)
 })
 </script>
 
@@ -403,11 +501,7 @@ onUnmounted(() => {
 .acg-run-item__headline strong { overflow: hidden; color: inherit; font-size: 11px; font-weight: 700; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .acg-run-item__meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .acg-run-item__meta time { flex: 0 0 auto; color: var(--text-disabled); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.acg-run-actions { position: absolute; z-index: 1; top: 5px; right: 5px; display: flex; align-items: center; gap: 1px; opacity: 0; transition: opacity 160ms ease; }
-.acg-run-item:hover .acg-run-actions, .acg-run-actions:focus-within { opacity: 1; }
-.acg-run-item:hover .acg-run-item__headline { padding-right: 44px; }
-.acg-run-action { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: color-mix(in srgb, var(--bg-card) 88%, transparent); color: var(--text-disabled); cursor: pointer; transition: color 160ms ease, background-color 160ms ease; }
-.acg-run-action:hover { background: var(--bg-card); color: var(--primary-color); }
+.acg-run-item:hover .acg-run-item__headline { padding-right: 0; }
 .acg-run-delete:hover { background: var(--danger-fade); color: var(--danger); }
 .acg-run-action:disabled { cursor: wait; opacity: .55; }
 .acg-run-item__phase { overflow: hidden; color: var(--text-secondary); font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
@@ -425,4 +519,13 @@ onUnmounted(() => {
 .acg-run-manage strong { color: var(--text-primary); font-size: 12px; }
 .acg-run-manage small { display: none; }
 @media (prefers-reduced-motion: reduce) { .acg-run-item, .acg-run-item__progress span, .acg-new-run, .acg-run-manage { transition-duration: 1ms; } }
+</style>
+
+<style>
+.acg-run-context-menu { position: fixed; z-index: 3000; box-sizing: border-box; width: 168px; padding: 5px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-card); box-shadow: var(--shadow-lg); color: var(--text-primary); }
+.acg-run-context-menu button { width: 100%; min-height: 32px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.acg-run-context-menu button:hover:not(:disabled), .acg-run-context-menu button:focus-visible { background: var(--primary-fade); color: var(--primary-color); outline: none; }
+.acg-run-context-menu button.is-danger { color: var(--danger); }
+.acg-run-context-menu button:disabled { color: var(--text-disabled); cursor: not-allowed; }
+.acg-run-context-menu__separator { height: 1px; margin: 4px 6px; background: var(--border-light); }
 </style>

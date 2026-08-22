@@ -135,6 +135,20 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     wrapper.unmount()
   })
 
+  it('keeps the Mission ID visible when the ACG projection fails', async () => {
+    vi.mocked(workflowApi.getAcgView).mockRejectedValue(Object.assign(new Error('subresource missing'), {
+      isAxiosError: true,
+      response: { status: 404 }
+    }))
+
+    const { wrapper, router } = await mountPage('?runId=run_1')
+
+    expect(wrapper.find('.hero-run-chip').text()).toContain('任务 ID')
+    expect(wrapper.find('.hero-run-chip').text()).toContain('mission_1')
+    expect(router.currentRoute.value.query.runId).toBe('run_1')
+    wrapper.unmount()
+  })
+
   it('starts a Run, writes its id to the URL and immediately connects progress polling', async () => {
     const { wrapper, router } = await mountPage()
     const draft = (wrapper.vm as unknown as { draft: { title: string; taskGoal: string } }).draft

@@ -107,6 +107,18 @@ export const workflowApi = {
     return agentosApi.getWorkflowRun(runId, options)
   },
 
+  archiveMission(missionId: string) {
+    return agentosApi.archiveMission(missionId)
+  },
+
+  restoreMission(missionId: string) {
+    return agentosApi.restoreMission(missionId)
+  },
+
+  deleteMission(missionId: string) {
+    return agentosApi.deleteMission(missionId)
+  },
+
   getExecutionTree(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunExecutionTree> {
     return agentosApi.getExecutionTree(runId, options)
   },

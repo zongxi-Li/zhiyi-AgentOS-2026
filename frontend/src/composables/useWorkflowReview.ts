@@ -13,6 +13,7 @@ interface SubmitWorkflowReviewInput {
   decision: Extract<ReviewDecision, 'approved' | 'rejected'>
   comment?: string
   expectedRunUpdatedAt?: string
+  expectedStepStatus?: ReviewRequest['expectedStepStatus'] | null
 }
 
 interface UseWorkflowReviewOptions {
@@ -62,7 +63,9 @@ export function useWorkflowReview(options: UseWorkflowReviewOptions = {}) {
       comment: input.comment || '',
       operationId: pendingOperationId,
       expectedRunUpdatedAt: input.expectedRunUpdatedAt,
-      expectedStepStatus: 'waiting_review'
+      expectedStepStatus: input.expectedStepStatus === null
+        ? undefined
+        : (input.expectedStepStatus || 'waiting_review')
     }
 
     try {

@@ -62,6 +62,41 @@ describe('WorkflowReviewPanel', () => {
     expect(workflowApi.submitReview).toHaveBeenCalledWith('run_1', expect.objectContaining({ decision: 'rejected' }), expect.any(Object))
   })
 
+  it('uses the persisted control subject without inventing a waiting workflow step', async () => {
+    const controlRun: WorkflowRun = {
+      ...run,
+      currentStepId: 'ctrl_join_1',
+      steps: run.steps.map(step => ({ ...step, status: 'completed' })),
+      executionState: {
+        reviewPayload: {
+          subjectType: 'control',
+          subjectId: 'ctrl_join_1',
+          controlId: 'ctrl_join_1',
+          reasonCode: 'CONSENSUS_UNRESOLVED'
+        }
+      }
+    }
+    const wrapper = mount(WorkflowReviewPanel, {
+      props: {
+        runId: 'run_1',
+        progress: { ...progress, currentStepId: 'ctrl_join_1', activeStepIds: [] },
+        run: controlRun
+      },
+      global: { stubs: { 'el-icon': true } }
+    })
+
+    expect(wrapper.text()).toContain('控制审核节点')
+    expect(wrapper.text()).toContain('控制审核屏障 · ctrl_join_1')
+    expect(wrapper.text()).toContain('共识未决')
+    await wrapper.find('button.approve').trigger('click')
+    await flushPromises()
+
+    expect(workflowApi.submitReview).toHaveBeenCalledWith('run_1', expect.objectContaining({
+      stepId: 'ctrl_join_1',
+      expectedStepStatus: undefined
+    }), expect.any(Object))
+  })
+
   it('exposes a 409 conflict without reporting success', async () => {
     vi.mocked(workflowApi.submitReview).mockRejectedValue({ isAxiosError: true, response: { status: 409 } })
     const wrapper = mountPanel()
