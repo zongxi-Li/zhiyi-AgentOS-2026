@@ -18,6 +18,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -102,7 +103,7 @@ class AgentOsGatewayControllerTest {
     void listRunsForwardsTheCompleteHistoryFilterContract() throws Exception {
         String upstream = "/ai/agentos/v2/runs?statuses=running,waiting_review&domain=legal"
                 + "&workflowId=workflow_1&missionId=mission_1&lifecyclePhase=review&source=acg"
-                + "&sources=acg,chat&summary=true&page=2&pageSize=50";
+                + "&sources=acg,chat&recordState=archived&summary=true&page=2&pageSize=50";
         gateway.getResponses.put(upstream, response(200, Map.of(
                 "items", java.util.List.of(), "total", 0, "page", 2, "pageSize", 50
         )));
@@ -115,6 +116,7 @@ class AgentOsGatewayControllerTest {
                         .param("lifecyclePhase", "review")
                         .param("source", "acg")
                         .param("sources", "acg,chat")
+                        .param("recordState", "archived")
                         .param("summary", "true")
                         .param("page", "2")
                         .param("pageSize", "50"))
@@ -122,6 +124,21 @@ class AgentOsGatewayControllerTest {
                 .andExpect(jsonPath("$.total").value(0));
 
         assertEquals(upstream, gateway.lastGetPath);
+    }
+
+    @Test
+    void missionRecordActionsUseEncodedMissionIdentity() throws Exception {
+        String archivePath = "/ai/agentos/v2/missions/mission%20001/archive";
+        gateway.postResponses.put(archivePath, response(200, Map.of("missionId", "mission 001", "recordState", "archived")));
+        mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/archive", "mission 001"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.recordState").value("archived"));
+        assertEquals(archivePath, gateway.lastPostPath);
+
+        String deletePath = "/ai/agentos/v2/missions/mission%20001";
+        gateway.deleteResponses.put(deletePath, response(200, Map.of("missionId", "mission 001", "recordState", "deleted")));
+        mockMvc.perform(delete("/api/agentos/v2/missions/{missionId}", "mission 001"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.recordState").value("deleted"));
+        assertEquals(deletePath, gateway.lastDeletePath);
     }
 
     @Test
@@ -162,9 +179,11 @@ class AgentOsGatewayControllerTest {
     private static final class RecordingGateway extends AgentOsGatewayService {
         private final Map<String, Map<String, Object>> getResponses = new HashMap<>();
         private final Map<String, Map<String, Object>> postResponses = new HashMap<>();
+        private final Map<String, Map<String, Object>> deleteResponses = new HashMap<>();
         private String lastGetPath;
         private String lastPostPath;
         private Object lastPostBody;
+        private String lastDeletePath;
 
         private RecordingGateway() {
             super(WebClient.builder(), new AgentProperties(), "http://localhost:8000");
@@ -181,6 +200,13 @@ class AgentOsGatewayControllerTest {
             lastPostPath = path;
             lastPostBody = body;
             return postResponses.getOrDefault(path, response(404, Map.of("message", "not found")));
+        }
+
+
+        @Override
+        public Map<String, Object> delete(String path) {
+            lastDeletePath = path;
+            return deleteResponses.getOrDefault(path, response(404, Map.of("message", "not found")));
         }
     }
 }

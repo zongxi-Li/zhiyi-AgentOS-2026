@@ -42,7 +42,7 @@ public class AgentOsGatewayService {
         try {
             return webClient.get().uri(path)
                     .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
-                    .timeout(Duration.ofMillis(properties.getTimeoutMs()))
+                    .timeout(Duration.ofMillis(properties.getProgressTimeoutMs()))
                     .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
                     .block();
         } catch (Exception failure) {
@@ -58,12 +58,34 @@ public class AgentOsGatewayService {
         try {
             return webClient.post().uri(path).bodyValue(body == null ? Map.of() : body)
                     .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
+                    .timeout(Duration.ofMillis(postTimeoutMs(path)))
+                    .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
+                    .block();
+        } catch (Exception failure) {
+            return unavailable(path, failure);
+        }
+    }
+
+    public Map<String, Object> delete(String path) {
+        if (!properties.isEnabled()) {
+            return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
+                    "AgentOS gateway is disabled.");
+        }
+        try {
+            return webClient.delete().uri(path)
+                    .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
                     .timeout(Duration.ofMillis(properties.getTimeoutMs()))
                     .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
                     .block();
         } catch (Exception failure) {
             return unavailable(path, failure);
         }
+    }
+
+    private int postTimeoutMs(String path) {
+        return path.endsWith("/missions")
+                ? properties.getAsyncStartTimeoutMs()
+                : properties.getTimeoutMs();
     }
 
     private Mono<Map<String, Object>> mapResponse(int upstreamStatus, Mono<String> responseBody) {

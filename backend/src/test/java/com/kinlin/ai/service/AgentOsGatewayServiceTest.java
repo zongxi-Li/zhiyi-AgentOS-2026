@@ -52,6 +52,21 @@ class AgentOsGatewayServiceTest {
         assertFalse(result.toString().contains("PRIVATE"));
     }
 
+    @Test
+    void boundsReadProjectionWaitsWithTheProgressTimeout() {
+        AgentProperties properties = new AgentProperties();
+        properties.setEnabled(true);
+        properties.setTimeoutMs(5_000);
+        properties.setProgressTimeoutMs(10);
+        WebClient.Builder builder = WebClient.builder().exchangeFunction(request -> Mono.never());
+        AgentOsGatewayService service = new AgentOsGatewayService(builder, properties, "http://agentos");
+
+        Map<String, Object> result = service.get("/ai/agentos/v2/runs");
+
+        assertEquals(503, result.get(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY));
+        assertEquals("AGENTOS_UPSTREAM_UNAVAILABLE", result.get("error"));
+    }
+
     private AgentOsGatewayService service(HttpStatus status, String body) {
         AgentProperties properties = new AgentProperties();
         properties.setEnabled(true);
