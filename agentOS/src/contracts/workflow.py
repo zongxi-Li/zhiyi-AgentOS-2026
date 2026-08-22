@@ -84,6 +84,13 @@ class WorkflowStatus(str, Enum):
     SUPERSEDED = "superseded"
 
 
+class MissionRecordState(str, Enum):
+    """Mission 在用户任务列表中的管理状态，与执行生命周期正交。"""
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    DELETED = "deleted"
+
+
 class WorkflowDefinitionType(str, Enum):
     """区分可执行模板与规划器引导定义；两者的注册身份相同但运行入口不同。"""
 
@@ -153,6 +160,9 @@ class RuntimeMissionRecord(CoreModel):
     security_level: str = Field(default="internal", alias="securityLevel")
     priority: str = "normal"
     status: WorkflowStatus = WorkflowStatus.PENDING
+    record_state: MissionRecordState = Field(default=MissionRecordState.ACTIVE, alias="recordState")
+    archived_at: Optional[datetime] = Field(default=None, alias="archivedAt")
+    deleted_at: Optional[datetime] = Field(default=None, alias="deletedAt")
     recommended_workflow: Optional[str] = Field(default=None, alias="recommendedWorkflow")
     enabled_plugin_ids: Optional[List[str]] = Field(default=None, alias="enabledPluginIds")
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")

@@ -15,7 +15,7 @@ from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.memory import MemoryQuery
-from contracts.workflow import TraceEventType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
+from contracts.workflow import StepStatus, TraceEventType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -90,6 +90,7 @@ def test_restart_reuses_commit_and_does_not_duplicate_persistence(stage: str, tm
     result = asyncio.run(recovered.execute_prepared_run(run.run_id))
 
     assert result.status is WorkflowStatus.COMPLETED
+    assert result.steps[0].status is StepStatus.COMPLETED
     assert set(agent.commit_ids) == {"commit:" + run.run_id + ":one:0"}
     assert sum(event.event_type is TraceEventType.STEP_SUCCEEDED for event in result.trace) == 1
     assert recovered.checkpoint_store.latest_version(run_id=run.run_id) == 1

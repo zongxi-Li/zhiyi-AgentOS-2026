@@ -7,13 +7,14 @@ from typing import Dict
 import hashlib
 import json
 
-from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
+from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import (
     TERMINAL_RUN_STATUSES,
     matches_run,
     matches_mission,
     reject_terminal_overwrite,
     run_priority,
+    validate_run_state,
 )
 from support.stores.workflow_store import (
     RuntimeRunRecordDeleteResult,
@@ -54,6 +55,25 @@ class MemoryWorkflowStore(WorkflowStore):
         except KeyError as exc:
             raise KeyError(f"task not found: {mission_id}") from exc
 
+    def set_mission_record_state(
+        self, mission_id: str, state: MissionRecordState
+    ) -> tuple[RuntimeMissionRecord, int]:
+        task = self.get_mission(mission_id)
+        if task.record_state is MissionRecordState.DELETED:
+            raise ValueError("deleted mission record state is immutable")
+        runs = [run for run in self._runs.values() if run.mission_id == mission_id]
+        for run in runs:
+            if run.status not in TERMINAL_RUN_STATUSES:
+                raise RuntimeRunRecordNotTerminalError(run.run_id, run.status)
+        now = utc_now()
+        task.record_state = state
+        task.updated_at = now
+        task.archived_at = now if state is MissionRecordState.ARCHIVED else None
+        if state is MissionRecordState.DELETED:
+            task.deleted_at = now
+        self._tasks[mission_id] = task.model_copy(deep=True)
+        return task.model_copy(deep=True), len(runs)
+
     def save_run(self, run: RuntimeRunRecord) -> None:
         """深复制保存运行，并拒绝终态被不同状态或更旧快照覆盖。
 
@@ -78,6 +98,7 @@ class MemoryWorkflowStore(WorkflowStore):
     def _save_run_snapshot(self, run: RuntimeRunRecord) -> bool:
         if run.mission_id not in self._tasks:
             raise ValueError(f"workflow run task does not exist: {run.mission_id}")
+        validate_run_state(run)
         existing = self._runs.get(run.run_id)
         terminal_status = self._terminal_run_statuses.get(run.run_id)
         if terminal_status is not None and _reject_terminal_status_overwrite(terminal_status, run.status):
@@ -239,6 +260,7 @@ class MemoryWorkflowStore(WorkflowStore):
         lifecycle_phase: str | None = None,
         source: str | None = None,
         sources=None,
+        mission_record_state: MissionRecordState | str | None = None,
         owner_user_id: str | None = None,
         owner_tenant_id: str | None = None,
         page: int = 1,
@@ -252,10 +274,17 @@ class MemoryWorkflowStore(WorkflowStore):
         expected_status = status_value(status)
         expected_statuses = status_values(statuses)
         expected_sources = {str(item) for item in sources} if sources else None
+        expected_record_state = (
+            mission_record_state.value if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
         runs = [
             run.model_copy(deep=True)
             for run in self._runs.values()
-            if matches_run(
+            if (
+                expected_record_state is None
+                or self._tasks[run.mission_id].record_state.value == expected_record_state
+            ) and matches_run(
                 run,
                 status=expected_status,
                 statuses=expected_statuses,

@@ -74,6 +74,7 @@ from adapters.model_compatibility import ModelCompatibilityRegistry, ModelProvid
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.tool_adapter import configured_tool_runtime
 from contracts.workflow import (
+    MissionRecordState,
     RuntimeMissionRecord,
     Checkpoint,
     EvaluationRun,
@@ -111,6 +112,7 @@ from adapters.model.native import register_native_runtime
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.workflow_store import WorkflowStore
+from support.stores._policy import acg_review_subject
 
 
 logger = logging.getLogger(__name__)
@@ -375,6 +377,8 @@ class ExecutionRuntime:
                 return self.mission_manager.get_mission(existing.mission_id), existing
 
         task = self.mission_manager.get_mission(mission_id)
+        if task.record_state is not MissionRecordState.ACTIVE:
+            raise ValueError("mission must be active before preparing a new run")
         requested_plugins = (
             enabled_plugin_ids
             if enabled_plugin_ids is not None
@@ -691,11 +695,18 @@ class ExecutionRuntime:
             self._persist_acg_state(run, execution_state)
             checkpoint_id = self._save_acg_checkpoint(run, execution_state)
             self._persist_acg_state(run, execution_state)
-            review_step_id = str(interrupt.payload.get("stepId") or execution_state.current_step_id or "")
-            if review_step_id:
-                step = run.get_step(review_step_id)
+            subject_type, subject_id = acg_review_subject(interrupt.payload)
+            blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
+            subject_node = blueprint.get_node(subject_id)
+            expected_node_type = "step" if subject_type == "step" else "control"
+            if subject_node.node_type.value != expected_node_type:
+                raise ValueError(
+                    f"ACG review subject type does not match blueprint node: {subject_id}"
+                )
+            if subject_type == "step":
+                step = run.get_step(subject_id)
                 step.status = StepStatus.WAITING_REVIEW
-                run.current_step_id = review_step_id
+            run.current_step_id = subject_id
             self.trace_store.append_execution_event(run, {"type": "interrupted", **interrupt.payload})
             self.trace_store.append_execution_event(run, {"type": "checkpoint_created", "checkpointId": checkpoint_id})
             run = self._set_run_lifecycle(
@@ -1162,7 +1173,15 @@ class ExecutionRuntime:
         node_trace_batch: list[TraceEvent] = []
         if event_type == "node_completed" and isinstance(commit_id, str) and self._is_projected_commit(run, commit_id):
             # Trace 已经确认过该提交，说明上次在状态保存前中断。重放时不能再次追加
-            # 步骤成功、记忆访问或通信血缘事件；图状态本身由当前 checkpoint 继续推进。
+            # 步骤成功、记忆访问或通信血缘事件；但可变 WorkflowStep 投影仍必须与
+            # 提交事实对齐，否则 Run 会在完成时残留 RUNNING 步骤。
+            step_id = str(event.get("stepId"))
+            step = run.get_step(step_id)
+            step.status = StepStatus.COMPLETED
+            step.completed_at = step.completed_at or utc_now()
+            run.current_step_id = step_id
+            run.completed_step_ids = list(state.completed_step_ids)
+            run.active_step_ids = list(state.active_step_ids)
             self._persist_acg_state(run, state)
             return
         if event_type == "nodes_scheduled":
@@ -2021,18 +2040,31 @@ class ExecutionRuntime:
 
     @staticmethod
     def _normalize_waiting_review_after_restart(run: RuntimeRunRecord) -> bool:
-        """Align both persisted step projections without leaving review state."""
+        """Restore the persisted review subject without inventing a WorkflowStep."""
 
         changed = False
-        waiting_ids = {
-            step.step_id for step in run.steps if step.status == StepStatus.WAITING_REVIEW
-        }
-        if not waiting_ids and run.current_step_id:
-            waiting_ids.add(run.current_step_id)
-        for step in run.steps:
-            if step.step_id in waiting_ids and step.status != StepStatus.WAITING_REVIEW:
-                step.status = StepStatus.WAITING_REVIEW
+        if (run.runtime_engine or "").strip().lower() == "acg":
+            subject_type, subject_id = acg_review_subject(
+                run.execution_state.get("reviewPayload")
+            )
+            if run.current_step_id != subject_id:
+                run.current_step_id = subject_id
                 changed = True
+            if subject_type == "step":
+                step = run.get_step(subject_id)
+                if step.status != StepStatus.WAITING_REVIEW:
+                    step.status = StepStatus.WAITING_REVIEW
+                    changed = True
+        else:
+            waiting_ids = {
+                step.step_id for step in run.steps if step.status == StepStatus.WAITING_REVIEW
+            }
+            if not waiting_ids and run.current_step_id:
+                waiting_ids.add(run.current_step_id)
+            for step in run.steps:
+                if step.step_id in waiting_ids and step.status != StepStatus.WAITING_REVIEW:
+                    step.status = StepStatus.WAITING_REVIEW
+                    changed = True
         if run.lifecycle_phase != WorkflowProgressPhase.REVIEW:
             run.lifecycle_phase = WorkflowProgressPhase.REVIEW
             changed = True
@@ -2628,26 +2660,42 @@ class ExecutionRuntime:
                 raise ReviewConflictError("review operation id was already used for a different decision")
             if run.status != WorkflowStatus.WAITING_REVIEW:
                 raise ReviewConflictError("workflow run is no longer waiting for review")
-            step = run.get_step(decision.step_id)
-            if step.status != StepStatus.WAITING_REVIEW:
-                raise ReviewConflictError("workflow step is no longer waiting for review")
             checkpoint_id = str(run.execution_state.get("checkpointId") or "")
             checkpoint_data = self.checkpoint_store.load(run_id=run.run_id, checkpoint_id=checkpoint_id)
             if checkpoint_data is None:
                 raise ValueError("review checkpoint does not exist for this run")
             restored = ACGExecutionState.model_validate(checkpoint_data)
+            subject_type, subject_id = acg_review_subject(restored.review_payload)
+            if decision.step_id != subject_id:
+                raise ReviewConflictError("review decision does not match the persisted ACG subject")
+            step = run.get_step(subject_id) if subject_type == "step" else None
+            if (
+                decision.expected_run_updated_at is not None
+                and run.updated_at != decision.expected_run_updated_at
+            ):
+                raise ReviewConflictError("workflow run revision changed")
+            if step is not None and step.status != StepStatus.WAITING_REVIEW:
+                raise ReviewConflictError("workflow step is no longer waiting for review")
+            if (
+                step is not None
+                and decision.expected_step_status is not None
+                and step.status != decision.expected_step_status
+            ):
+                raise ReviewConflictError("workflow step state changed")
             # 拒绝路径也必须验证 checkpoint 中的审计引用。否则攻击者可借由“直接
             # 拒绝”绕过归属检查，留下无法解释的审核记录或伪造的待写入意图。
             self._validate_acg_state_references(run=run, state=restored)
             if decision.decision is not ReviewDecisionType.APPROVED:
-                self._transition_step(step, StepStatus.FAILED)
+                if step is not None:
+                    self._transition_step(step, StepStatus.FAILED)
                 run.error = {"code": "review_rejected", "message": decision.comment[:500]}
                 self.trace_store.append(
                     run,
                     TraceEventType.REVIEW_DECIDED,
-                    step_id=step.step_id,
+                    step_id=subject_id,
                     observation="ACG review rejected",
                     payload={
+                        "subjectType": subject_type,
                         "decision": decision.decision.value,
                         "operationId": decision.operation_id,
                         "reviewer": decision.reviewer,
@@ -2661,17 +2709,20 @@ class ExecutionRuntime:
                 self.mission_manager.mark_failed(run.mission_id)
                 self.workflow_store.save_run(run)
                 return run
-            self._commit_deferred_memory(run=run, step=step, state=restored)
+            if step is not None:
+                self._commit_deferred_memory(run=run, step=step, state=restored)
             # The node result was committed before the interrupt; approval
             # resolves the review projection and must not leave a stale
             # WAITING_REVIEW step in an otherwise completed persisted run.
-            self._transition_step(step, StepStatus.COMPLETED)
+            if step is not None:
+                self._transition_step(step, StepStatus.COMPLETED)
             self.trace_store.append(
                 run,
                 event_type=TraceEventType.REVIEW_DECIDED,
-                step_id=step.step_id,
+                step_id=subject_id,
                 observation="ACG review approved",
                 payload={
+                    "subjectType": subject_type,
                     "decision": decision.decision.value,
                     "operationId": decision.operation_id,
                     "reviewer": decision.reviewer,

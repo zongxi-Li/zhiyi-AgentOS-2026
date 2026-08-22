@@ -107,6 +107,7 @@ class MemoryManifest(FrozenContract):
 class EvidenceRule(FrozenContract):
     step_id: StrictStr = Field(alias="stepId", min_length=1)
     evidence_node_id: StrictStr = Field(alias="evidenceNodeId", min_length=1)
+    access: Literal["produce", "consume"]
     evidence_type: StrictStr = Field(alias="evidenceType", min_length=1)
     source: StrictStr
     schema_: dict[str, Any] = Field(default_factory=dict, alias="schema")
@@ -116,8 +117,11 @@ class EvidenceRule(FrozenContract):
 class EvidenceManifest(FrozenContract):
     rules: tuple[EvidenceRule, ...] = ()
 
-    def for_step(self, step_id: str) -> tuple[EvidenceRule, ...]:
-        return tuple(rule for rule in self.rules if rule.step_id == step_id)
+    def for_step(self, step_id: str, access: str | None = None) -> tuple[EvidenceRule, ...]:
+        return tuple(
+            rule for rule in self.rules
+            if rule.step_id == step_id and (access is None or rule.access == access)
+        )
 
 
 class CommunicationRuleSpec(FrozenContract):
@@ -201,7 +205,7 @@ class ControlManifest(FrozenContract):
 
 
 class CompiledACGPackage(FrozenContract):
-    package_version: Literal[2] = Field(default=2, alias="packageVersion")
+    package_version: Literal[3] = Field(default=3, alias="packageVersion")
     package_id: StrictStr = Field(alias="packageId", min_length=1)
     run_id: StrictStr | None = Field(default=None, alias="runId")
     blueprint_id: StrictStr = Field(alias="blueprintId", min_length=1)

@@ -34,9 +34,19 @@ def failure_event_from_exception(
     mapped = _CLASSIFICATIONS.get(type(classified).__name__)
     if mapped is None:
         resolved_source = source
-        failure_type = FailureType.PERMANENT
-        reason_code = "UNCLASSIFIED_EXECUTION_FAILURE"
-        retryable = False
+        structured_code = getattr(classified, "code", None)
+        if isinstance(structured_code, str) and structured_code:
+            reason_code = structured_code
+            failure_type = (
+                FailureType.CONTRACT
+                if structured_code == "OUTPUT_CONTRACT_VIOLATION"
+                else FailureType.PERMANENT
+            )
+            retryable = bool(getattr(classified, "retryable", False))
+        else:
+            failure_type = FailureType.PERMANENT
+            reason_code = "UNCLASSIFIED_EXECUTION_FAILURE"
+            retryable = False
     else:
         resolved_source, failure_type, reason_code, retryable = mapped
     message = str(classified).strip() or type(classified).__name__

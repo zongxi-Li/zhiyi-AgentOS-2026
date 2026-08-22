@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Generic, Sequence, TypeVar
 
-from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
+from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 
 
 T = TypeVar("T")
@@ -156,6 +156,13 @@ class WorkflowStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def set_mission_record_state(
+        self, mission_id: str, state: MissionRecordState
+    ) -> tuple[RuntimeMissionRecord, int]:
+        """原子校验全部 Run 已终止并更新 Mission 的用户管理状态。"""
+        raise NotImplementedError
+
+    @abstractmethod
     def save_run(self, run: RuntimeRunRecord) -> None:
         """持久化运行；实现必须维护终态不可被旧快照覆盖的不变量。"""
         raise NotImplementedError
@@ -195,6 +202,7 @@ class WorkflowStore(ABC):
         lifecycle_phase: str | None = None,
         source: str | None = None,
         sources: Sequence[str] | None = None,
+        mission_record_state: MissionRecordState | str | None = None,
         owner_user_id: str | None = None,
         owner_tenant_id: str | None = None,
         page: int = 1,

@@ -14,3 +14,11 @@ def test_acg_package_has_an_explicit_public_blueprint_export() -> None:
 
     assert ACGBlueprint is RuntimeBlueprintSpec
     assert RuntimeBlueprintSpec.__name__ == "RuntimeBlueprintSpec"
+
+
+def test_task_understanding_preserves_detailed_acceptance_criteria() -> None:
+    from support.acg.models import build_default_capability_catalog
+
+    descriptor = build_default_capability_catalog().get("task_understanding")
+
+    assert descriptor.output_contract["properties"]["success_criteria"]["maxItems"] == 24

@@ -267,10 +267,10 @@ class ACGBuilder:
                     nodeId=f"evidence::{node_id}",
                     name=f"Evidence:{descriptor.display_name}",
                     evidenceType="retrieved",
+                    producerStepId=node_id,
                     metadata={"producerStepId": node_id, "capabilityId": descriptor.capability_id},
                 )
                 blueprint.nodes.append(evidence)
-                step.evidence_ids.append(evidence.node_id)
             if descriptor.writes_memory:
                 memory = MemoryNode(
                     nodeId=f"memory::{node_id}",
@@ -393,6 +393,11 @@ class ACGBuilder:
         descriptors,
         dependencies,
     ) -> None:
+        evidence_by_producer = {
+            node.producer_step_id: node.node_id
+            for node in blueprint.nodes
+            if isinstance(node, EvidenceNode) and node.producer_step_id
+        }
         for target_capability in selected:
             target = step_by_capability[target_capability]
             for source_capability in dependencies[target_capability]:
@@ -407,10 +412,11 @@ class ACGBuilder:
                         metadata={"mode": "catalog_contract"},
                     )
                 )
-                if source.evidence_ids:
+                source_evidence_id = evidence_by_producer.get(source.node_id)
+                if source_evidence_id:
                     blueprint.edges.append(
                         ACGEdge(
-                            sourceId=source.evidence_ids[0],
+                            sourceId=source_evidence_id,
                             targetId=target.node_id,
                             edgeType=EdgeType.SUPPORT,
                         )

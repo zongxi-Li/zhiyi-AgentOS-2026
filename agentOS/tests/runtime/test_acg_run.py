@@ -17,12 +17,12 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
 from components.mission_manager.store import WorkflowRegistry
-from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, RuntimeRunRecord, WorkflowStepDefinition, WorkflowStatus
+from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, RuntimeRunRecord, WorkflowStep, WorkflowStepDefinition, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ControlNode, ControlType, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
 
 
 class _RunAgent(BaseAgent):
@@ -43,6 +43,15 @@ class _ReviewAgent(BaseAgent):
             summary="needs-human-review",
             riskLevel="high",
         )
+
+
+class _VoteAgent(BaseAgent):
+    async def run(self, context):
+        if context.step.step_id == "left":
+            return AgentOutput(output={"vote": True}, summary="approve")
+        if context.step.step_id == "right":
+            return AgentOutput(output={"vote": False}, summary="reject")
+        return AgentOutput(output={"summary": "delivered"}, summary="delivered")
 
 
 def _runtime() -> ExecutionRuntime:
@@ -97,6 +106,81 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     assert latest_id == result.execution_state["checkpointId"]
     assert latest_state["checkpointId"] == latest_id
     assert latest_state["completedStepIds"] == ["extract", "summarize"]
+
+
+def test_runtime_persists_and_resumes_control_review_barrier(monkeypatch) -> None:
+    agents = AgentRegistry()
+    agents.register(_VoteAgent(AgentProfile(agentName="voter", domain="general")))
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="control-review",
+        name="control review",
+        domain="general",
+        runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="bootstrap", name="bootstrap", agentName="voter")],
+    ))
+    runtime = ExecutionRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=MemoryWorkflowStore(),
+    )
+    blueprint = ACGBlueprint(
+        graphId="acg-control-review",
+        nodes=[
+            StepNode(
+                nodeId="left", agentName="voter",
+                outputSpec={"type": "object", "properties": {"vote": {"type": "boolean"}}, "required": ["vote"]},
+            ),
+            StepNode(
+                nodeId="right", agentName="voter",
+                outputSpec={"type": "object", "properties": {"vote": {"type": "boolean"}}, "required": ["vote"]},
+            ),
+            ControlNode(
+                nodeId="join",
+                controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=["left", "right"], quorum=2, strategy="majority"
+                ),
+            ),
+            StepNode(
+                nodeId="deliver", agentName="voter",
+                outputSpec={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
+            ),
+        ],
+        edges=[
+            ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY),
+        ],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_build_acg_blueprint",
+        lambda *_args, **_kwargs: (blueprint, None, ()),
+    )
+    mission = runtime.create_mission("control review", workflow_id="control-review")
+    _, run = runtime.prepare_run(mission.mission_id)
+
+    paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    assert paused.status is WorkflowStatus.WAITING_REVIEW
+    assert paused.current_step_id == "join"
+    assert paused.execution_state["reviewPayload"]["subjectType"] == "control"
+    assert [step.status for step in paused.steps] == [
+        StepStatus.COMPLETED,
+        StepStatus.COMPLETED,
+        StepStatus.PENDING,
+    ]
+    completed = asyncio.run(runtime.apply_review(ReviewDecision(
+        runId=run.run_id,
+        stepId="join",
+        decision=ReviewDecisionType.APPROVED,
+        operationId="approve-control",
+    )))
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.completed_step_ids == ["left", "right", "join", "deliver"]
+    assert completed.execution_state["consensusResults"]["join"]["resolvedByReview"] is True
 
 
 def test_runtime_persists_broker_communication_usage_without_output_body() -> None:
@@ -157,7 +241,20 @@ def test_runtime_cleanup_keeps_committed_and_review_references(tmp_path) -> None
         domain="general",
         runtimeEngine="acg",
         status=WorkflowStatus.WAITING_REVIEW,
-        executionState={"reviewPayload": {"pendingMemory": {"outputRef": review_ref}}},
+        currentStepId="review",
+        steps=[WorkflowStep(
+            stepId="review",
+            name="review",
+            agentName="reviewer",
+            status=StepStatus.WAITING_REVIEW,
+        )],
+        executionState={
+            "checkpointId": "checkpoint:review",
+            "reviewPayload": {
+                "stepId": "review",
+                "pendingMemory": {"outputRef": review_ref},
+            },
+        },
     )
     runtime.workflow_store.save_run(run)
 

@@ -56,7 +56,7 @@ class IncompleteACGCompilationError(ValueError):
 class ACGGraphCompiler:
     """The only Blueprint-to-runtime compilation boundary."""
 
-    package_version = 2
+    package_version = 3
     supported_communication_modes = {mode.value for mode in CommunicationMode}
 
     def compile_package(
@@ -340,29 +340,48 @@ class ACGGraphCompiler:
     @staticmethod
     def _compile_evidence(blueprint, steps, nodes_by_id, compatibility_warnings):
         rules: list[EvidenceRule] = []
-        explicit_pairs = {
+        consume_pairs = {
             (edge.target_id, edge.source_id)
             for edge in blueprint.edges_of_type(EdgeType.SUPPORT)
         }
+        produce_pairs: set[tuple[str, str]] = set()
+        for node in nodes_by_id.values():
+            if not isinstance(node, EvidenceNode):
+                continue
+            producer_step_id = node.producer_step_id
+            if producer_step_id is None:
+                legacy_producer = node.metadata.get("producerStepId")
+                if isinstance(legacy_producer, str) and legacy_producer in steps:
+                    producer_step_id = legacy_producer
+                    compatibility_warnings.append(
+                        f"evidence {node.node_id} uses metadata producerStepId; use the typed field"
+                    )
+            if producer_step_id in steps:
+                produce_pairs.add((producer_step_id, node.node_id))
         for step_id, step in steps.items():
-            ids = [evidence_id for target, evidence_id in explicit_pairs if target == step_id]
-            explicit_ids = set(ids)
+            consume_ids = [evidence_id for target, evidence_id in consume_pairs if target == step_id]
+            produce_ids = [evidence_id for producer, evidence_id in produce_pairs if producer == step_id]
+            explicit_ids = {*consume_ids, *produce_ids}
             compatibility_ids = [item for item in step.evidence_ids if item not in explicit_ids]
             if compatibility_ids:
                 compatibility_warnings.append(
-                    f"step {step_id} uses legacy evidenceIds; declare EvidenceNode + SUPPORT"
+                    f"step {step_id} uses legacy evidenceIds; declare an EvidenceNode producer"
                 )
-            for evidence_id in [*ids, *compatibility_ids]:
+            for evidence_id, access in [
+                *((item, "produce") for item in produce_ids),
+                *((item, "consume") for item in consume_ids),
+                *((item, "produce") for item in compatibility_ids),
+            ]:
                 node = nodes_by_id.get(evidence_id)
                 if isinstance(node, EvidenceNode):
                     rules.append(EvidenceRule(
-                        stepId=step_id, evidenceNodeId=evidence_id,
+                        stepId=step_id, evidenceNodeId=evidence_id, access=access,
                         evidenceType=node.evidence_type, source=node.source,
                         schema=node.schema_, compatibilitySource=evidence_id in compatibility_ids,
                     ))
                 else:
                     rules.append(EvidenceRule(
-                        stepId=step_id, evidenceNodeId=evidence_id,
+                        stepId=step_id, evidenceNodeId=evidence_id, access=access,
                         evidenceType="reference", source="compatibility",
                         compatibilitySource=True,
                     ))

@@ -64,7 +64,6 @@ class _IdentityAgent(BaseAgent):
         return AgentOutput(
             output={"result": context.step.step_id},
             summary=f"completed:{context.step.step_id}",
-            evidenceRefs=[f"evidence:{context.step.step_id}"],
         )
 
 
@@ -631,7 +630,7 @@ def test_identity_query_models_use_v2_repositories_as_their_only_source() -> Non
         assert detail.origin.mission.mission_id == task.mission_id
         assert detail.origin.step_execution.step_execution_id == execution.step_execution_id
         assert tree.operational.package is not None
-        assert tree.operational.package.package_version == 2
+        assert tree.operational.package.package_version == 3
         assert tree.operational.package.package_id
         assert tree.operational.node_executions[0].phase.value == "committed"
         assert tree.operational.node_executions[0].commit_id

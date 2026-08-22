@@ -64,6 +64,9 @@ class ACGExecutionState(BaseModel):
     )
     checkpoint_id: str | None = Field(default=None, alias="checkpointId")
     review_payload: dict[str, Any] | None = Field(default=None, alias="reviewPayload")
+    control_review_decisions: dict[str, str] = Field(
+        default_factory=dict, alias="controlReviewDecisions"
+    )
 
 
 class ACGChannelError(ValueError):
@@ -242,6 +245,8 @@ class ACGExecutionGraph:
     ) -> None:
         """推进满足前驱条件的控制节点，并根据路由结果标记跳过分支。"""
         self._advance_loop_frames(state, route_values or {})
+        if state.review_payload is not None:
+            return
         completed = set(state.completed_step_ids)
         skipped = set(state.skipped_step_ids)
         changed = True
@@ -263,6 +268,11 @@ class ACGExecutionGraph:
                     skipped.update(branch_targets - {target})
                 if spec.control_type == "consensus":
                     self._resolve_consensus(state, control_id, route_values or {})
+                    if state.review_payload is not None:
+                        state.skipped_step_ids = [
+                            node_id for node_id in self.nodes if node_id in skipped
+                        ]
+                        return
                 state.completed_step_ids.append(control_id)
                 completed.add(control_id)
                 changed = True
@@ -293,8 +303,17 @@ class ACGExecutionGraph:
                 continue
             next_iteration = current + 1
             if next_iteration >= loop.max_iterations:
+                if state.control_review_decisions.pop(rule.control_id, None) == "approved":
+                    state.control_frames = [
+                        item
+                        for item in state.control_frames
+                        if item.get("controlId") != rule.control_id
+                    ]
+                    continue
                 if loop.on_limit == "review":
                     state.review_payload = {
+                        "subjectType": "control",
+                        "subjectId": rule.control_id,
                         "controlId": rule.control_id,
                         "reasonCode": "LOOP_MAX_ITERATIONS",
                         "iteration": next_iteration,
@@ -369,10 +388,25 @@ class ACGExecutionGraph:
             "accepted": accepted,
             "strategy": spec.strategy,
         }
+        if state.control_review_decisions.pop(control_id, None) == "approved":
+            result.update({"accepted": True, "resolvedByReview": True})
+            state.consensus_results[control_id] = result
+            return
         state.consensus_results[control_id] = result
-        if not resolved or (len(votes) % 2 == 0 and approvals * 2 == len(votes)):
+        tied_majority = (
+            spec.strategy == "majority"
+            and bool(votes)
+            and approvals * 2 == len(votes)
+        )
+        if not resolved or tied_majority:
             if spec.on_unresolved == "review":
-                state.review_payload = {"controlId": control_id, "reasonCode": "CONSENSUS_UNRESOLVED", **result}
+                state.review_payload = {
+                    "subjectType": "control",
+                    "subjectId": control_id,
+                    "controlId": control_id,
+                    "reasonCode": "CONSENSUS_UNRESOLVED",
+                    **result,
+                }
             else:
                 raise RuntimeError(f"CONSENSUS_UNRESOLVED:{control_id}")
 
@@ -384,24 +418,31 @@ class ACGExecutionGraph:
 
     async def resume(self, state: ACGExecutionState, command: Any, execute: NodeRunner) -> ACGExecutionState:
         """消费同 runId 的审核恢复命令，并从已持久化的状态继续而不重跑审核步骤。"""
-        command_run_id = getattr(command, "run_id", None)
-        if command_run_id != state.run_id:
-            raise ValueError("resume command runId does not match execution state")
-        if state.review_payload is None:
-            raise ValueError("execution state is not waiting for review")
-        state.review_payload = None
+        self._prepare_resume(state, command)
         return await self.run(state, execute)
 
     async def astream_after_resume(self, state: ACGExecutionState, command: Any, execute: NodeRunner):
         """消费恢复命令后继续产生事件流，避免 Runtime 需要绕过图的审核语义。"""
+        self._prepare_resume(state, command)
+        async for event in self.astream(state, execute):
+            yield event
+
+    @staticmethod
+    def _prepare_resume(state: ACGExecutionState, command: Any) -> None:
+        """Resolve exactly one persisted review barrier before scheduling resumes."""
+
         command_run_id = getattr(command, "run_id", None)
         if command_run_id != state.run_id:
             raise ValueError("resume command runId does not match execution state")
         if state.review_payload is None:
             raise ValueError("execution state is not waiting for review")
+        control_id = state.review_payload.get("controlId")
+        decision = getattr(command, "payload", {}).get("decision")
+        if isinstance(control_id, str) and control_id:
+            if decision != "approved":
+                raise ValueError("control review resume requires an approved decision")
+            state.control_review_decisions[control_id] = decision
         state.review_payload = None
-        async for event in self.astream(state, execute):
-            yield event
 
     async def astream(self, state: ACGExecutionState, execute: NodeRunner):
         """产生 AgentOS 事件字典，供 runtime/auditor 投影为既有 TraceEvent。"""

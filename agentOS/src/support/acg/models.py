@@ -314,6 +314,7 @@ class EvidenceNode(ACGNodeBase):
     evidence_type: str = Field(default="document", alias="evidenceType")
     source: str = ""
     schema_: Dict[str, Any] = Field(default_factory=dict, alias="schema")
+    producer_step_id: Optional[str] = Field(default=None, alias="producerStepId")
 
     @computed_field(alias="evidenceId", return_type=str)
     @property
@@ -1002,23 +1003,45 @@ def _inject_cognitive_nodes(blueprint: ACGBlueprint, steps) -> None:
         )
 
         # 2) Evidence 节点（需外部依据支撑的步骤）
-        if _matches(sig, _EVIDENCE_KEYWORDS):
+        output_properties = (
+            definition.output_spec.get("properties", {})
+            if isinstance(definition.output_spec, dict)
+            else {}
+        )
+        declares_evidence_output = any(
+            field in output_properties for field in ("evidence_refs", "evidenceRefs")
+        )
+        if declares_evidence_output or _matches(sig, _EVIDENCE_KEYWORDS):
             ev_id = _node_id("ev")
             blueprint.nodes.append(
                 EvidenceNode(
                     nodeId=ev_id,
                     name=f"证据·{definition.name}",
                     evidenceType="retrieved",
+                    producerStepId=step_id,
                     metadata={"producerStepId": step_id},
                 )
             )
             evidence_nodes[step_id] = ev_id
 
         # 3) Memory 节点（产出结论、值得沉淀的步骤）
-        if _matches(sig, _MEMORY_KEYWORDS):
+        memory_policy = (
+            definition.input.get("memoryPolicy", {})
+            if isinstance(definition.input, dict)
+            else {}
+        )
+        declares_memory_write = (
+            isinstance(memory_policy, dict) and memory_policy.get("write") is True
+        )
+        if declares_memory_write or _matches(sig, _MEMORY_KEYWORDS):
+            memory_type = (
+                str(memory_policy.get("writeType") or "episodic")
+                if declares_memory_write
+                else "episodic"
+            )
             mem_id = _node_id("mem")
             blueprint.nodes.append(
-                MemoryNode(nodeId=mem_id, name=f"记忆·{definition.name}", memoryType="episodic")
+                MemoryNode(nodeId=mem_id, name=f"记忆·{definition.name}", memoryType=memory_type)
             )
             blueprint.edges.append(
                 ACGEdge(sourceId=step_id, targetId=mem_id, edgeType=EdgeType.WRITE)
@@ -1312,7 +1335,9 @@ def _output_schema(capability_id: str) -> dict:
                     "mandatory",
                     max_items=24,
                 ),
-                "success_criteria": _TEXT_LIST,
+                # Acceptance criteria are user-authored requirements. Keep the
+                # list bounded without truncating moderately detailed missions.
+                "success_criteria": _text_list(max_items=24),
                 "assumptions": _TEXT_LIST,
                 "open_questions": _TEXT_LIST,
             },

@@ -4,6 +4,7 @@ from components.recovery import (
     failure_event_from_exception,
 )
 from components.communicator.reliable import CommunicationBackpressureError
+from adapters.model_adapter import StructuredGenerationError
 from contracts.recovery import (
     FailureEvent,
     FailureSource,
@@ -68,3 +69,17 @@ def test_failure_boundary_produces_stable_event_and_recovery_action() -> None:
     assert failure.failure_type is FailureType.COMMUNICATION
     assert failure.reason_code == "COMMUNICATION_BACKPRESSURE"
     assert RecoveryService().propose(failure).strategy is RecoveryAction.RETRY
+
+
+def test_failure_boundary_preserves_structured_output_contract_reason() -> None:
+    failure = failure_event_from_exception(
+        StructuredGenerationError(
+            "OUTPUT_CONTRACT_VIOLATION",
+            "success_criteria exceeds maxItems",
+        ),
+        subject_ref="run:run-1:step:understand",
+    )
+
+    assert failure.failure_type is FailureType.CONTRACT
+    assert failure.reason_code == "OUTPUT_CONTRACT_VIOLATION"
+    assert failure.retryable is False

@@ -15,6 +15,7 @@ from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCo
 from components.auditor import InMemoryDecisionStore
 from components.auditor.governance.trace import TraceStore
 from contracts.memory import MemoryQuery, MemoryRecord, MemoryType
+from contracts.compiled_acg import EvidenceManifest, EvidenceRule
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from components.communicator import CommunicatorService
 from components.memory import MemoryService
@@ -24,6 +25,7 @@ from support.acg.models import (
     ACGEdge,
     ConditionOperator,
     ConditionSpec,
+    ConsensusSpec,
     ControlNode,
     ControlType,
     EdgeType,
@@ -294,6 +296,98 @@ def test_resume_command_isolated_to_its_run() -> None:
         asyncio.run(graph.resume(state, ExecutionResumeCommand(runId="run-2"), lambda *_: None))
 
 
+def test_auditor_consensus_accepts_committed_participants_without_vote_fields() -> None:
+    """Auditor consensus is based on committed participants, so an empty vote set is not a tie."""
+
+    blueprint = ACGBlueprint(
+        graphId="acg-auditor-consensus",
+        nodes=[
+            StepNode(nodeId="left", agentName="agent"),
+            StepNode(nodeId="right", agentName="agent"),
+            ControlNode(
+                nodeId="join",
+                controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=["left", "right"],
+                    quorum=2,
+                    strategy="auditor",
+                ),
+            ),
+            StepNode(nodeId="deliver", agentName="agent"),
+        ],
+        edges=[
+            ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY),
+        ],
+    )
+    graph = ACGGraphCompiler().compile(blueprint)
+
+    async def execute(step_id, _state):
+        return {"outputSummary": step_id, "routeValue": {}}
+
+    state = asyncio.run(graph.run(ACGExecutionState(runId="run-auditor"), execute))
+
+    assert state.review_payload is None
+    assert state.consensus_results["join"] == {
+        "votes": 0,
+        "approvals": 0,
+        "committedParticipants": 2,
+        "quorum": 2,
+        "accepted": True,
+        "strategy": "auditor",
+    }
+    assert state.completed_step_ids == ["left", "right", "join", "deliver"]
+
+
+def test_majority_tie_resumes_once_after_control_review_approval() -> None:
+    blueprint = ACGBlueprint(
+        graphId="acg-majority-review",
+        nodes=[
+            StepNode(nodeId="left", agentName="agent"),
+            StepNode(nodeId="right", agentName="agent"),
+            ControlNode(
+                nodeId="join",
+                controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=["left", "right"],
+                    quorum=2,
+                    strategy="majority",
+                ),
+            ),
+            StepNode(nodeId="deliver", agentName="agent"),
+        ],
+        edges=[
+            ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY),
+        ],
+    )
+    graph = ACGGraphCompiler().compile(blueprint)
+    state = ACGExecutionState(runId="run-majority")
+
+    async def execute(step_id, _state):
+        votes = {"left": True, "right": False}
+        return {
+            "outputSummary": step_id,
+            "routeValue": ({"vote": votes[step_id]} if step_id in votes else {}),
+        }
+
+    with pytest.raises(ExecutionInterrupt) as captured:
+        asyncio.run(graph.run(state, execute))
+
+    assert captured.value.payload["subjectType"] == "control"
+    assert captured.value.payload["subjectId"] == "join"
+    resumed = asyncio.run(graph.resume(
+        state,
+        ExecutionResumeCommand(runId="run-majority", payload={"decision": "approved"}),
+        execute,
+    ))
+    assert resumed.review_payload is None
+    assert resumed.consensus_results["join"]["resolvedByReview"] is True
+    assert resumed.completed_step_ids == ["left", "right", "join", "deliver"]
+
+
 def test_execution_stream_is_projected_to_existing_trace_events() -> None:
     run = RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")
 
@@ -331,6 +425,21 @@ class _CountingAgent(_RecordingAgent):
         return await super().run(context)
 
 
+class _EvidenceAgent(BaseAgent):
+    def __init__(self, evidence_ref: str) -> None:
+        super().__init__(AgentProfile(agentName="agent", domain="general"))
+        self.evidence_ref = evidence_ref
+
+    async def run(self, context):
+        source = {"citationId": "citation-1", "provider": "task-input"}
+        return AgentOutput(
+            output={"evidence_refs": [self.evidence_ref], "sources": [source]},
+            sources=[source],
+            evidenceRefs=[self.evidence_ref],
+            summary="evidence",
+        )
+
+
 def test_node_runner_uses_contract_context_memory_and_returns_references_only() -> None:
     agent = _RecordingAgent()
     memory = MemoryService()
@@ -358,6 +467,49 @@ def test_node_runner_uses_contract_context_memory_and_returns_references_only() 
     assert result["memoryRef"] == "memory:run-1:one"
     assert result["routeValue"] == {"answer": "accepted"}
     assert "output" not in result
+
+
+def test_node_runner_accepts_only_manifest_authorized_runtime_evidence() -> None:
+    def runner_for(evidence_ref: str) -> ACGNodeRunner:
+        step = WorkflowStep(
+            stepId="retrieve",
+            name="retrieve",
+            agentName="agent",
+            outputSpec={
+                "type": "object",
+                "properties": {
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "sources": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["evidence_refs"],
+            },
+        )
+        return ACGNodeRunner(
+            task=RuntimeMissionRecord(missionId="mission-1", title="test"),
+            run=RuntimeRunRecord(missionId="mission-1", workflowId="workflow-1", domain="general", runtimeEngine="acg"),
+            workflow=WorkflowDefinition(workflowId="workflow-1", name="workflow", domain="general", intent="general", runtimeEngine="acg"),
+            steps={"retrieve": step},
+            agents={"retrieve": _EvidenceAgent(evidence_ref)},
+            communicator=CommunicatorService(run_id="run-1", mission_id="mission-1"),
+            memory=MemoryService(),
+            evidence_manifest=EvidenceManifest(rules=(EvidenceRule(
+                stepId="retrieve",
+                evidenceNodeId="evidence::retrieve",
+                access="produce",
+                evidenceType="retrieved",
+                source="task-input",
+            ),)),
+        )
+
+    accepted = asyncio.run(runner_for("citation-1")(
+        "retrieve", ACGExecutionState(runId="run-1")
+    ))
+    assert accepted["evidenceRefs"] == ["citation-1"]
+
+    with pytest.raises(ValueError, match="unauthorized evidence references"):
+        asyncio.run(runner_for("fabricated-citation")(
+            "retrieve", ACGExecutionState(runId="run-1")
+        ))
 
 
 def test_node_runner_reuses_completed_commit_without_reinvoking_agent() -> None:

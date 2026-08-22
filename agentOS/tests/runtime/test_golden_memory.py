@@ -12,7 +12,7 @@ from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, EvidenceNode, StepNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -22,14 +22,17 @@ class _GoldenMemoryAgent(BaseAgent):
 
     async def run(self, context):
         step_id = context.step.step_id
+        evidence_ref = f"evidence:{step_id}"
+        sources = [{"citationId": evidence_ref, "provider": "golden-memory-fixture"}]
         return AgentOutput(
             output={
                 "summary": f"confirmed {step_id}",
-                "evidence_refs": [f"evidence:{step_id}"],
+                "evidence_refs": [evidence_ref],
                 "body": f"PRIVATE-BODY-{step_id}",
             },
             summary=f"confirmed {step_id}",
-            evidenceRefs=[f"evidence:{step_id}"],
+            sources=sources,
+            evidenceRefs=[evidence_ref],
         )
 
 
@@ -89,6 +92,27 @@ def _run(tmp_path):
             _node("research-a", "research", "golden-memory-a"),
             _node("research-b", "research", "golden-memory-b"),
             _node("synthesize", "synthesize", "golden-memory-a"),
+            EvidenceNode(
+                nodeId="evidence-node:research-a",
+                name="research-a evidence",
+                evidenceType="test",
+                source="golden-memory-fixture",
+                producerStepId="research-a",
+            ),
+            EvidenceNode(
+                nodeId="evidence-node:research-b",
+                name="research-b evidence",
+                evidenceType="test",
+                source="golden-memory-fixture",
+                producerStepId="research-b",
+            ),
+            EvidenceNode(
+                nodeId="evidence-node:synthesize",
+                name="synthesize evidence",
+                evidenceType="test",
+                source="golden-memory-fixture",
+                producerStepId="synthesize",
+            ),
         ],
         edges=[
             ACGEdge(sourceId="research-a", targetId="synthesize", edgeType=EdgeType.DEPENDENCY),

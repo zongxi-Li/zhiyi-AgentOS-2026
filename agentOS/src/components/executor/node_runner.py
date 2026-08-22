@@ -416,18 +416,28 @@ class ACGNodeRunner:
             *output.evidence_refs,
             *(output_evidence if isinstance(output_evidence, list) else []),
         ]
-        declared_evidence_ids = {
-            rule.evidence_node_id for rule in self.evidence_manifest.for_step(step_id)
+        evidence_refs = list(dict.fromkeys(str(item) for item in evidence_refs if str(item).strip()))
+        produced_citation_refs = {
+            str(item.get("citationId"))
+            for item in output.sources
+            if isinstance(item, dict) and str(item.get("citationId") or "").strip()
         }
-        if declared_evidence_ids:
-            undeclared = {
-                str(item) for item in evidence_refs
-                if str(item) not in declared_evidence_ids
-            }
-            if undeclared:
-                raise ValueError(
-                    f"step {step_id} produced undeclared evidence references: {sorted(undeclared)}"
-                )
+        upstream_evidence_refs = {
+            str(item) for item in getattr(pack, "evidence_refs", ()) if str(item).strip()
+        }
+        produce_allowed = bool(self.evidence_manifest.for_step(step_id, "produce"))
+        consume_allowed = bool(self.evidence_manifest.for_step(step_id, "consume"))
+        unauthorized = {
+            item for item in evidence_refs
+            if not (
+                (produce_allowed and item in produced_citation_refs)
+                or (consume_allowed and item in upstream_evidence_refs)
+            )
+        }
+        if unauthorized:
+            raise ValueError(
+                f"step {step_id} produced unauthorized evidence references: {sorted(unauthorized)}"
+            )
         memory_event = StructuredMemoryEventBuilder.build(
             run_id=state.run_id,
             step_id=step_id,

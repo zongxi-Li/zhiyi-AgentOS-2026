@@ -9,8 +9,8 @@ import os
 import sqlite3
 from pathlib import Path
 
-from contracts.workflow import RuntimeMissionRecord, StepStatus, RuntimeRunRecord, WorkflowStatus
-from support.stores._policy import matches_run, matches_mission, reject_terminal_overwrite, run_priority
+from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
+from support.stores._policy import matches_run, matches_mission, reject_terminal_overwrite, run_priority, validate_run_state
 from support.stores.workflow_store import (
     RuntimeRunRecordDeleteResult,
     RuntimeRunRecordNotTerminalError,
@@ -58,6 +58,39 @@ class SQLiteWorkflowStore(WorkflowStore):
         if row is None:
             raise KeyError(f"task not found: {mission_id}")
         return RuntimeMissionRecord.model_validate(json.loads(row["payload"]))
+
+    def set_mission_record_state(
+        self, mission_id: str, state: MissionRecordState
+    ) -> tuple[RuntimeMissionRecord, int]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT payload FROM tasks WHERE mission_id = ?", (mission_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {mission_id}")
+            task = RuntimeMissionRecord.model_validate(json.loads(row["payload"]))
+            if task.record_state is MissionRecordState.DELETED:
+                raise ValueError("deleted mission record state is immutable")
+            run_rows = conn.execute("SELECT payload FROM runs WHERE mission_id = ?", (mission_id,)).fetchall()
+            runs = [RuntimeRunRecord.model_validate(json.loads(item["payload"])) for item in run_rows]
+            for run in runs:
+                if run.status not in {
+                    WorkflowStatus.COMPLETED, WorkflowStatus.FAILED,
+                    WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED,
+                }:
+                    raise RuntimeRunRecordNotTerminalError(run.run_id, run.status)
+            now = utc_now()
+            task.record_state = state
+            task.updated_at = now
+            task.archived_at = now if state is MissionRecordState.ARCHIVED else None
+            if state is MissionRecordState.DELETED:
+                task.deleted_at = now
+            payload = json.dumps(task.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+            conn.execute(
+                "UPDATE tasks SET payload = ?, updated_at = ? WHERE mission_id = ?",
+                (payload, now.isoformat(), mission_id),
+            )
+            conn.commit()
+            return task, len(runs)
 
     def save_run(self, run: RuntimeRunRecord) -> None:
         """在单连接事务中保存运行。
@@ -143,7 +176,7 @@ class SQLiteWorkflowStore(WorkflowStore):
             existing = RuntimeRunRecord.model_validate(json.loads(row["payload"]))
             if reject_terminal_overwrite(existing, run):
                 return False
-        _validate_obvious_run_state_conflicts(run)
+        validate_run_state(run)
         conn.execute(
             """INSERT INTO runs(run_id, mission_id, payload, updated_at)
                VALUES(?, ?, ?, ?)
@@ -232,6 +265,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         lifecycle_phase: str | None = None,
         source: str | None = None,
         sources=None,
+        mission_record_state: MissionRecordState | str | None = None,
         owner_user_id: str | None = None,
         owner_tenant_id: str | None = None,
         page: int = 1,
@@ -241,11 +275,24 @@ class SQLiteWorkflowStore(WorkflowStore):
         expected_status = status_value(status)
         expected_statuses = status_values(statuses)
         expected_sources = {str(item) for item in sources} if sources else None
+        expected_record_state = (
+            mission_record_state.value if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
         rows = self._fetch_all("SELECT payload FROM runs")
+        mission_states = {
+            str(row["mission_id"]): RuntimeMissionRecord.model_validate(
+                json.loads(row["payload"])
+            ).record_state.value
+            for row in self._fetch_all("SELECT mission_id, payload FROM tasks")
+        }
         runs = [
             run
             for run in (RuntimeRunRecord.model_validate(json.loads(row["payload"])) for row in rows)
-            if matches_run(
+            if (
+                expected_record_state is None
+                or mission_states.get(run.mission_id) == expected_record_state
+            ) and matches_run(
                 run,
                 status=expected_status,
                 statuses=expected_statuses,
@@ -482,28 +529,5 @@ class SQLiteWorkflowStore(WorkflowStore):
             "taskCount": task_count,
             "runCount": run_count,
         }
-
-
-def _validate_obvious_run_state_conflicts(run: RuntimeRunRecord) -> None:
-    statuses = {step.status for step in run.steps}
-
-    if run.status == WorkflowStatus.COMPLETED:
-        conflicts = {
-            StepStatus.RUNNING,
-            StepStatus.RETRYING,
-            StepStatus.WAITING_REVIEW,
-        }
-        if statuses & conflicts:
-            raise ValueError(
-                f"completed workflow run has active or review steps: {run.run_id}"
-            )
-    elif run.status == WorkflowStatus.FAILED:
-        if statuses & {StepStatus.RUNNING, StepStatus.RETRYING}:
-            raise ValueError(f"failed workflow run has active steps: {run.run_id}")
-    elif run.status == WorkflowStatus.WAITING_REVIEW:
-        if StepStatus.WAITING_REVIEW not in statuses:
-            raise ValueError(
-                f"waiting_review workflow run has no waiting_review step: {run.run_id}"
-            )
 
 
