@@ -33,8 +33,8 @@
           <strong>{{ run.runId }}</strong>
         </div>
         <div>
-          <small>Task ID</small>
-          <strong>{{ run.taskId }}</strong>
+          <small>任务号</small>
+          <strong>{{ run.missionId }}</strong>
         </div>
         <div>
           <small>Engine</small>

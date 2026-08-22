@@ -23,7 +23,7 @@ export const buildAcgAuditExport = (view: AcgView) => ({
   productions: view.provenance.productions.map((event) => ({
     eventId: event.eventId,
     runId: event.runId,
-    taskId: event.taskId,
+    missionId: event.missionId,
     producerStepId: event.producerStepId,
     agentName: event.agentName,
     attempt: event.attempt,
@@ -38,7 +38,7 @@ export const buildAcgAuditExport = (view: AcgView) => ({
   consumptions: view.provenance.consumptions.map((event) => ({
     eventId: event.eventId,
     runId: event.runId,
-    taskId: event.taskId,
+    missionId: event.missionId,
     consumerStepId: event.consumerStepId,
     consumerAgentName: event.consumerAgentName,
     attempt: event.attempt,
@@ -59,7 +59,7 @@ export const buildAcgAuditExport = (view: AcgView) => ({
     eventId: event.eventId,
     interactionId: event.interactionId,
     runId: event.runId,
-    taskId: event.taskId,
+    missionId: event.missionId,
     edgeIds: event.edgeIds,
     producerStepIds: event.producerStepIds,
     consumerStepId: event.consumerStepId,

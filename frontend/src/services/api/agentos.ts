@@ -39,7 +39,7 @@ export type WorkflowProgressPhase =
   | 'cancelled'
 
 export interface WorkflowProgress {
-  taskId: string
+  missionId: string
   runId: string
   workflowId: string
   status: string
@@ -91,8 +91,8 @@ export type StepStatus =
   | 'cancelled'
   | 'skipped_by_condition'
 
-export interface AgentTask {
-  taskId: string
+export interface RuntimeMissionRecord {
+  missionId: string
   title: string
   domain: string
   intent: string
@@ -152,7 +152,7 @@ export interface TraceEvent {
 
 export interface WorkflowRun {
   runId: string
-  taskId: string
+  missionId: string
   title?: string | null
   workflowId: string
   workflowSelectionSource?: 'explicit' | 'recommended'
@@ -176,7 +176,7 @@ export interface WorkflowRun {
 
 export interface WorkflowTraceExport {
   runId: string
-  taskId: string
+  missionId: string
   workflowId: string
   domain: string
   status: WorkflowStatus
@@ -256,7 +256,7 @@ export interface WorkflowRunQuery {
   statuses?: string
   domain?: string
   workflowId?: string
-  taskId?: string
+  missionId?: string
   lifecyclePhase?: WorkflowProgressPhase | ''
   source?: string
   sources?: string
@@ -291,7 +291,7 @@ export interface AcgEdge {
 
 export interface AcgBlueprint {
   graphId: string
-  taskId?: string
+  missionId?: string
   objective?: string
   complexityLevel?: string
   nodes: AcgNode[]
@@ -306,7 +306,7 @@ export interface ProvenanceProduction {
   fieldNames?: string[]
   tokenSize?: number
   runId?: string
-  taskId?: string
+  missionId?: string
   agentName?: string
   attempt?: number
   previousHash?: string
@@ -335,7 +335,7 @@ export interface ProvenanceConsumption {
   consumerStepId: string
   producerStepIds: string[]
   runId?: string
-  taskId?: string
+  missionId?: string
   consumerAgentName?: string
   attempt?: number
   producerEventIds?: string[]
@@ -355,7 +355,7 @@ export interface RuntimeInteraction {
   interactionId: string
   eventId: string
   runId?: string
-  taskId?: string
+  missionId?: string
   edgeIds: string[]
   producerStepIds: string[]
   consumerStepId: string
@@ -464,7 +464,7 @@ const projectProgress = (run: WorkflowRun): WorkflowProgress => {
   const total = steps.length
   const percent = total ? Math.round((completed / total) * 10000) / 100 : null
   return {
-    taskId: run.taskId,
+    missionId: run.missionId,
     runId: run.runId,
     workflowId: run.workflowId,
     status: run.status,
@@ -537,7 +537,7 @@ export const agentosApi = {
         statuses: params.statuses || undefined,
         domain: params.domain,
         workflowId: params.workflowId,
-        taskId: params.taskId,
+        missionId: params.missionId,
         lifecyclePhase: params.lifecyclePhase || undefined,
         source: params.source,
         sources: params.sources,
@@ -558,7 +558,7 @@ export const agentosApi = {
   },
 
   async startWorkflow(payload: WorkflowStartRequest): Promise<WorkflowRun> {
-    const response = await agentosRequest.post<WorkflowRun>('/runs', payload)
+    const response = await agentosRequest.post<WorkflowRun>('/missions', payload)
     return response.data
   },
 
@@ -566,9 +566,9 @@ export const agentosApi = {
     payload: AsyncWorkflowStartRequest,
     options: { signal?: AbortSignal } = {}
   ): Promise<WorkflowRun> {
-    const response = await agentosRequest.post<WorkflowRun>('/runs', payload, { signal: options.signal })
-    if (!response.data?.runId || !response.data.taskId) {
-      throw new WorkflowApiContractError('运行创建响应缺少 runId 或 taskId')
+    const response = await agentosRequest.post<WorkflowRun>('/missions', payload, { signal: options.signal })
+    if (!response.data?.runId || !response.data.missionId) {
+      throw new WorkflowApiContractError('运行创建响应缺少 runId 或 missionId')
     }
     return response.data
   },

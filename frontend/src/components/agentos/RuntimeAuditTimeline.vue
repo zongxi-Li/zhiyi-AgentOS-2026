@@ -1,7 +1,7 @@
 <template>
-  <section class="runtime-audit-timeline ui-surface" aria-label="WKN 运行审计时间线">
+  <section class="runtime-audit-timeline ui-surface" aria-label="执行运行时 运行审计时间线">
     <header>
-      <div><span class="eyebrow">WKN Audit</span><strong>运行审计时间线</strong></div>
+      <div><span class="eyebrow">Execution Audit</span><strong>运行审计时间线</strong></div>
       <span>{{ items.length }} 条</span>
     </header>
     <p v-if="!items.length" class="empty">尚无 Trace、恢复、Checkpoint、Review 或 GraphPatch 引用</p>

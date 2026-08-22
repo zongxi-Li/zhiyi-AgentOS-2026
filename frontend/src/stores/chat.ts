@@ -135,7 +135,7 @@ export interface Message {
   routing?: AgentRoutingInfo
   acgTaskId?: string
   workflowRunId?: string
-  workflowTaskId?: string
+  workflowMissionId?: string
   workflowId?: string
   workflowStatus?: string
   workflowClientRequestId?: string
@@ -146,7 +146,7 @@ export interface Message {
 export interface ChatWorkflowBinding {
   conversationId: string
   messageId?: string
-  taskId: string
+  missionId: string
   acgTaskId: string
   runId: string
   workflowId?: string
@@ -819,7 +819,7 @@ export const useChatStore = defineStore('chat', () => {
     const binding: ChatWorkflowBinding = {
       conversationId: options.conversationId,
       messageId: String(userMessage.id),
-      taskId: response.taskId,
+      missionId: response.missionId,
       acgTaskId,
       runId: acgTaskId,
       workflowId: response.workflowId || options.workflowId,
@@ -838,7 +838,7 @@ export const useChatStore = defineStore('chat', () => {
       modelInfo: 'AgentOS Workflow',
       agentMode: 'default',
       acgTaskId: binding.acgTaskId,
-      workflowTaskId: binding.taskId,
+      workflowMissionId: binding.missionId,
       workflowRunId: binding.runId,
       workflowId: binding.workflowId,
       workflowStatus: binding.status,

@@ -52,7 +52,7 @@
           <button
             class="acg-run-item__select"
             type="button"
-            :title="`${displayTitle(run)}\n${taskIdentity(run)}`"
+            :title="`${displayTitle(run)}\n${missionIdentity(run)}`"
             @click="emit('select', run.runId)"
           >
             <span
@@ -81,7 +81,7 @@
             </span>
           </button>
           <span class="acg-run-actions">
-            <button class="acg-run-action" type="button" title="复制完整任务 ID" :aria-label="`复制任务 ID：${taskIdentity(run)}`" @click="copyTaskId(taskIdentity(run))">
+            <button class="acg-run-action" type="button" title="复制完整任务 ID" :aria-label="`复制任务 ID：${missionIdentity(run)}`" @click="copyMissionId(missionIdentity(run))">
               <el-icon><CopyDocument /></el-icon>
             </button>
           </span>
@@ -156,22 +156,22 @@ const groupKey = (run: WorkflowRunSummary): RunGroupKey => {
 
 const filteredRuns = computed(() => {
   const keyword = searchKeyword.value.toLocaleLowerCase('zh-CN')
-  const latestByTask = new Map<string, WorkflowRunSummary>()
+  const latestByMission = new Map<string, WorkflowRunSummary>()
   for (const run of runs.value) {
-    const identity = run.taskId || run.runId
-    const current = latestByTask.get(identity)
+    const identity = run.missionId || run.runId
+    const current = latestByMission.get(identity)
     const timestamp = Date.parse(run.updatedAt || run.startedAt || run.createdAt || '') || 0
     const currentTimestamp = current
       ? Date.parse(current.updatedAt || current.startedAt || current.createdAt || '') || 0
       : -1
-    if (!current || timestamp >= currentTimestamp) latestByTask.set(identity, run)
+    if (!current || timestamp >= currentTimestamp) latestByMission.set(identity, run)
   }
-  return [...latestByTask.values()]
+  return [...latestByMission.values()]
     .filter(run => {
       const key = groupKey(run)
       if (statusFilter.value !== 'all' && statusFilter.value !== key) return false
       if (!keyword) return true
-      return [run.taskId, run.runId, run.title, run.workflowId, run.message]
+      return [run.missionId, run.runId, run.title, run.workflowId, run.message]
         .filter(Boolean)
         .some(value => String(value).toLocaleLowerCase('zh-CN').includes(keyword))
     })
@@ -192,7 +192,7 @@ const visibleGroups = computed(() => {
 
 const displayTitle = (run: WorkflowRunSummary) => resolveAcgTaskTitle(run)
 
-const taskIdentity = (run: WorkflowRunSummary) => run.taskId || run.runId
+const missionIdentity = (run: WorkflowRunSummary) => run.missionId || run.runId
 const runActivityTime = (run: WorkflowRunSummary) => run.updatedAt || run.startedAt || run.createdAt || ''
 const runTimestamp = (run: WorkflowRunSummary) => Date.parse(runActivityTime(run)) || 0
 const runTimeLabel = (run: WorkflowRunSummary) => {
@@ -247,9 +247,9 @@ const formatFullRunTime = (value?: string | null) => {
   })}`
 }
 
-const copyTaskId = async (taskId: string) => {
+const copyMissionId = async (missionId: string) => {
   try {
-    await navigator.clipboard.writeText(taskId)
+    await navigator.clipboard.writeText(missionId)
     ElMessage.success('任务 ID 已复制')
   } catch {
     ElMessage.warning('复制失败，请手动选择任务 ID')

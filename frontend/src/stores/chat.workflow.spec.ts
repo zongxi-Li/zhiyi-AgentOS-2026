@@ -17,7 +17,7 @@ vi.mock('@/services/api/workflow', async (importOriginal) => {
 
 const acceptedResponse = {
   runId: 'run_chat_1',
-  taskId: 'task_chat_1',
+  missionId: 'mission_chat_1',
   workflowId: 'legal_case_analysis_v1',
   domain: 'legal',
   status: 'pending' as const,
@@ -49,7 +49,7 @@ describe('chat workflow binding', () => {
     expect(result?.binding).toEqual(expect.objectContaining({
       conversationId: 'conversation_1',
       messageId: expect.any(String),
-      taskId: 'task_chat_1',
+      missionId: 'mission_chat_1',
       acgTaskId: 'run_chat_1',
       runId: 'run_chat_1',
       workflowId: 'legal_case_analysis_v1',

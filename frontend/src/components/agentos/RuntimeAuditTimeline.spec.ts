@@ -21,7 +21,7 @@ describe('RuntimeAuditTimeline', () => {
     expect(wrapper.text()).not.toContain('dynamicPatch')
   })
 
-  it('uses the WKN empty state when no audit references exist', () => {
+  it('uses the 执行运行时 empty state when no audit references exist', () => {
     const wrapper = mount(RuntimeAuditTimeline)
     expect(wrapper.text()).toContain('尚无 Trace、恢复、Checkpoint、Review 或 GraphPatch 引用')
   })

@@ -1,7 +1,7 @@
 <template>
-  <section class="agentos-run-summary" aria-label="WKN 运行态摘要">
+  <section class="agentos-run-summary" aria-label="执行运行时 运行态摘要">
     <header>
-      <div><span class="eyebrow">WKN Runtime</span><strong>运行态摘要</strong></div>
+      <div><span class="eyebrow">Execution Runtime</span><strong>运行态摘要</strong></div>
       <span class="status" :class="statusClass">{{ statusLabel }}</span>
     </header>
     <p class="activity-note" :class="{ active: hasRuntimeActivity }">{{ activityLabel }}</p>

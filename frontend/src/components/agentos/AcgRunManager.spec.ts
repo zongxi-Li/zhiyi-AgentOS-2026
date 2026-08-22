@@ -19,7 +19,7 @@ vi.mock('@/services/api/workflow', async (importOriginal) => {
 })
 
 const run = (overrides: Partial<WorkflowRunSummary>): WorkflowRunSummary => ({
-  taskId: `task_${overrides.runId || 'run_active_123456789'}`, runId: 'run_active_123456789', workflowId: 'legal_contract_review_v1',
+  missionId: `mission_${overrides.runId || 'run_active_123456789'}`, runId: 'run_active_123456789', workflowId: 'legal_contract_review_v1',
   title: '请以 ACG 多智能体协作方式审查这份软件开发合同，强制生成差异化任务图，并完整执行后续流程。', status: 'running', phase: 'executing', message: '风险识别',
   percent: 28, totalSteps: 7, pendingSteps: 4, runningSteps: 1, waitingReviewSteps: 0,
   retryingSteps: 0, failedSteps: 0, completedSteps: 2, cancelledSteps: 0,
@@ -44,7 +44,7 @@ describe('AcgRunManager', () => {
     })
     vi.mocked(workflowApi.deleteRun).mockResolvedValue({
       runId: 'run_done_1',
-      taskId: 'task_1',
+      missionId: 'mission_1',
       deleted: true,
       taskDeleted: true
     })
@@ -99,8 +99,8 @@ describe('AcgRunManager', () => {
   it('shows only the latest run for the same task and moves it to the latest status group', async () => {
     vi.mocked(workflowApi.listRuns).mockResolvedValue({
       items: [
-        run({ taskId: 'task_retry', runId: 'run_failed', status: 'failed', phase: 'failed', updatedAt: '2026-07-26T04:00:10Z' }),
-        run({ taskId: 'task_retry', runId: 'run_success', status: 'completed', phase: 'completed', updatedAt: '2026-07-26T04:01:10Z' })
+        run({ missionId: 'mission_retry', runId: 'run_failed', status: 'failed', phase: 'failed', updatedAt: '2026-07-26T04:00:10Z' }),
+        run({ missionId: 'mission_retry', runId: 'run_success', status: 'completed', phase: 'completed', updatedAt: '2026-07-26T04:01:10Z' })
       ],
       total: 2, page: 1, pageSize: 20
     })
@@ -110,15 +110,15 @@ describe('AcgRunManager', () => {
     expect(wrapper.findAll('.acg-run-item')).toHaveLength(1)
     expect(wrapper.find('.status-completed').exists()).toBe(true)
     expect(wrapper.find('.status-failed').exists()).toBe(false)
-    expect(wrapper.find('.acg-run-item__select').attributes('title')).toContain('task_retry')
+    expect(wrapper.find('.acg-run-item__select').attributes('title')).toContain('mission_retry')
     wrapper.unmount()
   })
 
   it('sorts each status group by the authoritative update timestamp', async () => {
     vi.mocked(workflowApi.listRuns).mockResolvedValue({
       items: [
-        run({ taskId: 'task_older', runId: 'run_older', title: '较早任务', updatedAt: '2026-07-26T04:00:10Z' }),
-        run({ taskId: 'task_newer', runId: 'run_newer', title: '较新任务', updatedAt: '2026-07-26T04:02:10Z' })
+        run({ missionId: 'mission_older', runId: 'run_older', title: '较早任务', updatedAt: '2026-07-26T04:00:10Z' }),
+        run({ missionId: 'mission_newer', runId: 'run_newer', title: '较新任务', updatedAt: '2026-07-26T04:02:10Z' })
       ],
       total: 2,
       page: 1,

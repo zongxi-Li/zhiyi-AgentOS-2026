@@ -17,7 +17,7 @@ const run: WorkflowRun = {
 }
 
 describe('AgentOsRunSummaryCard', () => {
-  it('projects only WKN v2 run, graph and audit facts', () => {
+  it('projects only 执行运行时 v2 run, graph and audit facts', () => {
     const wrapper = mount(AgentOsRunSummaryCard, {
       props: {
         progress,

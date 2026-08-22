@@ -11,7 +11,7 @@ export type WorkflowRunSource = 'agent' | 'chat' | 'acg' | 'legacy_agent_chat' |
 
 export interface WorkflowRunReference {
   runId: string
-  taskId?: string
+  missionId?: string
   workflowId?: string
   conversationId?: string
   messageId?: string
@@ -27,7 +27,7 @@ export interface WorkflowRunReference {
 interface ChatWorkflowBindingLike {
   conversationId: string
   messageId?: string
-  taskId?: string
+  missionId?: string
   runId: string
   source?: 'agent' | 'chat'
   workflowId?: string
@@ -70,7 +70,7 @@ const normalizeReference = (value: unknown): WorkflowRunReference | null => {
     : undefined
   return {
     runId,
-    taskId: typeof item.taskId === 'string' ? item.taskId : undefined,
+    missionId: typeof item.missionId === 'string' ? item.missionId : undefined,
     workflowId: typeof item.workflowId === 'string' ? item.workflowId : undefined,
     conversationId: typeof item.conversationId === 'string' ? item.conversationId : undefined,
     messageId: typeof item.messageId === 'string' ? item.messageId : undefined,
@@ -99,7 +99,7 @@ const loadReferences = (): Record<string, WorkflowRunReference> => {
       if (!item?.runId || references[item.runId]) continue
       references[item.runId] = {
         runId: item.runId,
-        taskId: item.taskId,
+        missionId: item.missionId,
         workflowId: item.workflowId,
         conversationId: item.conversationId,
         messageId: item.messageId,
@@ -144,7 +144,7 @@ export const useWorkflowRunsStore = defineStore('workflowRuns', () => {
   const registerChatBinding = (binding: ChatWorkflowBindingLike) => {
     register({
       runId: binding.runId,
-      taskId: binding.taskId,
+      missionId: binding.missionId,
       workflowId: binding.workflowId,
       conversationId: binding.conversationId,
       messageId: binding.messageId,
@@ -163,7 +163,7 @@ export const useWorkflowRunsStore = defineStore('workflowRuns', () => {
       next[item.runId] = {
         ...current,
         runId: item.runId,
-        taskId: item.taskId,
+        missionId: item.missionId,
         workflowId: item.workflowId,
         source: current?.source || normalizeSource(item.source),
         status: item.status,
