@@ -46,4 +46,19 @@ class SchedulerUnavailable(RuntimeError):
     """Coordination state cannot safely allocate a lease."""
 
 
-__all__ = ["CandidateDecision", "FilterReason", "ReadyNodeSchedulingResult", "SchedulerUnavailable"]
+class SchedulerNoEligibleResource(RuntimeError):
+    """The frozen binding policy has no executable resource in this Runtime."""
+
+
+class SchedulerAllocationTimeout(TimeoutError):
+    """A READY node could not obtain capacity within its bounded queue window."""
+
+
+__all__ = [
+    "CandidateDecision",
+    "FilterReason",
+    "ReadyNodeSchedulingResult",
+    "SchedulerAllocationTimeout",
+    "SchedulerNoEligibleResource",
+    "SchedulerUnavailable",
+]

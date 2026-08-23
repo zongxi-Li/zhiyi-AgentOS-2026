@@ -9,6 +9,8 @@ from contracts.recovery import FailureEvent, FailureSource, FailureType
 
 _CLASSIFICATIONS: dict[str, tuple[FailureSource, FailureType, str, bool]] = {
     "ResourceNotFoundError": (FailureSource.SCHEDULER, FailureType.CAPACITY, "RESOURCE_UNAVAILABLE", True),
+    "SchedulerNoEligibleResource": (FailureSource.SCHEDULER, FailureType.CAPACITY, "NO_ELIGIBLE_RESOURCE", False),
+    "SchedulerAllocationTimeout": (FailureSource.SCHEDULER, FailureType.CAPACITY, "SCHEDULER_CAPACITY_TIMEOUT", True),
     "CommunicationBackpressureError": (FailureSource.COMMUNICATION, FailureType.COMMUNICATION, "COMMUNICATION_BACKPRESSURE", True),
     "CommunicationAccessError": (FailureSource.COMMUNICATION, FailureType.POLICY, "COMMUNICATION_NOT_AUTHORIZED", False),
     "EntropyBudgetExceededError": (FailureSource.COMMUNICATION, FailureType.POLICY, "COMMUNICATION_BUDGET_EXHAUSTED", False),

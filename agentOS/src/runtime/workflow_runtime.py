@@ -60,6 +60,7 @@ from contracts.planning import (
 )
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.resource.service import ResourceService
+from components.scheduler.models import SchedulerAllocationTimeout, SchedulerNoEligibleResource
 from components.scheduler.service import SchedulerService
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
@@ -175,7 +176,10 @@ class ExecutionRuntime:
         plugin_manifests: tuple = (),
         identity_lifecycle: AcgIdentityLifecyclePort | None = None,
         require_planner_identity: bool = False,
+        scheduler_wait_timeout: float = 300.0,
     ):
+        if scheduler_wait_timeout <= 0:
+            raise ValueError("scheduler_wait_timeout must be positive")
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
@@ -191,6 +195,7 @@ class ExecutionRuntime:
         self.scheduler_service = scheduler_service or SchedulerService(
             resource_service=self.resource_service
         )
+        self.scheduler_wait_timeout = float(scheduler_wait_timeout)
         self.evolution_service = evolution_service or EvolutionService()
         # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
         # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
@@ -778,7 +783,20 @@ class ExecutionRuntime:
                 new_attempt_id() if self.identity_lifecycle is not None
                 else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
             ))
+            allocation_deadline = monotonic() + self.scheduler_wait_timeout
+            retry_delay = 0.05
             while True:
+                # Registry-backed Agents execute in this process.  Their continued
+                # presence is the authoritative liveness signal; refresh only those
+                # frozen into this requirement before evaluating health.  Without
+                # this heartbeat, a valid long Run becomes permanently ineligible
+                # as soon as the one-time registration heartbeat reaches its TTL.
+                allowed_resource_ids = set(requirement.allowed_resource_ids)
+                for local_agent in self.agent_registry.all():
+                    resource_id = self.agent_registry.agent_id(local_agent)
+                    if allowed_resource_ids and resource_id not in allowed_resource_ids:
+                        continue
+                    self.resource_service.heartbeat(resource_id)
                 decision = self.scheduler_service.schedule_ready(
                     run_id=run.run_id,
                     step_id=step_id,
@@ -787,7 +805,22 @@ class ExecutionRuntime:
                 )
                 if decision.status == "allocated":
                     break
-                await asyncio.sleep(0.01)
+                if decision.reason == "NO_ELIGIBLE_RESOURCE":
+                    rejected = ", ".join(
+                        f"{item.resource_id}:[{','.join(reason.value for reason in item.reasons)}]"
+                        for item in decision.candidates
+                        if item.reasons
+                    )
+                    raise SchedulerNoEligibleResource(
+                        f"NO_ELIGIBLE_RESOURCE:{step_id}: {rejected or 'no registered candidates'}"
+                    )
+                if monotonic() >= allocation_deadline:
+                    raise SchedulerAllocationTimeout(
+                        f"SCHEDULER_CAPACITY_TIMEOUT:{step_id}: "
+                        f"no lease after {self.scheduler_wait_timeout:g}s"
+                    )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(1.0, retry_delay * 2)
             assert decision.binding is not None and decision.lease is not None
             selected_agent = self.agent_registry.resolve_by_id(
                 decision.binding.resource_id,

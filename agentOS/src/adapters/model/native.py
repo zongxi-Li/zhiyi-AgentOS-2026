@@ -12,6 +12,7 @@ from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, Base
 from contracts.communication import (
     ContextContractError,
     apply_contract_defaults,
+    compact_contract_text_arrays,
     validate_contract_payload,
 )
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, utc_now
@@ -229,6 +230,7 @@ class NativeGeneralAgent(BaseAgent):
         output = apply_contract_defaults(dict(generated.data), generation_schema)
         if capability == "artifact_generation":
             output = self._normalize_artifact_output(context, output)
+        output = compact_contract_text_arrays(output, output_schema)
         try:
             validate_contract_payload(
                 output,
@@ -260,6 +262,7 @@ class NativeGeneralAgent(BaseAgent):
             output = apply_contract_defaults(dict(repaired.data), generation_schema)
             if capability == "artifact_generation":
                 output = self._normalize_artifact_output(context, output)
+            output = compact_contract_text_arrays(output, output_schema)
             try:
                 validate_contract_payload(
                     output,

@@ -286,10 +286,81 @@ def apply_contract_defaults(payload: Any, schema: Dict[str, Any]) -> Any:
     return deepcopy(payload)
 
 
+def compact_contract_text_arrays(payload: Any, schema: Dict[str, Any]) -> Any:
+    """在不删除文本的前提下压缩超过 ``maxItems`` 的字符串数组。
+
+    模型供应商可能接受 JSON Schema 却不严格执行数组数量约束。对于纯字符串数组，
+    相邻条目可以用换行重新分组而不丢失原文；只有在所有内容都能同时满足
+    ``maxItems`` 与条目 ``maxLength`` 时才返回压缩结果，否则保持原载荷，交由既有
+    严格校验产生合同错误。函数递归复制载荷，不修改调用方对象或 Schema。
+    """
+
+    if isinstance(payload, dict):
+        normalized = {key: deepcopy(value) for key, value in payload.items()}
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            return normalized
+        for key, property_schema in properties.items():
+            if key in normalized and isinstance(property_schema, dict):
+                normalized[key] = compact_contract_text_arrays(
+                    normalized[key], property_schema
+                )
+        return normalized
+
+    if not isinstance(payload, list):
+        return deepcopy(payload)
+
+    item_schema = schema.get("items")
+    normalized = (
+        [compact_contract_text_arrays(item, item_schema) for item in payload]
+        if isinstance(item_schema, dict)
+        else deepcopy(payload)
+    )
+    max_items = schema.get("maxItems")
+    if (
+        not isinstance(max_items, int)
+        or isinstance(max_items, bool)
+        or max_items < 1
+        or len(normalized) <= max_items
+        or not isinstance(item_schema, dict)
+        or item_schema.get("type") != "string"
+        or not all(isinstance(item, str) for item in normalized)
+    ):
+        return normalized
+
+    max_length = item_schema.get("maxLength")
+    if (
+        max_length is not None
+        and (
+            not isinstance(max_length, int)
+            or isinstance(max_length, bool)
+            or max_length < 0
+            or any(len(item) > max_length for item in normalized)
+        )
+    ):
+        return normalized
+
+    compacted = list(normalized)
+    while len(compacted) > max_items:
+        candidates = [
+            (len(left) + 1 + len(right), index)
+            for index, (left, right) in enumerate(zip(compacted, compacted[1:]))
+            if max_length is None or len(left) + 1 + len(right) <= max_length
+        ]
+        if not candidates:
+            return normalized
+        _, merge_index = min(candidates)
+        compacted[merge_index : merge_index + 2] = [
+            f"{compacted[merge_index]}\n{compacted[merge_index + 1]}"
+        ]
+    return compacted
+
+
 __all__ = [
     "ContextContractError",
     "apply_contract_defaults",
     "check_contract_schema",
+    "compact_contract_text_arrays",
     "validate_contract_payload",
 ]
 
