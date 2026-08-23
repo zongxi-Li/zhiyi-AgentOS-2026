@@ -1,6 +1,6 @@
 <mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.3.0 Chrome/140.0.7339.249 Electron/38.7.2 Safari/537.36" version="29.3.0">
   <diagram name="认知规划引擎架构图" id="planner-arch">
-    <mxGraphModel dx="2266" dy="1274" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="1">
+    <mxGraphModel dx="1344" dy="1056" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="1">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -54,16 +54,16 @@
           <mxGeometry height="24" width="200" x="-30" y="253" as="geometry" />
         </mxCell>
         <mxCell id="pa1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d8e6f3;strokeColor=#496b8f;fontSize=12;fontStyle=1;fontColor=#1a3c34;" value="LLM 解析路径" vertex="1">
-          <mxGeometry height="36" width="160" x="-19.5" y="308" as="geometry" />
+          <mxGeometry height="36" width="160" x="-22" y="292" as="geometry" />
         </mxCell>
         <mxCell id="pa2" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=13;fontColor=#496b8f;" value="IntentLLM 协议 → DeepSeek&#xa;结构化 JSON 输出" vertex="1">
-          <mxGeometry height="30" width="160" x="-19.5" y="354" as="geometry" />
+          <mxGeometry height="30" width="160" x="-22" y="338" as="geometry" />
         </mxCell>
         <mxCell id="pa4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fcefd6;strokeColor=#9a7432;fontSize=12;fontStyle=1;fontColor=#5a4a2a;" value="启发式 回退路径" vertex="1">
-          <mxGeometry height="36" width="150" x="160" y="308" as="geometry" />
+          <mxGeometry height="36" width="150" x="157.5" y="292" as="geometry" />
         </mxCell>
         <mxCell id="pa5" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=13;fontColor=#9a7432;" value="关键词→能力映射&#xa;长度→复杂度推断&#xa;risk/compliance→风险识别" vertex="1">
-          <mxGeometry height="42" width="150" x="160" y="349" as="geometry" />
+          <mxGeometry height="42" width="150" x="157.5" y="333" as="geometry" />
         </mxCell>
         <mxCell id="a_pa" edge="1" parent="1" source="parser_bg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#496b8f;strokeWidth=2;endArrow=block;endFill=1;" target="profile">
           <mxGeometry relative="1" as="geometry">
@@ -286,6 +286,9 @@
         </mxCell>
         <mxCell id="3CDsX_qbdEcAlfx8n0GO-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7e7;strokeColor=#c59b54;strokeWidth=1.2;arcSize=20;fontFamily=Microsoft YaHei;fontSize=11;fontColor=#7a5a24;fontStyle=1;align=center;verticalAlign=middle;" value="规划预算控制　 Token · Cost · Duration · Entropy · Concurrency" vertex="1">
           <mxGeometry height="34" width="644.5" x="457.5" y="701" as="geometry" />
+        </mxCell>
+        <mxCell id="WguqXsat6OuLpoh-UTBy-1" parent="1" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;aspect=fixed;image=data:image/svg+xml,%3Csvg%0A%20%20class%3D%22lucide%20lucide-user-round%22%0A%20%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%0A%20%0A%20%0A%20%20viewBox%3D%220%200%2024%2024%22%0A%20%20fill%3D%22none%22%0A%20%20stroke%3D%22%231AA888%22%0A%20%20stroke-width%3D%222%22%0A%20%20stroke-linecap%3D%22round%22%0A%20%20stroke-linejoin%3D%22round%22%0A%3E%0A%3Ccircle%20cx%3D%2212%22%20cy%3D%228%22%20r%3D%225%22%20%2F%3E%0A%3Cpath%20d%3D%22M20%2021a8%208%200%200%200-16%200%22%20%2F%3E%0A%3C%2Fsvg%3E%0A;" value="" vertex="1">
+          <mxGeometry height="32" width="32" x="-13" y="116.5" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
