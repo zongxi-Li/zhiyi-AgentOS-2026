@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from components.executor import InMemoryExecutionValueStore
+from components.planner import TaskDecompositionError
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
@@ -367,7 +371,7 @@ async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tm
             assert set(item) == {"checkpointId", "version", "canResume"}
 
         paths = app.openapi()["paths"]
-        assert f"/agentos/v2/runs/{{run_id}}/reviews" in paths
+        assert "/agentos/v2/runs/{run_id}/reviews" in paths
 
 
 async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
@@ -398,6 +402,140 @@ async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts
             )
             assert conflict.status_code == 409
             assert conflict.json() == {"detail": "clientRequestId conflict"}
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_v2_create_mission_acknowledges_before_deferred_planning_finishes(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    planning_started = threading.Event()
+    release_planning = threading.Event()
+    original = runtime._materialize_deferred_acg_run
+
+    def block_planning(run_id: str):
+        planning_started.set()
+        if not release_planning.wait(timeout=5):
+            raise TimeoutError("test did not release deferred planning")
+        return original(run_id)
+
+    runtime._materialize_deferred_acg_run = block_planning  # type: ignore[method-assign]
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await asyncio.wait_for(
+                client.post(
+                    "/agentos/v2/missions",
+                    json={"title": "Deferred planning", "workflowId": "api-workflow"},
+                ),
+                timeout=1,
+            )
+        assert response.status_code == 202
+        assert await asyncio.to_thread(planning_started.wait, 1)
+        prepared = runtime.get_status(response.json()["runId"])
+        assert prepared.status is WorkflowStatus.PLANNING
+        assert prepared.execution_state["planningDeferred"] is True
+    finally:
+        release_planning.set()
+        await coordinator.shutdown()
+
+
+async def test_v2_deferred_planning_preserves_identity_projection_alignment(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/agentos/v2/missions",
+                json={"title": "Deferred identity planning", "workflowId": "api-workflow"},
+            )
+            assert response.status_code == 202
+            run_id = response.json()["runId"]
+            for _ in range(200):
+                run = runtime.get_status(run_id)
+                if run.status in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED}:
+                    break
+                await asyncio.sleep(0.01)
+            assert run.status is WorkflowStatus.COMPLETED
+
+            projected = await client.get(f"/agentos/v2/runs/{run_id}")
+            graph = await client.get(f"/agentos/v2/runs/{run_id}/graph")
+            health = await client.get("/agentos/v2/identity/health")
+        assert projected.status_code == 200
+        assert projected.json()["identity"]["blueprintId"].startswith("blueprint_")
+        assert graph.status_code == 200
+        assert graph.json()["taskBindings"][0]["acgNodeId"] == "report"
+        assert health.json()["unappliedEventCount"] == 0
+    finally:
+        await coordinator.shutdown()
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_v2_deferred_planning_failure_is_classified_without_identity_backlog(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+
+    def reject_plan(_run_id: str):
+        raise TaskDecompositionError("private planner validation detail")
+
+    runtime._materialize_deferred_acg_run = reject_plan  # type: ignore[method-assign]
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/agentos/v2/missions",
+                json={"title": "Deferred planning failure", "workflowId": "api-workflow"},
+            )
+            assert response.status_code == 202
+            run_id = response.json()["runId"]
+            for _ in range(200):
+                run = runtime.get_status(run_id)
+                if run.status is WorkflowStatus.FAILED:
+                    break
+                await asyncio.sleep(0.01)
+            health = await client.get("/agentos/v2/identity/health")
+
+        assert run.status is WorkflowStatus.FAILED
+        assert run.error == {
+            "code": "task_decomposition_failed",
+            "message": "private planner validation detail",
+        }
+        assert health.json()["unappliedEventCount"] == 0
+        assert not any(
+            event["aggregate_id"] == run_id
+            for event in runtime.workflow_store.list_outbox()
+        )
+    finally:
+        await coordinator.shutdown()
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_v2_create_mission_surfaces_safe_planning_contract_error(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+
+    def reject_plan(*_args, **_kwargs):
+        raise TaskDecompositionError("private planner validation detail")
+
+    runtime.prepare_run = reject_plan  # type: ignore[method-assign]
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/agentos/v2/missions",
+                json={"title": "Planning contract failure", "workflowId": "api-workflow"},
+            )
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": "ACG planning contract failed after one repair "
+            "(TASK_DECOMPOSITION_CONTRACT_FAILED)"
+        }
+        assert "private planner validation detail" not in response.text
     finally:
         await coordinator.shutdown()
 

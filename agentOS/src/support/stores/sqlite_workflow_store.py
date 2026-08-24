@@ -16,6 +16,7 @@ from support.stores.workflow_store import (
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
     WorkflowStorePage,
+    lifecycle_run_event_type,
     lifecycle_run_payload,
     paginate_items,
     status_value,
@@ -101,16 +102,10 @@ class SQLiteWorkflowStore(WorkflowStore):
         with self._connect() as conn:
             if not self._upsert_run(conn, run):
                 return
-            event_type = (
-                "run.superseded" if run.status is WorkflowStatus.SUPERSEDED
-                else "run.finished" if run.status in {
-                    WorkflowStatus.COMPLETED,
-                    WorkflowStatus.FAILED,
-                    WorkflowStatus.CANCELLED,
-                }
-                else "run.prepared" if run.status is WorkflowStatus.PENDING
-                else "run.snapshot"
-            )
+            event_type = lifecycle_run_event_type(run)
+            if event_type is None:
+                conn.commit()
+                return
             lifecycle_payload = json.dumps(
                 lifecycle_run_payload(run), ensure_ascii=False, sort_keys=True
             )

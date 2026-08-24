@@ -142,6 +142,30 @@ def lifecycle_run_payload(run: RuntimeRunRecord) -> dict[str, Any]:
     }
 
 
+def lifecycle_run_event_type(run: RuntimeRunRecord) -> str | None:
+    """Classify a Run snapshot only after its identity contract exists.
+
+    A deferred ACG Run is durably accepted before L1 planning has produced a
+    TaskPlan, Blueprint and bindings.  Publishing it as ``run.prepared`` would
+    violate the V2 identity contract, so the snapshot stays inside the
+    Execution Runtime until materialization removes ``planningDeferred``.
+    """
+    execution_state = run.execution_state or {}
+    if execution_state.get("planningDeferred"):
+        return None
+    if run.status is WorkflowStatus.SUPERSEDED:
+        return "run.superseded"
+    if run.status in {
+        WorkflowStatus.COMPLETED,
+        WorkflowStatus.FAILED,
+        WorkflowStatus.CANCELLED,
+    }:
+        return "run.finished"
+    if run.status is WorkflowStatus.PENDING:
+        return "run.prepared"
+    return "run.snapshot"
+
+
 class WorkflowStore(ABC):
     """RuntimeMissionRecord 和 RuntimeRunRecord 状态的持久化边界。"""
 

@@ -34,6 +34,35 @@ def test_store_rejects_run_without_saved_parent_task(store_factory, tmp_path: Pa
     "store_factory",
     [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
 )
+def test_deferred_planning_placeholder_is_persisted_without_prepared_identity_event(
+    store_factory,
+    tmp_path: Path,
+) -> None:
+    store = store_factory(tmp_path)
+    mission = RuntimeMissionRecord(missionId="mission_deferred", title="Deferred mission")
+    store.save_mission(mission)
+    run = RuntimeRunRecord(
+        runId="run_deferred",
+        missionId=mission.mission_id,
+        workflowId="workflow-1",
+        domain="general",
+        runtimeEngine="acg",
+        executionState={"planningDeferred": True},
+    )
+
+    store.save_run(run)
+
+    assert store.get_run(run.run_id).execution_state["planningDeferred"] is True
+    assert not any(
+        event["aggregate_id"] == run.run_id
+        for event in store.list_outbox()
+    )
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
+)
 def test_mission_record_state_covers_all_runs_without_deleting_history(store_factory, tmp_path: Path) -> None:
     store = store_factory(tmp_path)
     mission = RuntimeMissionRecord(missionId="mission_000000000004", title="Mission")

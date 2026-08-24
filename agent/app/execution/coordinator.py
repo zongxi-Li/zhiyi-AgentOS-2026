@@ -7,6 +7,8 @@ import logging
 from time import monotonic
 from typing import TYPE_CHECKING
 
+from components.planner import ACGPlanningError, TaskDecompositionError
+
 if TYPE_CHECKING:
     from runtime import ExecutionRuntime
 
@@ -74,7 +76,7 @@ class RunExecutionCoordinator:
             try:
                 await self.runtime.fail_run_safely(
                     run_id,
-                    error_code="workflow_execution_failed",
+                    error_code=self._error_code(exc),
                     error_message=self.runtime._safe_error_message(exc),
                 )
             except Exception:
@@ -92,6 +94,14 @@ class RunExecutionCoordinator:
             async with self._lock:
                 if self._tasks.get(run_id) is current:
                     self._tasks.pop(run_id, None)
+
+    @staticmethod
+    def _error_code(exc: Exception) -> str:
+        if isinstance(exc, TaskDecompositionError):
+            return "task_decomposition_failed"
+        if isinstance(exc, ACGPlanningError):
+            return "acg_planning_failed"
+        return "workflow_execution_failed"
 
 
 __all__ = ["RunExecutionCoordinator"]

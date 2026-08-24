@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -15,9 +16,13 @@ from app.security.internal_auth import current_trusted_user
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus
 from domain.models import MissionStatus
 from domain.repository import EntityNotFoundError
+from components.planner import ACGPlanningError, TaskDecompositionError
 from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
+
+
+logger = logging.getLogger(__name__)
 
 
 class MissionCreateRequest(BaseModel):
@@ -533,11 +538,22 @@ def create_router(
                 idempotency_key=key,
                 idempotency_fingerprint=fingerprint,
                 enabled_plugin_ids=request.enabled_plugin_ids,
+                defer_acg_planning=True,
             )
             await coordinator.submit(run.run_id)
             return project(runtime.get_status(run.run_id))
         except (KeyError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="invalid workflow request") from exc
+            logger.exception(
+                "mission_start_rejected",
+                extra={"errorType": type(exc).__name__},
+            )
+            if isinstance(exc, TaskDecompositionError):
+                detail = "ACG planning contract failed after one repair (TASK_DECOMPOSITION_CONTRACT_FAILED)"
+            elif isinstance(exc, ACGPlanningError):
+                detail = "ACG planning failed (ACG_PLANNING_FAILED)"
+            else:
+                detail = "invalid workflow request"
+            raise HTTPException(status_code=422, detail=detail) from exc
 
     @router.get("/runs")
     async def list_runs(

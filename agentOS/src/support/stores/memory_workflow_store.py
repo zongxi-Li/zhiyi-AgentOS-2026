@@ -21,6 +21,7 @@ from support.stores.workflow_store import (
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
     WorkflowStorePage,
+    lifecycle_run_event_type,
     paginate_items,
     lifecycle_run_payload,
     status_value,
@@ -81,12 +82,9 @@ class MemoryWorkflowStore(WorkflowStore):
         """
         if not self._save_run_snapshot(run):
             return
-        event_type = (
-            "run.superseded" if run.status is WorkflowStatus.SUPERSEDED
-            else "run.finished" if run.status in TERMINAL_RUN_STATUSES
-            else "run.prepared" if run.status is WorkflowStatus.PENDING
-            else "run.snapshot"
-        )
+        event_type = lifecycle_run_event_type(run)
+        if event_type is None:
+            return
         payload = lifecycle_run_payload(run)
         self._append_lifecycle_event(
             event_id=self._snapshot_event_id(event_type, run.run_id, payload),
