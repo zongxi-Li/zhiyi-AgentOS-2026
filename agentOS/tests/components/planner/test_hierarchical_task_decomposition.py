@@ -19,6 +19,16 @@ class _PlanLLM:
         return self.payload
 
 
+class _SequencePlanLLM(_PlanLLM):
+    def __init__(self, *payloads: dict) -> None:
+        super().__init__(payloads[0])
+        self.payloads = list(payloads)
+
+    def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+        self.calls.append({"prompt": prompt, "schema": schema, **kwargs})
+        return self.payloads[len(self.calls) - 1]
+
+
 def _profile() -> TaskSemanticProfile:
     return TaskSemanticProfile(
         primaryGoal="Produce and compare three independently testable solution candidates",
@@ -101,7 +111,7 @@ def test_dependency_cycle_is_rejected() -> None:
 
 def test_failed_contract_raises_after_exactly_one_repair() -> None:
     llm = _PlanLLM({"tasks": [], "relations": []})
-    with pytest.raises(Exception, match="TASK_DECOMPOSITION_CONTRACT_FAILED"):
+    with pytest.raises(Exception, match="TASK_PLAN_VALIDATION_FAILED"):
         TaskDecomposer(build_default_capability_catalog(), llm).decompose(
             mission_id="mission_0123456789ab",
             profile=_profile(),
@@ -111,6 +121,77 @@ def test_failed_contract_raises_after_exactly_one_repair() -> None:
         )
 
     assert len(llm.calls) == 2
+
+
+def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wording() -> None:
+    llm = _PlanLLM({"tasks": [], "relations": []})
+    prompt = TaskDecomposer(build_default_capability_catalog(), llm).build_prompt(
+        profile=TaskSemanticProfile(
+            primaryGoal="Verify an evidence-backed result",
+            requiredCapabilities=["verification"],
+            estimatedComplexity=ComplexityLevel.SIMPLE,
+        ),
+        task_input={},
+    )
+
+    assert '"capabilityId": "verification"' in prompt
+    assert '"dependsOn": ["task_understanding"]' in prompt
+    assert '"capabilityId": "task_understanding"' in prompt
+    assert "Mission requirements:" in prompt
+    assert "Mission contract:" not in prompt
+
+
+def test_reverse_catalog_dependency_is_reported_with_cycle_path_and_repaired() -> None:
+    tasks = [
+        {
+            "key": "understand",
+            "title": "Understand mission",
+            "objective": "Define the mission boundary",
+            "capabilityId": "task_understanding",
+            "acceptanceCriteria": ["Mission boundary is explicit"],
+        },
+        {
+            "key": "analyze",
+            "title": "Analyze mission",
+            "objective": "Analyze the mission within the defined boundary",
+            "capabilityId": "analysis",
+            "acceptanceCriteria": ["Analysis is traceable to the boundary"],
+        },
+    ]
+    invalid = {
+        "tasks": tasks,
+        "relations": [
+            {"sourceKey": "analyze", "targetKey": "understand", "relationType": "depends_on"},
+        ],
+    }
+    repaired = {
+        "tasks": tasks,
+        "relations": [
+            {"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"},
+        ],
+    }
+    llm = _SequencePlanLLM(invalid, repaired)
+    profile = TaskSemanticProfile(
+        primaryGoal="Analyze a mission",
+        requiredCapabilities=["task_understanding", "analysis"],
+        estimatedComplexity=ComplexityLevel.SIMPLE,
+    )
+
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=profile,
+        strategy="dynamic_generation",
+        task_input={},
+        use_llm=True,
+    )
+
+    assert len(llm.calls) == 2
+    assert "understand -> analyze -> understand" in llm.calls[1]["prompt"]
+    assert llm.calls[1]["prompt_version"] == f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
+    assert any(
+        relation.source_key == "understand" and relation.target_key == "analyze"
+        for relation in plan.relations
+    )
 
 
 def test_long_requirement_coverage_uses_stable_refs_instead_of_verbatim_copy() -> None:

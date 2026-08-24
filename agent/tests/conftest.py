@@ -111,8 +111,8 @@ class _ContractReviewTestProvider:
                 "estimatedComplexity": "medium",
             }
         if {"tasks", "relations"} <= required:
-            contract_text = prompt.split("Mission contract: ", 1)[1].split("\nSemantic profile:", 1)[0]
-            contract = json.loads(contract_text)
+            requirements_text = prompt.split("Mission requirements: ", 1)[1].split("\nSemantic profile:", 1)[0]
+            requirements = json.loads(requirements_text)
             profile_text = prompt.split("Semantic profile: ", 1)[1].split("\nCapability catalog:", 1)[0]
             profile = json.loads(profile_text)
             capabilities = profile.get("requiredCapabilities") or [
@@ -125,10 +125,10 @@ class _ContractReviewTestProvider:
                 "capabilityId": capability,
                 "constraints": [
                     {"type": "mission_constraint", "value": value}
-                    for value in contract.get("constraints", [])
+                    for value in requirements.get("constraints", [])
                 ],
                 "acceptanceCriteria": ["The capability output satisfies its declared contract"],
-                "sourceRefs": list(contract.get("expectedArtifacts", [])),
+                "sourceRefs": list(requirements.get("expectedArtifacts", [])),
                 "decompositionRationale": "deterministic test fixture",
                 "logicalRole": "task",
             } for index, capability in enumerate(capabilities, start=1)]

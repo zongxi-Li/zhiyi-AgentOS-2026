@@ -83,6 +83,13 @@ class IdentityProjectionReconciler:
         for run in runs:
             if run.run_id in report.failed_aggregate_ids:
                 continue
+            # Deferred planning is an accepted Execution Runtime placeholder,
+            # not yet a V2 Run identity.  Until L1 produces TaskPlan, Blueprint
+            # and bindings there is nothing valid to repair or audit.  This also
+            # covers terminal planning failures, which deliberately retain the
+            # marker so reconciliation never fabricates an empty graph identity.
+            if (run.execution_state or {}).get("planningDeferred"):
+                continue
             report.examined_runs += 1
             try:
                 task = workflow_store.get_mission(run.mission_id)

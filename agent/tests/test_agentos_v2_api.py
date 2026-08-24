@@ -514,7 +514,7 @@ async def test_v2_deferred_planning_failure_is_classified_without_identity_backl
         runtime.identity_lifecycle.lifecycle_service.close()
 
 
-async def test_v2_create_mission_surfaces_safe_planning_contract_error(tmp_path) -> None:
+async def test_v2_create_mission_surfaces_safe_taskplan_validation_error(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     coordinator = RunExecutionCoordinator(runtime)
     app = FastAPI()
@@ -532,8 +532,8 @@ async def test_v2_create_mission_surfaces_safe_planning_contract_error(tmp_path)
             )
         assert response.status_code == 422
         assert response.json() == {
-            "detail": "ACG planning contract failed after one repair "
-            "(TASK_DECOMPOSITION_CONTRACT_FAILED)"
+            "detail": "ACG task planning validation failed after one repair "
+            "(TASK_PLAN_VALIDATION_FAILED)"
         }
         assert "private planner validation detail" not in response.text
     finally:

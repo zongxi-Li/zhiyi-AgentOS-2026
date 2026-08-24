@@ -315,6 +315,35 @@ def test_reconciler_restores_a_missing_run_projection_from_runtime_snapshot() ->
         identity_runtime.close()
 
 
+def test_reconciler_skips_failed_run_that_never_materialized_planner_identity() -> None:
+    runtime, identity_runtime, bridge, task = _runtime()
+    try:
+        run = RuntimeRunRecord(
+            runId="run_planning_failed",
+            missionId=task.mission_id,
+            workflowId="identity-acg",
+            domain="general",
+            runtimeEngine="acg",
+            status=WorkflowStatus.FAILED,
+            executionState={"planningDeferred": True},
+            error={
+                "code": "task_decomposition_failed",
+                "message": "TaskPlan dependency cycle: analyze -> understand -> analyze",
+            },
+        )
+        runtime.workflow_store.save_run(run)
+
+        report = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            runtime.workflow_store
+        )
+
+        assert report.failures == []
+        assert report.examined_runs == 0
+        assert identity_runtime.repositories.runs.get(run.run_id) is None
+    finally:
+        identity_runtime.close()
+
+
 def test_inbox_retries_failed_consumption_and_recovers_missing_task(monkeypatch) -> None:
     workflow_store = _OutboxMemoryWorkflowStore()
     runtime, identity_runtime, bridge, _task = _runtime(workflow_store=workflow_store)

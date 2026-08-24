@@ -548,7 +548,7 @@ def create_router(
                 extra={"errorType": type(exc).__name__},
             )
             if isinstance(exc, TaskDecompositionError):
-                detail = "ACG planning contract failed after one repair (TASK_DECOMPOSITION_CONTRACT_FAILED)"
+                detail = "ACG task planning validation failed after one repair (TASK_PLAN_VALIDATION_FAILED)"
             elif isinstance(exc, ACGPlanningError):
                 detail = "ACG planning failed (ACG_PLANNING_FAILED)"
             else:

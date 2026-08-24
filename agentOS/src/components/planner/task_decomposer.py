@@ -14,7 +14,7 @@ from .complexity import PLANNING_BUDGETS
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v1"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v2"
 
 _SCHEMA = {
     "type": "object",
@@ -98,8 +98,10 @@ class TaskDecomposer:
                 try:
                     repaired = self.llm.generate_json(
                         prompt
-                        + "\nThe previous result violated the TaskPlan contract. Repair it once. "
-                        + f"Validation error: {first_error}",
+                        + "\nThe previous result failed TaskPlan schema or topology validation. "
+                        + "Repair it once. Preserve valid task semantics, remove every reported "
+                        + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
+                        + f"Validation detail: {first_error}",
                         _SCHEMA,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
                     )
@@ -110,7 +112,7 @@ class TaskDecomposer:
                     self.last_audit["mode"] = "failed"
                     self.last_audit["error"] = type(repair_error).__name__
                     raise TaskDecompositionError(
-                        "TASK_DECOMPOSITION_CONTRACT_FAILED after one repair: "
+                        "TASK_PLAN_VALIDATION_FAILED after one repair: "
                         f"{repair_error}"
                     ) from first_error
         return self._fallback(
@@ -137,9 +139,11 @@ class TaskDecomposer:
         level = profile.estimated_complexity
         minimum, maximum = PLANNING_BUDGETS[level]
         catalog = []
-        for item in self.capability_catalog.available(profile.domain_hint):
-            if item.capability_id not in profile.required_capabilities:
-                continue
+        visible_capabilities = self.capability_catalog.expand_dependencies(
+            profile.required_capabilities
+        )
+        for capability_id in visible_capabilities:
+            item = self.capability_catalog.get(capability_id)
             catalog.append({
                 "capabilityId": item.capability_id,
                 "purpose": item.prompt_profile.purpose,
@@ -147,6 +151,8 @@ class TaskDecomposer:
                 "whenNotToUse": item.prompt_profile.when_not_to_use,
                 "decompositionHints": item.prompt_profile.decomposition_hints,
                 "qualityCriteria": item.prompt_profile.quality_criteria,
+                "dependsOn": list(item.depends_on),
+                "optionalDependencies": list(item.optional_dependencies),
                 "outputFields": list(item.output_contract.get("properties", {})),
             })
         contract = {
@@ -170,10 +176,13 @@ class TaskDecomposer:
             "sourceRefs and a decomposition rationale. Do not write objectives such as 'Complete cost analysis'.\n"
             "The same capabilityId may be instantiated by multiple tasks when goals, alternatives or stages differ. "
             "Use depends_on relations as the authoritative execution topology and keep it acyclic.\n"
+            "Capability catalog dependsOn entries are hard prerequisites that the system will enforce after generation. "
+            "Never create a reverse path from a dependent task back to one of its prerequisite tasks. "
+            "optionalDependencies are advisory and must not be added when they create a cycle.\n"
             "Cover every hard constraint and expected artifact; do not invent facts or domain capabilities.\n"
             "For coverage, copy stable sourceRegistry ref values into task.sourceRefs. Do not prove coverage "
             "by repeating or paraphrasing source text. Every sourceRegistry ref must be cited by a task.\n"
-            f"Mission contract: {json.dumps(contract, ensure_ascii=False, default=str)}\n"
+            f"Mission requirements: {json.dumps(contract, ensure_ascii=False, default=str)}\n"
             f"Semantic profile: {profile.model_dump_json(by_alias=True)}\n"
             f"Capability catalog: {json.dumps(catalog, ensure_ascii=False)}\n"
         )
@@ -324,6 +333,11 @@ class TaskDecomposer:
         }
         for node in nodes:
             by_capability.setdefault(node.capability_requirements[0], []).append(node)
+        existing_cycle = self._find_dependency_cycle(relations)
+        if existing_cycle is not None:
+            raise TaskDecompositionError(
+                "TaskPlan dependency cycle: " + " -> ".join(existing_cycle)
+            )
         for node in nodes:
             capability = node.capability_requirements[0]
             for required in self.capability_catalog.get(capability).depends_on:
@@ -337,16 +351,120 @@ class TaskDecomposer:
                     for candidate in candidates
                     if node_positions[candidate.key] < node_positions[node.key]
                 ]
-                source = preceding[-1] if preceding else candidates[0]
+                preferred = [*reversed(preceding), *(
+                    candidate for candidate in candidates if candidate not in preceding
+                )]
+                source: PlannedTask | None = None
+                blocked_cycles: list[tuple[str, ...]] = []
+                for candidate in preferred:
+                    identity = (
+                        candidate.key,
+                        node.key,
+                        SemanticTaskRelationType.DEPENDS_ON,
+                    )
+                    if identity in existing:
+                        source = candidate
+                        break
+                    reverse_path = self._find_dependency_path(
+                        relations,
+                        start=node.key,
+                        target=candidate.key,
+                    )
+                    if reverse_path is None:
+                        source = candidate
+                        break
+                    blocked_cycles.append((candidate.key, *reverse_path))
+                if source is None:
+                    cycle = blocked_cycles[0] if blocked_cycles else (node.key,)
+                    raise TaskDecompositionError(
+                        "required capability dependency "
+                        f"{required} -> {capability} cannot be bound for task {node.key}; "
+                        "the generated reverse path would create dependency cycle: "
+                        + " -> ".join(cycle)
+                    )
                 identity = (source.key, node.key, SemanticTaskRelationType.DEPENDS_ON)
-                if identity not in existing:
-                    relations.append(TaskPlanRelation(
-                        sourceKey=source.key,
-                        targetKey=node.key,
-                        relationType=SemanticTaskRelationType.DEPENDS_ON,
-                    ))
-                    existing.add(identity)
+                if identity in existing:
+                    continue
+                relations.append(TaskPlanRelation(
+                    sourceKey=source.key,
+                    targetKey=node.key,
+                    relationType=SemanticTaskRelationType.DEPENDS_ON,
+                ))
+                existing.add(identity)
         return relations
+
+    @staticmethod
+    def _dependency_adjacency(
+        relations: list[TaskPlanRelation],
+    ) -> dict[str, list[str]]:
+        adjacency: dict[str, list[str]] = {}
+        for relation in relations:
+            if relation.relation_type != SemanticTaskRelationType.DEPENDS_ON:
+                continue
+            targets = adjacency.setdefault(relation.source_key, [])
+            if relation.target_key not in targets:
+                targets.append(relation.target_key)
+            adjacency.setdefault(relation.target_key, [])
+        return adjacency
+
+    @classmethod
+    def _find_dependency_path(
+        cls,
+        relations: list[TaskPlanRelation],
+        *,
+        start: str,
+        target: str,
+    ) -> tuple[str, ...] | None:
+        """Return one deterministic dependency path, including both endpoints."""
+        adjacency = cls._dependency_adjacency(relations)
+        pending: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
+        visited: set[str] = set()
+        while pending:
+            current, path = pending.pop()
+            if current == target:
+                return path
+            if current in visited:
+                continue
+            visited.add(current)
+            for successor in reversed(adjacency.get(current, [])):
+                if successor not in visited:
+                    pending.append((successor, (*path, successor)))
+        return None
+
+    @classmethod
+    def _find_dependency_cycle(
+        cls,
+        relations: list[TaskPlanRelation],
+    ) -> tuple[str, ...] | None:
+        """Return one deterministic cycle with its first node repeated at the end."""
+        adjacency = cls._dependency_adjacency(relations)
+        state: dict[str, int] = {}
+        stack: list[str] = []
+        stack_positions: dict[str, int] = {}
+
+        def visit(node: str) -> tuple[str, ...] | None:
+            state[node] = 1
+            stack_positions[node] = len(stack)
+            stack.append(node)
+            for successor in adjacency.get(node, []):
+                if state.get(successor, 0) == 0:
+                    cycle = visit(successor)
+                    if cycle is not None:
+                        return cycle
+                elif state.get(successor) == 1:
+                    start = stack_positions[successor]
+                    return (*stack[start:], successor)
+            stack.pop()
+            stack_positions.pop(node, None)
+            state[node] = 2
+            return None
+
+        for node in adjacency:
+            if state.get(node, 0) == 0:
+                cycle = visit(node)
+                if cycle is not None:
+                    return cycle
+        return None
 
     @staticmethod
     def _validate_coverage(plan: TaskPlan, profile: TaskSemanticProfile) -> None:
