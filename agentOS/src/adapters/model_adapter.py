@@ -44,7 +44,8 @@ class StructuredGenerationResult(BaseModel):
     provider: str
     model: str
     latency_ms: int = Field(default=0, alias="latencyMs", ge=0)
-    prompt_version: str = Field(default="native-capability.v1", alias="promptVersion")
+    prompt_version: str = Field(default="native-capability.v2", alias="promptVersion")
+    prompt_template_hash: str = Field(default="", alias="promptTemplateHash")
     usage: Dict[str, Any] = Field(default_factory=dict)
 
     def audit_record(self) -> Dict[str, Any]:
@@ -58,6 +59,7 @@ class StructuredGenerationResult(BaseModel):
             "model": self.model,
             "latencyMs": self.latency_ms,
             "promptVersion": self.prompt_version,
+            "promptTemplateHash": self.prompt_template_hash,
             "usage": dict(self.usage),
         }
 
@@ -85,7 +87,7 @@ class StructuredGenerationRuntime(Protocol):
         thinking_mode: str = "disabled",
         timeout_seconds: float = 120.0,
         max_output_tokens: int = 4096,
-        prompt_version: str = "native-capability.v1",
+        prompt_version: str = "native-capability.v2",
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """在给定 Schema、预算和超时内生成并解析一个 JSON 结果。

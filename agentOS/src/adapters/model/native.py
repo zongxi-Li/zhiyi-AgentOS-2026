@@ -17,8 +17,8 @@ from contracts.communication import (
 )
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, utc_now
 from adapters.model.native_prompt import (
-    NATIVE_CAPABILITY_PROMPT_VERSION,
     NativeCapabilityPromptBuilder,
+    prompt_version_for_capability,
 )
 from support.acg.models import NATIVE_CAPABILITY_IDS
 
@@ -153,7 +153,10 @@ class NativeGeneralAgent(BaseAgent):
         )
         prompt = prompt_method(
             capability_descriptor=descriptor,
-            step_goal=context.step.name,
+            step_goal=context.step.goal or context.step.name,
+            acceptance_criteria=list(context.step.acceptance_criteria),
+            source_refs=list(context.step.source_refs),
+            logical_role=context.step.logical_role,
             task_title=context.task.title,
             task_input=dict(context.task.input),
             context_data=upstream,
@@ -166,6 +169,7 @@ class NativeGeneralAgent(BaseAgent):
         timeout_seconds = 180.0 if capability == "artifact_generation" else 120.0
         max_output_tokens = 8192 if capability == "artifact_generation" else 4096
         invocations: list[dict[str, Any]] = []
+        base_prompt_version = prompt_version_for_capability(capability)
         repair_used = False
         thinking_fallback_reason: str | None = None
         try:
@@ -175,7 +179,7 @@ class NativeGeneralAgent(BaseAgent):
                 thinking_mode=thinking_mode,
                 timeout_seconds=timeout_seconds,
                 max_output_tokens=max_output_tokens,
-                prompt_version=NATIVE_CAPABILITY_PROMPT_VERSION,
+                prompt_version=base_prompt_version,
                 commit_id=context.commit_id,
             )
         except StructuredGenerationError as exc:
@@ -196,7 +200,7 @@ class NativeGeneralAgent(BaseAgent):
                     timeout_seconds=timeout_seconds,
                     max_output_tokens=max_output_tokens,
                     prompt_version=(
-                        f"{NATIVE_CAPABILITY_PROMPT_VERSION}.thinking-finalization1"
+                        f"{base_prompt_version}.thinking-finalization1"
                     ),
                     commit_id=context.commit_id,
                 )
@@ -213,7 +217,7 @@ class NativeGeneralAgent(BaseAgent):
                     thinking_mode=output_thinking_mode,
                     timeout_seconds=timeout_seconds,
                     max_output_tokens=max_output_tokens,
-                    prompt_version=f"{NATIVE_CAPABILITY_PROMPT_VERSION}.json-repair1",
+                    prompt_version=f"{base_prompt_version}.json-repair1",
                     commit_id=context.commit_id,
                 )
         generation_audit = generated.audit_record()
@@ -230,6 +234,9 @@ class NativeGeneralAgent(BaseAgent):
         output = apply_contract_defaults(dict(generated.data), generation_schema)
         if capability == "artifact_generation":
             output = self._normalize_artifact_output(context, output)
+        output = self._normalize_output_evidence_refs(output, evidence_refs)
+        if capability == "verification":
+            output = self._enforce_verification_evidence(output)
         output = compact_contract_text_arrays(output, output_schema)
         try:
             validate_contract_payload(
@@ -255,13 +262,16 @@ class NativeGeneralAgent(BaseAgent):
                 thinking_mode=output_thinking_mode,
                 timeout_seconds=timeout_seconds,
                 max_output_tokens=max_output_tokens,
-                prompt_version=f"{NATIVE_CAPABILITY_PROMPT_VERSION}.repair1",
+                prompt_version=f"{base_prompt_version}.repair1",
                 commit_id=context.commit_id,
             )
             invocations.append(repaired.audit_record())
             output = apply_contract_defaults(dict(repaired.data), generation_schema)
             if capability == "artifact_generation":
                 output = self._normalize_artifact_output(context, output)
+            output = self._normalize_output_evidence_refs(output, evidence_refs)
+            if capability == "verification":
+                output = self._enforce_verification_evidence(output)
             output = compact_contract_text_arrays(output, output_schema)
             try:
                 validate_contract_payload(
@@ -281,6 +291,46 @@ class NativeGeneralAgent(BaseAgent):
             summary=f"Native capability completed: {capability}.",
             modelInvocations=invocations,
         )
+
+    @staticmethod
+    def _enforce_verification_evidence(output: dict[str, Any]) -> dict[str, Any]:
+        verification = output.get("verification")
+        if not isinstance(verification, dict) or verification.get("status") != "passed":
+            return output
+        checks = verification.get("checks")
+        evidence_complete = bool(checks) and all(
+            isinstance(check, dict) and str(check.get("evidence") or "").strip()
+            for check in checks
+        )
+        if evidence_complete:
+            return output
+        normalized = dict(output)
+        verification = dict(verification)
+        verification["status"] = "partial"
+        gaps = list(verification.get("unresolved_gaps") or [])
+        gaps.append("Verification cannot pass because one or more checks lack evidence.")
+        verification["unresolved_gaps"] = list(dict.fromkeys(gaps))
+        normalized["verification"] = verification
+        return normalized
+
+    @staticmethod
+    def _normalize_output_evidence_refs(
+        output: dict[str, Any],
+        allowlisted_refs: list[str],
+    ) -> dict[str, Any]:
+        """Prevent a model from minting evidence identities outside ContextPack."""
+        key = "evidence_refs" if "evidence_refs" in output else "evidenceRefs" if "evidenceRefs" in output else None
+        if key is None:
+            return output
+        allowed = list(dict.fromkeys(str(item) for item in allowlisted_refs if str(item).strip()))
+        normalized = dict(output)
+        normalized[key] = [
+            str(item) for item in output.get(key, [])
+            if str(item) in set(allowed)
+        ]
+        if not normalized[key] and allowed:
+            normalized[key] = allowed
+        return normalized
 
     @staticmethod
     def _generation_schema(

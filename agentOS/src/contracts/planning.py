@@ -19,6 +19,7 @@ _ALLOWED_METADATA_KEYS = {
     "plannerStrategy", "strategy", "capability", "source", "rationale", "risk",
     "plannerAlgorithmVersion", "planningDiversity", "planningSeed",
     "capabilityCatalogRevision", "taskType", "domain",
+    "degraded", "degradationReason", "promptVersion", "complexityBand",
 }
 
 
@@ -73,6 +74,9 @@ class PlannedTask(BaseModel):
         default_factory=tuple,
         alias="acceptanceCriteria",
     )
+    source_refs: tuple[str, ...] = Field(default_factory=tuple, alias="sourceRefs")
+    decomposition_rationale: str = Field(default="", alias="decompositionRationale")
+    logical_role: str = Field(default="task", alias="logicalRole")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -119,6 +123,19 @@ class TaskPlan(BaseModel):
             resolved.update(ready)
             for key in ready:
                 unresolved.pop(key)
+        dependencies: dict[str, set[str]] = {key: set() for key in known}
+        for relation in self.relations:
+            if relation.relation_type == SemanticTaskRelationType.DEPENDS_ON:
+                dependencies[relation.target_key].add(relation.source_key)
+        resolved_dependencies: set[str] = set()
+        remaining = dict(dependencies)
+        while remaining:
+            ready = [key for key, deps in remaining.items() if deps <= resolved_dependencies]
+            if not ready:
+                raise ValueError("TaskPlan contains a dependency cycle")
+            resolved_dependencies.update(ready)
+            for key in ready:
+                remaining.pop(key)
         _reject_execution_identity(self.metadata)
         unknown = set(self.metadata) - _ALLOWED_METADATA_KEYS
         if unknown:

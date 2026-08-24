@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Any
@@ -72,7 +73,7 @@ class RegisteredModelRuntime:
         thinking_mode: str = "disabled",
         timeout_seconds: float = 120.0,
         max_output_tokens: int = 4096,
-        prompt_version: str = "native-capability.v1",
+        prompt_version: str = "native-capability.v2",
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """把原生 JSON 生成请求转换为统一模型调用，并返回安全审计投影。"""
@@ -157,6 +158,7 @@ class RegisteredModelRuntime:
             model=response.model,
             latencyMs=round((self._clock() - started) * 1000),
             promptVersion=prompt_version,
+            promptTemplateHash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             usage=dict(response.usage),
         )
 

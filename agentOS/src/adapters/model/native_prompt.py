@@ -6,7 +6,17 @@ import json
 from typing import Any
 
 
-NATIVE_CAPABILITY_PROMPT_VERSION = "native-capability.v1"
+NATIVE_CAPABILITY_PROMPT_VERSION = "native-capability.v2"
+VERIFICATION_PROMPT_VERSION = "verification.v2"
+ARTIFACT_SYNTHESIS_PROMPT_VERSION = "artifact-synthesis.v2"
+
+
+def prompt_version_for_capability(capability: str) -> str:
+    if capability == "verification":
+        return VERIFICATION_PROMPT_VERSION
+    if capability == "artifact_generation":
+        return ARTIFACT_SYNTHESIS_PROMPT_VERSION
+    return NATIVE_CAPABILITY_PROMPT_VERSION
 
 
 class NativeCapabilityPromptBuilder:
@@ -21,6 +31,9 @@ class NativeCapabilityPromptBuilder:
         *,
         capability_descriptor,
         step_goal: str,
+        acceptance_criteria: list[str],
+        source_refs: list[str],
+        logical_role: str,
         task_title: str,
         task_input: dict[str, Any],
         context_data: dict[str, Any],
@@ -40,18 +53,36 @@ class NativeCapabilityPromptBuilder:
             exclude={"aliases", "domain_hints", "plugin_id", "plugin_version"},
         )
         request = {
-            "capability": descriptor,
-            "stepGoal": step_goal,
-            "task": self._canonical_task(task_title, task_input),
-            "context": {
+            "systemBoundary": {
+                "allowedFacts": "mission contract, allowlisted context, memory/evidence and tool results",
+                "forbidden": ["fabricated facts", "fabricated evidence", "unreported assumptions"],
+                "factClasses": ["known", "derived", "assumed", "unknown"],
+            },
+            "mission": self._canonical_task(task_title, task_input),
+            "plannedTask": {
+                "goal": step_goal,
+                "logicalRole": logical_role,
+                "acceptanceCriteria": acceptance_criteria,
+                "sourceRefs": source_refs,
+            },
+            "capabilityProfile": descriptor,
+            "contextPack": {
                 "upstreamData": context_data,
                 "sourceData": source_data,
                 "evidenceRefs": evidence_refs,
             },
             "outputSchema": output_schema,
+            "completionChecklist": [
+                "Every acceptance criterion is addressed.",
+                "Every factual claim is known, derived, assumed or unknown.",
+                "Every numeric conclusion includes formula, inputs, units, result and assumptions.",
+                "A verification result is not passed without evidence for every passed check.",
+                "Unresolved gaps remain explicit.",
+            ],
         }
         payload = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
         return (
+            f"Prompt version: {prompt_version_for_capability(capability_descriptor.capability_id)}. "
             "Execute exactly one declared capability for an AgentOS workflow. "
             "Use only the supplied task and upstream facts. Do not invent measurements, "
             "prices, dates, sources, or completed actions. Separate known facts from "
@@ -157,6 +188,8 @@ class NativeCapabilityPromptBuilder:
             + json.dumps(
                 {
                     "consumeAllRelevantUpstreamFields": True,
+                    "coverEveryMissionConstraint": True,
+                    "coverEveryExpectedArtifact": True,
                     "requiredSections": [
                         "executive summary",
                         "requirements and acceptance",
@@ -175,4 +208,10 @@ class NativeCapabilityPromptBuilder:
         )
 
 
-__all__ = ["NATIVE_CAPABILITY_PROMPT_VERSION", "NativeCapabilityPromptBuilder"]
+__all__ = [
+    "ARTIFACT_SYNTHESIS_PROMPT_VERSION",
+    "NATIVE_CAPABILITY_PROMPT_VERSION",
+    "VERIFICATION_PROMPT_VERSION",
+    "NativeCapabilityPromptBuilder",
+    "prompt_version_for_capability",
+]

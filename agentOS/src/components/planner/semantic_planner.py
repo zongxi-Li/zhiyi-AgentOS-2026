@@ -11,7 +11,9 @@ from contracts.planning import (
     PlannedTask,
     TaskPlanRelation,
 )
-from support.acg.models import CapabilityCatalog
+from support.acg.models import CapabilityCatalog, TaskSemanticProfile
+from .intent_analyzer import IntentLLM
+from .task_decomposer import TaskDecomposer
 
 
 class SemanticPlanningError(ValueError):
@@ -19,8 +21,26 @@ class SemanticPlanningError(ValueError):
 
 
 class SemanticPlanner:
-    def __init__(self, capability_catalog: CapabilityCatalog) -> None:
+    def __init__(self, capability_catalog: CapabilityCatalog, llm: IntentLLM | None = None) -> None:
         self.capability_catalog = capability_catalog
+        self.task_decomposer = TaskDecomposer(capability_catalog, llm)
+
+    def plan_profile(
+        self,
+        *,
+        mission_id: str,
+        profile: TaskSemanticProfile,
+        strategy: str,
+        task_input: dict[str, Any] | None = None,
+        use_llm: bool = True,
+    ) -> TaskPlan:
+        return self.task_decomposer.decompose(
+            mission_id=mission_id,
+            profile=profile,
+            strategy=strategy,
+            task_input=task_input,
+            use_llm=use_llm,
+        )
 
     def plan_capabilities(
         self,
@@ -41,7 +61,7 @@ class SemanticPlanner:
             nodes.append(PlannedTask(
                 key=f"capability:{descriptor.capability_id}",
                 title=descriptor.display_name,
-                objective=descriptor.description or f"Complete {descriptor.display_name}",
+                objective=f"Use {descriptor.display_name} to satisfy the mission objective with traceable results.",
                 constraints=[
                     {"type": "required_capability", "value": descriptor.capability_id},
                     *(
@@ -50,6 +70,9 @@ class SemanticPlanner:
                     ),
                 ],
                 capabilityRequirements=(descriptor.capability_id,),
+                acceptanceCriteria=tuple(descriptor.prompt_profile.quality_criteria[:1]),
+                decompositionRationale="Compatibility plan generated from the capability dependency graph.",
+                logicalRole=descriptor.planning_stage,
                 metadata={"plannerStrategy": strategy},
             ))
         relations = tuple(

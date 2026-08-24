@@ -229,7 +229,7 @@ class ACGNodeRunner:
                 runId=state.run_id,
                 stepId=step_id,
                 objective=self.workflow.description,
-                stepGoal=step.name,
+                stepGoal=step.goal or step.name,
                 evidenceRefs=[
                     f"event:{state.output_refs[source_id]}"
                     for source_id in source_ids
@@ -252,7 +252,7 @@ class ACGNodeRunner:
                 runId=state.run_id,
                 stepId=step_id,
                 objective=self.workflow.description,
-                stepGoal=step.name,
+                stepGoal=step.goal or step.name,
                 evidenceRefs=[f"blackboard:{item}" for item in refs],
                 sourceStepIds=list(self.upstream_step_ids.get(step_id, ())),
             )
@@ -275,7 +275,7 @@ class ACGNodeRunner:
                 upstream_refs=state.output_refs,
                 value_store=self.value_store,
                 objective=self.workflow.description,
-                step_goal=step.name,
+                step_goal=step.goal or step.name,
                 token_budget=self.entropy_budget,
                 operation_id=commit_id,
             )
@@ -739,7 +739,7 @@ class ACGNodeRunner:
     @staticmethod
     def _safe_model_invocations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """裁剪模型调用审计字段，避免 prompt、响应正文或任意扩展载荷进入 Trace。"""
-        allowed = {"provider", "model", "latencyMs", "promptVersion", "usage"}
+        allowed = {"provider", "model", "latencyMs", "promptVersion", "promptTemplateHash", "usage"}
         return [
             {key: value for key, value in record.items() if key in allowed}
             for record in records
@@ -949,7 +949,7 @@ class ACGNodeRunner:
             runId=state.run_id,
             stepId=step_id,
             objective=self.workflow.description,
-            stepGoal=step.name,
+            stepGoal=step.goal or step.name,
             data=data,
             sourceData=source_data,
             evidenceRefs=evidence_refs,

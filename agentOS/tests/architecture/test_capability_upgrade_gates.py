@@ -73,3 +73,13 @@ def test_memory_and_evolution_forbid_runtime_mutation_primitives() -> None:
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             }
             assert calls.isdisjoint(forbidden_calls), path
+
+
+def test_v2_planner_core_contains_no_case_specific_domain_steps() -> None:
+    """Golden scenarios belong in evals or Packs, never in the generic planner."""
+    planner_root = SRC / "components" / "planner"
+    source = "\n".join(path.read_text(encoding="utf-8") for path in _python_sources(planner_root))
+    forbidden_case_terms = {
+        "源网荷储", "医院智慧门诊", "法律合同审查", "工业园区能源优化",
+    }
+    assert forbidden_case_terms.isdisjoint(source)

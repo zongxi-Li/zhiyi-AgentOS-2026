@@ -182,6 +182,10 @@ class WorkflowStepDefinition(CoreModel):
     name: str
     agent_name: str = Field(alias="agentName")
     capability: Optional[str] = None
+    goal: str = ""
+    acceptance_criteria: List[str] = Field(default_factory=list, alias="acceptanceCriteria")
+    source_refs: List[str] = Field(default_factory=list, alias="sourceRefs")
+    logical_role: str = Field(default="task", alias="logicalRole")
     input: Dict[str, Any] = Field(default_factory=dict)
     output_spec: Dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
     review_required: bool = Field(default=False, alias="reviewRequired")
@@ -277,6 +281,10 @@ class WorkflowStep(CoreModel):
     name: str
     agent_name: str = Field(alias="agentName")
     capability: Optional[str] = None
+    goal: str = ""
+    acceptance_criteria: List[str] = Field(default_factory=list, alias="acceptanceCriteria")
+    source_refs: List[str] = Field(default_factory=list, alias="sourceRefs")
+    logical_role: str = Field(default="task", alias="logicalRole")
     status: StepStatus = StepStatus.PENDING
     input: Dict[str, Any] = Field(default_factory=dict)
     output_spec: Dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
@@ -300,6 +308,10 @@ class WorkflowStep(CoreModel):
             name=definition.name,
             agentName=definition.agent_name,
             capability=definition.capability,
+            goal=definition.goal,
+            acceptanceCriteria=list(definition.acceptance_criteria),
+            sourceRefs=list(definition.source_refs),
+            logicalRole=definition.logical_role,
             input=dict(definition.input),
             outputSpec=dict(definition.output_spec),
             reviewRequired=definition.review_required,

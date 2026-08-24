@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import hashlib
+from collections.abc import Mapping
 from typing import Any, Dict, Optional, Protocol
 
-from support.acg.models import ComplexityLevel
 from support.acg.models import (
     CapabilityCatalog,
     highest_planning_risk_level,
 )
 from support.acg.models import build_default_capability_catalog
 from support.acg.models import CapabilityCandidate, TaskSemanticProfile
+from .complexity import assess_complexity
+
+
+INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v2"
 
 
 class IntentLLM(Protocol):
@@ -54,6 +60,7 @@ class IntentParser:
     ) -> None:
         self.llm = llm
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
+        self.last_audit: dict[str, Any] = {}
 
     def parse(
         self,
@@ -63,18 +70,47 @@ class IntentParser:
         task_type: str = "general",
         thinking_mode: str | None = None,
         use_llm: bool = True,
+        task_input: Mapping[str, Any] | None = None,
+        declared_capabilities: list[str] | tuple[str, ...] | None = None,
     ) -> TaskSemanticProfile:
         """把用户意图解析为标准语义画像。
 
-        可使用模型补充信息，失败或禁用时回退确定性规则；输出能力均按目录归一，且不修改
-        传入字符串或全局目录。
+        可使用模型补充信息；仅在模型禁用或不可用时采用显式确定性规划。模型输出违反
+        合同时只修复一次，仍失败则抛出结构化错误。输出能力均按目录归一。
         """
+        self.last_audit = {
+            "promptVersion": INTENT_PROFILE_PROMPT_VERSION,
+            "promptTemplateHash": hashlib.sha256(
+                (INTENT_PROFILE_PROMPT_VERSION + json.dumps(_PROFILE_SCHEMA, sort_keys=True)).encode("utf-8")
+            ).hexdigest(),
+            "modelVersion": str(getattr(self.llm, "model", None) or getattr(self.llm, "version", None) or "unreported"),
+            "mode": "model" if use_llm and self.llm is not None else "deterministic",
+        }
         if use_llm and self.llm is not None:
             try:
-                return self._parse_with_llm(intent, domain, task_type, thinking_mode)
-            except Exception:
-                pass
-        return self._heuristic(intent, domain, task_type)
+                return self._parse_with_llm(intent, domain, task_type, thinking_mode, task_input, declared_capabilities=declared_capabilities)
+            except Exception as first_error:
+                try:
+                    profile = self._parse_with_llm(
+                        intent,
+                        domain,
+                        task_type,
+                        thinking_mode,
+                        task_input,
+                        prompt_version=f"{INTENT_PROFILE_PROMPT_VERSION}.repair1",
+                        repair_error=str(first_error),
+                        declared_capabilities=declared_capabilities,
+                    )
+                    self.last_audit["promptVersion"] = f"{INTENT_PROFILE_PROMPT_VERSION}.repair1"
+                    return profile
+                except Exception as repair_error:
+                    self.last_audit["mode"] = "failed"
+                    self.last_audit["error"] = type(repair_error).__name__
+                    raise ValueError(
+                        "INTENT_PROFILE_CONTRACT_FAILED after one repair: "
+                        f"{repair_error}"
+                    ) from first_error
+        return self._heuristic(intent, domain, task_type, task_input)
 
     def _parse_with_llm(
         self,
@@ -82,12 +118,23 @@ class IntentParser:
         domain: str,
         task_type: str,
         thinking_mode: str | None,
+        task_input: Mapping[str, Any] | None,
+        prompt_version: str = INTENT_PROFILE_PROMPT_VERSION,
+        repair_error: str | None = None,
+        declared_capabilities: list[str] | tuple[str, ...] | None = None,
     ) -> TaskSemanticProfile:
         result = self.llm.generate_json(
-            self.build_prompt(intent=intent, domain=domain, task_type=task_type),
+            self.build_prompt(intent=intent, domain=domain, task_type=task_type, task_input=task_input)
+            + (f"\nRepair the previous contract error once: {repair_error}" if repair_error else ""),
             _PROFILE_SCHEMA,
             thinking_mode=thinking_mode,
+            prompt_version=prompt_version,
         )
+        if isinstance(result, dict):
+            if result.get("model"):
+                self.last_audit["modelVersion"] = str(result["model"])
+            if result.get("provider"):
+                self.last_audit["provider"] = str(result["provider"])
         data = result.get("data", result) if isinstance(result, dict) else {}
         data = dict(data) if isinstance(data, dict) else {}
         data.pop("entropyBudget", None)
@@ -99,6 +146,11 @@ class IntentParser:
             data.get("requiredCapabilities") or [],
             domain=domain,
         )
+        if not data["requiredCapabilities"] and declared_capabilities:
+            data["requiredCapabilities"] = self._normalize_capabilities(
+                declared_capabilities,
+                domain=domain,
+            )
         data["capabilityCandidates"] = [
             CapabilityCandidate(
                 capabilityId=capability_id,
@@ -111,49 +163,78 @@ class IntentParser:
         profile = TaskSemanticProfile.model_validate(data)
         if not profile.primary_goal.strip() or not profile.required_capabilities:
             raise ValueError("LLM returned no executable registered capability")
-        return self._finalize(profile, intent=intent, domain=domain, task_type=task_type)
+        return self._finalize(profile, intent=intent, domain=domain, task_type=task_type, task_input=task_input)
 
-    def build_prompt(self, *, intent: str, domain: str, task_type: str) -> str:
+    def build_prompt(
+        self,
+        *,
+        intent: str,
+        domain: str,
+        task_type: str,
+        task_input: Mapping[str, Any] | None = None,
+    ) -> str:
         """构造供 ``IntentLLM`` 使用的受限 JSON 解析提示，不执行模型调用。"""
         options = "\n".join(
-            f"- {item.capability_id}: {item.display_name}；{item.description}"
+            "- " + json.dumps({
+                "capabilityId": item.capability_id,
+                "displayName": item.display_name,
+                "purpose": item.prompt_profile.purpose,
+                "whenToUse": item.prompt_profile.when_to_use,
+                "whenNotToUse": item.prompt_profile.when_not_to_use,
+                "outputType": list(item.output_contract.get("properties", {})),
+                "qualityCriteria": item.prompt_profile.quality_criteria,
+                "promptProfileVersion": item.prompt_profile.prompt_profile_version,
+            }, ensure_ascii=False)
             for item in self.capability_catalog.available(domain)
         )
+        contract = self._planning_contract(intent, task_input)
         return (
+            f"提示版本：{INTENT_PROFILE_PROMPT_VERSION}\n"
             "你是任务规划的意图解析器。只返回 JSON。\n"
             "从下列目录选择实际需要执行的稳定 capabilityId，不得创造目录外能力。\n"
             f"可选执行能力：\n{options}\n\n"
             "返回 primaryGoal、keyConstraints、requiredCapabilities、expectedArtifacts、"
             "verificationRequirements、estimatedComplexity、domainHint、taskTypeHint、"
             "implicitRequirements、riskLevel。\n"
-            f"领域提示：{domain}\n任务类型提示：{task_type}\n用户需求：{intent}\n"
+            "复杂度只描述约束与工作结构，不按文字长度判断；最终分级会由确定性六维评分校验。\n"
+            f"领域提示：{domain}\n任务类型提示：{task_type}\n"
+            f"任务契约：{json.dumps(contract, ensure_ascii=False, default=str)}\n"
         )
 
-    def _heuristic(self, intent: str, domain: str, task_type: str) -> TaskSemanticProfile:
+    def _heuristic(
+        self,
+        intent: str,
+        domain: str,
+        task_type: str,
+        task_input: Mapping[str, Any] | None = None,
+    ) -> TaskSemanticProfile:
         text = intent or ""
-        length = len(text)
-        complexity = (
-            ComplexityLevel.COMPLEX
-            if length > 600
-            else ComplexityLevel.MEDIUM
-            if length > 200
-            else ComplexityLevel.SIMPLE
-        )
         candidates = self._infer_capability_candidates(text, domain)
         capabilities = [candidate.capability_id for candidate in candidates]
+        contract = self._planning_contract(text, task_input)
+        assessment = assess_complexity(
+            intent=text,
+            task_input=contract,
+            profile_data={"requiredCapabilities": capabilities},
+        )
         profile = TaskSemanticProfile(
-            primaryGoal=text[:80] or task_type,
+            primaryGoal=str(contract.get("objective") or text[:80] or task_type),
+            keyConstraints=[str(item) for item in contract.get("constraints", [])],
             requiredCapabilities=capabilities,
             capabilityCandidates=candidates,
-            expectedArtifacts=["deliverable"] if "artifact_generation" in capabilities else [],
+            expectedArtifacts=(
+                [str(item) for item in contract.get("expectedArtifacts", [])]
+                or (["deliverable"] if "artifact_generation" in capabilities else [])
+            ),
             verificationRequirements=["verification"] if "verification" in capabilities else [],
-            estimatedComplexity=complexity,
+            estimatedComplexity=assessment.level,
+            complexityAssessment=assessment,
             domainHint=domain,
             taskTypeHint=task_type,
             riskLevel="normal",
             rawIntent=text,
         )
-        return self._finalize(profile, intent=text, domain=domain, task_type=task_type)
+        return self._finalize(profile, intent=text, domain=domain, task_type=task_type, task_input=task_input)
 
     def _finalize(
         self,
@@ -162,6 +243,7 @@ class IntentParser:
         intent: str,
         domain: str,
         task_type: str,
+        task_input: Mapping[str, Any] | None = None,
     ) -> TaskSemanticProfile:
         normalized = self._normalize_capabilities(profile.required_capabilities, domain=domain)
         if not normalized:
@@ -200,7 +282,33 @@ class IntentParser:
         profile.domain_hint = profile.domain_hint or domain
         profile.task_type_hint = profile.task_type_hint or task_type
         profile.raw_intent = profile.raw_intent or intent
+        contract = self._planning_contract(intent, task_input)
+        if not profile.key_constraints:
+            profile.key_constraints = [str(item) for item in contract.get("constraints", [])]
+        if not profile.expected_artifacts:
+            profile.expected_artifacts = [str(item) for item in contract.get("expectedArtifacts", [])]
+        assessment = assess_complexity(
+            intent=intent,
+            task_input=contract,
+            profile_data=profile.model_dump(by_alias=True),
+        )
+        profile.estimated_complexity = assessment.level
+        profile.complexity_assessment = assessment
         return profile
+
+    @staticmethod
+    def _planning_contract(intent: str, task_input: Mapping[str, Any] | None) -> dict[str, Any]:
+        payload = dict(task_input or {})
+        contract: dict[str, Any] = {
+            "objective": payload.get("objective") or payload.get("userIntent") or intent,
+            "constraints": payload.get("constraints") or [],
+            "expectedArtifacts": payload.get("expectedArtifacts") or [],
+        }
+        for key in ("materials", "sourceMaterials", "materialText", "contractText"):
+            value = payload.get(key)
+            if value not in (None, "", [], {}):
+                contract[key] = value[:12000] if isinstance(value, str) else value
+        return contract
 
     def _infer_capabilities(self, text: str, domain: str) -> list[str]:
         return [
@@ -288,4 +396,4 @@ class IntentParser:
         return normalized
 
 
-__all__ = ["IntentParser", "IntentLLM", "TaskSemanticProfile"]
+__all__ = ["INTENT_PROFILE_PROMPT_VERSION", "IntentParser", "IntentLLM", "TaskSemanticProfile"]

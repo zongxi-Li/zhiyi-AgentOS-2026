@@ -67,11 +67,12 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
     trace_ids_before = [event.event_id for event in paused.trace]
     run_id = paused.run_id
     blueprint_nodes = paused.acg_blueprint["nodes"]
-    assert len(blueprint_nodes) == 16
-    assert len(paused.acg_blueprint["edges"]) == 42
+    assert len(blueprint_nodes) >= len(paused.steps) + 2
+    assert sum(node.get("nodeType") == "step" for node in blueprint_nodes) == len(paused.steps)
+    assert len(paused.acg_blueprint["edges"]) >= len(paused.steps) * 2
     assert {node["nodeId"] for node in blueprint_nodes if node["nodeType"] == "control"} >= {
-        "ctrl_parallel_1",
-        "ctrl_join_1",
+        "ctrl_start",
+        "ctrl_end",
     }
     memory_events_before = [
         event for event in paused.trace

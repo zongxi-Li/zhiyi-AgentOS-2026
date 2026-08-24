@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from contracts.planning import TaskImplementationBinding, TaskPlan
+from contracts.planning import SemanticTaskRelationType, TaskImplementationBinding, TaskPlan
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
@@ -62,15 +62,15 @@ class ACGBuilder:
             raise ValueError("ACG planning produced no capability bindings")
         if task_plan.mission_id != mission_id:
             raise ValueError("TaskPlan missionId does not match ACG build Mission")
-        plan_key_by_capability = {
-            str(node.capability_requirements[0]): node.key
-            for node in task_plan.nodes
-            if node.capability_requirements
-        }
+        if any(len(node.capability_requirements) != 1 for node in task_plan.nodes):
+            raise ValueError("Every executable TaskPlan node must select exactly one capability")
         selected_capabilities = {binding.capability for binding in network.bindings}
-        if set(plan_key_by_capability) != selected_capabilities:
+        planned_capabilities = {
+            str(node.capability_requirements[0]) for node in task_plan.nodes
+        }
+        if not planned_capabilities <= selected_capabilities:
             raise ValueError(
-                "TaskPlan capabilities must exactly cover ACG capability bindings"
+                "TaskPlan contains capabilities without an Agent binding"
             )
 
         blueprint = ACGBlueprint(
@@ -86,36 +86,29 @@ class ACGBuilder:
         )
         if variant is not None:
             blueprint.metadata["planningVariantId"] = variant.variant_id
-        selected = [binding.capability for binding in network.bindings]
-        selected_set = set(selected)
+        selected = [node.key for node in task_plan.nodes]
         descriptors = {
-            capability_id: self.capability_catalog.get(capability_id)
-            for capability_id in selected
+            node.key: self.capability_catalog.get(node.capability_requirements[0])
+            for node in task_plan.nodes
         }
-        data_dependencies = {
-            capability_id: self._selected_dependencies(
-                capability_id,
-                selected_set,
-                optional_dependencies=(
-                    variant.optional_for(capability_id) if variant else None
-                ),
-            )
-            for capability_id in selected
-        }
+        data_dependencies = {key: [] for key in selected}
+        for relation in task_plan.relations:
+            if relation.relation_type == SemanticTaskRelationType.DEPENDS_ON:
+                data_dependencies[relation.target_key].append(relation.source_key)
         control_dependencies = {
-            capability_id: self._minimal_dependencies(
-                data_dependencies[capability_id],
+            task_key: self._minimal_dependencies(
+                data_dependencies[task_key],
                 data_dependencies,
             )
-            for capability_id in selected
+            for task_key in selected
         }
 
         steps, step_by_capability = self._build_steps(
             blueprint,
             network,
+            task_plan,
             descriptors,
             data_dependencies,
-            plan_key_by_capability,
         )
         self._wire_execution_graph(
             blueprint,
@@ -177,32 +170,43 @@ class ACGBuilder:
         self,
         blueprint,
         network,
+        task_plan,
         descriptors,
         data_dependencies,
-        plan_key_by_capability,
     ) -> tuple[list[StepNode], dict[str, StepNode]]:
         used_ids: set[str] = set()
         agent_nodes: dict[str, str] = {}
         steps: list[StepNode] = []
         step_by_capability: dict[str, StepNode] = {}
-
-        for binding in network.bindings:
-            descriptor = descriptors[binding.capability]
-            node_id = self._step_id(binding.agent_name, descriptor.capability_id, used_ids)
+        binding_by_capability = {binding.capability: binding for binding in network.bindings}
+        node_id_by_task: dict[str, str] = {}
+        for task in task_plan.nodes:
+            capability = task.capability_requirements[0]
+            binding = binding_by_capability[capability]
+            node_id = self._step_id(binding.agent_name, capability, used_ids)
             used_ids.add(node_id)
+            node_id_by_task[task.key] = node_id
+
+        for task in task_plan.nodes:
+            descriptor = descriptors[task.key]
+            binding = binding_by_capability[descriptor.capability_id]
+            node_id = node_id_by_task[task.key]
             from_map = {
-                self._dependency_node_id(network, dependency): self._output_fields(
+                node_id_by_task[dependency]: self._output_fields(
                     descriptors[dependency].output_contract
                 )
-                for dependency in data_dependencies[descriptor.capability_id]
+                for dependency in data_dependencies[task.key]
             }
             input_spec = dict(descriptor.input_contract)
             if from_map:
                 input_spec = {"from": from_map, "schema": dict(descriptor.input_contract)}
             step = StepNode(
                 nodeId=node_id,
-                name=descriptor.display_name,
-                goal=descriptor.description or f"Execute {descriptor.display_name}",
+                name=task.title,
+                goal=task.objective,
+                acceptanceCriteria=list(task.acceptance_criteria),
+                sourceRefs=list(task.source_refs),
+                logicalRole=task.logical_role,
                 agentName=binding.agent_name,
                 capability=descriptor.capability_id,
                 inputSpec=input_spec,
@@ -212,7 +216,7 @@ class ACGBuilder:
                     "capabilityId": descriptor.capability_id,
                     "planningStage": descriptor.planning_stage,
                     "role": descriptor.planning_stage,
-                    "dependsOn": list(data_dependencies[descriptor.capability_id]),
+                    "dependsOn": list(data_dependencies[task.key]),
                     "parallelizable": descriptor.parallelizable,
                     "producesArtifact": descriptor.produces_artifact,
                     "requiresEvidence": descriptor.requires_evidence,
@@ -231,12 +235,14 @@ class ACGBuilder:
                         "requireAudit": descriptor.writes_memory,
                     },
                     "routerScore": binding.score,
-                    "taskPlanKey": plan_key_by_capability[descriptor.capability_id],
+                    "taskPlanKey": task.key,
+                    "decompositionRationale": task.decomposition_rationale,
+                    "capabilityPromptProfileVersion": descriptor.prompt_profile.prompt_profile_version,
                 },
             )
             blueprint.nodes.append(step)
             steps.append(step)
-            step_by_capability[descriptor.capability_id] = step
+            step_by_capability[task.key] = step
 
             if binding.agent_name not in agent_nodes:
                 agent_id = f"agent::{binding.agent_name}"

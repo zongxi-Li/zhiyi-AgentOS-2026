@@ -19,6 +19,7 @@ class CapabilityBinding:
     agent_name: str
     score: float
     ephemeral: bool = False
+    plan_node_key: str | None = None
 
 
 @dataclass

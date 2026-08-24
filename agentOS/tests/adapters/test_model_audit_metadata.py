@@ -18,7 +18,8 @@ def test_model_audit_record_excludes_prompt_and_generated_data() -> None:
         "provider": "local",
         "model": "test",
         "latencyMs": 0,
-        "promptVersion": "native-capability.v1",
+        "promptVersion": "native-capability.v2",
+        "promptTemplateHash": "",
         "usage": {"tokens": 3},
     }
     assert "answer" not in record

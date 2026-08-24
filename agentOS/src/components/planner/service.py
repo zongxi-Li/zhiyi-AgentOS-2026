@@ -71,6 +71,7 @@ class PlanResult:
     selection_reasons: list[str] = field(default_factory=list)
     stochastic_fallback: bool = False
     notes: list[str] = field(default_factory=list)
+    prompt_audit: list[Dict[str, Any]] = field(default_factory=list)
 
     def to_decision(self) -> Dict[str, Any]:
         """将规划结果转换为审计/前端消费的别名键字典，不修改蓝图或画像。"""
@@ -96,6 +97,7 @@ class PlanResult:
             "nodeCount": self.blueprint.node_count,
             "edgeCount": self.blueprint.edge_count,
             "notes": self.notes,
+            "promptAudit": self.prompt_audit,
         }
 
 
@@ -116,7 +118,7 @@ class PlanningEngine:
         self.template_matcher = TemplateMatcher(workflow_registry, threshold=template_threshold)
         self.cognitive_router = CognitiveRouter(agent_registry, self.capability_catalog)
         self.acg_builder = ACGBuilder(self.capability_catalog)
-        self.semantic_planner = SemanticPlanner(self.capability_catalog)
+        self.semantic_planner = SemanticPlanner(self.capability_catalog, intent_llm)
         self.variant_generator = PlanningVariantGenerator(
             capability_catalog=self.capability_catalog,
             cognitive_router=self.cognitive_router,
@@ -136,6 +138,7 @@ class PlanningEngine:
         planning_seed: int | None = None,
         capability_catalog_revision: str | None = None,
         required_capabilities: Sequence[str] | None = None,
+        task_input: Dict[str, Any] | None = None,
     ) -> PlanResult:
         """为任务选择模板或动态生成 ACG。
 
@@ -152,6 +155,8 @@ class PlanningEngine:
             task_type=task_type,
             thinking_mode=thinking_mode,
             use_llm=not deterministic_intent,
+            task_input=task_input,
+            declared_capabilities=list(required_capabilities or ()),
         )
         if required_capabilities:
             selected = self.capability_catalog.expand_dependencies(required_capabilities)
@@ -199,6 +204,7 @@ class PlanningEngine:
                     planning_seed=resolved_seed,
                     capability_catalog_revision=capability_catalog_revision,
                     selected_capabilities=list(profile.required_capabilities),
+                    prompt_audit=[dict(self.intent_parser.last_audit)],
                     notes=[f"matched template by {match.matched_by}"],
                 )
 
@@ -214,10 +220,12 @@ class PlanningEngine:
                 f"Estimated entropy {stable_network.estimated_entropy} exceeds budget "
                 f"{stable_network.entropy_budget}"
             )
-        task_plan = self.semantic_planner.plan_capabilities(
+        task_plan = self.semantic_planner.plan_profile(
             mission_id=mission_id,
-            capabilities=[binding.capability for binding in stable_network.bindings],
+            profile=profile,
             strategy="dynamic_generation",
+            task_input=task_input,
+            use_llm=not deterministic_intent,
         )
         variant_set = self.variant_generator.generate(
             profile=profile,
@@ -277,6 +285,10 @@ class PlanningEngine:
                 "capabilityCatalogRevision": capability_catalog_revision,
                 "candidateCount": len(valid),
                 "selectedVariantId": selected_variant.variant_id,
+                "promptAudit": [
+                    dict(self.intent_parser.last_audit),
+                    dict(self.semantic_planner.task_decomposer.last_audit),
+                ],
             }
         )
         notes = [
@@ -288,6 +300,8 @@ class PlanningEngine:
         ]
         notes.extend(selected_variant.network.notes)
         notes.extend(rejected)
+        if task_plan.metadata.get("degraded"):
+            notes.append(str(task_plan.metadata.get("degradationReason") or "v2 decomposition used explicit degraded plan"))
         built = self.acg_builder.finalize(
             task_plan=task_plan,
             blueprint=blueprint,
@@ -308,14 +322,23 @@ class PlanningEngine:
             selected_capabilities=list(profile.required_capabilities),
             selected_bindings=[
                 {
-                    "capabilityId": binding.capability,
-                    "agentName": binding.agent_name,
+                    "planNodeKey": node.key,
+                    "capabilityId": node.capability_requirements[0],
+                    "agentName": next(
+                        binding.agent_name
+                        for binding in selected_variant.network.bindings
+                        if binding.capability == node.capability_requirements[0]
+                    ),
                 }
-                for binding in selected_variant.network.bindings
+                for node in task_plan.nodes
             ],
             selection_reasons=list(selected_variant.selection_reasons),
             stochastic_fallback=stochastic_fallback,
             notes=notes,
+            prompt_audit=[
+                dict(self.intent_parser.last_audit),
+                dict(self.semantic_planner.task_decomposer.last_audit),
+            ],
         )
 
     def _validate_agents(self, blueprint: ACGBlueprint, *, domain: str) -> None:

@@ -208,6 +208,9 @@ class StepNode(ACGNodeBase):
     node_type: Literal[NodeType.STEP] = Field(default=NodeType.STEP, alias="nodeType")
     step_type: str = Field(default="agent", alias="stepType")
     goal: str = ""
+    acceptance_criteria: List[str] = Field(default_factory=list, alias="acceptanceCriteria")
+    source_refs: List[str] = Field(default_factory=list, alias="sourceRefs")
+    logical_role: str = Field(default="task", alias="logicalRole")
     input_spec: Dict[str, Any] = Field(default_factory=dict, alias="inputSpec")
     output_spec: Dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
     # 执行绑定：谁来执行、用什么技能
@@ -1090,6 +1093,24 @@ _RISK_LEVEL_ORDER: tuple[PlanningRiskLevel, ...] = (
 )
 
 
+class CapabilityPromptProfile(BaseModel):
+    """Versioned, domain-neutral instructions used to select and execute a capability."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    profile_id: str = Field(default="generic", alias="profileId")
+    prompt_profile_version: str = Field(default="capability-profile.v1", alias="promptProfileVersion")
+    purpose: str = ""
+    when_to_use: list[str] = Field(default_factory=list, alias="whenToUse")
+    when_not_to_use: list[str] = Field(default_factory=list, alias="whenNotToUse")
+    decomposition_hints: list[str] = Field(default_factory=list, alias="decompositionHints")
+    execution_principles: list[str] = Field(default_factory=list, alias="executionPrinciples")
+    quality_criteria: list[str] = Field(default_factory=list, alias="qualityCriteria")
+    verification_questions: list[str] = Field(default_factory=list, alias="verificationQuestions")
+    required_tools: list[str] = Field(default_factory=list, alias="requiredTools")
+    evidence_policy: str = Field(default="Use only supplied or tool-returned evidence.", alias="evidencePolicy")
+
+
 class PlanningCapabilityDescriptor(BaseModel):
     """解析、路由和 ACG 构造共享的稳定能力描述。
 
@@ -1103,6 +1124,10 @@ class PlanningCapabilityDescriptor(BaseModel):
     display_name: str = Field(alias="displayName")
     aliases: list[str] = Field(default_factory=list)
     description: str = ""
+    prompt_profile: CapabilityPromptProfile = Field(
+        default_factory=CapabilityPromptProfile,
+        alias="promptProfile",
+    )
     planning_stage: str = Field(default="analysis", alias="planningStage")
     depends_on: list[str] = Field(default_factory=list, alias="dependsOn")
     optional_dependencies: list[str] = Field(default_factory=list, alias="optionalDependencies")
@@ -1575,7 +1600,7 @@ def _output_schema(capability_id: str) -> dict:
 def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
     """返回内置通用能力描述符的有序不可变集合，供目录初始化或测试比较。"""
     general = ["general"]
-    return (
+    descriptors = (
         PlanningCapabilityDescriptor(
             capabilityId="task_understanding", displayName="任务理解",
             aliases=["理解任务", "任务目标", "目标", "约束"], planningStage="understand",
@@ -1685,6 +1710,59 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
             domainHints=general, priority=60,
         ),
     )
+    purposes = {
+        "task_understanding": "Turn the mission into explicit goals, constraints, artifacts, facts, assumptions and unknowns.",
+        "information_extraction": "Extract traceable facts, entities and metrics from supplied materials without adding facts.",
+        "information_retrieval": "Retrieve missing information with source references and an explicit evidence boundary.",
+        "requirement_analysis": "Translate stakeholder needs and hard constraints into testable requirements and acceptance criteria.",
+        "process_decomposition": "Describe an executable process with inputs, outputs, ownership, dependencies and quality gates.",
+        "resource_planning": "Estimate people, systems, equipment and capacity with assumptions and calculations.",
+        "architecture_design": "Define components, interfaces, deployment boundaries and controlled data flows.",
+        "analysis": "Analyze a bounded question and separate findings, assumptions and unresolved gaps.",
+        "evidence_analysis": "Assess claims against cited evidence and state confidence and evidence gaps.",
+        "comparative_analysis": "Compare independently produced alternatives against consistent criteria and explain the recommendation.",
+        "cost_analysis": "Calculate costs from explicit quantities, rates, units, formulas and assumptions.",
+        "risk_analysis": "Identify risks, triggers, probability, impact, ownership and mitigations.",
+        "solution_design": "Design one coherent candidate solution with phases, dependencies, milestones and deliverables.",
+        "verification": "Verify acceptance criteria against evidence; never pass a criterion without supporting evidence.",
+        "artifact_generation": "Synthesize verified outputs into the requested artifacts while preserving gaps and source references.",
+    }
+    return tuple(
+        descriptor.model_copy(update={
+            "description": purposes[descriptor.capability_id],
+            "prompt_profile": CapabilityPromptProfile(
+                profileId=descriptor.capability_id,
+                promptProfileVersion="capability-profile.v2",
+                purpose=purposes[descriptor.capability_id],
+                whenToUse=[f"The planned task primarily needs {descriptor.display_name}."],
+                whenNotToUse=["Another capability owns the primary output; use this only for a distinct task."],
+                decompositionHints=["Create separate instances when alternatives, stages or independently verifiable outputs differ."],
+                executionPrinciples=[
+                    "Use only mission facts, allowlisted context and tool-returned evidence.",
+                    "Separate known facts, derivations, assumptions and unknowns.",
+                ],
+                qualityCriteria=[
+                    "The output directly satisfies the planned task goal and every acceptance criterion.",
+                    "Claims and calculations remain traceable to inputs, evidence or declared assumptions.",
+                ],
+                verificationQuestions=[
+                    "Is every acceptance criterion answered?",
+                    "Are unsupported claims marked as assumptions or unknowns?",
+                ],
+                requiredTools=(
+                    ["knowledge_search"]
+                    if descriptor.capability_id == "information_retrieval"
+                    else []
+                ),
+                evidencePolicy=(
+                    "A passed result requires a non-empty evidence reference for every check."
+                    if descriptor.capability_id == "verification"
+                    else "Use only supplied or tool-returned evidence and cite it when making a factual claim."
+                ),
+            ),
+        })
+        for descriptor in descriptors
+    )
 
 
 NATIVE_CAPABILITY_IDS = tuple(
@@ -1721,6 +1799,19 @@ class CapabilityCandidate(BaseModel):
     score: float = Field(ge=0, le=1)
     matched_terms: List[str] = Field(default_factory=list, alias="matchedTerms")
     source: Literal["catalog_alias", "llm", "fallback", "dependency", "workflow_template"]
+    rationale: str = ""
+
+
+class ComplexityAssessment(BaseModel):
+    """Deterministic six-axis complexity assessment used as a planning budget."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    level: ComplexityLevel
+    score: int = Field(ge=0, le=18)
+    dimensions: Dict[str, int] = Field(default_factory=dict)
+    reasons: List[str] = Field(default_factory=list)
+    method: str = "deterministic-six-axis.v1"
 
 
 class TaskSemanticProfile(BaseModel):
@@ -1742,6 +1833,10 @@ class TaskSemanticProfile(BaseModel):
     estimated_complexity: ComplexityLevel = Field(
         default=ComplexityLevel.SIMPLE, alias="estimatedComplexity"
     )
+    complexity_assessment: ComplexityAssessment | None = Field(
+        default=None,
+        alias="complexityAssessment",
+    )
     domain_hint: str = Field(default="general", alias="domainHint")
     task_type_hint: str = Field(default="general", alias="taskTypeHint")
     implicit_requirements: List[str] = Field(default_factory=list, alias="implicitRequirements")
@@ -1759,6 +1854,7 @@ class TaskSemanticProfile(BaseModel):
 __all__ = [
     "ACGBlueprint", "RuntimeBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",
     "AgentNode", "BlueprintStatus", "CapabilityCandidate", "CapabilityCatalog",
+    "CapabilityPromptProfile", "ComplexityAssessment",
     "ComplexityLevel", "ConditionEvaluationError", "ConditionOperator", "ConditionSpec",
     "ControlNode", "ControlType", "EdgeActivation", "EdgeType", "EvidenceNode",
     "MemoryNode", "NATIVE_CAPABILITY_IDS", "NodeType", "PlanningCapabilityDescriptor",

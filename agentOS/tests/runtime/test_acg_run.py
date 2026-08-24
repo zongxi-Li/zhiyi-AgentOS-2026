@@ -108,6 +108,23 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     assert latest_state["completedStepIds"] == ["extract", "summarize"]
 
 
+def test_deferred_acg_planning_materializes_inside_single_runtime() -> None:
+    runtime = _runtime()
+    task = runtime.create_mission("deferred run", workflow_id="acg-run")
+    _, prepared = runtime.prepare_run(task.mission_id, defer_acg_planning=True)
+
+    assert prepared.status is WorkflowStatus.PENDING
+    assert prepared.acg_blueprint is None
+    assert prepared.execution_state["planningDeferred"] is True
+
+    result = asyncio.run(runtime.execute_prepared_run(prepared.run_id))
+
+    assert result.status is WorkflowStatus.COMPLETED
+    assert result.acg_blueprint is not None
+    assert "planningDeferred" not in result.execution_state
+    assert result.execution_state["compiledACGPackage"]
+
+
 def test_runtime_persists_and_resumes_control_review_barrier(monkeypatch) -> None:
     agents = AgentRegistry()
     agents.register(_VoteAgent(AgentProfile(agentName="voter", domain="general")))

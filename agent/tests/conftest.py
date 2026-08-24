@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -93,6 +94,49 @@ class _ContractReviewTestProvider:
 
     def generate_json(self, prompt, schema, **kwargs):
         from app.llm.schemas import compact_schema_name
+
+        required = set(schema.get("required") or [])
+        if {"primaryGoal", "requiredCapabilities"} <= required:
+            available = list(dict.fromkeys(re.findall(r'"capabilityId":\s*"([^"]+)"', prompt)))
+            native = [
+                item for item in ("task_understanding", "analysis", "artifact_generation")
+                if item in available
+            ]
+            return {
+                "primaryGoal": "Produce a traceable verified deliverable",
+                "keyConstraints": [],
+                "requiredCapabilities": native or available[:1],
+                "expectedArtifacts": [],
+                "verificationRequirements": [],
+                "estimatedComplexity": "medium",
+            }
+        if {"tasks", "relations"} <= required:
+            contract_text = prompt.split("Mission contract: ", 1)[1].split("\nSemantic profile:", 1)[0]
+            contract = json.loads(contract_text)
+            profile_text = prompt.split("Semantic profile: ", 1)[1].split("\nCapability catalog:", 1)[0]
+            profile = json.loads(profile_text)
+            capabilities = profile.get("requiredCapabilities") or [
+                "task_understanding", "analysis", "artifact_generation"
+            ]
+            tasks = [{
+                "key": f"fixture-{index}-{capability}",
+                "title": f"Fixture {capability}",
+                "objective": f"Use {capability} to produce a traceable mission result",
+                "capabilityId": capability,
+                "constraints": [
+                    {"type": "mission_constraint", "value": value}
+                    for value in contract.get("constraints", [])
+                ],
+                "acceptanceCriteria": ["The capability output satisfies its declared contract"],
+                "sourceRefs": list(contract.get("expectedArtifacts", [])),
+                "decompositionRationale": "deterministic test fixture",
+                "logicalRole": "task",
+            } for index, capability in enumerate(capabilities, start=1)]
+            relations = [
+                {"sourceKey": tasks[index - 1]["key"], "targetKey": tasks[index]["key"], "relationType": "depends_on"}
+                for index in range(1, len(tasks))
+            ]
+            return {"tasks": tasks, "relations": relations}
 
         task = compact_schema_name(schema)
         if task == "parse_contract":

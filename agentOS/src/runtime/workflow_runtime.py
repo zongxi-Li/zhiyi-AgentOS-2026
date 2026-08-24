@@ -371,8 +371,9 @@ class ExecutionRuntime:
         idempotency_key: Optional[str] = None,
         idempotency_fingerprint: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
+        defer_acg_planning: bool = False,
     ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
-        """在规划或节点执行前持久化可查询运行；幂等键冲突时抛出 ``ValueError``。"""
+        """持久化可查询运行；API 可把耗时 ACG 规划交给同一 Runtime 的后台阶段。"""
 
         if idempotency_key:
             existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
@@ -471,58 +472,10 @@ class ExecutionRuntime:
             active_evolution = self.evolution_service.store.active()
             run.execution_state["evolutionPolicyVersion"] = active_evolution.version
             run.execution_state["evolutionPolicy"] = dict(active_evolution.policy)
-        if is_acg:
-            blueprint, task_plan, task_bindings = self._build_acg_blueprint(
-                task,
-                run,
-                workflow,
-            )
-            self._validate_blueprint_agents(
-                blueprint,
-                domain=workflow.domain or task.domain,
-                scope=scope,
-            )
-            self._sync_run_steps_to_acg(run, blueprint)
-            compiler = ACGGraphCompiler()
-            compiled_package = compiler.compile_package(blueprint, run_id=run.run_id)
-            self._register_and_freeze_resources(
-                run=run,
-                workflow=workflow,
-                scope=scope,
-                binding_manifest=compiled_package.binding_manifest,
-            )
-            run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
-            run.execution_state.update(
-                {
-                    "workflowVersion": workflow.version,
-                    "graphId": blueprint.graph_id,
-                    "sourceBlueprintVersion": blueprint.version,
-                    "compiledACGPackage": compiled_package.model_dump(
-                        by_alias=True, mode="json"
-                    ),
-                    "compiledPackageId": compiled_package.package_id,
-                    "compiledPackageChecksum": compiled_package.checksum,
-                    "compiledPackageVersion": compiled_package.package_version,
-                    "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
-                    "compilerWarnings": list(compiled_package.compatibility_warnings),
-                    **(
-                        {
-                            "taskPlanVersion": task_plan.plan_version,
-                            "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
-                            "taskBindings": [
-                                item.model_dump(by_alias=True, mode="json")
-                                for item in task_bindings
-                            ],
-                        }
-                        if task_plan is not None
-                        else {}
-                    ),
-                }
-            )
-            if self.identity_lifecycle is not None and task_plan is None:
-                raise ValueError(
-                    "identity-enabled ACG execution requires Planner output"
-                )
+        if is_acg and defer_acg_planning:
+            run.execution_state["planningDeferred"] = True
+        elif is_acg:
+            self._materialize_acg_run(task=task, run=run, workflow=workflow, scope=scope)
         self.trace_store.append(
             run=run,
             event_type=TraceEventType.TASK_STATUS_CHANGED,
@@ -544,7 +497,11 @@ class ExecutionRuntime:
             },
         )
         self.workflow_store.save_run(run)
-        if self.identity_lifecycle is not None and is_acg:
+        if (
+            self.identity_lifecycle is not None
+            and is_acg
+            and not defer_acg_planning
+        ):
             self._flush_identity_outbox()
         logger.info(
             "run_prepared",
@@ -557,6 +514,80 @@ class ExecutionRuntime:
         )
         return task, run
 
+    def _materialize_acg_run(
+        self,
+        *,
+        task: RuntimeMissionRecord,
+        run: RuntimeRunRecord,
+        workflow: WorkflowDefinition,
+        scope: RunExecutionScope,
+    ) -> None:
+        """Run the existing L1-L3 plan/build/compile path for one persisted Run."""
+        blueprint, task_plan, task_bindings = self._build_acg_blueprint(
+            task,
+            run,
+            workflow,
+        )
+        self._validate_blueprint_agents(
+            blueprint,
+            domain=workflow.domain or task.domain,
+            scope=scope,
+        )
+        self._sync_run_steps_to_acg(run, blueprint)
+        compiled_package = ACGGraphCompiler().compile_package(blueprint, run_id=run.run_id)
+        self._register_and_freeze_resources(
+            run=run,
+            workflow=workflow,
+            scope=scope,
+            binding_manifest=compiled_package.binding_manifest,
+        )
+        run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
+        run.execution_state.update(
+            {
+                "workflowVersion": workflow.version,
+                "graphId": blueprint.graph_id,
+                "sourceBlueprintVersion": blueprint.version,
+                "compiledACGPackage": compiled_package.model_dump(
+                    by_alias=True, mode="json"
+                ),
+                "compiledPackageId": compiled_package.package_id,
+                "compiledPackageChecksum": compiled_package.checksum,
+                "compiledPackageVersion": compiled_package.package_version,
+                "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
+                "compilerWarnings": list(compiled_package.compatibility_warnings),
+                **(
+                    {
+                        "taskPlanVersion": task_plan.plan_version,
+                        "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+                        "taskBindings": [
+                            item.model_dump(by_alias=True, mode="json")
+                            for item in task_bindings
+                        ],
+                    }
+                    if task_plan is not None
+                    else {}
+                ),
+            }
+        )
+        if self.identity_lifecycle is not None and task_plan is None:
+            raise ValueError("identity-enabled ACG execution requires Planner output")
+        run.execution_state.pop("planningDeferred", None)
+
+    def _materialize_deferred_acg_run(self, run_id: str) -> RuntimeRunRecord:
+        run = self.workflow_store.get_run(run_id)
+        if not run.execution_state.get("planningDeferred"):
+            return run
+        task = self.mission_manager.get_mission(run.mission_id)
+        workflow = self._workflow_for_run(run)
+        scope = run.execution_scope
+        if scope is None:
+            raise ValueError("deferred ACG planning requires a frozen execution scope")
+        self._materialize_acg_run(task=task, run=run, workflow=workflow, scope=scope)
+        self.workflow_store.save_run(run)
+        if self.identity_lifecycle is not None:
+            self._flush_identity_outbox()
+        return run
+
     async def execute_prepared_run(self, run_id: str) -> RuntimeRunRecord:
         """执行已持久化运行并保持终态不回退；插件范围失效时安全标记失败后继续抛错。"""
 
@@ -564,6 +595,19 @@ class ExecutionRuntime:
         if self._normalize_runtime_engine(run.runtime_engine) == "acg":
             if run.status == WorkflowStatus.WAITING_REVIEW:
                 return run
+            if run.execution_state.get("planningDeferred"):
+                run = self._set_run_lifecycle(
+                    run,
+                    status=WorkflowStatus.PLANNING,
+                    phase=WorkflowProgressPhase.PLANNING,
+                    message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.PLANNING],
+                    set_started_at=True,
+                )
+                self.workflow_store.save_run(run)
+                run = await asyncio.to_thread(
+                    self._materialize_deferred_acg_run,
+                    run.run_id,
+                )
             return await self._execute_acg(run)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
@@ -1745,13 +1789,14 @@ class ExecutionRuntime:
                 task_type=task.intent or workflow.intent,
                 force_dynamic=force_dynamic,
                 thinking_mode=str(run.input.get("thinkingMode") or "").strip() or None,
-                # 强制动态图仍使用本地语义解析以避免模型往返；拓扑多样性由
-                # 已持久化 seed 驱动，并且只作用于受约束的规划候选。
-                deterministic_intent=force_dynamic,
+                # 仅显式 deterministicIntent 才禁用 v2 语义模型；强制动态规划
+                # 不能再隐式退回固定能力链。
+                deterministic_intent=bool(run.input.get("deterministicIntent")),
                 planning_diversity=run.planning_diversity,
                 planning_seed=run.planning_seed,
                 capability_catalog_revision=run.capability_catalog_revision,
                 required_capabilities=workflow.required_capabilities,
+                task_input=dict(run.input),
             )
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
@@ -1870,6 +1915,10 @@ class ExecutionRuntime:
                     name=node.name or node.node_id,
                     agentName=node.agent_name or node.node_id,
                     capability=node.capability,
+                    goal=node.goal,
+                    acceptanceCriteria=list(node.acceptance_criteria),
+                    sourceRefs=list(node.source_refs),
+                    logicalRole=node.logical_role,
                     input=node_input,
                     outputSpec=dict(node.output_spec),
                     reviewRequired=node.review_required,
@@ -1881,6 +1930,10 @@ class ExecutionRuntime:
                 step.name = node.name or step.name
                 step.agent_name = node.agent_name or step.agent_name
                 step.capability = node.capability
+                step.goal = node.goal
+                step.acceptance_criteria = list(node.acceptance_criteria)
+                step.source_refs = list(node.source_refs)
+                step.logical_role = node.logical_role
                 step.input = node_input
                 step.output_spec = dict(node.output_spec)
                 step.requires_review = node.review_required
@@ -2016,6 +2069,11 @@ class ExecutionRuntime:
         )
         run.updated_at = utc_now()
         self.workflow_store.save_run(run)
+        if (
+            self.identity_lifecycle is not None
+            and self._normalize_runtime_engine(run.runtime_engine) == "acg"
+        ):
+            self._flush_identity_outbox()
         return run
 
     @staticmethod
