@@ -10,6 +10,8 @@ from app.llm.providers.openai_compatible_provider import LLMProviderError, OpenA
 
 logger = logging.getLogger(__name__)
 
+_AUDIT_ONLY_ARGUMENTS = frozenset({"prompt_version", "prompt_template_hash"})
+
 
 class UnavailableLLMProvider:
     provider_name = "unavailable"
@@ -52,23 +54,40 @@ class LLMGateway:
 
     def generate_text(self, prompt: str, **kwargs) -> Dict[str, Any]:
         started = time.perf_counter()
-        text = self.provider.generate_text(prompt, **kwargs)
+        provider_kwargs, audit = self._separate_audit_arguments(kwargs)
+        text = self.provider.generate_text(prompt, **provider_kwargs)
         return {
             "text": text,
             "provider": self.provider_name,
             "model": self.model,
             "latency_ms": int((time.perf_counter() - started) * 1000),
+            **audit,
         }
 
     def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         started = time.perf_counter()
-        data = self.provider.generate_json(prompt, schema, **kwargs)
+        provider_kwargs, audit = self._separate_audit_arguments(kwargs)
+        data = self.provider.generate_json(prompt, schema, **provider_kwargs)
         return {
             "data": data,
             "provider": self.provider_name,
             "model": self.model,
             "latency_ms": int((time.perf_counter() - started) * 1000),
+            **audit,
         }
+
+    @staticmethod
+    def _separate_audit_arguments(kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Keep AgentOS audit metadata out of provider SDK request parameters."""
+        provider_kwargs = {
+            key: value for key, value in kwargs.items()
+            if key not in _AUDIT_ONLY_ARGUMENTS
+        }
+        audit = {
+            key: value for key, value in kwargs.items()
+            if key in _AUDIT_ONLY_ARGUMENTS and value is not None
+        }
+        return provider_kwargs, audit
 
     @staticmethod
     def _build_provider(config: LLMConfig) -> LLMProvider:

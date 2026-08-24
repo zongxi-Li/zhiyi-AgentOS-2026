@@ -88,7 +88,10 @@ class OpenAICompatibleProvider:
         parameters = {
             key: value
             for key, value in kwargs.items()
-            if key not in {"thinking_mode", "reasoning_effort", "commit_id"} and value is not None
+            if key not in {
+                "thinking_mode", "reasoning_effort", "commit_id",
+                "prompt_version", "prompt_template_hash",
+            } and value is not None
         }
         parameters.setdefault("temperature", 0.1)
         adapted = adapt_chat_completion_parameters(
