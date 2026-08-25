@@ -68,6 +68,10 @@ def stable_checksum(value: Any) -> str:
 
 from .acg_lifecycle import AcgIdentityLifecyclePort
 from .communication import ContextPackRef, MessageEnvelope
+from .content import (
+    ContentFragmentRef, ContentKind, ContentManifest, FragmentEnvelope,
+    VerificationStatus, WorksetSpec, WorksetUnitKind,
+)
 from .compiled_acg import (
     BindingManifest, BindingRule, CommunicationManifestSpec, CommunicationMode,
     CommunicationRuleSpec, CompiledACGPackage, CompiledEdge, CompiledNodeKind,
@@ -82,9 +86,13 @@ from .capability import (
     CapabilityInvocationResult,
     CapabilityKind,
     CapabilityManifest,
+    ModelCapabilityEnvelope,
+    ModelCapabilitySource,
+    ModelFeatureSet,
     ModelInvocationRequest,
     ModelInvocationResponse,
     ModelProvider,
+    ModelOutputPolicy,
     ModelStreamEvent,
     ToolProtocol,
 )
@@ -120,6 +128,7 @@ from .identity import (
 from .governance import AuditFinding, AuditRequest, PolicyDecision
 from .memory import MemoryPolicy, MemoryQuery, MemoryRecord, MemoryType, MemoryWriteBatch
 from .planning import (
+    PlanExpansionRequest,
     TaskBindingPatch,
     TaskImplementationBinding,
     SemanticTaskRelationType,
@@ -150,6 +159,7 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 __all__ = [
     "AcgIdentityLifecyclePort", "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind", "CompiledACGPackage",
+    "ContentFragmentRef", "ContentKind", "ContentManifest", "FragmentEnvelope",
     "CompiledEdge", "CompiledNodeKind", "CompiledNodeSpec", "BindingManifest", "BindingRule",
     "SkillManifest", "SkillRule", "MemoryManifest", "MemoryRule", "EvidenceManifest", "EvidenceRule",
     "CommunicationManifestSpec", "CommunicationMode", "CommunicationRuleSpec", "ControlManifest",
@@ -158,16 +168,18 @@ __all__ = [
     "ExecutionPackageRef", "NodeExecutionPhase", "NodeExecutionRecord", "FailureEvent", "FailureSource", "FailureType", "RecoveryAction", "GraphEdgeRef", "GraphEvolutionProposal",
     "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
-    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent", "PolicyDecision",
+    "ModelCapabilityEnvelope", "ModelCapabilitySource", "ModelFeatureSet",
+    "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelOutputPolicy", "ModelStreamEvent", "PolicyDecision",
     "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
     "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
     "RunId", "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",
     "StepExecutionId", "TaskId", "TaskBindingPatch", "TaskImplementationBinding",
-    "SemanticTaskRelationType", "TaskPlan", "PlannedTask", "TaskPlanPatch", "TaskPlanRelation",
+    "PlanExpansionRequest", "SemanticTaskRelationType", "TaskPlan", "PlannedTask", "TaskPlanPatch", "TaskPlanRelation",
     "MissionId", "generate_identity", "new_attempt_id", "new_binding_id",
     "new_blueprint_id", "new_run_id", "new_step_execution_id", "new_task_id",
     "new_mission_id", "validate_identity",
     "SkillLifecycleState", "TaskConstraint", "TaskLifecycleEvent", "ToolProtocol",
+    "VerificationStatus", "WorksetSpec", "WorksetUnitKind",
     "Trajectory", "TrajectoryEvaluation", "TrajectoryStep", "stable_checksum",
     "stable_json_dumps",
 ]

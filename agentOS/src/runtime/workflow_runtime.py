@@ -50,6 +50,7 @@ from contracts.evolution import (
     TrajectoryEvaluation,
 )
 from components.memory.store import SQLiteMemoryStore
+from components.content import ContentManifestStore, SQLiteContentManifestStore
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.resource import BindingRequirement, ResourceType
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
@@ -157,6 +158,7 @@ class ExecutionRuntime:
         trace_store: Optional[TraceStore] = None,
         checkpoint_store: Optional[object] = None,
         execution_value_store: ExecutionValueStore | None = None,
+        content_manifest_store: ContentManifestStore | None = None,
         memory_store: object | None = None,
         provenance_store: SQLiteProvenanceStore | None = None,
         decision_store: DecisionStore | None = None,
@@ -210,6 +212,11 @@ class ExecutionRuntime:
         self.checkpoint_store = checkpoint_store or ACGCheckpointStore()
         self.execution_value_store = execution_value_store or SQLiteExecutionValueStore(
             db_path=os.getenv("AGENTOS_EXECUTION_VALUE_DB", "data/execution_values.sqlite3")
+        )
+        # L0/L3/L5 共用的内容寻址存储只保存 Manifest 与不可变 Fragment；它是
+        # 当前 ExecutionRuntime 的一个持久化端口，不构成第二套 Runtime 或 Memory。
+        self.content_manifest_store = content_manifest_store or SQLiteContentManifestStore(
+            os.getenv("AGENTOS_CONTENT_MANIFEST_DB", "data/content_manifests.sqlite3")
         )
         self.orphan_cleaner = ExecutionOrphanCleaner(value_store=self.execution_value_store)
         self.memory_store = memory_store or SQLiteMemoryStore(
@@ -1216,6 +1223,7 @@ class ExecutionRuntime:
             memory=MemoryService(store=self.memory_store),
             entropy_budget=(int(run.input["entropyBudget"]) if run.input.get("entropyBudget") is not None else None),
             value_store=self.execution_value_store,
+            content_manifest_store=self.content_manifest_store,
             communication_modes={node_id: spec.communication_mode for node_id, spec in graph.node_specs.items() if spec.kind == "step"},
             upstream_step_ids=upstream_step_ids,
             model_runtime=self._model_runtime,

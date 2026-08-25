@@ -130,7 +130,7 @@ class CommunicationRuleSpec(FrozenContract):
     mode: CommunicationMode = CommunicationMode.STRICT_CONTRACT
     allowed_fields: tuple[StrictStr, ...] = Field(default=(), alias="allowedFields")
     channel: StrictStr = Field(min_length=1)
-    max_tokens: int = Field(alias="maxTokens", ge=0)
+    max_tokens: int | None = Field(default=None, alias="maxTokens", ge=0)
     schema_hash: StrictStr | None = Field(default=None, alias="schemaHash")
     backlog_limit: int = Field(default=1000, alias="backlogLimit", ge=1)
     partition: StrictStr | None = None

@@ -7,6 +7,7 @@ from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
+from components.content import SQLiteContentManifestStore
 from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
@@ -43,6 +44,7 @@ def _environment(root: Path) -> dict[str, str]:
         "AGENTOS_WORKFLOW_DB_PATH": str(root / "workflows.sqlite3"),
         "AGENTOS_LANGGRAPH_CHECKPOINT_DB": str(root / "langgraph_checkpoints.sqlite3"),
         "AGENTOS_EXECUTION_VALUE_DB": str(root / "execution_values.sqlite3"),
+        "AGENTOS_CONTENT_MANIFEST_DB": str(root / "content_manifests.sqlite3"),
         "AGENTOS_EXECUTION_MEMORY_DB": str(root / "execution_memory.sqlite3"),
         "AGENTOS_PROVENANCE_DB": str(root / "provenance.sqlite3"),
         "AGENTOS_AUDIT_DB": str(root / "audit_decisions.sqlite3"),
@@ -66,6 +68,7 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         assert isinstance(runtime.workflow_store, SQLiteWorkflowStore)
         assert isinstance(runtime.checkpoint_store, ACGCheckpointStore)
         assert isinstance(runtime.execution_value_store, SQLiteExecutionValueStore)
+        assert isinstance(runtime.content_manifest_store, SQLiteContentManifestStore)
         assert isinstance(runtime.memory_store, SQLiteMemoryStore)
         assert isinstance(runtime.provenance_store, SQLiteProvenanceStore)
         assert isinstance(runtime.decision_store, SQLiteDecisionStore)

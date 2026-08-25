@@ -18,7 +18,7 @@ class CommunicationReader:
         run_id: str,
         consumer_step_id: str,
         output_refs: Mapping[str, str],
-        max_tokens: int,
+        max_tokens: int | None,
     ) -> None:
         self._broker = broker
         self._run_id = run_id
@@ -56,6 +56,24 @@ class CommunicationReader:
         )
         self._packs.append(pack)
         return pack
+
+    async def read_page(
+        self, producer_step_id: str, fields: Iterable[str], *, cursor: str | None = None,
+        page_tokens: int, reason: str = "",
+    ) -> tuple[ContextPack, str | None]:
+        """Read one authorized page; retain its pack for normal provenance recording."""
+        output_ref = self._output_refs.get(producer_step_id)
+        if output_ref is None:
+            raise CommunicationAccessError(
+                "TOPOLOGY_DENIED", "producer step is not available to this communication reader"
+            )
+        pack, next_cursor = await self._broker.read_reference_page(
+            run_id=self._run_id, consumer_step_id=self._consumer_step_id,
+            output_ref=output_ref, requested_fields=fields, cursor=cursor,
+            page_tokens=page_tokens, reason=reason,
+        )
+        self._packs.append(pack)
+        return pack, next_cursor
 
     def drain_packs(self) -> list[ContextPack]:
         """领取本节点成功补读的 ContextPack，避免重复登记血缘。"""

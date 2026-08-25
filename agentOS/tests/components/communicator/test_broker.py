@@ -164,3 +164,36 @@ def test_broker_rejects_read_exceeding_budget_without_charging_it() -> None:
         )
 
     assert broker.drain_events() == []
+
+
+def test_broker_pages_large_authorized_array_without_loss() -> None:
+    values = InMemoryExecutionValueStore()
+    expected = [f"item-{index}-" + "x" * 20 for index in range(120)]
+    output_ref = values.put_output(
+        run_id="run-pages", step_id="produce", payload={"items": expected, "secret": "hidden"}
+    )
+    broker = CommunicationBroker(
+        manifest=CommunicationManifest(
+            run_id="run-pages",
+            rules=(CommunicationRule(
+                producer_step_id="produce", consumer_step_id="consume",
+                allowed_fields=("items",), channel="produce:consume",
+            ),),
+        ),
+        value_store=values,
+    )
+
+    cursor = None
+    rebuilt = []
+    while True:
+        pack, cursor = asyncio.run(broker.read_reference_page(
+            run_id="run-pages", consumer_step_id="consume", output_ref=output_ref,
+            requested_fields=["items"], cursor=cursor, page_tokens=25, reason="paged join",
+        ))
+        rebuilt.extend(pack.data["items"])
+        assert "secret" not in pack.model_dump_json()
+        if cursor is None:
+            break
+
+    assert rebuilt == expected
+    assert len(broker.drain_events()) > 1

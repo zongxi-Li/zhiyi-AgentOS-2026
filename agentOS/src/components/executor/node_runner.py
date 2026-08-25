@@ -20,6 +20,7 @@ from components.communicator.contracts import ContextPack, estimate_tokens, inpu
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService, StructuredMemoryEventBuilder
+from components.content import ContentManifestStore, ContentWorksetSession
 from adapters.agent_invocation import AgentInvocationAdapter
 from contracts.communication import validate_contract_payload
 from contracts.governance import AuditRequest
@@ -27,6 +28,7 @@ from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryManifest, SkillManifest
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+from contracts.content import ContentKind
 from service.agents.base import BaseAgent, AgentRunContext
 
 from .graph import ACGExecutionState
@@ -52,6 +54,7 @@ class ACGNodeRunner:
         memory: MemoryService,
         entropy_budget: int | None = None,
         value_store: ExecutionValueStore | None = None,
+        content_manifest_store: ContentManifestStore | None = None,
         communication_modes: Mapping[str, str] | None = None,
         upstream_step_ids: Mapping[str, tuple[str, ...]] | None = None,
         execution_audit: ExecutionAuditService | None = None,
@@ -81,6 +84,7 @@ class ACGNodeRunner:
         # 显式依赖受控仓库，而不是由运行器拼接伪引用。这样节点产物的归属、读取校验
         # 与不可变副本语义集中在唯一服务边界中，State 只会接触返回的字符串引用。
         self.value_store = value_store or InMemoryExecutionValueStore()
+        self.content_manifest_store = content_manifest_store
         self.communication_modes = dict(communication_modes or {})
         self.upstream_step_ids = {
             node_id: tuple(source_ids)
@@ -181,12 +185,8 @@ class ACGNodeRunner:
         )
         execution_record = self.value_store.transition_node_execution(execution_record)
         # State 只有摘要/引用。上游完整 slot 值必须由通信服务根据 outputRef 从受控
-        # 仓库读取；运行器不能从摘要推断数据，也不能旁路仓库获取全量 Agent 输出。
-        estimated_entropy = sum(estimate_tokens(summary) for summary in state.output_summaries.values())
-        if self.entropy_budget is not None and estimated_entropy > self.entropy_budget:
-            raise EntropyBudgetExceededError(
-                f"step {step_id} estimated entropy {estimated_entropy} exceeds budget {self.entropy_budget}"
-            )
+        # 仓库读取。entropyBudget 只表示 L1/L2 的规划与协作复杂度，不得在
+        # L3 被重新解释为输入/输出 Token 上限或因上游摘要较多而拒绝执行。
         mode = self.communication_modes.get(step_id, "STRICT_CONTRACT")
         consumed_message_ids: list[str] = []
         if mode in {"EVENT", "DEBATE"}:
@@ -276,7 +276,7 @@ class ACGNodeRunner:
                 value_store=self.value_store,
                 objective=self.workflow.description,
                 step_goal=step.goal or step.name,
-                token_budget=self.entropy_budget,
+                token_budget=None,
                 operation_id=commit_id,
             )
         if pack.contract_status != "valid":
@@ -296,6 +296,12 @@ class ACGNodeRunner:
             state=state,
             step_id=step_id,
             mode=mode,
+        )
+        workset_session = self._build_content_workset_session(
+            state=state,
+            step_id=step_id,
+            step=step,
+            commit_id=commit_id,
         )
         memories = (
             self.memory.recall_for_step(
@@ -347,6 +353,7 @@ class ACGNodeRunner:
             memory=memories,
             contextPack=pack,
             communicationReader=communication_reader,
+            contentWorksetSession=workset_session,
             toolRuntime=step_tool_runtime,
             modelRuntime=self.model_runtimes.get(step_id, self.model_runtime),
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
@@ -461,6 +468,13 @@ class ACGNodeRunner:
                 "memoryAccess": memory_access,
                 "memoryEvent": memory_event_payload,
             }
+
+        if self.content_manifest_store is not None and step.capability == "artifact_generation":
+            controlled = self._persist_artifact_manifest(
+                run_id=state.run_id,
+                step_id=step_id,
+                controlled=controlled,
+            )
 
         output_ref = self.value_store.put_output(
             run_id=state.run_id,
@@ -739,7 +753,12 @@ class ACGNodeRunner:
     @staticmethod
     def _safe_model_invocations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """裁剪模型调用审计字段，避免 prompt、响应正文或任意扩展载荷进入 Trace。"""
-        allowed = {"provider", "model", "latencyMs", "promptVersion", "promptTemplateHash", "usage"}
+        allowed = {
+            "provider", "model", "latencyMs", "promptVersion", "promptTemplateHash",
+            "usage", "finishReason", "capability", "outputPolicy",
+            "requestedOutputTokens", "effectiveOutputTokens", "effectiveReason",
+            "outputExhausted", "partIndex", "callChainId",
+        }
         return [
             {key: value for key, value in record.items() if key in allowed}
             for record in records
@@ -888,6 +907,47 @@ class ACGNodeRunner:
         if not isinstance(decision_id, str) or not decision_id or outcome not in {"allow", "review", "deny"}:
             raise ValueError("audit decision is required before memory write")
 
+    def _persist_artifact_manifest(
+        self, *, run_id: str, step_id: str, controlled: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Persist Markdown sections before the deterministic final assembly boundary."""
+        artifact = controlled.get("artifact")
+        if not isinstance(artifact, dict):
+            return controlled
+        content = artifact.get("content")
+        if not isinstance(content, str) or not content:
+            return controlled
+        manifest = self.content_manifest_store.create_manifest(
+            kind=ContentKind.ARTIFACT,
+            owner_type="run",
+            owner_id=run_id,
+            media_type=str(artifact.get("mediaType") or "text/markdown"),
+            chunking_version="markdown-sections.v1",
+        )
+        sections: list[str] = []
+        current: list[str] = []
+        for line in content.splitlines(keepends=True):
+            if line.startswith("## ") and current:
+                sections.append("".join(current))
+                current = []
+            current.append(line)
+        if current or not sections:
+            sections.append("".join(current))
+        for sequence, section in enumerate(sections):
+            self.content_manifest_store.append_fragment(
+                manifest_id=manifest.manifest_id,
+                sequence=sequence,
+                content=section.encode("utf-8"),
+                source_refs=(step_id,),
+            )
+        sealed = self.content_manifest_store.seal_manifest(manifest.manifest_id)
+        normalized = dict(controlled)
+        normalized_artifact = dict(artifact)
+        normalized_artifact["manifestId"] = sealed.manifest_id
+        normalized_artifact["checksum"] = sealed.checksum
+        normalized["artifact"] = normalized_artifact
+        return normalized
+
     @staticmethod
     def _commit_id(run_id: str, step_id: str, attempt: int, *, loop_path: tuple[int, ...] = ()) -> str:
         """生成步骤尝试的稳定提交标识；重试次数变化才会开启新的副作用边界。"""
@@ -934,7 +994,7 @@ class ACGNodeRunner:
                 consumer_step_id=step_id,
                 output_ref=output_ref,
                 requested_fields=[str(field) for field in requested],
-                max_tokens=self.entropy_budget if self.entropy_budget is not None else 4096,
+                max_tokens=None,
                 reason=f"ACG step {step_id} requires upstream {source_id}",
             )
             data.update(partial.data)
@@ -982,7 +1042,25 @@ class ACGNodeRunner:
             run_id=state.run_id,
             consumer_step_id=step_id,
             output_refs=output_refs,
-            max_tokens=self.entropy_budget if self.entropy_budget is not None else 4096,
+            max_tokens=None,
+        )
+
+    def _build_content_workset_session(
+        self, *, state: ACGExecutionState, step_id: str, step: WorkflowStep, commit_id: str
+    ) -> ContentWorksetSession | None:
+        if self.content_manifest_store is None or not isinstance(step.input, dict):
+            return None
+        raw = step.input.get("workset")
+        if not isinstance(raw, dict):
+            return None
+        from contracts.content import WorksetSpec
+
+        return ContentWorksetSession(
+            store=self.content_manifest_store,
+            spec=WorksetSpec.model_validate(raw),
+            run_id=state.run_id,
+            step_id=step_id,
+            commit_id=commit_id,
         )
 
 

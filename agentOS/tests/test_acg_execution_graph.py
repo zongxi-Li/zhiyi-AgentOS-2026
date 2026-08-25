@@ -9,8 +9,9 @@ import pytest
 from components.executor.compiler import ACGGraphCompiler, UnsupportedCommunicationModeError
 from components.executor.graph import ACGExecutionGraph, ACGExecutionState, ACGSuperstepError
 from components.executor.state_graph import ACGStateGraph
-from components.executor.node_runner import ACGNodeRunner, EntropyBudgetExceededError
+from components.executor.node_runner import ACGNodeRunner
 from components.executor.value_store import InMemoryExecutionValueStore
+from adapters.model_adapter import StructuredGenerationError
 from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCommand
 from components.auditor import InMemoryDecisionStore
 from components.auditor.governance.trace import TraceStore
@@ -102,6 +103,35 @@ def test_parallel_failure_cancels_unfinished_sibling_tasks() -> None:
     assert state.active_step_ids == []
 
 
+def test_output_exhaustion_failure_event_preserves_safe_model_audit() -> None:
+    graph = ACGExecutionGraph(nodes=("artifact",))
+
+    async def execute(_step_id, _state):
+        raise StructuredGenerationError(
+            "MODEL_OUTPUT_EXHAUSTED",
+            "capacity reached",
+            audit={
+                "provider": "test", "model": "model", "finishReason": "length",
+                "usage": {"input_tokens": 20, "output_tokens": 10},
+                "outputExhausted": True, "prompt": "must-not-enter-trace",
+            },
+        )
+
+    async def collect():
+        events = []
+        with pytest.raises(ACGSuperstepError):
+            async for event in graph.astream(ACGExecutionState(runId="run-1"), execute):
+                events.append(event)
+        return events
+
+    events = asyncio.run(collect())
+    failed = next(item for item in events if item["type"] == "superstep_failed")
+    assert failed["stepId"] == "artifact"
+    assert failed["modelInvocations"][0]["finishReason"] == "length"
+    assert failed["modelInvocations"][0]["outputExhausted"] is True
+    assert "prompt" not in failed["modelInvocations"][0]
+
+
 def test_compiler_preserves_blackboard_communication_mode() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-test",
@@ -154,8 +184,8 @@ def test_compiler_maps_blueprint_budget_to_manifest_run_budget() -> None:
     assert graph.communication_manifest.run_budget == 120
 
 
-def test_compiler_derives_default_fan_in_step_budget_from_channels() -> None:
-    """无显式节点预算时，多源节点总额度应覆盖所有已冻结的入站通道。"""
+def test_compiler_leaves_fan_in_unbounded_without_an_explicit_policy() -> None:
+    """未显式声明通信边界时，编译器不得偷偷回退到 4096。"""
     blueprint = ACGBlueprint(
         graphId="acg-fan-in-budget",
         nodes=[
@@ -172,11 +202,9 @@ def test_compiler_derives_default_fan_in_step_budget_from_channels() -> None:
     graph = ACGGraphCompiler().compile(blueprint, run_id="run-fan-in")
 
     assert graph.communication_manifest is not None
-    assert graph.communication_manifest.step_budgets["join"] == 8192
-    assert graph.communication_manifest.channel_budgets == {
-        "left:join": 4096,
-        "right:join": 4096,
-    }
+    assert graph.communication_manifest.step_budgets == {}
+    assert graph.communication_manifest.channel_budgets == {}
+    assert all(rule.max_tokens is None for rule in graph.communication_manifest.rules)
 
 
 def test_compiler_maps_step_dependencies_and_review_interrupt() -> None:
@@ -561,14 +589,13 @@ def test_node_runner_reuses_completed_commit_without_reinvoking_agent() -> None:
     assert "routeValue" not in committed
 
 
-def test_node_runner_rejects_entropy_over_budget_before_agent_call() -> None:
+def test_node_runner_does_not_treat_entropy_budget_as_a_token_limit() -> None:
     agent = _RecordingAgent()
     runner = ACGNodeRunner.minimal(agent=agent, entropy_budget=0)
 
-    with pytest.raises(EntropyBudgetExceededError):
-        asyncio.run(runner("one", ACGExecutionState(runId="run-1", outputSummaries={"upstream": "summary"})))
+    asyncio.run(runner("one", ACGExecutionState(runId="run-1", outputSummaries={"upstream": "summary"})))
 
-    assert agent.context is None
+    assert agent.context is not None
 
 
 def test_node_runner_assembles_declared_upstream_slots_from_output_references() -> None:

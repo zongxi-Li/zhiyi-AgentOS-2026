@@ -8,9 +8,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from contracts.planning import PlannedTask, SemanticTaskRelationType, TaskPlan, TaskPlanRelation
+from contracts.planning import PlannedTask, SemanticTaskRelationType, TaskPlan, TaskPlanRelation, WorksetSpec
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
-from .complexity import PLANNING_BUDGETS
 from .intent_analyzer import IntentLLM
 
 
@@ -34,6 +33,18 @@ _SCHEMA = {
                     "sourceRefs": {"type": "array", "items": {"type": "string"}},
                     "decompositionRationale": {"type": "string"},
                     "logicalRole": {"type": "string"},
+                    "workset": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "sourceManifestRefs": {"type": "array", "items": {"type": "string"}},
+                            "unitKind": {"type": "string", "enum": ["chunk", "section", "item"]},
+                            "cursorStrategy": {"type": "string"},
+                            "packingPolicy": {"type": "string", "enum": ["api_capacity"]},
+                            "parallelismPolicy": {"type": "string"},
+                            "estimatedUnitCount": {"type": ["integer", "null"]},
+                        },
+                        "required": ["sourceManifestRefs"],
+                    },
                 },
                 "required": ["key", "title", "objective", "capabilityId", "acceptanceCriteria"],
             },
@@ -93,7 +104,7 @@ class TaskDecomposer:
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
                 )
                 self._capture_model_audit(first)
-                return self._to_plan(mission_id, profile, strategy, first)
+                return self._to_plan(mission_id, profile, strategy, first, task_input=task_input)
             except Exception as first_error:
                 try:
                     repaired = self.llm.generate_json(
@@ -107,7 +118,7 @@ class TaskDecomposer:
                     )
                     self.last_audit["promptVersion"] = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
                     self._capture_model_audit(repaired)
-                    return self._to_plan(mission_id, profile, strategy, repaired)
+                    return self._to_plan(mission_id, profile, strategy, repaired, task_input=task_input)
                 except Exception as repair_error:
                     self.last_audit["mode"] = "failed"
                     self.last_audit["error"] = type(repair_error).__name__
@@ -137,7 +148,6 @@ class TaskDecomposer:
         task_input: Mapping[str, Any] | None,
     ) -> str:
         level = profile.estimated_complexity
-        minimum, maximum = PLANNING_BUDGETS[level]
         catalog = []
         visible_capabilities = self.capability_catalog.expand_dependencies(
             profile.required_capabilities
@@ -155,12 +165,21 @@ class TaskDecomposer:
                 "optionalDependencies": list(item.optional_dependencies),
                 "outputFields": list(item.output_contract.get("properties", {})),
             })
+        material_refs = tuple(
+            str(item) for item in ((task_input or {}).get("materialRefs") or []) if str(item)
+        )
         contract = {
             "objective": (task_input or {}).get("objective") or profile.primary_goal,
             "constraints": (task_input or {}).get("constraints") or profile.key_constraints,
             "expectedArtifacts": (task_input or {}).get("expectedArtifacts") or profile.expected_artifacts,
             "verificationRequirements": profile.verification_requirements,
-            "sourceRegistry": self._source_registry(profile),
+            "sourceRegistry": [
+                *self._source_registry(profile),
+                *(
+                    {"ref": item, "kind": "material_manifest", "text": "immutable content manifest"}
+                    for item in material_refs
+                ),
+            ],
             "materials": {
                 key: value
                 for key in ("materials", "sourceMaterials", "materialText", "contractText")
@@ -171,7 +190,10 @@ class TaskDecomposer:
             f"Prompt version: {TASK_DECOMPOSITION_PROMPT_VERSION}\n"
             "Create an executable, acyclic, domain-neutral TaskPlan and return JSON only.\n"
             f"Complexity assessment: {profile.complexity_assessment.model_dump() if profile.complexity_assessment else level.value}.\n"
-            f"Planning budget: normally {minimum}-{maximum} tasks; this is a budget, not a quota. Explain exceptions.\n"
+            "Choose the task count from semantic coverage, verifiable deliverables, useful "
+            "dependencies, parallel work and aggregation needs. Do not target a numeric task "
+            "quota. Material chunks are Workset units inside a logical task, not reasons to "
+            "manufacture one business task per chunk.\n"
             "Every task must have one business-specific objective, one primary capabilityId, explicit acceptance criteria, "
             "sourceRefs and a decomposition rationale. Do not write objectives such as 'Complete cost analysis'.\n"
             "The same capabilityId may be instantiated by multiple tasks when goals, alternatives or stages differ. "
@@ -180,6 +202,9 @@ class TaskDecomposer:
             "Never create a reverse path from a dependent task back to one of its prerequisite tasks. "
             "optionalDependencies are advisory and must not be added when they create a cycle.\n"
             "Cover every hard constraint and expected artifact; do not invent facts or domain capabilities.\n"
+            "When source material is represented by materialRefs, attach a WorksetSpec to the "
+            "logical task that scans it. Consume pages by cursor; do not copy all fragments into "
+            "one ContextPack and do not create one semantic task per storage fragment.\n"
             "For coverage, copy stable sourceRegistry ref values into task.sourceRefs. Do not prove coverage "
             "by repeating or paraphrasing source text. Every sourceRegistry ref must be cited by a task.\n"
             f"Mission requirements: {json.dumps(contract, ensure_ascii=False, default=str)}\n"
@@ -206,6 +231,7 @@ class TaskDecomposer:
         profile: TaskSemanticProfile,
         strategy: str,
         raw: Any,
+        task_input: Mapping[str, Any] | None = None,
     ) -> TaskPlan:
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
@@ -232,13 +258,34 @@ class TaskDecomposer:
                 sourceRefs=tuple(str(value) for value in item.get("sourceRefs", []) if str(value)),
                 decompositionRationale=str(item.get("decompositionRationale") or ""),
                 logicalRole=str(item.get("logicalRole") or "task"),
+                workset=(WorksetSpec.model_validate(item["workset"]) if item.get("workset") else None),
                 metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))
+        material_refs = tuple(
+            str(item) for item in ((task_input or {}).get("materialRefs") or []) if str(item)
+        )
+        if material_refs and not any(node.workset is not None for node in nodes):
+            preferred = next(
+                (
+                    index for index, node in enumerate(nodes)
+                    if node.capability_requirements[0] in {
+                        "information_extraction", "task_understanding", "analysis", "evidence_analysis"
+                    }
+                ),
+                0,
+            )
+            nodes[preferred] = nodes[preferred].model_copy(
+                update={
+                    "workset": WorksetSpec(sourceManifestRefs=material_refs),
+                    "source_refs": tuple(dict.fromkeys((*nodes[preferred].source_refs, *material_refs))),
+                }
+            )
         self._complete_missing_capability_tasks(nodes, profile, strategy)
         relations = self._complete_capability_dependencies(
             nodes,
             [TaskPlanRelation.model_validate(item) for item in payload.get("relations", [])],
         )
+        relations = self._connect_terminal_results(nodes, relations)
         plan = TaskPlan(
             missionId=mission_id,
             nodes=tuple(nodes),
@@ -391,6 +438,72 @@ class TaskDecomposer:
                     relationType=SemanticTaskRelationType.DEPENDS_ON,
                 ))
                 existing.add(identity)
+        return relations
+
+    def _connect_terminal_results(
+        self,
+        nodes: list[PlannedTask],
+        relations: list[TaskPlanRelation],
+    ) -> list[TaskPlanRelation]:
+        """Ensure every semantic leaf reaches a verification or artifact sink.
+
+        This is a domain-neutral topology invariant, not a replacement planner.  The model
+        remains responsible for task meaning and ordering; Core only connects otherwise
+        orphaned terminal results to an existing declared sink so final assembly cannot
+        silently omit a completed branch.
+        """
+        sink_capabilities = {"verification", "artifact_generation"}
+        sinks = [
+            node for node in nodes
+            if node.capability_requirements[0] in sink_capabilities
+        ]
+        if not sinks:
+            return relations
+        existing = {
+            (item.source_key, item.target_key, item.relation_type)
+            for item in relations
+        }
+        outgoing = {
+            item.source_key
+            for item in relations
+            if item.relation_type == SemanticTaskRelationType.DEPENDS_ON
+        }
+        positions = {node.key: index for index, node in enumerate(nodes)}
+        for leaf in nodes:
+            if leaf.key in outgoing or leaf in sinks:
+                continue
+            # Prefer a later artifact sink, then a later verification sink.  If the model
+            # ordered the sink earlier, use any cycle-safe declared sink instead of inventing
+            # a new task or dropping the leaf.
+            candidates = sorted(
+                sinks,
+                key=lambda node: (
+                    positions[node.key] <= positions[leaf.key],
+                    node.capability_requirements[0] != "artifact_generation",
+                    positions[node.key],
+                ),
+            )
+            for sink in candidates:
+                identity = (leaf.key, sink.key, SemanticTaskRelationType.DEPENDS_ON)
+                if identity in existing:
+                    break
+                if self._find_dependency_path(
+                    relations, start=sink.key, target=leaf.key
+                ) is not None:
+                    continue
+                relation = TaskPlanRelation(
+                    sourceKey=leaf.key,
+                    targetKey=sink.key,
+                    relationType=SemanticTaskRelationType.DEPENDS_ON,
+                )
+                relations.append(relation)
+                existing.add(identity)
+                outgoing.add(leaf.key)
+                break
+            else:
+                raise TaskDecompositionError(
+                    f"terminal task {leaf.key} cannot reach a verification or artifact sink"
+                )
         return relations
 
     @staticmethod

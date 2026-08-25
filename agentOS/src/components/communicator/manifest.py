@@ -18,12 +18,12 @@ class CommunicationRule:
     consumer_step_id: str
     allowed_fields: tuple[str, ...]
     channel: str
-    max_tokens: int
+    max_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if not self.producer_step_id or not self.consumer_step_id or not self.channel:
             raise ValueError("communication rule identifiers must not be empty")
-        if self.max_tokens < 0:
+        if self.max_tokens is not None and self.max_tokens < 0:
             raise ValueError("communication rule max_tokens must not be negative")
         if len(set(self.allowed_fields)) != len(self.allowed_fields):
             raise ValueError("communication rule allowed_fields must be unique")

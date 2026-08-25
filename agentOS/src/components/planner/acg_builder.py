@@ -198,8 +198,21 @@ class ACGBuilder:
                 for dependency in data_dependencies[task.key]
             }
             input_spec = dict(descriptor.input_contract)
+            if task.workset is not None:
+                input_spec = {
+                    **input_spec,
+                    "workset": task.workset.model_dump(by_alias=True, mode="json"),
+                }
             if from_map:
-                input_spec = {"from": from_map, "schema": dict(descriptor.input_contract)}
+                input_spec = {
+                    "from": from_map,
+                    "schema": dict(descriptor.input_contract),
+                    **(
+                        {"workset": task.workset.model_dump(by_alias=True, mode="json")}
+                        if task.workset is not None
+                        else {}
+                    ),
+                }
             step = StepNode(
                 nodeId=node_id,
                 name=task.title,
@@ -237,6 +250,11 @@ class ACGBuilder:
                     "routerScore": binding.score,
                     "taskPlanKey": task.key,
                     "decompositionRationale": task.decomposition_rationale,
+                    "workset": (
+                        task.workset.model_dump(by_alias=True, mode="json")
+                        if task.workset is not None
+                        else None
+                    ),
                     "capabilityPromptProfileVersion": descriptor.prompt_profile.prompt_profile_version,
                 },
             )

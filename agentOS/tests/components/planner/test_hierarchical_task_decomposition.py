@@ -331,3 +331,46 @@ def test_model_shorthand_constraints_and_missing_capability_are_normalized() -> 
         relation.source_key == understanding.key and relation.target_key == verification.key
         for relation in plan.relations
     )
+
+
+def test_terminal_semantic_results_are_connected_to_final_artifact() -> None:
+    payload = {
+        "tasks": [
+            {
+                "key": "understand", "title": "Understand", "objective": "Define the mission boundary",
+                "capabilityId": "task_understanding", "acceptanceCriteria": ["Boundary is explicit"],
+            },
+            {
+                "key": "branch-a", "title": "Branch A", "objective": "Analyze the first independent branch",
+                "capabilityId": "analysis", "acceptanceCriteria": ["Branch A is traceable"],
+            },
+            {
+                "key": "branch-b", "title": "Branch B", "objective": "Analyze the second independent branch",
+                "capabilityId": "analysis", "acceptanceCriteria": ["Branch B is traceable"],
+            },
+            {
+                "key": "deliver", "title": "Deliver", "objective": "Assemble all verified branch results",
+                "capabilityId": "artifact_generation", "acceptanceCriteria": ["Every branch is represented"],
+            },
+        ],
+        "relations": [
+            {"sourceKey": "understand", "targetKey": "branch-a", "relationType": "depends_on"},
+            {"sourceKey": "understand", "targetKey": "branch-b", "relationType": "depends_on"},
+        ],
+    }
+    profile = TaskSemanticProfile(
+        primaryGoal="Analyze two branches and deliver one result",
+        requiredCapabilities=["task_understanding", "analysis", "artifact_generation"],
+    )
+
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=profile,
+        strategy="dynamic_generation",
+        task_input={},
+        use_llm=True,
+    )
+
+    edges = {(item.source_key, item.target_key) for item in plan.relations}
+    assert ("branch-a", "deliver") in edges
+    assert ("branch-b", "deliver") in edges

@@ -56,3 +56,22 @@ def test_complexity_uses_six_axes_instead_of_text_length() -> None:
         "risk_and_review",
     }
     assert len(assessment.reasons) == 6
+
+
+def test_business_output_contracts_have_no_generic_expression_caps() -> None:
+    def forbidden_paths(value, path=""):
+        hits = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                child = f"{path}.{key}" if path else key
+                if key in {"maxItems", "maxLength"}:
+                    hits.append(child)
+                hits.extend(forbidden_paths(item, child))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                hits.extend(forbidden_paths(item, f"{path}[{index}]"))
+        return hits
+
+    catalog = build_default_capability_catalog()
+    for capability_id in NATIVE_CAPABILITY_IDS:
+        assert forbidden_paths(catalog.get(capability_id).output_contract) == []

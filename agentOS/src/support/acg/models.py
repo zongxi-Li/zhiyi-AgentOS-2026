@@ -1325,24 +1325,31 @@ def _record(properties: dict, *required: str) -> dict:
     }
 
 
-def _records(properties: dict, *required: str, max_items: int = 12) -> dict:
-    return {
+def _records(properties: dict, *required: str, max_items: int | None = None) -> dict:
+    schema = {
         "type": "array",
         "items": _record(properties, *required),
-        "maxItems": max_items,
     }
+    if max_items is not None:
+        schema["maxItems"] = max_items
+    return schema
 
 
-_TEXT = {"type": "string", "maxLength": 2000}
+_TEXT = {"type": "string"}
 _DELIVERABLE_TEXT = {"type": "string", "minLength": 1}
 
 
-def _text_list(*, max_items: int = 12, max_length: int = 800) -> dict:
-    return {
+def _text_list(*, max_items: int | None = None, max_length: int | None = None) -> dict:
+    item_schema: dict[str, object] = {"type": "string"}
+    if max_length is not None:
+        item_schema["maxLength"] = max_length
+    schema: dict[str, object] = {
         "type": "array",
-        "items": {"type": "string", "maxLength": max_length},
-        "maxItems": max_items,
+        "items": item_schema,
     }
+    if max_items is not None:
+        schema["maxItems"] = max_items
+    return schema
 
 
 _TEXT_LIST = _text_list()
@@ -1358,11 +1365,8 @@ def _output_schema(capability_id: str) -> dict:
                     "constraint",
                     "source",
                     "mandatory",
-                    max_items=24,
                 ),
-                # Acceptance criteria are user-authored requirements. Keep the
-                # list bounded without truncating moderately detailed missions.
-                "success_criteria": _text_list(max_items=24),
+                "success_criteria": _text_list(),
                 "assumptions": _TEXT_LIST,
                 "open_questions": _TEXT_LIST,
             },
@@ -1485,13 +1489,13 @@ def _output_schema(capability_id: str) -> dict:
             {
                 "analysis": _record(
                     {
-                        "findings": _text_list(max_items=12, max_length=400),
+                        "findings": _text_list(),
                         "assumptions": {
-                            **_text_list(max_items=12, max_length=400),
+                            **_text_list(),
                             "default": [],
                         },
                         "gaps": {
-                            **_text_list(max_items=12, max_length=400),
+                            **_text_list(),
                             "default": [],
                         },
                     },
@@ -1579,7 +1583,7 @@ def _output_schema(capability_id: str) -> dict:
                     "unresolvedGaps",
                 ),
                 "artifact": _record(
-                    {"artifactId": _TEXT, "type": {"type": "string", "enum": ["report"]}, "title": _TEXT, "mediaType": {"type": "string", "enum": ["text/markdown"]}, "content": _DELIVERABLE_TEXT, "structuredData": {"type": "object"}},
+                    {"artifactId": _TEXT, "type": {"type": "string", "enum": ["report"]}, "title": _TEXT, "mediaType": {"type": "string", "enum": ["text/markdown"]}, "content": _DELIVERABLE_TEXT, "structuredData": {"type": "object"}, "manifestId": _TEXT, "checksum": _TEXT},
                     "artifactId",
                     "type",
                     "title",

@@ -304,10 +304,10 @@ class IntentParser:
             "constraints": payload.get("constraints") or [],
             "expectedArtifacts": payload.get("expectedArtifacts") or [],
         }
-        for key in ("materials", "sourceMaterials", "materialText", "contractText"):
+        for key in ("materials", "sourceMaterials", "materialRefs", "materialText", "contractText"):
             value = payload.get(key)
             if value not in (None, "", [], {}):
-                contract[key] = value[:12000] if isinstance(value, str) else value
+                contract[key] = value
         return contract
 
     def _infer_capabilities(self, text: str, domain: str) -> list[str]:

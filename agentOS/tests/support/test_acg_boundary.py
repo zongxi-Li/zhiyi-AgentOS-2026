@@ -21,4 +21,7 @@ def test_task_understanding_preserves_detailed_acceptance_criteria() -> None:
 
     descriptor = build_default_capability_catalog().get("task_understanding")
 
-    assert descriptor.output_contract["properties"]["success_criteria"]["maxItems"] == 24
+    success_criteria = descriptor.output_contract["properties"]["success_criteria"]
+    assert success_criteria["type"] == "array"
+    assert "maxItems" not in success_criteria
+    assert "maxLength" not in success_criteria["items"]

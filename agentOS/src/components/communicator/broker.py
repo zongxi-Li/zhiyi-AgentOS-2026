@@ -61,7 +61,7 @@ class CommunicationBroker:
         consumer_step_id: str,
         output_ref: str,
         requested_fields: Iterable[str],
-        max_tokens: int,
+        max_tokens: int | None,
         reason: str,
     ) -> ContextPack:
         """读取一个经拓扑与预算许可的输出引用，并返回字段裁剪后的 ContextPack。
@@ -71,7 +71,7 @@ class CommunicationBroker:
         """
         if run_id != self.manifest.run_id:
             raise CommunicationAccessError("RUN_DENIED", "communication run does not match manifest")
-        if max_tokens < 0:
+        if max_tokens is not None and max_tokens < 0:
             raise ValueError("max_tokens must not be negative")
         requested = tuple(dict.fromkeys(str(field) for field in requested_fields if str(field)))
         rule = self._resolve_rule(
@@ -100,7 +100,8 @@ class CommunicationBroker:
                 if value and str(value) not in evidence_refs:
                     evidence_refs.append(str(value))
         tokens = estimate_tokens(data)
-        if tokens > max_tokens or tokens > rule.max_tokens:
+        if ((max_tokens is not None and tokens > max_tokens)
+                or (rule.max_tokens is not None and tokens > rule.max_tokens)):
             raise EntropyBudgetExceededError("communication read exceeds request or rule token limit")
         self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens)
         pack = ContextPack(
@@ -128,6 +129,104 @@ class CommunicationBroker:
             }
         )
         return pack
+
+    async def read_reference_page(
+        self, *, run_id: str, consumer_step_id: str, output_ref: str,
+        requested_fields: Iterable[str], cursor: str | None,
+        page_tokens: int, reason: str,
+    ) -> tuple[ContextPack, str | None]:
+        """Page one authorized large field without deleting any remaining content.
+
+        The cursor identifies a field and an item/character offset.  Callers may lower
+        ``page_tokens`` reactively when an API reports context pressure; traversing all
+        returned cursors reconstructs the complete authorized value.
+        """
+        if page_tokens < 1:
+            raise ValueError("page_tokens must be positive")
+        if run_id != self.manifest.run_id:
+            raise CommunicationAccessError("RUN_DENIED", "communication run does not match manifest")
+        requested = tuple(dict.fromkeys(str(field) for field in requested_fields if str(field)))
+        rule = self._resolve_rule(
+            run_id=run_id, consumer_step_id=consumer_step_id, output_ref=output_ref
+        )
+        fields = requested or rule.allowed_fields
+        if set(fields) - set(rule.allowed_fields):
+            raise CommunicationAccessError("FIELD_DENIED", "requested fields are not permitted by communication rule")
+        try:
+            field_index, offset = (int(item) for item in (cursor or "0:0").split(":", 1))
+        except (TypeError, ValueError) as exc:
+            raise CommunicationAccessError("CURSOR_INVALID", "communication cursor is invalid") from exc
+        if field_index < 0 or field_index >= len(fields) or offset < 0:
+            raise CommunicationAccessError("CURSOR_INVALID", "communication cursor is invalid")
+
+        output = self.value_store.get_output(run_id=run_id, output_ref=output_ref)
+        field = fields[field_index]
+        value = output.get(field)
+        page_value, next_offset = self._slice_value(value, offset=offset, page_tokens=page_tokens)
+        next_cursor = (
+            f"{field_index}:{next_offset}"
+            if next_offset is not None
+            else f"{field_index + 1}:0"
+            if field_index + 1 < len(fields)
+            else None
+        )
+        data = {field: page_value}
+        tokens = estimate_tokens(data)
+        if rule.max_tokens is not None and tokens > rule.max_tokens:
+            raise EntropyBudgetExceededError("communication page exceeds rule token limit")
+        self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens)
+        raw_evidence = page_value if field in {"evidence_refs", "evidenceRefs"} else []
+        evidence_refs = list(dict.fromkeys(
+            str(item) for item in raw_evidence if str(item).strip()
+        )) if isinstance(raw_evidence, list) else []
+        pack = ContextPack(
+            runId=run_id, stepId=consumer_step_id, data=data,
+            sourceData={rule.producer_step_id: dict(data)}, evidenceRefs=evidence_refs,
+            tokensDelivered=tokens, tokensAvailable=estimate_tokens({field: value}),
+            savingRatio=self._saving_ratio(tokens, estimate_tokens({field: value})),
+            sourceStepIds=[rule.producer_step_id], inputRevision=input_revision(data),
+        )
+        self._events.append({
+            "type": "communication_page_read", "runId": run_id,
+            "consumerStepId": consumer_step_id, "producerStepId": rule.producer_step_id,
+            "outputRef": output_ref, "fields": [field], "tokens": tokens,
+            "channel": rule.channel, "cursor": cursor, "nextCursor": next_cursor,
+        })
+        return pack, next_cursor
+
+    @staticmethod
+    def _slice_value(value: Any, *, offset: int, page_tokens: int) -> tuple[Any, int | None]:
+        """Return a non-empty bounded slice and the next logical offset."""
+        if isinstance(value, str):
+            width = max(1, page_tokens * 4)
+            page = value[offset:offset + width]
+            following = offset + len(page)
+            return page, following if following < len(value) else None
+        if isinstance(value, list):
+            page: list[Any] = []
+            index = offset
+            while index < len(value):
+                candidate = [*page, value[index]]
+                if page and estimate_tokens(candidate) > page_tokens:
+                    break
+                page = candidate
+                index += 1
+            return page, index if index < len(value) else None
+        if isinstance(value, Mapping):
+            entries = list(value.items())
+            page: dict[str, Any] = {}
+            index = offset
+            while index < len(entries):
+                key, item = entries[index]
+                candidate = {**page, str(key): item}
+                if page and estimate_tokens(candidate) > page_tokens:
+                    break
+                page = candidate
+                index += 1
+            return page, index if index < len(entries) else None
+        if offset > 0:
+            return None, None
+        return value, None
 
     def drain_events(self, *, consumer_step_id: str | None = None) -> list[dict[str, Any]]:
         """领取无正文读取审计事件；返回后清空私有缓冲避免后续步骤重复投影。"""

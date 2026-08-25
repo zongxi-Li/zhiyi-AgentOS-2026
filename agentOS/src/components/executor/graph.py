@@ -485,10 +485,24 @@ class ACGExecutionGraph:
                 # 继续。普通 ``Exception`` 仍保留完整的超步失败语义。
                 if not isinstance(cause, Exception):
                     raise cause
+                raw_audit = getattr(cause, "audit", None)
+                safe_audit_keys = {
+                    "provider", "model", "latencyMs", "promptVersion",
+                    "promptTemplateHash", "usage", "finishReason", "capability",
+                    "outputPolicy", "requestedOutputTokens", "effectiveOutputTokens",
+                    "effectiveReason", "outputExhausted", "partIndex", "callChainId",
+                }
+                failure_invocations = (
+                    [{key: value for key, value in raw_audit.items() if key in safe_audit_keys}]
+                    if isinstance(raw_audit, dict) and raw_audit
+                    else []
+                )
                 yield {
                     "type": "superstep_failed",
+                    "stepId": failures[0],
                     "failedStepIds": failures,
                     "cancelledStepIds": cancelled,
+                    "modelInvocations": failure_invocations,
                 }
                 raise ACGSuperstepError(
                     failed_step_ids=tuple(failures),

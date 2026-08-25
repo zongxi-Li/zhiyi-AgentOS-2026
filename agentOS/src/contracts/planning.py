@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from contracts.identity import MissionId
+from contracts.content import WorksetSpec
 
 
 _FORBIDDEN_IDENTITY_KEYS = {
@@ -77,6 +78,7 @@ class PlannedTask(BaseModel):
     source_refs: tuple[str, ...] = Field(default_factory=tuple, alias="sourceRefs")
     decomposition_rationale: str = Field(default="", alias="decompositionRationale")
     logical_role: str = Field(default="task", alias="logicalRole")
+    workset: WorksetSpec | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -187,12 +189,43 @@ class TaskPlanPatch(BaseModel):
         return self
 
 
+class PlanExpansionRequest(BaseModel):
+    """Safe-checkpoint request for an additive semantic plan expansion.
+
+    Capacity recovery may add smaller semantic units, but it cannot retire, replace or
+    rewrite already completed work through this contract.  Builder-owned Blueprint and
+    identity bindings remain separate downstream artifacts.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    mission_id: MissionId = Field(alias="missionId")
+    base_plan_version: int = Field(alias="basePlanVersion", ge=1)
+    checkpoint_ref: str = Field(alias="checkpointRef", min_length=1)
+    reason: str = Field(min_length=1)
+    source_refs: tuple[str, ...] = Field(default_factory=tuple, alias="sourceRefs")
+    add_nodes: tuple[PlannedTask, ...] = Field(alias="addNodes", min_length=1)
+    relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
+
+    def to_patch(self) -> TaskPlanPatch:
+        return TaskPlanPatch(
+            missionId=self.mission_id,
+            basePlanVersion=self.base_plan_version,
+            planVersion=self.base_plan_version + 1,
+            addNodes=self.add_nodes,
+            relations=self.relations,
+            metadata={"source": "plan_expansion", "rationale": self.reason},
+        )
+
+
 __all__ = [
     "TaskBindingPatch",
     "TaskImplementationBinding",
+    "PlanExpansionRequest",
     "SemanticTaskRelationType",
     "TaskPlan",
     "PlannedTask",
     "TaskPlanPatch",
     "TaskPlanRelation",
+    "WorksetSpec",
 ]

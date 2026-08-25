@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -15,6 +16,23 @@ class CapabilityKind(str, Enum):
     AGENT = "agent"
     SKILL = "skill"
     TOOL = "tool"
+
+
+class ModelCapabilitySource(str, Enum):
+    """模型物理能力事实的来源；未知值不得被产品默认值替代。"""
+
+    PROVIDER_REPORTED = "provider_reported"
+    ADAPTER_DECLARED = "adapter_declared"
+    RUNTIME_OBSERVED = "runtime_observed"
+    UNKNOWN = "unknown"
+
+
+class ModelOutputPolicy(str, Enum):
+    """结构化生成的输出边界决策来源。"""
+
+    API_CONTROLLED = "api_controlled"
+    PROVIDER_REQUIRED = "provider_required"
+    EXPLICIT = "explicit"
 
 
 class ModelProvider(str, Enum):
@@ -97,6 +115,46 @@ class CapabilityManifest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelFeatureSet(BaseModel):
+    """供应商无关的模型功能声明；缺失表示未声明而不是不支持。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    json_schema: bool | None = Field(default=None, alias="jsonSchema")
+    streaming: bool | None = None
+    tools: bool | None = None
+    thinking: bool | None = None
+    prompt_caching: bool | None = Field(default=None, alias="promptCaching")
+
+
+class ModelCapabilityEnvelope(BaseModel):
+    """一个精确 provider/model 路由在某一时刻的能力快照。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    version: str | None = None
+    revision: str | None = None
+    source: ModelCapabilitySource = ModelCapabilitySource.UNKNOWN
+    context_window_tokens: int | None = Field(default=None, alias="contextWindowTokens", ge=1)
+    max_output_tokens: int | None = Field(default=None, alias="maxOutputTokens", ge=1)
+    max_tokens_field: str | None = Field(default=None, alias="maxTokensField")
+    max_tokens_required: bool = Field(default=False, alias="maxTokensRequired")
+    features: ModelFeatureSet = Field(default_factory=ModelFeatureSet)
+    observed_at: datetime | None = Field(default=None, alias="observedAt")
+
+    @classmethod
+    def unknown(
+        cls,
+        *,
+        provider: str,
+        model: str,
+        version: str | None = None,
+    ) -> "ModelCapabilityEnvelope":
+        return cls(provider=provider, model=model, version=version)
+
+
 class ModelInvocationRequest(BaseModel):
     """定义供应商无关的模型调用输入，不携带任何 SDK 对象。"""
 
@@ -169,6 +227,8 @@ class CapabilityInvocationResult(BaseModel):
 __all__ = [
     "AgentArchitecture", "AgentFramework", "CapabilityInvocation",
     "CapabilityInvocationResult", "CapabilityKind", "CapabilityManifest",
+    "ModelCapabilityEnvelope", "ModelCapabilitySource", "ModelFeatureSet",
     "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelStreamEvent",
+    "ModelOutputPolicy",
     "ToolProtocol",
 ]
