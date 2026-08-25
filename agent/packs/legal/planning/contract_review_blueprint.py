@@ -13,6 +13,8 @@ from support.acg.models import (
     ControlNode,
     ControlType,
     EdgeType,
+    EvidenceNode,
+    ParallelSpec,
     StepNode,
     validate_blueprint,
 )
@@ -88,7 +90,15 @@ def build_contract_review_blueprint(
 
     nodes = [
         _step(definitions["parse_contract"]),
-        ControlNode(nodeId="parallel_legal_analysis", name="Parallel legal analysis", controlType=ControlType.PARALLEL),
+        ControlNode(
+            nodeId="parallel_legal_analysis",
+            name="Parallel legal analysis",
+            controlType=ControlType.PARALLEL,
+            parallelSpec=ParallelSpec(
+                branchEntryIds=["classify_clauses", "statute_retrieve"],
+                joinNodeId="join_legal_analysis",
+            ),
+        ),
         _step(definitions["classify_clauses"]),
         StepNode(
             nodeId="statute_retrieve",
@@ -113,6 +123,20 @@ def build_contract_review_blueprint(
                     "evidence_refs": {"type": "array"},
                 },
             },
+        ),
+        EvidenceNode(
+            nodeId="legal_source_evidence",
+            name="Retrieved legal source evidence",
+            evidenceType="legal-source",
+            source="tool-runtime-or-task-input",
+            producerStepId="statute_retrieve",
+        ),
+        EvidenceNode(
+            nodeId="matched_legal_evidence",
+            name="Matched legal evidence",
+            evidenceType="legal-analysis",
+            source="legal-evidence-match",
+            producerStepId="legal_evidence_match",
         ),
         ControlNode(nodeId="join_legal_analysis", name="Legal analysis barrier", controlType=ControlType.CONSENSUS),
         _step(definitions["risk_detect"]),
@@ -163,6 +187,11 @@ def build_contract_review_blueprint(
     ]
     edges.extend(
         [
+            ACGEdge(
+                sourceId="legal_source_evidence",
+                targetId="legal_evidence_match",
+                edgeType=EdgeType.SUPPORT,
+            ),
             ACGEdge(
                 edgeId="route_to_human_review",
                 sourceId="route_high_risk_review",

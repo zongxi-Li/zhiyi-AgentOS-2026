@@ -532,17 +532,25 @@ class LegalEvidenceMatchAgent(BaseAgent):
             for item in evidences
             if str((item.get("metadata") or {}).get("citationId") or item.get("id") or "")
         ]
-        web_sources = [
+        evidence_sources = [
             {
-                "citationId": str((item.get("metadata") or {}).get("citationId")),
+                "citationId": str(
+                    (item.get("metadata") or {}).get("citationId")
+                    or item.get("id")
+                    or ""
+                ),
                 "title": str(item.get("sourceName") or item.get("title") or ""),
                 "url": str((item.get("metadata") or {}).get("url") or ""),
                 "snippet": str(item.get("content") or "")[:600],
-                "provider": str((item.get("metadata") or {}).get("provider") or "web"),
+                "provider": str(
+                    (item.get("metadata") or {}).get("provider")
+                    or item.get("sourceType")
+                    or "derived-evidence"
+                ),
                 "retrievedAt": str((item.get("metadata") or {}).get("retrievedAt") or ""),
             }
             for item in evidences
-            if (item.get("metadata") or {}).get("citationId")
+            if str((item.get("metadata") or {}).get("citationId") or item.get("id") or "")
         ]
         return AgentOutput(
             output={
@@ -558,7 +566,7 @@ class LegalEvidenceMatchAgent(BaseAgent):
                 "runtimeSignals": runtime_signals,
             },
             summary=f"Matched {len(evidences)} evidence item(s) to contract risks.",
-            sources=web_sources,
+            sources=evidence_sources,
             evidenceRefs=evidence_refs,
         )
 
