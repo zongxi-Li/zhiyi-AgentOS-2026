@@ -13,6 +13,7 @@ from components.planner import TaskDecompositionError
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
+from contracts.content import ContentKind
 from contracts.planning import PlannedTask
 from contracts.workflow import (
     StepStatus,
@@ -404,6 +405,93 @@ async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts
             assert conflict.json() == {"detail": "clientRequestId conflict"}
     finally:
         await coordinator.shutdown()
+
+
+async def test_v2_material_and_resource_projections_preserve_unknown_capacity(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("Resource projection", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    runtime.trace_store.append(
+        run,
+        TraceEventType.MODEL_CALLED,
+        step_id="report",
+        payload={
+            "provider": "test-provider",
+            "model": "test-model",
+            "latencyMs": 125,
+            "finishReason": "stop",
+            "outputPolicy": "API_CONTROLLED",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 40,
+                "reasoning_tokens": 10,
+                "cache_read_tokens": 25,
+            },
+            "capability": {
+                "provider": "test-provider",
+                "model": "test-model",
+                "source": "unknown",
+                "features": {},
+            },
+        },
+    )
+    runtime.workflow_store.save_run(run)
+    artifact = runtime.content_manifest_store.create_manifest(
+        kind=ContentKind.ARTIFACT,
+        owner_type="run",
+        owner_id=run.run_id,
+        media_type="text/markdown",
+    )
+    runtime.content_manifest_store.append_fragment(
+        manifest_id=artifact.manifest_id, sequence=0, content=b"# title\n"
+    )
+    runtime.content_manifest_store.append_fragment(
+        manifest_id=artifact.manifest_id, sequence=1, content=b"\n## section\ncomplete"
+    )
+    artifact = runtime.content_manifest_store.seal_manifest(artifact.manifest_id)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    material_text = "完整材料" * 10000
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/agentos/v2/materials",
+            json={"content": material_text, "mediaType": "text/plain"},
+        )
+        usage = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage")
+        calls = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage/calls")
+        invalid_cursor = await client.get(
+            f"/agentos/v2/runs/{run.run_id}/resource-usage/calls", params={"cursor": "bad"}
+        )
+        artifacts = await client.get(f"/agentos/v2/runs/{run.run_id}/artifacts")
+        fragments = await client.get(
+            f"/agentos/v2/runs/{run.run_id}/artifacts/{artifact.manifest_id}/fragments",
+            params={"pageSize": 1},
+        )
+        invalid_fragment_cursor = await client.get(
+            f"/agentos/v2/runs/{run.run_id}/artifacts/{artifact.manifest_id}/fragments",
+            params={"cursor": "bad"},
+        )
+        downloaded = await client.get(
+            f"/agentos/v2/runs/{run.run_id}/artifacts/{artifact.manifest_id}/download"
+        )
+
+    assert created.status_code == 201
+    manifest_id = created.json()["manifestId"]
+    assert runtime.content_manifest_store.assemble(manifest_id).decode("utf-8") == material_text
+    assert usage.status_code == 200
+    body = usage.json()
+    assert body["capability"].get("contextWindowTokens") is None
+    assert body["capability"].get("maxOutputTokens") is None
+    assert body["contextPressure"]["peak"] is None
+    assert body["usage"]["totalTokens"] == 140
+    assert body["usage"]["reasoningTokens"] == 10
+    assert calls.json()["items"][0]["outputPolicy"] == "api_controlled"
+    assert invalid_cursor.status_code == 422
+    assert artifacts.json()["items"][0]["checksum"] == artifact.checksum
+    assert fragments.json()["nextCursor"] == "1"
+    assert invalid_fragment_cursor.status_code == 422
+    assert downloaded.content == b"# title\n\n## section\ncomplete"
 
 
 async def test_v2_create_mission_acknowledges_before_deferred_planning_finishes(tmp_path) -> None:

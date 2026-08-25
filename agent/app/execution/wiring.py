@@ -13,6 +13,7 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.evolution.service import EvolutionService
 from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
+from components.content import SQLiteContentManifestStore
 from components.resource.service import ResourceService
 from components.resource.store import SQLiteResourceStore
 from components.recovery.checkpoint import ACGCheckpointStore
@@ -37,6 +38,7 @@ from app.tools import get_tool_runtime
 _DEFAULT_DATABASES = {
     "AGENTOS_LANGGRAPH_CHECKPOINT_DB": "data/langgraph_checkpoints.sqlite3",
     "AGENTOS_EXECUTION_VALUE_DB": "data/execution_values.sqlite3",
+    "AGENTOS_CONTENT_MANIFEST_DB": "data/content_manifests.sqlite3",
     "AGENTOS_EXECUTION_MEMORY_DB": "data/execution_memory.sqlite3",
     "AGENTOS_PROVENANCE_DB": "data/provenance.sqlite3",
     "AGENTOS_AUDIT_DB": "data/audit_decisions.sqlite3",
@@ -150,6 +152,9 @@ def build_default_runtime(
         workflow_store=SQLiteWorkflowStore(workflow_path),
         checkpoint_store=ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")),
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
+        content_manifest_store=SQLiteContentManifestStore(
+            _database_path(env, "AGENTOS_CONTENT_MANIFEST_DB")
+        ),
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
         resource_service=resource_service,
         scheduler_service=scheduler_service,
@@ -182,6 +187,7 @@ def close_runtime(runtime: ExecutionRuntime) -> None:
         runtime.workflow_store,
         runtime.checkpoint_store,
         runtime.execution_value_store,
+        runtime.content_manifest_store,
         runtime.memory_store,
         runtime.resource_service.store,
         runtime.scheduler_service.coordinator,

@@ -77,6 +77,7 @@ services:
       AGENTOS_WORKFLOW_DB_PATH: /app/data/agentos/workflows.sqlite3
       AGENTOS_LANGGRAPH_CHECKPOINT_DB: /app/data/agentos/langgraph_checkpoints.sqlite3
       AGENTOS_EXECUTION_VALUE_DB: /app/data/agentos/execution_values.sqlite3
+      AGENTOS_CONTENT_MANIFEST_DB: /app/data/agentos/content_manifests.sqlite3
       AGENTOS_EXECUTION_MEMORY_DB: /app/data/agentos/execution_memory.sqlite3
       AGENTOS_PROVENANCE_DB: /app/data/agentos/provenance.sqlite3
       AGENTOS_AUDIT_DB: /app/data/agentos/audit_decisions.sqlite3

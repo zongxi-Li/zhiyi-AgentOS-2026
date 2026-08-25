@@ -6,6 +6,7 @@ import com.kinlin.ai.config.AgentProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -21,6 +22,8 @@ public class AgentOsGatewayService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
     public static final String INTERNAL_HTTP_STATUS_KEY = "_httpStatus";
+
+    public record BinaryResponse(int status, byte[] body, String contentType, String contentDisposition) { }
 
     private final WebClient webClient;
     private final AgentProperties properties;
@@ -79,6 +82,61 @@ public class AgentOsGatewayService {
                     .block();
         } catch (Exception failure) {
             return unavailable(path, failure);
+        }
+    }
+
+    public BinaryResponse getBinary(String path) {
+        if (!properties.isEnabled()) {
+            return new BinaryResponse(
+                    HttpStatus.SERVICE_UNAVAILABLE.value(),
+                    "AgentOS gateway is disabled.".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    MediaType.TEXT_PLAIN_VALUE,
+                    null
+            );
+        }
+        try {
+            return webClient.get().uri(path).exchangeToMono(response -> {
+                        int upstreamStatus = response.statusCode().value();
+                        String contentType = response.headers().contentType()
+                                .map(MediaType::toString)
+                                .orElse(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+                        String disposition = response.headers().asHttpHeaders()
+                                .getFirst(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION);
+                        return response.bodyToMono(byte[].class).defaultIfEmpty(new byte[0])
+                                .map(body -> {
+                                    if (upstreamStatus >= 500) {
+                                        return new BinaryResponse(
+                                                HttpStatus.BAD_GATEWAY.value(),
+                                                "AgentOS service returned an error."
+                                                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                                MediaType.TEXT_PLAIN_VALUE,
+                                                null
+                                        );
+                                    }
+                                    return new BinaryResponse(
+                                            upstreamStatus, body, contentType, disposition
+                                    );
+                                });
+                    })
+                    .timeout(Duration.ofMillis(properties.getProgressTimeoutMs()))
+                    .onErrorReturn(new BinaryResponse(
+                            HttpStatus.SERVICE_UNAVAILABLE.value(),
+                            "AgentOS gateway unavailable."
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                            MediaType.TEXT_PLAIN_VALUE,
+                            null
+                    ))
+                    .block();
+        } catch (Exception failure) {
+            log.error("AgentOS binary gateway unavailable. path={}, type={}",
+                    path, failure.getClass().getSimpleName());
+            return new BinaryResponse(
+                    HttpStatus.SERVICE_UNAVAILABLE.value(),
+                    "AgentOS gateway unavailable."
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    MediaType.TEXT_PLAIN_VALUE,
+                    null
+            );
         }
     }
 

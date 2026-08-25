@@ -1,11 +1,14 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.dto.agentos.AgentOsReviewRequest;
+import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,6 +35,18 @@ public class AgentOsGatewayController {
     @PostMapping("/missions")
     public ResponseEntity<Map<String, Object>> createMission(@Valid @RequestBody AgentOsMissionCreateRequest body) {
         return response(gateway.post(UPSTREAM_ROOT + "/missions", body));
+    }
+
+    @PostMapping("/materials")
+    public ResponseEntity<Map<String, Object>> createMaterial(
+            @Valid @RequestBody AgentOsMaterialCreateRequest body
+    ) {
+        return response(gateway.post(UPSTREAM_ROOT + "/materials", body));
+    }
+
+    @GetMapping("/materials/{manifestId}")
+    public ResponseEntity<Map<String, Object>> getMaterial(@PathVariable String manifestId) {
+        return response(gateway.get(UPSTREAM_ROOT + "/materials/" + segment(manifestId)));
     }
 
     @GetMapping("/missions")
@@ -123,6 +138,71 @@ public class AgentOsGatewayController {
         return response(gateway.get(runPath(runId) + "/execution-tree"));
     }
 
+    @GetMapping("/runs/{runId}/resource-usage")
+    public ResponseEntity<Map<String, Object>> getResourceUsage(@PathVariable String runId) {
+        return response(gateway.get(runPath(runId) + "/resource-usage"));
+    }
+
+    @GetMapping("/runs/{runId}/resource-usage/calls")
+    public ResponseEntity<Map<String, Object>> getResourceUsageCalls(
+            @PathVariable String runId,
+            @RequestParam(required = false) String stepId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("stepId", stepId);
+        params.put("cursor", cursor);
+        params.put("pageSize", String.valueOf(pageSize));
+        return response(gateway.get(query(runPath(runId) + "/resource-usage/calls", params)));
+    }
+
+    @GetMapping("/runs/{runId}/artifacts")
+    public ResponseEntity<Map<String, Object>> getArtifacts(@PathVariable String runId) {
+        return response(gateway.get(runPath(runId) + "/artifacts"));
+    }
+
+    @GetMapping("/runs/{runId}/artifacts/{manifestId}")
+    public ResponseEntity<Map<String, Object>> getArtifact(
+            @PathVariable String runId,
+            @PathVariable String manifestId
+    ) {
+        return response(gateway.get(artifactPath(runId, manifestId)));
+    }
+
+    @GetMapping("/runs/{runId}/artifacts/{manifestId}/fragments")
+    public ResponseEntity<Map<String, Object>> getArtifactFragments(
+            @PathVariable String runId,
+            @PathVariable String manifestId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("cursor", cursor);
+        params.put("pageSize", String.valueOf(pageSize));
+        return response(gateway.get(query(artifactPath(runId, manifestId) + "/fragments", params)));
+    }
+
+    @GetMapping("/runs/{runId}/artifacts/{manifestId}/download")
+    public ResponseEntity<byte[]> downloadArtifact(
+            @PathVariable String runId,
+            @PathVariable String manifestId
+    ) {
+        AgentOsGatewayService.BinaryResponse upstream = gateway.getBinary(
+                artifactPath(runId, manifestId) + "/download"
+        );
+        HttpHeaders headers = new HttpHeaders();
+        try {
+            headers.setContentType(MediaType.parseMediaType(upstream.contentType()));
+        } catch (IllegalArgumentException ignored) {
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        }
+        if (upstream.contentDisposition() != null && !upstream.contentDisposition().isBlank()) {
+            headers.set(HttpHeaders.CONTENT_DISPOSITION, upstream.contentDisposition());
+        }
+        return ResponseEntity.status(upstream.status()).headers(headers).body(upstream.body());
+    }
+
     @GetMapping("/identity/health")
     public ResponseEntity<Map<String, Object>> getIdentityHealth() {
         return response(gateway.get(UPSTREAM_ROOT + "/identity/health"));
@@ -171,6 +251,10 @@ public class AgentOsGatewayController {
 
     private String runPath(String runId) {
         return UPSTREAM_ROOT + "/runs/" + segment(runId);
+    }
+
+    private String artifactPath(String runId, String manifestId) {
+        return runPath(runId) + "/artifacts/" + segment(manifestId);
     }
 
     private String missionPath(String missionId) {

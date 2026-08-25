@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus
+from contracts.content import ContentKind
 from domain.models import MissionStatus
 from domain.repository import EntityNotFoundError
 from components.planner import ACGPlanningError, TaskDecompositionError
@@ -37,7 +38,15 @@ class MissionCreateRequest(BaseModel):
     security_level: str = Field(default="internal", alias="securityLevel")
     priority: str = "normal"
     enabled_plugin_ids: list[str] | None = Field(default=None, alias="enabledPluginIds")
+    material_refs: list[str] | None = Field(default=None, alias="materialRefs")
     client_request_id: str | None = Field(default=None, alias="clientRequestId", max_length=200)
+
+
+class MaterialCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    content: str
+    media_type: str = Field(default="text/plain", alias="mediaType", min_length=1)
 
 
 class ReviewApplyRequest(BaseModel):
@@ -152,7 +161,7 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
 
 
 _HISTORY_INPUT_KEYS = (
-    "taskName", "taskGoal", "userIntent", "materialText", "materialIds", "constraints",
+    "taskName", "taskGoal", "userIntent", "materialText", "materialIds", "materialRefs", "constraints",
     "expectedArtifacts", "planningMode", "planningDiversity", "planningSeed", "webSearchEnabled",
     "thinkingMode", "pluginData", "contractText", "contractType", "legalReviewGoal",
     "evidenceFirst", "riskParallel", "conservativeReview",
@@ -173,6 +182,74 @@ def _history_value(value: Any) -> Any:
             if not any(marker in str(key).lower().replace("-", "_") for marker in _SENSITIVE_KEYS)
         }
     return None
+
+
+def _usage_number(usage: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            return int(value)
+    return 0
+
+
+def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for event in run.trace:
+        event_type = getattr(event.event_type, "value", event.event_type)
+        if event_type != "model_called":
+            continue
+        payload = dict(event.payload) if isinstance(event.payload, dict) else {}
+        usage = dict(payload.get("usage") or {})
+        prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+        completion_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+        input_tokens = _usage_number(usage, "input_tokens", "prompt_tokens", "inputTokens")
+        output_tokens = _usage_number(usage, "output_tokens", "completion_tokens", "outputTokens")
+        cache_read = _usage_number(
+            usage, "cache_read_tokens", "cache_read_input_tokens", "cached_tokens", "cacheReadTokens"
+        ) or _usage_number(prompt_details if isinstance(prompt_details, dict) else {}, "cached_tokens")
+        cache_write = _usage_number(
+            usage, "cache_write_tokens", "cache_creation_input_tokens", "cacheWriteTokens"
+        )
+        reasoning = _usage_number(usage, "reasoning_tokens", "reasoningTokens") or _usage_number(
+            completion_details if isinstance(completion_details, dict) else {}, "reasoning_tokens"
+        )
+        capability = payload.get("capability") if isinstance(payload.get("capability"), dict) else None
+        output_policy = str(payload.get("outputPolicy") or "api_controlled").strip().lower()
+        context_window = (
+            capability.get("contextWindowTokens") if isinstance(capability, dict) else None
+        )
+        context_pressure = (
+            min(1.0, input_tokens / int(context_window))
+            if isinstance(context_window, int) and context_window > 0
+            else None
+        )
+        calls.append({
+            "callId": event.event_id,
+            "stepId": event.step_id,
+            "provider": payload.get("provider"),
+            "model": payload.get("model"),
+            "createdAt": event.created_at,
+            "latencyMs": int(payload.get("latencyMs") or 0),
+            "usage": {
+                "inputTokens": input_tokens,
+                "outputTokens": output_tokens,
+                "cacheReadTokens": cache_read,
+                "cacheWriteTokens": cache_write,
+                "reasoningTokens": reasoning,
+                "totalTokens": input_tokens + output_tokens,
+            },
+            "finishReason": payload.get("finishReason"),
+            "outputPolicy": output_policy,
+            "requestedOutputTokens": payload.get("requestedOutputTokens"),
+            "effectiveOutputTokens": payload.get("effectiveOutputTokens"),
+            "effectiveReason": payload.get("effectiveReason"),
+            "outputExhausted": bool(payload.get("outputExhausted")),
+            "partIndex": payload.get("partIndex"),
+            "callChainId": payload.get("callChainId"),
+            "capability": capability,
+            "contextPressure": context_pressure,
+        })
+    return calls
 
 
 def project_history_config(
@@ -343,6 +420,35 @@ def create_router(
                     "status": identity_run.status.value,
                 }
         return result
+
+    def require_manifest_access(manifest_id: str):
+        try:
+            manifest = runtime.content_manifest_store.get_manifest(manifest_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="content manifest not found") from exc
+        actor = current_trusted_user()
+        if manifest.owner_type == "user" and actor is not None and manifest.owner_id != actor.user_id:
+            raise HTTPException(status_code=404, detail="content manifest not found")
+        if manifest.owner_type == "run":
+            load_run(manifest.owner_id)
+        return manifest
+
+    @router.post("/materials", status_code=status.HTTP_201_CREATED)
+    async def create_material(request: MaterialCreateRequest):
+        actor = current_trusted_user()
+        manifest = runtime.content_manifest_store.create_from_bytes(
+            content=request.content.encode("utf-8"),
+            kind=ContentKind.MATERIAL,
+            owner_type="user",
+            owner_id=(actor.user_id if actor is not None else "internal"),
+            media_type=request.media_type,
+        )
+        return manifest.model_dump(by_alias=True, mode="json")
+
+    @router.get("/materials/{manifest_id}")
+    async def get_material(manifest_id: str):
+        manifest = require_manifest_access(manifest_id)
+        return manifest.model_dump(by_alias=True, mode="json")
 
     @router.get("/identity/health")
     async def get_identity_health():
@@ -521,11 +627,39 @@ def create_router(
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
                 return project(existing)
         try:
+            mission_input = _actor_input(request.input)
+            refs = list(dict.fromkeys([
+                *(request.material_refs or []),
+                *(mission_input.get("materialRefs") or []),
+            ]))
+            inline_material = mission_input.pop("materialText", None)
+            if isinstance(inline_material, str) and inline_material:
+                actor = current_trusted_user()
+                inline_manifest = runtime.content_manifest_store.create_from_bytes(
+                    content=inline_material.encode("utf-8"),
+                    kind=ContentKind.MATERIAL,
+                    owner_type="user",
+                    owner_id=(actor.user_id if actor is not None else "internal"),
+                    media_type="text/plain",
+                )
+                refs.append(inline_manifest.manifest_id)
+            for manifest_id in refs:
+                manifest = require_manifest_access(manifest_id)
+                if manifest.kind is not ContentKind.MATERIAL or not manifest.sealed:
+                    raise ValueError("materialRefs must reference sealed material manifests")
+            if refs:
+                mission_input["materialRefs"] = list(dict.fromkeys(refs))
+                mission_input["sourceMaterials"] = [
+                    runtime.content_manifest_store.get_manifest(item).model_dump(
+                        by_alias=True, mode="json"
+                    )
+                    for item in mission_input["materialRefs"]
+                ]
             task = runtime.create_mission(
                 title=request.title,
                 domain=request.domain,
                 intent=request.intent,
-                input=_actor_input(request.input),
+                input=mission_input,
                 security_level=request.security_level,
                 priority=request.priority,
                 workflow_id=request.workflow_id,
@@ -606,6 +740,88 @@ def create_router(
             title = None
         return project_history_config(run, title=title)
 
+    @router.get("/runs/{run_id}/resource-usage")
+    async def get_resource_usage(run_id: str):
+        run = load_run(run_id)
+        calls = _model_call_projection(run)
+        usage = {
+            key: sum(int(call["usage"][key]) for call in calls)
+            for key in (
+                "inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens",
+                "reasoningTokens", "totalTokens",
+            )
+        }
+        pressures = [call["contextPressure"] for call in calls if call["contextPressure"] is not None]
+        capability = next((call["capability"] for call in reversed(calls) if call["capability"]), None)
+        manifests = runtime.content_manifest_store.list_manifests(owner_type="run", owner_id=run_id)
+        artifact_manifests = [item for item in manifests if item.kind is ContentKind.ARTIFACT]
+        intermediate_manifests = [item for item in manifests if item.kind is ContentKind.INTERMEDIATE]
+        total_steps = len(run.steps)
+        completed_steps = len(run.completed_step_ids)
+        return {
+            "runId": run_id,
+            "capability": capability,
+            "outputPolicy": (calls[-1]["outputPolicy"] if calls else None),
+            "usage": {
+                **usage,
+                "callCount": len(calls),
+                "retryCount": sum(1 for call in calls if str(call.get("effectiveReason") or "").startswith("retry")),
+                "latencyMs": sum(int(call["latencyMs"]) for call in calls),
+                "cacheHitRatio": (
+                    round(usage["cacheReadTokens"] / usage["inputTokens"], 4)
+                    if usage["inputTokens"]
+                    else None
+                ),
+            },
+            "contextPressure": {
+                "current": pressures[-1] if pressures else None,
+                "peak": max(pressures) if pressures else None,
+                "source": "provider_usage" if pressures else "unknown",
+            },
+            "composition": {
+                "materialManifestCount": len(run.input.get("materialRefs") or []),
+                "materialFragmentCount": sum(
+                    runtime.content_manifest_store.get_manifest(item).fragment_count
+                    for item in run.input.get("materialRefs") or []
+                ),
+                "taskCount": total_steps,
+                "completedTaskCount": completed_steps,
+                "persistedResultFragmentCount": sum(item.fragment_count for item in intermediate_manifests),
+                "reducerManifestCount": len(intermediate_manifests),
+                "chapterCount": sum(item.fragment_count for item in artifact_manifests),
+                "artifactCount": len(artifact_manifests),
+                "assemblyComplete": bool(artifact_manifests and all(item.sealed for item in artifact_manifests)),
+                "taskProgress": round(completed_steps / total_steps, 4) if total_steps else None,
+            },
+            "scheduler": {
+                "activeSlots": len(run.active_step_ids),
+                "queueDepth": max(0, total_steps - completed_steps - len(run.active_step_ids)),
+                "checkpointCount": 1 if run.execution_state.get("checkpointId") else 0,
+                "recoveryCount": len(run.execution_state.get("graphPatchRefs") or []),
+            },
+        }
+
+    @router.get("/runs/{run_id}/resource-usage/calls")
+    async def get_resource_usage_calls(
+        run_id: str,
+        step_id: str | None = Query(default=None, alias="stepId"),
+        cursor: str | None = None,
+        page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+    ):
+        run = load_run(run_id)
+        calls = _model_call_projection(run)
+        if step_id:
+            calls = [call for call in calls if call["stepId"] == step_id]
+        try:
+            start = int(cursor or 0)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="invalid cursor") from exc
+        if start < 0:
+            raise HTTPException(status_code=422, detail="invalid cursor")
+        items = calls[start:start + page_size]
+        next_cursor = str(start + page_size) if start + page_size < len(calls) else None
+        return {"runId": run_id, "items": items, "nextCursor": next_cursor, "total": len(calls)}
+
     @router.get("/runs/{run_id}/graph")
     async def get_graph(run_id: str):
         runtime_run = load_run(run_id)
@@ -649,6 +865,63 @@ def create_router(
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="output not found") from exc
         return {"runId": run_id, "outputRef": output_ref, "content": content}
+
+    @router.get("/runs/{run_id}/artifacts")
+    async def list_artifacts(run_id: str):
+        load_run(run_id)
+        items = runtime.content_manifest_store.list_manifests(
+            owner_type="run", owner_id=run_id, kind=ContentKind.ARTIFACT
+        )
+        return {
+            "runId": run_id,
+            "items": [item.model_dump(by_alias=True, mode="json") for item in items],
+            "total": len(items),
+        }
+
+    @router.get("/runs/{run_id}/artifacts/{manifest_id}")
+    async def get_artifact(run_id: str, manifest_id: str):
+        load_run(run_id)
+        manifest = require_manifest_access(manifest_id)
+        if manifest.owner_type != "run" or manifest.owner_id != run_id or manifest.kind is not ContentKind.ARTIFACT:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        return manifest.model_dump(by_alias=True, mode="json")
+
+    @router.get("/runs/{run_id}/artifacts/{manifest_id}/fragments")
+    async def get_artifact_fragments(
+        run_id: str,
+        manifest_id: str,
+        cursor: str | None = None,
+        page_size: int = Query(default=20, alias="pageSize", ge=1, le=200),
+    ):
+        manifest = await get_artifact(run_id, manifest_id)
+        try:
+            page, next_cursor = runtime.content_manifest_store.read_page(
+                manifest_id, cursor=cursor, page_size=page_size
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "manifest": manifest,
+            "items": [
+                {
+                    **ref.model_dump(by_alias=True, mode="json"),
+                    "content": payload.decode("utf-8", errors="replace"),
+                }
+                for ref, payload in page
+            ],
+            "nextCursor": next_cursor,
+        }
+
+    @router.get("/runs/{run_id}/artifacts/{manifest_id}/download")
+    async def download_artifact(run_id: str, manifest_id: str):
+        from fastapi.responses import StreamingResponse
+
+        manifest = await get_artifact(run_id, manifest_id)
+        return StreamingResponse(
+            runtime.content_manifest_store.stream_assembly(manifest_id),
+            media_type=manifest["mediaType"],
+            headers={"Content-Disposition": f'attachment; filename="{manifest_id}.md"'},
+        )
 
     @router.get("/runs/{run_id}/legacy-outputs")
     async def get_legacy_outputs(run_id: str):
@@ -833,4 +1106,4 @@ def create_router(
     return router
 
 
-__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "MissionCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
+__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "MaterialCreateRequest", "MissionCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]

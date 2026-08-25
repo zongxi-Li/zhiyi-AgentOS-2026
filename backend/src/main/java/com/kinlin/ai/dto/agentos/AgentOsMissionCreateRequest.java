@@ -17,6 +17,7 @@ public record AgentOsMissionCreateRequest(
         String securityLevel,
         String priority,
         List<String> enabledPluginIds,
+        List<String> materialRefs,
         @Size(max = 200) String clientRequestId
 ) {
     public AgentOsMissionCreateRequest {
@@ -27,5 +28,6 @@ public record AgentOsMissionCreateRequest(
         securityLevel = securityLevel == null ? "internal" : securityLevel;
         priority = priority == null ? "normal" : priority;
         enabledPluginIds = enabledPluginIds == null ? null : List.copyOf(enabledPluginIds);
+        materialRefs = materialRefs == null ? null : List.copyOf(materialRefs);
     }
 }

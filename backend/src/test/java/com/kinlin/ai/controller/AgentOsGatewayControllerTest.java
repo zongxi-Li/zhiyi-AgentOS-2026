@@ -14,6 +14,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +48,7 @@ class AgentOsGatewayControllerTest {
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "title", "合同审查",
                                 "workflowId", "legal_contract_review_v1",
+                                "materialRefs", List.of("manifest_001"),
                                 "clientRequestId", "request-1"
                         ))))
                 .andExpect(status().isAccepted())
@@ -58,6 +60,65 @@ class AgentOsGatewayControllerTest {
         assertEquals("general", request.domain());
         assertEquals("auto", request.reviewMode());
         assertEquals(Map.of(), request.input());
+        assertEquals(List.of("manifest_001"), request.materialRefs());
+    }
+
+    @Test
+    void materialManifestEndpointsPreserveCompleteContentAndReferences() throws Exception {
+        String materialPath = "/ai/agentos/v2/materials";
+        gateway.postResponses.put(materialPath, response(201, Map.of(
+                "manifestId", "manifest_001", "sealed", true
+        )));
+
+        String material = "完整材料".repeat(2000);
+        mockMvc.perform(post("/api/agentos/v2/materials")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "content", material,
+                                "mediaType", "text/plain"
+                        ))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.manifestId").value("manifest_001"));
+
+        assertEquals(materialPath, gateway.lastPostPath);
+        com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest request =
+                (com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest) gateway.lastPostBody;
+        assertEquals(material, request.content());
+
+        String getPath = "/ai/agentos/v2/materials/manifest%20001";
+        gateway.getResponses.put(getPath, response(200, Map.of("manifestId", "manifest 001")));
+        mockMvc.perform(get("/api/agentos/v2/materials/{manifestId}", "manifest 001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manifestId").value("manifest 001"));
+        assertEquals(getPath, gateway.lastGetPath);
+    }
+
+    @Test
+    void compositionResourceEndpointsCrossTheTrustedGateway() throws Exception {
+        String usagePath = "/ai/agentos/v2/runs/run%20001/resource-usage";
+        gateway.getResponses.put(usagePath, response(200, Map.of("runId", "run 001")));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage", "run 001"))
+                .andExpect(status().isOk());
+        assertEquals(usagePath, gateway.lastGetPath);
+
+        String callsPath = usagePath + "/calls?stepId=report&cursor=20&pageSize=25";
+        gateway.getResponses.put(callsPath, response(200, Map.of("items", List.of())));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage/calls", "run 001")
+                        .param("stepId", "report")
+                        .param("cursor", "20")
+                        .param("pageSize", "25"))
+                .andExpect(status().isOk());
+        assertEquals(callsPath, gateway.lastGetPath);
+
+        String fragmentsPath = "/ai/agentos/v2/runs/run%20001/artifacts/manifest%20001/fragments"
+                + "?cursor=5&pageSize=10";
+        gateway.getResponses.put(fragmentsPath, response(200, Map.of("items", List.of())));
+        mockMvc.perform(get(
+                        "/api/agentos/v2/runs/{runId}/artifacts/{manifestId}/fragments",
+                        "run 001", "manifest 001"
+                ).param("cursor", "5").param("pageSize", "10"))
+                .andExpect(status().isOk());
+        assertEquals(fragmentsPath, gateway.lastGetPath);
     }
 
     @Test
