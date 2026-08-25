@@ -1,6 +1,7 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { workflowApi } from '@/services/api/workflow'
 import AcgExecutionContractBar from './AcgExecutionContractBar.vue'
 import AcgOperationalInspector from './AcgOperationalInspector.vue'
 import IdentityHealthStrip from './IdentityHealthStrip.vue'
@@ -74,6 +75,42 @@ describe('ACG capability panels', () => {
     await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('控制协同'))!.trigger('click')
     expect(wrapper.findAll('.summary-card strong').map(item => item.text())).toEqual(['0', '0', '0', '0', '0', '0', '0', '0'])
     expect(wrapper.findAll('.empty').length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('keeps unknown API capacity unknown in the read-only resource panel', async () => {
+    vi.spyOn(workflowApi, 'listRunResourceCalls').mockResolvedValue({
+      runId: 'run_1', items: [], nextCursor: undefined, total: 0
+    })
+    const wrapper = mount(AcgOperationalInspector, {
+      props: {
+        view, auditEvents: [], patchRefs: [],
+        resourceUsage: {
+          runId: 'run_1',
+          capability: { provider: 'test', model: 'model', source: 'unknown', features: {} },
+          usage: {
+            inputTokens: 100, outputTokens: 40, cacheReadTokens: 25,
+            cacheWriteTokens: 0, reasoningTokens: 10, totalTokens: 140,
+            callCount: 1, retryCount: 0, latencyMs: 120, cacheHitRatio: 0.25
+          },
+          contextPressure: { current: null, peak: null, source: 'unknown' },
+          composition: {
+            materialManifestCount: 1, materialFragmentCount: 5, taskCount: 2,
+            completedTaskCount: 1, persistedResultFragmentCount: 5,
+            reducerManifestCount: 1, chapterCount: 0, artifactCount: 0,
+            assemblyComplete: false, taskProgress: 0.5
+          },
+          scheduler: { activeSlots: 1, queueDepth: 0, checkpointCount: 0, recoveryCount: 0 }
+        } as any
+      },
+      global: { plugins: [ElementPlus] }
+    })
+
+    await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('资源'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API 未声明')
+    expect(wrapper.text()).toContain('推理 Token 已包含在供应商输出明细中')
+    expect(wrapper.find('.resource-panel').exists()).toBe(true)
   })
 
   it('marks retained health data stale without hiding backlog facts', () => {

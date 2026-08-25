@@ -199,6 +199,19 @@ export interface WorkflowStartRequest {
   workflowId?: string
   reviewMode?: string
   enabledPluginIds?: string[] | null
+  materialRefs?: string[]
+}
+
+export interface ContentManifestSummary {
+  manifestId: string
+  kind: 'material' | 'intermediate' | 'artifact'
+  mediaType: string
+  checksum?: string | null
+  byteLength: number
+  fragmentCount: number
+  estimatedTokens?: number | null
+  chunkingVersion: string
+  sealed: boolean
 }
 
 export type WorkflowStartResponse = WorkflowRun
@@ -582,6 +595,76 @@ export interface AcgLowEntropyMetrics {
   integrityStatus: string
 }
 
+export interface ModelCapabilitySnapshot {
+  provider: string
+  model: string
+  version?: string | null
+  revision?: string | null
+  source: 'provider_reported' | 'adapter_declared' | 'runtime_observed' | 'unknown'
+  contextWindowTokens?: number | null
+  maxOutputTokens?: number | null
+  maxTokensField?: string | null
+  features?: Record<string, boolean | null>
+}
+
+export interface ModelCallUsage {
+  callId: string
+  stepId?: string | null
+  provider?: string | null
+  model?: string | null
+  createdAt?: string | null
+  latencyMs: number
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    reasoningTokens: number
+    totalTokens: number
+  }
+  finishReason?: string | null
+  outputPolicy: string
+  requestedOutputTokens?: number | null
+  effectiveOutputTokens?: number | null
+  effectiveReason?: string | null
+  outputExhausted: boolean
+  contextPressure?: number | null
+  callChainId?: string | null
+  partIndex?: number | null
+}
+
+export interface RunResourceUsage {
+  runId: string
+  capability?: ModelCapabilitySnapshot | null
+  outputPolicy?: string | null
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    reasoningTokens: number
+    totalTokens: number
+    callCount: number
+    retryCount: number
+    latencyMs: number
+    cacheHitRatio?: number | null
+  }
+  contextPressure: { current?: number | null; peak?: number | null; source: string }
+  composition: {
+    materialManifestCount: number
+    materialFragmentCount: number
+    taskCount: number
+    completedTaskCount: number
+    persistedResultFragmentCount: number
+    reducerManifestCount: number
+    chapterCount: number
+    artifactCount: number
+    assemblyComplete: boolean
+    taskProgress?: number | null
+  }
+  scheduler: { activeSlots: number; queueDepth: number; checkpointCount: number; recoveryCount: number }
+}
+
 export interface AcgDeliverable {
   stepId: string
   name: string
@@ -776,6 +859,11 @@ export interface WorkflowHistoryConfig {
 }
 
 export const agentosApi = {
+  async createMaterial(content: string, mediaType = 'text/plain'): Promise<ContentManifestSummary> {
+    const response = await agentosRequest.post<ContentManifestSummary>('/materials', { content, mediaType })
+    return response.data
+  },
+
   async listWorkflowRuns(
     params: WorkflowRunQuery = {},
     options: { signal?: AbortSignal } = {}
@@ -832,6 +920,23 @@ export const agentosApi = {
 
   async getWorkflowRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     const response = await agentosRequest.get<WorkflowRun>(runPath(runId), {
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async getRunResourceUsage(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunResourceUsage> {
+    const response = await agentosRequest.get<RunResourceUsage>(`${runPath(runId)}/resource-usage`, { signal: options.signal })
+    return response.data
+  },
+
+  async listRunResourceCalls(
+    runId: string,
+    params: { stepId?: string; cursor?: string; pageSize?: number } = {},
+    options: { signal?: AbortSignal } = {}
+  ): Promise<{ runId: string; items: ModelCallUsage[]; nextCursor?: string | null; total: number }> {
+    const response = await agentosRequest.get(`${runPath(runId)}/resource-usage/calls`, {
+      params: { stepId: params.stepId, cursor: params.cursor, pageSize: params.pageSize || 20 },
       signal: options.signal
     })
     return response.data

@@ -178,6 +178,11 @@
       :view="acgView"
       :events="acgAuditEvents"
     />
+    <RunResourceStrip
+      v-if="activeRunId"
+      :usage="resourceUsage"
+      @open="openResourceInspector"
+    />
     <AcgExecutionContractBar
       v-if="acgView"
       :view="acgView"
@@ -263,6 +268,8 @@
             :view="acgView"
             :audit-events="acgAuditEvents"
             :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+            :resource-usage="resourceUsage"
+            :requested-tab-revision="resourceTabRequest"
             @export-audit="exportAudit"
           />
           <section class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
@@ -295,7 +302,8 @@ import {
   workflowApi,
   type AcgView,
   type WorkflowRun,
-  type WorkflowProgress
+  type WorkflowProgress,
+  type RunResourceUsage
 } from '@/services/api/workflow'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import AcgExecutionContractBar from '@/components/agentos/AcgExecutionContractBar.vue'
@@ -304,6 +312,7 @@ import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
+import RunResourceStrip from '@/components/agentos/RunResourceStrip.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
@@ -355,6 +364,12 @@ watch(userIntent, value => {
 
 const acgView = ref<AcgView | null>(null)
 const activeRun = ref<WorkflowRun | null>(null)
+const resourceUsage = ref<RunResourceUsage | null>(null)
+const resourceTabRequest = ref(0)
+const openResourceInspector = () => {
+  setSidePanelCollapsed(false)
+  resourceTabRequest.value += 1
+}
 const acgAuditEvents = computed(() => {
   const events = [
     ...(acgView.value?.recoveryTrace || []),
@@ -743,6 +758,8 @@ const clearRunData = () => {
   topologyController = null
   acgView.value = null
   activeRun.value = null
+  resourceUsage.value = null
+  resourceTabRequest.value = 0
   loadedRunId.value = ''
   isAcgLoading.value = false
   lastTopologyRefreshAt = 0
@@ -774,10 +791,11 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
   isAcgLoading.value = true
   try {
     const runPromise = workflowApi.getRun(runId, { signal })
-    const [runResult, viewResult, historyConfigResult] = await Promise.allSettled([
+    const [runResult, viewResult, historyConfigResult, resourceResult] = await Promise.allSettled([
       runPromise,
       workflowApi.getAcgView(runId, { signal, run: runPromise }),
-      workflowApi.getRunHistoryConfig(runId, { signal })
+      workflowApi.getRunHistoryConfig(runId, { signal }),
+      workflowApi.getRunResourceUsage(runId, { signal })
     ])
     if (requestGeneration !== topologyGeneration || runId !== activeRunId.value) return
     if (runResult.status === 'rejected') {
@@ -800,6 +818,7 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
     const run = runResult.value
     acgView.value = view
     activeRun.value = run
+    resourceUsage.value = resourceResult.status === 'fulfilled' ? resourceResult.value : null
     if (loadedRunId.value !== runId && historyConfigResult.status === 'fulfilled') {
       const historyConfig = historyConfigResult.value
       restoreWorkbenchDraft(draft, historyConfig, pluginUiExtensions.resolve(historyConfig.enabledPluginIds || []))
@@ -1037,6 +1056,12 @@ const startRun = async () => {
       lowEntropyOptions: [...lowEntropyOptions.value]
     }
     request.input = requestInput
+    const material = String(request.input.materialText || '')
+    if (material) {
+      const manifest = await workflowApi.createMaterial(material, 'text/plain')
+      request.materialRefs = [manifest.manifestId]
+      delete request.input.materialText
+    }
     const res = await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
     activeRunId.value = res.runId
     scheduleInputCollapse()

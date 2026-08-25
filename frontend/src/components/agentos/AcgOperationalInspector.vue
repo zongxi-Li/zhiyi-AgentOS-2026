@@ -19,6 +19,15 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane name="resource">
+        <template #label><span class="tab-label"><el-icon><PieChart /></el-icon>资源</span></template>
+        <AcgResourceInspector
+          v-if="activeTab === 'resource'"
+          :run-id="view.runId"
+          :usage="resourceUsage"
+        />
+      </el-tab-pane>
+
       <el-tab-pane name="control">
         <template #label><span class="tab-label"><el-icon><Operation /></el-icon>控制协同</span></template>
         <OperationalSummary :items="controlSummary" />
@@ -51,15 +60,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, ref, type PropType } from 'vue'
-import { Connection, DataAnalysis, Operation, RefreshRight } from '@element-plus/icons-vue'
-import type { AcgView, NodeExecutionPhase, TraceEvent } from '@/services/api/workflow'
+import { computed, defineComponent, h, ref, watch, type PropType } from 'vue'
+import { Connection, DataAnalysis, Operation, PieChart, RefreshRight } from '@element-plus/icons-vue'
+import type { AcgView, NodeExecutionPhase, RunResourceUsage, TraceEvent } from '@/services/api/workflow'
 import AcgLowEntropyMetrics from './AcgLowEntropyMetrics.vue'
+import AcgResourceInspector from './AcgResourceInspector.vue'
 import RuntimeAuditTimeline from './RuntimeAuditTimeline.vue'
 
-const props = defineProps<{ view: AcgView; auditEvents: TraceEvent[]; patchRefs: string[] }>()
+const props = withDefaults(defineProps<{
+  view: AcgView
+  auditEvents: TraceEvent[]
+  patchRefs: string[]
+  resourceUsage?: RunResourceUsage | null
+  requestedTabRevision?: number
+}>(), { resourceUsage: null, requestedTabRevision: 0 })
 const emit = defineEmits<{ 'export-audit': [format: 'json' | 'csv'] }>()
 const activeTab = ref('runtime')
+watch(() => props.requestedTabRevision, revision => {
+  if (revision > 0) activeTab.value = 'resource'
+})
 const records = computed(() => props.view.operational?.nodeExecutions || [])
 const controlFrames = computed(() => props.view.operational?.controlFrames || [])
 const controlSummary = computed(() => [
@@ -153,7 +172,7 @@ const OperationalSummary = defineComponent({
 .operational-inspector :deep(.el-tabs__header) { margin: 0; padding: 12px 12px 0; }
 .operational-inspector :deep(.el-tabs__nav-wrap::after) { display: none; }
 .operational-inspector :deep(.el-tabs__nav) {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; width: 100%; margin: 0; padding: 4px;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; width: 100%; margin: 0; padding: 4px;
   border: 1px solid color-mix(in srgb, var(--primary-color) 8%, var(--border-light)); border-radius: 10px;
   background: color-mix(in srgb, var(--bg-input) 88%, var(--bg-card));
 }

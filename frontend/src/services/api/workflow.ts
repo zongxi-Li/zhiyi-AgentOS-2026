@@ -36,6 +36,10 @@ import {
   type WorkflowStep,
   type WorkflowStatus,
   type WorkflowTraceExport,
+  type RunResourceUsage,
+  type ModelCallUsage,
+  type ModelCapabilitySnapshot,
+  type ContentManifestSummary,
 } from './agentos'
 
 export type {
@@ -75,9 +79,17 @@ export type {
   WorkflowStep,
   WorkflowStatus,
   WorkflowTraceExport,
+  RunResourceUsage,
+  ModelCallUsage,
+  ModelCapabilitySnapshot,
+  ContentManifestSummary,
 }
 
 export const workflowApi = {
+  createMaterial(content: string, mediaType = 'text/plain'): Promise<ContentManifestSummary> {
+    return agentosApi.createMaterial(content, mediaType)
+  },
+
   startWorkflow(payload: WorkflowStartRequest): Promise<WorkflowStartResponse> {
     return agentosApi.startWorkflow(payload)
   },
@@ -105,6 +117,18 @@ export const workflowApi = {
 
   getRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     return agentosApi.getWorkflowRun(runId, options)
+  },
+
+  getRunResourceUsage(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunResourceUsage> {
+    return agentosApi.getRunResourceUsage(runId, options)
+  },
+
+  listRunResourceCalls(
+    runId: string,
+    params: { stepId?: string; cursor?: string; pageSize?: number } = {},
+    options: { signal?: AbortSignal } = {}
+  ) {
+    return agentosApi.listRunResourceCalls(runId, params, options)
   },
 
   archiveMission(missionId: string) {
