@@ -21,6 +21,7 @@ from adapters.model.native_prompt import (
     prompt_version_for_capability,
 )
 from support.acg.models import NATIVE_CAPABILITY_IDS
+from components.communicator.contracts import ContextPack, input_revision
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"
@@ -69,6 +70,9 @@ class NativeGeneralAgent(BaseAgent):
         ).strip()
         upstream = self._upstream_data(context)
         capability = (context.step.capability or "").strip()
+
+        if context.content_workset_session is not None:
+            return await self._run_workset(context)
 
         task_summary = str(upstream.get("task_summary") or objective)
         if capability == "information_retrieval":
@@ -167,11 +171,14 @@ class NativeGeneralAgent(BaseAgent):
         thinking_mode = str(context.task.input.get("thinkingMode") or "disabled")
         output_thinking_mode = thinking_mode
         timeout_seconds = 180.0 if capability == "artifact_generation" else 120.0
-        max_output_tokens = 8192 if capability == "artifact_generation" else 4096
+        # 默认由精确模型 API/适配器决定单次输出能力。Harness 不用 capability 名称
+        # 猜测 4096/8192，也不通过人为缩短内容获得表面上的合同成功。
+        max_output_tokens = None
         invocations: list[dict[str, Any]] = []
         base_prompt_version = prompt_version_for_capability(capability)
         repair_used = False
         thinking_fallback_reason: str | None = None
+        recovered_output: dict[str, Any] | None = None
         try:
             generated = await runtime.generate_json(
                 prompt=prompt,
@@ -190,7 +197,26 @@ class NativeGeneralAgent(BaseAgent):
                 "none",
                 "off",
             }
-            if exc.code == "MODEL_EMPTY_RESPONSE" and thinking_enabled:
+            if exc.code == "MODEL_OUTPUT_EXHAUSTED" and capability == "artifact_generation":
+                recovered_output, recovery_invocations = await self._recover_artifact_by_sections(
+                    context=context,
+                    runtime=runtime,
+                    original_prompt=prompt,
+                    thinking_mode=output_thinking_mode,
+                    timeout_seconds=timeout_seconds,
+                    prompt_version=base_prompt_version,
+                    exhausted_audit=exc.audit,
+                )
+                invocations.extend(recovery_invocations)
+            elif exc.code == "MODEL_OUTPUT_EXHAUSTED":
+                recovered_output, recovery_invocations = await self._recover_capability_by_subtasks(
+                    context=context, runtime=runtime, original_prompt=prompt,
+                    output_schema=generation_schema, thinking_mode=output_thinking_mode,
+                    timeout_seconds=timeout_seconds, prompt_version=base_prompt_version,
+                    exhausted_audit=exc.audit,
+                )
+                invocations.extend(recovery_invocations)
+            elif exc.code == "MODEL_EMPTY_RESPONSE" and thinking_enabled:
                 thinking_fallback_reason = exc.code
                 output_thinking_mode = "disabled"
                 generated = await runtime.generate_json(
@@ -220,22 +246,25 @@ class NativeGeneralAgent(BaseAgent):
                     prompt_version=f"{base_prompt_version}.json-repair1",
                     commit_id=context.commit_id,
                 )
-        generation_audit = generated.audit_record()
-        if thinking_fallback_reason:
-            generation_audit["usage"].update(
-                {
-                    "thinkingFallback": True,
-                    "thinkingFallbackReason": thinking_fallback_reason,
-                    "requestedThinkingMode": thinking_mode,
-                    "effectiveThinkingMode": output_thinking_mode,
-                }
-            )
-        invocations.append(generation_audit)
-        output = apply_contract_defaults(dict(generated.data), generation_schema)
-        if capability == "artifact_generation":
-            output = self._normalize_artifact_output(context, output)
+        if recovered_output is not None:
+            output = recovered_output
+        else:
+            generation_audit = generated.audit_record()
+            if thinking_fallback_reason:
+                generation_audit["usage"].update(
+                    {
+                        "thinkingFallback": True,
+                        "thinkingFallbackReason": thinking_fallback_reason,
+                        "requestedThinkingMode": thinking_mode,
+                        "effectiveThinkingMode": output_thinking_mode,
+                    }
+                )
+            invocations.append(generation_audit)
+            output = apply_contract_defaults(dict(generated.data), generation_schema)
+            if capability == "artifact_generation":
+                output = self._normalize_artifact_output(context, output)
         output = self._normalize_output_evidence_refs(output, evidence_refs)
-        if capability == "verification":
+        if capability in {"verification", "artifact_generation"}:
             output = self._enforce_verification_evidence(output)
         output = compact_contract_text_arrays(output, output_schema)
         try:
@@ -270,7 +299,7 @@ class NativeGeneralAgent(BaseAgent):
             if capability == "artifact_generation":
                 output = self._normalize_artifact_output(context, output)
             output = self._normalize_output_evidence_refs(output, evidence_refs)
-            if capability == "verification":
+            if capability in {"verification", "artifact_generation"}:
                 output = self._enforce_verification_evidence(output)
             output = compact_contract_text_arrays(output, output_schema)
             try:
@@ -292,6 +321,464 @@ class NativeGeneralAgent(BaseAgent):
             modelInvocations=invocations,
         )
 
+    async def _recover_capability_by_subtasks(
+        self, *, context: AgentRunContext, runtime: Any, original_prompt: str,
+        output_schema: dict[str, Any], thinking_mode: str, timeout_seconds: float,
+        prompt_version: str, exhausted_audit: dict[str, Any] | None,
+        depth: int = 0,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Decompose an exhausted semantic unit, execute children, then pairwise reduce."""
+        if depth >= 8:
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_NO_PROGRESS",
+                "semantic unit remained output-exhausted after additive decomposition",
+                audit=exhausted_audit,
+            )
+        subtask_schema = {
+            "type": "object",
+            "properties": {
+                "subtasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "goal": {"type": "string"},
+                            "sourceScope": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["title", "goal", "sourceScope"],
+                    },
+                }
+            },
+            "required": ["subtasks"],
+        }
+        invocations = (
+            [dict(exhausted_audit)]
+            if isinstance(exhausted_audit, dict) and exhausted_audit else []
+        )
+        plan = await runtime.generate_json(
+            prompt=(
+                f"{original_prompt}\nThe current semantic unit exceeded one response. Start a new "
+                "planning operation and decompose it into smaller non-overlapping, independently "
+                "complete sub-units whose union preserves the entire goal, constraints, evidence "
+                "and acceptance criteria. Decide the useful subtask count. Return plan JSON only."
+            ),
+            schema=subtask_schema, thinking_mode=thinking_mode,
+            timeout_seconds=timeout_seconds, max_output_tokens=None,
+            prompt_version=f"{prompt_version}.capacity-split1",
+            commit_id=f"{context.commit_id or 'capability'}:split:{depth}",
+        )
+        invocations.append(plan.audit_record())
+        subtasks = list(plan.data.get("subtasks") or [])
+        if not subtasks:
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_NO_PROGRESS", "capacity split returned no semantic sub-units"
+            )
+        partials: list[dict[str, Any]] = []
+        for index, subtask in enumerate(subtasks):
+            subprompt = (
+                f"{original_prompt}\nExecute only this independently complete sub-unit. Preserve "
+                "all supported details in its scope and return the original output schema.\n"
+                f"SUBTASK={json.dumps(subtask, ensure_ascii=False)}"
+            )
+            try:
+                generated = await runtime.generate_json(
+                    prompt=subprompt, schema=output_schema, thinking_mode=thinking_mode,
+                    timeout_seconds=timeout_seconds, max_output_tokens=None,
+                    prompt_version=f"{prompt_version}.capacity-part1",
+                    commit_id=f"{context.commit_id or 'capability'}:part:{depth}:{index}",
+                )
+                invocations.append(generated.audit_record())
+                partials.append(apply_contract_defaults(dict(generated.data), output_schema))
+            except StructuredGenerationError as exc:
+                if exc.code != "MODEL_OUTPUT_EXHAUSTED":
+                    raise
+                partial, audits = await self._recover_capability_by_subtasks(
+                    context=context, runtime=runtime, original_prompt=subprompt,
+                    output_schema=output_schema, thinking_mode=thinking_mode,
+                    timeout_seconds=timeout_seconds, prompt_version=prompt_version,
+                    exhausted_audit=exc.audit, depth=depth + 1,
+                )
+                partials.append(partial)
+                invocations.extend(audits)
+
+        level = partials
+        round_index = 0
+        while len(level) > 1:
+            reduced: list[dict[str, Any]] = []
+            for pair_index in range(0, len(level), 2):
+                pair = level[pair_index:pair_index + 2]
+                if len(pair) == 1:
+                    reduced.append(pair[0])
+                    continue
+                merge_prompt = (
+                    f"{original_prompt}\nMerge these two complete partial results without losing "
+                    "supported facts, calculations, constraints, evidence, assumptions or gaps. "
+                    "Deduplicate only semantically identical content. Return the original schema.\n"
+                    f"LEFT={json.dumps(pair[0], ensure_ascii=False)}\n"
+                    f"RIGHT={json.dumps(pair[1], ensure_ascii=False)}"
+                )
+                try:
+                    merged = await runtime.generate_json(
+                        prompt=merge_prompt, schema=output_schema, thinking_mode=thinking_mode,
+                        timeout_seconds=timeout_seconds, max_output_tokens=None,
+                        prompt_version=f"{prompt_version}.capacity-reduce1",
+                        commit_id=(
+                            f"{context.commit_id or 'capability'}:reduce:"
+                            f"{depth}:{round_index}:{pair_index // 2}"
+                        ),
+                    )
+                    invocations.append(merged.audit_record())
+                    reduced.append(apply_contract_defaults(dict(merged.data), output_schema))
+                except StructuredGenerationError as exc:
+                    if exc.code != "MODEL_OUTPUT_EXHAUSTED":
+                        raise
+                    merged_data, audits = await self._recover_capability_by_subtasks(
+                        context=context, runtime=runtime, original_prompt=merge_prompt,
+                        output_schema=output_schema, thinking_mode=thinking_mode,
+                        timeout_seconds=timeout_seconds, prompt_version=prompt_version,
+                        exhausted_audit=exc.audit, depth=depth + 1,
+                    )
+                    reduced.append(merged_data)
+                    invocations.extend(audits)
+            level = reduced
+            round_index += 1
+        return level[0], invocations
+
+    async def _recover_artifact_by_sections(
+        self, *, context: AgentRunContext, runtime: Any, original_prompt: str,
+        thinking_mode: str, timeout_seconds: float, prompt_version: str,
+        exhausted_audit: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Replace a truncated monolithic artifact with outline -> sections -> assembly."""
+        text_list = {"type": "array", "items": {"type": "string"}}
+        section_plan = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"}, "goal": {"type": "string"},
+                "sourceFields": text_list,
+            },
+            "required": ["title", "goal", "sourceFields"],
+        }
+        outline_schema = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "executiveSummary": {"type": "string"},
+                "sections": {"type": "array", "items": section_plan},
+                "calculations": {"type": "array", "items": {"type": "object"}},
+                "assumptions": text_list,
+                "openQuestions": text_list,
+                "sourceRefs": text_list,
+            },
+            "required": [
+                "title", "executiveSummary", "sections", "calculations",
+                "assumptions", "openQuestions", "sourceRefs",
+            ],
+        }
+        invocations = (
+            [dict(exhausted_audit)]
+            if isinstance(exhausted_audit, dict) and exhausted_audit else []
+        )
+        outline = await runtime.generate_json(
+            prompt=(
+                f"{original_prompt}\nThe complete artifact exceeded one response. Start a new "
+                "semantic operation and design only a lossless chapter outline. Decide chapter "
+                "count and granularity from mission coverage and usefulness. Do not write chapter "
+                "prose yet. Return outline JSON only."
+            ),
+            schema=outline_schema, thinking_mode=thinking_mode,
+            timeout_seconds=timeout_seconds, max_output_tokens=None,
+            prompt_version=f"{prompt_version}.capacity-outline1",
+            commit_id=f"{context.commit_id or 'artifact'}:outline",
+        )
+        invocations.append(outline.audit_record())
+        outline_data = apply_contract_defaults(dict(outline.data), outline_schema)
+        sections: list[dict[str, Any]] = []
+        for index, section in enumerate(outline_data.get("sections") or []):
+            generated, audits = await self._generate_artifact_section(
+                context=context, runtime=runtime, original_prompt=original_prompt,
+                section=dict(section), thinking_mode=thinking_mode,
+                timeout_seconds=timeout_seconds, prompt_version=prompt_version,
+                path=str(index),
+            )
+            sections.extend(generated)
+            invocations.extend(audits)
+
+        verification_schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["passed", "partial", "failed"]},
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "criterion": {"type": "string"},
+                            "result": {"type": "string"},
+                            "evidence": {"type": "string"},
+                        },
+                        "required": ["criterion", "result", "evidence"],
+                    },
+                },
+                "unresolvedGaps": text_list,
+            },
+            "required": ["status", "checks", "unresolvedGaps"],
+        }
+        verification = await runtime.generate_json(
+            prompt=(
+                f"{original_prompt}\nVerify the assembled chapter index against every acceptance "
+                "criterion, constraint, evidence requirement and expected artifact. A check without "
+                "evidence cannot pass. Return verification JSON only.\n"
+                "ASSEMBLED_CHAPTER_INDEX="
+                + json.dumps(
+                    [
+                        {
+                            "title": item.get("title"),
+                            "sourceFields": item.get("sourceFields") or [],
+                        }
+                        for item in sections
+                    ],
+                    ensure_ascii=False,
+                )
+            ),
+            schema=verification_schema, thinking_mode=thinking_mode,
+            timeout_seconds=timeout_seconds, max_output_tokens=None,
+            prompt_version=f"{prompt_version}.capacity-verification1",
+            commit_id=f"{context.commit_id or 'artifact'}:verification",
+        )
+        invocations.append(verification.audit_record())
+        output = {
+            "deliverable": {
+                "title": outline_data["title"],
+                "executiveSummary": outline_data["executiveSummary"],
+                "sections": sections,
+                "calculations": outline_data["calculations"],
+                "assumptions": outline_data["assumptions"],
+                "openQuestions": outline_data["openQuestions"],
+                "sourceRefs": outline_data["sourceRefs"],
+            },
+            "verification": dict(verification.data),
+        }
+        return self._normalize_artifact_output(context, output), invocations
+
+    async def _generate_artifact_section(
+        self, *, context: AgentRunContext, runtime: Any, original_prompt: str,
+        section: dict[str, Any], thinking_mode: str, timeout_seconds: float,
+        prompt_version: str, path: str, depth: int = 0,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Generate one complete section; recursively split only after output exhaustion."""
+        text_list = {"type": "array", "items": {"type": "string"}}
+        section_schema = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"}, "content": {"type": "string"},
+                "sourceFields": text_list,
+            },
+            "required": ["title", "content", "sourceFields"],
+        }
+        try:
+            generated = await runtime.generate_json(
+                prompt=(
+                    f"{original_prompt}\nGenerate this one complete artifact chapter. Preserve all "
+                    "supported detail assigned to it; do not summarize merely to reduce length. "
+                    f"Return section JSON only.\nSECTION={json.dumps(section, ensure_ascii=False)}"
+                ),
+                schema=section_schema, thinking_mode=thinking_mode,
+                timeout_seconds=timeout_seconds, max_output_tokens=None,
+                prompt_version=f"{prompt_version}.section1",
+                commit_id=f"{context.commit_id or 'artifact'}:section:{path}",
+            )
+            return [apply_contract_defaults(dict(generated.data), section_schema)], [generated.audit_record()]
+        except StructuredGenerationError as exc:
+            if exc.code != "MODEL_OUTPUT_EXHAUSTED":
+                raise
+            if depth >= 8:
+                raise StructuredGenerationError(
+                    "MODEL_OUTPUT_NO_PROGRESS",
+                    "artifact section remained output-exhausted after additive decomposition",
+                    audit=exc.audit,
+                ) from exc
+            subsection_schema = {
+                "type": "object",
+                "properties": {
+                    "sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"}, "goal": {"type": "string"},
+                                "sourceFields": text_list,
+                            },
+                            "required": ["title", "goal", "sourceFields"],
+                        },
+                    },
+                },
+                "required": ["sections"],
+            }
+            split = await runtime.generate_json(
+                prompt=(
+                    f"{original_prompt}\nThe declared section exceeded one response. Decompose it "
+                    "into smaller non-overlapping subsections whose union preserves its complete "
+                    f"goal and sources. Return subsection outline JSON only.\nSECTION={json.dumps(section, ensure_ascii=False)}"
+                ),
+                schema=subsection_schema, thinking_mode=thinking_mode,
+                timeout_seconds=timeout_seconds, max_output_tokens=None,
+                prompt_version=f"{prompt_version}.section-split1",
+                commit_id=f"{context.commit_id or 'artifact'}:section:{path}:split",
+            )
+            children = list(split.data.get("sections") or [])
+            if not children:
+                raise StructuredGenerationError(
+                    "MODEL_OUTPUT_NO_PROGRESS", "artifact section split returned no children"
+                )
+            results: list[dict[str, Any]] = []
+            audits = [dict(exc.audit)] if isinstance(exc.audit, dict) and exc.audit else []
+            audits.append(split.audit_record())
+            for index, child in enumerate(children):
+                child_results, child_audits = await self._generate_artifact_section(
+                    context=context, runtime=runtime, original_prompt=original_prompt,
+                    section=dict(child), thinking_mode=thinking_mode,
+                    timeout_seconds=timeout_seconds, prompt_version=prompt_version,
+                    path=f"{path}.{index}", depth=depth + 1,
+                )
+                results.extend(child_results)
+                audits.extend(child_audits)
+            return results, audits
+
+    async def _run_workset(self, context: AgentRunContext) -> AgentOutput:
+        """Map immutable material fragments, then reduce them as a balanced tree."""
+        session = context.content_workset_session
+        mapped: list[AgentOutput] = []
+        for envelope in session.mapped_results():
+            mapped.append(AgentOutput.model_validate(envelope))
+        for unit in session.pending_units():
+            result = await self._execute_workset_unit(context, unit)
+            session.persist_map_result(
+                int(unit["sequence"]),
+                result.model_dump(by_alias=True, mode="json"),
+            )
+            mapped.append(result)
+        session.seal()
+        if not mapped:
+            raise StructuredGenerationError("WORKSET_EMPTY", "Workset has no material fragments")
+
+        level = mapped
+        round_index = 0
+        reduction_results: list[AgentOutput] = []
+        while len(level) > 1:
+            reduced: list[AgentOutput] = []
+            for pair_index in range(0, len(level), 2):
+                pair = level[pair_index:pair_index + 2]
+                if len(pair) == 1:
+                    reduced.append(pair[0])
+                    continue
+                result = await self._reduce_workset_pair(
+                    context, pair[0], pair[1], round_index, pair_index // 2
+                )
+                reduced.append(result)
+                reduction_results.append(result)
+            level = reduced
+            round_index += 1
+        final = level[0]
+        all_invocations = [
+            invocation
+            for result in [*mapped, *reduction_results]
+            for invocation in result.model_invocations
+        ]
+        return final.model_copy(update={
+            "summary": (
+                f"Workset completed from {len(mapped)} persisted fragment result(s); "
+                f"reduced in {round_index} level(s)."
+            ),
+            "model_invocations": all_invocations,
+        })
+
+    async def _execute_workset_unit(
+        self, context: AgentRunContext, unit: dict[str, Any], *, depth: int = 0
+    ) -> AgentOutput:
+        subcontext = self._workset_context(
+            context,
+            source_key=f"materialFragment:{unit['sequence']}:{depth}",
+            source_payload=unit,
+            commit_suffix=f"map:{unit['sequence']}:{depth}",
+        )
+        try:
+            return await self.run(subcontext)
+        except StructuredGenerationError as exc:
+            content = str(unit.get("content") or "")
+            if exc.code != "MODEL_OUTPUT_EXHAUSTED" or len(content) < 2:
+                raise
+            midpoint = len(content) // 2
+            left_unit = {**unit, "content": content[:midpoint], "subrange": f"0:{midpoint}"}
+            right_unit = {**unit, "content": content[midpoint:], "subrange": f"{midpoint}:{len(content)}"}
+            left = await self._execute_workset_unit(context, left_unit, depth=depth + 1)
+            right = await self._execute_workset_unit(context, right_unit, depth=depth + 1)
+            reduced = await self._reduce_workset_pair(
+                context, left, right, depth, int(unit["sequence"])
+            )
+            exhausted_audit = [dict(exc.audit)] if isinstance(exc.audit, dict) and exc.audit else []
+            return reduced.model_copy(update={
+                "model_invocations": [
+                    *exhausted_audit,
+                    *left.model_invocations,
+                    *right.model_invocations,
+                    *reduced.model_invocations,
+                ],
+            })
+
+    async def _reduce_workset_pair(
+        self, context: AgentRunContext, left: AgentOutput, right: AgentOutput,
+        round_index: int, pair_index: int,
+    ) -> AgentOutput:
+        return await self.run(self._workset_context(
+            context,
+            source_key=f"worksetReducer:{round_index}:{pair_index}",
+            source_payload={
+                "instruction": (
+                    "Merge both complete partial results. Preserve every supported fact, item, "
+                    "constraint, source reference, assumption and unresolved gap; deduplicate only "
+                    "semantically identical content."
+                ),
+                "left": left.output,
+                "right": right.output,
+            },
+            commit_suffix=f"reduce:{round_index}:{pair_index}",
+        ))
+
+    @staticmethod
+    def _workset_context(
+        context: AgentRunContext, *, source_key: str,
+        source_payload: dict[str, Any], commit_suffix: str,
+    ) -> AgentRunContext:
+        original_pack = context.context_pack
+        original_data = dict(getattr(original_pack, "data", {}) or {})
+        original_sources = dict(getattr(original_pack, "source_data", {}) or {})
+        original_sources[source_key] = source_payload
+        pack = ContextPack(
+            runId=context.run.run_id,
+            stepId=context.step.step_id,
+            objective=getattr(original_pack, "objective", "") if original_pack else "",
+            stepGoal=context.step.goal or context.step.name,
+            data=original_data,
+            sourceData=original_sources,
+            evidenceRefs=list(getattr(original_pack, "evidence_refs", ()) or ()),
+            tokensDelivered=0,
+            tokensAvailable=0,
+            sourceStepIds=list(getattr(original_pack, "source_step_ids", ()) or ()),
+            inputRevision=input_revision({"data": original_data, "sourceData": original_sources}),
+            attemptId=str(context.commit_id or ""),
+        )
+        step_input = dict(context.step.input)
+        step_input.pop("workset", None)
+        step = context.step.model_copy(update={"input": step_input})
+        return context.model_copy(update={
+            "step": step,
+            "context_pack": pack,
+            "content_workset_session": None,
+            "commit_id": f"{context.commit_id or 'workset'}:{commit_suffix}",
+        })
+
     @staticmethod
     def _enforce_verification_evidence(output: dict[str, Any]) -> dict[str, Any]:
         verification = output.get("verification")
@@ -307,9 +794,10 @@ class NativeGeneralAgent(BaseAgent):
         normalized = dict(output)
         verification = dict(verification)
         verification["status"] = "partial"
-        gaps = list(verification.get("unresolved_gaps") or [])
+        gap_key = "unresolvedGaps" if "unresolvedGaps" in verification else "unresolved_gaps"
+        gaps = list(verification.get(gap_key) or [])
         gaps.append("Verification cannot pass because one or more checks lack evidence.")
-        verification["unresolved_gaps"] = list(dict.fromkeys(gaps))
+        verification[gap_key] = list(dict.fromkeys(gaps))
         normalized["verification"] = verification
         return normalized
 

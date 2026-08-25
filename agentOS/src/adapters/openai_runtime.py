@@ -10,6 +10,9 @@ from adapters.http_transport import HttpTransportError
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
+    ModelCapabilityEnvelope,
+    ModelCapabilitySource,
+    ModelFeatureSet,
     ModelInvocationRequest,
     ModelInvocationResponse,
     ModelStreamEvent,
@@ -51,9 +54,18 @@ class ModelInvocationError(RuntimeError):
     模型响应正文，避免调用方把敏感内容经 Trace 或日志带出执行边界。
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        usage: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.usage = dict(usage or {})
+        self.metadata = dict(metadata or {})
 
 
 class OpenAICompatibleRuntime:
@@ -91,6 +103,39 @@ class OpenAICompatibleRuntime:
     def is_available(self) -> bool:
         """表明运行时已被装配；真实连通性检查由应用层生命周期管理。"""
         return True
+
+    def describe_model(self, model: str) -> ModelCapabilityEnvelope:
+        """从应用层 Manifest 读取精确声明；未声明容量时保持 unknown。"""
+
+        normalized = model.strip()
+        if normalized not in self._models:
+            raise ModelInvocationError("MODEL_NOT_SUPPORTED", "requested model is not declared by this adapter")
+        raw_all = self._manifest.metadata.get("modelCapabilities")
+        raw = raw_all.get(normalized) if isinstance(raw_all, Mapping) else None
+        if not isinstance(raw, Mapping):
+            return ModelCapabilityEnvelope.unknown(
+                provider=self._manifest.provider,
+                model=normalized,
+                version=self._manifest.version,
+            )
+        features = raw.get("features") if isinstance(raw.get("features"), Mapping) else {}
+        source_value = str(raw.get("source") or ModelCapabilitySource.ADAPTER_DECLARED.value)
+        try:
+            source = ModelCapabilitySource(source_value)
+        except ValueError:
+            source = ModelCapabilitySource.ADAPTER_DECLARED
+        return ModelCapabilityEnvelope(
+            provider=self._manifest.provider,
+            model=normalized,
+            version=self._manifest.version,
+            revision=str(raw.get("revision")) if raw.get("revision") else None,
+            source=source,
+            contextWindowTokens=raw.get("contextWindowTokens"),
+            maxOutputTokens=raw.get("maxOutputTokens"),
+            maxTokensField=str(raw.get("maxTokensField")) if raw.get("maxTokensField") else None,
+            maxTokensRequired=bool(raw.get("maxTokensRequired", False)),
+            features=ModelFeatureSet.model_validate(features),
+        )
 
     async def invoke(self, request: ModelInvocationRequest) -> ModelInvocationResponse:
         """调用兼容端点并将首个 JSON 响应选择映射回稳定模型信封。"""
@@ -220,16 +265,25 @@ class OpenAICompatibleRuntime:
         message = choice.get("message")
         if not isinstance(message, Mapping):
             raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider response has no message")
-        content = self._content_object(message.get("content"))
         usage = response.get("usage")
         finish_reason = choice.get("finish_reason")
+        safe_usage = dict(usage) if isinstance(usage, Mapping) else {}
+        safe_metadata = {"finishReason": finish_reason} if isinstance(finish_reason, str) else {}
+        if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
+            raise ModelInvocationError(
+                "MODEL_OUTPUT_EXHAUSTED",
+                "model provider exhausted its output capacity before completing JSON",
+                usage=safe_usage,
+                metadata=safe_metadata,
+            )
+        content = self._content_object(message.get("content"))
         return ModelInvocationResponse(
             requestId=request.request_id,
             content=content,
             provider=self._manifest.provider,
             model=model,
-            usage=dict(usage) if isinstance(usage, Mapping) else {},
-            metadata={"finishReason": finish_reason} if isinstance(finish_reason, str) else {},
+            usage=safe_usage,
+            metadata=safe_metadata,
         )
 
     @staticmethod

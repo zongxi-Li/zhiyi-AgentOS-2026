@@ -4,12 +4,27 @@ import json
 import re
 from typing import Any, Dict
 
-from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
+from app.llm.capabilities import (
+    adapt_chat_completion_parameters,
+    normalize_model_request,
+    provider_model_capabilities,
+)
 from app.llm.contracts import ProviderRawResult, ProviderToolCall
 
 
 class LLMProviderError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "MODEL_PROVIDER_FAILED",
+        usage: Dict[str, Any] | None = None,
+        finish_reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.usage = dict(usage or {})
+        self.finish_reason = finish_reason
 
 
 class OpenAICompatibleProvider:
@@ -59,6 +74,10 @@ class OpenAICompatibleProvider:
             raise LLMProviderError(f"OpenAI-compatible text generation failed: {exc}") from exc
 
     def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        return dict(self.generate_json_result(prompt, schema, **kwargs)["data"])
+
+    def generate_json_result(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """返回安全 JSON 与真实用量/结束原因，供 AgentOS 审计链消费。"""
         try:
             adapted = self._adapt_parameters(kwargs)
             adapted["response_format"] = {"type": "json_object"}
@@ -73,10 +92,24 @@ class OpenAICompatibleProvider:
                 ],
                 **adapted,
             )
-            content = self._extract_raw_result(completion).content
+            raw = self._extract_raw_result(completion)
+            finish_reason = str(raw.raw_response_metadata.get("finish_reason") or "") or None
+            if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
+                raise LLMProviderError(
+                    "OpenAI-compatible provider exhausted output capacity",
+                    code="MODEL_OUTPUT_EXHAUSTED",
+                    usage=raw.raw_usage,
+                    finish_reason=finish_reason,
+                )
+            content = raw.content
             if not content:
                 raise LLMProviderError("OpenAI-compatible provider returned empty JSON content")
-            return self._parse_json(content)
+            return {
+                "data": self._parse_json(content),
+                "usage": dict(raw.raw_usage),
+                "finish_reason": finish_reason,
+                "response_id": raw.raw_response_metadata.get("response_id"),
+            }
         except LLMProviderError:
             raise
         except Exception as exc:
@@ -94,6 +127,9 @@ class OpenAICompatibleProvider:
             } and value is not None
         }
         parameters.setdefault("temperature", 0.1)
+        capabilities = provider_model_capabilities(self.model, self.base_url)
+        if "max_tokens" in parameters and capabilities.max_tokens_field != "max_tokens":
+            parameters[capabilities.max_tokens_field] = parameters.pop("max_tokens")
         adapted = adapt_chat_completion_parameters(
             model=self.model,
             base_url=self.base_url,

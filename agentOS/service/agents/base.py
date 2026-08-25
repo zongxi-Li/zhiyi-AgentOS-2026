@@ -65,6 +65,7 @@ class AgentRunContext(BaseModel):
     # 可选的运行期补读入口。它只能读取当前节点已声明的上游引用，Agent 不会得到
     # Value Store、Broker 状态或其它步骤的完整输出集合。
     communication_reader: Optional[Any] = Field(default=None, alias="communicationReader")
+    content_workset_session: Optional[Any] = Field(default=None, alias="contentWorksetSession")
     tool_runtime: Optional[Any] = Field(default=None, alias="toolRuntime")
     model_runtime: Optional[Any] = Field(default=None, alias="modelRuntime")
     capability_descriptor: Optional[Any] = Field(default=None, alias="capabilityDescriptor")

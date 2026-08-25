@@ -88,8 +88,8 @@ class GuardedModelRuntime:
         schema: dict,
         thinking_mode: str = "disabled",
         timeout_seconds: float = 120.0,
-        max_output_tokens: int = 4096,
-        prompt_version: str = "native-capability.v1",
+        max_output_tokens: int | None = None,
+        prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """在本地保护边界内调用模型，并只暴露稳定、无正文的错误。"""
@@ -123,6 +123,7 @@ class GuardedModelRuntime:
                     f"model operation failed ({exc.code})",
                     attempts=attempt,
                     retryable=exc.code in _RETRYABLE_CODES,
+                    audit=exc.audit,
                 )
                 if exc.code not in _RETRYABLE_CODES or attempt > self.retries:
                     raise error from exc
@@ -135,6 +136,13 @@ class GuardedModelRuntime:
             if self.retry_delay_seconds:
                 await asyncio.sleep(self.retry_delay_seconds)
         raise AssertionError("model retry loop must return or raise")
+
+    def describe_model(self):
+        """透明转发模型能力，不在保护包装器中创造容量事实。"""
+        describer = getattr(self.delegate, "describe_model", None)
+        if not callable(describer):
+            raise LookupError("MODEL_CAPABILITY_UNKNOWN")
+        return describer()
 
 
 __all__ = ["GuardedModelRuntime"]

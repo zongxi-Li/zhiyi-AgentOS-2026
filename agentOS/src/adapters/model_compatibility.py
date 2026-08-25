@@ -16,6 +16,7 @@ from adapters.registry import (
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
+    ModelCapabilityEnvelope,
     ModelInvocationRequest,
     ModelInvocationResponse,
 )
@@ -36,6 +37,10 @@ class ModelProviderAdapter(Protocol):
 
     async def invoke(self, request: ModelInvocationRequest) -> ModelInvocationResponse:
         """将规范请求转换为供应商调用并返回规范响应。"""
+        ...
+
+    def describe_model(self, model: str) -> ModelCapabilityEnvelope:
+        """返回精确模型能力；实现不能用未经声明的产品默认值补齐未知字段。"""
         ...
 
 
@@ -149,6 +154,28 @@ class ModelCompatibilityRegistry:
             return tuple(resolved)
         raise LookupError(
             f"MODEL_UNAVAILABLE: {route[0]}/{route[1]} has no healthy adapter"
+        )
+
+    def describe_model(
+        self,
+        provider: str,
+        model: str,
+        *,
+        version: str | None = None,
+    ) -> ModelCapabilityEnvelope:
+        """返回当前首选健康实现声明的能力，未知时保留空值。"""
+
+        adapter = self.resolve(provider, model, version=version)
+        describer = getattr(adapter, "describe_model", None)
+        if callable(describer):
+            described = describer(model)
+            if isinstance(described, ModelCapabilityEnvelope):
+                return described
+        manifest = adapter.manifest
+        return ModelCapabilityEnvelope.unknown(
+            provider=manifest.provider,
+            model=self._model_key(model),
+            version=manifest.version,
         )
 
     async def refresh_health(

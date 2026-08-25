@@ -6,9 +6,10 @@ import json
 from typing import Any
 
 
-NATIVE_CAPABILITY_PROMPT_VERSION = "native-capability.v2"
+NATIVE_CAPABILITY_PROMPT_VERSION = "native-capability.v3"
 VERIFICATION_PROMPT_VERSION = "verification.v2"
-ARTIFACT_SYNTHESIS_PROMPT_VERSION = "artifact-synthesis.v2"
+ARTIFACT_SYNTHESIS_PROMPT_VERSION = "artifact-synthesis.v3"
+JSON_REPAIR_PROMPT_VERSION = "json-repair.v2"
 
 
 def prompt_version_for_capability(capability: str) -> str:
@@ -87,8 +88,9 @@ class NativeCapabilityPromptBuilder:
             "Use only the supplied task and upstream facts. Do not invent measurements, "
             "prices, dates, sources, or completed actions. Separate known facts from "
             "assumptions and open questions. Show formulas and assumptions for numeric "
-            "estimates. Be concise: unless the schema is stricter, use at most 8 useful "
-            "items per array and keep each item under 400 characters. Preserve the task "
+            "estimates. Let the mission, acceptance criteria, constraints, evidence coverage, "
+            "and usefulness determine the number and depth of items. Do not omit supported "
+            "content merely to shorten the response. Preserve the task "
             "language. Return one JSON object that matches "
             "outputSchema exactly, without markdown fences or commentary.\n"
             f"RUNTIME_REQUEST={payload}"
@@ -163,16 +165,17 @@ class NativeCapabilityPromptBuilder:
         original_prompt: str,
         validation_error: str,
     ) -> str:
-        """为无效或截断的 JSON 响应构造一次更保守的重试提示词。
+        """为无效 JSON 响应构造一次只修结构、不删语义的重试提示词。
 
-        输入是原提示词和解析错误，输出要求缩短结果并返回完整 JSON。此方法
+        输入是原提示词和解析错误，输出要求保留已支持内容并返回完整 JSON。此方法
         不尝试解析或修复数据，以免在适配器层伪造模型输出。
         """
         return (
             f"{original_prompt}\n"
-            "The previous response was invalid or truncated JSON. Retry once with a "
-            "smaller response. Use fewer and shorter items, close every string/array/object, "
-            "and return only one complete JSON object.\n"
+            f"Prompt version: {JSON_REPAIR_PROMPT_VERSION}. "
+            "The previous response was invalid JSON. Repair structure only: preserve every "
+            "supported semantic item, close every string/array/object, and return one complete "
+            "JSON object. Do not shorten, summarize, or delete content to make validation pass.\n"
             f"PARSE_ERROR={validation_error}"
         )
 
@@ -190,7 +193,7 @@ class NativeCapabilityPromptBuilder:
                     "consumeAllRelevantUpstreamFields": True,
                     "coverEveryMissionConstraint": True,
                     "coverEveryExpectedArtifact": True,
-                    "requiredSections": [
+                    "coverageAreas": [
                         "executive summary",
                         "requirements and acceptance",
                         "implementation or solution",
@@ -198,6 +201,7 @@ class NativeCapabilityPromptBuilder:
                         "risks and controls",
                         "verification and unresolved gaps",
                     ],
+                    "chapterPolicy": "model decides chapter count and granularity from useful coverage",
                     "finalAnswer": "complete standalone Markdown deliverable",
                     "facts": "cite sourceRefs where supplied",
                     "unknowns": "record as openQuestions instead of inventing values",
@@ -210,6 +214,7 @@ class NativeCapabilityPromptBuilder:
 
 __all__ = [
     "ARTIFACT_SYNTHESIS_PROMPT_VERSION",
+    "JSON_REPAIR_PROMPT_VERSION",
     "NATIVE_CAPABILITY_PROMPT_VERSION",
     "VERIFICATION_PROMPT_VERSION",
     "NativeCapabilityPromptBuilder",

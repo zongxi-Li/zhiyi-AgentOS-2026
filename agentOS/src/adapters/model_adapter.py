@@ -9,6 +9,8 @@ from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from contracts.capability import ModelCapabilityEnvelope, ModelOutputPolicy
+
 
 class StructuredGenerationError(RuntimeError):
     """表示结构化模型运行时可供调用方分支处理的稳定错误。
@@ -24,11 +26,13 @@ class StructuredGenerationError(RuntimeError):
         *,
         attempts: int = 1,
         retryable: bool = False,
+        audit: Dict[str, Any] | None = None,
     ):
         super().__init__(message)
         self.code = code
         self.attempts = attempts
         self.retryable = retryable
+        self.audit = dict(audit or {})
 
 
 class StructuredGenerationResult(BaseModel):
@@ -44,9 +48,21 @@ class StructuredGenerationResult(BaseModel):
     provider: str
     model: str
     latency_ms: int = Field(default=0, alias="latencyMs", ge=0)
-    prompt_version: str = Field(default="native-capability.v2", alias="promptVersion")
+    prompt_version: str = Field(default="native-capability.v3", alias="promptVersion")
     prompt_template_hash: str = Field(default="", alias="promptTemplateHash")
     usage: Dict[str, Any] = Field(default_factory=dict)
+    finish_reason: str | None = Field(default=None, alias="finishReason")
+    capability: ModelCapabilityEnvelope | None = None
+    output_policy: ModelOutputPolicy = Field(
+        default=ModelOutputPolicy.API_CONTROLLED,
+        alias="outputPolicy",
+    )
+    requested_output_tokens: int | None = Field(default=None, alias="requestedOutputTokens", ge=1)
+    effective_output_tokens: int | None = Field(default=None, alias="effectiveOutputTokens", ge=1)
+    effective_reason: str = Field(default="provider_default", alias="effectiveReason")
+    output_exhausted: bool = Field(default=False, alias="outputExhausted")
+    part_index: int | None = Field(default=None, alias="partIndex", ge=0)
+    call_chain_id: str | None = Field(default=None, alias="callChainId")
 
     def audit_record(self) -> Dict[str, Any]:
         """提取不含生成内容的可序列化模型调用审计投影。
@@ -61,6 +77,19 @@ class StructuredGenerationResult(BaseModel):
             "promptVersion": self.prompt_version,
             "promptTemplateHash": self.prompt_template_hash,
             "usage": dict(self.usage),
+            "finishReason": self.finish_reason,
+            "capability": (
+                self.capability.model_dump(by_alias=True, mode="json", exclude_none=True)
+                if self.capability is not None
+                else None
+            ),
+            "outputPolicy": self.output_policy.value,
+            "requestedOutputTokens": self.requested_output_tokens,
+            "effectiveOutputTokens": self.effective_output_tokens,
+            "effectiveReason": self.effective_reason,
+            "outputExhausted": self.output_exhausted,
+            "partIndex": self.part_index,
+            "callChainId": self.call_chain_id,
         }
 
 
@@ -79,6 +108,10 @@ class StructuredGenerationRuntime(Protocol):
         """
         ...
 
+    def describe_model(self) -> ModelCapabilityEnvelope:
+        """返回当前精确模型路由的能力；未知字段保持为空。"""
+        ...
+
     async def generate_json(
         self,
         *,
@@ -86,8 +119,8 @@ class StructuredGenerationRuntime(Protocol):
         schema: Dict[str, Any],
         thinking_mode: str = "disabled",
         timeout_seconds: float = 120.0,
-        max_output_tokens: int = 4096,
-        prompt_version: str = "native-capability.v2",
+        max_output_tokens: int | None = None,
+        prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """在给定 Schema、预算和超时内生成并解析一个 JSON 结果。

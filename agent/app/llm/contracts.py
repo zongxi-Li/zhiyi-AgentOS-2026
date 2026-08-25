@@ -18,7 +18,7 @@ class ModelInvocationPolicy(BaseModel):
     thinking_mode: ThinkingMode = ThinkingMode.DISABLED
     response_format: str = "text"
     timeout_ms: int = 60_000
-    max_output_tokens: int = 4096
+    max_output_tokens: Optional[int] = None
     retry_policy: Optional[str] = None
     fallback_policy: Optional[str] = None
 
@@ -34,7 +34,7 @@ class ResolvedModelPolicy(BaseModel):
     effective_reasoning_effort: Optional[str] = None
     response_format: str = "text"
     timeout_ms: int = 60_000
-    max_output_tokens: int = 4096
+    max_output_tokens: Optional[int] = None
     fallback_chain: List[str] = Field(default_factory=list)
     resolution_reasons: List[str] = Field(default_factory=list)
 
@@ -113,6 +113,8 @@ class LLMUsage(BaseModel):
     reasoning_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
 
 
 class ModelInvocationAudit(BaseModel):

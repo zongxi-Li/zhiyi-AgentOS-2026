@@ -196,7 +196,10 @@ def adapt_chat_completion_parameters(
             extra_body["enable_thinking"] = False
         else:
             extra_body["enable_thinking"] = True
-            extra_body["thinking_budget"] = 8192 if mode == ThinkingMode.DEEP else 4096
+            # Thinking mode is a semantic choice. The Harness must not turn it
+            # into an invented token ceiling when the provider did not report
+            # one; DashScope/API defaults remain authoritative.
+            extra_body.pop("thinking_budget", None)
         request["extra_body"] = extra_body
     elif normalized_model.startswith(("o1", "o3", "o4", "gpt-5")):
         if mode != ThinkingMode.DISABLED:

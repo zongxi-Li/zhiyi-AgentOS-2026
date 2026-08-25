@@ -13,6 +13,8 @@ from adapters.openai_runtime import ModelInvocationError
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
+    ModelCapabilityEnvelope,
+    ModelCapabilitySource,
     ModelInvocationRequest,
     ModelInvocationResponse,
 )
@@ -29,6 +31,7 @@ class _Provider:
         failure_code: str | None = None,
         delay_seconds: float = 0.0,
         version: str = "v1",
+        capability: ModelCapabilityEnvelope | None = None,
     ) -> None:
         self.requests: list[ModelInvocationRequest] = []
         self.capability_id = capability_id
@@ -36,6 +39,7 @@ class _Provider:
         self.failure_code = failure_code
         self.delay_seconds = delay_seconds
         self.version = version
+        self.capability = capability
 
     @property
     def manifest(self) -> CapabilityManifest:
@@ -53,6 +57,13 @@ class _Provider:
     def is_available(self) -> bool:
         """测试提供商始终可用。"""
         return True
+
+    def describe_model(self, model: str) -> ModelCapabilityEnvelope:
+        if self.capability is not None:
+            return self.capability
+        return ModelCapabilityEnvelope.unknown(
+            provider="openai_compatible", model=model, version=self.version
+        )
 
     async def invoke(self, request: ModelInvocationRequest) -> ModelInvocationResponse:
         """回传统一 JSON 输出，并记录模型桥接后的请求。"""
@@ -104,6 +115,23 @@ def test_registered_runtime_converts_native_generation_to_capability_request() -
     assert provider.requests[0].commit_id == "commit:run-1:step-1:0"
 
 
+def test_registered_runtime_omits_artificial_output_limit_by_default() -> None:
+    provider = _Provider()
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"
+    )
+
+    result = asyncio.run(runtime.generate_json(prompt="json", schema={"type": "object"}))
+
+    assert provider.requests[0].options == {}
+    assert result.output_policy.value == "api_controlled"
+    assert result.requested_output_tokens is None
+    assert result.capability is not None
+    assert result.capability.context_window_tokens is None
+
+
 def test_registered_runtime_uses_backup_after_primary_temporary_failure() -> None:
     """主实现调用时临时失败，必须在同一请求内切换至健康备实现。"""
     primary = _Provider(
@@ -133,6 +161,39 @@ def test_registered_runtime_uses_backup_after_primary_temporary_failure() -> Non
     assert len(primary.requests) == 1
     assert len(backup.requests) == 1
     assert backup.requests[0].commit_id == "commit:run-1:step-1:0"
+
+
+def test_failover_re_resolves_provider_required_output_field() -> None:
+    primary = _Provider(
+        capability_id="model.local.primary",
+        priority=100,
+        failure_code="MODEL_TEMPORARY_UNAVAILABLE",
+    )
+    backup = _Provider(
+        capability_id="model.local.backup",
+        priority=10,
+        capability=ModelCapabilityEnvelope(
+            provider="openai_compatible",
+            model="local-chat",
+            source=ModelCapabilitySource.ADAPTER_DECLARED,
+            maxOutputTokens=777,
+            maxTokensField="max_completion_tokens",
+            maxTokensRequired=True,
+        ),
+    )
+    registry = ModelCompatibilityRegistry()
+    registry.register(primary)
+    registry.register(backup)
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"
+    )
+
+    result = asyncio.run(runtime.generate_json(prompt="json", schema={"type": "object"}))
+
+    assert primary.requests[0].options == {}
+    assert backup.requests[0].options == {"max_completion_tokens": 777}
+    assert result.output_policy.value == "provider_required"
+    assert result.effective_output_tokens == 777
 
 
 def test_registered_runtime_keeps_timeout_across_all_failover_candidates() -> None:

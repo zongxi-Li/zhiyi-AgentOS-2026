@@ -7,7 +7,7 @@ from adapters.model.native_prompt import (
 from support.acg.models import build_default_capability_catalog
 
 
-def test_native_v2_prompt_preserves_planned_task_semantics() -> None:
+def test_native_v3_prompt_preserves_planned_task_semantics_without_expression_caps() -> None:
     descriptor = build_default_capability_catalog().get("cost_analysis")
     prompt = NativeCapabilityPromptBuilder().build(
         capability_descriptor=descriptor,
@@ -23,10 +23,13 @@ def test_native_v2_prompt_preserves_planned_task_semantics() -> None:
         output_schema=descriptor.output_contract,
     )
 
-    assert NATIVE_CAPABILITY_PROMPT_VERSION == "native-capability.v2"
+    assert NATIVE_CAPABILITY_PROMPT_VERSION == "native-capability.v3"
     assert VERIFICATION_PROMPT_VERSION == "verification.v2"
-    assert ARTIFACT_SYNTHESIS_PROMPT_VERSION == "artifact-synthesis.v2"
+    assert ARTIFACT_SYNTHESIS_PROMPT_VERSION == "artifact-synthesis.v3"
     assert "Calculate candidate A lifecycle cost" in prompt
     assert "Formula, inputs, units and assumptions are present" in prompt
     assert "budget cap" in prompt and "cost table" in prompt
     assert '"factClasses"' in prompt
+    assert "at most 8" not in prompt
+    assert "under 400" not in prompt
+    assert "Do not omit supported content" in prompt

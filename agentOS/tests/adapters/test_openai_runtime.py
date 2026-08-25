@@ -124,6 +124,30 @@ def test_openai_compatible_runtime_preserves_safe_transport_error_code() -> None
     assert "private provider body" not in str(captured.value)
 
 
+def test_openai_runtime_classifies_length_finish_as_capacity_exhaustion() -> None:
+    class _LengthTransport:
+        async def post_json(self, **_kwargs) -> dict:
+            return {
+                "choices": [{"finish_reason": "length", "message": {"content": '{"partial":'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            }
+
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.length", kind=CapabilityKind.MODEL,
+            displayName="Length model", provider="openai_compatible", capabilities=["local-chat"],
+        ),
+        transport=_LengthTransport(),
+    )
+
+    with pytest.raises(ModelInvocationError) as captured:
+        asyncio.run(runtime.invoke(ModelInvocationRequest(requestId="request-length", model="local-chat")))
+
+    assert captured.value.code == "MODEL_OUTPUT_EXHAUSTED"
+    assert captured.value.usage == {"prompt_tokens": 10, "completion_tokens": 20}
+    assert captured.value.metadata["finishReason"] == "length"
+
+
 def test_openai_compatible_runtime_projects_stream_deltas() -> None:
     """流式响应只向调用会话输出 delta 与完成事件，不写入持久化状态。"""
     class _StreamTransport:

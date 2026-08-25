@@ -67,12 +67,23 @@ class LLMGateway:
     def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         started = time.perf_counter()
         provider_kwargs, audit = self._separate_audit_arguments(kwargs)
-        data = self.provider.generate_json(prompt, schema, **provider_kwargs)
+        detailed = getattr(self.provider, "generate_json_result", None)
+        if callable(detailed):
+            result = detailed(prompt, schema, **provider_kwargs)
+            data = result.get("data") if isinstance(result, dict) else None
+            usage = result.get("usage") if isinstance(result, dict) else None
+            finish_reason = result.get("finish_reason") if isinstance(result, dict) else None
+        else:
+            data = self.provider.generate_json(prompt, schema, **provider_kwargs)
+            usage = None
+            finish_reason = None
         return {
             "data": data,
             "provider": self.provider_name,
             "model": self.model,
             "latency_ms": int((time.perf_counter() - started) * 1000),
+            "usage": dict(usage) if isinstance(usage, dict) else {},
+            "finish_reason": finish_reason,
             **audit,
         }
 

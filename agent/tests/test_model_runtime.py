@@ -46,7 +46,7 @@ def test_native_reasoning_options_cover_openai_and_qwen():
         "high",
     )
     assert qwen_options["extra_body"]["enable_thinking"] is True
-    assert qwen_options["extra_body"]["thinking_budget"] == 8192
+    assert "thinking_budget" not in qwen_options["extra_body"]
 
     deepseek_options = completion_options(
         "deepseek-v4-pro",

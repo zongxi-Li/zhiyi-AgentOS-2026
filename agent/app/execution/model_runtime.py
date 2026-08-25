@@ -11,8 +11,15 @@ from adapters.model_adapter import (
     StructuredGenerationError,
     StructuredGenerationResult,
 )
+from contracts.capability import (
+    ModelCapabilityEnvelope,
+    ModelCapabilitySource,
+    ModelFeatureSet,
+    ModelOutputPolicy,
+)
 
 from app.llm.gateway import get_llm_gateway
+from app.llm.capabilities import provider_model_capabilities
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -35,6 +42,31 @@ class GatewayStructuredGenerationRuntime:
     def is_available(self) -> bool:
         return get_llm_gateway().provider_name not in {"", "mock", "unavailable"}
 
+    def describe_model(self) -> ModelCapabilityEnvelope:
+        gateway = get_llm_gateway()
+        if gateway.provider_name in {"", "mock", "unavailable"}:
+            return ModelCapabilityEnvelope.unknown(
+                provider=gateway.provider_name or "unavailable",
+                model=gateway.model or "unknown",
+            )
+        declared = provider_model_capabilities(
+            gateway.model,
+            str(getattr(getattr(gateway, "provider", None), "base_url", "") or ""),
+        )
+        return ModelCapabilityEnvelope(
+            provider=gateway.provider_name or "unavailable",
+            model=gateway.model or "unknown",
+            source=ModelCapabilitySource.ADAPTER_DECLARED,
+            maxTokensField=declared.max_tokens_field,
+            features=ModelFeatureSet(
+                jsonSchema=declared.supports_json_schema,
+                streaming=declared.supports_stream_usage,
+                tools=declared.supports_tools,
+                thinking=declared.supports_thinking,
+                promptCaching=None,
+            ),
+        )
+
     def close(self) -> None:
         """Release application-owned worker threads during service shutdown."""
         self._executor.shutdown(wait=False, cancel_futures=True)
@@ -46,8 +78,8 @@ class GatewayStructuredGenerationRuntime:
         schema: Dict[str, Any],
         thinking_mode: str = "disabled",
         timeout_seconds: float = 120.0,
-        max_output_tokens: int = 4096,
-        prompt_version: str = "native-capability.v1",
+        max_output_tokens: int | None = None,
+        prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         gateway = get_llm_gateway()
@@ -60,13 +92,13 @@ class GatewayStructuredGenerationRuntime:
         loop = asyncio.get_running_loop()
 
         def invoke() -> Dict[str, Any]:
-            return gateway.generate_json(
-                prompt,
-                schema,
-                thinking_mode=thinking_mode,
-                max_tokens=max_output_tokens,
-                commit_id=commit_id,
-            )
+            kwargs: Dict[str, Any] = {
+                "thinking_mode": thinking_mode,
+                "commit_id": commit_id,
+            }
+            if max_output_tokens is not None:
+                kwargs["max_tokens"] = max_output_tokens
+            return gateway.generate_json(prompt, schema, **kwargs)
 
         try:
             raw = await asyncio.wait_for(
@@ -81,9 +113,12 @@ class GatewayStructuredGenerationRuntime:
         except StructuredGenerationError:
             raise
         except Exception as exc:
+            explicit_code = str(getattr(exc, "code", "") or "")
             message = str(exc)
             lowered = message.lower()
-            if (
+            if explicit_code:
+                code = explicit_code
+            elif (
                 "invalid json returned" in lowered
                 or "json response must be an object" in lowered
                 or "unterminated string" in lowered
@@ -97,7 +132,31 @@ class GatewayStructuredGenerationRuntime:
                 code = "MODEL_TIMEOUT"
             else:
                 code = "MODEL_TRANSPORT_ERROR"
-            raise StructuredGenerationError(code, message or code) from exc
+            raise StructuredGenerationError(
+                code,
+                message or code,
+                retryable=code in {"MODEL_RATE_LIMITED", "MODEL_TIMEOUT"},
+                audit={
+                    "provider": gateway.provider_name,
+                    "model": gateway.model,
+                    "usage": dict(getattr(exc, "usage", {}) or {}),
+                    "finishReason": getattr(exc, "finish_reason", None),
+                    "capability": self.describe_model().model_dump(
+                        by_alias=True, mode="json", exclude_none=True
+                    ),
+                    "outputPolicy": (
+                        ModelOutputPolicy.EXPLICIT.value
+                        if max_output_tokens is not None
+                        else ModelOutputPolicy.API_CONTROLLED.value
+                    ),
+                    "requestedOutputTokens": max_output_tokens,
+                    "effectiveOutputTokens": max_output_tokens,
+                    "effectiveReason": (
+                        "explicit_request" if max_output_tokens is not None else "provider_default"
+                    ),
+                    "outputExhausted": code == "MODEL_OUTPUT_EXHAUSTED",
+                },
+            ) from exc
 
         data = raw.get("data")
         if not isinstance(data, dict) or not data:
@@ -112,6 +171,16 @@ class GatewayStructuredGenerationRuntime:
             latencyMs=int(raw.get("latency_ms") or 0),
             promptVersion=prompt_version,
             usage=dict(raw.get("usage") or {}),
+            finishReason=str(raw.get("finish_reason") or "") or None,
+            capability=self.describe_model(),
+            outputPolicy=(
+                ModelOutputPolicy.EXPLICIT
+                if max_output_tokens is not None
+                else ModelOutputPolicy.API_CONTROLLED
+            ),
+            requestedOutputTokens=max_output_tokens,
+            effectiveOutputTokens=max_output_tokens,
+            effectiveReason=("explicit_request" if max_output_tokens is not None else "provider_default"),
         )
 
 
