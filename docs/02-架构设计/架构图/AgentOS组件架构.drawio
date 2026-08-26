@@ -1,0 +1,106 @@
+<mxfile host="65bd71144e">
+    <diagram id="agentos-arch-beautified" name="AgentOS组件架构-美化版">
+        <mxGraphModel dx="702" dy="1532" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="planner" value="规划器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EEFF;strokeColor=#3B82F6;strokeWidth=2;fontColor=#1E3A8A;fontStyle=1;fontSize=22;shadow=1;arcSize=14;labelBackgroundColor=#E8EEFF;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="200" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="scheduler" value="调度器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="350" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="resource" value="资源器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E8FF;strokeColor=#A855F7;strokeWidth=2;fontColor=#6B21A8;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="770" y="350" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="recovery" value="恢复器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#F59E0B;strokeWidth=2;fontColor=#92400E;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="272.94" y="350" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="memory" value="记忆器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECFDF5;strokeColor=#10B981;strokeWidth=2;fontColor=#065F46;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="272.94" y="490" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="communicator" value="通信器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF1F2;strokeColor=#F43F5E;strokeWidth=2;fontColor=#9F1239;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="272.94" y="640" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="executor" value="执行器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="560" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="audit" value="审计器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#F59E0B;strokeWidth=2;fontColor=#92400E;fontStyle=1;fontSize=22;shadow=1;arcSize=14;opacity=90;" parent="1" vertex="1">
+                    <mxGeometry x="760" y="560" width="180" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="output" value="" style="shape=document;whiteSpace=wrap;html=1;fillColor=#E2E8F0;strokeColor=#475569;strokeWidth=2;fontColor=#0F172A;fontStyle=1;fontSize=22;shadow=1;opacity=90;verticalAlign=top;" parent="1" vertex="1">
+                    <mxGeometry x="525" y="780" width="190" height="96" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" value="①" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#1E3A8A;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="planner" target="scheduler" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" value="②" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#6B21A8;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="resource" target="scheduler" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" value="③" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#2563EB;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="scheduler" target="executor" edge="1">
+                    <mxGeometry x="-0.2941" y="20" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                        <Array as="points">
+                            <mxPoint x="620" y="440"/>
+                            <mxPoint x="620" y="440"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e4" value="④" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#059669;labelBackgroundColor=#FFFFFF;opacity=90;startArrow=block;startFill=1;shadow=1;fillColor=#1ba1e2;" parent="1" source="memory" target="executor" edge="1">
+                    <mxGeometry x="0.2727" y="20" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                        <Array as="points">
+                            <mxPoint x="560" y="530"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e5" value="⑤" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#E11D48;labelBackgroundColor=#FFFFFF;opacity=90;startArrow=block;startFill=1;shadow=1;fillColor=#1ba1e2;" parent="1" source="executor" target="communicator" edge="1">
+                    <mxGeometry x="-0.2" y="20" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                        <Array as="points">
+                            <mxPoint x="560" y="680"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e6" value="⑥" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FFFFFF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#E11D48;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#f5f5f5;" parent="1" source="communicator" target="memory" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="242.94" y="680"/>
+                            <mxPoint x="242.94" y="530"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e7" value="⑦" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#D97706;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="memory" target="recovery" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e8" value="⑧" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#D97706;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="recovery" target="scheduler" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e9" value="⑨" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#0F766E;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="executor" target="output" edge="1">
+                    <mxGeometry x="0.4074" relative="1" as="geometry">
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e10" value="⑩" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;fontSize=22;fontColor=#B45309;labelBackgroundColor=#FFFFFF;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="executor" target="audit" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="680" y="680"/>
+                            <mxPoint x="830" y="680"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#006EAF;strokeWidth=3;endArrow=block;endFill=1;opacity=90;shadow=1;fillColor=#1ba1e2;" parent="1" source="scheduler" target="audit" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="670" y="520"/>
+                            <mxPoint x="830" y="520"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="iZKE10HYOjCJlwOvVCFk-3" value="&lt;span style=&quot;color: rgb(15, 23, 42); font-size: 22px; font-weight: 700;&quot;&gt;最终输出&lt;/span&gt;" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="565" y="800" width="110" height="30" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

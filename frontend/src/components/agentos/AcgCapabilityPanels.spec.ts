@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { workflowApi } from '@/services/api/workflow'
 import AcgExecutionContractBar from './AcgExecutionContractBar.vue'
 import AcgOperationalInspector from './AcgOperationalInspector.vue'
+import AcgResourceInspector from './AcgResourceInspector.vue'
 import IdentityHealthStrip from './IdentityHealthStrip.vue'
 
 const view = {
@@ -45,6 +46,8 @@ describe('ACG capability panels', () => {
     expect(wrapper.text()).toContain('控制协同')
     expect(wrapper.text()).toContain('通信上下文')
     expect(wrapper.text()).toContain('恢复审计')
+    expect(wrapper.findAll('.el-tabs__item')).toHaveLength(4)
+    expect(wrapper.findAll('.el-tabs__item').some(item => item.text().includes('资源'))).toBe(false)
   })
 
   it('summarizes control and context capabilities without hiding their details', async () => {
@@ -81,10 +84,10 @@ describe('ACG capability panels', () => {
     vi.spyOn(workflowApi, 'listRunResourceCalls').mockResolvedValue({
       runId: 'run_1', items: [], nextCursor: undefined, total: 0
     })
-    const wrapper = mount(AcgOperationalInspector, {
+    const wrapper = mount(AcgResourceInspector, {
       props: {
-        view, auditEvents: [], patchRefs: [],
-        resourceUsage: {
+        runId: 'run_1',
+        usage: {
           runId: 'run_1',
           capability: { provider: 'test', model: 'model', source: 'unknown', features: {} },
           usage: {
@@ -105,7 +108,6 @@ describe('ACG capability panels', () => {
       global: { plugins: [ElementPlus] }
     })
 
-    await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('资源'))!.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('API 未声明')

@@ -103,9 +103,26 @@ class OpenAICompatibleProvider:
                 )
             content = raw.content
             if not content:
-                raise LLMProviderError("OpenAI-compatible provider returned empty JSON content")
+                raise LLMProviderError(
+                    "OpenAI-compatible provider returned empty JSON content",
+                    code="MODEL_EMPTY_RESPONSE",
+                    usage=raw.raw_usage,
+                    finish_reason=finish_reason,
+                )
+            try:
+                data = self._parse_json(content)
+            except LLMProviderError as exc:
+                # Parsing happens after a successful provider response. Preserve
+                # that response's accounting metadata while keeping the semantic
+                # error code that drives the existing one-shot JSON repair path.
+                raise LLMProviderError(
+                    str(exc),
+                    code=exc.code,
+                    usage=raw.raw_usage,
+                    finish_reason=finish_reason,
+                ) from exc
             return {
-                "data": self._parse_json(content),
+                "data": data,
                 "usage": dict(raw.raw_usage),
                 "finish_reason": finish_reason,
                 "response_id": raw.raw_response_metadata.get("response_id"),
@@ -191,9 +208,15 @@ class OpenAICompatibleProvider:
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise LLMProviderError(f"Invalid JSON returned by provider: {exc}") from exc
+            raise LLMProviderError(
+                f"Invalid JSON returned by provider: {exc}",
+                code="MODEL_OUTPUT_INVALID_JSON",
+            ) from exc
         if not isinstance(parsed, dict):
-            raise LLMProviderError("Provider JSON response must be an object")
+            raise LLMProviderError(
+                "Provider JSON response must be an object",
+                code="MODEL_OUTPUT_INVALID_JSON",
+            )
         return parsed
 
 

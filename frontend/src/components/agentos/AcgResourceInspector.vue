@@ -106,7 +106,7 @@ onMounted(() => { void load(true) })
 .resource-section > :deep(header strong) { font-size: 12px; }
 .resource-section > :deep(header span) { color: var(--text-secondary); font-size: 10px; }
 .capability-grid, .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; }
-.capability-grid > div, .metric-grid > div { min-width: 0; padding: 9px 10px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-input); }
+.capability-grid > div, .metric-grid > div { min-width: 0; padding: 9px 10px; border: 1px solid var(--border-light); border-radius: var(--radius-card); background: var(--bg-input); }
 dt, .metric-grid span { color: var(--text-secondary); font-size: 9px; }
 dd, .metric-grid strong { display: block; overflow-wrap: anywhere; margin: 4px 0 0; font-size: 12px; font-weight: 700; }
 .resource-note { margin: 0; color: var(--text-secondary); font-size: 9px; line-height: 1.5; text-wrap: pretty; }
@@ -114,15 +114,15 @@ dd, .metric-grid strong { display: block; overflow-wrap: anywhere; margin: 4px 0
 .pressure-track i { display: block; height: 100%; border-radius: inherit; background: var(--primary-color); transition: width 150ms ease; }
 .pressure-track.unknown i { width: 0 !important; }
 .progress-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
-.progress-list li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-radius: 7px; background: var(--bg-input); font-size: 10px; }
+.progress-list li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-radius: var(--radius-control); background: var(--bg-input); font-size: 10px; }
 .call-list { display: grid; gap: 7px; }
-.call-list article { padding: 9px 10px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-input); }
+.call-list article { padding: 9px 10px; border: 1px solid var(--border-light); border-radius: var(--radius-card); background: var(--bg-input); }
 .call-list header { display: flex; justify-content: space-between; gap: 8px; }
 .call-list strong { overflow-wrap: anywhere; font-size: 10px; }
 .call-list header span, .call-list p, .call-list small { color: var(--text-secondary); font-size: 9px; }
 .call-list p { margin: 5px 0; }
-.load-more { width: 100%; min-height: 32px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--surface-solid); color: var(--primary-color); font: inherit; font-size: 10px; cursor: pointer; }
+.load-more { width: 100%; min-height: 32px; border: 1px solid var(--border-light); border-radius: var(--radius-control); background: var(--surface-solid); color: var(--primary-color); font: inherit; font-size: 10px; cursor: pointer; }
 .load-more:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-.resource-empty { margin: 0; padding: 12px; border: 1px dashed var(--border-light); border-radius: 8px; color: var(--text-secondary); font-size: 10px; text-align: center; }
+.resource-empty { margin: 0; padding: 12px; border: 1px dashed var(--border-light); border-radius: var(--radius-card); color: var(--text-secondary); font-size: 10px; text-align: center; }
 @media (prefers-reduced-motion: reduce) { .pressure-track i { transition: none; } }
 </style>

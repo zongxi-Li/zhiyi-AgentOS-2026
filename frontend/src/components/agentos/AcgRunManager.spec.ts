@@ -87,6 +87,20 @@ describe('AcgRunManager', () => {
     wrapper.unmount()
   })
 
+  it('keeps the sidebar on active tasks and moves archive browsing to run history', async () => {
+    const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('.acg-run-filter')).toHaveLength(2)
+    expect(wrapper.find('select[aria-label="筛选任务记录"]').exists()).toBe(false)
+    expect(wrapper.find('.acg-run-manage strong').text()).toBe('查看运行历史记录')
+    expect(workflowApi.listRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ recordState: 'active' }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    wrapper.unmount()
+  })
+
   it('filters the combined ACG history by role domain', async () => {
     const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
     await flushPromises()
@@ -232,13 +246,13 @@ describe('AcgRunManager', () => {
     wrapper.unmount()
   })
 
-  it('mutates the Mission identity from the context menu instead of the displayed Run', async () => {
+  it('mutates the Mission identity from the row action menu instead of the displayed Run', async () => {
     const wrapper = mount(AcgRunManager, { attachTo: document.body, global: { stubs: { 'el-icon': true } } })
     await flushPromises()
 
-    await wrapper.find('.acg-run-item.status-completed').trigger('contextmenu', { clientX: 30, clientY: 30 })
+    await wrapper.find('.acg-run-item.status-completed .acg-run-item__actions').trigger('click')
     await flushPromises()
-    const archive = [...document.body.querySelectorAll<HTMLButtonElement>('.acg-run-context-menu button')]
+    const archive = [...document.body.querySelectorAll<HTMLButtonElement>('.acg-run-action-menu button')]
       .find(button => button.textContent?.includes('归档任务'))
     archive?.click()
     await flushPromises()

@@ -107,6 +107,24 @@ describe('AgentOsConsoleView control plane', () => {
     wrapper.unmount()
   })
 
+  it('keeps archive browsing inside the run history filters', async () => {
+    const { wrapper } = await mountConsole()
+
+    expect(wrapper.find('[aria-label="任务记录范围"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="显示当前任务"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('button[aria-label="显示已归档任务"]').attributes('aria-selected')).toBe('false')
+
+    await wrapper.find('button[aria-label="显示已归档任务"]').trigger('click')
+    await flushPromises()
+
+    expect(workflowApi.listRuns).toHaveBeenLastCalledWith(
+      expect.objectContaining({ recordState: 'archived' }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(wrapper.find('button[aria-label="显示已归档任务"]').attributes('aria-selected')).toBe('true')
+    wrapper.unmount()
+  })
+
   it('restores a selected Run from URL without starting a workflow or loading full ACG during planning', async () => {
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({ runId: 'run_url', phase: 'planning', percent: null }))
     const { wrapper } = await mountConsole('?runId=run_url')

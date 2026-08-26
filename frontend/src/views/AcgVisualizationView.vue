@@ -19,7 +19,7 @@
     </header>
 
     <!-- 控制台 -->
-    <section class="ui-surface ui-surface--pad control-bar" :class="{ collapsed: inputPanelCompact }">
+    <section class="ui-surface ui-surface--pad control-bar" :class="{ collapsed: inputPanelCompact, 'advanced-open': advancedSettingsExpanded }">
       <button
         class="input-panel-toggle"
         type="button"
@@ -34,7 +34,7 @@
         <span class="input-summary__copy">
           <el-icon><Document /></el-icon>
           <strong>{{ taskName || '未命名 ACG 任务' }}</strong>
-          <small>任务材料 · {{ taskMaterialLength.toLocaleString('zh-CN') }} 字｜{{ planningModeSummary }}｜{{ draft.webSearchEnabled ? '联网' : '仅本地' }}｜{{ activePluginSummary }}</small>
+          <small>任务材料 · {{ taskMaterialLength.toLocaleString('zh-CN') }} 字｜{{ planningModeSummary }}｜{{ advancedSettingsSummary }}｜{{ activePluginSummary }}</small>
         </span>
       </div>
       <Transition
@@ -48,7 +48,7 @@
       >
         <div v-show="inputPanelExpanded" class="input-panel-expandable">
       <div class="workbench-identity">
-        <div><strong>知弈OS 原生任务工作台</strong><small>默认只使用 Native 能力；专业能力包按 Run 显式启用</small></div>
+        <!-- <div><strong>知弈OS 原生任务工作台</strong><small>默认只使用 Native 能力；专业能力包按 Run 显式启用</small></div> -->
       </div>
       <div class="input-fields">
         <div class="input-pane contract-pane">
@@ -87,67 +87,135 @@
         </div>
       </div>
       <section class="plugin-selector" aria-label="专业能力扩展">
-        <header><div><strong>专业能力扩展（单选）</strong><small>Native Core 始终启用；每个 Run 最多叠加一个专业能力包</small></div></header>
+        <header><div><strong>专业能力扩展</strong><small>Native Core 始终启用；每个 Run 最多叠加一个专业能力包</small></div></header>
         <div class="plugin-options">
           <button type="button" class="plugin-card native-card" :class="{ selected: !draft.enabledPluginIds.length }" :aria-pressed="!draft.enabledPluginIds.length" :disabled="scopeLocked" @click="clearPlugins">
-            <strong>Native Core · 始终启用</strong><small>{{ draft.enabledPluginIds.length ? '作为专业能力包的运行基础' : '当前仅使用通用规划、分析与交付能力' }}</small><code>不叠加专业能力包</code>
+            <span class="plugin-card__top"><strong>Native Core · 始终启用</strong><span class="plugin-card__state">{{ !draft.enabledPluginIds.length ? '已启用' : '基础' }}</span></span>
+            <small>{{ draft.enabledPluginIds.length ? '作为专业能力包的运行基础' : '当前仅使用通用规划、分析与交付能力' }}</small>
+            <code>不叠加专业能力包</code>
           </button>
           <button v-for="plugin in installedPlugins" :key="plugin.pluginId" type="button" class="plugin-card" :class="{ selected: draft.enabledPluginIds[0] === plugin.pluginId }" :aria-pressed="draft.enabledPluginIds[0] === plugin.pluginId" :disabled="scopeLocked || !plugin.available" @click="togglePlugin(plugin.pluginId)">
-            <strong>{{ plugin.displayName }}</strong><small>{{ plugin.description }}</small><code>{{ plugin.pluginId }} · v{{ plugin.version }}</code>
+            <span class="plugin-card__top"><strong>{{ plugin.displayName }}</strong><span class="plugin-card__state">{{ draft.enabledPluginIds[0] === plugin.pluginId ? '已启用' : '选择' }}</span></span>
+            <small>{{ plugin.description }}</small>
+            <code>{{ plugin.pluginId }} · v{{ plugin.version }}</code>
           </button>
         </div>
       </section>
       <PluginExtensionHost :extensions="draftExtensions" :draft="draft" :readonly="scopeLocked" @update:plugin-data="draft.pluginData = $event" />
-      <div v-if="advancedSettingsExpanded" class="advanced-settings">
-        <label class="advanced-item">
-          <span>图规划多样性</span>
-          <el-select v-model="draft.planningDiversity" aria-label="图规划多样性">
-            <el-option label="稳定（可重复）" value="stable" />
-            <el-option label="均衡（推荐）" value="balanced" />
-            <el-option label="探索（变化更大）" value="exploratory" />
-          </el-select>
-        </label>
-        <label class="advanced-item">
-          <span>随机种子（可选）</span>
-          <el-input-number v-model="draft.planningSeed" :min="0" :max="2147483647" :controls="false" placeholder="留空则自动生成" />
-        </label>
-        <label v-if="activeRunId && draft.planningDiversity !== 'stable'" class="advanced-item">
-          <span>规划变体</span>
-          <el-button @click="rerunWithNewPlanningSeed">换一种规划</el-button>
-        </label>
-        <label class="advanced-item"><span>调试开关</span><el-checkbox v-model="debugTraceEnabled">记录详细调试轨迹</el-checkbox></label>
-        <label class="advanced-item advanced-item--wide">
-          <span>低熵通信实验项</span>
-          <el-checkbox-group v-model="lowEntropyOptions" class="advanced-checks">
-            <el-checkbox label="trace_provenance">记录通信血缘</el-checkbox>
-          </el-checkbox-group>
-        </label>
-      </div>
         </div>
       </Transition>
       <div class="ctrl-options">
-        <div v-show="inputPanelExpanded" class="primary-config"><span class="ctrl-label">规划方式</span><el-radio-group v-model="planningMode" size="small"><el-radio-button label="dynamic">动态规划</el-radio-button><el-radio-button label="template_preferred">模板优先</el-radio-button></el-radio-group></div>
-        <div v-show="inputPanelExpanded" class="primary-config"><span class="ctrl-label">思考强度</span><el-radio-group v-model="thinkingMode" size="small"><el-radio-button label="disabled">关闭</el-radio-button><el-radio-button label="standard">标准</el-radio-button><el-radio-button label="deep">深度</el-radio-button></el-radio-group></div>
-        <div v-show="inputPanelExpanded" class="primary-config"><span class="ctrl-label">审核方式</span><el-radio-group v-model="draft.reviewMode" size="small"><el-radio-button label="auto">自动</el-radio-button><el-radio-button label="human_in_loop">人工介入</el-radio-button></el-radio-group></div>
-        <div
-          v-show="inputPanelExpanded"
-          class="primary-config network-config"
-          :class="{ enabled: draft.webSearchEnabled }"
-          title="用于检索公开网页；失败或超时会自动回退本地资料"
-        >
-          <span class="ctrl-label">联网检索</span>
-          <el-switch
-            v-model="draft.webSearchEnabled"
-            size="small"
-            inline-prompt
-            active-text="开"
-            inactive-text="关"
-            :disabled="isSubmitting"
-            aria-label="联网检索"
-          />
+        <div v-show="inputPanelExpanded" class="primary-options">
+          <div class="primary-config">
+            <span class="ctrl-label">规划方式</span>
+            <div class="segmented-control" role="radiogroup" aria-label="规划方式">
+              <button type="button" role="radio" class="segment-option" :aria-checked="planningMode === 'dynamic'" :class="{ selected: planningMode === 'dynamic' }" @click="planningMode = 'dynamic'">动态规划</button>
+              <button type="button" role="radio" class="segment-option" :aria-checked="planningMode === 'template_preferred'" :class="{ selected: planningMode === 'template_preferred' }" @click="planningMode = 'template_preferred'">模板优先</button>
+            </div>
+          </div>
+          <div class="primary-config">
+            <span class="ctrl-label">审核方式</span>
+            <div class="segmented-control" role="radiogroup" aria-label="审核方式">
+              <button type="button" role="radio" class="segment-option" :aria-checked="draft.reviewMode === 'auto'" :class="{ selected: draft.reviewMode === 'auto' }" @click="draft.reviewMode = 'auto'">自动</button>
+              <button type="button" role="radio" class="segment-option" :aria-checked="draft.reviewMode === 'human_in_loop'" :class="{ selected: draft.reviewMode === 'human_in_loop' }" @click="draft.reviewMode = 'human_in_loop'">人工介入</button>
+            </div>
+          </div>
+          <div class="advanced-settings-popover">
+            <button ref="advancedSettingsToggle" class="advanced-toggle" type="button" :aria-expanded="advancedSettingsExpanded" @click="toggleAdvancedSettings">
+              <span class="advanced-toggle__copy"><strong>高级设置</strong><small>{{ advancedSettingsSummary }}</small></span>
+              <el-icon><ArrowUp v-if="advancedSettingsExpanded" /><ArrowDown v-else /></el-icon>
+            </button>
+            <Teleport to="body">
+            <div v-if="advancedSettingsExpanded" ref="advancedSettingsElement" class="advanced-settings" :style="{ left: `${advancedSettingsPosition.x}px`, top: `${advancedSettingsPosition.y}px` }">
+              <header class="advanced-settings__head">
+                <div>
+                  <strong>高级运行策略</strong>
+                  <small>仅在需要控制推理、规划或调试行为时调整</small>
+                </div>
+                <div class="advanced-settings__head-actions">
+                  <span>{{ advancedSettingsSummary }}</span>
+                  <button class="advanced-settings__close" type="button" title="关闭高级设置" aria-label="关闭高级设置" @click="closeAdvancedSettings">
+                    <el-icon><Close /></el-icon>
+                  </button>
+                </div>
+              </header>
+              <section class="advanced-presets" aria-label="高级设置快速方案">
+                <div class="advanced-presets__intro">
+                  <strong>快速方案</strong>
+                  <small>一键应用常用的运行组合</small>
+                </div>
+                <div class="advanced-presets__options">
+                  <button type="button" class="advanced-preset" :class="{ selected: advancedPreset === 'fast' }" @click="applyAdvancedPreset('fast')">
+                    <strong>快速</strong><small>低耗时 · 稳定规划</small>
+                  </button>
+                  <button type="button" class="advanced-preset" :class="{ selected: advancedPreset === 'balanced' }" @click="applyAdvancedPreset('balanced')">
+                    <strong>均衡</strong><small>标准思考 · 联网检索</small>
+                  </button>
+                  <button type="button" class="advanced-preset" :class="{ selected: advancedPreset === 'deep' }" @click="applyAdvancedPreset('deep')">
+                    <strong>深度</strong><small>深度思考 · 探索规划</small>
+                  </button>
+                </div>
+              </section>
+              <div class="advanced-item advanced-item--segmented">
+                <div class="advanced-item__heading"><span>思考强度</span><small>影响耗时与推理深度</small></div>
+                <div class="segmented-control" role="radiogroup" aria-label="思考强度">
+                  <button type="button" role="radio" class="segment-option" :aria-checked="thinkingMode === 'disabled'" :class="{ selected: thinkingMode === 'disabled' }" @click="thinkingMode = 'disabled'">关闭</button>
+                  <button type="button" role="radio" class="segment-option" :aria-checked="thinkingMode === 'standard'" :class="{ selected: thinkingMode === 'standard' }" @click="thinkingMode = 'standard'">标准</button>
+                  <button type="button" role="radio" class="segment-option" :aria-checked="thinkingMode === 'deep'" :class="{ selected: thinkingMode === 'deep' }" @click="thinkingMode = 'deep'">深度</button>
+                </div>
+              </div>
+              <div class="advanced-item advanced-item--switch">
+                <div class="advanced-item__heading"><span>联网检索</span><small>优先补充公开网页信息</small></div>
+                <button class="settings-switch" type="button" role="switch" :aria-checked="draft.webSearchEnabled" :disabled="isSubmitting" @click="draft.webSearchEnabled = !draft.webSearchEnabled">
+                  <span class="settings-switch__track"><span></span></span>
+                  <span>{{ draft.webSearchEnabled ? '开启' : '关闭' }}</span>
+                </button>
+              </div>
+              <label class="advanced-item">
+                <span class="advanced-item__label">图规划多样性</span>
+                <el-select v-model="draft.planningDiversity" aria-label="图规划多样性">
+                  <el-option label="稳定（可重复）" value="stable" />
+                  <el-option label="均衡（推荐）" value="balanced" />
+                  <el-option label="探索（变化更大）" value="exploratory" />
+                </el-select>
+              </label>
+              <label class="advanced-item">
+                <span class="advanced-item__label">随机种子（可选）</span>
+                <el-input-number v-model="draft.planningSeed" :min="0" :max="2147483647" :controls="false" placeholder="留空则自动生成" />
+              </label>
+              <label v-if="activeRunId && draft.planningDiversity !== 'stable'" class="advanced-item">
+                <span class="advanced-item__label">规划变体</span>
+                <el-button @click="rerunWithNewPlanningSeed">换一种规划</el-button>
+              </label>
+              <div class="advanced-item advanced-item--switch">
+                <div class="advanced-item__heading"><span>调试轨迹</span><small>记录更详细的执行诊断</small></div>
+                <button class="settings-switch" type="button" role="switch" :aria-checked="debugTraceEnabled" @click="debugTraceEnabled = !debugTraceEnabled">
+                  <span class="settings-switch__track"><span></span></span>
+                  <span>{{ debugTraceEnabled ? '开启' : '关闭' }}</span>
+                </button>
+              </div>
+              <div class="advanced-item advanced-item--switch">
+                <div class="advanced-item__heading"><span>通信血缘</span><small>保留低熵通信的来源与去向记录</small></div>
+                <button class="settings-switch" type="button" role="switch" :aria-checked="lowEntropyOptions.includes('trace_provenance')" @click="lowEntropyOptions = lowEntropyOptions.includes('trace_provenance') ? [] : ['trace_provenance']">
+                  <span class="settings-switch__track"><span></span></span>
+                  <span>{{ lowEntropyOptions.includes('trace_provenance') ? '记录' : '不记录' }}</span>
+                </button>
+              </div>
+            </div>
+            </Teleport>
+          </div>
         </div>
-        <button v-show="inputPanelExpanded" class="advanced-toggle" type="button" :aria-expanded="advancedSettingsExpanded" @click="advancedSettingsExpanded = !advancedSettingsExpanded"><span>高级设置</span><el-icon><ArrowUp v-if="advancedSettingsExpanded" /><ArrowDown v-else /></el-icon></button>
-        <el-button :type="mainAction.type" :loading="mainAction.loading" :disabled="mainAction.disabled" @click="handleMainAction">{{ mainAction.label }}</el-button>
+        <el-button
+          class="main-action"
+          :class="`main-action--${mainAction.action}`"
+          :type="mainAction.type"
+          :loading="mainAction.loading"
+          :disabled="mainAction.disabled"
+          @click="handleMainAction"
+        >
+          <span class="main-action__label">{{ mainAction.label }}</span>
+          <el-icon v-if="!mainAction.loading" class="main-action__arrow" aria-hidden="true"><ArrowRight /></el-icon>
+        </el-button>
       </div>
     </section>
 
@@ -189,6 +257,34 @@
       @open-run="openRelatedRun"
     />
     </section>
+
+    <el-drawer
+      id="acg-resource-drawer"
+      v-model="resourceDrawerOpen"
+      class="resource-drawer"
+      direction="rtl"
+      size="520px"
+      :with-header="true"
+      :destroy-on-close="false"
+      aria-label="资源详情"
+    >
+      <template #header>
+        <div class="resource-drawer__header">
+          <div>
+            <strong>资源详情</strong>
+            <span>当前 Run 的 API、用量与上下文观测</span>
+          </div>
+          <el-tag v-if="activeRun" effect="plain" type="info">{{ activeRun.status }}</el-tag>
+        </div>
+      </template>
+      <div class="resource-drawer__body">
+        <AcgResourceInspector
+          v-if="activeRunId"
+          :run-id="activeRunId"
+          :usage="resourceUsage"
+        />
+      </div>
+    </el-drawer>
 
     <p v-if="startError" class="run-error" role="alert">{{ startError }}</p>
 
@@ -268,8 +364,6 @@
             :view="acgView"
             :audit-events="acgAuditEvents"
             :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
-            :resource-usage="resourceUsage"
-            :requested-tab-revision="resourceTabRequest"
             @export-audit="exportAudit"
           />
           <section class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
@@ -293,9 +387,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type DeepReadonly } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type DeepReadonly } from 'vue'
 import axios from 'axios'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Close, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -313,6 +407,7 @@ import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 import RunResourceStrip from '@/components/agentos/RunResourceStrip.vue'
+import AcgResourceInspector from '@/components/agentos/AcgResourceInspector.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
@@ -346,9 +441,70 @@ const expectedArtifactsText = computed({
   set: value => { draft.expectedArtifacts = value.split(/[,，\n]/).map(item => item.trim()).filter(Boolean) }
 })
 const advancedSettingsExpanded = ref(false)
+const advancedSettingsToggle = ref<HTMLButtonElement | null>(null)
+const advancedSettingsElement = ref<HTMLElement | null>(null)
+const advancedSettingsPosition = reactive({ x: 0, y: 0 })
 const debugTraceEnabled = ref(false)
 const lowEntropyOptions = ref(['trace_provenance'])
 const autoGeneratedTaskName = ref('')
+
+const positionAdvancedSettings = async () => {
+  await nextTick()
+  const trigger = advancedSettingsToggle.value
+  const panel = advancedSettingsElement.value
+  if (!trigger || !panel) return
+  const rect = trigger.getBoundingClientRect()
+  const gutter = 16
+  const panelWidth = panel.offsetWidth
+  const panelHeight = panel.offsetHeight
+  advancedSettingsPosition.x = Math.max(gutter, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - gutter))
+  advancedSettingsPosition.y = Math.max(gutter, Math.min(rect.bottom + 10, window.innerHeight - panelHeight - gutter))
+}
+
+const toggleAdvancedSettings = async () => {
+  advancedSettingsExpanded.value = !advancedSettingsExpanded.value
+  if (advancedSettingsExpanded.value) await positionAdvancedSettings()
+}
+
+const closeAdvancedSettings = () => {
+  advancedSettingsExpanded.value = false
+}
+
+const applyAdvancedPreset = (preset: AdvancedPreset) => {
+  if (preset === 'fast') {
+    thinkingMode.value = 'disabled'
+    draft.webSearchEnabled = false
+    draft.planningDiversity = 'stable'
+    return
+  }
+  if (preset === 'balanced') {
+    thinkingMode.value = 'standard'
+    draft.webSearchEnabled = true
+    draft.planningDiversity = 'balanced'
+    return
+  }
+  thinkingMode.value = 'deep'
+  draft.webSearchEnabled = true
+  draft.planningDiversity = 'exploratory'
+}
+
+const handleAdvancedSettingsViewportChange = () => {
+  if (advancedSettingsExpanded.value) void positionAdvancedSettings()
+}
+
+const handleAdvancedSettingsDismiss = (event: PointerEvent) => {
+  const target = event.target as Node | null
+  if (!target) return
+  if (advancedSettingsElement.value?.contains(target) || advancedSettingsToggle.value?.contains(target)) return
+  if (target instanceof Element && target.closest('.el-popper')) return
+  closeAdvancedSettings()
+}
+
+const handleAdvancedSettingsKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Escape' || !advancedSettingsExpanded.value) return
+  closeAdvancedSettings()
+  nextTick(() => advancedSettingsToggle.value?.focus())
+}
 
 watch(userIntent, value => {
   if (activeRunId.value) return
@@ -365,10 +521,9 @@ watch(userIntent, value => {
 const acgView = ref<AcgView | null>(null)
 const activeRun = ref<WorkflowRun | null>(null)
 const resourceUsage = ref<RunResourceUsage | null>(null)
-const resourceTabRequest = ref(0)
+const resourceDrawerOpen = ref(false)
 const openResourceInspector = () => {
-  setSidePanelCollapsed(false)
-  resourceTabRequest.value += 1
+  resourceDrawerOpen.value = true
 }
 const acgAuditEvents = computed(() => {
   const events = [
@@ -625,6 +780,18 @@ const planningModeSummary = computed(() => ({
   dynamic: '动态规划'
 })[planningMode.value])
 const thinkingModeSummary = computed(() => ({ disabled: '关闭', standard: '标准', deep: '深度' })[thinkingMode.value])
+type AdvancedPreset = 'fast' | 'balanced' | 'deep'
+const advancedPreset = computed<AdvancedPreset | 'custom'>(() => {
+  if (thinkingMode.value === 'disabled' && !draft.webSearchEnabled && draft.planningDiversity === 'stable') return 'fast'
+  if (thinkingMode.value === 'standard' && draft.webSearchEnabled && draft.planningDiversity === 'balanced') return 'balanced'
+  if (thinkingMode.value === 'deep' && draft.webSearchEnabled && draft.planningDiversity === 'exploratory') return 'deep'
+  return 'custom'
+})
+const advancedSettingsSummary = computed(() => `${thinkingModeSummary.value}思考 · ${draft.webSearchEnabled ? '联网' : '仅本地'} · ${({
+  stable: '稳定',
+  balanced: '均衡',
+  exploratory: '探索'
+} as const)[draft.planningDiversity]}规划`)
 const mainAction = computed<{
   action: 'start' | 'planning' | 'view' | 'review' | 'rerun' | 'retry'
   label: string
@@ -759,7 +926,7 @@ const clearRunData = () => {
   acgView.value = null
   activeRun.value = null
   resourceUsage.value = null
-  resourceTabRequest.value = 0
+  resourceDrawerOpen.value = false
   loadedRunId.value = ''
   isAcgLoading.value = false
   lastTopologyRefreshAt = 0
@@ -1120,6 +1287,9 @@ const startErrorMessage = (error: unknown): string => {
 
 onMounted(() => {
   window.addEventListener('acg-new-task', enterNewAcgDraft)
+  window.addEventListener('resize', handleAdvancedSettingsViewportChange)
+  window.addEventListener('pointerdown', handleAdvancedSettingsDismiss)
+  window.addEventListener('keydown', handleAdvancedSettingsKeydown)
 })
 
 onBeforeUnmount(() => {
@@ -1130,6 +1300,9 @@ onBeforeUnmount(() => {
   clearInputCollapseTimer()
   clearInputPanelCompactTimer()
   window.removeEventListener('acg-new-task', enterNewAcgDraft)
+  window.removeEventListener('resize', handleAdvancedSettingsViewportChange)
+  window.removeEventListener('pointerdown', handleAdvancedSettingsDismiss)
+  window.removeEventListener('keydown', handleAdvancedSettingsKeydown)
 })
 </script>
 
@@ -1149,6 +1322,29 @@ onBeforeUnmount(() => {
 }
 .run-overview > :deep(.workflow-progress) { padding: 14px 16px; }
 .run-overview > :deep(.agentos-run-summary) { padding: 14px 16px; }
+:global(.resource-drawer) {
+  --el-drawer-padding-primary: 0;
+  border-radius: var(--radius-panel) 0 0 var(--radius-panel);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+:global(.resource-drawer .el-drawer__header) {
+  margin: 0;
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+:global(.resource-drawer .el-drawer__body) {
+  padding: 0;
+  overflow-y: auto;
+  background: var(--surface-solid);
+}
+:global(.resource-drawer .el-drawer__close-btn) { border-radius: var(--radius-control); }
+:global(.resource-drawer .el-tag) { border-radius: var(--radius-full); }
+.resource-drawer__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.resource-drawer__header > div { display: grid; gap: 4px; min-width: 0; }
+.resource-drawer__header strong { color: var(--text-primary); font-size: 16px; font-weight: 800; line-height: 1.25; }
+.resource-drawer__header span { color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
+.resource-drawer__body { min-height: 100%; padding: 0 22px 24px; }
 .hero-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ui-hero h3 { overflow: hidden; margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 800; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .hero-right { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; }
@@ -1161,6 +1357,7 @@ onBeforeUnmount(() => {
 .hero-icon-action:disabled { cursor: not-allowed; opacity: .5; }
 .hero-icon-action:focus-visible, .hero-operations:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 .control-bar { position: relative; display: flex; flex-direction: column; gap: var(--space-md); padding-right: 52px; padding-bottom: 10px; }
+.control-bar.advanced-open { z-index: 40; }
 .control-bar.collapsed { flex-direction: row; align-items: center; gap: 14px; padding: 10px 52px 10px 14px; }
 .control-bar.collapsed .input-summary { flex: 1 1 auto; }
 .control-bar.collapsed .ctrl-options { flex: 0 0 auto; padding: 0; border: 0; }
@@ -1168,13 +1365,22 @@ onBeforeUnmount(() => {
 .workbench-identity, .plugin-selector header, .run-scope header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .workbench-identity div, .plugin-selector header div { display:flex; flex-direction:column; gap:3px; }
 .workbench-identity small, .plugin-selector small, .plugin-selector header span { color:var(--text-secondary); font-size:11px; }
-.plugin-selector { display:flex; flex-direction:column; gap:10px; }
-.plugin-options { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px; }
-.plugin-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px; min-height:86px; padding:12px; border:1px solid var(--border-light); border-radius:8px; background:var(--surface-solid); color:var(--text-primary); text-align:left; cursor:pointer; }
-.plugin-card:hover:not(:disabled), .plugin-card.selected { border-color:var(--primary-color); background:var(--primary-fade); }
-.plugin-card:disabled { cursor:not-allowed; opacity:.72; }
-.plugin-card small { min-height:30px; }
-.plugin-card code { color:var(--text-muted); font-size:10px; }
+.plugin-selector { display:flex; flex-direction:column; gap:10px; padding:0; }
+.plugin-selector header { align-items:flex-end; }
+.plugin-selector header strong { color:var(--text-primary); font-size:14px; font-weight:780; }
+.plugin-selector header small { color:var(--text-muted); font-size:10px; }
+.plugin-options { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; }
+.plugin-card { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:7px; min-height:92px; padding:13px 14px; border:1px solid var(--border-light); border-radius:var(--radius-card); background:var(--surface-solid); color:var(--text-primary); text-align:left; cursor:pointer; transition:var(--transition); }
+.plugin-card:hover:not(:disabled) { border-color:var(--border-hover); background:var(--surface-hover); transform:translateY(-1px); }
+.plugin-card.selected { border-color:var(--primary-line); background:color-mix(in srgb, var(--primary-fade) 68%, var(--surface-solid)); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 24%, transparent), var(--shadow-sm); }
+.plugin-card__top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.plugin-card__top strong { min-width:0; color:var(--text-primary); font-size:12px; font-weight:760; }
+.plugin-card__state { flex:0 0 auto; padding:4px 7px; border-radius:var(--radius-full); background:var(--bg-input); color:var(--text-muted); font-size:9px; line-height:1; }
+.plugin-card.selected .plugin-card__state { background:var(--primary-fade); color:var(--primary-color); }
+.plugin-card small { min-height:28px; color:var(--text-secondary); font-size:10px; line-height:1.45; }
+.plugin-card code { align-self:flex-start; padding:4px 7px; border-radius:5px; background:var(--bg-input); color:var(--text-muted); font-family:var(--font-mono); font-size:9px; }
+.plugin-card:disabled { cursor:not-allowed; opacity:.6; }
+.plugin-card:focus-visible { outline:2px solid var(--primary-color); outline-offset:2px; }
 .run-scope { display:flex; flex-direction:column; gap:8px; padding:18px 20px; }
 .run-scope header strong { font-size:13px; }
 .snapshot-list { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--text-secondary); font-size:11px; }
@@ -1237,33 +1443,230 @@ onBeforeUnmount(() => {
 }
 .ctrl-row { display: flex; flex-direction: column; gap: 6px; }
 .ctrl-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
-.ctrl-options { order: 2; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding-top: 4px; }
-.primary-config { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.primary-config :deep(.el-radio-button__inner) { border-color: transparent; background: transparent; box-shadow: none; }
-.primary-config :deep(.el-radio-button.is-active .el-radio-button__inner) { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); }
-.network-config {
-  min-height: 30px; padding: 0 9px; border: 1px solid var(--border-light); border-radius: 6px;
-  background: var(--surface-solid); transition: var(--transition);
+.ctrl-options {
+  order: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 6px;
 }
-.network-config.enabled { border-color: var(--primary-line); background: var(--primary-fade); }
-.network-config.enabled .ctrl-label { color: var(--primary-color); }
-.network-config:focus-within { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.primary-options { display: flex; align-items: center; gap: 18px; min-width: 0; flex-wrap: wrap; overflow: visible; }
+.primary-config { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ctrl-label { white-space: nowrap; font-size: 11px; font-weight: 650; color: var(--text-secondary); }
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 45%, transparent);
+}
+.segment-option {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.segment-option:hover { color: var(--text-primary); }
+.segment-option.selected {
+  background: var(--surface-solid);
+  color: var(--primary-color);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--primary-line);
+}
+.segment-option:active { transform: scale(.98); }
+.segment-option:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 .advanced-toggle {
-  min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px;
-  border: 1px solid var(--border-light); border-radius: 6px; background: var(--surface-solid);
-  color: var(--text-secondary); cursor: pointer; transition: var(--transition);
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 9px 4px 11px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
 }
-.advanced-toggle:hover { border-color: var(--primary-line); color: var(--primary-color); }
-.ctrl-options > :deep(.el-button:last-child) { margin-left: auto; }
+.advanced-toggle:hover, .advanced-toggle[aria-expanded="true"] { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); }
+.advanced-toggle:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.advanced-toggle__copy { display: grid; gap: 1px; min-width: 0; }
+.advanced-toggle__copy strong { color: inherit; font-size: 11px; font-weight: 700; line-height: 1.2; }
+.advanced-toggle__copy small { overflow: hidden; max-width: 210px; color: var(--text-muted); font-size: 9px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.advanced-toggle:hover .advanced-toggle__copy small, .advanced-toggle[aria-expanded="true"] .advanced-toggle__copy small { color: color-mix(in srgb, var(--primary-color) 72%, var(--text-secondary)); }
+.advanced-settings-popover { position: relative; z-index: 20; }
+.ctrl-options > :deep(.main-action:last-child) {
+  --main-action-tone: var(--primary-color);
+  --main-action-hover: var(--primary-hover);
+  position: relative;
+  isolation: isolate;
+  min-width: 126px;
+  min-height: 44px;
+  padding: 0 15px 0 17px;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, var(--main-action-tone) 82%, white 18%) !important;
+  border-radius: var(--radius-card);
+  color: var(--on-primary) !important;
+  font-weight: 780;
+  letter-spacing: .01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 7px 14px color-mix(in srgb, var(--main-action-tone) 22%, transparent), 0 0 0 1px color-mix(in srgb, var(--main-action-tone) 16%, transparent);
+  transform: translateY(0);
+  transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out), transform 180ms var(--ease-out);
+}
+.ctrl-options > :deep(.main-action:last-child)::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  z-index: -1;
+  border: 1px solid color-mix(in srgb, var(--main-action-tone) 42%, transparent);
+  border-radius: calc(var(--radius-card) + 4px);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--main-action-tone) 7%, transparent);
+  opacity: 0;
+  transform: scale(.94);
+  transition: opacity 180ms var(--ease-out), transform 220ms var(--ease-out);
+  pointer-events: none;
+}
+.ctrl-options > :deep(.main-action:last-child)::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  border-radius: calc(var(--radius-card) - 1px);
+  background: rgba(255, 255, 255, .1);
+  opacity: .55;
+  pointer-events: none;
+}
+.ctrl-options > :deep(.main-action.el-button--primary) { background: var(--primary-color) !important; }
+.ctrl-options > :deep(.main-action.el-button--warning) { --main-action-tone: var(--warning); --main-action-hover: color-mix(in srgb, var(--warning) 86%, white 14%); }
+.ctrl-options > :deep(.main-action.el-button--danger) { --main-action-tone: var(--danger); --main-action-hover: color-mix(in srgb, var(--danger) 86%, white 14%); }
+.ctrl-options > :deep(.main-action.el-button--info) { --main-action-tone: var(--info); --main-action-hover: color-mix(in srgb, var(--info) 86%, white 14%); }
+.ctrl-options > :deep(.main-action:last-child:hover:not(:disabled)) {
+  background: var(--main-action-hover) !important;
+  border-color: color-mix(in srgb, var(--main-action-tone) 90%, white 10%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 12px 24px color-mix(in srgb, var(--main-action-tone) 30%, transparent), 0 0 0 1px color-mix(in srgb, var(--main-action-tone) 22%, transparent);
+  transform: translateY(-2px);
+}
+.ctrl-options > :deep(.main-action:last-child:hover:not(:disabled))::before { opacity: 1; transform: scale(1); }
+.ctrl-options > :deep(.main-action:last-child:active:not(:disabled)) {
+  box-shadow: inset 0 2px 3px rgba(8, 9, 18, .18), 0 3px 8px color-mix(in srgb, var(--main-action-tone) 20%, transparent);
+  transform: translateY(1px) scale(.985);
+}
+.ctrl-options > :deep(.main-action:last-child:focus-visible) { outline: 3px solid color-mix(in srgb, var(--main-action-tone) 34%, transparent); outline-offset: 3px; }
+.ctrl-options > :deep(.main-action:last-child:disabled) { box-shadow: var(--shadow-sm); cursor: wait; opacity: .72; }
+.main-action__label, .main-action__arrow { position: relative; z-index: 1; }
+.main-action__arrow { margin-left: 6px; transition: transform 180ms var(--ease-out); }
+.ctrl-options > :deep(.main-action:last-child:hover:not(:disabled)) .main-action__arrow { transform: translateX(3px); }
 .advanced-settings {
-  order: 3;
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
-  padding: 12px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-input);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 100;
+  width: min(688px, calc(100vw - 32px));
+  max-height: min(520px, calc(100dvh - 104px));
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--border-light) 78%, var(--surface-solid));
+  border-radius: 16px;
+  background: var(--bg-input);
+  box-shadow: 0 22px 56px color-mix(in srgb, var(--shadow-color) 80%, transparent), 0 4px 12px color-mix(in srgb, var(--shadow-color) 42%, transparent);
+  transform-origin: top right;
+  animation: advanced-settings-in 180ms var(--ease-out) both;
 }
-.advanced-item { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-.advanced-item > span { color: var(--text-secondary); font-size: 11px; font-weight: 700; }
+.advanced-settings__head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  min-height: 72px;
+  padding: 15px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 11px;
+  background: var(--surface-solid);
+}
+.advanced-settings__head > div { display: grid; gap: 3px; min-width: 0; }
+.advanced-settings__head strong { color: var(--text-primary); font-size: 15px; font-weight: 780; letter-spacing: -.015em; }
+.advanced-settings__head small { color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+.advanced-settings__head > .advanced-settings__head-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.advanced-settings__head-actions > span { max-width: 220px; overflow: hidden; padding: 7px 10px; border: 1px solid var(--primary-line); border-radius: var(--radius-full); background: var(--primary-fade); color: var(--primary-color); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.advanced-settings__close { width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; border: 1px solid var(--border-light); border-radius: var(--radius-control); background: var(--bg-input); color: var(--text-secondary); cursor: pointer; transition: var(--transition); }
+.advanced-settings__close:hover, .advanced-settings__close:focus-visible { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); outline: none; }
+.advanced-settings__close:focus-visible { box-shadow: 0 0 0 3px var(--primary-fade); }
+.advanced-presets { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(142px, .7fr) minmax(0, 2fr); align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border-light); border-radius: 11px; background: var(--surface-solid); }
+.advanced-presets__intro { display: grid; gap: 3px; min-width: 0; }
+.advanced-presets__intro strong { color: var(--text-primary); font-size: 12px; font-weight: 780; }
+.advanced-presets__intro small { color: var(--text-muted); font-size: 10px; }
+.advanced-presets__options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; min-width: 0; }
+.advanced-preset { min-height: 48px; display: grid; align-content: center; gap: 3px; padding: 7px 10px; border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-input); color: var(--text-secondary); text-align: left; cursor: pointer; transition: var(--transition); }
+.advanced-preset strong { color: inherit; font-size: 11px; font-weight: 750; }
+.advanced-preset small { overflow: hidden; color: var(--text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.advanced-preset:hover, .advanced-preset.selected { border-color: var(--primary-color); background: var(--primary-fade); color: var(--primary-color); }
+.advanced-preset:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.advanced-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 82px;
+  padding: 13px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 11px;
+  background: var(--surface-solid);
+}
+.advanced-item__heading { display: grid; gap: 3px; min-width: 0; }
+.advanced-item__heading > span, .advanced-item__label { color: var(--text-primary); font-size: 12px; font-weight: 740; }
+.advanced-item__heading small { overflow: hidden; color: var(--text-muted); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.advanced-item--segmented .segmented-control { align-self: flex-start; }
+.advanced-item--switch { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.advanced-item--switch .advanced-item__heading { flex: 1 1 auto; }
 .advanced-item--wide { grid-column: span 2; }
-.advanced-checks { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.advanced-item :deep(.el-select), .advanced-item :deep(.el-input-number) { width: 100%; }
+.advanced-item :deep(.el-input__wrapper) {
+  min-height: 36px;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  background: var(--bg-input);
+  box-shadow: none;
+  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.advanced-item :deep(.el-input__wrapper:hover) { border-color: var(--border-hover); }
+.advanced-item :deep(.el-input__wrapper.is-focus) { border-color: var(--primary-color); background: var(--surface-solid); box-shadow: 0 0 0 3px var(--primary-fade); }
+.advanced-item :deep(.el-input__inner) { color: var(--text-primary); font-size: 11px; }
+.advanced-item :deep(.el-select .el-input__inner) { color: var(--text-primary); }
+.advanced-item :deep(.el-button) { min-height: 34px; border-radius: 9px; }
+.settings-switch { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; padding: 0; border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: 10px; cursor: pointer; }
+.settings-switch:hover:not(:disabled), .settings-switch[aria-checked="true"] { color: var(--primary-color); }
+.settings-switch:disabled { cursor: not-allowed; opacity: .55; }
+.settings-switch:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 4px; border-radius: var(--radius-full); }
+.settings-switch__track { position: relative; width: 36px; height: 22px; flex: 0 0 36px; display: inline-flex; align-items: center; padding: 2px; border-radius: var(--radius-full); background: var(--border-hover); transition: background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
+.settings-switch__track > span { width: 18px; height: 18px; display: block; border-radius: 50%; background: var(--surface-solid); box-shadow: var(--shadow-sm); transform: translateX(0); transition: transform 160ms var(--ease-out); }
+.settings-switch[aria-checked="true"] .settings-switch__track { background: var(--primary-color); box-shadow: 0 0 0 2px var(--primary-fade); }
+.settings-switch[aria-checked="true"] .settings-switch__track > span { transform: translateX(14px); }
+.settings-switch:active .settings-switch__track > span { transform: scale(.92); }
+.settings-switch[aria-checked="true"]:active .settings-switch__track > span { transform: translateX(14px) scale(.92); }
+@keyframes advanced-settings-in {
+  from { opacity: 0; transform: translateY(-6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .contract-textarea :deep(.el-textarea__inner),
 .intent-textarea :deep(.el-textarea__inner) {
   line-height: 1.72;
@@ -1409,9 +1812,12 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .acg-grid { transition: none; }
+  .advanced-settings { animation: none; }
 }
 
 @media (max-width: 720px) {
+  :global(.resource-drawer) { width: 92vw !important; }
+  .resource-drawer__body { padding-right: 16px; padding-left: 16px; }
   .ui-hero { flex-wrap: wrap; align-items: flex-start; }
   .hero-left { width: 100%; }
   .hero-right { justify-content: flex-start; width: 100%; flex-wrap: wrap; }
@@ -1421,7 +1827,9 @@ onBeforeUnmount(() => {
   .contract-upload__actions { width: 100%; padding-left: 34px; }
   .input-fields { grid-template-columns: 1fr; }
   .definition-pane { padding-top: 14px; }
-  .advanced-settings { grid-template-columns: 1fr; }
+  .advanced-settings { left: 0; right: auto; width: min(620px, calc(100vw - 32px)); grid-template-columns: 1fr; }
+  .advanced-presets { grid-template-columns: 1fr; }
+  .advanced-presets__options { grid-template-columns: 1fr; }
   .advanced-item--wide { grid-column: auto; }
   .ctrl-options > :deep(.el-button:last-child) { width: 100%; margin-left: 0; }
   .input-summary__copy { align-items: flex-start; flex-wrap: wrap; }

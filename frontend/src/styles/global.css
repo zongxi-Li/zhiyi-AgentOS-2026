@@ -104,6 +104,10 @@
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+  /* ACG surface hierarchy: compact controls, data cards, large containers */
+  --radius-control: 6px;
+  --radius-card: 9px;
+  --radius-panel: 12px;
   --radius-full: 9999px;
 
   /* Effects */

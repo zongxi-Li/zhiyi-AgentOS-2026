@@ -19,15 +19,6 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane name="resource">
-        <template #label><span class="tab-label"><el-icon><PieChart /></el-icon>资源</span></template>
-        <AcgResourceInspector
-          v-if="activeTab === 'resource'"
-          :run-id="view.runId"
-          :usage="resourceUsage"
-        />
-      </el-tab-pane>
-
       <el-tab-pane name="control">
         <template #label><span class="tab-label"><el-icon><Operation /></el-icon>控制协同</span></template>
         <OperationalSummary :items="controlSummary" />
@@ -60,25 +51,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, ref, watch, type PropType } from 'vue'
-import { Connection, DataAnalysis, Operation, PieChart, RefreshRight } from '@element-plus/icons-vue'
-import type { AcgView, NodeExecutionPhase, RunResourceUsage, TraceEvent } from '@/services/api/workflow'
+import { computed, defineComponent, h, ref, type PropType } from 'vue'
+import { Connection, DataAnalysis, Operation, RefreshRight } from '@element-plus/icons-vue'
+import type { AcgView, NodeExecutionPhase, TraceEvent } from '@/services/api/workflow'
 import AcgLowEntropyMetrics from './AcgLowEntropyMetrics.vue'
-import AcgResourceInspector from './AcgResourceInspector.vue'
 import RuntimeAuditTimeline from './RuntimeAuditTimeline.vue'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   view: AcgView
   auditEvents: TraceEvent[]
   patchRefs: string[]
-  resourceUsage?: RunResourceUsage | null
-  requestedTabRevision?: number
-}>(), { resourceUsage: null, requestedTabRevision: 0 })
+}>()
 const emit = defineEmits<{ 'export-audit': [format: 'json' | 'csv'] }>()
 const activeTab = ref('runtime')
-watch(() => props.requestedTabRevision, revision => {
-  if (revision > 0) activeTab.value = 'resource'
-})
 const records = computed(() => props.view.operational?.nodeExecutions || [])
 const controlFrames = computed(() => props.view.operational?.controlFrames || [])
 const controlSummary = computed(() => [
@@ -172,12 +157,12 @@ const OperationalSummary = defineComponent({
 .operational-inspector :deep(.el-tabs__header) { margin: 0; padding: 12px 12px 0; }
 .operational-inspector :deep(.el-tabs__nav-wrap::after) { display: none; }
 .operational-inspector :deep(.el-tabs__nav) {
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; width: 100%; margin: 0; padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--primary-color) 8%, var(--border-light)); border-radius: 10px;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; width: 100%; margin: 0; padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 8%, var(--border-light)); border-radius: var(--radius-card);
   background: color-mix(in srgb, var(--bg-input) 88%, var(--bg-card));
 }
 .operational-inspector :deep(.el-tabs__item) {
-  min-width: 0; height: 34px; padding: 0 8px; border: 1px solid transparent; border-radius: 7px;
+  min-width: 0; height: 34px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-control);
   color: var(--text-secondary); font-family: var(--font-sans); font-size: 11px; line-height: 32px;
   transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
@@ -196,7 +181,7 @@ const OperationalSummary = defineComponent({
 .tab-label { min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px; font-size: inherit; font-weight: 600; white-space: nowrap; }
 .tab-label .el-icon { flex: 0 0 auto; font-size: 13px; }
 :deep(.operational-summary) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 2px 0 16px; border-bottom: 1px solid var(--border-light); }
-:deep(.summary-card) { min-width: 0; min-height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--primary-color) 12%, var(--border-light)); border-radius: 12px; background: color-mix(in srgb, var(--bg-input) 68%, var(--bg-card)); }
+:deep(.summary-card) { min-width: 0; min-height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--primary-color) 12%, var(--border-light)); border-radius: var(--radius-card); background: color-mix(in srgb, var(--bg-input) 68%, var(--bg-card)); }
 :deep(.summary-card strong) { color: #202236; font-size: 21px; font-weight: 750; line-height: 1; letter-spacing: 0; }
 :deep(.summary-card span) { overflow-wrap: anywhere; color: #737894; font-size: 11px; line-height: 1.25; }
 :deep(.summary-card--active) { border-color: color-mix(in srgb, var(--primary-color) 30%, var(--border-light)); background: color-mix(in srgb, var(--primary-fade) 62%, var(--bg-card)); }
@@ -207,17 +192,17 @@ const OperationalSummary = defineComponent({
 :deep(.section-block header), .record-list article > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 :deep(.section-block header strong) { color: var(--text-primary); font-family: var(--font-sans); font-size: 12px; font-weight: 700; line-height: 1.4; }
 :deep(.section-block header span), :deep(.empty) { color: var(--text-secondary); font-family: var(--font-sans); font-size: 10px; }
-:deep(.empty) { margin: 0; padding: 11px 12px; border: 1px dashed color-mix(in srgb, var(--primary-color) 18%, var(--border-light)); border-radius: 8px; background: color-mix(in srgb, var(--bg-input) 55%, transparent); color: #8589a0; line-height: 1.45; text-align: center; }
+:deep(.empty) { margin: 0; padding: 11px 12px; border: 1px dashed color-mix(in srgb, var(--primary-color) 18%, var(--border-light)); border-radius: var(--radius-card); background: color-mix(in srgb, var(--bg-input) 55%, transparent); color: #8589a0; line-height: 1.45; text-align: center; }
 .record-list, :deep(.structured-list), :deep(.reference-list) { display: grid; gap: 7px; }
 .record-list article, :deep(.data-card) {
   box-sizing: border-box; min-width: 0; border: 1px solid color-mix(in srgb, var(--primary-color) 8%, var(--border-light));
-  border-radius: 8px; background: color-mix(in srgb, var(--bg-input) 82%, var(--bg-card));
+  border-radius: var(--radius-card); background: color-mix(in srgb, var(--bg-input) 82%, var(--bg-card));
 }
 .record-list article { display: grid; gap: 4px; padding: 9px 10px; border-left: 2px solid color-mix(in srgb, var(--primary-color) 22%, var(--border-light)); }
 .record-list strong { overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--font-sans); font-size: 11px; font-weight: 700; }
 .record-list code, .record-list small { overflow-wrap: anywhere; color: var(--text-secondary); font-family: var(--font-mono); font-size: 9px; line-height: 1.45; }
 .record-list .failure { color: var(--danger); }
-.phase { padding: 2px 5px; border-radius: 4px; color: var(--primary-color); background: var(--primary-fade); font-size: 9px; }
+.phase { padding: 2px 7px; border-radius: var(--radius-full); color: var(--primary-color); background: var(--primary-fade); font-size: 9px; }
 .phase.committed { color: var(--success); background: var(--success-fade); }
 .phase.failed, .phase.cancelled { color: var(--danger); background: var(--danger-fade); }
 .phase.waiting_review { color: var(--warning); background: var(--warning-fade); }

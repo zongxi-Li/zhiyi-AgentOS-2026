@@ -27,6 +27,27 @@
             <el-icon><Search /></el-icon>
             <span>运行筛选</span>
           </div>
+          <div class="filter-scope">
+            <span>任务记录</span>
+            <div class="filter-scope__segmented" role="tablist" aria-label="任务记录范围">
+              <button
+                type="button"
+                role="tab"
+                aria-label="显示当前任务"
+                :aria-selected="filters.recordState === 'active'"
+                :class="{ active: filters.recordState === 'active' }"
+                @click="setRecordState('active')"
+              >当前任务</button>
+              <button
+                type="button"
+                role="tab"
+                aria-label="显示已归档任务"
+                :aria-selected="filters.recordState === 'archived'"
+                :class="{ active: filters.recordState === 'archived' }"
+                @click="setRecordState('archived')"
+              >已归档任务</button>
+            </div>
+          </div>
           <label>
             <span>状态</span>
             <select v-model="filters.status" @change="applyFilters">
@@ -376,6 +397,7 @@ const terminalDetailCache = new Map<string, { run: WorkflowRun; acg: AcgView }>(
 const filters = reactive({
   status: '' as WorkflowStatus | '',
   role: loadAcgHistoryRole() as AcgHistoryRole,
+  recordState: (route.query.recordState === 'archived' ? 'archived' : 'active') as 'active' | 'archived',
   query: '',
   page: 1
 })
@@ -431,6 +453,7 @@ const listParams = () => {
     missionId: query.startsWith('mission_') ? query : undefined,
     sources: ACG_HISTORY_SOURCES,
     domain: acgHistoryRoleDomain(filters.role),
+    recordState: filters.recordState,
     summary: true,
     page: filters.page,
     pageSize: PAGE_SIZE
@@ -504,6 +527,13 @@ const loadRuns = async (force = false) => {
 
 const applyFilters = () => {
   saveAcgHistoryRole(filters.role)
+  filters.page = 1
+  void loadRuns(true)
+}
+
+const setRecordState = (recordState: 'active' | 'archived') => {
+  if (filters.recordState === recordState) return
+  filters.recordState = recordState
   filters.page = 1
   void loadRuns(true)
 }
@@ -785,6 +815,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .filter-panel { display: grid; gap: 10px; }
 .filter-title, .run-list-head, .run-group > header, .run-item__top, .run-item__metrics, .run-toolbar, .run-toolbar nav, .acg-summary header, .acg-summary__facts, .pagination { display: flex; align-items: center; }
 .filter-title { gap: 7px; font-size: 14px; font-weight: 700; }
+.filter-scope { display: grid; gap: 5px; }
+.filter-scope > span { color: var(--text-secondary); font-size: 12px; font-weight: 650; }
+.filter-scope__segmented { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 3px; border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-input); }
+.filter-scope__segmented button { min-width: 0; height: 30px; padding: 0 8px; overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; transition: var(--transition); }
+.filter-scope__segmented button:hover { color: var(--primary-color); }
+.filter-scope__segmented button.active { border-color: var(--primary-line); background: var(--surface-solid); color: var(--primary-color); box-shadow: var(--shadow-sm); font-weight: 700; }
 label { display: grid; gap: 5px; }
 label > span { color: var(--text-secondary); font-size: 12px; font-weight: 650; }
 select, input { width: 100%; height: 34px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; background: var(--bg-input); color: var(--text-primary); outline: none; }

@@ -79,6 +79,11 @@ const mountPage = async (query = ''): Promise<{ wrapper: VueWrapper; router: Rou
         'el-input': true,
         'el-input-number': true,
         'el-tag': { template: '<span><slot /></span>' },
+        'el-drawer': {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template: '<div v-if="modelValue"><slot name="header" /><slot /></div>'
+        },
         'el-radio-group': true,
         'el-radio-button': true,
         'el-switch': true,
@@ -119,6 +124,20 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     expect(wrapper.text()).toContain('知弈OS 原生任务工作台')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
     expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('opens advanced run settings as a downward popover without changing the primary controls', async () => {
+    const { wrapper } = await mountPage()
+
+    expect(wrapper.find('.advanced-settings').exists()).toBe(false)
+    await wrapper.find('.advanced-toggle').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.advanced-toggle').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.primary-options .primary-config').exists()).toBe(true)
+    await wrapper.find('.advanced-toggle').trigger('click')
+    expect(wrapper.find('.advanced-toggle').attributes('aria-expanded')).toBe('false')
     wrapper.unmount()
   })
 

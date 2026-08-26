@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from app.llm.gateway import LLMGateway
-from app.llm.providers.openai_compatible_provider import OpenAICompatibleProvider
+from app.llm.providers.openai_compatible_provider import LLMProviderError, OpenAICompatibleProvider
 
 
 class _RecordingProvider:
@@ -52,3 +54,17 @@ def test_openai_provider_defensively_filters_audit_only_parameters() -> None:
     assert "prompt_version" not in parameters
     assert "prompt_template_hash" not in parameters
     assert parameters["max_tokens"] == 1024
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"analysis": {}} trailing content',
+        '[{"analysis": {}}]',
+    ],
+)
+def test_openai_provider_marks_invalid_json_as_repairable(content: str) -> None:
+    with pytest.raises(LLMProviderError) as raised:
+        OpenAICompatibleProvider._parse_json(content)
+
+    assert raised.value.code == "MODEL_OUTPUT_INVALID_JSON"

@@ -1,5 +1,12 @@
 <template>
-  <button class="resource-strip" type="button" @click="$emit('open')">
+  <button
+    class="resource-strip"
+    type="button"
+    aria-haspopup="dialog"
+    aria-controls="acg-resource-drawer"
+    aria-label="打开资源详情"
+    @click="$emit('open')"
+  >
     <span class="resource-model"><i aria-hidden="true"></i>{{ modelLabel }}</span>
     <span>调用 <b>{{ usage?.usage.callCount ?? '—' }}</b></span>
     <span>输入 <b>{{ compact(usage?.usage.inputTokens) }}</b></span>

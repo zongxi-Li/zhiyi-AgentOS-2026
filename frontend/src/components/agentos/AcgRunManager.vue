@@ -17,10 +17,6 @@
         <option value="failed">需处理</option>
         <option value="completed">已完成</option>
       </select>
-      <select v-model="recordStateFilter" class="acg-run-filter" aria-label="筛选任务记录" @change="handleRecordStateChange">
-        <option value="active">当前任务</option>
-        <option value="archived">已归档任务</option>
-      </select>
       <select
         v-model="roleFilter"
         class="acg-run-filter"
@@ -51,14 +47,14 @@
           v-for="run in group.items"
           :key="run.runId"
           class="acg-run-item"
-          :class="[`status-${group.key}`, { active: run.runId === activeRunId }]"
-          @contextmenu.prevent="openContextMenu($event, run)"
+          :class="[`status-${group.key}`, { active: run.runId === activeRunId, selected: run.runId === selectedRunId }]"
+          @focusin="selectedRunId = run.runId"
         >
           <button
             class="acg-run-item__select"
             type="button"
             :title="`${displayTitle(run)}\n${missionIdentity(run)}`"
-            @click="emit('select', run.runId)"
+            @click="selectRun(run.runId)"
           >
             <span
               class="acg-run-item__status"
@@ -85,20 +81,29 @@
               </span>
             </span>
           </button>
+          <button
+            class="acg-run-item__actions"
+            type="button"
+            :tabindex="run.runId === activeRunId || run.runId === selectedRunId ? 0 : -1"
+            aria-haspopup="menu"
+            aria-controls="acg-run-action-menu"
+            :aria-expanded="actionMenu.run?.runId === run.runId"
+            :aria-label="`打开${displayTitle(run)}的任务操作`"
+            @click.stop="openActionMenu($event, run)"
+          >
+            <el-icon><MoreFilled /></el-icon>
+          </button>
         </div>
       </section>
     </div>
 
     <Teleport to="body">
-      <div v-if="contextMenu.run" ref="contextMenuElement" class="acg-run-context-menu" role="menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }">
-        <button type="button" role="menuitem" @click="selectContextRun"><el-icon><View /></el-icon><span>打开任务</span></button>
-        <button type="button" role="menuitem" @click="copyContextMissionId"><el-icon><CopyDocument /></el-icon><span>复制任务 ID</span></button>
-        <div class="acg-run-context-menu__separator"></div>
-        <button v-if="recordStateFilter === 'archived'" type="button" role="menuitem" @click="restoreContextMission"><el-icon><FolderOpened /></el-icon><span>移出归档</span></button>
-        <template v-else>
-          <button type="button" role="menuitem" :disabled="!isTerminalMission(contextMenu.run)" @click="archiveContextMission"><el-icon><FolderAdd /></el-icon><span>归档任务</span></button>
-          <button class="is-danger" type="button" role="menuitem" :disabled="!isTerminalMission(contextMenu.run)" @click="deleteContextMission"><el-icon><DeleteIcon /></el-icon><span>删除任务</span></button>
-        </template>
+      <div v-if="actionMenu.run" id="acg-run-action-menu" ref="actionMenuElement" class="acg-run-action-menu" role="menu" :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }">
+        <button type="button" role="menuitem" @click="selectActionRun"><el-icon><View /></el-icon><span>打开任务</span></button>
+        <button type="button" role="menuitem" @click="copyActionMissionId"><el-icon><CopyDocument /></el-icon><span>复制任务 ID</span></button>
+        <div class="acg-run-action-menu__separator"></div>
+        <button type="button" role="menuitem" :disabled="!isTerminalMission(actionMenu.run)" @click="archiveActionMission"><el-icon><FolderAdd /></el-icon><span>归档任务</span></button>
+        <button class="is-danger" type="button" role="menuitem" :disabled="!isTerminalMission(actionMenu.run)" @click="deleteActionMission"><el-icon><DeleteIcon /></el-icon><span>删除任务</span></button>
       </div>
     </Teleport>
 
@@ -106,8 +111,8 @@
     <button class="acg-run-manage" type="button" @click="emit('manage')">
       <span class="acg-run-manage__icon"><el-icon><Clock /></el-icon></span>
       <span>
-        <strong>查看全部运行记录</strong>
-        <small>搜索、审计与运行管理</small>
+        <strong>查看运行历史记录</strong>
+        <small>包含已归档任务 · 搜索与审计</small>
       </span>
       <el-icon><ArrowRight /></el-icon>
     </button>
@@ -116,7 +121,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ArrowRight, Clock, CopyDocument, Delete as DeleteIcon, FolderAdd, FolderOpened, Plus, Search, View } from '@element-plus/icons-vue'
+import { ArrowRight, Clock, CopyDocument, Delete as DeleteIcon, FolderAdd, MoreFilled, Plus, Search, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
@@ -150,10 +155,10 @@ const refreshing = ref(false)
 const loadError = ref('')
 const searchKeyword = ref('')
 const statusFilter = ref<'all' | RunGroupKey>('all')
-const recordStateFilter = ref<'active' | 'archived'>('active')
 const roleFilter = ref<AcgHistoryRole>(loadAcgHistoryRole())
-const contextMenuElement = ref<HTMLElement | null>(null)
-const contextMenu = reactive<{ run: WorkflowRunSummary | null; x: number; y: number }>({ run: null, x: 0, y: 0 })
+const selectedRunId = ref('')
+const actionMenuElement = ref<HTMLElement | null>(null)
+const actionMenu = reactive<{ run: WorkflowRunSummary | null; x: number; y: number }>({ run: null, x: 0, y: 0 })
 const workflowRunsStore = useWorkflowRunsStore()
 let loadController: AbortController | null = null
 let loadPromise: Promise<void> | null = null
@@ -300,7 +305,7 @@ const loadRuns = (silent = false): Promise<void> => {
           summary: true,
           page: 1,
           pageSize: RUN_LIST_PAGE_SIZE,
-          recordState: recordStateFilter.value
+          recordState: 'active'
         },
         { signal: controller.signal }
       )
@@ -329,17 +334,27 @@ const loadRuns = (silent = false): Promise<void> => {
   return pending
 }
 
-const closeContextMenu = () => { contextMenu.run = null }
-const openContextMenu = async (event: MouseEvent, run: WorkflowRunSummary) => {
-  contextMenu.run = run; contextMenu.x = event.clientX; contextMenu.y = event.clientY
-  await nextTick()
-  const menu = contextMenuElement.value
-  if (!menu) return
-  contextMenu.x = Math.max(8, Math.min(contextMenu.x, window.innerWidth - menu.offsetWidth - 8))
-  contextMenu.y = Math.max(8, Math.min(contextMenu.y, window.innerHeight - menu.offsetHeight - 8))
+const closeActionMenu = () => { actionMenu.run = null }
+const selectRun = (runId: string) => {
+  selectedRunId.value = runId
+  closeActionMenu()
+  emit('select', runId)
 }
-const selectContextRun = () => { if (contextMenu.run) emit('select', contextMenu.run.runId); closeContextMenu() }
-const copyContextMissionId = () => { if (contextMenu.run) void copyMissionId(missionIdentity(contextMenu.run)); closeContextMenu() }
+const openActionMenu = async (event: MouseEvent, run: WorkflowRunSummary) => {
+  selectedRunId.value = run.runId
+  actionMenu.run = run
+  const target = event.currentTarget as HTMLElement | null
+  const rect = target?.getBoundingClientRect()
+  actionMenu.x = rect ? rect.left - 18 : event.clientX - 84
+  actionMenu.y = rect ? rect.bottom + 6 : event.clientY
+  await nextTick()
+  const menu = actionMenuElement.value
+  if (!menu) return
+  actionMenu.x = Math.max(8, Math.min(actionMenu.x, window.innerWidth - menu.offsetWidth - 8))
+  actionMenu.y = Math.max(8, Math.min(actionMenu.y, window.innerHeight - menu.offsetHeight - 8))
+}
+const selectActionRun = () => { if (actionMenu.run) selectRun(actionMenu.run.runId); closeActionMenu() }
+const copyActionMissionId = () => { if (actionMenu.run) void copyMissionId(missionIdentity(actionMenu.run)); closeActionMenu() }
 const missionMutationError = (error: unknown, action: string) => {
   if (axios.isAxiosError(error)) {
     if (error.response?.status === 409) return `任务仍有活动执行，暂时不能${action}`
@@ -350,20 +365,14 @@ const missionMutationError = (error: unknown, action: string) => {
   }
   return `任务${action}失败，请稍后重试`
 }
-const archiveContextMission = async () => {
-  const run = contextMenu.run
+const archiveActionMission = async () => {
+  const run = actionMenu.run
   if (!run || !isTerminalMission(run)) return
-  try { await workflowApi.archiveMission(missionIdentity(run)); ElMessage.success('任务已归档'); closeContextMenu(); await loadRuns(true) }
+  try { await workflowApi.archiveMission(missionIdentity(run)); ElMessage.success('任务已归档'); closeActionMenu(); await loadRuns(true) }
   catch (error: unknown) { ElMessage.error(missionMutationError(error, '归档')) }
 }
-const restoreContextMission = async () => {
-  const run = contextMenu.run
-  if (!run) return
-  try { await workflowApi.restoreMission(missionIdentity(run)); ElMessage.success('任务已恢复'); closeContextMenu(); await loadRuns(true) }
-  catch (error: unknown) { ElMessage.error(missionMutationError(error, '恢复')) }
-}
-const deleteContextMission = async () => {
-  const run = contextMenu.run
+const deleteActionMission = async () => {
+  const run = actionMenu.run
   if (!run || !isTerminalMission(run)) return
   try {
     await ElMessageBox.confirm(
@@ -375,24 +384,17 @@ const deleteContextMission = async () => {
   try {
     await workflowApi.deleteMission(missionIdentity(run))
     ElMessage.success('任务已删除')
-    closeContextMenu()
+    closeActionMenu()
     emit('deleted', run.runId)
     await loadRuns(true)
   }
   catch (error: unknown) { ElMessage.error(missionMutationError(error, '删除')) }
 }
-const handleContextDismiss = (event: PointerEvent) => { if (!contextMenuElement.value?.contains(event.target as Node)) closeContextMenu() }
-const handleContextKeydown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeContextMenu() }
+const handleActionDismiss = (event: PointerEvent) => { if (!actionMenuElement.value?.contains(event.target as Node)) closeActionMenu() }
+const handleActionKeydown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeActionMenu() }
 
 const handleRoleFilterChange = () => {
   saveAcgHistoryRole(roleFilter.value)
-  loadController?.abort()
-  loadPromise = null
-  void loadRuns()
-}
-
-const handleRecordStateChange = () => {
-  closeContextMenu()
   loadController?.abort()
   loadPromise = null
   void loadRuns()
@@ -438,8 +440,8 @@ onMounted(() => {
   window.addEventListener('acg-runs-refresh', handleRunsRefresh)
   window.addEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
   window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
-  window.addEventListener('pointerdown', handleContextDismiss)
-  window.addEventListener('keydown', handleContextKeydown)
+  window.addEventListener('pointerdown', handleActionDismiss)
+  window.addEventListener('keydown', handleActionKeydown)
   void loadRuns().finally(scheduleRefresh)
 })
 
@@ -450,8 +452,8 @@ onUnmounted(() => {
   window.removeEventListener('acg-runs-refresh', handleRunsRefresh)
   window.removeEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
   window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
-  window.removeEventListener('pointerdown', handleContextDismiss)
-  window.removeEventListener('keydown', handleContextKeydown)
+  window.removeEventListener('pointerdown', handleActionDismiss)
+  window.removeEventListener('keydown', handleActionKeydown)
 })
 </script>
 
@@ -472,11 +474,28 @@ onUnmounted(() => {
 .acg-run-group + .acg-run-group { margin-top: 8px; }
 .acg-run-group__head { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px 4px; color: var(--text-disabled); font-size: 11px; font-weight: 700; }
 .acg-run-group__head span:last-child { min-width: 16px; height: 16px; display: inline-grid; place-items: center; padding: 0 4px; border-radius: 999px; background: var(--primary-fade); color: var(--primary-color); font-size: 10px; }
-.acg-run-item { position: relative; width: 100%; border-radius: 7px; background: transparent; color: var(--text-secondary); transition: background-color 160ms ease, color 160ms ease; }
-.acg-run-item__select { width: 100%; display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 6px; padding: 8px 8px 8px 7px; border: 0; border-radius: inherit; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.acg-run-item { position: relative; width: 100%; border-radius: var(--radius-control); background: transparent; color: var(--text-secondary); transition: background-color 160ms ease, color 160ms ease; }
+.acg-run-item__select { width: 100%; display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 6px; padding: 8px 34px 8px 7px; border: 0; border-radius: inherit; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.acg-run-item__actions {
+  position: absolute; top: 50%; right: 6px; width: 24px; height: 24px; display: inline-grid; place-items: center;
+  padding: 0; border: 0; border-radius: var(--radius-control);
+  background: transparent; color: var(--text-secondary);
+  cursor: pointer; opacity: 0; pointer-events: none; transform: translate(4px, -50%);
+  transition: opacity 220ms var(--ease-out) 35ms, transform 220ms var(--ease-out) 35ms, color 160ms ease;
+}
+.acg-run-item:hover .acg-run-item__actions,
+.acg-run-item__actions:focus-visible {
+  opacity: 1; pointer-events: auto; transform: translate(0, -50%);
+}
+.acg-run-item__actions:hover, .acg-run-item__actions:focus-visible, .acg-run-item__actions[aria-expanded="true"] {
+  background: transparent; color: var(--primary-color); outline: none;
+}
+.acg-run-item__actions:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent); outline-offset: 2px; }
+.acg-run-item__actions .el-icon { font-size: 15px; }
 .acg-run-item::before { content: ''; position: absolute; inset: 5px auto 5px 0; width: 2px; border-radius: 0 2px 2px 0; background: transparent; }
 .acg-run-item:hover { background: var(--bg-panel); color: var(--text-primary); }
 .acg-run-item.active { background: var(--primary-fade); color: var(--text-primary); }
+.acg-run-item.selected:not(.active) { background: color-mix(in srgb, var(--primary-fade) 68%, transparent); color: var(--text-primary); }
 .acg-run-item.active::before { background: var(--primary-color); }
 .acg-run-item__status { width: 13px; height: 13px; margin-top: 1px; display: inline-grid; place-items: center; border: 1px solid var(--text-disabled); border-radius: 50%; background: var(--bg-card); color: var(--text-disabled); font-size: 9px; font-weight: 800; line-height: 1; }
 .status-active .acg-run-item__status { border-color: var(--primary-color); background: var(--primary-fade); color: var(--primary-color); animation: acg-status-pulse 1.8s ease-in-out infinite; }
@@ -518,14 +537,23 @@ onUnmounted(() => {
 .acg-run-manage strong, .acg-run-manage small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acg-run-manage strong { color: var(--text-primary); font-size: 12px; }
 .acg-run-manage small { display: none; }
-@media (prefers-reduced-motion: reduce) { .acg-run-item, .acg-run-item__progress span, .acg-new-run, .acg-run-manage { transition-duration: 1ms; } }
+@media (prefers-reduced-motion: reduce) { .acg-run-item, .acg-run-item__actions, .acg-run-item__progress span, .acg-new-run, .acg-run-manage { transition-duration: 1ms; transition-delay: 0ms; } }
 </style>
 
 <style>
-.acg-run-context-menu { position: fixed; z-index: 3000; box-sizing: border-box; width: 168px; padding: 5px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-card); box-shadow: var(--shadow-lg); color: var(--text-primary); }
-.acg-run-context-menu button { width: 100%; min-height: 32px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-.acg-run-context-menu button:hover:not(:disabled), .acg-run-context-menu button:focus-visible { background: var(--primary-fade); color: var(--primary-color); outline: none; }
-.acg-run-context-menu button.is-danger { color: var(--danger); }
-.acg-run-context-menu button:disabled { color: var(--text-disabled); cursor: not-allowed; }
-.acg-run-context-menu__separator { height: 1px; margin: 4px 6px; background: var(--border-light); }
+.acg-run-action-menu {
+  position: fixed; z-index: 3000; box-sizing: border-box; width: 168px; padding: 5px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-card); background: var(--bg-card);
+  box-shadow: var(--shadow-lg); color: var(--text-primary); animation: acg-run-action-menu-in 180ms var(--ease-out) both;
+}
+.acg-run-action-menu button { width: 100%; min-height: 32px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: var(--radius-control); background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.acg-run-action-menu button:hover:not(:disabled), .acg-run-action-menu button:focus-visible { background: var(--primary-fade); color: var(--primary-color); outline: none; }
+.acg-run-action-menu button.is-danger { color: var(--danger); }
+.acg-run-action-menu button:disabled { color: var(--text-disabled); cursor: not-allowed; }
+.acg-run-action-menu__separator { height: 1px; margin: 4px 6px; background: var(--border-light); }
+@keyframes acg-run-action-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .acg-run-action-menu { animation: none; } }
 </style>
