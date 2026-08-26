@@ -19,6 +19,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
     workflowApi: {
       ...actual.workflowApi,
       startWorkflowAsync: vi.fn(),
+      rerunWorkflowAsync: vi.fn(),
       getWorkflowProgress: vi.fn(),
       getRun: vi.fn(),
       getRunHistoryConfig: vi.fn(),
@@ -109,6 +110,9 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
       runId: 'run_1', title: '测试 ACG 任务', reviewMode: 'auto', enabledPluginIds: [], input: {}
     })
     vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue(run({ status: 'pending', lifecyclePhase: 'planning' }))
+    vi.mocked(workflowApi.rerunWorkflowAsync).mockResolvedValue(run({
+      runId: 'run_2', missionId: 'mission_1', status: 'pending', lifecyclePhase: 'planning'
+    }))
   })
 
   afterEach(() => {
@@ -121,7 +125,7 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
 
     expect(wrapper.find('.hero-left').text()).toContain('ACG 动态群体智能引擎')
     expect(wrapper.find('.hero-run-chip').exists()).toBe(false)
-    expect(wrapper.text()).toContain('知弈OS 原生任务工作台')
+    expect(wrapper.text()).toContain('任务定义')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(false)
     expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
     wrapper.unmount()
@@ -189,6 +193,38 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     )
     expect(router.currentRoute.value.query.runId).toBe('run_1')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('reruns the current configuration as a new Run under the same Mission', async () => {
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      status: 'completed', phase: 'completed', percent: 100
+    }))
+    vi.mocked(workflowApi.getRun).mockResolvedValue(run({
+      status: 'completed', lifecyclePhase: 'completed'
+    }))
+    const { wrapper, router } = await mountPage('?runId=run_1')
+    const draft = (wrapper.vm as unknown as { draft: { title: string; taskGoal: string } }).draft
+    draft.title = '测试任务实施方案'
+    draft.taskGoal = '输出可验收的实施方案'
+    await wrapper.vm.$nextTick()
+
+    const rerunButton = wrapper.findAll('button').find(item => item.text().includes('基于当前配置重新运行'))
+    expect(rerunButton).toBeTruthy()
+    await rerunButton!.trigger('click')
+    await flushPromises()
+
+    expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
+    expect(workflowApi.rerunWorkflowAsync).toHaveBeenCalledWith(
+      'mission_1',
+      expect.objectContaining({
+        sourceRunId: 'run_1',
+        rerunReason: 'current_configuration',
+        input: expect.objectContaining({ taskName: '测试任务实施方案' })
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(router.currentRoute.value.query.runId).toBe('run_2')
     wrapper.unmount()
   })
 

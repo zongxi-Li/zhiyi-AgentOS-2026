@@ -24,6 +24,7 @@ import {
   type WorkflowStartResponse,
   type AsyncWorkflowStartRequest,
   type AsyncWorkflowStartResponse,
+  type WorkflowRerunRequest,
   type WorkflowProgress,
   type WorkflowProgressPhase,
   type WorkflowRunSummary,
@@ -67,6 +68,7 @@ export type {
   WorkflowStartResponse,
   AsyncWorkflowStartRequest,
   AsyncWorkflowStartResponse,
+  WorkflowRerunRequest,
   WorkflowProgress,
   WorkflowProgressPhase,
   WorkflowRunSummary,
@@ -99,6 +101,14 @@ export const workflowApi = {
     options: { signal?: AbortSignal } = {}
   ): Promise<AsyncWorkflowStartResponse> {
     return agentosApi.startWorkflowAsync(payload, options)
+  },
+
+  rerunWorkflowAsync(
+    missionId: string,
+    payload: WorkflowRerunRequest,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<WorkflowRun> {
+    return agentosApi.rerunWorkflowAsync(missionId, payload, options)
   },
 
   getWorkflowProgress(

@@ -45,6 +45,25 @@ describe('AgentOS v2 application API', () => {
     })).rejects.toBeInstanceOf(WorkflowApiContractError)
   })
 
+  it('creates a rerun under the existing Mission identity', async () => {
+    const signal = new AbortController().signal
+    const rerun = { ...run, runId: 'run_2', missionId: 'mission/1' }
+    const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: rerun } as never)
+
+    await expect(agentosApi.rerunWorkflowAsync('mission/1', {
+      workflowId: 'legal.contract_review',
+      clientRequestId: 'request_2',
+      sourceRunId: 'run_1',
+      rerunReason: 'current_configuration'
+    }, { signal })).resolves.toEqual(rerun)
+
+    expect(post).toHaveBeenCalledWith(
+      '/missions/mission%2F1/runs',
+      expect.objectContaining({ sourceRunId: 'run_1', rerunReason: 'current_configuration' }),
+      { signal }
+    )
+  })
+
   it('derives progress only from the reference-first run projection', async () => {
     const signal = new AbortController().signal
     const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: run } as never)

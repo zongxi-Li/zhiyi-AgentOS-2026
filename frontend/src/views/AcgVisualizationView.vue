@@ -397,7 +397,8 @@ import {
   type AcgView,
   type WorkflowRun,
   type WorkflowProgress,
-  type RunResourceUsage
+  type RunResourceUsage,
+  type WorkflowRerunRequest
 } from '@/services/api/workflow'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import AcgExecutionContractBar from '@/components/agentos/AcgExecutionContractBar.vue'
@@ -1136,12 +1137,20 @@ const rerunWithNewPlanningSeed = () => {
   const values = new Uint32Array(1)
   crypto.getRandomValues(values)
   draft.planningSeed = values[0] & 0x7fffffff
-  void startRun()
+  void startRun('planning_variant')
 }
 
 const handleMainAction = () => {
-  if (mainAction.value.action === 'start' || mainAction.value.action === 'rerun' || mainAction.value.action === 'retry') {
+  if (mainAction.value.action === 'start') {
     void startRun()
+    return
+  }
+  if (mainAction.value.action === 'rerun') {
+    void startRun('current_configuration')
+    return
+  }
+  if (mainAction.value.action === 'retry') {
+    void startRun('retry_after_failure')
     return
   }
   if (mainAction.value.action === 'review') {
@@ -1188,7 +1197,7 @@ const exportAudit = (format: 'json' | 'csv') => {
   ElMessage.success(`ACG 审计 ${format.toUpperCase()} 已导出`)
 }
 
-const startRun = async () => {
+const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
   if (isSubmitting.value) return
   if (!taskName.value.trim()) {
     ElMessage.warning('请输入任务名称')
@@ -1209,6 +1218,13 @@ const startRun = async () => {
   startError.value = null
   submitController?.abort()
   submitController = new AbortController()
+  const sourceRunId = rerunReason ? activeRunId.value : ''
+  const sourceMissionId = rerunReason ? displayedMissionId.value : ''
+  if (rerunReason && (!sourceRunId || !sourceMissionId)) {
+    isSubmitting.value = false
+    ElMessage.error('当前运行缺少 Mission 身份，无法安全重新运行')
+    return
+  }
   progressTracker.reset()
   clearRunData()
   activeRunId.value = ''
@@ -1229,7 +1245,18 @@ const startRun = async () => {
       request.materialRefs = [manifest.manifestId]
       delete request.input.materialText
     }
-    const res = await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
+    const res = rerunReason
+      ? await workflowApi.rerunWorkflowAsync(sourceMissionId, {
+          workflowId: request.workflowId,
+          reviewMode: request.reviewMode,
+          input: request.input,
+          enabledPluginIds: request.enabledPluginIds,
+          materialRefs: request.materialRefs,
+          clientRequestId,
+          sourceRunId,
+          rerunReason
+        }, { signal: submitController.signal })
+      : await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
     activeRunId.value = res.runId
     scheduleInputCollapse()
     advancedSettingsExpanded.value = false

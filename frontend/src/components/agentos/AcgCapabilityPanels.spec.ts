@@ -95,7 +95,10 @@ describe('ACG capability panels', () => {
             cacheWriteTokens: 0, reasoningTokens: 10, totalTokens: 140,
             callCount: 1, retryCount: 0, latencyMs: 120, cacheHitRatio: 0.25
           },
-          contextPressure: { current: null, peak: null, source: 'unknown' },
+          contextPressure: {
+            current: null, peak: null, currentInputTokens: 100, peakInputTokens: 100,
+            contextWindowTokens: null, source: 'unknown'
+          },
           composition: {
             materialManifestCount: 1, materialFragmentCount: 5, taskCount: 2,
             completedTaskCount: 1, persistedResultFragmentCount: 5,
@@ -110,7 +113,8 @@ describe('ACG capability panels', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('API 未声明')
+    expect(wrapper.text()).toContain('上限未声明')
+    expect(wrapper.text()).toContain('100 Token')
     expect(wrapper.text()).toContain('推理 Token 已包含在供应商输出明细中')
     expect(wrapper.find('.resource-panel').exists()).toBe(true)
   })

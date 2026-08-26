@@ -20,8 +20,21 @@
     </ResourceSection>
 
     <ResourceSection title="上下文压力" :meta="pressureLabel">
-      <div class="pressure-track" :class="{ unknown: usage?.contextPressure.peak == null }"><i :style="pressureStyle"></i></div>
-      <p class="resource-note">多个活动节点展示单次调用峰值，不做错误累加。</p>
+      <div class="pressure-card" :class="{ unknown: !hasPressure }">
+        <div class="pressure-card__top">
+          <div class="pressure-reading">
+            <span>当前输入</span>
+            <strong>{{ tokens(currentInputTokens, '未观测') }}<small v-if="contextWindow"> / {{ tokens(contextWindow) }}</small><small v-else> Token</small></strong>
+          </div>
+          <span class="pressure-badge">{{ currentPressureLabel }}</span>
+        </div>
+        <div class="pressure-track"><i :style="pressureStyle"></i></div>
+        <div class="pressure-card__meta">
+          <span>峰值 {{ percent(usage?.contextPressure.peak, '未计算') }}<small v-if="peakInputTokens != null"> · {{ tokens(peakInputTokens) }} Token</small></span>
+          <span>上限 {{ tokens(contextWindow, '未声明') }}</span>
+        </div>
+      </div>
+      <p class="resource-note">{{ pressureNote }}</p>
     </ResourceSection>
 
     <ResourceSection title="组合进度" :meta="assemblyLabel">
@@ -71,11 +84,23 @@ const ResourceSection = defineComponent({
   }
 })
 const tokens = (value?: number | null, empty = '—') => value === null || value === undefined ? empty : value.toLocaleString()
+const percent = (value?: number | null, empty = '—') => value === null || value === undefined ? empty : `${Math.round(value * 100)}%`
 const capabilitySource = computed(() => ({
   provider_reported: 'API 报告', adapter_declared: '适配器声明', runtime_observed: '运行观测', unknown: '未知'
 }[props.usage?.capability?.source || 'unknown']))
-const pressureLabel = computed(() => props.usage?.contextPressure.peak == null ? 'API 未声明' : `${Math.round(props.usage.contextPressure.peak * 100)}% 峰值`)
+const contextWindow = computed(() => props.usage?.contextPressure.contextWindowTokens ?? props.usage?.capability?.contextWindowTokens ?? null)
+const currentInputTokens = computed(() => props.usage?.contextPressure.currentInputTokens ?? null)
+const peakInputTokens = computed(() => props.usage?.contextPressure.peakInputTokens ?? null)
+const hasPressure = computed(() => props.usage?.contextPressure.current != null || props.usage?.contextPressure.peak != null)
+const pressureLabel = computed(() => hasPressure.value ? `${Math.round((props.usage?.contextPressure.peak || 0) * 100)}% 峰值` : contextWindow.value ? '等待调用' : '上限未声明')
+const currentPressureLabel = computed(() => props.usage?.contextPressure.current == null ? '未计算' : `当前 ${Math.round(props.usage.contextPressure.current * 100)}%`)
 const pressureStyle = computed(() => ({ width: `${Math.round((props.usage?.contextPressure.peak || 0) * 100)}%` }))
+const pressureNote = computed(() => {
+  if (!contextWindow.value) return currentInputTokens.value == null
+    ? '等待模型调用数据；模型未声明上下文上限，暂不计算压力比例。'
+    : '已记录调用输入 Token，但模型未声明上下文上限，暂不计算压力比例。'
+  return '按每次调用输入 Token ÷ 上下文上限计算，多个活动节点取峰值。'
+})
 const assemblyLabel = computed(() => props.usage?.composition.assemblyComplete ? '已装配' : '进行中')
 
 async function load(reset = false) {
@@ -110,9 +135,19 @@ onMounted(() => { void load(true) })
 dt, .metric-grid span { color: var(--text-secondary); font-size: 9px; }
 dd, .metric-grid strong { display: block; overflow-wrap: anywhere; margin: 4px 0 0; font-size: 12px; font-weight: 700; }
 .resource-note { margin: 0; color: var(--text-secondary); font-size: 9px; line-height: 1.5; text-wrap: pretty; }
-.pressure-track { height: 6px; overflow: hidden; border-radius: 999px; background: var(--bg-input); }
+.pressure-card { display: grid; gap: 9px; padding: 11px 12px; border: 1px solid var(--primary-line); border-radius: var(--radius-card); background: color-mix(in srgb, var(--primary-fade) 58%, var(--surface-solid)); }
+.pressure-card.unknown { border-color: var(--border-light); background: var(--bg-input); }
+.pressure-card__top, .pressure-card__meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pressure-reading { display: grid; gap: 3px; min-width: 0; }
+.pressure-reading span, .pressure-card__meta { color: var(--text-secondary); font-size: 9px; }
+.pressure-card__meta small { color: inherit; font-size: inherit; }
+.pressure-reading strong { color: var(--text-primary); font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.pressure-reading strong small { color: var(--text-secondary); font-size: 10px; font-weight: 600; }
+.pressure-badge { flex: 0 0 auto; padding: 5px 8px; border-radius: var(--radius-full); background: var(--primary-fade); color: var(--primary-color); font-size: 9px; font-weight: 700; }
+.pressure-card.unknown .pressure-badge { background: var(--surface-solid); color: var(--text-muted); }
+.pressure-track { height: 7px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--surface-solid) 68%, var(--border-light)); }
 .pressure-track i { display: block; height: 100%; border-radius: inherit; background: var(--primary-color); transition: width 150ms ease; }
-.pressure-track.unknown i { width: 0 !important; }
+.pressure-card.unknown .pressure-track i { width: 0 !important; }
 .progress-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
 .progress-list li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-radius: var(--radius-control); background: var(--bg-input); font-size: 10px; }
 .call-list { display: grid; gap: 7px; }

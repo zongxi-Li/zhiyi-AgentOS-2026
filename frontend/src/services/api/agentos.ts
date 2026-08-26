@@ -69,6 +69,12 @@ export interface WorkflowRunSummary extends WorkflowProgress {
 }
 
 export interface WorkflowExecutionState {
+  parentRunId?: string | null
+  sourceRunId?: string | null
+  rerunReason?: string | null
+  supersedesRunId?: string | null
+  supersededByRunId?: string | null
+  sourcePatchId?: string | null
   outputRefs?: Record<string, string>
   outputSummaries?: Record<string, string>
   contextRefs?: Record<string, string>
@@ -328,6 +334,8 @@ export interface CompiledPackageIdentity {
 
 export interface RunLineage {
   parentRunId?: string | null
+  sourceRunId?: string | null
+  rerunReason?: string | null
   supersedesRunId?: string | null
   supersededByRunId?: string | null
   sourcePatchId?: string | null
@@ -499,6 +507,17 @@ export interface AsyncWorkflowStartRequest extends WorkflowStartRequest {
   clientRequestId: string
 }
 
+export interface WorkflowRerunRequest {
+  workflowId?: string
+  reviewMode?: string
+  input?: Record<string, any>
+  enabledPluginIds?: string[] | null
+  materialRefs?: string[]
+  clientRequestId: string
+  sourceRunId: string
+  rerunReason: 'current_configuration' | 'retry_after_failure' | 'planning_variant' | 'review_rerun'
+}
+
 export type AsyncWorkflowStartResponse = WorkflowRun
 
 export class WorkflowApiContractError extends Error {
@@ -649,7 +668,14 @@ export interface RunResourceUsage {
     latencyMs: number
     cacheHitRatio?: number | null
   }
-  contextPressure: { current?: number | null; peak?: number | null; source: string }
+  contextPressure: {
+    current?: number | null
+    peak?: number | null
+    currentInputTokens?: number | null
+    peakInputTokens?: number | null
+    contextWindowTokens?: number | null
+    source: string
+  }
   composition: {
     materialManifestCount: number
     materialFragmentCount: number
@@ -927,6 +953,22 @@ export const agentosApi = {
 
   async getRunResourceUsage(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunResourceUsage> {
     const response = await agentosRequest.get<RunResourceUsage>(`${runPath(runId)}/resource-usage`, { signal: options.signal })
+    return response.data
+  },
+
+  async rerunWorkflowAsync(
+    missionId: string,
+    payload: WorkflowRerunRequest,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<WorkflowRun> {
+    const response = await agentosRequest.post<WorkflowRun>(
+      `/missions/${encodeURIComponent(missionId)}/runs`,
+      payload,
+      { signal: options.signal }
+    )
+    if (!response.data?.runId || response.data.missionId !== missionId) {
+      throw new WorkflowApiContractError('重新运行响应缺少有效的同 Mission Run')
+    }
     return response.data
   },
 

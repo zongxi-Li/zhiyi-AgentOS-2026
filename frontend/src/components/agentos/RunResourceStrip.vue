@@ -12,7 +12,7 @@
     <span>输入 <b>{{ compact(usage?.usage.inputTokens) }}</b></span>
     <span>输出 <b>{{ compact(usage?.usage.outputTokens) }}</b></span>
     <span>缓存命中 <b>{{ percent(usage?.usage.cacheHitRatio) }}</b></span>
-    <span>上下文峰值 <b>{{ percent(usage?.contextPressure.peak, 'API 未声明') }}</b></span>
+    <span>上下文峰值 <b>{{ percent(usage?.contextPressure.peak, '上限未声明') }}</b></span>
     <span>报告装配 <b>{{ assembly }}</b></span>
     <span class="resource-more">资源详情 <span aria-hidden="true">›</span></span>
   </button>
