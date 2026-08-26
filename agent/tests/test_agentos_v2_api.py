@@ -484,6 +484,10 @@ async def test_v2_material_and_resource_projections_preserve_unknown_capacity(tm
     assert body["capability"].get("contextWindowTokens") is None
     assert body["capability"].get("maxOutputTokens") is None
     assert body["contextPressure"]["peak"] is None
+    assert body["contextPressure"]["currentInputTokens"] == 100
+    assert body["contextPressure"]["peakInputTokens"] == 100
+    assert body["contextPressure"]["contextWindowTokens"] is None
+    assert body["contextPressure"]["source"] == "unknown"
     assert body["usage"]["totalTokens"] == 140
     assert body["usage"]["reasoningTokens"] == 10
     assert calls.json()["items"][0]["outputPolicy"] == "api_controlled"
@@ -492,6 +496,47 @@ async def test_v2_material_and_resource_projections_preserve_unknown_capacity(tm
     assert fragments.json()["nextCursor"] == "1"
     assert invalid_fragment_cursor.status_code == 422
     assert downloaded.content == b"# title\n\n## section\ncomplete"
+
+
+async def test_v2_resource_projection_returns_context_pressure_details(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("Context pressure projection", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    for index, input_tokens in enumerate((100, 150)):
+        runtime.trace_store.append(
+            run,
+            TraceEventType.MODEL_CALLED,
+            step_id=f"report-{index}",
+            payload={
+                "provider": "test-provider",
+                "model": "test-model",
+                "latencyMs": 125,
+                "finishReason": "stop",
+                "usage": {"input_tokens": input_tokens, "output_tokens": 40},
+                "capability": {
+                    "provider": "test-provider",
+                    "model": "test-model",
+                    "source": "adapter_declared",
+                    "contextWindowTokens": 200,
+                    "features": {},
+                },
+            },
+        )
+    runtime.workflow_store.save_run(run)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage")
+
+    assert response.status_code == 200
+    pressure = response.json()["contextPressure"]
+    assert pressure["current"] == 0.75
+    assert pressure["peak"] == 0.75
+    assert pressure["currentInputTokens"] == 150
+    assert pressure["peakInputTokens"] == 150
+    assert pressure["contextWindowTokens"] == 200
+    assert pressure["source"] == "usage_derived"
 
 
 async def test_v2_create_mission_acknowledges_before_deferred_planning_finishes(tmp_path) -> None:
@@ -557,6 +602,54 @@ async def test_v2_deferred_planning_preserves_identity_projection_alignment(tmp_
         assert graph.status_code == 200
         assert graph.json()["taskBindings"][0]["acgNodeId"] == "report"
         assert health.json()["unappliedEventCount"] == 0
+    finally:
+        await coordinator.shutdown()
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_v2_rerun_creates_another_run_under_same_mission(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    task = runtime.create_mission(
+        "Same Mission rerun",
+        input={"taskGoal": "original goal", "planningDiversity": "stable"},
+        workflow_id="api-workflow",
+    )
+    source = await runtime.start(task.mission_id, workflow_id="api-workflow")
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    payload = {
+        "workflowId": "api-workflow",
+        "input": {"taskGoal": "updated run configuration", "planningDiversity": "stable"},
+        "clientRequestId": "rerun-request-1",
+        "sourceRunId": source.run_id,
+        "rerunReason": "current_configuration",
+    }
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                f"/agentos/v2/missions/{task.mission_id}/runs",
+                json=payload,
+            )
+            repeated = await client.post(
+                f"/agentos/v2/missions/{task.mission_id}/runs",
+                json=payload,
+            )
+
+        assert created.status_code == 202
+        assert repeated.status_code == 202
+        body = created.json()
+        assert body["missionId"] == task.mission_id
+        assert body["runId"] != source.run_id
+        assert body["executionState"]["sourceRunId"] == source.run_id
+        assert body["executionState"]["rerunReason"] == "current_configuration"
+        assert repeated.json()["runId"] == body["runId"]
+        rerun = runtime.get_status(body["runId"])
+        assert rerun.input["taskGoal"] == "updated run configuration"
+        assert rerun.execution_state["parentRunId"] == source.run_id
+        assert rerun.execution_state["sourceRunId"] == source.run_id
+        assert rerun.execution_state["rerunReason"] == "current_configuration"
+        assert len(runtime.workflow_store.list_runs(mission_id=task.mission_id, page_size=20).items) == 2
     finally:
         await coordinator.shutdown()
         runtime.identity_lifecycle.lifecycle_service.close()

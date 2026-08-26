@@ -52,6 +52,8 @@ class CompiledPackageIdentity(DomainModel):
 
 class RunLineage(DomainModel):
     parent_run_id: str | None = Field(default=None, alias="parentRunId")
+    source_run_id: str | None = Field(default=None, alias="sourceRunId")
+    rerun_reason: str | None = Field(default=None, alias="rerunReason")
     supersedes_run_id: str | None = Field(default=None, alias="supersedesRunId")
     superseded_by_run_id: str | None = Field(default=None, alias="supersededByRunId")
     source_patch_id: str | None = Field(default=None, alias="sourcePatchId")

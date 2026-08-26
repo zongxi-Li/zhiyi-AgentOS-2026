@@ -379,6 +379,9 @@ class ExecutionRuntime:
         idempotency_fingerprint: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
         defer_acg_planning: bool = False,
+        input_override: Optional[dict] = None,
+        parent_run_id: Optional[str] = None,
+        rerun_reason: Optional[str] = None,
     ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
         """持久化可查询运行；API 可把耗时 ACG 规划交给同一 Runtime 的后台阶段。"""
 
@@ -392,6 +395,10 @@ class ExecutionRuntime:
         task = self.mission_manager.get_mission(mission_id)
         if task.record_state is not MissionRecordState.ACTIVE:
             raise ValueError("mission must be active before preparing a new run")
+        if parent_run_id:
+            parent_run = self.workflow_store.get_run(parent_run_id)
+            if parent_run.mission_id != mission_id:
+                raise ValueError("parent run must belong to the same mission")
         requested_plugins = (
             enabled_plugin_ids
             if enabled_plugin_ids is not None
@@ -419,13 +426,15 @@ class ExecutionRuntime:
             # explicitly rebound to ACG only when the run is prepared.
             self.workflow_store.save_mission(task)
             self._flush_identity_outbox()
+        run_input = dict(task.input)
+        if input_override is not None:
+            run_input.update(input_override)
         planning_diversity = normalize_planning_diversity(
-            task.input.get("planningDiversity")
+            run_input.get("planningDiversity")
         )
-        planning_seed = normalize_planning_seed(task.input.get("planningSeed"))
+        planning_seed = normalize_planning_seed(run_input.get("planningSeed"))
         if planning_diversity != "stable" and planning_seed is None:
             planning_seed = secrets.randbits(53)
-        run_input = dict(task.input)
         run_input["planningDiversity"] = planning_diversity
         if planning_seed is not None:
             run_input["planningSeed"] = planning_seed
@@ -463,6 +472,8 @@ class ExecutionRuntime:
             legacyPluginScope=False,
             executionState={
                 **({"engineMigration": "langgraph_pending"} if is_acg else {}),
+                **({"parentRunId": parent_run_id, "sourceRunId": parent_run_id} if parent_run_id else {}),
+                **({"rerunReason": rerun_reason} if rerun_reason else {}),
                 "pluginScopeResolution": (
                     "legacy_compatibility" if requested_plugins is None else "explicit"
                 ),

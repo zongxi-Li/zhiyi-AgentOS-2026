@@ -56,7 +56,10 @@ class GatewayStructuredGenerationRuntime:
         return ModelCapabilityEnvelope(
             provider=gateway.provider_name or "unavailable",
             model=gateway.model or "unknown",
+            version=declared.version,
             source=ModelCapabilitySource.ADAPTER_DECLARED,
+            contextWindowTokens=declared.context_window_tokens,
+            maxOutputTokens=declared.max_output_tokens,
             maxTokensField=declared.max_tokens_field,
             features=ModelFeatureSet(
                 jsonSchema=declared.supports_json_schema,

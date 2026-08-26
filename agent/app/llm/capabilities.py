@@ -93,6 +93,10 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
     normalized_url = (base_url or "").lower()
 
     if normalized_model.startswith("deepseek-v4") or "api.deepseek.com" in normalized_url:
+        official_metadata = {
+            "deepseek-v4-flash": ("DeepSeek-V4-Flash-0731", 1_000_000, 384_000),
+            "deepseek-v4-pro": ("DeepSeek-V4-Pro-0813", 1_000_000, 384_000),
+        }.get(normalized_model) if "api.deepseek.com" in normalized_url else None
         return ProviderModelCapabilities(
             supports_thinking=True,
             supported_thinking_modes={
@@ -110,6 +114,9 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
             supports_developer_role=False,
             supports_stream_usage=True,
             max_tokens_field="max_tokens",
+            version=official_metadata[0] if official_metadata else None,
+            context_window_tokens=official_metadata[1] if official_metadata else None,
+            max_output_tokens=official_metadata[2] if official_metadata else None,
         )
 
     if "dashscope.aliyuncs.com" in normalized_url and "qwen3" in normalized_model:

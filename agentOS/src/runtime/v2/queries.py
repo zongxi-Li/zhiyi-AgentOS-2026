@@ -181,6 +181,8 @@ class IdentityQueryService:
             package=package,
             lineage=RunLineage(
                 parentRunId=metadata.get("parentRunId"),
+                sourceRunId=metadata.get("sourceRunId"),
+                rerunReason=metadata.get("rerunReason"),
                 supersedesRunId=metadata.get("supersedesRunId"),
                 supersededByRunId=(
                     metadata.get("supersededByRunId")

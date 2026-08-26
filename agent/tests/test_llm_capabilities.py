@@ -48,6 +48,17 @@ def test_deepseek_capabilities_include_tool_call_protocol_requirements():
     assert capabilities.requires_non_null_assistant_content_for_tool_calls is True
     assert capabilities.supports_json_object is True
     assert capabilities.supports_json_schema is False
+    assert capabilities.version == "DeepSeek-V4-Pro-0813"
+    assert capabilities.context_window_tokens == 1_000_000
+    assert capabilities.max_output_tokens == 384_000
+
+
+def test_custom_compatible_endpoint_does_not_inherit_official_model_limits():
+    capabilities = provider_model_capabilities(
+        "deepseek-v4-flash", "https://llm.internal.example/v1"
+    )
+    assert capabilities.context_window_tokens is None
+    assert capabilities.max_output_tokens is None
 
 
 def test_deepseek_thinking_request_removes_unsupported_parameters():

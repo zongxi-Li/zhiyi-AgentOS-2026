@@ -42,6 +42,21 @@ class MissionCreateRequest(BaseModel):
     client_request_id: str | None = Field(default=None, alias="clientRequestId", max_length=200)
 
 
+class MissionRunCreateRequest(BaseModel):
+    """Create another execution for an existing Mission without changing task identity."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    workflow_id: str | None = Field(default=None, alias="workflowId")
+    review_mode: str = Field(default="auto", alias="reviewMode")
+    input: dict[str, Any] = Field(default_factory=dict)
+    enabled_plugin_ids: list[str] | None = Field(default=None, alias="enabledPluginIds")
+    material_refs: list[str] | None = Field(default=None, alias="materialRefs")
+    client_request_id: str = Field(alias="clientRequestId", min_length=1, max_length=200)
+    source_run_id: str = Field(alias="sourceRunId", min_length=1)
+    rerun_reason: str = Field(alias="rerunReason", min_length=1, max_length=80)
+
+
 class MaterialCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -140,7 +155,8 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
         "memoryRefs", "phaseCapsuleRefs", "traceRefs", "provenanceRefs", "graphPatchRefs",
         "outputSummaries", "resourceBindings", "bindingHistory",
         "bindingRequirements", "executionBindings", "schedulingDecisions",
-        "evolutionPolicyVersion",
+        "evolutionPolicyVersion", "parentRunId", "sourceRunId", "rerunReason",
+        "supersedesRunId", "supersededByRunId", "sourcePatchId",
         "consensusResults", "controlFrames", "loopIterations",
         "loopPaths", "debateSessions", "recoveryOutcome",
     )
@@ -342,7 +358,7 @@ def project_graph(run: RuntimeRunRecord) -> dict[str, Any]:
     }
 
 
-def _idempotency(request: MissionCreateRequest) -> tuple[str | None, str | None]:
+def _idempotency(request: MissionCreateRequest | MissionRunCreateRequest) -> tuple[str | None, str | None]:
     if not request.client_request_id:
         return None, None
     actor = current_trusted_user()
@@ -432,6 +448,42 @@ def create_router(
         if manifest.owner_type == "run":
             load_run(manifest.owner_id)
         return manifest
+
+    def prepare_execution_input(
+        payload: dict[str, Any],
+        material_refs: list[str] | None,
+    ) -> dict[str, Any]:
+        """Resolve actor ownership and sealed materials for a Mission or Run command."""
+
+        execution_input = _actor_input(payload)
+        refs = list(dict.fromkeys([
+            *(material_refs or []),
+            *(execution_input.get("materialRefs") or []),
+        ]))
+        inline_material = execution_input.pop("materialText", None)
+        if isinstance(inline_material, str) and inline_material:
+            actor = current_trusted_user()
+            inline_manifest = runtime.content_manifest_store.create_from_bytes(
+                content=inline_material.encode("utf-8"),
+                kind=ContentKind.MATERIAL,
+                owner_type="user",
+                owner_id=(actor.user_id if actor is not None else "internal"),
+                media_type="text/plain",
+            )
+            refs.append(inline_manifest.manifest_id)
+        for manifest_id in refs:
+            manifest = require_manifest_access(manifest_id)
+            if manifest.kind is not ContentKind.MATERIAL or not manifest.sealed:
+                raise ValueError("materialRefs must reference sealed material manifests")
+        if refs:
+            execution_input["materialRefs"] = list(dict.fromkeys(refs))
+            execution_input["sourceMaterials"] = [
+                runtime.content_manifest_store.get_manifest(item).model_dump(
+                    by_alias=True, mode="json"
+                )
+                for item in execution_input["materialRefs"]
+            ]
+        return execution_input
 
     @router.post("/materials", status_code=status.HTTP_201_CREATED)
     async def create_material(request: MaterialCreateRequest):
@@ -627,34 +679,7 @@ def create_router(
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
                 return project(existing)
         try:
-            mission_input = _actor_input(request.input)
-            refs = list(dict.fromkeys([
-                *(request.material_refs or []),
-                *(mission_input.get("materialRefs") or []),
-            ]))
-            inline_material = mission_input.pop("materialText", None)
-            if isinstance(inline_material, str) and inline_material:
-                actor = current_trusted_user()
-                inline_manifest = runtime.content_manifest_store.create_from_bytes(
-                    content=inline_material.encode("utf-8"),
-                    kind=ContentKind.MATERIAL,
-                    owner_type="user",
-                    owner_id=(actor.user_id if actor is not None else "internal"),
-                    media_type="text/plain",
-                )
-                refs.append(inline_manifest.manifest_id)
-            for manifest_id in refs:
-                manifest = require_manifest_access(manifest_id)
-                if manifest.kind is not ContentKind.MATERIAL or not manifest.sealed:
-                    raise ValueError("materialRefs must reference sealed material manifests")
-            if refs:
-                mission_input["materialRefs"] = list(dict.fromkeys(refs))
-                mission_input["sourceMaterials"] = [
-                    runtime.content_manifest_store.get_manifest(item).model_dump(
-                        by_alias=True, mode="json"
-                    )
-                    for item in mission_input["materialRefs"]
-                ]
+            mission_input = prepare_execution_input(request.input, request.material_refs)
             task = runtime.create_mission(
                 title=request.title,
                 domain=request.domain,
@@ -753,6 +778,14 @@ def create_router(
         }
         pressures = [call["contextPressure"] for call in calls if call["contextPressure"] is not None]
         capability = next((call["capability"] for call in reversed(calls) if call["capability"]), None)
+        context_window = (
+            capability.get("contextWindowTokens")
+            if isinstance(capability, dict)
+            else None
+        )
+        input_values = [int(call["usage"]["inputTokens"]) for call in calls]
+        current_input_tokens = input_values[-1] if input_values else None
+        peak_input_tokens = max(input_values) if input_values else None
         manifests = runtime.content_manifest_store.list_manifests(owner_type="run", owner_id=run_id)
         artifact_manifests = [item for item in manifests if item.kind is ContentKind.ARTIFACT]
         intermediate_manifests = [item for item in manifests if item.kind is ContentKind.INTERMEDIATE]
@@ -776,7 +809,16 @@ def create_router(
             "contextPressure": {
                 "current": pressures[-1] if pressures else None,
                 "peak": max(pressures) if pressures else None,
-                "source": "provider_usage" if pressures else "unknown",
+                "currentInputTokens": current_input_tokens,
+                "peakInputTokens": peak_input_tokens,
+                "contextWindowTokens": context_window,
+                "source": (
+                    "usage_derived"
+                    if pressures
+                    else "capability_declared"
+                    if context_window
+                    else "unknown"
+                ),
             },
             "composition": {
                 "materialManifestCount": len(run.input.get("materialRefs") or []),
@@ -900,6 +942,7 @@ def create_router(
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         return {
             "manifest": manifest,
             "items": [
@@ -911,6 +954,47 @@ def create_router(
             ],
             "nextCursor": next_cursor,
         }
+
+    @router.post("/missions/{mission_id}/runs", status_code=status.HTTP_202_ACCEPTED)
+    async def create_mission_run(mission_id: str, request: MissionRunCreateRequest):
+        """Create a new Run under an existing Mission using the submitted configuration snapshot."""
+
+        require_mission_access(mission_id)
+        source_run = load_run(request.source_run_id)
+        if source_run.mission_id != mission_id:
+            raise HTTPException(status_code=409, detail="source run belongs to another mission")
+        if source_run.status.value not in {"completed", "failed", "cancelled", "superseded"}:
+            raise HTTPException(status_code=409, detail="source run must be terminal before rerun")
+        key, fingerprint = _idempotency(request)
+        if key:
+            existing = runtime.workflow_store.find_run_by_idempotency_key(key)
+            if existing is not None:
+                _require_access(existing)
+                if existing.mission_id != mission_id or existing.idempotency_fingerprint != fingerprint:
+                    raise HTTPException(status_code=409, detail="clientRequestId conflict")
+                return project(existing)
+        try:
+            run_input = prepare_execution_input(request.input, request.material_refs)
+            _, run = runtime.prepare_run(
+                mission_id,
+                workflow_id=request.workflow_id or source_run.workflow_id,
+                review_mode=request.review_mode,
+                idempotency_key=key,
+                idempotency_fingerprint=fingerprint,
+                enabled_plugin_ids=request.enabled_plugin_ids,
+                defer_acg_planning=True,
+                input_override=run_input,
+                parent_run_id=source_run.run_id,
+                rerun_reason=request.rerun_reason,
+            )
+            await coordinator.submit(run.run_id)
+            return project(runtime.get_status(run.run_id))
+        except (KeyError, ValueError) as exc:
+            logger.exception(
+                "agentos_v2_run_create_failed",
+                extra={"missionId": mission_id, "sourceRunId": request.source_run_id},
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get("/runs/{run_id}/artifacts/{manifest_id}/download")
     async def download_artifact(run_id: str, manifest_id: str):
@@ -1085,7 +1169,7 @@ def create_router(
 
     @router.post("/runs/{run_id}/reviews")
     async def apply_review(run_id: str, request: ReviewApplyRequest):
-        load_run(run_id)
+        source_run = load_run(run_id)
         try:
             run = await runtime.apply_review(
                 ReviewDecision(
@@ -1099,6 +1183,26 @@ def create_router(
                     expectedStepStatus=request.expected_step_status,
                 )
             )
+            if request.decision is ReviewDecisionType.RERUN:
+                operation_key = hashlib.sha256(
+                    f"review-rerun:{run_id}:{request.operation_id}".encode()
+                ).hexdigest()
+                operation_fingerprint = hashlib.sha256(
+                    f"{run_id}:{request.step_id}:{request.operation_id}".encode()
+                ).hexdigest()
+                _, run = runtime.prepare_run(
+                    source_run.mission_id,
+                    workflow_id=source_run.workflow_id,
+                    review_mode=source_run.review_mode,
+                    idempotency_key=operation_key,
+                    idempotency_fingerprint=operation_fingerprint,
+                    enabled_plugin_ids=source_run.enabled_plugin_ids,
+                    defer_acg_planning=True,
+                    input_override=dict(source_run.input),
+                    parent_run_id=source_run.run_id,
+                    rerun_reason="review_rerun",
+                )
+                await coordinator.submit(run.run_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail="review conflict") from exc
         return project(run)
@@ -1106,4 +1210,4 @@ def create_router(
     return router
 
 
-__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "MaterialCreateRequest", "MissionCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]
+__all__ = ["EvolutionApprovalRequest", "EvolutionRollbackRequest", "MaterialCreateRequest", "MissionCreateRequest", "MissionRunCreateRequest", "ReviewApplyRequest", "create_router", "project_graph", "project_run"]

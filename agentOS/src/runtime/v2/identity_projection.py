@@ -253,7 +253,13 @@ class IdentityProjectionBridge:
         execution_state = getattr(run, "execution_state", {})
         lineage = {
             key: execution_state[key]
-            for key in ("parentRunId", "supersedesRunId", "sourcePatchId")
+            for key in (
+                "parentRunId",
+                "supersedesRunId",
+                "sourceRunId",
+                "sourcePatchId",
+                "rerunReason",
+            )
             if isinstance(execution_state, dict) and execution_state.get(key)
         }
         self.lifecycle_service.create_run(
@@ -1322,8 +1328,10 @@ class IdentityProjectionBridge:
             "recoveryOutcome",
             "schedulingDecisions",
             "sourcePatchId",
+            "sourceRunId",
             "supersedesRunId",
             "supersededByRunId",
+            "rerunReason",
             "traceRefs",
         }
         return {key: state[key] for key in allowed if state.get(key) is not None}
@@ -1340,7 +1348,9 @@ class IdentityProjectionBridge:
                 "compiledPackageBlueprintHash",
                 "parentRunId",
                 "supersedesRunId",
+                "sourceRunId",
                 "sourcePatchId",
+                "rerunReason",
             )
             if key in projection
         }

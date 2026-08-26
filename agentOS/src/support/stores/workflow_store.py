@@ -103,9 +103,11 @@ _SAFE_EXECUTION_STATE_KEYS = {
     "recoveryOutcome",
     "schedulingDecisions",
     "sourceBlueprintVersion",
+    "sourceRunId",
     "sourcePatchId",
     "supersedesRunId",
     "supersededByRunId",
+    "rerunReason",
     "traceRefs",
 }
 

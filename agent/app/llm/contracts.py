@@ -54,6 +54,9 @@ class ProviderModelCapabilities(BaseModel):
     supports_developer_role: bool = False
     supports_stream_usage: bool = False
     max_tokens_field: str = "max_tokens"
+    version: Optional[str] = None
+    context_window_tokens: Optional[int] = None
+    max_output_tokens: Optional[int] = None
 
 
 class ProviderToolCall(BaseModel):
