@@ -21,6 +21,7 @@ _ALLOWED_METADATA_KEYS = {
     "plannerAlgorithmVersion", "planningDiversity", "planningSeed",
     "capabilityCatalogRevision", "taskType", "domain",
     "degraded", "degradationReason", "promptVersion", "complexityBand",
+    "planningBudget",
 }
 
 

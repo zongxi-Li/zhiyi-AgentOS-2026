@@ -10,10 +10,12 @@ from typing import Any
 
 from contracts.planning import PlannedTask, SemanticTaskRelationType, TaskPlan, TaskPlanRelation, WorksetSpec
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
+
+from .complexity import PLANNING_BUDGETS
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v2"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v3"
 
 _SCHEMA = {
     "type": "object",
@@ -186,13 +188,18 @@ class TaskDecomposer:
                 if (value := (task_input or {}).get(key)) not in (None, "", [], {})
             },
         }
+        budget_lo, budget_hi = PLANNING_BUDGETS[level]
         return (
             f"Prompt version: {TASK_DECOMPOSITION_PROMPT_VERSION}\n"
             "Create an executable, acyclic, domain-neutral TaskPlan and return JSON only.\n"
             f"Complexity assessment: {profile.complexity_assessment.model_dump() if profile.complexity_assessment else level.value}.\n"
+            f"Planning budget: complexity band {level.value} should decompose into approximately "
+            f"{int(budget_lo)}-{int(budget_hi)} tasks (inclusive). Treat the budget as a semantic "
+            "coverage target: do not pad or split tasks merely to satisfy it, and do not merge "
+            "genuinely separable deliverables just to stay under it.\n"
             "Choose the task count from semantic coverage, verifiable deliverables, useful "
-            "dependencies, parallel work and aggregation needs. Do not target a numeric task "
-            "quota. Material chunks are Workset units inside a logical task, not reasons to "
+            "dependencies, parallel work and aggregation needs, steered by that planning budget. "
+            "Material chunks are Workset units inside a logical task, not reasons to "
             "manufacture one business task per chunk.\n"
             "Every task must have one business-specific objective, one primary capabilityId, explicit acceptance criteria, "
             "sourceRefs and a decomposition rationale. Do not write objectives such as 'Complete cost analysis'.\n"
@@ -211,6 +218,17 @@ class TaskDecomposer:
             f"Semantic profile: {profile.model_dump_json(by_alias=True)}\n"
             f"Capability catalog: {json.dumps(catalog, ensure_ascii=False)}\n"
         )
+
+    @staticmethod
+    def _budget_metadata(profile: TaskSemanticProfile, node_count: int) -> dict[str, Any]:
+        """记录档位预算三元组：只做审计观测，不在生成侧拦截。"""
+        budget_lo, budget_hi = PLANNING_BUDGETS[profile.estimated_complexity]
+        lo, hi = int(budget_lo), int(budget_hi)
+        return {
+            "budgetRange": [lo, hi],
+            "actualTaskCount": int(node_count),
+            "withinBudget": bool(lo <= node_count <= hi),
+        }
 
     @staticmethod
     def _source_registry(profile: TaskSemanticProfile) -> list[dict[str, str]]:
@@ -294,6 +312,7 @@ class TaskDecomposer:
                 "strategy": strategy,
                 "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
                 "complexityBand": profile.estimated_complexity.value,
+                "planningBudget": self._budget_metadata(profile, len(nodes)),
                 "degraded": False,
             },
         )
@@ -655,6 +674,7 @@ class TaskDecomposer:
                 "strategy": strategy,
                 "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
                 "complexityBand": profile.estimated_complexity.value,
+                "planningBudget": self._budget_metadata(profile, len(nodes)),
                 "degraded": True,
                 "degradationReason": reason[:1000],
             },
