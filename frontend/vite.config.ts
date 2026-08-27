@@ -39,6 +39,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       strictPort: false,
+      // Windows 宿主目录 bind mount 进容器后不产生 inotify 事件，chokidar 常规监听
+      // 会静默失效：源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
+      // 轮询是 Dev 形态下保证"改完代码容器内可见"的唯一可靠通道。
+      watch: { usePolling: true, interval: 500 },
       proxy: {
         '/api': {
           target: BACKEND_PROXY_TARGET,
