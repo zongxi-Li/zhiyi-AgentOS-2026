@@ -56,8 +56,10 @@ export interface WorkflowProgress {
   cancelledSteps: number
   currentStepId: string | null
   activeStepIds: string[]
+  completedStepIds?: string[]
   startedAt: string | null
   updatedAt: string | null
+  runtimeRevision?: number
   progress: number
   percentage: number
 }
@@ -180,8 +182,10 @@ export interface WorkflowRun {
   activeStepIds?: string[]
   skippedStepIds?: string[]
   executionState?: WorkflowExecutionState
+  acgBlueprint?: AcgBlueprint | null
   createdAt?: string
   updatedAt?: string
+  runtimeRevision?: number
   startedAt?: string | null
 }
 
@@ -655,6 +659,8 @@ export interface ModelCallUsage {
 export interface RunResourceUsage {
   runId: string
   capability?: ModelCapabilitySnapshot | null
+  /** 观测到真实调用为 observed；零调用时来自运行时声明的 catalog 提示为 declared */
+  capabilitySource?: 'observed' | 'declared' | null
   outputPolicy?: string | null
   usage: {
     inputTokens: number
@@ -696,6 +702,7 @@ export interface AcgDeliverable {
   name: string
   status: string
   output: Record<string, any>
+  outputRef?: string
 }
 
 export interface AcgFinalArtifact {
@@ -713,6 +720,7 @@ export interface AcgView {
   runId: string
   status: WorkflowStatus
   engine: string
+  runtimeRevision?: number
   acgBlueprint: AcgBlueprint | null
   graphVersion?: number | null
   completedStepIds: string[]
@@ -773,8 +781,10 @@ const projectProgress = (run: WorkflowRun): WorkflowProgress => {
     cancelledSteps: count('cancelled'),
     currentStepId: run.currentStepId || null,
     activeStepIds: run.activeStepIds || [],
+    completedStepIds: run.completedStepIds || [],
     startedAt: run.startedAt || null,
     updatedAt: run.updatedAt || null,
+    runtimeRevision: run.runtimeRevision,
     progress: percent === null ? 0 : percent / 100,
     percentage: percent === null ? 0 : percent
   }
@@ -1098,8 +1108,13 @@ export const agentosApi = {
       }))
       : []
     const interactions = provenance.interactions
-    const tokensAvailable = interactions.reduce((sum, item) => sum + Number(item.tokensAvailable || 0), 0)
-    const tokensDelivered = interactions.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)
+    // 原生直连等新引擎路径只落 prod/cons 投递信封，不生成带 interactionId 的
+    // RuntimeInteraction 记录；此时退回按消费投递聚合，否则指标在数据已存在时仍归零。
+    const metricSource = interactions.length
+      ? interactions
+      : provenance.consumptions.filter(item => item.tokensAvailable != null || item.tokensDelivered != null)
+    const tokensAvailable = metricSource.reduce((sum, item) => sum + Number(item.tokensAvailable || 0), 0)
+    const tokensDelivered = metricSource.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)
     const reports = outputs.map(item => outputMarkdown(item.output)).filter((item): item is string => Boolean(item))
     const finalReport = reports.length ? reports[reports.length - 1] : null
     const finalArtifacts = outputs.flatMap(item => {
@@ -1151,13 +1166,13 @@ export const agentosApi = {
       finalArtifacts,
       finalReport,
       lowEntropyMetrics: {
-        averageSavingRatio: interactions.length ? interactions.reduce((sum, item) => sum + Number(item.savingRatio || 0), 0) / interactions.length : 0,
+        averageSavingRatio: metricSource.length ? metricSource.reduce((sum, item) => sum + Number(item.savingRatio || 0), 0) / metricSource.length : 0,
         effectiveSavingRatio: tokensAvailable ? (tokensAvailable - tokensDelivered) / tokensAvailable : 0,
         tokensAvailable,
         tokensDelivered,
         tokensSaved: Math.max(0, tokensAvailable - tokensDelivered),
         recoveryCount: trace.events.filter(event => event.eventType === 'run_recovered').length,
-        interactionCount: interactions.length,
+        interactionCount: metricSource.length,
         contractViolationCount: trace.events.filter(event => event.eventType === 'contract_violation').length,
         integrityStatus: provenance.integrityStatus || 'invalid'
       },

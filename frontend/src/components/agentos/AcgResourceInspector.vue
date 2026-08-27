@@ -121,6 +121,12 @@ async function load(reset = false) {
 }
 const loadMore = () => load(false)
 watch(() => props.runId, () => { calls.value = []; nextCursor.value = null; loadError.value = ''; void load(true) })
+// 执行中 usage 由上层周期刷新，调用总数增长超过已载入条目时重拉首页，
+// 保证抽屉打开状态下明细随新模型调用实时生长。
+watch(() => props.usage?.usage.callCount ?? 0, (callCount) => {
+  if (!props.runId || loading.value) return
+  if (callCount > calls.value.length) void load(true)
+})
 onMounted(() => { void load(true) })
 </script>
 

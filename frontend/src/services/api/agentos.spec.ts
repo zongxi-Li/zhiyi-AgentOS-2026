@@ -202,6 +202,35 @@ describe('AgentOS v2 application API', () => {
     })
   })
 
+  it('derives low-entropy metrics from delivery envelopes when no interaction records exist', async () => {
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: run } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_native', graphVersion: 1, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: {
+        integrityStatus: 'valid',
+        events: [
+          { eventType: 'data_produced', payload: { eventId: 'prod_000001', producerStepId: 'ctrl_start', fieldNames: ['intent'] } },
+          { eventType: 'data_consumed', payload: { eventId: 'cons_000002', consumerStepId: 'native_general_agent', producerStepIds: ['ctrl_start'], tokensAvailable: 14702, tokensDelivered: 11352, savingRatio: 0.228 } }
+        ]
+      } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
+      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_native_delivery')
+
+    expect(result.provenance.consumptions).toHaveLength(1)
+    expect(result.lowEntropyMetrics).toMatchObject({
+      averageSavingRatio: 0.228,
+      tokensAvailable: 14702,
+      tokensDelivered: 11352,
+      tokensSaved: 3350,
+      interactionCount: 1,
+      integrityStatus: 'valid'
+    })
+    expect(result.lowEntropyMetrics.effectiveSavingRatio).toBeCloseTo(0.2279, 3)
+  })
+
   it('merges Identity nodes and orders loop executions by attempt and loop path', async () => {
     const identityNode = {
       task: { nodeId: 'semantic_task_1', taskId: 'task_1', missionId: 'mission_1', title: 'Deliver', objective: 'Ship result', constraints: [], status: 'running', metadata: {} },
