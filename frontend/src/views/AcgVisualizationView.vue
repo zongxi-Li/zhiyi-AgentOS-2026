@@ -829,7 +829,10 @@ const scheduleBatches = computed(() => {
   return Array.from(batches.values()).sort((a, b) => a.round - b.round)
 })
 
-const ACTIVE_TOPOLOGY_PHASES = new Set(['executing', 'recovery', 'review'])
+// 规划/建图早期阶段同样持续刷新：拓扑、资源横幅与运行详情从任务一开始就有内容。
+const ACTIVE_TOPOLOGY_PHASES = new Set([
+    'understanding', 'planning', 'graph_building', 'executing', 'recovery', 'review'
+])
 const TOPOLOGY_REFRESH_MS = 8000
 let topologyController: AbortController | null = null
 let topologyTimer: ReturnType<typeof setTimeout> | null = null
@@ -1020,6 +1023,13 @@ const removeMissingAcgRun = async (runId: string) => {
   await router.replace({ query })
   ElMessage.warning('该运行记录已不存在。')
 }
+
+watch(
+  () => progressTracker.progress.value,
+  (value) => {
+    if (value) scheduleTopologyRefresh(value)
+  }
+)
 
 const scheduleTopologyRefresh = (value: DeepReadonly<WorkflowProgress>) => {
   if (!ACTIVE_TOPOLOGY_PHASES.has(value.phase) || value.runId !== activeRunId.value) return
@@ -1271,6 +1281,8 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
     window.dispatchEvent(new Event('acg-runs-refresh'))
     terminalNotificationRunId = res.runId
     void progressTracker.start(res.runId, { fresh: true })
+    // 提交成功立即拉取一次图与资源详情，运行中再由进度 watcher 按 8s 节奏续刷。
+    void refreshAcgForRun(res.runId, true)
     await router.replace({ query: { ...route.query, runId: res.runId } })
   } catch (error: unknown) {
     if (axios.isCancel(error)) return
