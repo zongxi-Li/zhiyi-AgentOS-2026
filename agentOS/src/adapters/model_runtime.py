@@ -161,6 +161,14 @@ class RegisteredModelRuntime:
                 policy = ModelOutputPolicy.PROVIDER_REQUIRED
                 effective_tokens = capability.max_output_tokens
                 effective_reason = "provider_required"
+            elif capability.max_output_tokens is not None:
+                # 调用方未指定时，能力目录登记的输出上限必须显式随请求发送：
+                # "未指定"不得等价于供应商服务端默认额度（结构化 JSON 会被静默截断）。
+                field = capability.max_tokens_field or "max_tokens"
+                options[field] = capability.max_output_tokens
+                policy = ModelOutputPolicy.CATALOG_DEFAULT
+                effective_tokens = capability.max_output_tokens
+                effective_reason = "catalog_default"
             request = ModelInvocationRequest(
                 requestId=request_id,
                 model=self.model,

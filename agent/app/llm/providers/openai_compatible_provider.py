@@ -20,11 +20,13 @@ class LLMProviderError(RuntimeError):
         code: str = "MODEL_PROVIDER_FAILED",
         usage: Dict[str, Any] | None = None,
         finish_reason: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.usage = dict(usage or {})
         self.finish_reason = finish_reason
+        self.metadata = dict(metadata or {})
 
 
 class OpenAICompatibleProvider:
@@ -77,7 +79,31 @@ class OpenAICompatibleProvider:
         return dict(self.generate_json_result(prompt, schema, **kwargs)["data"])
 
     def generate_json_result(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        """返回安全 JSON 与真实用量/结束原因，供 AgentOS 审计链消费。"""
+        """返回安全 JSON 与真实用量/结束原因，供 AgentOS 审计链消费。
+
+        输出预算合同：调用方未显式指定 ``max_tokens`` 时，默认取能力目录登记的
+        ``maxOutputTokens`` 显式随请求发送——"未指定"不得再等价于供应商服务端
+        默认额度（那会导致结构化 JSON 被静默截断）。解析出的预算以 ``outputBudget``
+        元数据随结果/异常上浮，供审计层盖章 requested/effective/reason。
+        """
+        capabilities = provider_model_capabilities(self.model, self.base_url)
+        budget_field = getattr(capabilities, "max_tokens_field", None) or "max_tokens"
+        requested_budget = kwargs.get("max_tokens")
+        effective_budget = requested_budget
+        if effective_budget is None:
+            catalog_max = getattr(capabilities, "max_output_tokens", None)
+            if catalog_max:
+                kwargs = {**kwargs, "max_tokens": int(catalog_max)}
+                effective_budget = int(catalog_max)
+        output_budget = {
+            "requested": requested_budget,
+            "effective": effective_budget,
+            "reason": (
+                "explicit_request" if requested_budget is not None
+                else ("catalog_default" if effective_budget is not None else "provider_default")
+            ),
+            "field": budget_field,
+        }
         try:
             adapted = self._adapt_parameters(kwargs)
             adapted["response_format"] = {"type": "json_object"}
@@ -100,6 +126,7 @@ class OpenAICompatibleProvider:
                     code="MODEL_OUTPUT_EXHAUSTED",
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
+                    metadata={"outputBudget": output_budget},
                 )
             content = raw.content
             if not content:
@@ -108,6 +135,7 @@ class OpenAICompatibleProvider:
                     code="MODEL_EMPTY_RESPONSE",
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
+                    metadata={"outputBudget": output_budget},
                 )
             try:
                 data = self._parse_json(content)
@@ -120,12 +148,14 @@ class OpenAICompatibleProvider:
                     code=exc.code,
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
+                    metadata={"outputBudget": output_budget},
                 ) from exc
             return {
                 "data": data,
                 "usage": dict(raw.raw_usage),
                 "finish_reason": finish_reason,
                 "response_id": raw.raw_response_metadata.get("response_id"),
+                "outputBudget": output_budget,
             }
         except LLMProviderError:
             raise

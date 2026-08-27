@@ -33,6 +33,7 @@ class ModelOutputPolicy(str, Enum):
     API_CONTROLLED = "api_controlled"
     PROVIDER_REQUIRED = "provider_required"
     EXPLICIT = "explicit"
+    CATALOG_DEFAULT = "catalog_default"
 
 
 class ModelProvider(str, Enum):

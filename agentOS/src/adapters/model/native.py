@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from copy import deepcopy
 from typing import Any
 
@@ -27,6 +28,20 @@ from components.communicator.contracts import ContextPack, input_revision
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"
 GENERAL_EVIDENCE_WORKFLOW_ID = "general_evidence_decision"
 NATIVE_AGENT_NAME = "native_general_agent"
+
+logger = logging.getLogger(__name__)
+
+
+def _workset_recovery_bounded(context) -> bool:
+    """判断该节点是否处于 workset 恢复边界之内。
+
+    workset 分片单元的超限必须原样上抛给外层的确定性材料二分；内层语义
+    子任务拆分在边界内截胡会把外层恢复链饿死（历史缺陷：空拆分直接终结）。
+    """
+    pack = getattr(context, "context_pack", None)
+    data = getattr(pack, "data", None) or {}
+    return str(data.get("recoveryBoundary") or "") == "workset"
+
 # Backward-compatible export derived from the native Catalog contribution.
 NATIVE_CAPABILITIES = NATIVE_CAPABILITY_IDS
 
@@ -208,14 +223,34 @@ class NativeGeneralAgent(BaseAgent):
                     exhausted_audit=exc.audit,
                 )
                 invocations.extend(recovery_invocations)
-            elif exc.code == "MODEL_OUTPUT_EXHAUSTED":
-                recovered_output, recovery_invocations = await self._recover_capability_by_subtasks(
-                    context=context, runtime=runtime, original_prompt=prompt,
-                    output_schema=generation_schema, thinking_mode=output_thinking_mode,
-                    timeout_seconds=timeout_seconds, prompt_version=base_prompt_version,
-                    exhausted_audit=exc.audit,
-                )
-                invocations.extend(recovery_invocations)
+            elif exc.code == "MODEL_OUTPUT_EXHAUSTED" and not _workset_recovery_bounded(context):
+                try:
+                    recovered_output, recovery_invocations = await self._recover_capability_by_subtasks(
+                        context=context, runtime=runtime, original_prompt=prompt,
+                        output_schema=generation_schema, thinking_mode=output_thinking_mode,
+                        timeout_seconds=timeout_seconds, prompt_version=base_prompt_version,
+                        exhausted_audit=exc.audit,
+                    )
+                    invocations.extend(recovery_invocations)
+                except StructuredGenerationError as split_exc:
+                    if split_exc.code != "MODEL_OUTPUT_NO_PROGRESS":
+                        raise
+                    # 语义拆分无进展时回落到确定性分段续写，而不是把整个运行判死；
+                    # sectioned 恢复自身失败则以原无进展错误上抛。
+                    logger.warning(
+                        "semantic split produced no progress; falling back to sectioned continuation"
+                    )
+                    try:
+                        recovered_output, section_invocations = await self._recover_artifact_by_sections(
+                            context=context, runtime=runtime, original_prompt=prompt,
+                            thinking_mode=output_thinking_mode, timeout_seconds=timeout_seconds,
+                            prompt_version=f"{base_prompt_version}.sectioned-fallback",
+                            exhausted_audit=(exc.audit if isinstance(exc.audit, dict) else None),
+                        )
+                        invocations.extend(section_invocations)
+                    except StructuredGenerationError:
+                        logger.exception("sectioned fallback failed after empty semantic split")
+                        raise split_exc from None
             elif exc.code == "MODEL_EMPTY_RESPONSE" and thinking_enabled:
                 thinking_fallback_reason = exc.code
                 output_thinking_mode = "disabled"
@@ -339,6 +374,9 @@ class NativeGeneralAgent(BaseAgent):
             "properties": {
                 "subtasks": {
                     "type": "array",
+                    # 空拆分是本次事故的直接死因：合同层必须先行拒绝，
+                    # 让修复指令有机会进入纠偏重试而不是业务层事后判死。
+                    "minItems": 1,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -370,10 +408,39 @@ class NativeGeneralAgent(BaseAgent):
         )
         invocations.append(plan.audit_record())
         subtasks = list(plan.data.get("subtasks") or [])
+        split_attempts = [plan.audit_record()]
         if not subtasks:
-            raise StructuredGenerationError(
-                "MODEL_OUTPUT_NO_PROGRESS", "capacity split returned no semantic sub-units"
+            # 纠偏重试：明确要求至少一个子任务；模型找不到切分点时允许以单元素
+            # 透传作为最低合法形态。二次仍为空才上报无进展（并携带完整尝试审计）。
+            corrective_plan = await runtime.generate_json(
+                prompt=(
+                    f"{original_prompt}\nThe current semantic unit exceeded one response. Start a new "
+                    "planning operation and decompose it into smaller non-overlapping, independently "
+                    "complete sub-units whose union preserves the entire goal. Your previous response "
+                    "contained an EMPTY subtask list, which is invalid. Return AT LEAST ONE sub-task; "
+                    "if decomposition is impossible, return exactly one sub-task covering the whole unit. "
+                    "Return plan JSON only."
+                ),
+                schema=subtask_schema, thinking_mode=thinking_mode,
+                timeout_seconds=timeout_seconds, max_output_tokens=None,
+                prompt_version=f"{prompt_version}.capacity-split-retry1",
+                commit_id=f"{context.commit_id or 'capability'}:split:{depth}:retry",
             )
+            split_attempts.append(corrective_plan.audit_record())
+            subtasks = list(corrective_plan.data.get("subtasks") or [])
+            if not subtasks:
+                raise StructuredGenerationError(
+                    "MODEL_OUTPUT_NO_PROGRESS",
+                    "capacity split returned no semantic sub-units after corrective retry",
+                    audit={
+                        "capacitySplitAttempts": len(split_attempts),
+                        "invocations": [
+                            item for item in (exhausted_audit, *split_attempts)
+                            if isinstance(item, dict)
+                        ],
+                    },
+                )
+        invocations.extend(split_attempts[1:])
         partials: list[dict[str, Any]] = []
         for index, subtask in enumerate(subtasks):
             subprompt = (
@@ -702,6 +769,7 @@ class NativeGeneralAgent(BaseAgent):
             source_key=f"materialFragment:{unit['sequence']}:{depth}",
             source_payload=unit,
             commit_suffix=f"map:{unit['sequence']}:{depth}",
+            boundary=True,
         )
         try:
             return await self.run(subcontext)
@@ -750,9 +818,12 @@ class NativeGeneralAgent(BaseAgent):
     def _workset_context(
         context: AgentRunContext, *, source_key: str,
         source_payload: dict[str, Any], commit_suffix: str,
+        boundary: bool = False,
     ) -> AgentRunContext:
         original_pack = context.context_pack
         original_data = dict(getattr(original_pack, "data", {}) or {})
+        if boundary:
+            original_data["recoveryBoundary"] = "workset"
         original_sources = dict(getattr(original_pack, "source_data", {}) or {})
         original_sources[source_key] = source_payload
         pack = ContextPack(

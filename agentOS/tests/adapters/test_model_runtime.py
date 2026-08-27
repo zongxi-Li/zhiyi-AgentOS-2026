@@ -259,3 +259,35 @@ def test_registered_runtime_uses_profile_version_constraint() -> None:
     assert result.data == {"answer": "ok"}
     assert legacy.requests == []
     assert len(current.requests) == 1
+
+
+def test_catalog_declared_budget_is_sent_when_caller_unspecified() -> None:
+    """调用方未指定输出额度时，能力目录登记值必须显式随请求发送。
+
+    历史缺陷：max_output_tokens=None 导致请求里完全没有 max_tokens，
+    实际输出额度落入供应商服务端默认值，结构化 JSON 被中途截断。
+    """
+    from contracts.capability import ModelCapabilityEnvelope
+
+    envelope = ModelCapabilityEnvelope.unknown(
+        provider="openai_compatible", model="local-chat", version="v1"
+    ).model_copy(update={"max_output_tokens": 384000})
+    provider = _Provider(capability=envelope)
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"
+    )
+
+    result = asyncio.run(runtime.generate_json(
+        prompt="只返回 JSON",
+        schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+    ))
+
+    assert provider.requests, "model was never invoked"
+    options = provider.requests[0].options
+    assert options.get("max_tokens") == 384000, (
+        f"catalog budget not transmitted: options={options}"
+    )
+    assert result.effective_output_tokens == 384000
+    assert result.effective_reason == "catalog_default"
