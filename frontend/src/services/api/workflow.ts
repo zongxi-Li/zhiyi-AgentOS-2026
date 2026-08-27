@@ -185,6 +185,10 @@ export const workflowApi = {
     return agentosApi.applyWorkflowReview(runId, payload, options)
   },
 
+  cancelRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
+    return agentosApi.cancelWorkflowRun(runId, options)
+  },
+
   getAcgView(runId: string, options: { signal?: AbortSignal; run?: WorkflowRun | Promise<WorkflowRun> } = {}): Promise<AcgView> {
     return agentosApi.getAcgView(runId, options)
   }

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 from time import monotonic
 from contracts.identity import new_attempt_id, new_step_execution_id
 from typing import Callable, Mapping, Optional
@@ -146,6 +147,14 @@ class ReviewConflictError(ValueError):
     """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
 
 
+class ExecutionRunCancelled(RuntimeError):
+    """操作者请求取消后，用于在调度边界协作式终止图推进的控制流异常。
+
+    它不是 ``asyncio.CancelledError``：不撕毁事件循环中正在执行的任务树，
+    只让当前 run 停止认领新的节点执行，让已真实完成的步骤保留其提交。
+    """
+
+
 class ExecutionRuntime:
     """唯一 Execution Runtime 执行内核，串联规划、调度、节点执行、审核与恢复。"""
 
@@ -250,6 +259,13 @@ class ExecutionRuntime:
             trace_store=self.trace_store,
         )
         self.run_lock_manager = run_lock_manager or GLOBAL_RUN_LOCK_MANAGER
+        # 每个 run 同时只允许一个活跃执行体：并发 start/resume/审核恢复在入口处
+        # 原子认领执行槽，重复入口立即失败，而不是对同一批未提交步骤双跑。
+        self._execution_slot_guard = threading.Lock()
+        self._active_execution_slots: set[str] = set()
+        # 协作式取消信号：cancel() 写入，_execute_acg 的调度边界读取并清理。
+        self._run_cancel_guard = threading.Lock()
+        self._run_cancel_events: dict[str, threading.Event] = {}
         self.recovery_recipe_registry = recovery_recipe_registry
         self._runtime_adapters: dict[str, object] = {}
         self.execution_adapter_factories: dict[str, ExecutionAdapterFactory] = {
@@ -673,6 +689,28 @@ class ExecutionRuntime:
         state: ACGExecutionState | None = None,
         command: ExecutionResumeCommand | None = None,
     ) -> RuntimeRunRecord:
+        """ACG 执行入口：认领单执行槽并管理取消信号生命周期。
+
+        并发重复入口（如同时 resume 同一检查点）在此被确定性拒绝；执行体见
+        ``_execute_acg_locked``。
+        """
+        if run.status in _TERMINAL_RUN_STATUSES:
+            return run
+        if not self._claim_execution_slot(run.run_id):
+            raise ValueError(f"run {run.run_id} already has an active execution")
+        try:
+            return await self._execute_acg_locked(run, state=state, command=command)
+        finally:
+            self._release_execution_slot(run.run_id)
+            self._discard_run_cancellation(run.run_id)
+
+    async def _execute_acg_locked(
+        self,
+        run: RuntimeRunRecord,
+        *,
+        state: ACGExecutionState | None = None,
+        command: ExecutionResumeCommand | None = None,
+    ) -> RuntimeRunRecord:
         """执行或续跑融合 ACG，并把图状态投影为既有运行合同。
 
         图、值仓库和检查点均只传递引用型状态。此方法是 Runtime 唯一的 ACG 接线点：
@@ -736,6 +774,7 @@ class ExecutionRuntime:
             self.mission_manager.mark_running_for_new_run(task, run_id=run.run_id)
         else:
             self.mission_manager.mark_running(task)
+        cancel_requested = self._cancellation_event(run.run_id)
         try:
             stream = (
                 graph.astream(execution_state, scheduled_runner)
@@ -743,7 +782,17 @@ class ExecutionRuntime:
                 else graph.astream_after_resume(execution_state, command, scheduled_runner)
             )
             async for event in stream:
+                # ``nodes_scheduled`` 是图的安全取消点：此刻新 superstep 尚未派生
+                # 任何节点任务，在此停止推进即可避免一切新增 Agent/模型调用。
+                if (
+                    cancel_requested.is_set()
+                    and isinstance(event, dict)
+                    and event.get("type") == "nodes_scheduled"
+                ):
+                    break
                 self._project_acg_event(run, execution_state, event)
+            if cancel_requested.is_set():
+                return await self._finalize_cancelled_run(run, execution_state)
             self._persist_acg_state(run, execution_state)
             run.output = self._acg_output(execution_state)
             run = self._set_run_lifecycle(
@@ -758,6 +807,9 @@ class ExecutionRuntime:
             if self.identity_lifecycle is not None:
                 self._flush_identity_outbox()
             return run
+        except ExecutionRunCancelled:
+            # 节点执行体在调度边界感知到取消；与主循环 break 走同一条收敛路径。
+            return await self._finalize_cancelled_run(run, execution_state)
         except ExecutionInterrupt as interrupt:
             self._persist_acg_state(run, execution_state)
             checkpoint_id = self._save_acg_checkpoint(run, execution_state)
@@ -830,6 +882,10 @@ class ExecutionRuntime:
             self.resource_directory.register_agent(agent.profile)
 
         async def execute(step_id: str, state: ACGExecutionState):
+            if self._run_cancellation_requested(run.run_id):
+                raise ExecutionRunCancelled(
+                    f"run {run.run_id} cancelled before scheduling step {step_id}"
+                )
             payload = raw_requirements.get(step_id)
             if not isinstance(payload, dict):
                 raise ValueError(f"READY step has no binding requirement: {step_id}")
@@ -880,6 +936,10 @@ class ExecutionRuntime:
                     raise SchedulerAllocationTimeout(
                         f"SCHEDULER_CAPACITY_TIMEOUT:{step_id}: "
                         f"no lease after {self.scheduler_wait_timeout:g}s"
+                    )
+                if self._run_cancellation_requested(run.run_id):
+                    raise ExecutionRunCancelled(
+                        f"run {run.run_id} cancelled while waiting for step {step_id} lease"
                     )
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(1.0, retry_delay * 2)
@@ -947,6 +1007,15 @@ class ExecutionRuntime:
                 )])
                 self._flush_identity_outbox()
                 return result
+            except ExecutionRunCancelled:
+                reason = "step scheduling stopped by operator cancellation"
+                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
+                    f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
+                    {"runId": run.run_id, "attemptId": attempt_id,
+                     "stepExecutionId": step_execution_id, "reason": reason},
+                )])
+                self._flush_identity_outbox()
+                raise
             except asyncio.CancelledError:
                 reason = "ACG superstep cancelled after sibling failure"
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
@@ -1970,6 +2039,67 @@ class ExecutionRuntime:
         if run.status != status:
             self._transition_run(run, status)
 
+    def _claim_execution_slot(self, run_id: str) -> bool:
+        """原子认领运行级执行槽；该 run 已有执行体在场时返回 ``False``。"""
+        with self._execution_slot_guard:
+            if run_id in self._active_execution_slots:
+                return False
+            self._active_execution_slots.add(run_id)
+            return True
+
+    def _release_execution_slot(self, run_id: str) -> None:
+        with self._execution_slot_guard:
+            self._active_execution_slots.discard(run_id)
+
+    def _signal_run_cancellation(self, run_id: str) -> None:
+        """写入协作式取消信号；执行侧在下一次调度边界感知并停止推进。"""
+        with self._run_cancel_guard:
+            event = self._run_cancel_events.get(run_id)
+            if event is None:
+                event = threading.Event()
+                self._run_cancel_events[run_id] = event
+            event.set()
+
+    def _cancellation_event(self, run_id: str) -> threading.Event:
+        """取回（或惰性创建）当前运行的取消信号，供执行主循环持有引用轮询。"""
+        with self._run_cancel_guard:
+            event = self._run_cancel_events.get(run_id)
+            if event is None:
+                event = threading.Event()
+                self._run_cancel_events[run_id] = event
+            return event
+
+    def _run_cancellation_requested(self, run_id: str) -> bool:
+        with self._run_cancel_guard:
+            event = self._run_cancel_events.get(run_id)
+            return bool(event is not None and event.is_set())
+
+    def _discard_run_cancellation(self, run_id: str) -> None:
+        with self._run_cancel_guard:
+            self._run_cancel_events.pop(run_id, None)
+
+    async def _finalize_cancelled_run(
+        self,
+        run: RuntimeRunRecord,
+        execution_state: ACGExecutionState | None,
+    ) -> RuntimeRunRecord:
+        """把仍处于活动状态的投影收敛为 CANCELLED，并保留真实完成的最新进度。
+
+        ``cancel()`` 先行写入了 CANCELLED 终态投影；本方法用携带更新后步骤状态
+        的内存投影覆盖它，让审计能看到取消前实际完成的步骤，而不改变终态，
+        也绝不把已取消的任务推进为 COMPLETED。
+        """
+        if execution_state is not None:
+            self._persist_acg_state(run, execution_state)
+        if run.status in _TERMINAL_RUN_STATUSES:
+            return run
+        run.status = self.state_machine.transition(run.status, WorkflowStatus.CANCELLED)
+        run.lifecycle_phase = WorkflowProgressPhase.CANCELLED
+        run.lifecycle_message = _LIFECYCLE_MESSAGES[WorkflowProgressPhase.CANCELLED]
+        run.updated_at = utc_now()
+        self.workflow_store.save_run(run)
+        return run
+
     def get_status(self, run_id: str) -> RuntimeRunRecord:
         """读取指定运行的最新状态投影；不存在时由存储层抛出 ``KeyError``。"""
         return self.workflow_store.get_run(run_id)
@@ -2959,6 +3089,9 @@ class ExecutionRuntime:
         """在运行锁内取消可继续步骤并持久化终态；已终态的迁移规则由状态机校验。"""
         with self.run_lock_manager.lock_for(run_id):
             latest = self.workflow_store.get_run(run_id)
+            # 先写协作式取消信号，再落终态：执行中的图会在下一个调度边界停止
+            # 推进，而不是继续跑完后继步骤后与已持久化的终态互踩。
+            self._signal_run_cancellation(run_id)
             run = latest.model_copy(deep=True)
             self._transition_run(run, WorkflowStatus.CANCELLED)
             self.mission_manager.mark_cancelled(run.mission_id)
@@ -3147,7 +3280,5 @@ def build_default_runtime() -> ExecutionRuntime:
 
 
 # 兼容既有 API 与第三方导入；新代码使用 ExecutionRuntime 明确唯一执行内核。
-RuntimeRunRecordtime = ExecutionRuntime
 
-
-__all__ = ["ExecutionRuntime", "RuntimeRunRecordtime", "build_default_runtime"]
+__all__ = ["ExecutionRuntime", "ExecutionRunCancelled", "ReviewConflictError", "build_default_runtime"]

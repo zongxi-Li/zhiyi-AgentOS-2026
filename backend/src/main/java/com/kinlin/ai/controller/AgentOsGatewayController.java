@@ -249,6 +249,11 @@ public class AgentOsGatewayController {
         return response(gateway.post(runPath(runId) + "/reviews", body));
     }
 
+    @PostMapping("/runs/{runId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancelRun(@PathVariable String runId) {
+        return response(gateway.post(runPath(runId) + "/cancel", Map.of()));
+    }
+
     private String runPath(String runId) {
         return UPSTREAM_ROOT + "/runs/" + segment(runId);
     }

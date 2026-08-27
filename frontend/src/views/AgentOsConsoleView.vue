@@ -112,6 +112,13 @@
                   <span v-else-if="run.source === 'agent'">来自 Agent</span>
                 </span>
               </button>
+              <button
+                v-if="!TERMINAL.has(run.status)"
+                type="button"
+                class="run-item-terminate"
+                :disabled="cancellingRunIds.has(run.runId)"
+                @click.stop="terminateRun(run)"
+              >{{ run.status === 'waiting_review' ? '放弃审核' : '终止' }}</button>
             </div>
           </section>
         </div>
@@ -253,7 +260,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { Monitor, Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import CheckpointPanel from '@/components/agentos/CheckpointPanel.vue'
 import TraceEventTimeline from '@/components/agentos/TraceEventTimeline.vue'
@@ -292,6 +299,45 @@ import {
 const DEFAULT_STATUSES = ['pending', 'planning', 'running', 'retrying', 'waiting_review', 'completed', 'failed', 'cancelled']
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 const LIST_INTERVAL_MS = 7000
+
+const cancellingRunIds = ref(new Set<string>())
+
+const terminateRun = async (run: WorkflowRunSummary) => {
+  if (cancellingRunIds.value.has(run.runId)) return
+  try {
+    await ElMessageBox.confirm(
+      '确定要终止该运行吗？已完成的步骤会保留，后续步骤不再执行。',
+      run.status === 'waiting_review' ? '放弃审核' : '终止运行',
+      { confirmButtonText: '终止运行', cancelButtonText: '继续运行', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  const busy = new Set(cancellingRunIds.value)
+  busy.add(run.runId)
+  cancellingRunIds.value = busy
+  try {
+    const cancelled = await workflowApi.cancelRun(run.runId)
+    const status = cancelled.status
+    runs.value = runs.value.map(item => item.runId === run.runId
+      ? { ...item, status: status as WorkflowRunSummary['status'], phase: status as WorkflowRunSummary['phase'], updatedAt: cancelled.updatedAt ?? item.updatedAt }
+      : item)
+    workflowRunsStore.updateObservedState(run.runId, status)
+    if (selectedRunId.value === run.runId) void loadSelectedDetail({ acg: true })
+    ElMessage.success('运行已终止')
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 409) {
+      ElMessage.warning('该运行已结束，无需终止')
+    } else {
+      ElMessage.error('终止运行失败，请稍后重试')
+    }
+  } finally {
+    const idle = new Set(cancellingRunIds.value)
+    idle.delete(run.runId)
+    cancellingRunIds.value = idle
+  }
+}
+
 const PAGE_SIZE = 50
 const CONSOLE_LEFT_WIDTH_KEY = 'agentos.console.left_width'
 const CONSOLE_RIGHT_WIDTH_KEY = 'agentos.console.right_width'
@@ -839,6 +885,10 @@ select:focus, input:focus { border-color: var(--primary-line); box-shadow: 0 0 0
 .run-item:hover { border-color: var(--border-hover); }
 .run-item-shell.active .run-item { border-color: var(--primary-line); background: var(--surface-solid); box-shadow: inset 2px 0 var(--primary-color); }
 .run-item-delete { position: absolute; top: 7px; right: 7px; display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--bg-card) 90%, transparent); color: var(--text-disabled); cursor: pointer; opacity: 0; transition: var(--transition); }
+.run-item-terminate { position: absolute; bottom: 9px; right: 9px; padding: 3px 8px; border: 1px solid var(--danger); border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; line-height: 1.4; cursor: pointer; opacity: 0; transition: var(--transition); }
+.run-item-shell:hover .run-item-terminate, .run-item-shell.active .run-item-terminate, .run-item-terminate:focus-visible { opacity: 1; }
+.run-item-terminate:hover { background: var(--danger-fade); }
+.run-item-terminate:disabled { opacity: .55; cursor: wait; }
 .run-item-shell:hover .run-item-delete, .run-item-shell.active .run-item-delete, .run-item-delete:focus-visible { opacity: 1; }
 .run-item-delete:hover { background: var(--danger-fade); color: var(--danger); }
 .run-item-delete:disabled { cursor: wait; opacity: .55; }

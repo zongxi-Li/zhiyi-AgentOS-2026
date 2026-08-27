@@ -1054,6 +1054,11 @@ export const agentosApi = {
     return response.data
   },
 
+  async cancelWorkflowRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
+    const response = await agentosRequest.post<WorkflowRun>(`${runPath(runId)}/cancel`, {}, { signal: options.signal })
+    return response.data
+  },
+
   async getAcgView(runId: string, options: { signal?: AbortSignal; run?: WorkflowRun | Promise<WorkflowRun> } = {}): Promise<AcgView> {
     const coreRequests = [
       options.run || this.getWorkflowRun(runId, options),

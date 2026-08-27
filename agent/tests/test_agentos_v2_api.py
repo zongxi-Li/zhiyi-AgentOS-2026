@@ -42,9 +42,25 @@ class _ApiAgent(BaseAgent):
         return AgentOutput(output={"report": _SECRET}, summary="safe report summary")
 
 
-def _runtime(tmp_path, *, with_identity: bool = False) -> ExecutionRuntime:
+class _GatedApiAgent(BaseAgent):
+    """第一步阻塞在闸门上，为取消端点制造确定性的活跃执行窗口。"""
+
+    def __init__(self, profile: AgentProfile) -> None:
+        super().__init__(profile)
+        self.arrived = asyncio.Event()
+        self.gate = asyncio.Event()
+
+    async def run(self, context):
+        if context.step.step_id == "report":
+            self.arrived.set()
+            await self.gate.wait()
+            return AgentOutput(output={"report": _SECRET}, summary="safe report summary")
+        return AgentOutput(output={"report": "done"}, summary="done")
+
+
+def _runtime(tmp_path, *, with_identity: bool = False, agent: BaseAgent | None = None) -> ExecutionRuntime:
     agents = AgentRegistry()
-    agents.register(_ApiAgent())
+    agents.register(agent or _ApiAgent())
     workflows = WorkflowRegistry()
     workflows.register(
         WorkflowDefinition(
@@ -779,3 +795,54 @@ async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path)
         assert provenance.json()["stepExecutionId"] == execution.step_execution_id
     finally:
         runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_v2_cancel_endpoint_stops_active_run_cleanly_and_is_idempotent(tmp_path) -> None:
+    """取消端点必须真正终止活跃运行：终态干净收敛，且重复取消保持幂等。"""
+    gated = _GatedApiAgent(AgentProfile(agentName="api-agent", domain="general"))
+    runtime = _runtime(tmp_path, agent=gated)
+    task = runtime.create_mission("cancel endpoint probe", workflow_id="api-workflow")
+    _, prepared = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+
+    exec_task = asyncio.create_task(runtime.execute_prepared_run(prepared.run_id))
+    await asyncio.wait_for(gated.arrived.wait(), timeout=5)
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.post("/agentos/v2/runs/run_does_not_exist/cancel")
+        assert missing.status_code == 404
+
+        cancelled = await client.post(f"/agentos/v2/runs/{prepared.run_id}/cancel")
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+
+        # 执行体必须在闸门打开后干净收敛为 CANCELLED，而不是崩溃或继续跑完。
+        gated.gate.set()
+        result = await asyncio.wait_for(exec_task, timeout=10)
+        assert result.status is WorkflowStatus.CANCELLED
+
+        again = await client.post(f"/agentos/v2/runs/{prepared.run_id}/cancel")
+        assert again.status_code == 200
+        assert again.json()["status"] == "cancelled"
+
+        detail = await client.get(f"/agentos/v2/runs/{prepared.run_id}")
+        assert detail.json()["status"] == "cancelled"
+
+
+async def test_v2_cancel_endpoint_rejects_completed_run_as_conflict(tmp_path) -> None:
+    """已完成/被取代的运行不可再取消：端点返回安全的固定冲突提示。"""
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("cancel conflict probe", workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
+    assert run.status is WorkflowStatus.COMPLETED
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(f"/agentos/v2/runs/{run.run_id}/cancel")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "run cannot be cancelled"
+
+        detail = await client.get(f"/agentos/v2/runs/{run.run_id}")
+        assert detail.json()["status"] == "completed"

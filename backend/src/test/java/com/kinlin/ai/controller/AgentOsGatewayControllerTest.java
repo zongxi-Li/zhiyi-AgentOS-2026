@@ -231,6 +231,23 @@ class AgentOsGatewayControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void runCancellationForwardsOwnedRunSubresourceAndKeepsConflictStatus() throws Exception {
+        String cancelPath = "/ai/agentos/v2/runs/run%20001/cancel";
+        gateway.postResponses.put(cancelPath, response(200, Map.of("runId", "run_001", "status", "cancelled")));
+        mockMvc.perform(post("/api/agentos/v2/runs/{runId}/cancel", "run 001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("cancelled"));
+        assertEquals("/ai/agentos/v2/runs/run%20001/cancel", gateway.lastPostPath);
+
+        String conflictPath = "/ai/agentos/v2/runs/run_002/cancel";
+        gateway.postResponses.put(conflictPath, response(409, Map.of("detail", "run cannot be cancelled")));
+        mockMvc.perform(post("/api/agentos/v2/runs/{runId}/cancel", "run_002"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("run cannot be cancelled"));
+        assertEquals(conflictPath, gateway.lastPostPath);
+    }
+
     private static Map<String, Object> response(int status, Map<String, Object> body) {
         Map<String, Object> result = new LinkedHashMap<>(body);
         result.put(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY, status);

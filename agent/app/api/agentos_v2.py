@@ -18,6 +18,7 @@ from contracts.content import ContentKind
 from domain.models import MissionStatus
 from domain.repository import EntityNotFoundError
 from components.planner import ACGPlanningError, TaskDecompositionError
+from components.mission_manager.state_machine import InvalidStateTransition
 from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
@@ -1205,6 +1206,16 @@ def create_router(
                 await coordinator.submit(run.run_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail="review conflict") from exc
+        return project(run)
+
+    @router.post("/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str):
+        """协作式终止一个活跃运行；幂等，且对不可取消的终态返回固定冲突提示。"""
+        load_run(run_id)
+        try:
+            run = runtime.cancel(run_id)
+        except InvalidStateTransition as exc:
+            raise HTTPException(status_code=409, detail="run cannot be cancelled") from exc
         return project(run)
 
     return router
