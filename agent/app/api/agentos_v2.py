@@ -139,6 +139,35 @@ def _csv_values(value: str | None) -> tuple[str, ...] | None:
     return values or None
 
 
+def _declared_capability_hint(runtime: ExecutionRuntime) -> dict[str, Any] | None:
+    """零调用阶段从运行时声明的模型能力推导资源横幅提示。
+
+    历史缺陷：capability 仅从已完成调用的审计投影取值，任务开始时前端只能
+    显示“API 未声明”。此回退读取注入的模型运行时静态登记（catalog 声明），
+    让模型名/策略/上下文窗口在第一个调用发生前就可见。
+    """
+    guarded = getattr(runtime, "_model_runtime", None)
+    describer = getattr(guarded, "describe_model", None)
+    if not callable(describer):
+        inner = getattr(guarded, "delegate", None)
+        describer = getattr(inner, "describe_model", None)
+    if not callable(describer):
+        return None
+    try:
+        envelope = describer()
+    except Exception:
+        logger.warning("declared capability lookup failed", exc_info=True)
+        return None
+    data = (
+        envelope.model_dump(by_alias=True, mode="json", exclude_none=True)
+        if hasattr(envelope, "model_dump")
+        else None
+    )
+    if not isinstance(data, dict) or not (data.get("model") or data.get("provider")):
+        return None
+    return data
+
+
 def _require_access(run: RuntimeRunRecord) -> None:
     owner = str(run.input.get("authenticatedUserId") or "")
     if not owner:
@@ -778,7 +807,19 @@ def create_router(
             )
         }
         pressures = [call["contextPressure"] for call in calls if call["contextPressure"] is not None]
-        capability = next((call["capability"] for call in reversed(calls) if call["capability"]), None)
+        observed_capability = next((call["capability"] for call in reversed(calls) if call["capability"]), None)
+        capability = observed_capability
+        output_policy_value = (calls[-1]["outputPolicy"] if calls else None)
+        if capability is None:
+            capability = _declared_capability_hint(runtime)
+            if isinstance(capability, dict):
+                output_policy_value = output_policy_value or "catalog_default"
+        if calls:
+            capability_source = "observed"
+        elif isinstance(capability, dict) and capability is not observed_capability:
+            capability_source = "declared"
+        else:
+            capability_source = None
         context_window = (
             capability.get("contextWindowTokens")
             if isinstance(capability, dict)
@@ -795,7 +836,8 @@ def create_router(
         return {
             "runId": run_id,
             "capability": capability,
-            "outputPolicy": (calls[-1]["outputPolicy"] if calls else None),
+            "capabilitySource": capability_source,
+            "outputPolicy": output_policy_value,
             "usage": {
                 **usage,
                 "callCount": len(calls),

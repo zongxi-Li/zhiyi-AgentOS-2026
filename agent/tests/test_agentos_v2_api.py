@@ -846,3 +846,37 @@ async def test_v2_cancel_endpoint_rejects_completed_run_as_conflict(tmp_path) ->
 
         detail = await client.get(f"/agentos/v2/runs/{run.run_id}")
         assert detail.json()["status"] == "completed"
+
+
+async def test_resource_usage_declares_model_before_first_call(tmp_path) -> None:
+    """零调用阶段资源详情也必须能声明模型与策略（不再显示 API 未声明）。
+
+    历史缺陷：capability 仅从已完成调用的审计投影推导，任务开始时整条资源
+    横幅只剩占位符，用户要等到第一个节点跑完才知道用的是什么模型。
+    """
+    from types import SimpleNamespace
+
+    from contracts.capability import ModelCapabilityEnvelope
+
+    runtime = _runtime(tmp_path)
+    envelope = ModelCapabilityEnvelope.unknown(
+        provider="deepseek", model="deepseek-v4-flash"
+    ).model_copy(update={"max_output_tokens": 384000, "context_window_tokens": 1000000})
+    runtime.set_model_runtime(SimpleNamespace(describe_model=lambda: envelope))
+
+    task = runtime.create_mission("declared probe", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    assert run.status is WorkflowStatus.PENDING
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["usage"]["callCount"] == 0
+    assert body["capability"]["model"] == "deepseek-v4-flash"
+    assert body["capability"]["maxOutputTokens"] == 384000
+    assert body["capabilitySource"] == "declared"
+    assert body["outputPolicy"] == "catalog_default"
