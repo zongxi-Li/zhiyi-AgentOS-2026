@@ -566,6 +566,9 @@ class ACGNodeRunner:
             "communicationReads": communication_reads,
             "communicationRefs": communication_refs,
             "evidenceRefs": list(dict.fromkeys(str(item) for item in evidence_refs)),
+            # Artifact bodies remain in the ContentManifest/Value Store boundary;
+            # lifecycle projection receives only the sealed manifest references.
+            "artifacts": self._safe_artifact_descriptors(controlled),
             "nodeExecution": committed_execution_record.model_dump(
                 by_alias=True, mode="json"
             ),
@@ -910,43 +913,88 @@ class ACGNodeRunner:
     def _persist_artifact_manifest(
         self, *, run_id: str, step_id: str, controlled: dict[str, Any]
     ) -> dict[str, Any]:
-        """Persist Markdown sections before the deterministic final assembly boundary."""
-        artifact = controlled.get("artifact")
-        if not isinstance(artifact, dict):
+        """Seal artifact bodies and return only manifest references to projection."""
+        raw = controlled.get("artifacts")
+        if raw is None and isinstance(controlled.get("artifact"), dict):
+            raw = [controlled["artifact"]]
+        elif isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
             return controlled
-        content = artifact.get("content")
-        if not isinstance(content, str) or not content:
-            return controlled
-        manifest = self.content_manifest_store.create_manifest(
-            kind=ContentKind.ARTIFACT,
-            owner_type="run",
-            owner_id=run_id,
-            media_type=str(artifact.get("mediaType") or "text/markdown"),
-            chunking_version="markdown-sections.v1",
-        )
-        sections: list[str] = []
-        current: list[str] = []
-        for line in content.splitlines(keepends=True):
-            if line.startswith("## ") and current:
-                sections.append("".join(current))
-                current = []
-            current.append(line)
-        if current or not sections:
-            sections.append("".join(current))
-        for sequence, section in enumerate(sections):
-            self.content_manifest_store.append_fragment(
-                manifest_id=manifest.manifest_id,
-                sequence=sequence,
-                content=section.encode("utf-8"),
-                source_refs=(step_id,),
-            )
-        sealed = self.content_manifest_store.seal_manifest(manifest.manifest_id)
         normalized = dict(controlled)
-        normalized_artifact = dict(artifact)
-        normalized_artifact["manifestId"] = sealed.manifest_id
-        normalized_artifact["checksum"] = sealed.checksum
-        normalized["artifact"] = normalized_artifact
+        normalized_artifacts: list[dict[str, Any]] = []
+        for raw_artifact in raw:
+            if not isinstance(raw_artifact, dict):
+                continue
+            artifact = dict(raw_artifact)
+            artifact.setdefault("artifactKey", "primary")
+            manifest_id = artifact.get("manifestId")
+            checksum = artifact.get("checksum")
+            content = artifact.get("content")
+            if not (isinstance(manifest_id, str) and manifest_id and
+                    isinstance(checksum, str) and checksum):
+                if not isinstance(content, str) or not content:
+                    normalized_artifacts.append(artifact)
+                    continue
+                manifest = self.content_manifest_store.create_manifest(
+                    kind=ContentKind.ARTIFACT,
+                    owner_type="run",
+                    owner_id=run_id,
+                    media_type=str(artifact.get("mediaType") or "text/markdown"),
+                    chunking_version="markdown-sections.v1",
+                )
+                sections: list[str] = []
+                current: list[str] = []
+                for line in content.splitlines(keepends=True):
+                    if line.startswith("## ") and current:
+                        sections.append("".join(current))
+                        current = []
+                    current.append(line)
+                if current or not sections:
+                    sections.append("".join(current))
+                for sequence, section in enumerate(sections):
+                    self.content_manifest_store.append_fragment(
+                        manifest_id=manifest.manifest_id,
+                        sequence=sequence,
+                        content=section.encode("utf-8"),
+                        source_refs=(step_id,),
+                    )
+                sealed = self.content_manifest_store.seal_manifest(manifest.manifest_id)
+                artifact["manifestId"] = sealed.manifest_id
+                artifact["checksum"] = sealed.checksum
+            normalized_artifacts.append(artifact)
+        if normalized_artifacts:
+            normalized["artifacts"] = normalized_artifacts
+            # Keep the singular envelope for legacy consumers and existing tests.
+            if isinstance(controlled.get("artifact"), dict):
+                normalized["artifact"] = normalized_artifacts[0]
         return normalized
+
+    @staticmethod
+    def _safe_artifact_descriptors(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        raw = payload.get("artifacts")
+        if raw is None and isinstance(payload.get("artifact"), dict):
+            raw = [payload["artifact"]]
+        elif isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        allowed = {
+            "artifactKey", "semanticTaskKey", "name", "title", "artifactType",
+            "type", "mediaType", "manifestId", "checksum", "metadata",
+        }
+        descriptors: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            descriptor = {
+                key: item[key]
+                for key in allowed
+                if item.get(key) is not None
+            }
+            descriptor.setdefault("artifactKey", "primary")
+            descriptors.append(descriptor)
+        return descriptors
 
     @staticmethod
     def _commit_id(run_id: str, step_id: str, attempt: int, *, loop_path: tuple[int, ...] = ()) -> str:

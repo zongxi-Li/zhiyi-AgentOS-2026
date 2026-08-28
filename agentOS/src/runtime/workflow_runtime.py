@@ -562,6 +562,12 @@ class ExecutionRuntime:
             run,
             workflow,
         )
+        if task_plan is not None and self.identity_lifecycle is not None:
+            resolve_snapshot = getattr(
+                self.identity_lifecycle, "resolve_task_plan_snapshot", None
+            )
+            if callable(resolve_snapshot):
+                task_plan = resolve_snapshot(task_plan)
         self._validate_blueprint_agents(
             blueprint,
             domain=workflow.domain or task.domain,
@@ -1058,7 +1064,31 @@ class ExecutionRuntime:
             "traceRef", "auditDecisionRef", "auditOutcome", "nodeExecution",
             "communicationRefs", "evidenceRefs", "provenanceEvents",
         }
-        return {key: result[key] for key in allowed if result.get(key) is not None}
+        safe = {key: result[key] for key in allowed if result.get(key) is not None}
+        raw = result.get("artifacts")
+        if raw is None and isinstance(result.get("artifact"), dict):
+            raw = [result["artifact"]]
+        elif isinstance(raw, dict):
+            raw = [raw]
+        if isinstance(raw, list):
+            descriptor_keys = {
+                "artifactKey", "semanticTaskKey", "name", "title", "artifactType",
+                "type", "mediaType", "manifestId", "checksum", "metadata",
+            }
+            descriptors = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                descriptor = {
+                    key: item[key]
+                    for key in descriptor_keys
+                    if item.get(key) is not None
+                }
+                descriptor.setdefault("artifactKey", "primary")
+                descriptors.append(descriptor)
+            if descriptors:
+                safe["artifacts"] = descriptors
+        return safe
 
     def _flush_identity_outbox(self) -> None:
         if self.identity_lifecycle is None:

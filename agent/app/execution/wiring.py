@@ -142,9 +142,16 @@ def build_default_runtime(
             or workflow_path.with_name("identity_v2.sqlite3")
         ))
     )
+    # The identity projection and the single ExecutionRuntime must observe the
+    # same ContentManifest store.  Artifact is only a V2 identity projection of
+    # sealed manifests; it is not a second content database.
+    content_manifest_store = SQLiteContentManifestStore(
+        _database_path(env, "AGENTOS_CONTENT_MANIFEST_DB")
+    )
     identity_adapter = IdentityProjectionBridge(
         identity_service,
         identity_service.repositories,
+        content_manifest_store,
     )
     runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
@@ -152,9 +159,7 @@ def build_default_runtime(
         workflow_store=SQLiteWorkflowStore(workflow_path),
         checkpoint_store=ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")),
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
-        content_manifest_store=SQLiteContentManifestStore(
-            _database_path(env, "AGENTOS_CONTENT_MANIFEST_DB")
-        ),
+        content_manifest_store=content_manifest_store,
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
         resource_service=resource_service,
         scheduler_service=scheduler_service,

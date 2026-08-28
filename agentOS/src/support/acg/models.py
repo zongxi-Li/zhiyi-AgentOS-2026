@@ -1583,7 +1583,7 @@ def _output_schema(capability_id: str) -> dict:
                     "unresolvedGaps",
                 ),
                 "artifact": _record(
-                    {"artifactId": _TEXT, "type": {"type": "string", "enum": ["report"]}, "title": _TEXT, "mediaType": {"type": "string", "enum": ["text/markdown"]}, "content": _DELIVERABLE_TEXT, "structuredData": {"type": "object"}, "manifestId": _TEXT, "checksum": _TEXT},
+                    {"artifactId": _TEXT, "artifactKey": _TEXT, "type": {"type": "string", "enum": ["report"]}, "title": _TEXT, "mediaType": {"type": "string", "enum": ["text/markdown"]}, "content": _DELIVERABLE_TEXT, "structuredData": {"type": "object"}, "manifestId": _TEXT, "checksum": _TEXT},
                     "artifactId",
                     "type",
                     "title",
@@ -1591,6 +1591,10 @@ def _output_schema(capability_id: str) -> dict:
                     "content",
                     "structuredData",
                 ),
+                "artifacts": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
             },
             "deliverable",
             "final_answer",

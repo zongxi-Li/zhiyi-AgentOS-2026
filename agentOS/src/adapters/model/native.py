@@ -955,11 +955,17 @@ class NativeGeneralAgent(BaseAgent):
         normalized["artifact"] = {
             "artifactId": artifact_id,
             "type": "report",
+            "artifactKey": str(context.step.input.get("artifactKey") or "primary")
+            if isinstance(context.step.input, dict)
+            else "primary",
             "title": str(deliverable.get("title") or context.task.title),
             "mediaType": "text/markdown",
             "content": final_answer,
             "structuredData": deliverable,
         }
+        # Keep the singular envelope for the existing runtime contract while
+        # exposing the multi-artifact shape needed by the identity projection.
+        normalized["artifacts"] = [dict(normalized["artifact"])]
         return normalized
 
     @staticmethod
