@@ -410,7 +410,10 @@ def create_router(
     identity_adapter = getattr(runtime, "identity_lifecycle", None)
     identity_repositories = getattr(identity_adapter, "repositories", None)
     identity_queries = (
-        IdentityQueryService(identity_repositories)
+        IdentityQueryService(
+            identity_repositories,
+            getattr(runtime, "content_manifest_store", None),
+        )
         if identity_repositories is not None
         else None
     )
@@ -479,6 +482,22 @@ def create_router(
         if manifest.owner_type == "run":
             load_run(manifest.owner_id)
         return manifest
+
+    def project_identity_artifact(detail: Any) -> dict[str, Any]:
+        """Join a V2 RunArtifactBinding with its sealed ContentManifest metadata."""
+        artifact = detail.artifact
+        try:
+            manifest = runtime.content_manifest_store.get_manifest(artifact.content_ref)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="artifact content not found") from exc
+        if manifest.kind is not ContentKind.ARTIFACT or not manifest.sealed:
+            raise HTTPException(status_code=404, detail="artifact content not found")
+        return {
+            **manifest.model_dump(by_alias=True, mode="json"),
+            **artifact.model_dump(by_alias=True, mode="json"),
+            **detail.binding.model_dump(by_alias=True, mode="json"),
+            "manifestId": artifact.content_ref,
+        }
 
     def prepare_execution_input(
         payload: dict[str, Any],
@@ -615,6 +634,25 @@ def create_router(
         require_mission_access(mission_id)
         history = require_identity_queries().mission_run_history(mission_id)
         return history.model_dump(by_alias=True, mode="json")
+
+    @router.get("/missions/{mission_id}/workspace")
+    async def get_mission_workspace(
+        mission_id: str,
+        run_id: str | None = Query(default=None, alias="runId"),
+    ):
+        require_mission_access(mission_id)
+        try:
+            projection = require_identity_queries().mission_workspace(
+                mission_id,
+                run_id=run_id,
+            )
+        except EntityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="workspace source not found") from exc
+        return projection.model_dump(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+        )
 
     def change_mission_record_state(mission_id: str, state: MissionRecordState) -> dict[str, Any]:
         require_mission_access(mission_id)
@@ -955,6 +993,13 @@ def create_router(
     @router.get("/runs/{run_id}/artifacts")
     async def list_artifacts(run_id: str):
         load_run(run_id)
+        if identity_repositories is not None:
+            identity_run = identity_repositories.runs.get(run_id)
+            if identity_run is not None:
+                details = identity_queries.artifacts_for_run(run_id)
+                if details:
+                    items = [project_identity_artifact(item) for item in details]
+                    return {"runId": run_id, "items": items, "total": len(items)}
         items = runtime.content_manifest_store.list_manifests(
             owner_type="run", owner_id=run_id, kind=ContentKind.ARTIFACT
         )
@@ -967,6 +1012,12 @@ def create_router(
     @router.get("/runs/{run_id}/artifacts/{manifest_id}")
     async def get_artifact(run_id: str, manifest_id: str):
         load_run(run_id)
+        if identity_repositories is not None:
+            identity_run = identity_repositories.runs.get(run_id)
+            if identity_run is not None:
+                for detail in identity_queries.artifacts_for_run(run_id):
+                    if manifest_id in {detail.artifact.artifact_id, detail.artifact.content_ref}:
+                        return project_identity_artifact(detail)
         manifest = require_manifest_access(manifest_id)
         if manifest.owner_type != "run" or manifest.owner_id != run_id or manifest.kind is not ContentKind.ARTIFACT:
             raise HTTPException(status_code=404, detail="artifact not found")
