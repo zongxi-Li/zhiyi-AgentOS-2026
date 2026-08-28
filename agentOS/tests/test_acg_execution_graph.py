@@ -103,6 +103,33 @@ def test_parallel_failure_cancels_unfinished_sibling_tasks() -> None:
     assert state.active_step_ids == []
 
 
+def test_parallel_node_completion_is_streamed_before_sibling_finishes() -> None:
+    """并行超步中先完成的节点必须先发布，不能等待最慢兄弟。"""
+    graph = ACGExecutionGraph(nodes=("left", "right"))
+
+    async def collect() -> list[dict]:
+        release_right = asyncio.Event()
+        state = ACGExecutionState(runId="run-1")
+        events: list[dict] = []
+
+        async def execute(step_id, _state):
+            if step_id == "right":
+                await release_right.wait()
+            return {"outputSummary": f"{step_id} done"}
+
+        async for event in graph.astream(state, execute):
+            events.append(event)
+            if event["type"] == "node_completed" and event["stepId"] == "left":
+                assert state.completed_step_ids == ["left"]
+                assert state.active_step_ids == ["right"]
+                release_right.set()
+        return events
+
+    events = asyncio.run(collect())
+    completed = [item["stepId"] for item in events if item["type"] == "node_completed"]
+    assert completed == ["left", "right"]
+
+
 def test_output_exhaustion_failure_event_preserves_safe_model_audit() -> None:
     graph = ACGExecutionGraph(nodes=("artifact",))
 

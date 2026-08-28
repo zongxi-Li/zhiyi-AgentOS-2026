@@ -22,6 +22,7 @@ from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.acg.models import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
 
 
@@ -667,6 +668,83 @@ def test_runtime_persists_completed_node_without_tool_calls_before_run_end() -> 
 
     persisted = runtime.workflow_store.get_run(run.run_id)
     assert persisted.get_step("extract").status is StepStatus.COMPLETED
+
+
+def test_runtime_persists_incremental_projection_and_replays_commit_idempotently() -> None:
+    """节点提交后立即推进查询版本；同一提交重放不得重复推进版本或 Trace。"""
+    runtime = _runtime()
+    task = runtime.create_mission("incremental", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
+    initial = runtime.workflow_store.get_run(run.run_id)
+    output_ref = runtime.execution_value_store.put_output(
+        run_id=run.run_id,
+        step_id="extract",
+        payload={"answer": "complete"},
+    )
+    state = ACGExecutionState(
+        runId=run.run_id,
+        completedStepIds=["extract"],
+        outputRefs={"extract": output_ref},
+        outputSummaries={"extract": "complete"},
+    )
+    event = {
+        "type": "node_completed",
+        "stepId": "extract",
+        "commitId": "commit:extract:1",
+        "outputSummary": "complete",
+        "modelInvocations": [{
+            "provider": "local",
+            "model": "unit",
+            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            "latencyMs": 17,
+        }],
+    }
+
+    runtime._project_acg_event(run, state, event)
+    first = runtime.workflow_store.get_run(run.run_id)
+    first_revision = first.runtime_revision
+    first_updated_at = first.updated_at
+    first_model_calls = [item for item in first.trace if item.event_type.value == "model_called"]
+
+    assert first_revision > initial.runtime_revision
+    assert first.updated_at > initial.updated_at
+    assert first.completed_step_ids == ["extract"]
+    assert first.execution_state["outputRefs"] == {"extract": output_ref}
+    assert runtime.execution_value_store.get_output(
+        run_id=run.run_id, output_ref=output_ref
+    ) == {"answer": "complete"}
+    assert len(first_model_calls) == 1
+
+    runtime._project_acg_event(run, state, event)
+    second = runtime.workflow_store.get_run(run.run_id)
+
+    assert second.runtime_revision == first_revision
+    assert second.updated_at == first_updated_at
+    assert len([item for item in second.trace if item.event_type.value == "model_called"]) == 1
+    assert len([item for item in second.trace if item.event_type.value == "step_succeeded"]) == 1
+
+
+def test_runtime_projection_revision_and_updated_at_survive_sqlite_round_trip(tmp_path) -> None:
+    """SQLite 查询层必须能立刻读到节点提交后的版本和 updatedAt。"""
+    runtime = _runtime()
+    sqlite_store = SQLiteWorkflowStore(tmp_path / "workflow.sqlite3")
+    task = runtime.create_mission("sqlite incremental", workflow_id="acg-run")
+    sqlite_store.save_mission(task)
+    runtime.workflow_store = sqlite_store
+    _, run = runtime.prepare_run(task.mission_id)
+    initial = sqlite_store.get_run(run.run_id)
+    state = ACGExecutionState(runId=run.run_id, completedStepIds=["extract"])
+
+    runtime._project_acg_event(
+        run,
+        state,
+        {"type": "node_completed", "stepId": "extract", "commitId": "commit:sqlite:1"},
+    )
+
+    persisted = sqlite_store.get_run(run.run_id)
+    assert persisted.runtime_revision > initial.runtime_revision
+    assert persisted.updated_at > initial.updated_at
+    assert persisted.completed_step_ids == ["extract"]
 
 
 def test_runtime_marks_parallel_failed_and_cancelled_steps_before_run_failure() -> None:

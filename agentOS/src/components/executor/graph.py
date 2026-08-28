@@ -452,9 +452,11 @@ class ACGExecutionGraph:
             ready = self.ready_steps(state)
             if not ready:
                 raise RuntimeError("execution graph has no schedulable step nodes")
-            yield {"type": "nodes_scheduled", "stepIds": list(ready)}
             state.active_step_ids = list(ready)
             state.current_step_id = ready[0] if len(ready) == 1 else None
+            # 在发出调度事件前就固化活动集，Runtime 投影层可以立即把“正在执行”
+            # 写入 WorkflowStore，而不必等待任一节点完成。
+            yield {"type": "nodes_scheduled", "stepIds": list(ready)}
             prepare_superstep = getattr(execute, "prepare_superstep", None)
             if callable(prepare_superstep):
                 prepare_superstep(state, ready)
@@ -462,123 +464,97 @@ class ACGExecutionGraph:
                 step_id: asyncio.create_task(execute(step_id, state), name=f"acg:{state.run_id}:{step_id}")
                 for step_id in ready
             }
-            done, pending = await asyncio.wait(tasks.values(), return_when=asyncio.FIRST_EXCEPTION)
-            failures = [
-                step_id
-                for step_id, task in tasks.items()
-                if task.done() and not task.cancelled() and task.exception() is not None
-            ]
-            if failures:
-                # 整个超步是原子提交边界：即使某个兄弟任务恰好先返回，它的结果也
-                # 不能被提交。因此除失败节点外的所有兄弟均投影为 cancelled，未完成
-                # 的任务再实际发送取消信号，避免调度时序影响最终状态。
-                cancelled = [step_id for step_id in ready if step_id not in failures]
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-                state.active_step_ids = []
-                cause = tasks[failures[0]].exception()
-                assert cause is not None
-                # 进程终止、测试模拟断电等 ``BaseException`` 不能被误标为业务节点
-                # 失败或触发 failed run 投影；让调用栈直接中断，下一进程从持久化边界
-                # 继续。普通 ``Exception`` 仍保留完整的超步失败语义。
-                if not isinstance(cause, Exception):
-                    raise cause
-                raw_audit = getattr(cause, "audit", None)
-                safe_audit_keys = {
-                    "provider", "model", "latencyMs", "promptVersion",
-                    "promptTemplateHash", "usage", "finishReason", "capability",
-                    "outputPolicy", "requestedOutputTokens", "effectiveOutputTokens",
-                    "effectiveReason", "outputExhausted", "partIndex", "callChainId",
-                }
-                failure_invocations = (
-                    [{key: value for key, value in raw_audit.items() if key in safe_audit_keys}]
-                    if isinstance(raw_audit, dict) and raw_audit
-                    else []
-                )
-                yield {
-                    "type": "superstep_failed",
-                    "stepId": failures[0],
-                    "failedStepIds": failures,
-                    "cancelledStepIds": cancelled,
-                    "modelInvocations": failure_invocations,
-                }
-                raise ACGSuperstepError(
-                    failed_step_ids=tuple(failures),
-                    cancelled_step_ids=tuple(cancelled),
-                    cause=cause,
-                ) from cause
-            results = [tasks[step_id].result() for step_id in ready]
-            for step_id, result in zip(ready, results):
-                # 严重风险由审计器给出 deny。此时节点结果不能进入 State，也不能产生
-                # outputRef、memoryRef 或下游调度条件；Runtime 会将该异常收敛为失败。
-                if result.get("auditOutcome") == "deny":
-                    raise RuntimeError(
-                        f"execution denied at {step_id}: {result.get('auditDecisionRef') or 'policy decision'}"
+            pending_tasks = dict(tasks)
+            while pending_tasks:
+                try:
+                    done, pending = await asyncio.wait(
+                        pending_tasks.values(), return_when=asyncio.FIRST_COMPLETED
                     )
-                if isinstance(result.get("routeValue"), dict):
-                    route_values[step_id] = dict(result["routeValue"])
-                if result.get("outputSummary") is not None:
-                    state.output_summaries[step_id] = str(result["outputSummary"])
-                if result.get("outputRef") is not None:
-                    state.output_refs[step_id] = str(result["outputRef"])
-                for key, destination in (("contextRef", state.context_refs), ("memoryRef", state.memory_refs), ("traceRef", state.trace_refs)):
-                    if result.get(key) is not None:
-                        destination[step_id] = str(result[key])
-                provenance_ids: list[str] = []
-                for provenance_event in result.get("provenanceEvents") or []:
-                    if not isinstance(provenance_event, dict):
-                        continue
-                    payload = provenance_event.get("payload")
-                    event_id = payload.get("eventId") if isinstance(payload, dict) else None
-                    if isinstance(event_id, str) and event_id:
-                        provenance_ids.append(event_id)
-                if provenance_ids:
-                    # 节点提交可能在进程中断后被重放。保留首次顺序并去重，确保同一
-                    # 血缘事件不会因重放膨胀 checkpoint，也不会影响账本中的真实事件。
-                    state.provenance_refs[step_id] = list(
-                        dict.fromkeys([*state.provenance_refs.get(step_id, []), *provenance_ids])
-                    )
-                state.completed_step_ids.append(step_id)
-                memory_access = self._safe_memory_access(result.get("memoryAccess"))
-                memory_event = self._safe_memory_event(result.get("memoryEvent"))
-                yield {
-                    "type": "node_completed",
-                    "stepId": step_id,
-                    "commitId": result.get("commitId"),
-                    "outputSummary": state.output_summaries.get(step_id, ""),
-                    "modelInvocations": list(result.get("modelInvocations") or []),
-                    "toolCalls": list(result.get("toolCalls") or []),
-                    "provenanceEvents": list(result.get("provenanceEvents") or []),
-                    "communicationReads": list(result.get("communicationReads") or []),
-                    "memoryAccess": memory_access,
-                    "memoryEvent": memory_event,
-                }
-                if self.node_specs[step_id].review_required or result.get("reviewRequired"):
-                    review_payload = {
-                        "stepId": step_id,
-                        "traceRef": state.trace_refs.get(step_id),
-                    }
-                    if result.get("auditDecisionRef") is not None:
-                        review_payload["auditDecisionRef"] = str(result["auditDecisionRef"])
-                    if result.get("auditOutcome") is not None:
-                        review_payload["auditOutcome"] = str(result["auditOutcome"])
-                    pending_memory = result.get("pendingMemory")
-                    if isinstance(pending_memory, dict):
-                        # 待写意图只能携带 outputRef、策略与审计引用；正文仍在独立
-                        # 值仓库，人工批准前绝不进入 MemoryStore 或执行 State 主字段。
-                        review_payload["pendingMemory"] = dict(pending_memory)
-                    state.review_payload = review_payload
-                    # The review node has already committed successfully.  A paused
-                    # checkpoint therefore has no actively executing node; keeping
-                    # the just-completed superstep in activeStepIds makes the
-                    # persisted state lie and prevents safe graph mutation while
-                    # the run is stopped at its review barrier.
+                except asyncio.CancelledError:
+                    for task in pending_tasks.values():
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*pending_tasks.values(), return_exceptions=True)
                     state.active_step_ids = []
-                    from components.recovery.checkpoint import ExecutionInterrupt
+                    raise
+                failures = [
+                    step_id
+                    for step_id, task in pending_tasks.items()
+                    if task in done and not task.cancelled() and task.exception() is not None
+                ]
+                if failures:
+                    # 已经原子提交的节点结果继续保留；尚未提交的兄弟节点进入取消态。
+                    # 这样一个慢节点失败时，不会回滚此前已经可查询的完整答案。
+                    cancelled = [
+                        step_id for step_id in ready
+                        if step_id not in failures and step_id not in state.completed_step_ids
+                    ]
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                    state.active_step_ids = []
+                    cause = pending_tasks[failures[0]].exception()
+                    assert cause is not None
+                    # 进程终止、测试模拟断电等 ``BaseException`` 不能被误标为业务节点
+                    # 失败或触发 failed run 投影；让调用栈直接中断，下一进程从持久化边界
+                    # 继续。普通 ``Exception`` 仍保留完整的超步失败语义。
+                    if not isinstance(cause, Exception):
+                        raise cause
+                    raw_audit = getattr(cause, "audit", None)
+                    safe_audit_keys = {
+                        "provider", "model", "latencyMs", "promptVersion",
+                        "promptTemplateHash", "usage", "finishReason", "capability",
+                        "outputPolicy", "requestedOutputTokens", "effectiveOutputTokens",
+                        "effectiveReason", "outputExhausted", "partIndex", "callChainId",
+                    }
+                    failure_invocations = (
+                        [{key: value for key, value in raw_audit.items() if key in safe_audit_keys}]
+                        if isinstance(raw_audit, dict) and raw_audit
+                        else []
+                    )
+                    yield {
+                        "type": "superstep_failed",
+                        "stepId": failures[0],
+                        "failedStepIds": failures,
+                        "cancelledStepIds": cancelled,
+                        "modelInvocations": failure_invocations,
+                    }
+                    raise ACGSuperstepError(
+                        failed_step_ids=tuple(failures),
+                        cancelled_step_ids=tuple(cancelled),
+                        cause=cause,
+                    ) from cause
 
-                    raise ExecutionInterrupt("execution requires review", state.review_payload)
+                completed_ids = sorted(
+                    (step_id for step_id, task in pending_tasks.items() if task in done),
+                    key=ready.index,
+                )
+                for step_id in completed_ids:
+                    try:
+                        event, review_payload = self._commit_node_result(
+                            state=state,
+                            route_values=route_values,
+                            step_id=step_id,
+                            result=pending_tasks[step_id].result(),
+                        )
+                    except BaseException:
+                        for task in pending_tasks.values():
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(*pending_tasks.values(), return_exceptions=True)
+                        state.active_step_ids = []
+                        raise
+                    yield event
+                    pending_tasks.pop(step_id)
+                    if review_payload is not None:
+                        for task in pending_tasks.values():
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(*pending_tasks.values(), return_exceptions=True)
+                        from components.recovery.checkpoint import ExecutionInterrupt
+
+                        raise ExecutionInterrupt("execution requires review", review_payload)
             state.active_step_ids = []
             for step_id in ready:
                 state.blackboard_snapshots.pop(step_id, None)
@@ -591,6 +567,86 @@ class ACGExecutionGraph:
                 "stepIds": list(ready),
             }
         state.current_step_id = None
+
+    def _commit_node_result(
+        self,
+        *,
+        state: ACGExecutionState,
+        route_values: dict[str, dict[str, Any]],
+        step_id: str,
+        result: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """原子提交一个已完成节点，并返回可立即投影的事件。"""
+        # 严重风险由审计器给出 deny。此时节点结果不能进入 State，也不能产生
+        # outputRef、memoryRef 或下游调度条件；Runtime 会将该异常收敛为失败。
+        if result.get("auditOutcome") == "deny":
+            raise RuntimeError(
+                f"execution denied at {step_id}: {result.get('auditDecisionRef') or 'policy decision'}"
+            )
+        if isinstance(result.get("routeValue"), dict):
+            route_values[step_id] = dict(result["routeValue"])
+        if result.get("outputSummary") is not None:
+            state.output_summaries[step_id] = str(result["outputSummary"])
+        if result.get("outputRef") is not None:
+            state.output_refs[step_id] = str(result["outputRef"])
+        for key, destination in (("contextRef", state.context_refs), ("memoryRef", state.memory_refs), ("traceRef", state.trace_refs)):
+            if result.get(key) is not None:
+                destination[step_id] = str(result[key])
+        provenance_ids: list[str] = []
+        for provenance_event in result.get("provenanceEvents") or []:
+            if not isinstance(provenance_event, dict):
+                continue
+            payload = provenance_event.get("payload")
+            event_id = payload.get("eventId") if isinstance(payload, dict) else None
+            if isinstance(event_id, str) and event_id:
+                provenance_ids.append(event_id)
+        if provenance_ids:
+            # 节点提交可能在进程中断后被重放。保留首次顺序并去重，确保同一
+            # 血缘事件不会因重放膨胀 checkpoint，也不会影响账本中的真实事件。
+            state.provenance_refs[step_id] = list(
+                dict.fromkeys([*state.provenance_refs.get(step_id, []), *provenance_ids])
+            )
+        state.completed_step_ids.append(step_id)
+        memory_access = self._safe_memory_access(result.get("memoryAccess"))
+        memory_event = self._safe_memory_event(result.get("memoryEvent"))
+        # 节点结果已原子提交时，活动集立即只保留同一并行超步中仍在运行的
+        # 兄弟节点；Runtime 因而可以在该节点事件后展示准确的运行态。
+        state.active_step_ids = [
+            item for item in state.active_step_ids
+            if item not in state.completed_step_ids
+        ]
+        event = {
+            "type": "node_completed",
+            "stepId": step_id,
+            "commitId": result.get("commitId"),
+            "outputSummary": state.output_summaries.get(step_id, ""),
+            "modelInvocations": list(result.get("modelInvocations") or []),
+            "toolCalls": list(result.get("toolCalls") or []),
+            "provenanceEvents": list(result.get("provenanceEvents") or []),
+            "communicationReads": list(result.get("communicationReads") or []),
+            "memoryAccess": memory_access,
+            "memoryEvent": memory_event,
+        }
+        review_payload: dict[str, Any] | None = None
+        if self.node_specs[step_id].review_required or result.get("reviewRequired"):
+            review_payload = {
+                "stepId": step_id,
+                "traceRef": state.trace_refs.get(step_id),
+            }
+            if result.get("auditDecisionRef") is not None:
+                review_payload["auditDecisionRef"] = str(result["auditDecisionRef"])
+            if result.get("auditOutcome") is not None:
+                review_payload["auditOutcome"] = str(result["auditOutcome"])
+            pending_memory = result.get("pendingMemory")
+            if isinstance(pending_memory, dict):
+                # 待写意图只能携带 outputRef、策略与审计引用；正文仍在独立
+                # 值仓库，人工批准前绝不进入 MemoryStore 或执行 State 主字段。
+                review_payload["pendingMemory"] = dict(pending_memory)
+            state.review_payload = review_payload
+            # The review node has already committed successfully.  A paused
+            # checkpoint therefore has no actively executing node.
+            state.active_step_ids = []
+        return event, review_payload
 
     def _validate_acyclic(self) -> None:
         """在图构造时拒绝依赖环，避免运行期出现没有 ready 节点的死锁。"""

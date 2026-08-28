@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
@@ -1333,6 +1333,7 @@ class ExecutionRuntime:
 
     def _project_acg_event(self, run: RuntimeRunRecord, state: ACGExecutionState, event: dict) -> None:
         """投影单个图事件与步骤状态；事件正文只含步骤标识、摘要或引用。"""
+        projection_before = self._acg_projection_snapshot(run, state)
         event_type = event.get("type")
         commit_id = event.get("commitId")
         node_trace_batch: list[TraceEvent] = []
@@ -1347,7 +1348,11 @@ class ExecutionRuntime:
             run.current_step_id = step_id
             run.completed_step_ids = list(state.completed_step_ids)
             run.active_step_ids = list(state.active_step_ids)
-            self._persist_acg_state(run, state)
+            self._persist_acg_state(
+                run,
+                state,
+                projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
+            )
             return
         if event_type == "nodes_scheduled":
             for step_id in event.get("stepIds", []):
@@ -1355,6 +1360,7 @@ class ExecutionRuntime:
                 step.status = StepStatus.RUNNING
                 step.started_at = step.started_at or utc_now()
             run.active_step_ids = list(event.get("stepIds", []))
+            run.current_step_id = state.current_step_id
         elif event_type == "node_completed":
             step_id = str(event.get("stepId"))
             step = run.get_step(step_id)
@@ -1362,7 +1368,12 @@ class ExecutionRuntime:
             step.completed_at = utc_now()
             run.current_step_id = step_id
             run.completed_step_ids = list(state.completed_step_ids)
-            run.active_step_ids = list(state.active_step_ids)
+            # Graph 的并行 superstep 会逐个 yield 完成事件，State.activeStepIds
+            # 在整批提交前仍包含兄弟节点；已完成节点不能继续显示为活动。
+            run.active_step_ids = [
+                item for item in state.active_step_ids
+                if item not in state.completed_step_ids
+            ]
         elif event_type == "superstep_completed":
             self._project_completed_phase_capsules(run=run, state=state)
             checkpoint_id = self._save_acg_checkpoint(run, state)
@@ -1548,7 +1559,11 @@ class ExecutionRuntime:
             self._inject_fault("after_trace")
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
-        self._persist_acg_state(run, state)
+        self._persist_acg_state(
+            run,
+            state,
+            projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
+        )
 
     def _project_completed_phase_capsules(
         self,
@@ -1621,12 +1636,70 @@ class ExecutionRuntime:
             for event in run.trace
         )
 
-    def _persist_acg_state(self, run: RuntimeRunRecord, state: ACGExecutionState) -> None:
+    @staticmethod
+    def _acg_projection_snapshot(run: RuntimeRunRecord, state: ACGExecutionState) -> str:
+        """返回用于判断 Run 是否真的发生可观察变化的稳定快照。
+
+        该快照只存在于当前投影调用，不写入执行状态或 checkpoint。Trace 事件 ID、
+        步骤状态和引用型 State 的变化都会触发版本推进；同一 commit 的重放如果没有
+        修复任何缺失投影，则不会无意义地改变 ``updatedAt``。
+        """
+        steps = [
+            {
+                "stepId": step.step_id,
+                "status": step.status.value,
+                "startedAt": step.started_at.isoformat() if step.started_at else None,
+                "completedAt": step.completed_at.isoformat() if step.completed_at else None,
+                "error": step.error,
+            }
+            for step in run.steps
+        ]
+        return json.dumps(
+            {
+                "state": state.model_dump(by_alias=True, mode="json"),
+                "completedStepIds": list(run.completed_step_ids),
+                "activeStepIds": list(run.active_step_ids),
+                "currentStepId": run.current_step_id,
+                "steps": steps,
+                "traceEventIds": [event.event_id for event in run.trace],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _touch_run_projection(run: RuntimeRunRecord) -> None:
+        """单调推进 Run 投影时间，即使系统时钟精度不足也保证查询可见变化。"""
+        now = utc_now()
+        if now <= run.updated_at:
+            now = run.updated_at + timedelta(microseconds=1)
+        run.updated_at = now
+
+    def _persist_acg_state(
+        self,
+        run: RuntimeRunRecord,
+        state: ACGExecutionState,
+        *,
+        projection_changed: bool | None = None,
+    ) -> None:
         """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""
+        previous_state = dict(run.execution_state)
+        previous_completed = list(run.completed_step_ids)
+        previous_active = list(run.active_step_ids)
         state_data = state.model_dump(by_alias=True, mode="json")
         run.execution_state.update(state_data)
         run.completed_step_ids = list(state.completed_step_ids)
         run.active_step_ids = list(state.active_step_ids)
+        if projection_changed is None:
+            projection_changed = (
+                any(previous_state.get(key) != value for key, value in state_data.items())
+                or previous_completed != run.completed_step_ids
+                or previous_active != run.active_step_ids
+            )
+        if projection_changed:
+            run.runtime_revision += 1
+            self._touch_run_projection(run)
         self.workflow_store.save_run(run)
 
     def _save_acg_checkpoint(self, run: RuntimeRunRecord, state: ACGExecutionState) -> str:

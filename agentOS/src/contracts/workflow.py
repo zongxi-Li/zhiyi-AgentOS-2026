@@ -418,6 +418,9 @@ class RuntimeRunRecord(CoreModel):
     execution_state: Dict[str, Any] = Field(default_factory=dict, alias="executionState")
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
     updated_at: datetime = Field(default_factory=utc_now, alias="updatedAt")
+    # Run 投影版本不属于 ACGExecutionState，因此不会污染确定性 checkpoint。
+    # 历史 Run 缺少该字段时由 Pydantic 回退为 0，查询层仍可使用 updatedAt。
+    runtime_revision: int = Field(default=0, alias="runtimeRevision", ge=0)
 
     @model_validator(mode="before")
     @classmethod

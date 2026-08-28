@@ -141,6 +141,7 @@ def lifecycle_run_payload(run: RuntimeRunRecord) -> dict[str, Any]:
         "executionState": safe_state,
         "createdAt": run.created_at.isoformat(),
         "updatedAt": run.updated_at.isoformat(),
+        "runtimeRevision": run.runtime_revision,
     }
 
 
