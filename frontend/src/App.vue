@@ -63,12 +63,12 @@
               </div>
               <div
                 class="chat-nav-group acg-nav-group"
-                :class="{ active: route.path.startsWith('/agentos/acg'), open: acgNavOpen }"
+                :class="{ active: isAcgRoute, open: acgNavOpen }"
               >
                 <button
                   class="chat-nav-trigger"
                   type="button"
-                  :aria-current="route.path.startsWith('/agentos/acg') ? 'page' : undefined"
+                  :aria-current="isAcgRoute ? 'page' : undefined"
                   @click="handleAcgNavToggle"
                 >
                   <img class="acg-nav-logo" src="/acglogo.png" alt="" aria-hidden="true" />
@@ -463,7 +463,9 @@ const workspaceMode = ref<WorkspaceMode>(localStorage.getItem(WORKSPACE_MODE_KEY
 const CHAT_NAV_OPEN_KEY = 'layout.chat_nav_open'
 const chatNavOpen = ref(route.path.startsWith('/chat') && localStorage.getItem(CHAT_NAV_OPEN_KEY) === '1')
 const ACG_NAV_OPEN_KEY = 'layout.acg_nav_open'
-const acgNavOpen = ref(route.path.startsWith('/agentos/acg') && localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0')
+const isMissionWorkspacePath = (path: string) => path.startsWith('/agentos/missions/') && path.endsWith('/workspace')
+const isAcgPath = (path: string) => path.startsWith('/agentos/acg') || isMissionWorkspacePath(path)
+const acgNavOpen = ref(isAcgPath(route.path) && localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0')
 const CHAT_PANEL_WIDTH_KEY = 'layout.chat_panel_width'
 const CHAT_PANEL_DEFAULT_WIDTH = 300
 const CHAT_PANEL_MIN_WIDTH = 220
@@ -517,7 +519,7 @@ const sidebarWidth = ref(
     : SIDEBAR_DEFAULT_WIDTH
 )
 const sidebarResizing = ref(false)
-const isAcgRoute = computed(() => route.path.startsWith('/agentos/acg'))
+const isAcgRoute = computed(() => isAcgPath(route.path))
 const secondaryNavOpen = computed(() => chatNavOpen.value)
 const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value || isAcgRoute.value)
 const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? 60 + chatPanelWidth.value : ((sidebarCollapsed.value || isAcgRoute.value) ? 60 : sidebarWidth.value)}px`)
@@ -655,7 +657,7 @@ const handleAcgNavToggle = () => {
   if (chatNavOpen.value) closeChatPanel()
   acgNavOpen.value = !acgNavOpen.value
   localStorage.setItem(ACG_NAV_OPEN_KEY, acgNavOpen.value ? '1' : '0')
-  if (!route.path.startsWith('/agentos/acg')) {
+  if (!isAcgPath(route.path)) {
     acgNavOpen.value = true
     localStorage.setItem(ACG_NAV_OPEN_KEY, '1')
     void router.push('/agentos/acg')
@@ -690,7 +692,10 @@ const agentRunState = (run: WorkflowRunSummary) => {
 
 const openAgentRun = async (run: WorkflowRunSummary) => {
   chatStore.clearMessages()
-  await router.push({ path: '/chat', query: { workspace: 'agent', runId: run.runId } })
+  await router.push({
+    path: `/agentos/missions/${encodeURIComponent(run.missionId)}/workspace`,
+    query: { runId: run.runId }
+  })
 }
 
 const openConversation = async (conversation: Conversation) => {
@@ -762,7 +767,7 @@ watch(
   () => route.path,
   path => {
     if (!path.startsWith('/chat') && chatNavOpen.value) closeChatPanel()
-    if (path.startsWith('/agentos/acg')) {
+    if (isAcgPath(path)) {
       if (localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0') acgNavOpen.value = true
     } else {
       acgNavOpen.value = false
@@ -958,7 +963,7 @@ const activeMenu = computed(() => {
   const path = route.path
   if (path === '/chat' || path.startsWith('/chat')) return '/chat'
   if (path.startsWith('/agentos-console')) return '/agentos-console'
-  if (path.startsWith('/agentos/acg')) return '/agentos/acg'
+  if (path.startsWith('/agentos/acg') || isMissionWorkspacePath(path)) return '/agentos/acg'
   if (path === '/roles' || path.startsWith('/roles')) return '/roles'
   if (path === '/rag' || path.startsWith('/rag')) return '/rag'
   if (path === '/settings' || path.startsWith('/settings')) return '/settings'

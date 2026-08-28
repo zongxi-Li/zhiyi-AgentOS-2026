@@ -199,10 +199,13 @@ const props = defineProps<{
   stepStates?: AcgStepState[]
   collapsible?: boolean
   workbench?: boolean
+  focusNodeId?: string | null
 }>()
 
 const emit = defineEmits<{
   collapse: []
+  nodeSelected: [nodeId: string]
+  nodeDoubleClicked: [nodeId: string]
 }>()
 
 const graphRef = ref<HTMLElement | null>(null)
@@ -715,7 +718,12 @@ const render = async () => {
   if (selectedNodeId.value) network.selectNodes([selectedNodeId.value])
   network.on('selectNode', params => {
     selectedNodeId.value = String(params.nodes[0] || '')
+    if (selectedNodeId.value) emit('nodeSelected', selectedNodeId.value)
     void render()
+  })
+  network.on('doubleClick', params => {
+    const nodeId = String(params.nodes?.[0] || '')
+    if (nodeId) emit('nodeDoubleClicked', nodeId)
   })
   network.on('deselectNode', () => {
     selectedNodeId.value = ''
@@ -836,10 +844,25 @@ const setViewMode = (mode: GraphViewMode) => {
   pendingViewState = null
 }
 
+const focusNode = (nodeId: string) => {
+  if (!network || !visibleBlueprint.value?.nodes.some(node => node.nodeId === nodeId)) return
+  selectedNodeId.value = nodeId
+  network.selectNodes([nodeId])
+  network.focus(nodeId, { scale: 1.2, animation: true })
+  emit('nodeSelected', nodeId)
+  void render()
+}
+
 watch(
   () => [props.blueprint, props.completedStepIds, props.stepStates, selectedEdgeTypes.value, viewMode.value],
   () => render(),
   { deep: true }
+)
+watch(
+  () => props.focusNodeId,
+  nodeId => {
+    if (nodeId) void nextTick(() => focusNode(nodeId))
+  }
 )
 onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreenState)

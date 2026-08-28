@@ -132,9 +132,18 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/agentos/acg',
     name: 'AcgVisualization',
-    component: () => import('@/views/AcgVisualizationView.vue'),
+    component: () => import('@/views/AcgEntryView.vue'),
     meta: {
       title: 'ACG 动态群体智能引擎',
+      requiresAuth: true
+    }
+  },
+  {
+    path: '/agentos/missions/:missionId/workspace',
+    name: 'MissionWorkspace',
+    component: () => import('@/views/MissionWorkspaceView.vue'),
+    meta: {
+      title: 'Mission Project Workspace',
       requiresAuth: true
     }
   },
