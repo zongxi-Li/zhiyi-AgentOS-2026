@@ -282,7 +282,7 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
                 "cacheReadTokens": cache_read,
                 "cacheWriteTokens": cache_write,
                 "reasoningTokens": reasoning,
-                "totalTokens": input_tokens + output_tokens,
+                "totalTokens": _usage_number(usage, "total_tokens", "totalTokens") or input_tokens + output_tokens,
             },
             "finishReason": payload.get("finishReason"),
             "outputPolicy": output_policy,
@@ -347,6 +347,7 @@ def project_run(run: RuntimeRunRecord, *, title: str | None = None) -> dict[str,
         "activeStepIds": list(run.active_step_ids),
         "skippedStepIds": list(run.execution_state.get("skippedStepIds") or []),
         "outputRef": run.output.get("outputRef") if isinstance(run.output, dict) else None,
+        "runtimeRevision": run.runtime_revision,
         "executionState": state,
         "steps": [
             {
