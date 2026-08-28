@@ -60,6 +60,54 @@ const buttonStub = {
   template: '<button type="button" @click="$emit(\'click\')"><slot /></button>'
 }
 
+const workbenchLayoutStub = {
+  props: ['showRight'],
+  template: `
+    <section class="workbench-layout-stub">
+      <slot name="left" />
+      <slot
+        name="main"
+        :left-collapsed-by-user="false"
+        :right-collapsed-by-user="false"
+        :left-auto-hidden="false"
+        :right-auto-hidden="false"
+        :right-enabled="showRight"
+        :toggle-left="noop"
+        :toggle-right="noop"
+      />
+      <slot name="right" />
+    </section>
+  `,
+  methods: {
+    noop() {}
+  }
+}
+
+const workbenchBottomPanelStub = {
+  props: ['modelValue', 'collapsed', 'tabs'],
+  emits: ['update:modelValue', 'update:collapsed'],
+  template: `
+    <section class="workbench-bottom-panel-stub">
+      <slot name="tab-result" />
+      <slot name="tab-trace" />
+      <slot name="tab-events" />
+      <slot name="tab-tools" />
+    </section>
+  `
+}
+
+const workbenchVerticalSplitStub = {
+  template: `
+    <section class="workbench-vertical-split-stub">
+      <slot name="graph" />
+      <slot name="bottom" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" />
+    </section>
+  `,
+  methods: {
+    noop() {}
+  }
+}
+
 const mountPage = async (query = ''): Promise<{ wrapper: VueWrapper; router: Router }> => {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -92,7 +140,10 @@ const mountPage = async (query = ''): Promise<{ wrapper: VueWrapper; router: Rou
         'el-checkbox': true,
         'el-checkbox-group': true,
         'el-select': true,
-        'el-option': true
+        'el-option': true,
+        WorkbenchLayout: workbenchLayoutStub,
+        WorkbenchBottomPanel: workbenchBottomPanelStub,
+        WorkbenchVerticalSplit: workbenchVerticalSplitStub
       }
     }
   })
@@ -157,6 +208,30 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
     expect(wrapper.findComponent(AgentOsRunSummaryCard).exists()).toBe(true)
     expect(wrapper.text()).toContain('mission_1')
+    wrapper.unmount()
+  })
+
+  it('keeps multiple opened Runs as editor tabs and switches or closes them locally', async () => {
+    const { wrapper, router } = await mountPage('?runId=run_1')
+    const vm = wrapper.vm as unknown as {
+      openAcgRunFromExplorer: (runId: string) => void
+    }
+
+    vm.openAcgRunFromExplorer('run_2')
+    await flushPromises()
+
+    expect(wrapper.findAll('.workbench-editor-tab')).toHaveLength(2)
+    expect(wrapper.find('.workbench-editor-tab.is-active').text()).toContain('任务 run_2')
+    expect(router.currentRoute.value.query.runId).toBe('run_2')
+
+    await wrapper.findAll('.workbench-editor-tab__main')[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.runId).toBe('run_1')
+
+    await wrapper.find('.workbench-editor-tab.is-active .workbench-editor-tab__close').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.runId).toBe('run_2')
+    expect(wrapper.findAll('.workbench-editor-tab')).toHaveLength(1)
     wrapper.unmount()
   })
 

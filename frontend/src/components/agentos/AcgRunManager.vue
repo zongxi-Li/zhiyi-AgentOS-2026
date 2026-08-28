@@ -1,9 +1,11 @@
 <template>
   <div class="acg-run-manager">
-    <button class="acg-new-run" type="button" @click="emit('new')">
-      <el-icon><Plus /></el-icon>
-      <span>新建 ACG 任务</span>
-    </button>
+    <header class="acg-explorer-header">
+      <button class="acg-new-run" type="button" title="新建 ACG 任务" aria-label="新建 ACG 任务" @click="emit('new')">
+        <el-icon><Plus /></el-icon>
+        <span>新建 ACG 任务</span>
+      </button>
+    </header>
 
     <div class="acg-run-tools">
       <label class="acg-run-search">
@@ -468,7 +470,7 @@ onUnmounted(() => {
 .acg-run-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 10px; }
 .acg-run-search input::placeholder { color: var(--text-disabled); }
 .acg-run-filter { height: 30px; min-width: 0; padding: 0 6px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--bg-input); color: var(--text-secondary); font: inherit; font-size: 10px; }
-.acg-run-groups { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.acg-run-groups { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .acg-run-groups::-webkit-scrollbar { width: 4px; }
 .acg-run-groups::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--scrollbar-thumb); }
 .acg-run-group + .acg-run-group { margin-top: 8px; }
@@ -537,6 +539,27 @@ onUnmounted(() => {
 .acg-run-manage strong, .acg-run-manage small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acg-run-manage strong { color: var(--text-primary); font-size: 12px; }
 .acg-run-manage small { display: none; }
+.acg-explorer-header { flex: 0 0 auto; display: flex; min-width: 0; padding: 0; }
+.acg-new-run { width: 100%; min-width: 0; min-height: 48px; height: 48px; display: inline-flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 0 14px; border: 1px solid var(--wb-border, var(--border-light)); border-radius: 10px; background: var(--surface-solid); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .92), 0 2px 5px rgba(46, 50, 78, .1); color: var(--wb-text, var(--text-primary)); font-size: 13px; font-weight: 760; white-space: nowrap; }
+.acg-new-run .el-icon { color: var(--wb-muted, var(--text-secondary)); font-size: 16px; }
+.acg-new-run > span { overflow: hidden; text-overflow: ellipsis; }
+.acg-new-run:hover { border-color: var(--primary-line); color: var(--wb-accent, var(--primary-color)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .96), 0 3px 7px rgba(46, 50, 78, .13); }
+.acg-new-run:hover .el-icon { color: var(--wb-accent, var(--primary-color)); }
+.acg-new-run:active { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(46, 50, 78, .14), 0 1px 2px rgba(46, 50, 78, .08); }
+.acg-run-tools { gap: 4px; margin: 5px 0 4px; }
+.acg-run-search, .acg-run-filter { height: 28px; border-radius: 4px; }
+.acg-run-groups { scrollbar-gutter: stable; }
+.acg-run-group + .acg-run-group { margin-top: 4px; }
+.acg-run-group__head { height: 26px; padding: 4px 5px 3px; font-size: 10px; }
+.acg-run-group__head span:last-child { min-width: 15px; height: 15px; border-radius: 3px; font-size: 9px; }
+.acg-run-item { border-radius: 3px; }
+.acg-run-item__select { gap: 5px; padding: 6px 30px 6px 5px; }
+.acg-run-item__body { gap: 2px; }
+.acg-run-item__headline strong { font-size: 11px; }
+.acg-run-item__phase { font-size: 9px; }
+.acg-run-manage { height: 32px; min-height: 32px; flex-basis: 32px; margin-top: 4px; padding: 0 5px; border: 0; border-top: 1px solid var(--wb-border, var(--border-light)); border-radius: 0; background: transparent; }
+.acg-run-manage:hover { border-color: var(--wb-border, var(--border-light)); background: var(--wb-hover, var(--bg-input)); }
+.acg-run-manage__icon { width: 20px; height: 20px; flex-basis: 20px; border-radius: 3px; background: transparent; }
 @media (prefers-reduced-motion: reduce) { .acg-run-item, .acg-run-item__actions, .acg-run-item__progress span, .acg-new-run, .acg-run-manage { transition-duration: 1ms; transition-delay: 0ms; } }
 </style>
 

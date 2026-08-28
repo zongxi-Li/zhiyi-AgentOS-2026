@@ -219,5 +219,22 @@ const OperationalSummary = defineComponent({
   font: 9px/1.6 var(--font-mono); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
 }
 .operational-inspector :deep(.acg-metrics), .operational-inspector :deep(.acg-provenance), .operational-inspector :deep(.runtime-audit-timeline) { border: 0; border-radius: 0; box-shadow: none; }
+.operational-inspector { background: transparent; }
+:deep(.operational-summary) { grid-template-columns: 1fr; gap: 0; padding: 0; }
+:deep(.summary-card) { min-height: 30px; flex-direction: row; align-items: baseline; justify-content: space-between; gap: 8px; padding: 5px 0; border: 0; border-bottom: 1px solid var(--wb-border, var(--border-light)); border-radius: 0; background: transparent; }
+:deep(.summary-card strong) { order: 2; color: var(--wb-text, var(--text-primary)); font-size: 11px; font-weight: 720; }
+:deep(.summary-card span) { order: 1; color: var(--wb-muted, var(--text-secondary)); font-size: 10px; }
+:deep(.summary-card--active), :deep(.summary-card:nth-child(2)), :deep(.summary-card--active strong), :deep(.summary-card:nth-child(2) strong) { background: transparent; color: var(--wb-text, var(--text-primary)); }
+:deep(.summary-card--active strong) { color: var(--wb-accent, var(--primary-color)); }
+:deep(.section-block) { gap: 6px; padding: 9px 0; }
+:deep(.empty) { padding: 9px 0; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.record-list, :deep(.structured-list), :deep(.reference-list) { gap: 0; }
+.record-list article, :deep(.data-card) { border: 0; border-bottom: 1px solid var(--wb-border, var(--border-light)); border-radius: 0; background: transparent; }
+.record-list article { padding: 7px 0; border-left: 0; }
+.phase { padding: 2px 5px; border-radius: 3px; }
+:deep(.reference-card) { padding: 7px 0; }
+:deep(.structured-card) { overflow: visible; }
+:deep(.data-card__heading) { padding: 6px 0; }
+:deep(.structured-card pre), pre { max-height: 160px; padding: 7px 0; }
 @media (max-width: 760px) { .operational-inspector :deep(.el-tabs__item) { padding: 0 7px; } .tab-label .el-icon { display: none; } }
 </style>

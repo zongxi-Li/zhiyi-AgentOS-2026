@@ -1,6 +1,6 @@
 <!-- ACG 拓扑图 — 使用 vis-network 渲染 ACG 交互式拓扑，含步骤、Agent、记忆、证据、控制节点和图例 -->
 <template>
-  <section ref="sectionRef" class="acg-topology ui-surface">
+  <section ref="sectionRef" class="acg-topology ui-surface" :class="{ 'is-workbench': workbench }">
     <header class="panel-head">
       <div class="head-left">
         <el-icon class="head-icon"><Share /></el-icon>
@@ -38,7 +38,7 @@
     </header>
 
     <div v-if="!hasData" class="empty">暂无 ACG 拓扑数据，请先运行一个 ACG 引擎工作流</div>
-    <div v-else class="graph-stage" :class="{ 'has-detail': selectedNode }">
+    <div v-else class="graph-surface">
       <div class="graph-toolbar" aria-label="拓扑分析视图">
         <div class="view-mode">
           <button type="button" :class="{ active: viewMode === 'main' }" @click="setViewMode('main')">主执行链</button>
@@ -57,9 +57,10 @@
           </div>
         </div>
       </div>
-      <div ref="graphRef" class="graph-canvas" />
-      <p v-if="viewHint" class="view-hint">{{ viewHint }}</p>
-      <aside v-if="selectedNode" class="node-detail" aria-label="节点详情">
+      <div class="graph-stage" :class="{ 'has-detail': selectedNode }">
+        <div ref="graphRef" class="graph-canvas" />
+        <p v-if="viewHint" class="view-hint">{{ viewHint }}</p>
+        <aside v-if="selectedNode" class="node-detail" aria-label="节点详情">
         <header>
           <div>
             <span>{{ nodeTypeLabel(selectedNode.nodeType) }}</span>
@@ -142,8 +143,8 @@
             <small>{{ edgeTypeLabel(edge.edgeType) }}</small>{{ edge.targetId }}
           </button>
         </div>
-      </aside>
-      <div class="legend" :class="{ expanded: legendExpanded }">
+        </aside>
+        <div class="legend" :class="{ expanded: legendExpanded }">
         <button type="button" class="legend-toggle" :aria-expanded="legendExpanded" @click="legendExpanded = !legendExpanded">
           <span>{{ legendExpanded ? '收起图例' : '图例' }}</span>
           <b aria-hidden="true">{{ legendExpanded ? '−' : '+' }}</b>
@@ -172,11 +173,12 @@
             <span class="legend-item"><b class="badge skipped">Skipped</b>条件跳过</span>
           </div>
         </template>
-      </div>
-      <div class="canvas-controls" aria-label="画布控制">
+        </div>
+        <div class="canvas-controls" aria-label="画布控制">
         <button type="button" title="缩小" aria-label="缩小拓扑" @click="zoomGraph(0.86)"><el-icon><Minus /></el-icon></button>
         <button type="button" title="适应画布" aria-label="适应画布" @click="resetView()"><el-icon><Aim /></el-icon></button>
         <button type="button" title="放大" aria-label="放大拓扑" @click="zoomGraph(1.16)"><el-icon><Plus /></el-icon></button>
+        </div>
       </div>
     </div>
   </section>
@@ -196,6 +198,7 @@ const props = defineProps<{
   completedStepIds?: string[]
   stepStates?: AcgStepState[]
   collapsible?: boolean
+  workbench?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -218,6 +221,8 @@ let edgesData: DataSet<any> | null = null
 let graphStructureKey = ''
 let stabilizationTimer: number | undefined
 let themeObserver: MutationObserver | null = null
+let graphResizeObserver: ResizeObserver | null = null
+let graphResizeFrame: number | undefined
 let layoutFinalized = false
 let pendingViewState: { position: { x: number; y: number }; scale: number } | null = null
 
@@ -741,6 +746,24 @@ const syncFullscreenState = () => {
   }, 120)
 }
 
+const scheduleGraphRedraw = () => {
+  if (graphResizeFrame !== undefined) return
+  const redraw = () => {
+    graphResizeFrame = undefined
+    network?.redraw()
+  }
+  graphResizeFrame = typeof window.requestAnimationFrame === 'function'
+    ? window.requestAnimationFrame(redraw)
+    : window.setTimeout(redraw, 16)
+}
+
+const cancelGraphRedraw = () => {
+  if (graphResizeFrame === undefined) return
+  if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(graphResizeFrame)
+  else window.clearTimeout(graphResizeFrame)
+  graphResizeFrame = undefined
+}
+
 const toggleFullscreen = async () => {
   if (!sectionRef.value || !fullscreenSupported) return
   try {
@@ -800,6 +823,10 @@ onMounted(() => {
   document.addEventListener('keydown', handleFullscreenEscape)
   themeObserver = new MutationObserver(() => render())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-color-scheme'] })
+  if (props.workbench && typeof ResizeObserver !== 'undefined' && sectionRef.value) {
+    graphResizeObserver = new ResizeObserver(() => scheduleGraphRedraw())
+    graphResizeObserver.observe(sectionRef.value)
+  }
   render()
 })
 onBeforeUnmount(() => {
@@ -811,6 +838,9 @@ onBeforeUnmount(() => {
   stopPhysics()
   themeObserver?.disconnect()
   themeObserver = null
+  cancelGraphRedraw()
+  graphResizeObserver?.disconnect()
+  graphResizeObserver = null
   network?.destroy()
   network = null
   nodesData = null
@@ -845,6 +875,61 @@ onBeforeUnmount(() => {
   border-color: var(--border-light);
   box-shadow: 0 1px 3px rgba(34, 61, 52, 0.08);
 }
+.acg-topology.is-workbench {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--wb-editor-bg, var(--bg-panel));
+  box-shadow: none;
+}
+.acg-topology.is-workbench .panel-head {
+  flex: 0 0 34px;
+  box-sizing: border-box;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--wb-border, var(--border-light));
+}
+.acg-topology.is-workbench .action-group { padding: 2px; border: 1px solid var(--wb-border, var(--border-light)); border-radius: 5px; background: var(--wb-hover, var(--bg-input)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 1px 2px rgba(46, 50, 78, .06); }
+.acg-topology.is-workbench .action-btn { width: 28px; height: 28px; border-radius: 4px; }
+.acg-topology.is-workbench .action-btn:hover, .acg-topology.is-workbench .action-btn.active { border-color: var(--primary-line); background: var(--surface-solid); box-shadow: var(--shadow-sm); }
+.acg-topology.is-workbench .graph-surface { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.acg-topology.is-workbench .graph-toolbar {
+  position: static;
+  flex: 0 0 35px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px solid var(--wb-border, var(--border-light));
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.acg-topology.is-workbench .view-mode { min-width: 0; }
+.acg-topology.is-workbench .view-mode button {
+  min-height: 35px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--wb-muted, var(--text-secondary));
+}
+.acg-topology.is-workbench .view-mode button:hover { background: var(--wb-hover, var(--bg-input)); color: var(--wb-text, var(--text-primary)); }
+.acg-topology.is-workbench .view-mode button.active { border-bottom-color: var(--wb-accent, var(--primary-color)); background: transparent; color: var(--wb-accent, var(--primary-color)); }
+.acg-topology.is-workbench .filter-trigger { min-height: 30px; border-left: 1px solid var(--wb-border, var(--border-light)); border-radius: 0; }
+.acg-topology.is-workbench .empty { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; }
+.acg-topology.is-workbench .graph-stage { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); border: 0; border-radius: 0; background: transparent; }
+.acg-topology.is-workbench .graph-canvas { flex: 1 1 auto; height: 100%; min-height: 0; }
+.acg-topology.is-workbench .node-detail { height: auto; min-height: 0; }
+.acg-topology.is-workbench .meta { padding: 2px 5px; border-radius: 3px; background: transparent; }
+.graph-surface { position: relative; min-width: 0; }
 .panel-head {
   display: flex;
   justify-content: center;

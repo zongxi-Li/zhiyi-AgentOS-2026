@@ -1,10 +1,25 @@
 <!-- 知弈OS 原生 ACG 工作台 — 专业语义通过编译期 Plugin UI Extension 增量注入。 -->
 <template>
   <div class="acg-view ui-shell" :class="{ 'has-progress': isSubmitting || progressTracker.progress.value || progressTracker.syncError.value, 'has-run': !!activeRunId, 'is-draft': !activeRunId }">
-    <header class="ui-hero ui-hero--compact">
+    <WorkbenchLayout :show-right="Boolean(acgView)">
+      <template #left>
+        <AcgRunManager
+          :active-run-id="activeRunId"
+          @new="startNewAcgFromExplorer"
+          @select="openAcgRunFromExplorer"
+          @deleted="handleAcgRunDeletedFromExplorer"
+          @manage="openAcgOperationsFromExplorer"
+        />
+      </template>
+
+      <template #main>
+        <div ref="acgMainPane" class="acg-main-pane">
+    <header class="workbench-editor-toolbar" aria-label="当前任务信息">
       <div class="hero-left">
-        <div class="ui-icon-badge"><el-icon><Cpu /></el-icon></div>
-        <h3>ACG 动态群体智能引擎</h3>
+        <div class="editor-toolbar__identity">
+          <strong>{{ editorTitle }}</strong>
+          <span>{{ editorMetadata }}</span>
+        </div>
       </div>
       <div class="hero-right">
         <span v-if="displayedMissionId" class="hero-run-chip" :title="`任务 ID: ${displayedMissionId}`">
@@ -18,8 +33,39 @@
       </div>
     </header>
 
+    <header class="workbench-editor-tabbar" aria-label="已打开的 ACG 任务">
+      <div
+        v-for="tab in visibleEditorTabs"
+        :key="tab.id"
+        class="workbench-editor-tab"
+        :class="{ 'is-active': tab.id === activeEditorTabId }"
+      >
+        <button
+          class="workbench-editor-tab__main"
+          type="button"
+          role="tab"
+          :aria-selected="tab.id === activeEditorTabId"
+          @click="selectEditorTab(tab.id)"
+        >
+          <span class="workbench-editor-tab__icon"><el-icon><Cpu /></el-icon></span>
+          <span class="workbench-editor-tab__title" :title="tab.title">{{ tab.title }}</span>
+          <span v-if="tab.status" class="workbench-editor-tab__status" :class="`is-${tab.status}`">{{ editorTabStatusLabel(tab.status) }}</span>
+        </button>
+        <button
+          v-if="tab.runId"
+          class="workbench-editor-tab__close"
+          type="button"
+          :title="`关闭 ${tab.title}`"
+          :aria-label="`关闭 ${tab.title}`"
+          @click.stop="closeEditorTab(tab.id)"
+        >
+          <el-icon><Close /></el-icon>
+        </button>
+      </div>
+    </header>
+
     <!-- 控制台 -->
-    <section class="ui-surface ui-surface--pad control-bar" :class="{ collapsed: inputPanelCompact, 'advanced-open': advancedSettingsExpanded }">
+    <section class="control-bar" :class="{ collapsed: inputPanelCompact, 'advanced-open': advancedSettingsExpanded }">
       <button
         class="input-panel-toggle"
         type="button"
@@ -221,41 +267,25 @@
 
     <section
       v-if="activeRunId || isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
-      class="run-overview ui-surface"
+      class="editor-runtime-strip"
       aria-label="ACG 运行概览"
     >
-    <section v-if="activeRunId" class="run-scope">
-      <header><strong>运行状态来自执行运行时</strong><el-tag effect="plain" type="info">引用式只读</el-tag></header>
-      <div class="snapshot-list">
-        <span>{{ activePluginSummary }}</span>
-        <code v-if="activeRun?.executionState?.checkpointId">Checkpoint {{ activeRun.executionState.checkpointId }}</code>
-      </div>
-    </section>
-
-    <WorkflowProgressBar
-      v-if="isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
-      :progress="progressTracker.progress.value"
-      :loading="isSubmitting || progressTracker.isLoading.value"
-      :sync-error="progressTracker.syncError.value"
-    />
-    <AgentOsRunSummaryCard
-      v-if="activeRunId"
-      class="run-summary-card"
-      :progress="progressTracker.progress.value"
-      :run="activeRun"
-      :view="acgView"
-      :events="acgAuditEvents"
-    />
-    <RunResourceStrip
-      v-if="activeRunId"
-      :usage="resourceUsage"
-      @open="openResourceInspector"
-    />
-    <AcgExecutionContractBar
-      v-if="acgView"
-      :view="acgView"
-      @open-run="openRelatedRun"
-    />
+      <WorkflowProgressBar
+        v-if="isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
+        :progress="progressTracker.progress.value"
+        :loading="isSubmitting || progressTracker.isLoading.value"
+        :sync-error="progressTracker.syncError.value"
+      />
+      <RunResourceStrip
+        v-if="activeRunId"
+        :usage="resourceUsage"
+        @open="openResourceInspector"
+      />
+      <AcgExecutionContractBar
+        v-if="acgView"
+        :view="acgView"
+        @open-run="openRelatedRun"
+      />
     </section>
 
     <el-drawer
@@ -297,100 +327,129 @@
       @conflict="handleAcgReviewConflict"
     />
 
-    <!-- 主区：拓扑 + 指标/血缘 -->
-    <div
-      v-if="acgView"
-      class="acg-grid"
-      :class="{ 'is-side-collapsed': sidePanelCollapsed }"
-    >
-      <div class="grid-main">
-        <AcgTopologyGraph
-          :blueprint="acgView.acgBlueprint"
-          :completed-step-ids="acgView.completedStepIds"
-          :step-states="acgView.stepStates"
-        />
-        <template v-if="artifactRenderers.length">
-          <component v-for="renderer in artifactRenderers" :key="renderer.pluginId" :is="renderer.component" :deliverables="acgView.deliverables" :final-report="acgView.finalReport" />
-        </template>
-        <GenericArtifactPanel
-          v-else
-          :step-outputs="acgView.stepOutputs || acgView.deliverables"
-          :final-artifacts="acgView.finalArtifacts || []"
-          :final-report="acgView.finalReport"
-          :status="acgView.status"
-          :step-states="acgView.stepStates"
-        />
-        <div class="schedule-strip ui-surface" v-if="scheduleBatches.length">
-          <h4>就绪集调度轨迹（动态拓扑）</h4>
-          <div class="batch-row">
-            <div v-for="b in scheduleBatches" :key="b.id" class="batch">
-              <span class="batch-idx">第{{ b.round }}轮</span>
-              <span v-for="sid in b.nodes" :key="sid" class="batch-node">{{ sid }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <aside v-if="sidePanelCollapsed" class="side-rail" aria-label="运行详情折叠栏">
-        <button
-          class="side-rail__toggle"
-          type="button"
-          title="展开运行详情"
-          aria-label="展开运行详情"
-          :aria-expanded="false"
-          aria-controls="acg-run-details"
-          @click="setSidePanelCollapsed(false)"
-        >
-          <el-icon><ArrowLeft /></el-icon>
-        </button>
-      </aside>
-      <aside
-        id="acg-run-details"
-        class="grid-side"
-        :aria-hidden="sidePanelCollapsed"
-      >
-        <div class="grid-side__content">
-          <button
-            class="grid-side__collapse"
-            type="button"
-            title="收起运行详情"
-            aria-label="收起运行详情"
-            :aria-expanded="true"
-            aria-controls="acg-run-details"
-            @click="setSidePanelCollapsed(true)"
-          >
-            <el-icon><ArrowRight /></el-icon>
-            <span>收起运行详情</span>
-          </button>
-          <AcgOperationalInspector
-            :view="acgView"
-            :audit-events="acgAuditEvents"
-            :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
-            @export-audit="exportAudit"
+    <!-- 主区：拓扑编辑器 + 独立垂直分割运行面板 -->
+    <WorkbenchVerticalSplit v-if="acgView" class="acg-editor-body">
+      <template #graph>
+        <div class="acg-editor-surface">
+          <AcgTopologyGraph
+            class="acg-editor-graph"
+            :blueprint="acgView.acgBlueprint"
+            :completed-step-ids="acgView.completedStepIds"
+            :step-states="acgView.stepStates"
+            :workbench="true"
           />
-          <section class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
-            <AcgProvenancePanel
-              :consumptions="acgView.provenance.consumptions"
-              :interactions="acgView.interactions"
-              :recovery-trace="acgView.recoveryTrace"
-              :contract-violations="acgView.contractViolations"
-              @export-json="exportAudit('json')"
-              @export-csv="exportAudit('csv')"
-            />
-          </section>
         </div>
-      </aside>
-    </div>
+      </template>
 
-    <div v-else class="ui-surface task-brief">
+      <template #bottom="{ collapsed, setCollapsed }">
+        <WorkbenchBottomPanel
+          :model-value="collapsed"
+          :tabs="bottomPanelTabs"
+          @update:model-value="setCollapsed"
+        >
+      <template #tab-result>
+        <div class="bottom-panel-result">
+          <template v-if="artifactRenderers.length">
+            <component
+              v-for="renderer in artifactRenderers"
+              :key="renderer.pluginId"
+              :is="renderer.component"
+              :deliverables="acgView.deliverables"
+              :final-report="acgView.finalReport"
+            />
+          </template>
+          <GenericArtifactPanel
+            v-else
+            :step-outputs="acgView.stepOutputs || acgView.deliverables"
+            :final-artifacts="acgView.finalArtifacts || []"
+            :final-report="acgView.finalReport"
+            :status="acgView.status"
+            :step-states="acgView.stepStates"
+          />
+        </div>
+      </template>
+
+      <template #tab-trace>
+        <div class="bottom-panel-trace">
+          <AgentOsRunSummaryCard
+            v-if="activeRunId"
+            class="run-summary-card"
+            :progress="progressTracker.progress.value"
+            :run="activeRun"
+            :view="acgView"
+            :events="acgAuditEvents"
+          />
+          <section v-if="scheduleBatches.length" class="schedule-strip" aria-label="就绪集调度轨迹">
+            <h4>就绪集调度轨迹（动态拓扑）</h4>
+            <div class="batch-row">
+              <div v-for="b in scheduleBatches" :key="b.id" class="batch">
+                <span class="batch-idx">第{{ b.round }}轮</span>
+                <span v-for="sid in b.nodes" :key="sid" class="batch-node">{{ sid }}</span>
+              </div>
+            </div>
+          </section>
+          <RuntimeAuditTimeline
+            :events="acgAuditEvents"
+            :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+          />
+        </div>
+      </template>
+
+      <template #tab-events>
+        <div v-if="acgAuditEvents.length" class="bottom-panel-event-list">
+          <article v-for="(event, index) in acgAuditEvents" :key="event.eventId || `${event.eventType}-${event.createdAt || index}`" class="bottom-panel-event-row">
+            <strong>{{ event.eventType }}</strong>
+            <span>{{ event.observation || '运行事件已记录' }}</span>
+            <time v-if="event.createdAt">{{ event.createdAt }}</time>
+          </article>
+        </div>
+        <div v-else class="bottom-panel-empty">暂无事件数据</div>
+      </template>
+
+      <template #tab-tools>
+        <div class="bottom-panel-empty">暂无工具调用数据</div>
+      </template>
+        </WorkbenchBottomPanel>
+      </template>
+    </WorkbenchVerticalSplit>
+
+    <div v-else class="task-brief">
       <strong>ACG 动态智能体长程任务</strong>
     </div>
+        </div>
+      </template>
+
+      <template #right>
+        <div id="acg-run-details" class="acg-inspector-pane" aria-label="ACG 运行详情">
+          <div class="acg-inspector-pane__content">
+            <AcgOperationalInspector
+              v-if="acgView"
+              :view="acgView"
+              :audit-events="acgAuditEvents"
+              :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+              @export-audit="exportAudit"
+            />
+            <section v-if="acgView" class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
+              <AcgProvenancePanel
+                :consumptions="acgView.provenance.consumptions"
+                :interactions="acgView.interactions"
+                :recovery-trace="acgView.recoveryTrace"
+                :contract-violations="acgView.contractViolations"
+                @export-json="exportAudit('json')"
+                @export-csv="exportAudit('csv')"
+              />
+            </section>
+          </div>
+        </div>
+      </template>
+    </WorkbenchLayout>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type DeepReadonly } from 'vue'
 import axios from 'axios'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Close, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, ArrowUp, Close, Cpu, Delete, Document, Monitor, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -405,11 +464,15 @@ import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import AcgExecutionContractBar from '@/components/agentos/AcgExecutionContractBar.vue'
 import AcgOperationalInspector from '@/components/agentos/AcgOperationalInspector.vue'
 import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
+import AcgRunManager from '@/components/agentos/AcgRunManager.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 import RunResourceStrip from '@/components/agentos/RunResourceStrip.vue'
 import AcgResourceInspector from '@/components/agentos/AcgResourceInspector.vue'
+import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
+import WorkbenchBottomPanel from '@/components/workbench/WorkbenchBottomPanel.vue'
+import WorkbenchVerticalSplit from '@/components/workbench/WorkbenchVerticalSplit.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import type { ThinkingMode } from '@/config/modelSettings'
@@ -420,6 +483,7 @@ import { resolveAcgTaskTitle, resolveAcgTaskTitleAutoUpdate } from '@/utils/acgT
 import { notifyAcgRunInvalidated } from '@/utils/acgHistoryFilter'
 import PluginExtensionHost from '@/features/acg/PluginExtensionHost.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
+import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import {
   buildWorkbenchStartRequest,
   createNativeWorkbenchDraft,
@@ -429,6 +493,7 @@ import {
 import { pluginUiExtensions } from '@/plugins'
 
 const draft = reactive<WorkbenchDraft>(createNativeWorkbenchDraft())
+const acgMainPane = ref<HTMLElement | null>(null)
 const taskName = computed({ get: () => draft.title, set: value => { draft.title = value } })
 const contractText = computed({ get: () => draft.materialText, set: value => { draft.materialText = value } })
 const userIntent = computed({ get: () => draft.taskGoal, set: value => { draft.taskGoal = value } })
@@ -541,6 +606,21 @@ const acgAuditEvents = computed(() => {
     return true
   })
 })
+const bottomPanelTabs = computed(() => [
+  { id: 'result', label: '结果' },
+  { id: 'trace', label: '运行轨迹', count: acgAuditEvents.value.length },
+  { id: 'events', label: '事件', count: acgAuditEvents.value.length },
+  { id: 'tools', label: '工具调用' }
+])
+const editorTitle = computed(() => activeRun.value?.title || (activeRunId.value
+  ? (taskName.value || '当前 ACG 任务')
+  : 'ACG 动态群体智能引擎'))
+const editorMetadata = computed(() => [
+  planningModeSummary.value,
+  draft.webSearchEnabled ? '联网' : '仅本地',
+  ({ stable: '稳定', balanced: '均衡', exploratory: '探索' } as const)[draft.planningDiversity],
+  activePluginSummary.value
+].join(' · '))
 const taskMaterialLength = computed(() => {
   const legalDraft = draft.pluginData['kinlin.legal']
   const candidates = [
@@ -557,6 +637,60 @@ const route = useRoute()
 const router = useRouter()
 const workflowRunsStore = useWorkflowRunsStore()
 const activeRunId = ref('')
+type AcgEditorTab = {
+  id: string
+  runId?: string
+  title: string
+  status?: string
+}
+
+const DRAFT_EDITOR_TAB_ID = 'acg-editor-draft'
+const openedEditorTabs = ref<AcgEditorTab[]>([])
+const draftEditorTabOpen = ref(false)
+const editorStatusLabels: Record<string, string> = {
+  completed: '已完成', failed: '失败', running: '执行中',
+  waiting_review: '待审核', cancelled: '已取消', retrying: '重试中',
+  planning: '规划中', pending: '待启动'
+}
+const activeEditorTabId = computed(() => activeRunId.value || DRAFT_EDITOR_TAB_ID)
+const visibleEditorTabs = computed<AcgEditorTab[]>(() => {
+  const tabs = openedEditorTabs.value.slice()
+  if (draftEditorTabOpen.value || !tabs.length) {
+    tabs.unshift({ id: DRAFT_EDITOR_TAB_ID, title: tabs.length ? '新建 ACG 任务' : 'ACG 动态群体智能引擎' })
+  }
+  return tabs
+})
+const editorTabStatusLabel = (status?: string) => status ? (editorStatusLabels[status] || status) : ''
+const editorTabTitle = (run: WorkflowRun | null | undefined, fallback = '') => {
+  if (run) return resolveAcgTaskTitle(run)
+  return fallback || '当前 ACG 任务'
+}
+const ensureEditorTab = (runId: string, title?: string, status?: string) => {
+  if (!runId) return
+  const existing = openedEditorTabs.value.find(tab => tab.id === runId)
+  if (existing) {
+    if (title) existing.title = title
+    if (status) existing.status = status
+    return
+  }
+  openedEditorTabs.value.push({
+    id: runId,
+    runId,
+    title: title || `任务 ${runId.slice(0, 10)}`,
+    status
+  })
+}
+const updateEditorTabFromRun = (run: WorkflowRun) => {
+  ensureEditorTab(run.runId, editorTabTitle(run), run.status)
+}
+const updateEditorTabStatus = (runId: string, status?: string) => {
+  if (!runId || !status) return
+  const tab = openedEditorTabs.value.find(item => item.id === runId)
+  if (tab) tab.status = status
+}
+const removeEditorTab = (tabId: string) => {
+  openedEditorTabs.value = openedEditorTabs.value.filter(tab => tab.id !== tabId)
+}
 const installedPlugins = computed(() => pluginUiExtensions.all().map(extension => ({
   pluginId: extension.pluginId,
   displayName: extension.displayName,
@@ -576,29 +710,7 @@ const activePluginSummary = computed(() => activePluginIds.value.length
   : 'Native only')
 const inputPanelExpanded = ref(true)
 const inputPanelCompact = ref(false)
-const sidePanelCollapsed = ref(false)
-const sidePanelManuallySet = ref(false)
 const loadedRunId = ref('')
-
-const isCompletedRun = computed(() => (
-  acgView.value?.status === 'completed'
-  || activeRun.value?.status === 'completed'
-))
-
-const setSidePanelCollapsed = (collapsed: boolean) => {
-  sidePanelManuallySet.value = true
-  sidePanelCollapsed.value = collapsed
-}
-
-watch(activeRunId, () => {
-  sidePanelManuallySet.value = false
-  sidePanelCollapsed.value = false
-})
-
-watch(isCompletedRun, completed => {
-  if (sidePanelManuallySet.value) return
-  sidePanelCollapsed.value = completed
-}, { immediate: true })
 const contractFileInput = ref<HTMLInputElement | null>(null)
 const uploadDragging = ref(false)
 type SelectedMaterial = { originalFilename: string; size: number; textLength: number; extractedText: string }
@@ -766,14 +878,6 @@ const statusLabel = computed(() => {
   }
   const status = progressTracker.progress.value?.status || acgView.value?.status
   return status ? (map[status] || status) : '准备中'
-})
-const statusTagType = computed(() => {
-  const phase = progressTracker.progress.value?.phase
-  const s = progressTracker.progress.value?.status || acgView.value?.status
-  if (s === 'completed') return 'success'
-  if (s === 'failed') return 'danger'
-  if (s === 'waiting_review' || phase === 'review' || phase === 'recovery') return 'warning'
-  return 'info'
 })
 const effectiveStatus = computed(() => progressTracker.progress.value?.status || acgView.value?.status || '')
 const effectivePhase = computed(() => progressTracker.progress.value?.phase || '')
@@ -976,6 +1080,7 @@ const enterNewAcgDraft = () => {
   clearInputCollapseTimer()
   clearInputPanelCompactTimer()
   activeRunId.value = ''
+  draftEditorTabOpen.value = openedEditorTabs.value.length > 0
   startError.value = null
   inputPanelExpanded.value = true
   inputPanelCompact.value = false
@@ -1009,9 +1114,9 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
       }
       return
     }
-    activeRun.value = runResult.value
     const run = runResult.value
     activeRun.value = run
+    updateEditorTabFromRun(run)
     if (viewResult.status === 'fulfilled') {
       acgView.value = viewResult.value
     } else if (!axios.isCancel(viewResult.reason) && force) {
@@ -1043,10 +1148,12 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
 const removeMissingAcgRun = async (runId: string) => {
   workflowRunsStore.removeReference(runId)
   notifyAcgRunInvalidated(runId)
+  removeEditorTab(runId)
   if (activeRunId.value !== runId) return
   progressTracker.reset()
   clearRunData()
   activeRunId.value = ''
+  draftEditorTabOpen.value = openedEditorTabs.value.length > 0
   const query = { ...route.query }
   delete query.runId
   await router.replace({ query })
@@ -1091,6 +1198,7 @@ watch(
   () => progressTracker.progress.value,
   (value, previous) => {
     if (!value) return
+    updateEditorTabStatus(value.runId, value.status)
     const stateChanged = value.status !== previous?.status || value.phase !== previous?.phase
     if (value.status === 'failed' || value.phase === 'failed') {
       clearInputCollapseTimer()
@@ -1131,6 +1239,8 @@ watch(
   (value) => {
     if (typeof value !== 'string' || !value.trim()) return
     const runId = value.trim()
+    ensureEditorTab(runId)
+    draftEditorTabOpen.value = false
     if (runId === activeRunId.value && progressTracker.runId.value === runId) return
     terminalNotificationRunId = null
     progressTracker.reset()
@@ -1154,15 +1264,68 @@ const openOperations = () => {
   })
 }
 
-const openRelatedRun = (runId: string) => {
+const startNewAcgFromExplorer = async () => {
+  if (route.query.runId) {
+    await router.replace({ path: '/agentos/acg', query: {} })
+  }
+  enterNewAcgDraft()
+}
+
+const openAcgRunFromExplorer = (runId: string) => {
+  ensureEditorTab(runId)
   void router.push({ path: '/agentos/acg', query: { runId } })
 }
 
+const handleAcgRunDeletedFromExplorer = async (runId: string) => {
+  removeEditorTab(runId)
+  if (route.query.runId !== runId) return
+  await startNewAcgFromExplorer()
+}
+
+const openAcgOperationsFromExplorer = () => {
+  void router.push({ path: '/agentos-console', query: { tab: 'runs', source: 'acg' } })
+}
+
+const openRelatedRun = (runId: string) => {
+  ensureEditorTab(runId)
+  void router.push({ path: '/agentos/acg', query: { runId } })
+}
+
+const selectEditorTab = (tabId: string) => {
+  if (tabId === DRAFT_EDITOR_TAB_ID) {
+    void startNewAcgFromExplorer()
+    return
+  }
+  const tab = openedEditorTabs.value.find(item => item.id === tabId)
+  if (!tab?.runId || tab.runId === activeRunId.value) return
+  ensureEditorTab(tab.runId)
+  void router.push({ path: '/agentos/acg', query: { runId: tab.runId } })
+}
+
+const closeEditorTab = async (tabId: string) => {
+  const tabIndex = openedEditorTabs.value.findIndex(item => item.id === tabId)
+  if (tabIndex < 0) return
+  const isActive = tabId === activeRunId.value
+  removeEditorTab(tabId)
+  if (!isActive) return
+
+  const nextTab = draftEditorTabOpen.value
+    ? null
+    : openedEditorTabs.value[tabIndex] || openedEditorTabs.value[tabIndex - 1]
+  if (nextTab?.runId) {
+    ensureEditorTab(nextTab.runId)
+    await router.push({ path: '/agentos/acg', query: { runId: nextTab.runId } })
+    return
+  }
+  await startNewAcgFromExplorer()
+}
+
 const scrollToSection = (selector: string) => {
-  const target = document.querySelector<HTMLElement>(selector)
-  if (!target) return
-  const top = target.getBoundingClientRect().top + window.scrollY - 16
-  window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  const mainPane = acgMainPane.value?.closest<HTMLElement>('.workbench-pane--main')
+  const target = acgMainPane.value?.querySelector<HTMLElement>(selector)
+  if (!mainPane || !target) return
+  const top = mainPane.scrollTop + target.getBoundingClientRect().top - mainPane.getBoundingClientRect().top - 16
+  mainPane.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
 }
 
 const rerunWithNewPlanningSeed = () => {
@@ -1290,6 +1453,8 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
         }, { signal: submitController.signal })
       : await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
     activeRunId.value = res.runId
+    ensureEditorTab(res.runId, request.title, res.status)
+    draftEditorTabOpen.value = false
     scheduleInputCollapse()
     advancedSettingsExpanded.value = false
     workflowRunsStore.register({
@@ -1368,21 +1533,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.acg-view.ui-shell { display: flex; flex-direction: column; gap: 0; padding: var(--space-sm) var(--space-md); }
-.acg-view.is-draft { min-height: calc(100dvh + 15px); }
-.acg-view > .ui-hero { border-bottom: 0; border-radius: 8px 8px 0 0; }
-.acg-view > .control-bar { border-top: 0; border-radius: 0 0 8px 8px; }
-.acg-view.is-draft > .control-bar { flex: 1 1 auto; }
-.acg-view.is-draft > .control-bar.collapsed { flex: 0 0 auto; min-height: 58px; }
-.acg-view.has-progress:not(.has-run) > .control-bar { border-bottom: 0; border-radius: 0; box-shadow: none; }
-.acg-view.has-progress:not(.has-run) > .run-overview { border-top: 0; border-radius: 0 0 8px 8px; }
-.run-overview { margin-top: 12px; overflow: hidden; }
-.run-overview > :deep(.workflow-progress),
-.run-overview > :deep(.agentos-run-summary) {
-  margin: 0; border: 0; border-radius: 0; background: transparent;
-}
-.run-overview > :deep(.workflow-progress) { padding: 14px 16px; }
-.run-overview > :deep(.agentos-run-summary) { padding: 14px 16px; }
+.acg-view.ui-shell { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 0; padding: 0; }
+.acg-view.is-draft { min-height: 0; }
+.acg-main-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: var(--space-sm) var(--space-md) 24px; }
+.acg-view.is-draft .acg-main-pane > .control-bar { flex: 1 1 auto; min-height: 0; }
+.acg-view.is-draft .acg-main-pane > .control-bar.collapsed { flex: 0 0 auto; min-height: 58px; }
+.acg-view.has-progress:not(.has-run) .acg-main-pane > .control-bar { border-bottom: 0; border-radius: 0; box-shadow: none; }
 :global(.resource-drawer) {
   --el-drawer-padding-primary: 0;
   border-radius: var(--radius-panel) 0 0 var(--radius-panel);
@@ -1423,7 +1579,7 @@ onBeforeUnmount(() => {
 .control-bar.collapsed .input-summary { flex: 1 1 auto; }
 .control-bar.collapsed .ctrl-options { flex: 0 0 auto; padding: 0; border: 0; }
 .control-bar.collapsed .ctrl-options > :deep(.el-button:last-child) { margin-left: 0; }
-.workbench-identity, .plugin-selector header, .run-scope header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.workbench-identity, .plugin-selector header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .workbench-identity div, .plugin-selector header div { display:flex; flex-direction:column; gap:3px; }
 .workbench-identity small, .plugin-selector small, .plugin-selector header span { color:var(--text-secondary); font-size:11px; }
 .plugin-selector { display:flex; flex-direction:column; gap:10px; padding:0; }
@@ -1442,10 +1598,6 @@ onBeforeUnmount(() => {
 .plugin-card code { align-self:flex-start; padding:4px 7px; border-radius:5px; background:var(--bg-input); color:var(--text-muted); font-family:var(--font-mono); font-size:9px; }
 .plugin-card:disabled { cursor:not-allowed; opacity:.6; }
 .plugin-card:focus-visible { outline:2px solid var(--primary-color); outline-offset:2px; }
-.run-scope { display:flex; flex-direction:column; gap:8px; padding:18px 20px; }
-.run-scope header strong { font-size:13px; }
-.snapshot-list { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--text-secondary); font-size:11px; }
-.snapshot-list span, .snapshot-list code { padding:5px 8px; border-radius:6px; background:var(--bg-input); }
 .input-panel-expandable {
   display: flex;
   flex-direction: column;
@@ -1579,6 +1731,7 @@ onBeforeUnmount(() => {
   overflow: visible;
   border: 1px solid color-mix(in srgb, var(--main-action-tone) 82%, white 18%) !important;
   border-radius: var(--radius-card);
+  background: var(--main-action-tone) !important;
   color: var(--on-primary) !important;
   font-weight: 780;
   letter-spacing: .01em;
@@ -1793,47 +1946,13 @@ onBeforeUnmount(() => {
 .contract-upload__copy .contract-upload__error { color: var(--el-color-danger); }
 .contract-upload__actions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
 
-.acg-view > :deep(.workflow-review) { margin-top: var(--space-lg); }
-.acg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 11px; margin-top: 16px; align-items: stretch; min-width: 0; transition: grid-template-columns 180ms ease; }
-.acg-grid.is-side-collapsed { grid-template-columns: minmax(0, 1fr) 44px; }
-.grid-main { align-self: start; display: flex; flex-direction: column; gap: var(--space-lg); min-width: 0; }
-.grid-side {
-  position: sticky; top: 12px; align-self: start; box-sizing: border-box;
-  height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); min-width: 0; min-height: 0;
-  overflow: hidden;
-}
-.grid-side__content {
-  box-sizing: border-box; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: var(--space-lg);
-  overflow-y: auto; overscroll-behavior-y: auto; scrollbar-gutter: stable; scrollbar-width: thin;
-}
-.side-provenance { flex: 1 0 auto; min-height: 0; display: flex; min-width: 0; overflow: hidden; }
+.acg-inspector-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface-solid); }
+.acg-inspector-pane__content { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--space-lg); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; }
+.side-provenance { flex: 0 0 auto; min-width: 0; display: flex; overflow: hidden; }
 .side-provenance :deep(.acg-provenance) { flex: 1 1 auto; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
 .side-provenance :deep(.panel-head) { padding: 14px 16px 10px; }
 .side-provenance :deep(.tabs) { margin-right: 16px; margin-left: 16px; }
 .side-provenance :deep(.tab-body) { padding: 0 16px 14px; }
-.is-side-collapsed .grid-side { display: none; }
-.grid-side :deep(.acg-provenance) { min-height: 0; }
-.grid-side__metrics { flex: 0 0 auto; min-width: 0; }
-.grid-side__audit { flex: 1 1 auto; min-width: 0; min-height: 360px; display: flex; }
-.grid-side__audit :deep(.acg-provenance) { width: 100%; height: 100%; }
-.grid-side > :deep(.runtime-audit-timeline) { flex: 0 0 auto; max-height: 380px; overflow: auto; }
-.grid-side__collapse {
-  min-height: 32px; display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px;
-  padding: 0 9px; border: 1px solid var(--border-light); border-radius: 7px;
-  background: var(--surface-solid); color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer;
-  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
-}
-.grid-side__collapse:hover, .grid-side__collapse:focus-visible { border-color: var(--primary-line); background: var(--primary-fade); color: var(--primary-color); }
-.side-rail {
-  align-self: stretch; box-sizing: border-box; height: 100%; min-height: 176px; display: flex; flex-direction: column; align-items: stretch; gap: 6px;
-  padding: 6px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--surface-solid);
-}
-.side-rail button { border: 0; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
-.side-rail__toggle {
-  width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 6px !important;
-  background: var(--primary-fade) !important; color: var(--primary-color) !important;
-}
-.side-rail button:focus-visible, .grid-side__collapse:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 
 .schedule-strip { padding: var(--space-md); }
 .schedule-strip h4 { margin: 0 0 var(--space-sm); font-size: 13px; font-weight: 700; color: var(--text-primary); }
@@ -1850,36 +1969,261 @@ onBeforeUnmount(() => {
   padding: 12px 20px;
   border-radius: var(--radius-lg);
 }
-.acg-view.is-draft > .task-brief { flex: 0 0 62px; margin-bottom: var(--space-md); }
+.acg-view.is-draft .acg-main-pane > .task-brief { flex: 0 0 62px; margin-bottom: var(--space-md); }
 .task-brief strong { color: var(--text-secondary); font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+
+/* ACG route-scoped Workbench tokens and density rules. */
+.acg-view {
+  --wb-bg: var(--bg-app, #f7f8fc);
+  --wb-sidebar-bg: var(--bg-card, #fff);
+  --wb-editor-bg: var(--bg-card, #fff);
+  --wb-panel-bg: var(--bg-card, #fff);
+  --wb-border: var(--border-light, #e5e7ef);
+  --wb-hover: var(--bg-input, #f3f4f8);
+  --wb-active: var(--primary-fade, #f0edff);
+  --wb-muted: var(--text-secondary, #73798c);
+  --wb-text: var(--text-primary, #25283a);
+  --wb-accent: var(--primary-color, #7562e8);
+  background: var(--wb-bg);
+}
+.acg-main-pane {
+  height: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+  background: var(--wb-editor-bg);
+}
+.workbench-editor-tabbar {
+  flex: 0 0 36px;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--wb-border);
+  background: var(--wb-bg);
+  scrollbar-width: thin;
+}
+.workbench-editor-tab {
+  min-width: 0;
+  max-width: min(420px, 62%);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  border-right: 1px solid var(--wb-border);
+  border-bottom: 2px solid transparent;
+  background: var(--wb-bg);
+  color: var(--wb-muted);
+  font-size: 11px;
+}
+.workbench-editor-tab.is-active {
+  border-bottom-color: var(--wb-accent);
+  background: var(--wb-editor-bg);
+  color: var(--wb-text);
+}
+.workbench-editor-tab__main {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workbench-editor-tab__main:focus-visible {
+  outline: 2px solid var(--wb-accent);
+  outline-offset: -2px;
+}
+.workbench-editor-tab__icon { display: inline-grid; place-items: center; color: var(--wb-accent); }
+.workbench-editor-tab__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workbench-editor-tab__status {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--wb-active);
+  color: var(--wb-accent);
+  font-size: 9px;
+  line-height: 1.2;
+}
+.workbench-editor-tab__status.is-failed { background: var(--danger-fade); color: var(--danger); }
+.workbench-editor-tab__close {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-grid;
+  place-items: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--wb-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: background-color .16s ease, color .16s ease, opacity .16s ease;
+}
+.workbench-editor-tab:hover .workbench-editor-tab__close,
+.workbench-editor-tab.is-active .workbench-editor-tab__close,
+.workbench-editor-tab__close:focus-visible { opacity: 1; }
+.workbench-editor-tab__close:hover {
+  background: var(--wb-hover);
+  color: var(--wb-accent);
+}
+.workbench-editor-tab__close:focus-visible {
+  outline: 2px solid var(--wb-accent);
+  outline-offset: -1px;
+}
+.workbench-editor-toolbar {
+  flex: 0 0 42px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--wb-border);
+  background: var(--wb-editor-bg);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.workbench-editor-toolbar .hero-left,
+.workbench-editor-toolbar .hero-right { min-width: 0; gap: 6px; }
+.editor-toolbar__identity { min-width: 0; display: grid; gap: 1px; }
+.editor-toolbar__identity strong { overflow: hidden; color: var(--wb-text); font-size: 12px; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
+.editor-toolbar__identity span { overflow: hidden; color: var(--wb-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.workbench-editor-toolbar .hero-operations { height: 28px; border-radius: 5px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .76), 0 1px 2px rgba(46, 50, 78, .08); }
+.workbench-editor-toolbar .hero-run-chip { height: 26px; padding: 0 7px; border-radius: 4px; background: transparent; font-size: 9px; }
+.workbench-editor-toolbar .hero-run-chip code { max-width: 120px; font-size: 9px; }
+.workbench-editor-toolbar .hero-operations { padding: 0 8px; border-color: var(--wb-border); background: var(--surface-solid); font-size: 10px; }
+.workbench-editor-toolbar .hero-operations:hover { background: var(--wb-hover); }
+.control-bar {
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0 10px;
+  gap: 0;
+  border: 0;
+  border-bottom: 1px solid var(--wb-border);
+  border-radius: 0;
+  background: var(--wb-bg);
+  box-shadow: none;
+}
+.control-bar:not(.collapsed) { padding-right: 10px; }
+.control-bar.collapsed { min-height: 38px; padding: 5px 10px; gap: 10px; }
+.control-bar.collapsed .input-panel-toggle { position: static; flex: 0 0 28px; }
+.input-panel-expandable { padding: 10px 0 0; }
+.control-bar .ctrl-options { padding: 8px 0; }
+.control-bar.collapsed .ctrl-options { padding: 0; }
+.control-bar.collapsed .input-summary__copy .el-icon { border: 0; background: transparent; }
+.control-bar.collapsed .input-summary__copy strong { font-size: 11px; }
+.control-bar.collapsed .input-summary__copy small { font-size: 10px; }
+.editor-runtime-strip {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--wb-border);
+  background: var(--wb-bg);
+}
+.editor-runtime-strip > :deep(.workflow-progress),
+.editor-runtime-strip > :deep(.resource-strip),
+.editor-runtime-strip > :deep(.execution-contract) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.editor-runtime-strip > :deep(.workflow-progress) { padding: 7px 10px; }
+.editor-runtime-strip > :deep(.resource-strip) { padding: 6px 10px; border-top: 1px solid var(--wb-border); }
+.editor-runtime-strip > :deep(.execution-contract) { border-top: 1px solid var(--wb-border); }
+.acg-editor-surface {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--wb-editor-bg);
+}
+.acg-editor-surface > :deep(.acg-editor-graph) { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.acg-main-pane > :deep(.workflow-review) { margin: 0; border-radius: 0; border-right: 0; border-left: 0; box-shadow: none; }
+.bottom-panel-result,
+.bottom-panel-trace,
+.bottom-panel-event-list { min-width: 0; padding: 0 12px 10px; }
+.bottom-panel-result :deep(.generic-artifacts),
+.bottom-panel-trace :deep(.agentos-run-summary),
+.bottom-panel-trace :deep(.runtime-audit-timeline) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.bottom-panel-result :deep(.generic-artifacts) { padding: 8px 0; }
+.bottom-panel-result :deep(.delivery-overview),
+.bottom-panel-result :deep(.delivery-facts > div),
+.bottom-panel-result :deep(.calculation-card),
+.bottom-panel-result :deep(.decision-grid > article),
+.bottom-panel-result :deep(details) { border-radius: 0; box-shadow: none; }
+.bottom-panel-trace :deep(.agentos-run-summary),
+.bottom-panel-trace :deep(.runtime-audit-timeline) { padding: 8px 0; }
+.bottom-panel-trace :deep(.summary-grid) { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.bottom-panel-trace :deep(.summary-grid > div) { min-height: 40px; border-radius: 0; }
+.bottom-panel-event-row {
+  display: grid;
+  grid-template-columns: minmax(120px, .35fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  border-bottom: 1px solid var(--wb-border);
+  color: var(--wb-muted);
+  font-size: 10px;
+}
+.bottom-panel-event-row strong { color: var(--wb-text); font-size: 10px; }
+.bottom-panel-event-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bottom-panel-event-row time { color: var(--text-disabled); font-family: var(--font-mono, monospace); font-size: 9px; }
+.bottom-panel-empty { display: grid; min-height: 96px; place-items: center; color: var(--wb-muted); font-size: 11px; }
+.schedule-strip { padding: 8px 0; border-bottom: 1px solid var(--wb-border); }
+.schedule-strip h4 { margin-bottom: 6px; font-size: 11px; }
+.batch-row { gap: 6px; }
+.batch { padding: 3px 6px; border-radius: 3px; }
+.batch-node { padding: 2px 5px; border-radius: 3px; font-size: 10px; }
+.task-brief { min-height: 62px; margin: 0; border-radius: 0; }
+.acg-view.is-draft .acg-main-pane > .task-brief { margin-bottom: 0; }
+.acg-inspector-pane { background: var(--wb-sidebar-bg); }
+.acg-inspector-pane__content { gap: 0; scrollbar-gutter: auto; }
+.side-provenance { border: 0; border-top: 1px solid var(--wb-border); border-radius: 0; background: transparent; box-shadow: none; }
+.side-provenance :deep(.panel-head) { padding: 9px 12px 7px; }
+.side-provenance :deep(.tabs) { margin-right: 12px; margin-left: 12px; }
+.side-provenance :deep(.tab-body) { padding: 0 12px 10px; }
 
 @keyframes restore-pulse {
   to { opacity: 1; }
 }
 
 @media (max-width: 1160px) {
-  .acg-grid { grid-template-columns: minmax(0, 1fr); }
-  .acg-grid.is-side-collapsed { grid-template-columns: minmax(0, 1fr); }
-  .side-rail { display: none; }
-  .grid-side, .is-side-collapsed .grid-side { position: static; display: block; height: auto; max-height: none; overflow: visible; }
-  .grid-side__content { height: auto; overflow: visible; }
-  .side-provenance { flex: 0 0 auto; display: block; }
-  .side-provenance :deep(.acg-provenance) { display: flex; }
-  .grid-side__audit { min-height: 0; display: block; }
-  .grid-side__audit :deep(.acg-provenance) { height: auto; }
-  .grid-side__collapse { display: none; }
   .advanced-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .acg-grid { transition: none; }
   .advanced-settings { animation: none; }
 }
 
 @media (max-width: 720px) {
   :global(.resource-drawer) { width: 92vw !important; }
   .resource-drawer__body { padding-right: 16px; padding-left: 16px; }
-  .ui-hero { flex-wrap: wrap; align-items: flex-start; }
   .hero-left { width: 100%; }
   .hero-right { justify-content: flex-start; width: 100%; flex-wrap: wrap; }
   .hero-run-chip code { max-width: 120px; }

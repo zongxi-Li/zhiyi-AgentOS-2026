@@ -68,8 +68,7 @@
                 <button
                   class="chat-nav-trigger"
                   type="button"
-                  :aria-expanded="acgNavOpen"
-                  aria-controls="acg-side-panel"
+                  :aria-current="route.path.startsWith('/agentos/acg') ? 'page' : undefined"
                   @click="handleAcgNavToggle"
                 >
                   <img class="acg-nav-logo" src="/acglogo.png" alt="" aria-hidden="true" />
@@ -283,39 +282,6 @@
             </section>
           </Transition>
 
-          <Transition name="chat-panel">
-            <section
-              v-if="acgNavOpen"
-              id="acg-side-panel"
-              class="chat-side-panel acg-side-panel"
-              :style="{ width: `${chatPanelWidth}px` }"
-              aria-label="ACG 运行管理器"
-            >
-              <AcgRunManager
-                :active-run-id="typeof route.query.runId === 'string' ? route.query.runId : ''"
-                @new="startNewAcg"
-                @select="openAcgRun"
-                @deleted="handleAcgRunDeleted"
-                @manage="openAcgOperations"
-              />
-
-              <div
-                class="chat-panel-resizer"
-                role="separator"
-                aria-label="调整 ACG 运行面板宽度"
-                aria-orientation="vertical"
-                :aria-valuemin="CHAT_PANEL_MIN_WIDTH"
-                :aria-valuemax="CHAT_PANEL_MAX_WIDTH"
-                :aria-valuenow="chatPanelWidth"
-                tabindex="0"
-                title="拖动调整宽度，双击恢复默认"
-                @pointerdown="startChatPanelResize"
-                @keydown="handleChatPanelResizeKeydown"
-                @dblclick="resetChatPanelWidth"
-              ></div>
-            </section>
-          </Transition>
-
           <div
             v-if="!sidebarCollapsed && !secondaryNavOpen"
             class="sidebar-resizer"
@@ -462,7 +428,6 @@ import {
   Menu as MenuIcon, Fold, Expand
 } from '@element-plus/icons-vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
-import AcgRunManager from '@/components/agentos/AcgRunManager.vue'
 import { authApi } from '@/services/api/auth'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
@@ -552,9 +517,10 @@ const sidebarWidth = ref(
     : SIDEBAR_DEFAULT_WIDTH
 )
 const sidebarResizing = ref(false)
-const secondaryNavOpen = computed(() => chatNavOpen.value || acgNavOpen.value)
-const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value)
-const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? 60 + chatPanelWidth.value : (sidebarCollapsed.value ? 60 : sidebarWidth.value)}px`)
+const isAcgRoute = computed(() => route.path.startsWith('/agentos/acg'))
+const secondaryNavOpen = computed(() => chatNavOpen.value)
+const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value || isAcgRoute.value)
+const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? 60 + chatPanelWidth.value : ((sidebarCollapsed.value || isAcgRoute.value) ? 60 : sidebarWidth.value)}px`)
 const primarySidebarWidth = computed(() => `${mainSidebarCompact.value ? 60 : sidebarWidth.value}px`)
 let sidebarResizeStartX = 0
 let sidebarResizeStartWidth = SIDEBAR_DEFAULT_WIDTH
@@ -694,24 +660,6 @@ const handleAcgNavToggle = () => {
     localStorage.setItem(ACG_NAV_OPEN_KEY, '1')
     void router.push('/agentos/acg')
   }
-}
-
-const startNewAcg = async () => {
-  await router.push('/agentos/acg')
-  window.dispatchEvent(new Event('acg-new-task'))
-}
-
-const openAcgRun = async (runId: string) => {
-  await router.push({ path: '/agentos/acg', query: { runId } })
-}
-
-const handleAcgRunDeleted = async (runId: string) => {
-  if (route.query.runId !== runId) return
-  await startNewAcg()
-}
-
-const openAcgOperations = async () => {
-  await router.push({ path: '/agentos-console', query: { tab: 'runs', source: 'acg' } })
 }
 
 const startNewChat = async () => {
@@ -1001,7 +949,6 @@ const isRouteScrollable = computed(() => {
     path.startsWith('/federated-learning') ||
     path.startsWith('/federated-models') ||
     path.startsWith('/agentos-console') ||
-    path.startsWith('/agentos/acg') ||
     path.startsWith('/rag') ||
     path.startsWith('/voice-chat')
   )

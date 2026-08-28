@@ -234,6 +234,21 @@ const recoveryLabel = (t: string) => {
 .rec-obs { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 .rec-meta { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
 .rec-meta strong { color: var(--success); }
+.acg-provenance { background: transparent; }
+.acg-provenance .panel-head { min-height: 34px; margin: 0; padding: 0 0 7px; border-bottom: 1px solid var(--wb-border, var(--border-light)); }
+.acg-provenance .panel-head h4 { font-size: 12px; }
+.acg-provenance .tab-body { padding: 5px 0 10px; }
+.lineage-list, .interaction-list, .recovery-list { gap: 0; }
+.lineage-item, .interaction-item, .recovery-item { padding: 8px 0; border: 0; border-bottom: 1px solid var(--wb-border, var(--border-light)); border-radius: 0; background: transparent; }
+.lineage-item:hover, .interaction-item:hover { border-color: var(--wb-border, var(--border-light)); background: var(--wb-hover, var(--bg-input)); }
+.node-tag { padding: 2px 5px; border-radius: 3px; font-size: 10px; }
+.node-tag.consumer { background: var(--wb-active, var(--primary-fade)); }
+.fields { margin-top: 6px; padding-top: 6px; }
+.fields code { padding: 2px 4px; border-radius: 3px; font-size: 9px; }
+.recovery-item { border-left: 2px solid var(--border-light); padding-left: 7px; }
+.rec-type { font-size: 11px; }
+.rec-obs { font-size: 10px; }
+.empty { min-height: 80px; padding: 12px 0; font-size: 11px; }
 
 @media (max-width: 520px) {
   .panel-head { align-items: flex-start; }

@@ -80,6 +80,7 @@ describe('AcgRunManager', () => {
     expect(wrapper.text()).toContain('运行中')
     expect(wrapper.text()).toContain('等待审核')
     expect(wrapper.text()).toContain('最近完成')
+    expect(wrapper.find('.acg-new-run').text()).toBe('新建 ACG 任务')
     expect(wrapper.find('.acg-run-item.active').exists()).toBe(true)
     expect(wrapper.find('.acg-run-item__headline strong').text()).toBe('软件开发合同审查')
     expect(wrapper.find('.acg-run-item__meta').text()).toContain('步骤 2/7')
