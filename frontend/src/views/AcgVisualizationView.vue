@@ -64,13 +64,16 @@
       </div>
     </header>
 
+    <!-- 任务配置栏目：与运行概览保持独立，可分别折叠。 -->
+    <section class="acg-task-config-section" aria-label="任务配置">
+    <div v-show="inputPanelExpanded" class="acg-task-config-expanded">
     <!-- 控制台 -->
     <section class="control-bar" :class="{ collapsed: inputPanelCompact, 'advanced-open': advancedSettingsExpanded }">
       <button
         class="input-panel-toggle"
         type="button"
-        :title="inputPanelExpanded ? '收起任务配置' : '展开任务配置'"
-        :aria-label="inputPanelExpanded ? '收起任务配置' : '展开任务配置'"
+        title="收起任务配置"
+        aria-label="收起任务配置"
         :aria-expanded="inputPanelExpanded"
         @click="inputPanelExpanded = !inputPanelExpanded"
       >
@@ -265,27 +268,91 @@
       </div>
     </section>
 
+    </div>
+    <div v-if="!inputPanelExpanded" class="acg-config-thumbnail" aria-label="已折叠的任务配置">
+      <button
+        class="input-panel-toggle"
+        type="button"
+        title="展开任务配置"
+        aria-label="展开任务配置"
+        aria-expanded="false"
+        @click="inputPanelExpanded = true"
+      >
+        <el-icon><ArrowDown /></el-icon>
+      </button>
+      <div class="acg-overview-thumbnail__summary">
+        <el-icon><Document /></el-icon>
+        <strong>{{ taskName || editorTitle || '未命名 ACG 任务' }}</strong>
+        <span>任务配置已折叠 · {{ planningModeSummary }} · {{ activePluginSummary }}</span>
+      </div>
+      <el-button
+        class="main-action"
+        :class="`main-action--${mainAction.action}`"
+        :type="mainAction.type"
+        :loading="mainAction.loading"
+        :disabled="mainAction.disabled"
+        @click="handleMainAction"
+      >
+        <span class="main-action__label">{{ mainAction.label }}</span>
+        <el-icon v-if="!mainAction.loading" class="main-action__arrow" aria-hidden="true"><ArrowRight /></el-icon>
+      </el-button>
+    </div>
+    </section>
+
+    <!-- 运行概览栏目：保留进度、资源和执行合同的业务组件，只切换展示状态。 -->
     <section
       v-if="activeRunId || isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
-      class="editor-runtime-strip"
+      class="acg-runtime-section"
       aria-label="ACG 运行概览"
     >
-      <WorkflowProgressBar
-        v-if="isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
-        :progress="progressTracker.progress.value"
-        :loading="isSubmitting || progressTracker.isLoading.value"
-        :sync-error="progressTracker.syncError.value"
-      />
-      <RunResourceStrip
-        v-if="activeRunId"
-        :usage="resourceUsage"
-        @open="openResourceInspector"
-      />
-      <AcgExecutionContractBar
-        v-if="acgView"
-        :view="acgView"
-        @open-run="openRelatedRun"
-      />
+      <div v-show="runtimeOverviewExpanded" class="acg-runtime-expanded">
+        <button
+          class="runtime-panel-toggle"
+          type="button"
+          title="收起运行概览"
+          aria-label="收起运行概览"
+          aria-expanded="true"
+          @click="runtimeOverviewExpanded = false"
+        >
+          <el-icon><ArrowUp /></el-icon>
+        </button>
+        <section class="editor-runtime-strip">
+          <WorkflowProgressBar
+            v-if="isSubmitting || progressTracker.progress.value || progressTracker.syncError.value"
+            :progress="progressTracker.progress.value"
+            :loading="isSubmitting || progressTracker.isLoading.value"
+            :sync-error="progressTracker.syncError.value"
+          />
+          <RunResourceStrip
+            v-if="activeRunId"
+            :usage="resourceUsage"
+            @open="openResourceInspector"
+          />
+          <AcgExecutionContractBar
+            v-if="acgView"
+            :view="acgView"
+            @open-run="openRelatedRun"
+          />
+        </section>
+      </div>
+      <div v-if="!runtimeOverviewExpanded" class="acg-runtime-thumbnail" aria-label="已折叠的运行概览">
+        <button
+          class="runtime-panel-toggle"
+          type="button"
+          title="展开运行概览"
+          aria-label="展开运行概览"
+          aria-expanded="false"
+          @click="runtimeOverviewExpanded = true"
+        >
+          <el-icon><ArrowDown /></el-icon>
+        </button>
+        <span class="acg-overview-thumbnail__dot" :class="{ 'is-running': isSubmitting || progressTracker.progress.value?.status === 'running' }" aria-hidden="true"></span>
+        <strong>ACG 执行状态</strong>
+        <span class="acg-runtime-thumbnail__message">{{ progressTracker.progress.value?.message || activeRun?.lifecycleMessage || '运行概览已折叠' }}</span>
+        <span v-if="progressTracker.progress.value?.percent != null" class="acg-overview-thumbnail__percent">
+          {{ progressTracker.progress.value.percent.toFixed(0) }}%
+        </span>
+      </div>
     </section>
 
     <el-drawer
@@ -332,6 +399,7 @@
       <template #graph>
         <div class="acg-editor-surface">
           <AcgTopologyGraph
+            :key="topologyGraphKey"
             class="acg-editor-graph"
             :blueprint="acgView.acgBlueprint"
             :completed-step-ids="acgView.completedStepIds"
@@ -709,6 +777,8 @@ const activePluginSummary = computed(() => activePluginIds.value.length
   ? activePluginIds.value.join('、')
   : 'Native only')
 const inputPanelExpanded = ref(true)
+const runtimeOverviewExpanded = ref(true)
+const topologyGraphKey = ref(0)
 const inputPanelCompact = ref(false)
 const loadedRunId = ref('')
 const contractFileInput = ref<HTMLInputElement | null>(null)
@@ -947,6 +1017,7 @@ let lastTopologyMarker: string | null = null
 let submitController: AbortController | null = null
 let inputCollapseTimer: ReturnType<typeof setTimeout> | null = null
 let inputPanelCompactTimer: ReturnType<typeof setTimeout> | null = null
+let topologyGraphRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let terminalNotificationRunId: string | null = null
 
 const clearInputCollapseTimer = () => {
@@ -957,6 +1028,21 @@ const clearInputCollapseTimer = () => {
 const clearInputPanelCompactTimer = () => {
   if (inputPanelCompactTimer !== null) window.clearTimeout(inputPanelCompactTimer)
   inputPanelCompactTimer = null
+}
+
+const clearTopologyGraphRefreshTimer = () => {
+  if (topologyGraphRefreshTimer !== null) window.clearTimeout(topologyGraphRefreshTimer)
+  topologyGraphRefreshTimer = null
+}
+
+const scheduleTopologyGraphRefresh = () => {
+  clearTopologyGraphRefreshTimer()
+  // Wait for the task configuration collapse transition to finish, then let
+  // vis-network initialize against the settled canvas size and fit once.
+  topologyGraphRefreshTimer = window.setTimeout(() => {
+    topologyGraphRefreshTimer = null
+    topologyGraphKey.value += 1
+  }, 420)
 }
 
 const topologyMarker = (value: {
@@ -1060,6 +1146,7 @@ const clearTopologyTimer = () => {
 
 const clearRunData = () => {
   clearTopologyTimer()
+  clearTopologyGraphRefreshTimer()
   topologyGeneration += 1
   topologyController?.abort()
   topologyController = null
@@ -1083,6 +1170,7 @@ const enterNewAcgDraft = () => {
   draftEditorTabOpen.value = openedEditorTabs.value.length > 0
   startError.value = null
   inputPanelExpanded.value = true
+  runtimeOverviewExpanded.value = true
   inputPanelCompact.value = false
   advancedSettingsExpanded.value = false
   resetDraftContent()
@@ -1234,6 +1322,10 @@ watch(inputPanelExpanded, value => {
   }, 380)
 })
 
+watch([inputPanelExpanded, runtimeOverviewExpanded], () => {
+  scheduleTopologyGraphRefresh()
+})
+
 watch(
   () => route.query.runId,
   (value) => {
@@ -1248,6 +1340,7 @@ watch(
     startError.value = null
     activeRunId.value = runId
     inputPanelExpanded.value = false
+    runtimeOverviewExpanded.value = true
     inputPanelCompact.value = true
     advancedSettingsExpanded.value = false
     workflowRunsStore.register({ runId, source: 'restored' })
@@ -1521,6 +1614,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   submitController?.abort()
   clearTopologyTimer()
+  clearTopologyGraphRefreshTimer()
   topologyGeneration += 1
   topologyController?.abort()
   clearInputCollapseTimer()
@@ -1536,9 +1630,11 @@ onBeforeUnmount(() => {
 .acg-view.ui-shell { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 0; padding: 0; }
 .acg-view.is-draft { min-height: 0; }
 .acg-main-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: var(--space-sm) var(--space-md) 24px; }
-.acg-view.is-draft .acg-main-pane > .control-bar { flex: 1 1 auto; min-height: 0; }
-.acg-view.is-draft .acg-main-pane > .control-bar.collapsed { flex: 0 0 auto; min-height: 58px; }
-.acg-view.has-progress:not(.has-run) .acg-main-pane > .control-bar { border-bottom: 0; border-radius: 0; box-shadow: none; }
+.acg-task-config-expanded { min-width: 0; display: flex; flex-direction: column; flex: 0 0 auto; }
+.acg-view.is-draft .acg-task-config-expanded { flex: 1 1 auto; min-height: 0; }
+.acg-view.is-draft .acg-task-config-expanded > .control-bar { flex: 1 1 auto; min-height: 0; }
+.acg-view.is-draft .acg-task-config-expanded > .control-bar.collapsed { flex: 0 0 auto; min-height: 58px; }
+.acg-view.has-progress:not(.has-run) .acg-task-config-expanded > .control-bar { border-bottom: 0; border-radius: 0; box-shadow: none; }
 :global(.resource-drawer) {
   --el-drawer-padding-primary: 0;
   border-radius: var(--radius-panel) 0 0 var(--radius-panel);
@@ -1612,7 +1708,7 @@ onBeforeUnmount(() => {
   will-change: height, opacity, transform;
 }
 .input-panel-toggle {
-  position: absolute; top: 10px; right: 12px; z-index: 1;
+  position: absolute; top: 10px; left: 12px; z-index: 1;
   width: 28px; height: 28px; display: inline-grid; place-items: center;
   padding: 0; border: 1px solid var(--border-light); border-radius: 6px;
   background: var(--surface-solid); color: var(--text-secondary); cursor: pointer;
@@ -2118,7 +2214,17 @@ onBeforeUnmount(() => {
   background: var(--wb-bg);
   box-shadow: none;
 }
-.control-bar:not(.collapsed) { padding-right: 10px; }
+.acg-task-config-section,
+.acg-runtime-section {
+  min-width: 0;
+  flex: 0 0 auto;
+  border-top: 1px solid #dfe2f0;
+  border-bottom: 1px solid #dfe2f0;
+}
+.acg-task-config-section { background: #f0f1f9; }
+.acg-runtime-section { background: #e9ecf7; }
+.acg-task-config-expanded > .control-bar { border-bottom: 0; background: #f0f1f9; }
+.control-bar:not(.collapsed) { padding-right: 10px; padding-left: 52px; }
 .control-bar.collapsed { min-height: 38px; padding: 5px 10px; gap: 10px; }
 .control-bar.collapsed .input-panel-toggle { position: static; flex: 0 0 28px; }
 .input-panel-expandable { padding: 10px 0 0; }
@@ -2133,9 +2239,30 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 0;
   overflow: hidden;
-  border-bottom: 1px solid var(--wb-border);
-  background: var(--wb-bg);
+  border-bottom: 0;
+  background: #e9ecf7;
+  padding-left: 40px;
 }
+.acg-runtime-expanded { position: relative; min-width: 0; }
+.runtime-panel-toggle {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--surface-solid);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.runtime-panel-toggle:hover { border-color: var(--primary-line); color: var(--primary-color); background: var(--primary-fade); }
+.runtime-panel-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--primary-fade); }
 .editor-runtime-strip > :deep(.workflow-progress),
 .editor-runtime-strip > :deep(.resource-strip),
 .editor-runtime-strip > :deep(.execution-contract) {
@@ -2146,8 +2273,31 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 .editor-runtime-strip > :deep(.workflow-progress) { padding: 7px 10px; }
-.editor-runtime-strip > :deep(.resource-strip) { padding: 6px 10px; border-top: 1px solid var(--wb-border); }
-.editor-runtime-strip > :deep(.execution-contract) { border-top: 1px solid var(--wb-border); }
+.editor-runtime-strip > :deep(.resource-strip) { padding: 6px 10px; border-top: 0; }
+.editor-runtime-strip > :deep(.execution-contract) { margin-top: 0; border-top: 0; }
+.editor-runtime-strip > :deep(.workflow-progress__sync-error) { border-top: 0; padding-top: 0; }
+.acg-config-thumbnail,
+.acg-runtime-thumbnail {
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-top: 0;
+}
+.acg-config-thumbnail { background: #f0f1f9; }
+.acg-runtime-thumbnail { background: #e9ecf7; }
+.acg-config-thumbnail .input-panel-toggle { position: static; flex: 0 0 28px; }
+.acg-runtime-thumbnail .runtime-panel-toggle { position: static; flex: 0 0 28px; }
+.acg-overview-thumbnail__summary { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 7px; overflow: hidden; color: var(--wb-muted); font-size: 10px; }
+.acg-overview-thumbnail__summary strong { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--wb-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.acg-overview-thumbnail__summary > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acg-overview-thumbnail__dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--wb-muted); }
+.acg-overview-thumbnail__dot.is-running { background: var(--success); box-shadow: 0 0 0 3px var(--success-fade); }
+.acg-overview-thumbnail__percent { flex: 0 0 auto; color: var(--wb-accent); font-size: 11px; font-weight: 750; }
+.acg-config-thumbnail > :deep(.main-action) { flex: 0 0 auto; min-width: 126px; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 10px; font-weight: 750; }
+.acg-runtime-thumbnail__message { min-width: 0; overflow: hidden; color: var(--wb-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .acg-editor-surface {
   flex: 1 1 auto;
   width: 100%;
@@ -2158,6 +2308,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   background: var(--wb-editor-bg);
 }
+.acg-editor-body { flex: 1 1 0; min-width: 0; min-height: 0; }
 .acg-editor-surface > :deep(.acg-editor-graph) { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .acg-main-pane > :deep(.workflow-review) { margin: 0; border-radius: 0; border-right: 0; border-left: 0; box-shadow: none; }
 .bottom-panel-result,

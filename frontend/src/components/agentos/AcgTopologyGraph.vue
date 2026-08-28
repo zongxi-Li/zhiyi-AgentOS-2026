@@ -223,6 +223,7 @@ let stabilizationTimer: number | undefined
 let themeObserver: MutationObserver | null = null
 let graphResizeObserver: ResizeObserver | null = null
 let graphResizeFrame: number | undefined
+let graphResizeTimer: number | undefined
 let layoutFinalized = false
 let pendingViewState: { position: { x: number; y: number }; scale: number } | null = null
 
@@ -667,6 +668,14 @@ const finalizeGraphLayout = (animation = true) => {
   }
 }
 
+const redrawPreservingView = () => {
+  if (!network) return
+  const position = network.getViewPosition()
+  const scale = network.getScale()
+  network.redraw()
+  network.moveTo({ position, scale, animation: false })
+}
+
 const render = async () => {
   await nextTick()
   const blueprint = visibleBlueprint.value
@@ -685,7 +694,7 @@ const render = async () => {
   if (network && nodesData && edgesData && graphStructureKey === nextStructureKey) {
     nodesData.update(nodeRows)
     edgesData.update(edgeRows)
-    network.redraw()
+    redrawPreservingView()
     return
   }
 
@@ -747,17 +756,31 @@ const syncFullscreenState = () => {
 }
 
 const scheduleGraphRedraw = () => {
-  if (graphResizeFrame !== undefined) return
-  const redraw = () => {
-    graphResizeFrame = undefined
-    network?.redraw()
-  }
-  graphResizeFrame = typeof window.requestAnimationFrame === 'function'
-    ? window.requestAnimationFrame(redraw)
-    : window.setTimeout(redraw, 16)
+  if (graphResizeTimer !== undefined) window.clearTimeout(graphResizeTimer)
+  // Collapse/expand can produce several ResizeObserver notifications while
+  // flex layout settles. Coalesce them so vis-network paints once afterwards.
+  graphResizeTimer = window.setTimeout(() => {
+    graphResizeTimer = undefined
+    if (graphResizeFrame !== undefined) return
+    const redraw = () => {
+      graphResizeFrame = undefined
+      if (!network || !graphRef.value) return
+      if (graphRef.value.clientWidth <= 0 || graphRef.value.clientHeight <= 0) return
+      // vis-network may adjust the camera scale when its canvas changes size.
+      // Preserve the user's exact viewport across a pane collapse/expand.
+      redrawPreservingView()
+    }
+    graphResizeFrame = typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame(redraw)
+      : window.setTimeout(redraw, 16)
+  }, 64)
 }
 
 const cancelGraphRedraw = () => {
+  if (graphResizeTimer !== undefined) {
+    window.clearTimeout(graphResizeTimer)
+    graphResizeTimer = undefined
+  }
   if (graphResizeFrame === undefined) return
   if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(graphResizeFrame)
   else window.clearTimeout(graphResizeFrame)
@@ -826,6 +849,7 @@ onMounted(() => {
   if (props.workbench && typeof ResizeObserver !== 'undefined' && sectionRef.value) {
     graphResizeObserver = new ResizeObserver(() => scheduleGraphRedraw())
     graphResizeObserver.observe(sectionRef.value)
+    if (graphRef.value) graphResizeObserver.observe(graphRef.value)
   }
   render()
 })

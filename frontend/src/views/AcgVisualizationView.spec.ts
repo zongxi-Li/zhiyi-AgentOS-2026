@@ -211,6 +211,27 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     wrapper.unmount()
   })
 
+  it('keeps task configuration and runtime overview as independent collapsible sections', async () => {
+    const { wrapper } = await mountPage('?runId=run_1')
+
+    expect(wrapper.find('.acg-task-config-section').exists()).toBe(true)
+    expect(wrapper.find('.acg-runtime-section').exists()).toBe(true)
+    expect(wrapper.find('.acg-config-thumbnail').exists()).toBe(true)
+    expect(wrapper.find('.acg-runtime-thumbnail').exists()).toBe(false)
+
+    await wrapper.find('.acg-config-thumbnail .input-panel-toggle').trigger('click')
+    expect(wrapper.find('.acg-config-thumbnail').exists()).toBe(false)
+    expect(wrapper.find('.acg-runtime-thumbnail').exists()).toBe(false)
+
+    await wrapper.find('.acg-runtime-expanded .runtime-panel-toggle').trigger('click')
+    expect(wrapper.find('.acg-runtime-thumbnail').exists()).toBe(true)
+    expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
+
+    await wrapper.find('.acg-runtime-thumbnail .runtime-panel-toggle').trigger('click')
+    expect(wrapper.find('.acg-runtime-thumbnail').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('keeps multiple opened Runs as editor tabs and switches or closes them locally', async () => {
     const { wrapper, router } = await mountPage('?runId=run_1')
     const vm = wrapper.vm as unknown as {
