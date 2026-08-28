@@ -232,6 +232,106 @@ def test_long_requirement_coverage_uses_stable_refs_instead_of_verbatim_copy() -
     assert '"ref": "constraint:1"' in llm.calls[0]["prompt"]
 
 
+def test_coverage_gap_uses_focused_source_ref_assignment_repair() -> None:
+    initial = {
+        "tasks": [
+            {
+                "key": "understand",
+                "title": "Define delivery scope",
+                "objective": "Define the mission boundary and management deliverables",
+                "capabilityId": "task_understanding",
+                "acceptanceCriteria": ["Every management deliverable has an accountable task"],
+                "sourceRefs": ["artifact:3"],
+                "decompositionRationale": "Establish the delivery contract",
+            },
+        ],
+        "relations": [],
+    }
+    assignments = {
+        "assignments": [
+            {
+                "sourceRef": "artifact:1",
+                "taskKey": "understand",
+                "rationale": "The scope task owns the executive summary contract",
+            },
+            {
+                "sourceRef": "artifact:2",
+                "taskKey": "understand",
+                "rationale": "The scope task owns the requirements register contract",
+            },
+        ],
+    }
+    profile = TaskSemanticProfile(
+        primaryGoal="Prepare a management review package",
+        expectedArtifacts=["Executive summary", "Requirements register", "Decision record"],
+        requiredCapabilities=["task_understanding"],
+        estimatedComplexity=ComplexityLevel.SIMPLE,
+    )
+    llm = _SequencePlanLLM(initial, assignments)
+
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=profile,
+        strategy="dynamic_generation",
+        task_input={},
+        use_llm=True,
+    )
+
+    assert len(llm.calls) == 2
+    assert llm.calls[1]["prompt_version"] == (
+        f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
+    )
+    assert "Do not create, delete, rename or rewrite tasks" in llm.calls[1]["prompt"]
+    assert llm.calls[1]["schema"]["properties"]["assignments"]["minItems"] == 2
+    assert plan.nodes[0].source_refs == ("artifact:3", "artifact:1", "artifact:2")
+    assert plan.nodes[0].objective == initial["tasks"][0]["objective"]
+    assert plan.relations == ()
+
+
+def test_focused_coverage_repair_rejects_incomplete_assignments() -> None:
+    initial = {
+        "tasks": [
+            {
+                "key": "understand",
+                "title": "Define delivery scope",
+                "objective": "Define the mission boundary and management deliverables",
+                "capabilityId": "task_understanding",
+                "acceptanceCriteria": ["Every management deliverable has an accountable task"],
+                "sourceRefs": [],
+                "decompositionRationale": "Establish the delivery contract",
+            },
+        ],
+        "relations": [],
+    }
+    incomplete = {
+        "assignments": [
+            {
+                "sourceRef": "artifact:1",
+                "taskKey": "understand",
+                "rationale": "The scope task owns the executive summary contract",
+            },
+        ],
+    }
+    profile = TaskSemanticProfile(
+        primaryGoal="Prepare a management review package",
+        expectedArtifacts=["Executive summary", "Requirements register"],
+        requiredCapabilities=["task_understanding"],
+        estimatedComplexity=ComplexityLevel.SIMPLE,
+    )
+    llm = _SequencePlanLLM(initial, incomplete)
+
+    with pytest.raises(Exception, match="every missing source ref exactly once"):
+        TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+            mission_id="mission_0123456789ab",
+            profile=profile,
+            strategy="dynamic_generation",
+            task_input={},
+            use_llm=True,
+        )
+
+    assert len(llm.calls) == 2
+
+
 def test_catalog_dependency_completion_does_not_depend_on_model_task_order() -> None:
     payload = {
         "tasks": [

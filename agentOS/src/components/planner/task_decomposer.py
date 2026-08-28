@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+from copy import deepcopy
 from collections.abc import Mapping
 from typing import Any
 
@@ -15,7 +16,7 @@ from .complexity import PLANNING_BUDGETS
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v3"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v4"
 
 _SCHEMA = {
     "type": "object",
@@ -48,7 +49,10 @@ _SCHEMA = {
                         "required": ["sourceManifestRefs"],
                     },
                 },
-                "required": ["key", "title", "objective", "capabilityId", "acceptanceCriteria"],
+                "required": [
+                    "key", "title", "objective", "capabilityId",
+                    "acceptanceCriteria", "sourceRefs", "decompositionRationale",
+                ],
             },
         },
         "relations": {
@@ -109,16 +113,26 @@ class TaskDecomposer:
                 return self._to_plan(mission_id, profile, strategy, first, task_input=task_input)
             except Exception as first_error:
                 try:
-                    repaired = self.llm.generate_json(
-                        prompt
-                        + "\nThe previous result failed TaskPlan schema or topology validation. "
-                        + "Repair it once. Preserve valid task semantics, remove every reported "
-                        + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
-                        + f"Validation detail: {first_error}",
-                        _SCHEMA,
-                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
-                    )
-                    self.last_audit["promptVersion"] = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
+                    missing_refs = self._coverage_gap_refs(first_error)
+                    if missing_refs and first is not None:
+                        repaired = self._repair_source_ref_coverage(
+                            raw=first,
+                            profile=profile,
+                            missing_refs=missing_refs,
+                        )
+                        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
+                    else:
+                        repaired = self.llm.generate_json(
+                            prompt
+                            + "\nThe previous result failed TaskPlan schema or topology validation. "
+                            + "Repair it once. Preserve valid task semantics, remove every reported "
+                            + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
+                            + f"Validation detail: {first_error}",
+                            _SCHEMA,
+                            prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
+                        )
+                        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
+                    self.last_audit["promptVersion"] = repair_version
                     self._capture_model_audit(repaired)
                     return self._to_plan(mission_id, profile, strategy, repaired, task_input=task_input)
                 except Exception as repair_error:
@@ -134,6 +148,135 @@ class TaskDecomposer:
             strategy=strategy,
             reason="model decomposition disabled or unavailable",
         )
+
+    @staticmethod
+    def _coverage_gap_refs(error: Exception) -> tuple[str, ...]:
+        prefix = "TaskPlan coverage gap for source refs:"
+        detail = str(error)
+        if not isinstance(error, TaskDecompositionError) or not detail.startswith(prefix):
+            return ()
+        return tuple(
+            ref.strip()
+            for ref in detail[len(prefix):].split(",")
+            if ref.strip()
+        )
+
+    def _repair_source_ref_coverage(
+        self,
+        *,
+        raw: Any,
+        profile: TaskSemanticProfile,
+        missing_refs: tuple[str, ...],
+    ) -> Any:
+        """Repair provenance annotations without rewriting valid task semantics/topology."""
+        payload = raw.get("data", raw) if isinstance(raw, dict) else {}
+        tasks = payload.get("tasks") if isinstance(payload, dict) else None
+        if not isinstance(tasks, list) or not tasks:
+            raise TaskDecompositionError("coverage repair requires the original task list")
+        task_keys = tuple(
+            str(item.get("key") or "").strip()
+            for item in tasks
+            if isinstance(item, dict) and str(item.get("key") or "").strip()
+        )
+        if not task_keys:
+            raise TaskDecompositionError("coverage repair requires stable task keys")
+
+        source_registry = {
+            item["ref"]: item["text"]
+            for item in self._source_registry(profile)
+        }
+        missing_registry = [
+            {"ref": ref, "text": source_registry[ref]}
+            for ref in missing_refs
+            if ref in source_registry
+        ]
+        if len(missing_registry) != len(missing_refs):
+            raise TaskDecompositionError("coverage repair contains unknown source refs")
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "assignments": {
+                    "type": "array",
+                    "minItems": len(missing_refs),
+                    "maxItems": len(missing_refs),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "sourceRef": {"type": "string", "enum": list(missing_refs)},
+                            "taskKey": {"type": "string", "enum": list(task_keys)},
+                            "rationale": {"type": "string"},
+                        },
+                        "required": ["sourceRef", "taskKey", "rationale"],
+                    },
+                },
+            },
+            "required": ["assignments"],
+        }
+        task_catalog = [
+            {
+                "key": str(item.get("key") or ""),
+                "title": str(item.get("title") or ""),
+                "objective": str(item.get("objective") or ""),
+                "acceptanceCriteria": item.get("acceptanceCriteria") or [],
+                "sourceRefs": item.get("sourceRefs") or [],
+            }
+            for item in tasks
+            if isinstance(item, dict)
+        ]
+        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
+        self.last_audit["promptVersion"] = repair_version
+        assignment_result = self.llm.generate_json(
+            "Repair only the missing TaskPlan source-reference annotations. "
+            "Do not create, delete, rename or rewrite tasks and do not change relations. "
+            "Assign every missing sourceRef exactly once to the existing task whose objective "
+            "and acceptance criteria will produce or verify that requirement. Return JSON only.\n"
+            f"Missing source registry entries: {json.dumps(missing_registry, ensure_ascii=False)}\n"
+            f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}",
+            schema,
+            prompt_version=repair_version,
+        )
+        self._capture_model_audit(assignment_result)
+        assignment_payload = (
+            assignment_result.get("data", assignment_result)
+            if isinstance(assignment_result, dict)
+            else {}
+        )
+        assignments = (
+            assignment_payload.get("assignments")
+            if isinstance(assignment_payload, dict)
+            else None
+        )
+        if not isinstance(assignments, list):
+            raise TaskDecompositionError("coverage repair returned no assignments")
+
+        assigned_refs: list[str] = []
+        assignments_by_task: dict[str, list[str]] = {}
+        for item in assignments:
+            if not isinstance(item, dict):
+                raise TaskDecompositionError("coverage repair assignment must be an object")
+            source_ref = str(item.get("sourceRef") or "").strip()
+            task_key = str(item.get("taskKey") or "").strip()
+            if source_ref not in missing_refs or task_key not in task_keys:
+                raise TaskDecompositionError("coverage repair returned an unknown ref or task key")
+            assigned_refs.append(source_ref)
+            assignments_by_task.setdefault(task_key, []).append(source_ref)
+        if len(assigned_refs) != len(set(assigned_refs)) or set(assigned_refs) != set(missing_refs):
+            raise TaskDecompositionError(
+                "coverage repair must assign every missing source ref exactly once"
+            )
+
+        repaired = deepcopy(raw)
+        repaired_payload = repaired.get("data", repaired)
+        for item in repaired_payload["tasks"]:
+            task_key = str(item.get("key") or "").strip()
+            additions = assignments_by_task.get(task_key, [])
+            if additions:
+                item["sourceRefs"] = list(dict.fromkeys([
+                    *(str(ref) for ref in item.get("sourceRefs", []) if str(ref)),
+                    *additions,
+                ]))
+        return repaired
 
     def _capture_model_audit(self, result: Any) -> None:
         if not isinstance(result, dict):
