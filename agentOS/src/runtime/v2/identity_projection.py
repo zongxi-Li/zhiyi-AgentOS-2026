@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from components.executor import ACGGraphCompiler
+from contracts.content import ContentKind
 from contracts.identity import (
     AttemptId,
     BlueprintId,
@@ -31,10 +32,13 @@ from domain.identity_graph import (
     ExecutionBinding,
     IdentityRelation,
     ProvenanceLink,
+    RunArtifactBinding,
+    RunArtifactDisposition,
     TaskBinding,
 )
 from domain.models import (
     AcgBlueprint,
+    Artifact,
     RunStatus,
     StepExecution,
     StepExecutionStatus,
@@ -64,14 +68,20 @@ class IdentityProjectionBridge:
         self,
         lifecycle_service: AcgIdentityLifecycleService,
         repositories: RepositorySet,
+        content_manifest_store: Any | None = None,
     ) -> None:
         self.lifecycle_service = lifecycle_service
         self.repositories = repositories
+        self.content_manifest_store = content_manifest_store
 
     @property
     def runtime(self) -> AcgIdentityLifecycleService:
         """兼容 Phase 3 初版属性名；新代码使用 ``lifecycle_service``。"""
         return self.lifecycle_service
+
+    def resolve_task_plan_snapshot(self, task_plan: TaskPlan) -> TaskPlan:
+        """Resolve a Run's immutable TaskPlan snapshot version before Runtime saves it."""
+        return self._resolve_run_task_plan_snapshot(task_plan)
 
     def new_mission_id(self) -> str:
         """由 AgentOS 身份合同为 Execution Runtime 新任务分配唯一 taskId。"""
@@ -140,6 +150,7 @@ class IdentityProjectionBridge:
         task_bindings: Sequence[TaskImplementationBinding],
     ) -> None:
         """登记真实 Execution Runtime Blueprint，并用同一 runId 建立 OS 运行身份。"""
+        task_plan = self._resolve_run_task_plan_snapshot(task_plan)
         payload = {
             "missionId": task.mission_id,
             "runId": run.run_id,
@@ -260,6 +271,7 @@ class IdentityProjectionBridge:
                 "sourcePatchId",
                 "rerunReason",
             )
+
             if isinstance(execution_state, dict) and execution_state.get(key)
         }
         self.lifecycle_service.create_run(
@@ -270,10 +282,47 @@ class IdentityProjectionBridge:
                 "identityGeneration": "v2",
                 "workflowId": run.workflow_id,
                 "runtimeGraphId": blueprint.graph_id,
+                # The Run points at the immutable planning snapshot while the
+                # SemanticTask row remains the stable logical identity.
+                "taskPlanVersion": task_plan.plan_version,
                 **self._identity_run_metadata(run),
                 **lineage,
             },
         )
+
+    def _resolve_run_task_plan_snapshot(self, task_plan: TaskPlan) -> TaskPlan:
+        """Allocate a new snapshot version only when a new Run changes plan content.
+
+        Planner keys remain the logical identity.  The version here distinguishes
+        immutable planning snapshots and is never derived from title/objective.
+        Direct Planner repository calls keep their strict same-version conflict
+        behavior; this resolution is only the Run preparation boundary.
+        """
+        latest = self.repositories.task_plans.latest(task_plan.mission_id)
+        if latest is None:
+            return task_plan
+
+        def snapshot_payload(plan: TaskPlan) -> dict[str, Any]:
+            payload = plan.model_dump(by_alias=True, mode="json")
+            payload.pop("planVersion", None)
+            return payload
+
+        existing = self.repositories.task_plans.get(
+            task_plan.mission_id, task_plan.plan_version
+        )
+        if existing is not None:
+            if snapshot_payload(existing) == snapshot_payload(task_plan):
+                return task_plan
+            return task_plan.model_copy(
+                update={"plan_version": latest.plan_version + 1}
+            )
+        if task_plan.plan_version <= latest.plan_version:
+            if snapshot_payload(latest) == snapshot_payload(task_plan):
+                return task_plan.model_copy(update={"plan_version": latest.plan_version})
+            return task_plan.model_copy(
+                update={"plan_version": latest.plan_version + 1}
+            )
+        return task_plan
 
     def on_run_snapshot(self, run_id: str, projection: dict[str, Any]) -> None:
         """Refresh reference-only operational state without reading Execution Runtime."""
@@ -405,11 +454,11 @@ class IdentityProjectionBridge:
             if task_plan_patch is not None or task_binding_patch is not None:
                 raise IdentityConflictError("patch data is only valid when executable nodes are added")
             binding_patch = ()
-        by_key = {
-            str(node.metadata.get("plannerSemanticKey")): node
-            for node in self.repositories.semantic_tasks.list_for_mission(run.mission_id)
-            if node.metadata.get("plannerSemanticKey")
-        }
+        by_key: dict[str, Any] = {}
+        for node in self.repositories.semantic_tasks.list_for_mission(run.mission_id):
+            semantic_key = node.semantic_task_key or node.metadata.get("plannerSemanticKey")
+            if semantic_key:
+                by_key[str(semantic_key)] = node
         binding_items: list[TaskImplementationBinding] = []
         for node in next_plan.nodes:
             semantic_task = by_key.get(node.key)
@@ -651,6 +700,11 @@ class IdentityProjectionBridge:
             else []
         )
         if execution.status is StepExecutionStatus.SUCCEEDED:
+            self._project_artifacts(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                result=result,
+            )
             self._record_provenance(execution, evidence_ids, memory_ids)
             return
         if execution.status is not StepExecutionStatus.RUNNING:
@@ -671,13 +725,127 @@ class IdentityProjectionBridge:
             )
             if result.get(key) is not None
         }
+        artifacts = self._safe_artifact_descriptors(result)
+        if artifacts:
+            safe_output["artifacts"] = artifacts
         context = self.lifecycle_service.create_context(run_id)
         finished = self.lifecycle_service.complete_step_execution(
             context,
             step_execution_id,
             output=safe_output,
         )
+        self._project_artifacts(
+            run_id=run_id,
+            attempt_id=attempt_id,
+            result=result,
+        )
         self._record_provenance(finished, evidence_ids, memory_ids)
+
+    def _project_artifacts(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Project sealed ContentManifest references into immutable Artifacts."""
+        descriptors = self._artifact_descriptors(result)
+        if not descriptors:
+            return
+        if self.content_manifest_store is None:
+            raise IdentityConflictError(
+                "Artifact projection requires the shared ContentManifestStore"
+            )
+        run = self.repositories.runs.get(run_id)
+        attempt = self.repositories.attempts.get(attempt_id)
+        if run is None or attempt is None or attempt.run_id != run_id:
+            raise IdentityConflictError("Artifact producer Attempt does not belong to Run")
+        task = self.repositories.semantic_tasks.get(attempt.task_id)
+        if task is None or task.semantic_task_key is None:
+            raise IdentityConflictError(
+                "Artifact producer Attempt requires a canonical SemanticTask key"
+            )
+        execution_binding = self.repositories.execution_bindings.get_for_attempt(attempt_id)
+        if execution_binding is None:
+            raise EntityNotFoundError(f"ExecutionBinding not found: {attempt_id}")
+        artifact_keys = [str(item.get("artifactKey") or "primary") for item in descriptors]
+        if len(artifact_keys) != len(set(artifact_keys)):
+            raise IdentityConflictError(
+                "one Attempt cannot produce multiple Artifact variants for the same artifactKey"
+            )
+        # Artifact and binding writes share the V2 transaction.  ContentManifest
+        # sealing already happened in the content store; this prevents a malformed
+        # multi-artifact event from leaving an unbound Artifact behind.
+        with self.repositories.storage.transaction():
+            for descriptor in descriptors:
+                manifest_id = descriptor.get("manifestId")
+                checksum = descriptor.get("checksum")
+                if not isinstance(manifest_id, str) or not manifest_id:
+                    raise IdentityConflictError("Artifact descriptor requires manifestId")
+                if not isinstance(checksum, str) or not checksum:
+                    raise IdentityConflictError("Artifact descriptor requires checksum")
+                manifest = self.content_manifest_store.get_manifest(manifest_id)
+                if (
+                    manifest.kind is not ContentKind.ARTIFACT
+                    or not manifest.sealed
+                    or manifest.owner_type != "run"
+                    or manifest.owner_id != run_id
+                    or manifest.checksum != checksum
+                ):
+                    raise IdentityConflictError(
+                        "Artifact descriptor must reference a sealed matching ContentManifest"
+                    )
+                semantic_task_key = descriptor.get("semanticTaskKey") or task.semantic_task_key
+                if semantic_task_key != task.semantic_task_key:
+                    raise IdentityConflictError(
+                        "Artifact descriptor semanticTaskKey does not match producer SemanticTask"
+                    )
+                artifact_key = str(descriptor.get("artifactKey") or "primary")
+                artifact_id = "artifact_" + hashlib.sha256(
+                    f"content-manifest:{manifest_id}".encode("utf-8")
+                ).hexdigest()[:12]
+                artifact = Artifact(
+                    artifactId=artifact_id,
+                    missionId=run.mission_id,
+                    originRunId=run_id,
+                    taskId=task.task_id,
+                    semanticTaskKey=task.semantic_task_key,
+                    artifactKey=artifact_key,
+                    acgNodeId=execution_binding.acg_node_id,
+                    producerAttemptId=attempt_id,
+                    name=str(descriptor.get("name") or descriptor.get("title") or artifact_key),
+                    artifactType=str(
+                        descriptor.get("artifactType") or descriptor.get("type") or "artifact"
+                    ),
+                    mediaType=manifest.media_type,
+                    contentRef=manifest.manifest_id,
+                    checksum=manifest.checksum,
+                    createdAt=manifest.created_at,
+                    metadata=(descriptor.get("metadata") if isinstance(descriptor.get("metadata"), dict) else {}),
+                )
+                self.repositories.artifacts.add(artifact)
+                self.repositories.run_artifact_bindings.add(
+                    RunArtifactBinding(
+                        runId=run_id,
+                        taskId=task.task_id,
+                        semanticTaskKey=task.semantic_task_key,
+                        artifactKey=artifact_key,
+                        artifactId=artifact.artifact_id,
+                        disposition=RunArtifactDisposition.GENERATED,
+                        createdAt=artifact.created_at,
+                    )
+                )
+
+    @staticmethod
+    def _artifact_descriptors(result: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = result.get("artifacts")
+        if raw is None and isinstance(result.get("artifact"), dict):
+            raw = [result["artifact"]]
+        elif isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
 
     def on_step_failed(
         self,
@@ -1300,7 +1468,36 @@ class IdentityProjectionBridge:
             )
             if result.get(key) is not None
         }
+        artifacts = IdentityProjectionBridge._safe_artifact_descriptors(result)
+        if artifacts:
+            allowed["artifacts"] = artifacts
         return allowed
+
+    @staticmethod
+    def _safe_artifact_descriptors(result: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = result.get("artifacts")
+        if raw is None and isinstance(result.get("artifact"), dict):
+            raw = [result["artifact"]]
+        elif isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        allowed = {
+            "artifactKey", "semanticTaskKey", "name", "title", "artifactType",
+            "type", "mediaType", "manifestId", "checksum", "metadata",
+        }
+        descriptors: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            descriptor = {
+                key: item[key]
+                for key in allowed
+                if item.get(key) is not None
+            }
+            descriptor.setdefault("artifactKey", "primary")
+            descriptors.append(descriptor)
+        return descriptors
 
     @staticmethod
     def _safe_run_projection(run: Any) -> dict[str, Any]:

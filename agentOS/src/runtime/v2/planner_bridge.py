@@ -27,7 +27,7 @@ class PlannerIdentityBridge:
         return list(self.record_task_plan(TaskPlan(missionId=mission_id, nodes=tuple(nodes))).values())
 
     def record_task_plan(self, plan: TaskPlan) -> dict[str, SemanticTask]:
-        """按稳定语义键幂等登记计划；语义发生漂移时拒绝覆盖历史节点。"""
+        """按稳定逻辑键登记计划；新 Run 的内容变化留在新的 TaskPlan 快照中。"""
         persisted = self.lifecycle_service.repositories.persist_task_plan(plan)
         if set(persisted) != {node.key for node in plan.nodes}:
             raise IdentityConflictError("TaskPlan persistence did not cover every semantic node")

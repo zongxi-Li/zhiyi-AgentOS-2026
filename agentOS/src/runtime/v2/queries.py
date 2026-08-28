@@ -15,18 +15,24 @@ from .query_models import (
     StepExecutionDetail,
     MissionDetail,
     MissionRunHistory,
+    RunArtifactDetail,
 )
 from domain.identity_graph import IdentityResolver
-from domain.models import MissionStatus
+from domain.models import Artifact, MissionStatus
 from domain.repository import EntityNotFoundError, RepositorySet
+from .workspace import MissionWorkspaceProjection, MissionWorkspaceProjector
 
 
 class IdentityQueryService:
     """Phase 4 查询真源；只组合 Repository，不读取 Execution Runtime 运行快照。"""
 
-    def __init__(self, repositories: RepositorySet) -> None:
+    def __init__(self, repositories: RepositorySet, content_manifest_store: object | None = None) -> None:
         self.repositories = repositories
         self.resolver = IdentityResolver(repositories)
+        self.workspace_projector = MissionWorkspaceProjector(
+            repositories,
+            content_manifest_store,
+        )
 
     def list_missions(
         self,
@@ -57,6 +63,15 @@ class IdentityQueryService:
             runs=self.repositories.runs.list_for_mission(mission_id),
         )
 
+    def mission_workspace(
+        self,
+        mission_id: str,
+        *,
+        run_id: str | None = None,
+    ) -> MissionWorkspaceProjection:
+        """Build the read-only Workspace projection from V2 authorities."""
+        return self.workspace_projector.project(mission_id, run_id=run_id)
+
     def mission_run_history(self, mission_id: str) -> MissionRunHistory:
         self.get_mission(mission_id)
         return MissionRunHistory(
@@ -74,7 +89,28 @@ class IdentityQueryService:
                 attempt_id
             ),
             executions=self.repositories.step_executions.list_for_attempt(attempt_id),
+            artifacts=self.repositories.artifacts.list_for_attempt(attempt_id),
         )
+
+    def artifacts_for_run(self, run_id: str) -> list[RunArtifactDetail]:
+        """Return logical Run slots joined to immutable Artifact identities."""
+        if self.repositories.runs.get(run_id) is None:
+            raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
+        details: list[RunArtifactDetail] = []
+        for binding in self.repositories.run_artifact_bindings.list_for_run(run_id):
+            artifact = self.repositories.artifacts.get(binding.artifact_id)
+            if artifact is None:
+                raise EntityNotFoundError(
+                    f"Artifact not found for binding: {binding.binding_id}"
+                )
+            details.append(RunArtifactDetail(binding=binding, artifact=artifact))
+        return details
+
+    def get_artifact(self, artifact_id: str) -> Artifact:
+        artifact = self.repositories.artifacts.get(artifact_id)
+        if artifact is None:
+            raise EntityNotFoundError(f"Artifact not found: {artifact_id}")
+        return artifact
 
     def attempt_history(
         self,
