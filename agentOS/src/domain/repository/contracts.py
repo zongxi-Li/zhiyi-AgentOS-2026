@@ -4,11 +4,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from contracts.identity import AttemptId, BlueprintId, RunId, StepExecutionId, TaskId, MissionId
+from contracts.identity import (
+    ArtifactId,
+    AttemptId,
+    BlueprintId,
+    MissionId,
+    RunId,
+    StepExecutionId,
+    TaskId,
+)
 from domain.models import (
     AcgBlueprint,
     Attempt,
     AttemptStatus,
+    Artifact,
     RunStatus,
     StepExecution,
     StepExecutionStatus,
@@ -24,6 +33,7 @@ if TYPE_CHECKING:
         BlueprintNodeBinding,
         ExecutionBinding,
         ProvenanceLink,
+        RunArtifactBinding,
         TaskBinding,
     )
 
@@ -106,6 +116,24 @@ class ExecutionBindingRepository(Protocol):
     def get_for_attempt(self, attempt_id: AttemptId) -> ExecutionBinding | None: ...
 
 
+class ArtifactRepository(Protocol):
+    def add(self, artifact: Artifact) -> Artifact: ...
+    def get(self, artifact_id: ArtifactId) -> Artifact | None: ...
+    def list_for_mission(self, mission_id: MissionId) -> list[Artifact]: ...
+    def list_for_origin_run(self, run_id: RunId) -> list[Artifact]: ...
+    def list_for_attempt(self, attempt_id: AttemptId) -> list[Artifact]: ...
+
+
+class RunArtifactBindingRepository(Protocol):
+    def add(self, binding: RunArtifactBinding) -> RunArtifactBinding: ...
+    def get(self, binding_id: str) -> RunArtifactBinding | None: ...
+    def list_for_run(self, run_id: RunId) -> list[RunArtifactBinding]: ...
+    def list_for_artifact(self, artifact_id: ArtifactId) -> list[RunArtifactBinding]: ...
+    def find_for_slot(
+        self, run_id: RunId, semantic_task_key: str, artifact_key: str
+    ) -> RunArtifactBinding | None: ...
+
+
 class ProvenanceLinkRepository(Protocol):
     def add(self, link: ProvenanceLink) -> None: ...
     def list_from(self, source_id: str) -> list[ProvenanceLink]: ...
@@ -131,6 +159,8 @@ class RepositorySet(Protocol):
     task_bindings: TaskBindingRepository
     blueprint_node_bindings: BlueprintNodeBindingRepository
     execution_bindings: ExecutionBindingRepository
+    artifacts: ArtifactRepository
+    run_artifact_bindings: RunArtifactBindingRepository
     provenance_links: ProvenanceLinkRepository
     projection_events: LifecycleProjectionEventRepository
     inbox_events: LifecycleProjectionEventRepository
@@ -174,6 +204,7 @@ class RepositorySet(Protocol):
 
 __all__ = [
     "AttemptRepository",
+    "ArtifactRepository",
     "BlueprintNodeBindingRepository",
     "BlueprintRepository",
     "ExecutionBindingRepository",
@@ -181,6 +212,7 @@ __all__ = [
     "ProvenanceLinkRepository",
     "RepositorySet",
     "RunRepository",
+    "RunArtifactBindingRepository",
     "StepExecutionRepository",
     "SemanticTaskRepository",
     "TaskBindingRepository",

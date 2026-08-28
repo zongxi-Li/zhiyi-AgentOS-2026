@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from contracts.identity import MissionId
+from contracts.identity import MissionId, SemanticTaskKey
 from contracts.content import WorksetSpec
 
 
@@ -49,8 +49,8 @@ class SemanticTaskRelationType(str, Enum):
 class TaskPlanRelation(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
-    source_key: str = Field(alias="sourceKey", min_length=1)
-    target_key: str = Field(alias="targetKey", min_length=1)
+    source_key: SemanticTaskKey = Field(alias="sourceKey")
+    target_key: SemanticTaskKey = Field(alias="targetKey")
     relation_type: SemanticTaskRelationType = Field(alias="relationType")
 
     @model_validator(mode="after")
@@ -63,8 +63,11 @@ class TaskPlanRelation(BaseModel):
 class PlannedTask(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
-    key: str = Field(min_length=1)
-    parent_key: str | None = Field(default=None, alias="parentKey")
+    # This is the canonical Mission-scoped logical identity.  It is not a
+    # title/objective/content hash and must be retained when a later Run merely
+    # changes the planning snapshot for the same logical step.
+    key: SemanticTaskKey
+    parent_key: SemanticTaskKey | None = Field(default=None, alias="parentKey")
     title: str = Field(min_length=1)
     objective: str = Field(min_length=1)
     constraints: list[dict[str, Any]] = Field(default_factory=list)
@@ -151,7 +154,7 @@ class TaskImplementationBinding(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
-    plan_node_key: str = Field(alias="planNodeKey", min_length=1)
+    plan_node_key: SemanticTaskKey = Field(alias="planNodeKey")
     acg_node_id: str = Field(alias="acgNodeId", min_length=1)
 
 
@@ -170,8 +173,8 @@ class TaskPlanPatch(BaseModel):
     base_plan_version: int = Field(alias="basePlanVersion", ge=1)
     plan_version: int = Field(alias="planVersion", ge=2)
     add_nodes: tuple[PlannedTask, ...] = Field(default_factory=tuple, alias="addNodes")
-    retire_keys: tuple[str, ...] = Field(default_factory=tuple, alias="retireKeys")
-    replace_keys: tuple[str, ...] = Field(default_factory=tuple, alias="replaceKeys")
+    retire_keys: tuple[SemanticTaskKey, ...] = Field(default_factory=tuple, alias="retireKeys")
+    replace_keys: tuple[SemanticTaskKey, ...] = Field(default_factory=tuple, alias="replaceKeys")
     relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

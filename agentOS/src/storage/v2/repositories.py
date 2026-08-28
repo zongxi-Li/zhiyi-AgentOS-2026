@@ -9,6 +9,7 @@ from typing import Any
 
 from contracts.identity import (
     AttemptId,
+    ArtifactId,
     BlueprintId,
     RunId,
     StepExecutionId,
@@ -17,12 +18,14 @@ from contracts.identity import (
     new_attempt_id,
     new_task_id,
     new_step_execution_id,
+    validate_logical_key,
 )
 from contracts.planning import TaskPlan, PlannedTask, TaskPlanRelation
 from domain.models import (
     AcgBlueprint,
     Attempt,
     AttemptStatus,
+    Artifact,
     RunStatus,
     StepExecution,
     StepExecutionStatus,
@@ -35,6 +38,8 @@ from domain.identity_graph.bindings import (
     BlueprintNodeBinding,
     ExecutionBinding,
     ProvenanceLink,
+    RunArtifactBinding,
+    RunArtifactDisposition,
     TaskBinding,
 )
 from domain.lifecycle_projection import LifecycleProjectionEvent
@@ -165,12 +170,13 @@ class SQLiteSemanticTaskRepository(_SQLiteRepository):
     def add(self, node: SemanticTask) -> None:
         self._insert(
             """INSERT INTO semantic_tasks(
-                task_id, mission_id, parent_task_id, title, objective,
+                task_id, mission_id, semantic_key, parent_task_id, title, objective,
                 constraints_json, status, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 node.task_id,
                 node.mission_id,
+                node.semantic_task_key,
                 node.parent_task_id,
                 node.title,
                 node.objective,
@@ -199,6 +205,7 @@ class SQLiteSemanticTaskRepository(_SQLiteRepository):
             taskId=row["task_id"],
             missionId=row["mission_id"],
             parentTaskId=row["parent_task_id"],
+            semanticTaskKey=row["semantic_key"],
             title=row["title"],
             objective=row["objective"],
             constraints=_load_json(row["constraints_json"], []),
@@ -403,6 +410,7 @@ class SQLiteRunRepository(_SQLiteRepository):
             "compiledPackageChecksum",
             "compiledPackageVersion",
             "compiledPackageBlueprintHash",
+            "taskPlanVersion",
             "parentRunId",
             "supersedesRunId",
             "sourcePatchId",
@@ -742,6 +750,196 @@ class SQLiteExecutionBindingRepository(_SQLiteRepository):
         )
 
 
+class SQLiteArtifactRepository(_SQLiteRepository):
+    """Append-only repository for immutable Artifact domain identities."""
+
+    def add(self, artifact: Artifact) -> Artifact:
+        encoded = artifact.model_dump(by_alias=True, mode="json")
+        with self.storage.transaction() as conn:
+            existing_row = conn.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ? OR content_ref = ?",
+                (artifact.artifact_id, artifact.content_ref),
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._from_row(existing_row)
+                if existing.model_dump(by_alias=True, mode="json") != encoded:
+                    raise IdentityConflictError(
+                        "Artifact identity or contentRef already belongs to different immutable data"
+                    )
+                return existing
+            try:
+                conn.execute(
+                    """INSERT INTO artifacts(
+                           artifact_id, mission_id, origin_run_id, task_id,
+                           semantic_task_key, artifact_key, acg_node_id,
+                           producer_attempt_id, name, artifact_type, media_type,
+                           content_ref, checksum, created_at, metadata_json
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        artifact.artifact_id,
+                        artifact.mission_id,
+                        artifact.origin_run_id,
+                        artifact.task_id,
+                        artifact.semantic_task_key,
+                        artifact.artifact_key,
+                        artifact.acg_node_id,
+                        artifact.producer_attempt_id,
+                        artifact.name,
+                        artifact.artifact_type,
+                        artifact.media_type,
+                        artifact.content_ref,
+                        artifact.checksum,
+                        _iso(artifact.created_at),
+                        _json(artifact.metadata),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise IdentityConflictError(f"cannot persist Artifact: {exc}") from exc
+        return artifact
+
+    def get(self, artifact_id: ArtifactId) -> Artifact | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,)
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list_for_mission(self, mission_id: MissionId) -> list[Artifact]:
+        return self._list("mission_id", mission_id)
+
+    def list_for_origin_run(self, run_id: RunId) -> list[Artifact]:
+        return self._list("origin_run_id", run_id)
+
+    def list_for_attempt(self, attempt_id: AttemptId) -> list[Artifact]:
+        return self._list("producer_attempt_id", attempt_id)
+
+    def _list(self, column: str, value: str) -> list[Artifact]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM artifacts WHERE {column} = ? ORDER BY created_at, artifact_id",
+                (value,),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> Artifact:
+        return Artifact(
+            artifactId=row["artifact_id"],
+            missionId=row["mission_id"],
+            originRunId=row["origin_run_id"],
+            taskId=row["task_id"],
+            semanticTaskKey=row["semantic_task_key"],
+            artifactKey=row["artifact_key"],
+            acgNodeId=row["acg_node_id"],
+            producerAttemptId=row["producer_attempt_id"],
+            name=row["name"],
+            artifactType=row["artifact_type"],
+            mediaType=row["media_type"],
+            contentRef=row["content_ref"],
+            checksum=row["checksum"],
+            createdAt=row["created_at"],
+            metadata=_load_json(row["metadata_json"], {}),
+        )
+
+
+class SQLiteRunArtifactBindingRepository(_SQLiteRepository):
+    """Append-only usage relation; slot replacement is deliberately rejected."""
+
+    def add(self, binding: RunArtifactBinding) -> RunArtifactBinding:
+        encoded = binding.model_dump(by_alias=True, mode="json")
+        with self.storage.transaction() as conn:
+            existing_row = conn.execute(
+                """SELECT * FROM run_artifact_bindings
+                   WHERE binding_id = ?
+                      OR (run_id = ? AND semantic_task_key = ? AND artifact_key = ?)""",
+                (
+                    binding.binding_id,
+                    binding.run_id,
+                    binding.semantic_task_key,
+                    binding.artifact_key,
+                ),
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._from_row(existing_row)
+                if existing.model_dump(by_alias=True, mode="json") != encoded:
+                    raise IdentityConflictError(
+                        "RunArtifactBinding slot already belongs to different immutable binding"
+                    )
+                return existing
+            try:
+                conn.execute(
+                    """INSERT INTO run_artifact_bindings(
+                           binding_id, run_id, task_id, semantic_task_key,
+                           artifact_key, artifact_id, disposition, source_run_id, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        binding.binding_id,
+                        binding.run_id,
+                        binding.task_id,
+                        binding.semantic_task_key,
+                        binding.artifact_key,
+                        binding.artifact_id,
+                        binding.disposition.value,
+                        binding.source_run_id,
+                        _iso(binding.created_at),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise IdentityConflictError(
+                    f"cannot persist RunArtifactBinding: {exc}"
+                ) from exc
+        return binding
+
+    def get(self, binding_id: str) -> RunArtifactBinding | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT * FROM run_artifact_bindings WHERE binding_id = ?",
+                (binding_id,),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list_for_run(self, run_id: RunId) -> list[RunArtifactBinding]:
+        return self._list("run_id", run_id)
+
+    def list_for_artifact(self, artifact_id: ArtifactId) -> list[RunArtifactBinding]:
+        return self._list("artifact_id", artifact_id)
+
+    def find_for_slot(
+        self, run_id: RunId, semantic_task_key: str, artifact_key: str
+    ) -> RunArtifactBinding | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                """SELECT * FROM run_artifact_bindings
+                   WHERE run_id = ? AND semantic_task_key = ? AND artifact_key = ?""",
+                (run_id, semantic_task_key, artifact_key),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def _list(self, column: str, value: str) -> list[RunArtifactBinding]:
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM run_artifact_bindings
+                    WHERE {column} = ?
+                    ORDER BY created_at, binding_id""",
+                (value,),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> RunArtifactBinding:
+        return RunArtifactBinding(
+            bindingId=row["binding_id"],
+            runId=row["run_id"],
+            taskId=row["task_id"],
+            semanticTaskKey=row["semantic_task_key"],
+            artifactKey=row["artifact_key"],
+            artifactId=row["artifact_id"],
+            disposition=row["disposition"],
+            sourceRunId=row["source_run_id"],
+            createdAt=row["created_at"],
+        )
+
+
 class SQLiteProvenanceLinkRepository(_SQLiteRepository):
     def add(self, link: ProvenanceLink) -> None:
         self._insert(
@@ -927,15 +1125,19 @@ class SQLiteV2Repositories:
         self.task_bindings = SQLiteTaskBindingRepository(storage)
         self.blueprint_node_bindings = SQLiteBlueprintNodeBindingRepository(storage)
         self.execution_bindings = SQLiteExecutionBindingRepository(storage)
+        self.artifacts = SQLiteArtifactRepository(storage)
+        self.run_artifact_bindings = SQLiteRunArtifactBindingRepository(storage)
         self.provenance_links = SQLiteProvenanceLinkRepository(storage)
         self.projection_events = SQLiteLifecycleProjectionEventRepository(storage)
         self.inbox_events = SQLiteLifecycleInboxRepository(storage)
         self.task_plans = SQLiteTaskPlanRepository(storage)
 
     def persist_task_plan(self, plan: TaskPlan) -> dict[str, SemanticTask]:
-        """Atomically persist an immutable plan snapshot and its semantic nodes."""
+        """Persist a plan snapshot while reusing its canonical logical task identities."""
         import hashlib
 
+        for node in plan.nodes:
+            validate_logical_key(node.key, field_name="semanticTaskKey")
         payload = plan.model_dump(by_alias=True, mode="json")
         encoded = _json(payload)
         content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -972,10 +1174,23 @@ class SQLiteV2Repositories:
                 (plan.mission_id,),
             ).fetchall()
             by_key: dict[str, sqlite3.Row] = {}
+            legacy_candidates: dict[str, list[sqlite3.Row]] = {}
             for row in rows:
-                key = _load_json(row["metadata_json"], {}).get("plannerSemanticKey")
-                if key and row["status"] not in {"retired", "superseded"}:
-                    by_key[str(key)] = row
+                key = row["semantic_key"]
+                if isinstance(key, str) and key:
+                    by_key[key] = row
+                    continue
+                metadata_key = _load_json(row["metadata_json"], {}).get("plannerSemanticKey")
+                if isinstance(metadata_key, str) and metadata_key:
+                    legacy_candidates.setdefault(metadata_key, []).append(row)
+            for key, candidates in legacy_candidates.items():
+                if key not in by_key and len(candidates) == 1:
+                    row = candidates[0]
+                    conn.execute(
+                        "UPDATE semantic_tasks SET semantic_key = ? WHERE task_id = ?",
+                        (key, row["task_id"]),
+                    )
+                    by_key[key] = row
             node_ids: dict[str, str] = {}
             pending = list(plan.nodes)
             while pending:
@@ -996,33 +1211,36 @@ class SQLiteV2Repositories:
                         "capabilityRequirements": list(node.capability_requirements),
                         "acceptanceCriteria": list(node.acceptance_criteria),
                     }
-                    equivalent = existing is not None and (
-                        existing["parent_task_id"] == parent_id
-                        and existing["title"] == node.title
-                        and existing["objective"] == node.objective
-                        and _load_json(existing["constraints_json"], []) == node.constraints
-                        and _load_json(existing["metadata_json"], {}).get("capabilityRequirements", [])
-                        == list(node.capability_requirements)
-                        and _load_json(existing["metadata_json"], {}).get("acceptanceCriteria", [])
-                        == list(node.acceptance_criteria)
-                    )
-                    if equivalent:
+                    if existing is not None:
                         node_id = str(existing["task_id"])
+                        conn.execute(
+                            """UPDATE semantic_tasks
+                               SET semantic_key = ?, parent_task_id = ?, title = ?, objective = ?,
+                                   constraints_json = ?, status = 'created', metadata_json = ?
+                               WHERE task_id = ?""",
+                            (
+                                node.key,
+                                parent_id,
+                                node.title,
+                                node.objective,
+                                _json(node.constraints),
+                                _json(semantic_metadata),
+                                node_id,
+                            ),
+                        )
                     else:
-                        if existing is not None:
-                            semantic_metadata["supersedesTaskId"] = existing["task_id"]
-                            conn.execute(
-                                "UPDATE semantic_tasks SET status = 'superseded' WHERE task_id = ?",
-                                (existing["task_id"],),
+                        if legacy_candidates.get(node.key):
+                            raise IdentityConflictError(
+                                f"semanticTaskKey is ambiguous in legacy data: {node.key}"
                             )
                         node_id = new_task_id()
                         conn.execute(
                             """INSERT INTO semantic_tasks(
-                                   task_id, mission_id, parent_task_id, title, objective,
+                                   task_id, mission_id, semantic_key, parent_task_id, title, objective,
                                    constraints_json, status, metadata_json
-                               ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?)""",
+                               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?)""",
                             (
-                                node_id, plan.mission_id, parent_id, node.title, node.objective,
+                                node_id, plan.mission_id, node.key, parent_id, node.title, node.objective,
                                 _json(node.constraints), _json(semantic_metadata),
                             ),
                         )
@@ -1320,12 +1538,14 @@ class SQLiteV2Repositories:
 
 __all__ = [
     "SQLiteAttemptRepository",
+    "SQLiteArtifactRepository",
     "SQLiteBlueprintNodeBindingRepository",
     "SQLiteBlueprintRepository",
     "SQLiteExecutionBindingRepository",
     "SQLiteLifecycleProjectionEventRepository",
     "SQLiteProvenanceLinkRepository",
     "SQLiteRunRepository",
+    "SQLiteRunArtifactBindingRepository",
     "SQLiteStepExecutionRepository",
     "SQLiteSemanticTaskRepository",
     "SQLiteTaskBindingRepository",

@@ -5,9 +5,18 @@ from __future__ import annotations
 from pydantic import Field
 
 from contracts.execution import NodeExecutionRecord
-from domain.identity_graph import ExecutionBinding, ProvenanceLink
+from domain.identity_graph import ExecutionBinding, ProvenanceLink, RunArtifactBinding
 from domain.identity_graph.contracts import ExecutionOrigin
-from domain.models import AcgBlueprint, Attempt, DomainModel, StepExecution, SemanticTask, Mission, WorkflowRun
+from domain.models import (
+    AcgBlueprint,
+    Artifact,
+    Attempt,
+    DomainModel,
+    StepExecution,
+    SemanticTask,
+    Mission,
+    WorkflowRun,
+)
 
 
 class MissionDetail(DomainModel):
@@ -29,6 +38,12 @@ class AttemptDetail(DomainModel):
         alias="executionBinding",
     )
     executions: list[StepExecution]
+    artifacts: list[Artifact] = Field(default_factory=list)
+
+
+class RunArtifactDetail(DomainModel):
+    binding: RunArtifactBinding
+    artifact: Artifact
 
 
 class AttemptHistory(DomainModel):
@@ -116,6 +131,7 @@ __all__ = [
     "RunExecutionTree",
     "RunLineage",
     "RunOperationalState",
+    "RunArtifactDetail",
     "CompiledPackageIdentity",
     "IdentityProjectionHealth",
     "StepExecutionDetail",

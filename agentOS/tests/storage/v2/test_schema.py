@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from storage.v2 import SQLiteV2Storage
+from storage.v2 import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
 
 
 def test_v2_schema_is_independent_and_complete() -> None:
@@ -13,6 +13,7 @@ def test_v2_schema_is_independent_and_complete() -> None:
                 ).fetchall()
             }
             foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
 
     assert {
         "missions",
@@ -24,9 +25,12 @@ def test_v2_schema_is_independent_and_complete() -> None:
         "task_bindings",
         "blueprint_node_bindings",
         "execution_bindings",
+        "artifacts",
+        "run_artifact_bindings",
         "provenance_links",
         "lifecycle_projection_events",
     }.issubset(tables)
     assert "tasks" not in tables
     assert "runs" not in tables
     assert foreign_keys == 1
+    assert schema_version == CURRENT_SCHEMA_VERSION == 2

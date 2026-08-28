@@ -10,12 +10,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from contracts.identity import (
     AttemptId,
+    ArtifactId,
+    ArtifactKey,
     BlueprintId,
     RunId,
+    SemanticTaskKey,
     StepExecutionId,
     TaskId,
     MissionId,
     new_attempt_id,
+    new_artifact_id,
     new_blueprint_id,
     new_run_id,
     new_step_execution_id,
@@ -95,6 +99,12 @@ class SemanticTask(DomainModel):
 
     task_id: TaskId = Field(default_factory=new_task_id, alias="taskId")
     mission_id: MissionId = Field(alias="missionId")
+    # Legacy rows and direct domain fixtures may not have this value yet.  The
+    # Planner/TaskPlan persistence path requires it before a new Run is projected.
+    semantic_task_key: SemanticTaskKey | None = Field(
+        default=None,
+        alias="semanticTaskKey",
+    )
     parent_task_id: TaskId | None = Field(default=None, alias="parentTaskId")
     title: str = Field(min_length=1)
     objective: str = Field(min_length=1)
@@ -106,6 +116,52 @@ class SemanticTask(DomainModel):
     def reject_self_parent(self) -> "SemanticTask":
         if self.parent_task_id == self.task_id:
             raise ValueError("SemanticTask cannot be its own parent")
+        return self
+
+
+class Artifact(DomainModel):
+    """Immutable domain identity for content produced by one Attempt.
+
+    Content and fragments remain in ContentManifest.  This entity only records
+    the Mission-scoped logical slot and the producer relationship.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+        validate_assignment=False,
+        frozen=True,
+    )
+
+    artifact_id: ArtifactId = Field(default_factory=new_artifact_id, alias="artifactId")
+    mission_id: MissionId = Field(alias="missionId")
+    origin_run_id: RunId = Field(alias="originRunId")
+    task_id: TaskId = Field(alias="taskId")
+    semantic_task_key: SemanticTaskKey = Field(alias="semanticTaskKey")
+    artifact_key: ArtifactKey = Field(alias="artifactKey")
+    acg_node_id: str = Field(alias="acgNodeId", min_length=1)
+    producer_attempt_id: AttemptId = Field(alias="producerAttemptId")
+    name: str = Field(min_length=1)
+    artifact_type: str = Field(alias="artifactType", min_length=1)
+    media_type: str = Field(alias="mediaType", min_length=1)
+    content_ref: str = Field(alias="contentRef", min_length=1)
+    checksum: str = Field(min_length=64, max_length=64)
+    created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def reject_usage_state(self) -> "Artifact":
+        forbidden = {
+            "stale",
+            "invalidated",
+            "current",
+            "disposition",
+        }.intersection(self.metadata)
+        if forbidden:
+            raise ValueError(
+                "Artifact metadata cannot contain usage state: "
+                + ", ".join(sorted(forbidden))
+            )
         return self
 
 
@@ -205,6 +261,7 @@ class IdentityOwnership:
 
 __all__ = [
     "AcgBlueprint",
+    "Artifact",
     "Attempt",
     "AttemptStatus",
     "IdentityOwnership",

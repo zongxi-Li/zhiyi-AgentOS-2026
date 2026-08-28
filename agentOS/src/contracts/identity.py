@@ -16,9 +16,31 @@ _PREFIXES = {
     "blueprint",
     "run",
     "attempt",
+    "artifact",
     "binding",
     "step_execution",
 }
+
+
+def validate_logical_key(value: str, *, field_name: str) -> str:
+    """Validate a stable, opaque Mission-scoped logical key.
+
+    Logical keys are deliberately not derived from mutable semantic content.  They
+    may contain punctuation used by existing Planner payloads (for example ``:``
+    and ``-``), but must remain a single non-whitespace token.
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    if normalized != value:
+        raise ValueError(f"{field_name} must not have leading or trailing whitespace")
+    if any(character.isspace() for character in value):
+        raise ValueError(f"{field_name} must not contain whitespace")
+    if len(value) > 200:
+        raise ValueError(f"{field_name} must be at most 200 characters")
+    return value
 
 
 def validate_identity(value: str, *, prefix: str) -> str:
@@ -51,6 +73,15 @@ RunId: TypeAlias = Annotated[str, _validator("run")]
 AttemptId: TypeAlias = Annotated[str, _validator("attempt")]
 BindingId: TypeAlias = Annotated[str, _validator("binding")]
 StepExecutionId: TypeAlias = Annotated[str, _validator("step_execution")]
+ArtifactId: TypeAlias = Annotated[str, _validator("artifact")]
+SemanticTaskKey: TypeAlias = Annotated[
+    str,
+    AfterValidator(lambda value: validate_logical_key(value, field_name="semanticTaskKey")),
+]
+ArtifactKey: TypeAlias = Annotated[
+    str,
+    AfterValidator(lambda value: validate_logical_key(value, field_name="artifactKey")),
+]
 
 
 def new_mission_id() -> str:
@@ -73,6 +104,10 @@ def new_attempt_id() -> str:
     return generate_identity("attempt")
 
 
+def new_artifact_id() -> str:
+    return generate_identity("artifact")
+
+
 def new_binding_id() -> str:
     return generate_identity("binding")
 
@@ -83,14 +118,18 @@ def new_step_execution_id() -> str:
 
 __all__ = [
     "AttemptId",
+    "ArtifactId",
+    "ArtifactKey",
     "BindingId",
     "BlueprintId",
     "RunId",
     "StepExecutionId",
     "TaskId",
     "MissionId",
+    "SemanticTaskKey",
     "generate_identity",
     "new_attempt_id",
+    "new_artifact_id",
     "new_binding_id",
     "new_blueprint_id",
     "new_run_id",
@@ -98,4 +137,5 @@ __all__ = [
     "new_task_id",
     "new_mission_id",
     "validate_identity",
+    "validate_logical_key",
 ]
