@@ -4,6 +4,7 @@ import { agentosApi, agentosRequest, WorkflowApiContractError } from './agentos'
 const run = {
   runId: 'run_1', missionId: 'mission_1', workflowId: 'legal.contract_review', domain: 'legal',
   status: 'completed' as const,
+  outputRef: 'output:run_1:deliver',
   steps: [{
     stepId: 'deliver', name: 'Deliver', agentName: 'legal.drafter', status: 'completed' as const,
     outputRef: 'output:run_1:deliver', outputSummary: 'Contract review ready'
@@ -170,6 +171,79 @@ describe('AgentOS v2 application API', () => {
     expect(result.finalReport).toBeNull()
     expect(get).toHaveBeenCalledTimes(5)
     expect(get).not.toHaveBeenCalledWith(expect.stringContaining('legacy-outputs'), expect.anything())
+  })
+
+  it('keeps completed node outputs when auxiliary projections fail and withholds final delivery while running', async () => {
+    const liveRun = {
+      ...run,
+      status: 'running' as const,
+      steps: [
+        { ...run.steps[0], status: 'completed' as const },
+        { stepId: 'research', name: 'Research', agentName: 'researcher', status: 'running' as const }
+      ],
+      completedStepIds: ['deliver'],
+      activeStepIds: ['research'],
+      executionState: {
+        outputRefs: { deliver: 'output:run_1:deliver' },
+        resourceBindings: {}
+      }
+    }
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: liveRun } as never)
+      .mockRejectedValueOnce(new Error('graph unavailable'))
+      .mockRejectedValueOnce(new Error('provenance unavailable'))
+      .mockRejectedValueOnce(new Error('trace unavailable'))
+      .mockRejectedValueOnce(Object.assign(new Error('identity pending'), {
+        isAxiosError: true,
+        response: { status: 404 }
+      }))
+      .mockResolvedValueOnce({ data: { content: { answer: '节点已完成的完整答案' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_1')
+
+    expect(result.stepOutputs).toEqual([expect.objectContaining({
+      stepId: 'deliver', outputRef: 'output:run_1:deliver', output: { answer: '节点已完成的完整答案' }
+    })])
+    expect(result.stepStates).toEqual([
+      expect.objectContaining({ stepId: 'deliver', status: 'completed', name: 'Deliver' }),
+      expect.objectContaining({ stepId: 'research', status: 'running', name: 'Research' })
+    ])
+    expect(result.finalReport).toBeNull()
+    expect(result.finalArtifacts).toEqual([])
+    expect(result.identityProjection?.status).toBe('pending')
+    expect(get).toHaveBeenCalledTimes(6)
+  })
+
+  it('orders multiple node outputs by run steps and does not infer a final report from them', async () => {
+    const completedRun = {
+      ...run,
+      outputRef: undefined,
+      steps: [
+        { stepId: 'first', name: 'First', agentName: 'runner', status: 'completed' as const, outputRef: 'output:run_1:first' },
+        { stepId: 'second', name: 'Second', agentName: 'runner', status: 'completed' as const, outputRef: 'output:run_1:second' }
+      ],
+      completedStepIds: ['first', 'second'],
+      activeStepIds: [],
+      executionState: {
+        outputRefs: { second: 'output:run_1:second', first: 'output:run_1:first' },
+        resourceBindings: {}
+      }
+    }
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: completedRun } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
+      .mockResolvedValueOnce({ data: { content: { answer: 'first' } } } as never)
+      .mockResolvedValueOnce({ data: { content: { answer: 'second' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_1')
+
+    expect(result.stepOutputs.map(item => item.stepId)).toEqual(['first', 'second'])
+    expect(result.finalReport).toBeNull()
+    expect(result.finalArtifacts).toEqual([])
+    expect(get).toHaveBeenCalledTimes(7)
   })
 
   it('projects low-entropy metrics and lineage from legacy provenance snapshots', async () => {

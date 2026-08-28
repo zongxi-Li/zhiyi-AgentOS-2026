@@ -23,6 +23,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
       getWorkflowProgress: vi.fn(),
       getRun: vi.fn(),
       getRunHistoryConfig: vi.fn(),
+      getRunResourceUsage: vi.fn(),
       getAcgView: vi.fn()
     }
   }
@@ -109,6 +110,7 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     vi.mocked(workflowApi.getRunHistoryConfig).mockResolvedValue({
       runId: 'run_1', title: '测试 ACG 任务', reviewMode: 'auto', enabledPluginIds: [], input: {}
     })
+    vi.mocked(workflowApi.getRunResourceUsage).mockResolvedValue(null as never)
     vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue(run({ status: 'pending', lifecyclePhase: 'planning' }))
     vi.mocked(workflowApi.rerunWorkflowAsync).mockResolvedValue(run({
       runId: 'run_2', missionId: 'mission_1', status: 'pending', lifecyclePhase: 'planning'
@@ -193,6 +195,24 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     )
     expect(router.currentRoute.value.query.runId).toBe('run_1')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('refreshes the ACG detail when the runtime revision changes during the same phase', async () => {
+    vi.useFakeTimers()
+    vi.mocked(workflowApi.getWorkflowProgress)
+      .mockResolvedValueOnce(progress({ runtimeRevision: 1, updatedAt: '2026-08-20T00:01:01Z' }))
+      .mockResolvedValueOnce(progress({ runtimeRevision: 2, updatedAt: '2026-08-20T00:01:02Z', completedSteps: 3 }))
+    vi.mocked(workflowApi.getRun)
+      .mockResolvedValueOnce(run({ runtimeRevision: 1, updatedAt: '2026-08-20T00:01:01Z' }))
+      .mockResolvedValueOnce(run({ runtimeRevision: 2, updatedAt: '2026-08-20T00:01:02Z', completedStepIds: ['step_1', 'step_2', 'step_3'] }))
+
+    const { wrapper } = await mountPage('?runId=run_1')
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledTimes(2)
+    expect(workflowApi.getAcgView.mock.calls.length).toBeGreaterThanOrEqual(2)
     wrapper.unmount()
   })
 

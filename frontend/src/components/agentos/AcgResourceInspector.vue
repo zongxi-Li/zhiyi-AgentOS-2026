@@ -11,10 +11,12 @@
 
     <ResourceSection title="Run 用量" :meta="`${usage?.usage.callCount ?? 0} 次调用`">
       <div class="metric-grid">
-        <div><span>输入</span><strong>{{ tokens(usage?.usage.inputTokens) }}</strong></div>
-        <div><span>输出</span><strong>{{ tokens(usage?.usage.outputTokens) }}</strong></div>
-        <div><span>缓存读取</span><strong>{{ tokens(usage?.usage.cacheReadTokens) }}</strong></div>
-        <div><span>推理</span><strong>{{ tokens(usage?.usage.reasoningTokens) }}</strong></div>
+        <div><span>输入</span><strong>{{ observedTokens(usage?.usage.inputTokens) }}</strong></div>
+        <div><span>输出</span><strong>{{ observedTokens(usage?.usage.outputTokens) }}</strong></div>
+        <div><span>缓存读取</span><strong>{{ observedTokens(usage?.usage.cacheReadTokens) }}</strong></div>
+        <div><span>推理</span><strong>{{ observedTokens(usage?.usage.reasoningTokens) }}</strong></div>
+        <div><span>总 Token</span><strong>{{ observedTokens(usage?.usage.totalTokens) }}</strong></div>
+        <div><span>总耗时</span><strong>{{ usage?.usage.callCount ? `${usage.usage.latencyMs.toLocaleString()} ms` : '未观测' }}</strong></div>
       </div>
       <p class="resource-note">推理 Token 已包含在供应商输出明细中，不重复计入总 Token。</p>
     </ResourceSection>
@@ -64,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, ref, watch, type PropType } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { workflowApi, type ModelCallUsage, type RunResourceUsage } from '@/services/api/workflow'
 
 const props = defineProps<{ runId: string; usage?: RunResourceUsage | null }>()
@@ -73,6 +75,8 @@ const nextCursor = ref<string | null>(null)
 const total = ref(0)
 const loading = ref(false)
 const loadError = ref('')
+let requestGeneration = 0
+let activeController: AbortController | null = null
 
 const ResourceSection = defineComponent({
   props: { title: { type: String, required: true }, meta: { type: String as PropType<string>, default: '' } },
@@ -84,6 +88,7 @@ const ResourceSection = defineComponent({
   }
 })
 const tokens = (value?: number | null, empty = '—') => value === null || value === undefined ? empty : value.toLocaleString()
+const observedTokens = (value?: number | null) => props.usage?.usage.callCount ? tokens(value) : '未观测'
 const percent = (value?: number | null, empty = '—') => value === null || value === undefined ? empty : `${Math.round(value * 100)}%`
 const capabilitySource = computed(() => ({
   provider_reported: 'API 报告', adapter_declared: '适配器声明', runtime_observed: '运行观测', unknown: '未知'
@@ -105,22 +110,44 @@ const assemblyLabel = computed(() => props.usage?.composition.assemblyComplete ?
 
 async function load(reset = false) {
   if (!props.runId || loading.value) return
+  const generation = ++requestGeneration
+  activeController?.abort()
+  const controller = new AbortController()
+  activeController = controller
   loading.value = true
   loadError.value = ''
   try {
-    const result = await workflowApi.listRunResourceCalls(props.runId, { cursor: reset ? undefined : nextCursor.value || undefined, pageSize: 20 })
+    const result = await workflowApi.listRunResourceCalls(
+      props.runId,
+      { cursor: reset ? undefined : nextCursor.value || undefined, pageSize: 20 },
+      { signal: controller.signal }
+    )
+    if (generation !== requestGeneration) return
     calls.value = reset ? result.items : [...calls.value, ...result.items]
     nextCursor.value = result.nextCursor || null
     total.value = result.total
   } catch {
+    if (generation !== requestGeneration || controller.signal.aborted) return
     // 资源账本是只读辅助投影，短暂不可用不得污染主运行视图或产生未处理 Promise。
     loadError.value = '调用账本暂时不可用'
   } finally {
-    loading.value = false
+    if (generation === requestGeneration) {
+      loading.value = false
+      activeController = null
+    }
   }
 }
 const loadMore = () => load(false)
-watch(() => props.runId, () => { calls.value = []; nextCursor.value = null; loadError.value = ''; void load(true) })
+watch(() => props.runId, () => {
+  requestGeneration += 1
+  activeController?.abort()
+  activeController = null
+  loading.value = false
+  calls.value = []
+  nextCursor.value = null
+  loadError.value = ''
+  void load(true)
+})
 // 执行中 usage 由上层周期刷新，调用总数增长超过已载入条目时重拉首页，
 // 保证抽屉打开状态下明细随新模型调用实时生长。
 watch(() => props.usage?.usage.callCount ?? 0, (callCount) => {
@@ -128,6 +155,11 @@ watch(() => props.usage?.usage.callCount ?? 0, (callCount) => {
   if (callCount > calls.value.length) void load(true)
 })
 onMounted(() => { void load(true) })
+onBeforeUnmount(() => {
+  requestGeneration += 1
+  activeController?.abort()
+  activeController = null
+})
 </script>
 
 <style scoped>

@@ -9,8 +9,8 @@
   >
     <span class="resource-model"><i aria-hidden="true"></i>{{ modelLabel }}<em v-if="declared" class="resource-declared">预计</em></span>
     <span>调用 <b>{{ usage?.usage.callCount ?? '—' }}</b></span>
-    <span>输入 <b>{{ compact(usage?.usage.inputTokens) }}</b></span>
-    <span>输出 <b>{{ compact(usage?.usage.outputTokens) }}</b></span>
+    <span>输入 <b>{{ observed(usage?.usage.inputTokens) }}</b></span>
+    <span>输出 <b>{{ observed(usage?.usage.outputTokens) }}</b></span>
     <span>缓存命中 <b>{{ percent(usage?.usage.cacheHitRatio) }}</b></span>
     <span>上下文峰值 <b>{{ percent(usage?.contextPressure.peak, '上限未声明') }}</b></span>
     <span>报告装配 <b>{{ assembly }}</b></span>
@@ -47,6 +47,7 @@ const compact = (value?: number | null) => {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`
   return String(value)
 }
+const observed = (value?: number | null) => props.usage?.usage.callCount ? compact(value) : '未观测'
 const percent = (value?: number | null, empty = '—') => value === null || value === undefined
   ? empty
   : `${Math.round(value * 100)}%`

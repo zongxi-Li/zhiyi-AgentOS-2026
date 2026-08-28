@@ -105,6 +105,32 @@ describe('GenericArtifactPanel', () => {
     expect(wrapper.text()).not.toContain('最终交付物 0 项')
   })
 
+  it('shows every node state and full completed output while final delivery is still assembling', () => {
+    const wrapper = mount(GenericArtifactPanel, {
+      props: {
+        status: 'running',
+        finalReport: null,
+        finalArtifacts: [],
+        stepStates: [
+          { stepId: 'research', name: '资料检索', status: 'completed', outputSummary: '已完成' },
+          { stepId: 'draft', name: '方案撰写', status: 'running' },
+          { stepId: 'review', name: '质量核验', status: 'pending' }
+        ],
+        stepOutputs: [{
+          stepId: 'research', name: '资料检索', status: 'completed',
+          output: { answer: '这是节点完成后立即可见的完整答案' }
+        }]
+      }
+    })
+
+    expect(wrapper.text()).toContain('最终交付组装中')
+    expect(wrapper.text()).toContain('节点实时产出')
+    expect(wrapper.text()).toContain('这是节点完成后立即可见的完整答案')
+    expect(wrapper.text()).toContain('正在生成')
+    expect(wrapper.text()).toContain('等待执行')
+    expect(wrapper.findAll('details')).toHaveLength(3)
+  })
+
   it('turns degraded JSON fields into readable requirement and acceptance lists', () => {
     const structuredArtifact = {
       ...artifact,

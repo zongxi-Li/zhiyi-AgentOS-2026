@@ -107,8 +107,9 @@ import { computed } from 'vue'
 import { Cpu, DataAnalysis, Monitor, Share } from '@element-plus/icons-vue'
 import type { AcgBlueprint, AcgView, WorkflowProgress, WorkflowRun } from '@/services/api/agentos'
 
-type InspectorProgress = Omit<WorkflowProgress, 'activeStepIds'> & {
+type InspectorProgress = Omit<WorkflowProgress, 'activeStepIds' | 'completedStepIds'> & {
   activeStepIds: readonly string[]
+  completedStepIds?: readonly string[]
 }
 
 const props = withDefaults(defineProps<{

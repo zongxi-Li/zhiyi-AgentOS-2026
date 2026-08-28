@@ -318,6 +318,7 @@
           :final-artifacts="acgView.finalArtifacts || []"
           :final-report="acgView.finalReport"
           :status="acgView.status"
+          :step-states="acgView.stepStates"
         />
         <div class="schedule-strip ui-surface" v-if="scheduleBatches.length">
           <h4>就绪集调度轨迹（动态拓扑）</h4>
@@ -833,12 +834,12 @@ const scheduleBatches = computed(() => {
 const ACTIVE_TOPOLOGY_PHASES = new Set([
     'understanding', 'planning', 'graph_building', 'executing', 'recovery', 'review'
 ])
-const TOPOLOGY_REFRESH_MS = 8000
+const TOPOLOGY_REFRESH_MS = 1200
 let topologyController: AbortController | null = null
 let topologyTimer: ReturnType<typeof setTimeout> | null = null
 let topologyGeneration = 0
 let lastTopologyRefreshAt = 0
-let lastTopologyUpdatedAt: string | null = null
+let lastTopologyMarker: string | null = null
 let submitController: AbortController | null = null
 let inputCollapseTimer: ReturnType<typeof setTimeout> | null = null
 let inputPanelCompactTimer: ReturnType<typeof setTimeout> | null = null
@@ -853,6 +854,37 @@ const clearInputPanelCompactTimer = () => {
   if (inputPanelCompactTimer !== null) window.clearTimeout(inputPanelCompactTimer)
   inputPanelCompactTimer = null
 }
+
+const topologyMarker = (value: {
+  runtimeRevision?: number
+  updatedAt?: string | null
+  completedSteps?: number
+  completedStepIds?: readonly string[]
+  activeStepIds?: readonly string[]
+  currentStepId?: string | null
+  status?: string
+  phase?: string | null
+}) => JSON.stringify([
+  value.runtimeRevision ?? null,
+  value.updatedAt ?? null,
+  value.completedSteps ?? null,
+  [...(value.completedStepIds || [])],
+  [...(value.activeStepIds || [])],
+  value.currentStepId ?? null,
+  value.status ?? null,
+  value.phase ?? null
+])
+
+const runTopologyMarker = (run: WorkflowRun) => topologyMarker({
+  runtimeRevision: run.runtimeRevision,
+  updatedAt: run.updatedAt,
+  completedSteps: run.completedStepIds?.length,
+  completedStepIds: run.completedStepIds,
+  activeStepIds: run.activeStepIds,
+  currentStepId: run.currentStepId,
+  status: run.status,
+  phase: run.lifecyclePhase
+})
 
 const inputPanelElement = (element: Element) => element as HTMLElement
 
@@ -934,7 +966,7 @@ const clearRunData = () => {
   loadedRunId.value = ''
   isAcgLoading.value = false
   lastTopologyRefreshAt = 0
-  lastTopologyUpdatedAt = null
+  lastTopologyMarker = null
 }
 
 const enterNewAcgDraft = () => {
@@ -953,7 +985,7 @@ const enterNewAcgDraft = () => {
 
 async function refreshAcgForRun(runId: string, force = false): Promise<void> {
   if (!runId || runId !== activeRunId.value) return
-  if (!force && progressTracker.progress.value?.updatedAt === lastTopologyUpdatedAt) return
+  if (!force && progressTracker.progress.value && topologyMarker(progressTracker.progress.value) === lastTopologyMarker) return
 
   const requestGeneration = ++topologyGeneration
   topologyController?.abort()
@@ -978,18 +1010,15 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
       return
     }
     activeRun.value = runResult.value
-    if (viewResult.status === 'rejected') {
-      if (!axios.isCancel(viewResult.reason) && force) {
-        ElMessage.warning('最终 ACG 数据暂时未能加载，请稍后刷新')
-      }
-      return
-    }
-
-    const view = viewResult.value
     const run = runResult.value
-    acgView.value = view
     activeRun.value = run
-    resourceUsage.value = resourceResult.status === 'fulfilled' ? resourceResult.value : null
+    if (viewResult.status === 'fulfilled') {
+      acgView.value = viewResult.value
+    } else if (!axios.isCancel(viewResult.reason) && force) {
+      ElMessage.warning('ACG 运行详情暂时未能完整加载，已保留已有结果')
+    }
+    // 资源是辅助投影，失败时保留上一次已观测调用/Token，不能清空节点答案。
+    if (resourceResult.status === 'fulfilled') resourceUsage.value = resourceResult.value
     if (loadedRunId.value !== runId && historyConfigResult.status === 'fulfilled') {
       const historyConfig = historyConfigResult.value
       restoreWorkbenchDraft(draft, historyConfig, pluginUiExtensions.resolve(historyConfig.enabledPluginIds || []))
@@ -998,7 +1027,7 @@ async function refreshAcgForRun(runId: string, force = false): Promise<void> {
     }
     loadedRunId.value = runId
     lastTopologyRefreshAt = Date.now()
-    lastTopologyUpdatedAt = progressTracker.progress.value?.updatedAt ?? null
+    lastTopologyMarker = runTopologyMarker(run)
   } catch (error: unknown) {
     if (!axios.isCancel(error) && requestGeneration === topologyGeneration && force) {
       ElMessage.warning('最终 ACG 数据暂时未能加载，请稍后刷新')
@@ -1024,16 +1053,9 @@ const removeMissingAcgRun = async (runId: string) => {
   ElMessage.warning('该运行记录已不存在。')
 }
 
-watch(
-  () => progressTracker.progress.value,
-  (value) => {
-    if (value) scheduleTopologyRefresh(value)
-  }
-)
-
 const scheduleTopologyRefresh = (value: DeepReadonly<WorkflowProgress>) => {
   if (!ACTIVE_TOPOLOGY_PHASES.has(value.phase) || value.runId !== activeRunId.value) return
-  if (value.updatedAt === lastTopologyUpdatedAt) return
+  if (topologyMarker(value) === lastTopologyMarker) return
   clearTopologyTimer()
   const remaining = Math.max(0, TOPOLOGY_REFRESH_MS - (Date.now() - lastTopologyRefreshAt))
   topologyTimer = window.setTimeout(() => {

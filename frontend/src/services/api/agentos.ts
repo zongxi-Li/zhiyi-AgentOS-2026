@@ -579,6 +579,7 @@ export interface RuntimeInteraction {
 export interface AcgStepState {
   stepId: string
   status: StepStatus
+  name?: string
   agentName: string
   attempt: number
   retryCount: number
@@ -1076,7 +1077,6 @@ export const agentosApi = {
       agentosRequest.get<any>(`${runPath(runId)}/provenance`, { signal: options.signal }),
       this.getWorkflowTrace(runId, options)
     ] as const
-    const coreRequest = Promise.all(coreRequests)
     const identityRequest = this.getExecutionTree(runId, options)
       .then(executionTree => ({ executionTree, projection: { status: 'available' as const } }))
       .catch((error: unknown) => {
@@ -1090,23 +1090,54 @@ export const agentosApi = {
           }
         }
       })
-    const [[run, graphResponse, provenanceResponse, trace], identityResult] = await Promise.all([
-      coreRequest,
-      identityRequest
-    ])
-    const graph = graphResponse.data
-    const provenance = provenanceProjection(provenanceResponse.data)
+    // Run 是主投影，图/血缘/Trace/Identity/输出都是可降级的辅助投影。
+    // 某一路暂时失败时仍返回其它已取得的增量数据，避免运行中的节点答案消失。
+    const coreResults = await Promise.allSettled(coreRequests)
+    const runResult = coreResults[0]
+    if (runResult.status === 'rejected') throw runResult.reason
+    const run = runResult.value
+    const graphResult = coreResults[1]
+    const provenanceResult = coreResults[2]
+    const traceResult = coreResults[3]
+    for (const result of [graphResult, provenanceResult, traceResult]) {
+      if (result.status === 'rejected' && axios.isCancel(result.reason)) throw result.reason
+    }
+    const graph = graphResult.status === 'fulfilled'
+      ? graphResult.value.data
+      : (run.acgBlueprint || null)
+    const provenance = provenanceResult.status === 'fulfilled'
+      ? provenanceProjection(provenanceResult.value.data)
+      : { schemaVersion: undefined, integrityStatus: 'unknown', productions: [], consumptions: [], interactions: [] }
+    const trace: WorkflowTraceExport = traceResult.status === 'fulfilled'
+      ? traceResult.value
+      : { runId, missionId: run.missionId, workflowId: run.workflowId, domain: run.domain, status: run.status, eventCount: 0, events: [] }
+    const identityResult = await identityRequest
     const outputRefs = Object.entries(run.executionState?.outputRefs || {}) as Array<[string, string]>
-    const outputs = outputRefs.length
-      ? await Promise.all(outputRefs.map(async ([stepId, outputRef]) => {
+    const outputResults: PromiseSettledResult<AcgDeliverable>[] = outputRefs.length
+      ? await Promise.allSettled(outputRefs.map(async ([stepId, outputRef]) => {
         const response = await agentosRequest.get<{ content: Record<string, any> }>(
           `${runPath(runId)}/outputs/${encodeURIComponent(outputRef)}`,
           { signal: options.signal }
         )
         const step = run.steps.find(item => item.stepId === stepId)
-        return { stepId, name: step?.name || stepId, status: step?.status || 'completed', output: response.data.content }
+        return { stepId, outputRef, name: step?.name || stepId, status: step?.status || 'completed', output: response.data.content }
       }))
       : []
+    const outputByKey = new Map<string, AcgDeliverable>()
+    for (const result of outputResults) {
+      if (result.status === 'rejected' && axios.isCancel(result.reason)) throw result.reason
+      if (result.status !== 'fulfilled') continue
+      const item = result.value
+      outputByKey.set(`${item.stepId}:${item.outputRef || ''}`, item)
+    }
+    const outputs = [...outputByKey.values()].sort((left, right) => {
+      const leftIndex = run.steps.findIndex(step => step.stepId === left.stepId)
+      const rightIndex = run.steps.findIndex(step => step.stepId === right.stepId)
+      return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex)
+        - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
+        || left.stepId.localeCompare(right.stepId)
+        || (left.outputRef || '').localeCompare(right.outputRef || '')
+    })
     const interactions = provenance.interactions
     // 原生直连等新引擎路径只落 prod/cons 投递信封，不生成带 interactionId 的
     // RuntimeInteraction 记录；此时退回按消费投递聚合，否则指标在数据已存在时仍归零。
@@ -1115,9 +1146,16 @@ export const agentosApi = {
       : provenance.consumptions.filter(item => item.tokensAvailable != null || item.tokensDelivered != null)
     const tokensAvailable = metricSource.reduce((sum, item) => sum + Number(item.tokensAvailable || 0), 0)
     const tokensDelivered = metricSource.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)
-    const reports = outputs.map(item => outputMarkdown(item.output)).filter((item): item is string => Boolean(item))
-    const finalReport = reports.length ? reports[reports.length - 1] : null
-    const finalArtifacts = outputs.flatMap(item => {
+    // 运行中每个 outputRef 都是节点级中间结果；只有 Runtime 在终态写入的
+    // run.outputRef 才能升级为最终交付，避免把最后一个中间节点冒充报告。
+    const finalOutput = run.status === 'completed'
+      ? (run.outputRef
+        ? outputs.find(item => item.outputRef === run.outputRef)
+        : outputs.length === 1 ? outputs[0] : undefined)
+      : undefined
+    const finalReport = finalOutput ? outputMarkdown(finalOutput.output) : null
+    const finalArtifacts = finalOutput ? (() => {
+      const item = finalOutput
       const artifact = item.output.artifact
       if (!artifact || typeof artifact !== 'object') return []
       const candidate = artifact as Record<string, unknown>
@@ -1133,7 +1171,7 @@ export const agentosApi = {
           : {},
         stepId: item.stepId
       } satisfies AcgFinalArtifact]
-    })
+    })() : []
     const executionTree = identityResult.executionTree
     const identityNodesByAcgId = new Map<string, RunExecutionNode>(
       (executionTree?.nodes || []).filter(item => item.acgNodeId).map(item => [item.acgNodeId as string, item] as const)
@@ -1141,6 +1179,7 @@ export const agentosApi = {
     const stepStates = run.steps.map(step => projectIdentityStepState({
       stepId: step.stepId,
       status: step.status,
+      name: step.name,
       agentName: step.agentName,
       attempt: step.attempt || 0,
       retryCount: step.retryCount || 0,
@@ -1151,8 +1190,9 @@ export const agentosApi = {
       runId,
       status: run.status,
       engine: run.runtimeEngine || 'acg',
-      acgBlueprint: graph as AcgBlueprint,
-      graphVersion: graph.graphVersion,
+      runtimeRevision: run.runtimeRevision,
+      acgBlueprint: graph as AcgBlueprint | null,
+      graphVersion: graph?.graphVersion || run.executionState?.graphVersion || null,
       completedStepIds: run.completedStepIds || [],
       activeStepIds: run.activeStepIds || [],
       stepStates,

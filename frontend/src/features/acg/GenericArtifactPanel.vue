@@ -19,12 +19,14 @@
       </div>
     </header>
 
-    <div v-if="!hasFinalResult" class="delivery-empty" :class="{ syncing: status === 'completed' }">
-      <strong>{{ status === 'completed' ? '正在整理最终成果' : '等待任务完成' }}</strong>
+    <div v-if="!hasFinalResult" class="delivery-empty" :class="{ syncing: status === 'completed' || isFinalDeliveryPending }">
+      <strong>{{ emptyDeliveryTitle }}</strong>
       <span>
         {{ status === 'completed'
           ? '执行已经结束，正在同步最后一个节点的交付内容。'
-          : '任务完成后，这里将提供可直接阅读和下载的成果说明。' }}
+          : isFinalDeliveryPending
+            ? '节点结果正在汇聚，最终报告将在真实交付内容完成后展示。'
+            : '任务完成后，这里将提供可直接阅读和下载的成果说明。' }}
       </span>
     </div>
 
@@ -148,21 +150,27 @@
       </article>
     </div>
 
-    <section v-if="stepOutputs.length" class="step-output-section">
+    <section v-if="liveSteps.length" class="step-output-section">
       <header>
         <div>
-          <h5>过程产出</h5>
-          <p>节点级结构化结果，仅在追溯推理过程时展开。</p>
+          <h5>节点实时产出</h5>
+          <p>过程产出：节点完成后立即展示完整结果；未完成节点只显示当前执行状态。</p>
         </div>
-        <span>{{ stepOutputs.length }} 项</span>
+        <span>{{ completedLiveSteps }} / {{ liveSteps.length }} 已完成</span>
       </header>
       <div class="artifact-list">
-        <details v-for="item in stepOutputs" :key="item.stepId">
+        <details
+          v-for="item in liveSteps"
+          :key="`${item.stepId}:${item.outputRef || ''}`"
+          :class="`step-output-card step-output-card--${item.status}`"
+          :open="item.status === 'completed' && item.hasOutput"
+        >
           <summary>
             <span>{{ displayStepName(item) }}</span>
             <small>{{ statusLabel(item.status) }}</small>
           </summary>
-          <pre>{{ JSON.stringify(item.output, null, 2) }}</pre>
+          <pre v-if="item.hasOutput">{{ JSON.stringify(item.output, null, 2) }}</pre>
+          <p v-else class="step-state-copy">{{ stepStateCopy(item.status) }}</p>
         </details>
       </div>
     </section>
@@ -171,7 +179,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { AcgDeliverable, AcgFinalArtifact } from '@/services/api/workflow'
+import type { AcgDeliverable, AcgFinalArtifact, AcgStepState } from '@/services/api/workflow'
 import { renderMarkdown } from '@/utils/markdown'
 
 type DeliveryTab = 'solution' | 'calculations' | 'decisions'
@@ -217,8 +225,10 @@ const props = withDefaults(defineProps<{
   finalArtifacts: AcgFinalArtifact[]
   finalReport: string | null
   status?: string
+  stepStates?: AcgStepState[]
 }>(), {
-  status: ''
+  status: '',
+  stepStates: () => []
 })
 
 const activeTab = ref<DeliveryTab>('solution')
@@ -470,6 +480,43 @@ const hasStructuredDelivery = computed(() => Boolean(
 const hasFinalResult = computed(() => Boolean(
   props.finalArtifacts.length || asText(props.finalReport)
 ))
+const isFinalDeliveryPending = computed(() => [
+  'pending', 'planning', 'running', 'waiting_review', 'retrying'
+].includes(props.status))
+const emptyDeliveryTitle = computed(() => {
+  if (props.status === 'completed') return '正在整理最终成果'
+  if (isFinalDeliveryPending.value) return '最终交付组装中'
+  return '等待任务完成'
+})
+
+interface LiveStep {
+  stepId: string
+  name: string
+  status: string
+  output?: Record<string, any>
+  outputRef?: string
+  hasOutput: boolean
+}
+
+const liveSteps = computed<LiveStep[]>(() => {
+  const outputByStepId = new Map(props.stepOutputs.map(item => [item.stepId, item]))
+  if (props.stepStates.length) {
+    return props.stepStates.map(state => {
+      const output = outputByStepId.get(state.stepId)
+      return {
+        stepId: state.stepId,
+        name: state.name || state.task?.title || output?.name || state.stepId,
+        status: state.status,
+        output: output?.output,
+        outputRef: output?.outputRef,
+        hasOutput: Boolean(output)
+      }
+    })
+  }
+  return props.stepOutputs.map(item => ({ ...item, hasOutput: true }))
+})
+
+const completedLiveSteps = computed(() => liveSteps.value.filter(item => item.status === 'completed' && item.hasOutput).length)
 
 const tabs = computed(() => [
   { id: 'solution' as const, label: '完整方案', count: sections.value.length },
@@ -502,7 +549,7 @@ const STEP_NAME_LABELS: Record<string, string> = {
 
 const normalizeStepNameKey = (value: string) => value.trim().toLowerCase().replace(/[\s-]+/g, '_')
 
-const displayStepName = (item: AcgDeliverable): string => {
+const displayStepName = (item: Pick<AcgDeliverable, 'name' | 'stepId'>): string => {
   const nameKey = normalizeStepNameKey(item.name || '')
   const stepIdKey = normalizeStepNameKey(item.stepId || '')
   return STEP_NAME_LABELS[nameKey]
@@ -510,6 +557,16 @@ const displayStepName = (item: AcgDeliverable): string => {
     || item.name
     || item.stepId
 }
+
+const stepStateCopy = (status: string) => ({
+  pending: '等待执行',
+  running: '正在生成',
+  waiting_review: '等待人工审核',
+  retrying: '正在重试',
+  completed: '结果同步中',
+  failed: '该节点执行失败，已保留之前完成的节点结果',
+  cancelled: '该节点已取消'
+}[status] || '等待运行状态更新')
 
 const deliveryMarkdown = computed(() => {
   if (!hasStructuredDelivery.value) return reportContent.value
@@ -786,6 +843,10 @@ details { border: 1px solid var(--border-light); border-radius: 8px; background:
 summary { display: flex; justify-content: space-between; gap: 16px; padding: 10px 12px; cursor: pointer; font-size: 12px; font-weight: 650; }
 summary small { color: var(--text-secondary); font-weight: 500; }
 details pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; border-top: 1px solid var(--border-light); background: var(--bg-input); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 var(--font-mono, monospace); }
+.step-output-card--running summary small,
+.step-output-card--retrying summary small { color: var(--primary-color); }
+.step-output-card--failed summary small { color: var(--danger, #b54747); }
+.step-state-copy { margin: 0; padding: 12px; border-top: 1px solid var(--border-light); color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 
 @container (max-width: 760px) {
   .delivery-head { align-items: flex-start; flex-direction: column; }
