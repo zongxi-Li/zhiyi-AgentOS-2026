@@ -363,4 +363,54 @@ describe('AgentOS v2 application API', () => {
     await expect(agentosApi.applyWorkflowReview('run_1', payload)).rejects.toBe(conflict)
     expect(post).toHaveBeenCalledWith('/runs/run_1/reviews', payload, { signal: undefined })
   })
+
+  it('loads one Mission Workspace projection with an optional Run selection', async () => {
+    const signal = new AbortController().signal
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { mission: { missionId: 'mission_1' }, entries: [], runs: [], graphNodes: [], diagnostics: [] }
+    } as never)
+
+    await agentosApi.getMissionWorkspace('mission/1', { runId: 'run/2', signal })
+
+    expect(get).toHaveBeenCalledWith('/missions/mission%2F1/workspace', {
+      params: { runId: 'run/2' }, signal
+    })
+  })
+
+  it('does not request Artifact content as part of Workspace projection loading', async () => {
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { mission: { missionId: 'mission_1' }, entries: [{ entryId: 'task:one:primary', kind: 'artifact' }], runs: [], graphNodes: [], diagnostics: [] }
+    } as never)
+
+    await agentosApi.getMissionWorkspace('mission_1')
+
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).not.toHaveBeenCalledWith(expect.stringContaining('/artifacts/'), expect.anything())
+  })
+
+  it('reads sealed Artifact fragments only when content is requested', async () => {
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: { manifestId: 'manifest_1', mediaType: 'text/plain' } } as never)
+      .mockResolvedValueOnce({ data: { manifest: { manifestId: 'manifest_1' }, items: [{ content: 'first' }], nextCursor: 'next' } } as never)
+      .mockResolvedValueOnce({ data: { manifest: { manifestId: 'manifest_1' }, items: [{ content: ' second' }], nextCursor: null } } as never)
+
+    await expect(agentosApi.getArtifactContent('run_1', 'manifest_1')).resolves.toMatchObject({
+      manifestId: 'manifest_1', content: 'first second'
+    })
+    expect(get).toHaveBeenNthCalledWith(2, '/runs/run_1/artifacts/manifest_1/fragments', expect.objectContaining({
+      params: { cursor: undefined, pageSize: 200 }
+    }))
+    expect(get).toHaveBeenNthCalledWith(3, '/runs/run_1/artifacts/manifest_1/fragments', expect.objectContaining({
+      params: { cursor: 'next', pageSize: 200 }
+    }))
+  })
+
+  it('uses the existing Artifact download endpoint rather than a second content store', async () => {
+    const signal = new AbortController().signal
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: new Blob(['body']) } as never)
+    await agentosApi.downloadArtifact('run/1', 'manifest/1', { signal })
+    expect(get).toHaveBeenCalledWith('/runs/run%2F1/artifacts/manifest%2F1/download', {
+      responseType: 'blob', signal
+    })
+  })
 })

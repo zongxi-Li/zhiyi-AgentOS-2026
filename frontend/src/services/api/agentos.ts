@@ -414,6 +414,123 @@ export interface IdentityProjectionState {
   message?: string
 }
 
+export type WorkspaceEntryKind = 'folder' | 'graph' | 'virtual_document' | 'artifact' | 'run'
+export type WorkspaceIdentityQuality = 'canonical' | 'legacy'
+export type WorkspaceRunStatus = WorkflowStatus | 'succeeded' | 'superseded'
+
+export interface WorkspaceMission {
+  missionId: string
+  userId: string
+  goal: string
+  description: string
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  status: string
+}
+
+export interface WorkspaceRunSummary {
+  runId: string
+  status: WorkspaceRunStatus
+  parentRunId?: string | null
+  sourceRunId?: string | null
+  createdAt: string
+  completedAt?: string | null
+  isActive: boolean
+}
+
+export interface WorkspaceEntry {
+  entryId: string
+  kind: WorkspaceEntryKind
+  name: string
+  group: 'overview' | 'steps' | 'output' | 'runs' | string
+  parentEntryId?: string | null
+  displayOrder: number
+  semanticTaskKey?: string | null
+  artifactKey?: string | null
+  taskId?: string | null
+  artifactId?: string | null
+  contentRef?: string | null
+  artifactType?: string | null
+  mediaType?: string | null
+  checksum?: string | null
+  attemptId?: string | null
+  acgNodeId?: string | null
+  disposition?: 'GENERATED' | 'REUSED' | string | null
+  sourceRunId?: string | null
+  identityQuality?: WorkspaceIdentityQuality | null
+  createdAt?: string | null
+  runId?: string | null
+  status?: WorkspaceRunStatus | null
+  blueprintId?: string | null
+  graphId?: string | null
+  graphVersion?: number | null
+  parentRunId?: string | null
+  completedAt?: string | null
+  isActive?: boolean | null
+  content?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceGraphNode {
+  acgNodeId: string
+  nodeType: string
+  name: string
+  semanticTaskKey?: string | null
+  taskId?: string | null
+  identityQuality?: WorkspaceIdentityQuality | null
+  displayOrder: number
+}
+
+export interface WorkspaceDiagnostic {
+  code: string
+  message: string
+  severity: 'info' | 'warning'
+  details?: Record<string, unknown>
+}
+
+export interface MissionWorkspaceProjection {
+  mission: WorkspaceMission
+  activeRun?: WorkspaceRunSummary | null
+  activeGraph?: AcgBlueprint | null
+  runs: WorkspaceRunSummary[]
+  entries: WorkspaceEntry[]
+  graphNodes: WorkspaceGraphNode[]
+  diagnostics: WorkspaceDiagnostic[]
+}
+
+export interface ArtifactDetail {
+  manifestId: string
+  artifactId?: string
+  missionId?: string
+  originRunId?: string
+  taskId?: string
+  semanticTaskKey?: string
+  artifactKey?: string
+  acgNodeId?: string
+  producerAttemptId?: string
+  name?: string
+  artifactType?: string
+  mediaType: string
+  contentRef?: string
+  checksum?: string | null
+  byteLength?: number
+  fragmentCount?: number
+  sealed?: boolean
+  createdAt?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface ArtifactFragment {
+  fragmentId?: string
+  ordinal?: number
+  content: string
+}
+
+export interface ArtifactContentResponse extends ArtifactDetail {
+  content: string
+}
+
 export interface ReviewRecord {
   reviewId: string
   runId: string
@@ -959,6 +1076,67 @@ export const agentosApi = {
     const response = await agentosRequest.get<WorkflowRun>(runPath(runId), {
       signal: options.signal
     })
+    return response.data
+  },
+
+  async getMissionWorkspace(
+    missionId: string,
+    options: { runId?: string; signal?: AbortSignal } = {}
+  ): Promise<MissionWorkspaceProjection> {
+    const response = await agentosRequest.get<MissionWorkspaceProjection>(
+      `/missions/${encodeURIComponent(missionId)}/workspace`,
+      {
+        params: { runId: options.runId || undefined },
+        signal: options.signal
+      }
+    )
+    return response.data
+  },
+
+  async getArtifactDetail(
+    runId: string,
+    contentRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<ArtifactDetail> {
+    const response = await agentosRequest.get<ArtifactDetail>(
+      `${runPath(runId)}/artifacts/${encodeURIComponent(contentRef)}`,
+      { signal: options.signal }
+    )
+    return response.data
+  },
+
+  async getArtifactContent(
+    runId: string,
+    contentRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<ArtifactContentResponse> {
+    const detail = await this.getArtifactDetail(runId, contentRef, options)
+    const items: ArtifactFragment[] = []
+    let cursor: string | undefined
+    do {
+      const response = await agentosRequest.get<{
+        manifest: ArtifactDetail
+        items: ArtifactFragment[]
+        nextCursor?: string | null
+      }>(`${runPath(runId)}/artifacts/${encodeURIComponent(contentRef)}/fragments`, {
+        params: { cursor, pageSize: 200 },
+        signal: options.signal
+      })
+      items.push(...(response.data.items || []))
+      cursor = response.data.nextCursor || undefined
+    } while (cursor)
+    return { ...detail, content: items.map(item => item.content).join('') }
+  },
+
+  async downloadArtifact(
+    runId: string,
+    contentRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<Blob> {
+    const response = await agentosRequest.get<Blob>(
+      `${runPath(runId)}/artifacts/${encodeURIComponent(contentRef)}/download`,
+      { responseType: 'blob', signal: options.signal }
+    )
     return response.data
   },
 
