@@ -122,6 +122,21 @@ class AgentOsGatewayControllerTest {
     }
 
     @Test
+    void missionWorkspaceForwardsTheOptionalRunSelection() throws Exception {
+        String workspacePath = "/ai/agentos/v2/missions/mission%20001/workspace?runId=run%20001";
+        gateway.getResponses.put(workspacePath, response(200, Map.of(
+                "missionId", "mission 001", "activeRun", Map.of("runId", "run 001")
+        )));
+
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "mission 001")
+                        .param("runId", "run 001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.missionId").value("mission 001"));
+
+        assertEquals(workspacePath, gateway.lastGetPath);
+    }
+
+    @Test
     void resourcesAreStraightProxiesWithoutLegacyRuntimeGraphEndpoints() throws Exception {
         gateway.getResponses.put("/ai/agentos/v2/runs/run_001/graph", response(200, Map.of(
                 "runId", "run_001", "nodes", java.util.List.of()

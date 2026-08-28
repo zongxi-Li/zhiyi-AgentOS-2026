@@ -72,6 +72,16 @@ public class AgentOsGatewayController {
         return response(gateway.get(missionPath(missionId) + "/runs"));
     }
 
+    @GetMapping("/missions/{missionId}/workspace")
+    public ResponseEntity<Map<String, Object>> getMissionWorkspace(
+            @PathVariable String missionId,
+            @RequestParam(required = false) String runId
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("runId", runId);
+        return response(gateway.get(query(missionPath(missionId) + "/workspace", params)));
+    }
+
     @PostMapping("/missions/{missionId}/archive")
     public ResponseEntity<Map<String, Object>> archiveMission(@PathVariable String missionId) {
         return response(gateway.post(missionPath(missionId) + "/archive", Map.of()));
