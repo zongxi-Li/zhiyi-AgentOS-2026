@@ -596,6 +596,29 @@ def create_router(
             },
         }
 
+    @router.get("/resources")
+    async def get_resources():
+        """Return the ResourceService's static profiles and last observations.
+
+        This is a read-only system projection.  In particular, the persisted
+        snapshot health is deliberately returned as-is: the API must not turn
+        resource registration or scheduler eligibility into an ``online`` or
+        ``healthy`` claim.
+        """
+        resource_service = getattr(runtime, "resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource query source unavailable")
+
+        items: list[dict[str, Any]] = []
+        for profile in resource_service.profiles():
+            versioned = resource_service.snapshot(profile.resource_id)
+            items.append({
+                "profile": profile.model_dump(by_alias=True, mode="json"),
+                "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
+                "snapshotVersion": versioned.version,
+            })
+        return {"items": items, "total": len(items)}
+
     @router.get("/missions")
     async def list_missions(
         status_value: str | None = Query(default=None, alias="status"),

@@ -14,6 +14,7 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.content import ContentKind
+from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
 from contracts.planning import PlannedTask
 from contracts.workflow import (
     StepStatus,
@@ -389,6 +390,39 @@ async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tm
 
         paths = app.openapi()["paths"]
         assert "/agentos/v2/runs/{run_id}/reviews" in paths
+
+
+async def test_v2_resources_projects_authoritative_profile_and_unknown_health(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.resource_service.register(
+        ResourceProfile(
+            resourceId="resource-api",
+            resourceType=ResourceType.AGENT,
+            capabilities=["report"],
+            capacity=2,
+        ),
+        ResourceSnapshot(
+            resourceId="resource-api",
+            availableSlots=2,
+            utilization=0.0,
+            healthStatus=ResourceHealthStatus.UNKNOWN,
+        ),
+    )
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/agentos/v2/resources")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    item = response.json()["items"][0]
+    assert item["profile"]["resourceId"] == "resource-api"
+    assert item["profile"]["resourceType"] == "agent"
+    assert item["snapshot"]["healthStatus"] == "unknown"
+    assert item["snapshot"]["availableSlots"] == 2
+    assert "cpu" not in item["snapshot"]["metrics"]
+    assert "gpu" not in item["snapshot"]["metrics"]
 
 
 async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
