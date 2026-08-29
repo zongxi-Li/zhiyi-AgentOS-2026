@@ -1,23 +1,32 @@
 <template>
-  <InspectorFrame title="graph.acg" :historical="historical">
-    <InspectorSection title="Graph" :badge="graphIdentity">
+  <div class="inspector-section-stack">
+    <InspectorSection title="运行状态" :badge="runStatus || '未观测'">
+      <div class="inspector-status">
+        <span class="inspector-status__dot" :class="`is-${runStatus || 'unobserved'}`" aria-hidden="true"></span>
+        <strong>{{ runStatus || '未观测' }}</strong>
+      </div>
       <InspectorPropertyList :rows="[
-        { label: 'runId', value: runId, code: true },
-        { label: 'status', value: runStatus, code: true },
-        { label: 'graphId', value: graph?.graphId || entry?.graphId, code: true },
-        { label: 'graphVersion', value: graphVersion, code: true },
-        { label: 'nodes', value: graph?.nodes.length || graphNodes.length },
-        { label: 'edges', value: graph?.edges.length || 0 },
-        { label: 'task plan', value: taskPlanVersion, code: true }
+        { label: 'Run', value: runId, code: true }
       ]" />
     </InspectorSection>
-  </InspectorFrame>
+
+    <InspectorSection title="图信息" :badge="graphIdentity">
+      <div class="inspector-metrics" aria-label="图统计">
+        <div><strong>{{ graph?.nodes.length || graphNodes.length }}</strong><span>节点</span></div>
+        <div><strong>{{ graph?.edges.length || 0 }}</strong><span>边</span></div>
+        <div><strong>{{ graphVersion ?? '—' }}</strong><span>版本</span></div>
+      </div>
+      <InspectorPropertyList :rows="[
+        { label: 'Graph ID', value: graph?.graphId || entry?.graphId, code: true },
+        { label: 'Task plan', value: taskPlanVersion, code: true }
+      ]" />
+    </InspectorSection>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
-import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 
@@ -27,7 +36,6 @@ const props = defineProps<{
   runId: string | null
   graph: AcgBlueprint | null
   runStatus: string | null
-  historical: boolean
 }>()
 
 const graphVersion = computed(() => {
@@ -49,3 +57,18 @@ const graphIdentity = computed(() => {
   return 'unproven'
 })
 </script>
+
+<style scoped>
+.inspector-section-stack { display: contents; }
+.inspector-status { display: flex; align-items: center; gap: 8px; min-height: 30px; margin-bottom: 4px; color: var(--wb-text); }
+.inspector-status strong { font-size: 13px; font-weight: 650; }
+.inspector-status__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wb-text-muted); }
+.inspector-status__dot.is-succeeded,
+.inspector-status__dot.is-completed { background: var(--wb-success); }
+.inspector-status__dot.is-failed { background: var(--wb-danger); }
+.inspector-status__dot.is-running { background: var(--wb-accent); }
+.inspector-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.inspector-metrics > div { display: grid; gap: 2px; min-width: 0; }
+.inspector-metrics strong { color: var(--wb-text); font: 16px var(--font-mono, monospace); }
+.inspector-metrics span { color: var(--wb-text-muted); font-size: 10px; }
+</style>

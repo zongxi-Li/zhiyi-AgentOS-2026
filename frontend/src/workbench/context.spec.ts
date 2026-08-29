@@ -15,7 +15,8 @@ describe('createWorkbenchContext', () => {
       activeEditorId: null,
       activeEntryKind: null,
       historicalMode: false,
-      diagnostics
+      diagnostics,
+      runtimeObservation: null
     })
   })
 })

@@ -3,8 +3,10 @@ import type {
   EditorContribution,
   ActivityBarContribution,
   InspectorContribution,
+  InspectorSectionContribution,
   PanelContribution,
   SidebarViewContribution,
+  SecondarySidebarViewContribution,
   WorkbenchContext,
   WorkbenchContribution,
   WorkbenchInspectorContext
@@ -66,6 +68,26 @@ export class WorkbenchContributionRegistry {
 
   resolveInspector(context: WorkbenchInspectorContext): InspectorContribution | null {
     return this.getInspectors().find(inspector => inspector.matches(context)) || null
+  }
+
+  getInspectorSections(context: WorkbenchInspectorContext): InspectorSectionContribution[] {
+    return contributionItems<InspectorSectionContribution>(this.contributions.values(), 'inspectorSections')
+      .filter(section => section.when(context))
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+  }
+
+  resolveInspectorSections(context: WorkbenchInspectorContext): InspectorSectionContribution[] {
+    return this.getInspectorSections(context)
+  }
+
+  getSecondarySidebarViews(context: WorkbenchInspectorContext): SecondarySidebarViewContribution[] {
+    return contributionItems<SecondarySidebarViewContribution>(this.contributions.values(), 'secondarySidebarViews')
+      .filter(view => view.when(context))
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+  }
+
+  resolveSecondarySidebarViews(context: WorkbenchInspectorContext): SecondarySidebarViewContribution[] {
+    return this.getSecondarySidebarViews(context)
   }
 
   getPanels(context: WorkbenchContext): PanelContribution[] {

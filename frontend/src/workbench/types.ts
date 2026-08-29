@@ -6,8 +6,9 @@ import type {
   WorkspaceEntryKind,
   WorkspaceGraphNode
 } from '@/services/api/agentos'
+import type { RuntimeObservation } from './runtime/observation'
 
-export type WorkbenchSlot = 'activityBar' | 'sidebarViews' | 'editors' | 'inspectors' | 'panels' | 'commands'
+export type WorkbenchSlot = 'activityBar' | 'sidebarViews' | 'editors' | 'inspectors' | 'inspectorSections' | 'secondarySidebarViews' | 'panels' | 'commands'
 
 export interface WorkbenchContext {
   missionId: string
@@ -19,6 +20,7 @@ export interface WorkbenchContext {
   activeEntryKind: WorkspaceEntryKind | null
   historicalMode: boolean
   diagnostics: readonly WorkspaceDiagnostic[]
+  runtimeObservation: RuntimeObservation | null
 }
 
 export interface WorkbenchInspectorContext extends WorkbenchContext {
@@ -57,6 +59,24 @@ export interface InspectorContribution {
   matches: (context: WorkbenchInspectorContext) => boolean
 }
 
+export interface InspectorSectionContribution {
+  id: string
+  title: string
+  order: number
+  component: Component
+  when: (context: WorkbenchInspectorContext) => boolean
+  getProps?: (context: WorkbenchInspectorContext) => Record<string, unknown>
+}
+
+export interface SecondarySidebarViewContribution {
+  id: string
+  title: string
+  order: number
+  component: Component
+  when: (context: WorkbenchInspectorContext) => boolean
+  getProps?: (context: WorkbenchInspectorContext) => Record<string, unknown>
+}
+
 export interface PanelContribution {
   id: string
   label: string
@@ -78,6 +98,8 @@ export interface WorkbenchContribution {
   sidebarViews?: readonly SidebarViewContribution[]
   editors?: readonly EditorContribution[]
   inspectors?: readonly InspectorContribution[]
+  inspectorSections?: readonly InspectorSectionContribution[]
+  secondarySidebarViews?: readonly SecondarySidebarViewContribution[]
   panels?: readonly PanelContribution[]
   commands?: readonly CommandContribution[]
 }

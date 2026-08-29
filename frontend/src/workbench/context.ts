@@ -1,4 +1,5 @@
-import type { WorkspaceDiagnostic, WorkspaceEntryKind } from '@/services/api/agentos'
+import type { WorkspaceEntryKind, WorkspaceDiagnostic } from '@/services/api/agentos'
+import type { RuntimeObservation } from './runtime/observation'
 import type { WorkbenchContext } from './types'
 
 export interface WorkbenchContextInput {
@@ -11,6 +12,7 @@ export interface WorkbenchContextInput {
   activeEntryKind?: WorkspaceEntryKind | null
   historicalMode?: boolean
   diagnostics?: readonly WorkspaceDiagnostic[]
+  runtimeObservation?: RuntimeObservation | null
 }
 
 export const createWorkbenchContext = (input: WorkbenchContextInput): WorkbenchContext => ({
@@ -22,5 +24,6 @@ export const createWorkbenchContext = (input: WorkbenchContextInput): WorkbenchC
   activeEditorId: input.activeEditorId || null,
   activeEntryKind: input.activeEntryKind || null,
   historicalMode: Boolean(input.historicalMode),
-  diagnostics: input.diagnostics || []
+  diagnostics: input.diagnostics || [],
+  runtimeObservation: input.runtimeObservation || null
 })

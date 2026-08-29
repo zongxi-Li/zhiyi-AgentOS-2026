@@ -14,7 +14,8 @@ const context: WorkbenchContext = {
   activeEditorId: 'overview:graph.acg',
   activeEntryKind: 'graph',
   historicalMode: false,
-  diagnostics: []
+  diagnostics: [],
+  runtimeObservation: null
 }
 
 const inspectorContext: WorkbenchInspectorContext = {
@@ -65,5 +66,38 @@ describe('WorkbenchContributionRegistry', () => {
     expect(registry.getPanels(context)[0]?.count?.(context)).toBe(0)
     expect(registry.resolveCommand('workbench.togglePanel')?.title).toBe('Toggle panel')
     expect(registry.resolveCommand('missing')).toBeNull()
+  })
+
+  it('returns all matching inspector sections in stable order', () => {
+    const registry = createWorkbenchRegistry()
+    registry.register({
+      id: 'runtime',
+      inspectorSections: [
+        { id: 'runtime.resource', title: 'Resource', order: 200, component, when: () => true },
+        { id: 'runtime.identity', title: 'Identity', order: 100, component, when: () => true }
+      ]
+    })
+
+    expect(registry.resolveInspectorSections(inspectorContext).map(section => section.id)).toEqual([
+      'runtime.identity',
+      'runtime.resource'
+    ])
+  })
+
+  it('resolves secondary sidebar views in stable order and filters by context', () => {
+    const registry = createWorkbenchRegistry()
+    registry.register({
+      id: 'runtime',
+      secondarySidebarViews: [
+        { id: 'runtime.context', title: '上下文', order: 500, component, when: () => true },
+        { id: 'runtime.run', title: '运行', order: 100, component, when: value => value.entry?.kind === 'graph' },
+        { id: 'runtime.hidden', title: 'Hidden', order: 50, component, when: () => false }
+      ]
+    })
+
+    expect(registry.resolveSecondarySidebarViews(inspectorContext).map(view => view.id)).toEqual([
+      'runtime.run',
+      'runtime.context'
+    ])
   })
 })
