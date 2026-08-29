@@ -7,6 +7,12 @@ const DEV_PROXY_TIMEOUT_MS = 240000
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  const isDesktop = mode === 'desktop'
+  const platformAdapter = resolve(
+    __dirname,
+    isDesktop ? 'src/platform/desktop/adapter.ts' : 'src/platform/web/adapter.ts'
+  )
+  const desktopNodeModules = resolve(__dirname, '../desktop/node_modules')
   const BACKEND_PROXY_TARGET =
     env.DEV_BACKEND_PROXY_TARGET ||
     'http://localhost:8080'
@@ -23,6 +29,12 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: [
+        { find: '@platform', replacement: platformAdapter },
+        ...(isDesktop ? [
+          { find: '@tauri-apps/plugin-dialog', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-dialog') },
+          { find: '@tauri-apps/plugin-notification', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-notification') },
+          { find: '@tauri-apps/plugin-opener', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-opener') }
+        ] : []),
         { find: '@', replacement: resolve(__dirname, 'src') },
         {
           find: /^dayjs\/plugin\/(.+)\.js$/,
