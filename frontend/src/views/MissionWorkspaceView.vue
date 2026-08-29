@@ -4,7 +4,7 @@
       :show-right="true"
       :show-bottom-panel="Boolean(projection)"
       bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
-      :bottom-panel-default-collapsed="true"
+      :bottom-panel-default-collapsed="false"
       storage-key="zhiyi.mission.workspace.layout.v1"
     >
       <template #left>
@@ -40,6 +40,7 @@
           @select-semantic-task="selectSemanticTask"
           @open-semantic-task="openSemanticTask"
           @locate-graph="locateGraph"
+          @open-artifact="openEntry"
         />
         <section v-else class="workspace-main-state" role="status">
           <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
@@ -76,6 +77,7 @@
             <WorkbenchContributionRenderer
               :contribution="resolvePanel(activeTab)"
               :component-props="panelProps(activeTab)"
+              @select="selectRuntimeTarget"
             />
           </template>
         </WorkbenchBottomPanel>
@@ -116,6 +118,7 @@ import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/work
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { createWorkbenchContext } from '@/workbench/context'
+import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
 
 const route = useRoute()
 const router = useRouter()
@@ -132,9 +135,11 @@ const activeEditorId = ref<string | null>(null)
 const selectedSemanticTaskKey = ref<string | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
+const runtimeObservation = ref<RuntimeObservation | null>(null)
 const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})
 let controller: AbortController | null = null
+const runtimeObservationAdapter = new RuntimeObservationAdapter()
 
 const workspaceProjectionRetryDelays = [
   250, 500, 1000, 2000, 3000,
@@ -152,6 +157,9 @@ const activeOpened = computed(() => openEntries.value.find(item => item.entry.en
 const inspectorEntry = computed(() => activeOpened.value?.entry || null)
 const inspectorAvailable = computed(() => activeOpened.value?.available ?? false)
 const inspectorGraphNode = computed<WorkspaceGraphNode | null>(() => {
+  if (inspectorEntry.value?.kind === 'task') {
+    return projection.value?.graphNodes.find(node => node.semanticTaskKey === inspectorEntry.value?.semanticTaskKey) || null
+  }
   if (inspectorEntry.value?.kind !== 'graph' && inspectorEntry.value?.kind !== 'artifact') {
     return projection.value?.graphNodes.find(node => node.acgNodeId === selectedGraphNodeId.value) || null
   }
@@ -171,7 +179,8 @@ const workbenchContext = computed(() => createWorkbenchContext({
   activeEditorId: activeEditorId.value,
   activeEntryKind: activeOpened.value?.entry.kind || null,
   historicalMode: isHistorical.value,
-  diagnostics: projection.value?.diagnostics || []
+  diagnostics: projection.value?.diagnostics || [],
+  runtimeObservation: runtimeObservation.value
 }))
 
 const sidebarContribution = computed(() => registry.getSidebarViews(workbenchContext.value)[0] || null)
@@ -274,8 +283,10 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     return
   }
   controller?.abort()
+  runtimeObservationAdapter.stop()
   controller = new AbortController()
   const requestController = controller
+  runtimeObservation.value = null
   loading.value = true
   loadError.value = ''
   try {
@@ -285,6 +296,18 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     selectedRunId.value = nextProjection.activeRun?.runId || runId || null
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     openDefaultEditor(nextProjection)
+    const nextRunId = nextProjection.activeRun?.runId || runId || null
+    if (nextRunId) {
+      runtimeObservationAdapter.start(nextRunId, {
+        historical: Boolean(currentRunId.value && currentRunId.value !== nextRunId),
+        diagnostics: nextProjection.diagnostics,
+        onUpdate: observation => {
+          if (controller === requestController && !requestController.signal.aborted) {
+            runtimeObservation.value = observation
+          }
+        }
+      })
+    }
   } catch (error: unknown) {
     if (isAbortError(error)) return
     loadError.value = '无法加载 Mission Workspace Projection，请稍后重试。'
@@ -325,9 +348,27 @@ const selectSemanticTask = (semanticTaskKey: string | null) => {
   if (selectedGraphNodeId.value) focusNodeId.value = selectedGraphNodeId.value
 }
 
+const selectRuntimeTarget = (selection: RuntimeSelection) => {
+  const node = projection.value?.graphNodes.find(item => (
+    (selection.stepId && item.acgNodeId === selection.stepId)
+    || (selection.semanticTaskKey && item.semanticTaskKey === selection.semanticTaskKey)
+  ))
+  if (!node) return
+  selectedSemanticTaskKey.value = node.semanticTaskKey || null
+  selectedGraphNodeId.value = node.acgNodeId
+  focusNodeId.value = node.acgNodeId
+  const graphEntry = projection.value?.entries.find(item => item.kind === 'graph')
+  if (graphEntry && inspectorEntry.value?.kind === 'artifact') openEntry(graphEntry)
+}
+
 const openSemanticTask = (semanticTaskKey: string | null) => {
   selectSemanticTask(semanticTaskKey)
   if (!semanticTaskKey || !projection.value) return
+  const task = projection.value.entries.find(entry => entry.kind === 'task' && entry.semanticTaskKey === semanticTaskKey)
+  if (task) {
+    openEntry(task)
+    return
+  }
   const artifacts = projection.value.entries.filter(entry => entry.kind === 'artifact' && entry.semanticTaskKey === semanticTaskKey)
   if (artifacts.length === 1) {
     openEntry(artifacts[0])
@@ -357,7 +398,10 @@ const locateGraph = (entry: WorkspaceEntry) => {
 }
 
 void loadWorkspace()
-onBeforeUnmount(() => controller?.abort())
+onBeforeUnmount(() => {
+  controller?.abort()
+  runtimeObservationAdapter.stop()
+})
 </script>
 
 <style scoped>

@@ -22,6 +22,13 @@ const artifactEditorStub = {
 
 const missionEditorStub = { template: '<div class="mission-editor-stub">mission.md</div>' }
 
+const taskEntry = (): WorkspaceEntry => ({
+  entryId: 'task:capacity', kind: 'task', name: 'Capacity', group: 'steps', displayOrder: 0,
+  semanticTaskKey: 'capacity', taskId: 'task_capacity', objective: 'Form a capacity plan',
+  status: 'completed', attemptCount: 1, latestAttemptId: 'attempt_capacity', artifactCount: 1,
+  acgNodeId: 'node_capacity', identityQuality: 'canonical'
+})
+
 const folders = (): WorkspaceEntry[] => [
   { entryId: 'folder:overview', kind: 'folder', name: 'Overview', group: 'overview', displayOrder: 0 },
   { entryId: 'folder:steps', kind: 'folder', name: 'Steps', group: 'steps', displayOrder: 0 },
@@ -35,7 +42,7 @@ const runEntries = (): WorkspaceEntry[] => [
 ]
 
 const artifact = (key = 'primary', id = 'artifact_1', legacy = false): WorkspaceEntry => ({
-  entryId: `task:capacity:${key}`, kind: 'artifact', name: `${key}.md`, group: 'steps', displayOrder: 0,
+  entryId: `task:capacity:${key}`, kind: 'artifact', name: `${key}.md`, group: 'steps', displayOrder: 0, parentEntryId: 'task:capacity',
   semanticTaskKey: legacy ? null : 'capacity', artifactKey: key, artifactId: legacy ? null : id,
   contentRef: `manifest_${id}`, mediaType: 'text/markdown', identityQuality: legacy ? 'legacy' : 'canonical', runId: 'run_2'
 })
@@ -54,6 +61,7 @@ const projection = (overrides: Partial<MissionWorkspaceProjection> = {}): Missio
     ...folders(),
     { entryId: 'overview:graph.acg', kind: 'graph', name: 'graph.acg', group: 'overview', displayOrder: 0 },
     { entryId: 'overview:mission.md', kind: 'virtual_document', name: 'mission.md', group: 'overview', displayOrder: 1, content: '# Mission' },
+    taskEntry(),
     artifact(),
     ...runEntries()
   ],
@@ -78,6 +86,25 @@ const mountWorkspace = async (
       return typeof resolved === 'function' ? resolved(options.runId) : resolved
     })
   }
+  const getRun = vi.isMockFunction(agentosApi.getWorkflowRun)
+    ? vi.mocked(agentosApi.getWorkflowRun)
+    : vi.spyOn(agentosApi, 'getWorkflowRun')
+  if (!getRun.getMockImplementation()) {
+    getRun.mockImplementation(async runId => ({
+      runId,
+      missionId: 'mission_1',
+      workflowId: 'workflow_1',
+      domain: 'ops',
+      status: (typeof resolved === 'function' ? resolved(runId)?.activeRun?.status : resolved.activeRun?.status) || 'succeeded',
+      steps: []
+    } as any))
+  }
+  vi.spyOn(agentosApi, 'getWorkflowTrace').mockResolvedValue({
+    runId: 'run_2', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'succeeded', eventCount: 0, events: []
+  } as any)
+  vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue({ runId: 'run_2', events: [], productions: [], consumptions: [], interactions: [] })
+  vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
+  vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
   const wrapper = mount(MissionWorkspaceView, {
     global: {
       plugins: [router],
@@ -131,19 +158,21 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.find('.editor-tab').text()).toContain('graph.acg')
   })
 
-  it('maps a graph double click to one matching artifact', async () => {
+  it('maps a graph double click to the matching TaskEditor', async () => {
     const { wrapper } = await mountWorkspace()
     await wrapper.find('.graph-open').trigger('click')
-    expect(wrapper.find('.artifact-editor-stub').text()).toContain('primary.md')
+    expect(wrapper.find('.task-editor').exists()).toBe(true)
+    expect(wrapper.find('.task-editor').text()).toContain('capacity')
   })
 
-  it('offers a lightweight choice when one semantic task has multiple artifacts', async () => {
+  it('keeps multiple Artifacts inside the matching TaskEditor', async () => {
     const multi = projection({ entries: [...projection().entries, artifact('assumptions', 'artifact_2')] })
     const { wrapper } = await mountWorkspace(multi)
     await wrapper.find('.graph-open').trigger('click')
-    expect(wrapper.find('.artifact-choice').exists()).toBe(true)
-    expect(wrapper.findAll('.artifact-choice__item')).toHaveLength(2)
-    await wrapper.findAll('.artifact-choice__item')[1].trigger('click')
+    expect(wrapper.find('.artifact-choice').exists()).toBe(false)
+    expect(wrapper.findAll('.task-editor__artifacts button')).toHaveLength(2)
+    await wrapper.findAll('.task-editor__artifacts button')[0].trigger('click')
+    await flushPromises()
     expect(wrapper.find('.artifact-editor-stub').text()).toContain('assumptions.md')
   })
 
@@ -152,7 +181,7 @@ describe('MissionWorkspaceView', () => {
     const { wrapper } = await mountWorkspace(noArtifact)
     await wrapper.find('.graph-open').trigger('click')
     expect(wrapper.find('.artifact-choice').exists()).toBe(false)
-    expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
+    expect(wrapper.find('.task-editor').exists()).toBe(true)
   })
 
   it('locates a canonical artifact in graph and keeps the artifact tab open', async () => {
@@ -209,6 +238,13 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.find('.workbench-bottom-panel__tab small').text()).toBe('1')
     expect(wrapper.find('.problems-panel').text()).toContain('NO_ACTIVE_RUN')
     expect(wrapper.text()).toContain('mission.md')
+  })
+
+  it('exposes the fixed runtime observation panels through the Workbench registry', async () => {
+    const { wrapper } = await mountWorkspace()
+    expect(wrapper.findAll('.workbench-bottom-panel__tab').map(tab => tab.text())).toEqual([
+      'Problems0', 'Communication0', 'Trace0', 'Events0', 'Tool Calls0'
+    ])
   })
 
   it('surfaces API failure with a visible retry state', async () => {

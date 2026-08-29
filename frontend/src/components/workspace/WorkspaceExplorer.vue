@@ -23,24 +23,65 @@
           <small v-if="section.items.length">{{ section.items.length }}</small>
         </button>
         <div v-if="isExpanded(section.group)" class="workspace-tree__items">
-          <button
-            v-for="entry in section.items"
-            :key="entry.entryId"
-            type="button"
-            class="workspace-tree__entry"
-            :class="{
-              'is-active': entry.entryId === activeEditorId,
-              'is-current-run': entry.kind === 'run' && entry.runId === selectedRunId,
-              'is-legacy': entry.identityQuality === 'legacy'
-            }"
-            :title="entry.name"
-            @click="handleEntryClick(entry)"
-          >
-            <el-icon class="workspace-tree__entry-icon"><component :is="entryIcon(entry)" /></el-icon>
-            <span class="workspace-tree__entry-name">{{ entry.name }}</span>
-            <span v-if="entry.kind === 'run'" class="workspace-tree__run-state">{{ runLabel(entry.status) }}</span>
-            <span v-else-if="entry.identityQuality === 'legacy'" class="workspace-tree__legacy">legacy</span>
-          </button>
+          <template v-for="entry in section.items" :key="entry.entryId">
+            <button
+              type="button"
+              class="workspace-tree__entry"
+              :class="{
+                'is-active': entry.entryId === activeEditorId,
+                'is-current-run': entry.kind === 'run' && entry.runId === selectedRunId,
+                'is-legacy': entry.identityQuality === 'legacy',
+                'is-task': entry.kind === 'task'
+              }"
+              :title="entry.name"
+              @click="handleEntryClick(entry)"
+            >
+              <span
+                v-if="entry.kind === 'task' && taskChildren(entry).length"
+                class="workspace-tree__entry-toggle"
+                role="button"
+                tabindex="0"
+                :aria-label="`${isTaskExpanded(entry) ? '收起' : '展开'} ${entry.name} 的产物`"
+                @click.stop="toggleTask(entry)"
+                @keydown.enter.stop.prevent="toggleTask(entry)"
+                @keydown.space.stop.prevent="toggleTask(entry)"
+              >
+                <el-icon><ArrowDown v-if="isTaskExpanded(entry)" /><ArrowRight v-else /></el-icon>
+              </span>
+              <span v-else-if="entry.kind === 'task'" class="workspace-tree__entry-toggle workspace-tree__entry-toggle--empty" aria-hidden="true"></span>
+              <span v-if="entry.kind === 'task'" class="workspace-tree__order">{{ formatOrder(entry.displayOrder) }}</span>
+              <el-icon class="workspace-tree__entry-icon"><component :is="entryIcon(entry)" /></el-icon>
+              <span class="workspace-tree__entry-name">{{ entry.name }}</span>
+              <span
+                v-if="entry.kind === 'task'"
+                class="workspace-tree__task-state"
+                :class="`is-${entry.status || 'pending'}`"
+                :title="taskStatusLabel(entry.status)"
+                :aria-label="taskStatusLabel(entry.status)"
+              >
+                <span class="workspace-tree__task-state-icon" aria-hidden="true">{{ taskStatusMark(entry.status) }}</span>
+                <span class="workspace-tree__task-state-label">{{ taskStatusLabel(entry.status) }}</span>
+              </span>
+              <span v-if="entry.kind === 'task' && entry.artifactCount" class="workspace-tree__artifact-count">{{ entry.artifactCount }}</span>
+              <span v-if="entry.kind === 'run'" class="workspace-tree__run-state">{{ runLabel(entry.status) }}</span>
+              <span v-else-if="entry.identityQuality === 'legacy'" class="workspace-tree__legacy">legacy</span>
+            </button>
+            <div v-if="entry.kind === 'task' && isTaskExpanded(entry)" class="workspace-tree__children">
+              <button
+                v-for="child in taskChildren(entry)"
+                :key="child.entryId"
+                type="button"
+                class="workspace-tree__entry workspace-tree__entry--child"
+                :class="{ 'is-active': child.entryId === activeEditorId }"
+                :title="child.name"
+                @click="handleEntryClick(child)"
+              >
+                <el-icon class="workspace-tree__entry-icon"><component :is="entryIcon(child)" /></el-icon>
+                <span class="workspace-tree__entry-name">{{ child.name }}</span>
+                <code>{{ child.artifactKey }}</code>
+              </button>
+            </div>
+          </template>
           <p v-if="!section.items.length" class="workspace-tree__empty">{{ section.empty }}</p>
         </div>
       </section>
@@ -57,7 +98,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ArrowDown, ArrowLeft, ArrowRight, Document, Files, FolderOpened, Share, Clock } from '@element-plus/icons-vue'
-import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceEntryKind, WorkspaceRunStatus } from '@/services/api/agentos'
+import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceEntryKind } from '@/services/api/agentos'
 
 const props = defineProps<{
   projection: MissionWorkspaceProjection
@@ -77,10 +118,11 @@ const expandedSections = ref<Record<string, boolean>>({
   output: true,
   runs: true
 })
+const expandedTasks = ref<Record<string, boolean>>({})
 
 const groupLabels: Record<string, { label: string; empty: string }> = {
   overview: { label: 'OVERVIEW', empty: '当前 Run 尚未生成概览文件' },
-  steps: { label: 'STEPS', empty: '当前 Run 尚无步骤产物' },
+  steps: { label: 'STEPS', empty: '当前 Run 尚无逻辑步骤' },
   output: { label: 'OUTPUT', empty: '当前 Run 尚无已证明的最终产物' },
   runs: { label: 'RUNS', empty: 'Mission 尚无历史 Run' }
 }
@@ -89,7 +131,11 @@ const sections = computed(() => Object.entries(groupLabels).map(([group, meta]) 
   group,
   ...meta,
   items: props.projection.entries
-    .filter(entry => entry.group === group && entry.kind !== 'folder')
+    .filter(entry => entry.group === group && (
+      group !== 'steps'
+      || entry.kind === 'task'
+      || (entry.kind === 'artifact' && (!entry.parentEntryId || !props.projection.entries.some(parent => parent.entryId === entry.parentEntryId && parent.kind === 'task')))
+    ) && entry.kind !== 'folder')
     .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId))
 })))
 
@@ -98,6 +144,13 @@ const toggleSection = (group: string) => {
 }
 
 const isExpanded = (group: string) => expandedSections.value[group] !== false
+
+const taskChildren = (task: WorkspaceEntry) => props.projection.entries
+  .filter(entry => entry.parentEntryId === task.entryId && entry.kind === 'artifact')
+  .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId))
+
+const isTaskExpanded = (task: WorkspaceEntry) => expandedTasks.value[task.entryId] !== false
+const toggleTask = (task: WorkspaceEntry) => { expandedTasks.value[task.entryId] = !isTaskExpanded(task) }
 
 const handleEntryClick = (entry: WorkspaceEntry) => {
   if (entry.kind === 'run' && entry.runId) {
@@ -112,13 +165,14 @@ const entryIcon = (entry: WorkspaceEntry) => {
     folder: FolderOpened,
     graph: Share,
     virtual_document: Document,
+    task: Document,
     artifact: Files,
     run: Clock
   }
   return icons[entry.kind]
 }
 
-const runLabel = (status?: WorkspaceRunStatus | null) => ({
+const runLabel = (status?: string | null) => ({
   pending: 'pending',
   running: 'running',
   succeeded: 'succeeded',
@@ -126,6 +180,26 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   cancelled: 'cancelled',
   superseded: 'superseded'
 }[status || ''] || status || '')
+
+const taskStatusLabel = (status?: string | null) => ({
+  pending: 'pending',
+  ready: 'ready',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  skipped: 'skipped'
+}[status || ''] || status || 'pending')
+
+const taskStatusMark = (status?: string | null) => ({
+  pending: '○',
+  ready: '○',
+  running: '●',
+  completed: '✓',
+  failed: '!',
+  skipped: '×'
+}[status || ''] || '○')
+
+const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 </script>
 
 <style scoped>
@@ -135,17 +209,22 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   min-width: 0;
   min-height: 0;
   height: 100%;
-  color: var(--text-primary);
-  background: var(--bg-card);
+  color: var(--wb-text);
+  background: var(--wb-surface-1);
 }
 
 .workspace-explorer__header {
-  padding: 16px 16px 13px;
-  border-bottom: 1px solid var(--border-light);
+  flex: 0 0 auto;
+  margin: 8px 8px 4px;
+  padding: 11px 12px 10px;
+  border: 1px solid var(--wb-border-soft);
+  border-radius: var(--wb-radius-section);
+  background: var(--wb-surface-section);
+  box-shadow: var(--wb-shadow-section);
 }
 
-.workspace-explorer__back { display: inline-flex; align-items: center; gap: 5px; margin: -4px 0 12px; padding: 0; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 11px; }
-.workspace-explorer__back:hover { color: var(--primary-color); }
+.workspace-explorer__back { display: inline-flex; align-items: center; gap: 5px; margin: -3px 0 9px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 11px; }
+.workspace-explorer__back:hover { color: var(--wb-accent); }
 
 .workspace-explorer__title-row {
   display: flex;
@@ -161,10 +240,10 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   flex: 0 0 28px;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--primary-line);
-  border-radius: 6px;
-  color: var(--primary-color);
-  background: var(--primary-fade);
+  border: 1px solid color-mix(in srgb, var(--wb-accent) 28%, var(--wb-border));
+  border-radius: var(--wb-radius-md);
+  color: var(--wb-accent);
+  background: var(--wb-accent-soft);
 }
 
 .workspace-explorer__title-row div {
@@ -180,21 +259,21 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
 }
 
 .workspace-explorer__title-row strong {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .workspace-explorer__title-row small {
   margin-top: 2px;
-  color: var(--text-secondary);
+  color: var(--wb-text-secondary);
   font-size: 11px;
 }
 
 .workspace-explorer__mission-id {
   display: block;
-  margin-top: 11px;
+  margin-top: 9px;
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--wb-text-muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -204,11 +283,11 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 6px;
+  padding: 7px 5px;
   scrollbar-gutter: stable;
 }
 
-.workspace-tree__section { margin-bottom: 5px; }
+.workspace-tree__section { margin-bottom: 4px; }
 
 .workspace-tree__section-toggle,
 .workspace-tree__entry {
@@ -216,14 +295,14 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   align-items: center;
   width: 100%;
   border: 0;
-  color: var(--text-secondary);
+  color: var(--wb-text-secondary);
   background: transparent;
   text-align: left;
 }
 
 .workspace-tree__section-toggle {
   gap: 4px;
-  min-height: 28px;
+  min-height: 27px;
   padding: 0 7px;
   cursor: pointer;
   font-size: 10px;
@@ -231,31 +310,48 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   letter-spacing: .08em;
 }
 
-.workspace-tree__section-toggle:hover { color: var(--text-primary); }
-.workspace-tree__section-toggle small { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
+.workspace-tree__section-toggle:hover { color: var(--wb-text); }
+.workspace-tree__section-toggle small { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 
 .workspace-tree__items { padding: 1px 0 4px; }
 
 .workspace-tree__entry {
-  gap: 8px;
-  min-height: 31px;
-  padding: 0 9px 0 17px;
+  position: relative;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 8px 0 15px;
   border-left: 2px solid transparent;
   cursor: pointer;
   font-size: 12px;
   transition: background 160ms var(--ease-out), color 160ms var(--ease-out), border-color 160ms var(--ease-out);
 }
 
-.workspace-tree__entry:hover { color: var(--text-primary); background: var(--bg-input); }
-.workspace-tree__entry.is-active { border-left-color: var(--primary-color); color: var(--text-primary); background: var(--primary-fade); }
-.workspace-tree__entry.is-current-run { color: var(--primary-color); }
-.workspace-tree__entry.is-legacy { color: var(--warning); }
-.workspace-tree__entry-icon { flex: 0 0 auto; color: var(--text-muted); }
-.workspace-tree__entry.is-active .workspace-tree__entry-icon { color: var(--primary-color); }
+.workspace-tree__entry:hover { border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-hover); }
+.workspace-tree__entry.is-active { border-left-color: var(--wb-accent); border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-selected); }
+.workspace-tree__entry.is-current-run { color: var(--wb-accent); }
+.workspace-tree__entry.is-legacy { color: var(--wb-warning); }
+.workspace-tree__entry.is-task { min-height: 32px; padding-left: 6px; }
+.workspace-tree__entry--child { min-height: 28px; padding-left: 43px; font-size: 11px; }
+.workspace-tree__children { padding-bottom: 2px; }
+.workspace-tree__entry-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 17px; width: 17px; height: 17px; color: var(--wb-text-muted); cursor: pointer; }
+.workspace-tree__entry-toggle:hover { color: var(--wb-accent); }
+.workspace-tree__entry-toggle--empty { cursor: default; }
+.workspace-tree__order { flex: 0 0 20px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-align: right; }
+.workspace-tree__entry-icon { flex: 0 0 auto; color: var(--wb-text-muted); }
+.workspace-tree__entry.is-active .workspace-tree__entry-icon { color: var(--wb-accent); }
 .workspace-tree__entry-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-tree__run-state { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
-.workspace-tree__legacy { margin-left: auto; color: var(--warning); font: 10px var(--font-mono, monospace); }
-.workspace-tree__empty { margin: 4px 10px 8px 31px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.workspace-tree__task-state { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); }
+.workspace-tree__task-state-icon { display: inline-grid; place-items: center; width: 16px; height: 16px; }
+.workspace-tree__task-state-label { width: 0; overflow: hidden; opacity: 0; transition: width 160ms var(--ease-out), opacity 160ms var(--ease-out); }
+.workspace-tree__entry:hover .workspace-tree__task-state-label, .workspace-tree__entry.is-active .workspace-tree__task-state-label { width: auto; opacity: 1; }
+.workspace-tree__task-state.is-completed { color: var(--wb-success); }
+.workspace-tree__task-state.is-running { color: var(--wb-accent); }
+.workspace-tree__task-state.is-failed { color: var(--wb-danger); }
+.workspace-tree__artifact-count { margin-left: 0; color: var(--wb-accent); font: 10px var(--font-mono, monospace); }
+.workspace-tree__entry--child code { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.workspace-tree__run-state { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.workspace-tree__legacy { margin-left: auto; color: var(--wb-warning); font: 10px var(--font-mono, monospace); }
+.workspace-tree__empty { margin: 4px 10px 8px 31px; color: var(--wb-text-muted); font-size: 11px; line-height: 1.5; }
 
 .workspace-explorer__footer {
   display: flex;
@@ -263,14 +359,18 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   gap: 7px;
   min-height: 34px;
   padding: 0 13px;
-  border-top: 1px solid var(--border-light);
-  color: var(--text-muted);
+  border-top: 1px solid var(--wb-border-soft);
+  color: var(--wb-text-muted);
   font-size: 10px;
 }
 
 .workspace-explorer__status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-disabled); }
-.workspace-explorer__status-dot.is-active { background: var(--success); }
-.workspace-explorer__readonly { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
+.workspace-explorer__status-dot.is-active { background: var(--wb-success); }
+.workspace-explorer__readonly { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+
+.workspace-tree__entry:focus-visible,
+.workspace-tree__section-toggle:focus-visible,
+.workspace-explorer__back:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-tree__entry { transition-duration: 1ms; }
