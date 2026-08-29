@@ -15,6 +15,7 @@ from domain.models import (
     StepExecution,
     SemanticTask,
     Mission,
+    MissionStatus,
     WorkflowRun,
 )
 
@@ -24,6 +25,21 @@ class MissionDetail(DomainModel):
     tasks: list[SemanticTask]
     blueprints: list[AcgBlueprint]
     runs: list[WorkflowRun]
+
+
+class MissionListItem(DomainModel):
+    """Project-list projection; one row represents one long-lived Mission."""
+
+    mission_id: str = Field(alias="missionId")
+    user_id: str = Field(alias="userId")
+    title: str
+    description: str = ""
+    status: MissionStatus
+    latest_run_id: str | None = Field(default=None, alias="latestRunId")
+    latest_run_status: str | None = Field(default=None, alias="latestRunStatus")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    run_count: int = Field(default=0, alias="runCount", ge=0)
 
 
 class MissionRunHistory(DomainModel):
@@ -136,5 +152,6 @@ __all__ = [
     "IdentityProjectionHealth",
     "StepExecutionDetail",
     "MissionDetail",
+    "MissionListItem",
     "MissionRunHistory",
 ]

@@ -14,6 +14,7 @@ from .query_models import (
     RunOperationalState,
     StepExecutionDetail,
     MissionDetail,
+    MissionListItem,
     MissionRunHistory,
     RunArtifactDetail,
 )
@@ -51,6 +52,41 @@ class IdentityQueryService:
             limit=page_size,
         )
         return ([self.get_mission(mission.mission_id) for mission in missions], total)
+
+    def list_mission_items(
+        self,
+        *,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        status: MissionStatus | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[MissionListItem], int]:
+        """Return a Mission-level Project list without treating Runs as projects."""
+        missions, total = self.repositories.missions.list(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            status=status,
+            offset=(max(1, page) - 1) * max(1, page_size),
+            limit=page_size,
+        )
+        items: list[MissionListItem] = []
+        for mission in missions:
+            runs = self.repositories.runs.list_for_mission(mission.mission_id)
+            latest = max(runs, key=lambda item: (item.updated_at, item.run_id), default=None)
+            items.append(MissionListItem(
+                missionId=mission.mission_id,
+                userId=mission.user_id,
+                title=mission.goal,
+                description=mission.description,
+                status=mission.status,
+                latestRunId=latest.run_id if latest is not None else None,
+                latestRunStatus=latest.status.value if latest is not None else None,
+                createdAt=mission.created_at.isoformat(),
+                updatedAt=mission.updated_at.isoformat(),
+                runCount=len(runs),
+            ))
+        return items, total
 
     def get_mission(self, mission_id: str) -> MissionDetail:
         mission = self.repositories.missions.get(mission_id)

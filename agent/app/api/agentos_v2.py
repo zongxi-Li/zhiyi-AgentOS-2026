@@ -608,7 +608,7 @@ def create_router(
             mission_status = MissionStatus(status_value) if status_value else None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="invalid mission status") from exc
-        items, total = query.list_missions(
+        items, total = query.list_mission_items(
             user_id=(actor.user_id if actor else None),
             tenant_id=(actor.tenant_id if actor else None),
             status=mission_status,

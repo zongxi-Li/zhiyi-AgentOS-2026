@@ -781,7 +781,9 @@ async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path)
         assert health.json()["status"] == "healthy"
         assert health.json()["unappliedEventCount"] == 0
         assert tasks.json()["source"] == "agentos-v2"
-        assert tasks.json()["items"][0]["mission"]["missionId"] == task.mission_id
+        assert tasks.json()["items"][0]["missionId"] == task.mission_id
+        assert tasks.json()["items"][0]["latestRunId"] == run.run_id
+        assert tasks.json()["items"][0]["runCount"] == 1
         assert detail.json()["tasks"][0]["taskId"].startswith("task_")
         assert history.json()["runs"][0]["runId"] == run.run_id
         assert projected_run.json()["identity"]["blueprintId"].startswith("blueprint_")

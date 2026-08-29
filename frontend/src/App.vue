@@ -171,10 +171,10 @@
                 </button>
 
                 <div class="chat-submenu-section-head">
-                  <span class="chat-submenu-section-title">{{ workspaceMode === 'agent' ? 'ACG 记录' : '对话记录' }}</span>
+                    <span class="chat-submenu-section-title">{{ workspaceMode === 'agent' ? '运行记录' : '对话记录' }}</span>
                   <div class="chat-submenu-section-tools">
                     <label v-if="workspaceMode === 'agent'" class="acg-role-filter acg-role-filter--sidebar">
-                      <select v-model="agentHistoryRole" aria-label="按角色筛选 ACG 记录" @change="handleAgentHistoryRoleChange">
+                        <select v-model="agentHistoryRole" aria-label="按角色筛选运行记录" @change="handleAgentHistoryRoleChange">
                         <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
                           {{ option.label }}
                         </option>
@@ -354,7 +354,7 @@
               <div class="menu-group-title">{{ $t('nav.system') }}</div>
               <el-menu-item index="/agentos-console">
                 <el-icon><Monitor /></el-icon>
-                <span>ACG 历史记录</span>
+                <span>运行审计</span>
               </el-menu-item>
               <el-menu-item index="/roles">
                 <el-icon><User /></el-icon>
@@ -407,8 +407,8 @@
 
           <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable }">
             <router-view v-slot="{ Component }">
-              <transition name="fade" mode="out-in">
-                <component :is="Component" />
+              <transition name="fade">
+                <component :is="Component" :key="route.path" />
               </transition>
             </router-view>
           </el-main>
@@ -521,8 +521,8 @@ const sidebarWidth = ref(
 const sidebarResizing = ref(false)
 const isAcgRoute = computed(() => isAcgPath(route.path))
 const secondaryNavOpen = computed(() => chatNavOpen.value)
-const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value || isAcgRoute.value)
-const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? 60 + chatPanelWidth.value : ((sidebarCollapsed.value || isAcgRoute.value) ? 60 : sidebarWidth.value)}px`)
+const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value)
+const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? 60 + chatPanelWidth.value : (sidebarCollapsed.value ? 60 : sidebarWidth.value)}px`)
 const primarySidebarWidth = computed(() => `${mainSidebarCompact.value ? 60 : sidebarWidth.value}px`)
 let sidebarResizeStartX = 0
 let sidebarResizeStartWidth = SIDEBAR_DEFAULT_WIDTH

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { workflowApi } from '@/services/api/workflow'
 import AcgEntryView from './AcgEntryView.vue'
 
-const legacyStub = { template: '<div class="legacy-acg-entry">legacy entry</div>' }
+const projectListStub = { template: '<div class="project-list-entry">projects</div>' }
 
 const createTestRouter = async (url: string) => {
   const router = createRouter({
@@ -28,7 +28,7 @@ describe('AcgEntryView', () => {
     } as any)
     const router = await createTestRouter('/agentos/acg?runId=run_1')
     mount(AcgEntryView, {
-      global: { plugins: [router], stubs: { LegacyAcgVisualization: legacyStub } }
+      global: { plugins: [router], stubs: { ProjectListView: projectListStub } }
     })
 
     await flushPromises()
@@ -39,14 +39,14 @@ describe('AcgEntryView', () => {
     expect(router.currentRoute.value.query.runId).toBe('run_1')
   })
 
-  it('keeps the legacy ACG entry for creating a new run', async () => {
+  it('opens the canonical Project list without a Run query', async () => {
     const router = await createTestRouter('/agentos/acg')
     const wrapper = mount(AcgEntryView, {
-      global: { plugins: [router], stubs: { LegacyAcgVisualization: legacyStub } }
+      global: { plugins: [router], stubs: { ProjectListView: projectListStub } }
     })
 
     await flushPromises()
 
-    expect(wrapper.find('.legacy-acg-entry').text()).toBe('legacy entry')
+    expect(wrapper.find('.project-list-entry').text()).toBe('projects')
   })
 })

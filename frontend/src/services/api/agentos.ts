@@ -119,6 +119,26 @@ export interface RuntimeMissionRecord {
   updatedAt?: string
 }
 
+/** One row in the canonical Project list. A Mission owns its Runs. */
+export interface MissionListItem {
+  missionId: string
+  userId: string
+  title: string
+  description: string
+  status: string
+  latestRunId?: string | null
+  latestRunStatus?: string | null
+  createdAt: string
+  updatedAt: string
+  runCount: number
+}
+
+export interface MissionListQuery {
+  status?: string
+  page?: number
+  pageSize?: number
+}
+
 export interface PageResponse<T> {
   items: T[]
   total: number
@@ -480,6 +500,10 @@ export interface WorkspaceGraphNode {
   taskId?: string | null
   identityQuality?: WorkspaceIdentityQuality | null
   displayOrder: number
+  status?: string | null
+  attemptId?: string | null
+  artifactCount?: number
+  artifactIds?: string[]
 }
 
 export interface WorkspaceDiagnostic {
@@ -1015,6 +1039,21 @@ export interface WorkflowHistoryConfig {
 export const agentosApi = {
   async createMaterial(content: string, mediaType = 'text/plain'): Promise<ContentManifestSummary> {
     const response = await agentosRequest.post<ContentManifestSummary>('/materials', { content, mediaType })
+    return response.data
+  },
+
+  async listMissions(
+    params: MissionListQuery = {},
+    options: { signal?: AbortSignal } = {}
+  ): Promise<PageResponse<MissionListItem>> {
+    const response = await agentosRequest.get<PageResponse<MissionListItem>>('/missions', {
+      params: {
+        status: params.status || undefined,
+        page: params.page,
+        pageSize: params.pageSize
+      },
+      signal: options.signal
+    })
     return response.data
   },
 

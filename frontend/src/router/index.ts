@@ -139,6 +139,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/agentos/missions/new',
+    name: 'CreateMission',
+    component: () => import('@/views/CreateMissionView.vue'),
+    meta: {
+      title: '新建工程',
+      requiresAuth: true
+    }
+  },
+  {
     path: '/agentos/missions/:missionId/workspace',
     name: 'MissionWorkspace',
     component: () => import('@/views/MissionWorkspaceView.vue'),

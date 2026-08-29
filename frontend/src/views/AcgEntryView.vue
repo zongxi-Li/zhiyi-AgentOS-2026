@@ -10,11 +10,11 @@
       <span class="acg-entry-bridge__eyebrow">WORKSPACE UNAVAILABLE</span>
       <h1>无法打开任务工作区</h1>
       <p>{{ errorMessage }}</p>
-      <button type="button" @click="returnToAcgEntry">返回 ACG 任务入口</button>
+      <button type="button" @click="returnToProjectList">返回项目列表</button>
     </div>
   </section>
 
-  <LegacyAcgVisualization v-else />
+  <ProjectListView v-else />
 </template>
 
 <script setup lang="ts">
@@ -22,7 +22,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue
 import { useRoute, useRouter } from 'vue-router'
 import { workflowApi } from '@/services/api/workflow'
 
-const LegacyAcgVisualization = defineAsyncComponent(() => import('./AcgVisualizationView.vue'))
+const ProjectListView = defineAsyncComponent(() => import('./ProjectListView.vue'))
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
@@ -35,7 +35,7 @@ const runId = computed(() => {
   return typeof value === 'string' ? value.trim() : ''
 })
 
-const returnToAcgEntry = () => {
+const returnToProjectList = () => {
   void router.replace({ path: '/agentos/acg', query: {} })
 }
 
