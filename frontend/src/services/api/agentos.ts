@@ -297,6 +297,7 @@ export interface NodeExecutionRecord {
 export interface IdentitySemanticTask {
   taskId: string
   missionId: string
+  semanticTaskKey?: string | null
   parentTaskId?: string | null
   title: string
   objective: string
@@ -335,6 +336,75 @@ export interface ExecutionBinding {
   modelId: string
   metadata: Record<string, unknown>
   createdAt?: string
+}
+
+export type RuntimeResourceType = 'agent' | 'model' | 'embedding' | 'tool' | 'worker' | 'skill' | string
+export type RuntimeResourceHealth = 'unknown' | 'online' | 'degraded' | 'offline' | string
+
+export interface RuntimeResourceProfile {
+  resourceId: string
+  resourceType: RuntimeResourceType
+  capabilities: string[]
+  domains: string[]
+  labels: Record<string, string>
+  location?: string | null
+  dataZone?: string | null
+  costMetadata: Record<string, number>
+  capacity: number
+  ownerScope?: string | null
+  enabled: boolean
+  metadata: Record<string, unknown>
+  version: number
+}
+
+export interface RuntimeResourceSnapshot {
+  resourceId: string
+  observedAt: string
+  availableSlots: number
+  utilization: number
+  healthStatus: RuntimeResourceHealth
+  reliability?: number | null
+  latencyMs?: number | null
+  metrics: Record<string, number>
+}
+
+export interface RuntimeResourceItem {
+  profile: RuntimeResourceProfile
+  snapshot: RuntimeResourceSnapshot
+  snapshotVersion: number
+}
+
+export interface RunProvenanceEvent {
+  eventType?: string
+  payload?: Record<string, any>
+  createdAt?: string | null
+}
+
+export interface RunProvenanceProjection {
+  runId: string
+  integrityStatus?: string
+  events?: RunProvenanceEvent[]
+  productions?: ProvenanceProduction[]
+  consumptions?: ProvenanceConsumption[]
+  interactions?: RuntimeInteraction[]
+  legacy?: boolean
+}
+
+export interface ResourceBindingObservation extends ExecutionBinding {
+  taskId: string
+  semanticTaskKey?: string | null
+  attemptNumber: number
+  attemptStatus: string
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface ResourceObservation {
+  runId: string
+  items: RuntimeResourceItem[]
+  bindings: ResourceBindingObservation[]
+  attemptCount: number
+  source: string
 }
 
 export interface IdentityAttemptDetail {
@@ -434,7 +504,7 @@ export interface IdentityProjectionState {
   message?: string
 }
 
-export type WorkspaceEntryKind = 'folder' | 'graph' | 'virtual_document' | 'artifact' | 'run'
+export type WorkspaceEntryKind = 'folder' | 'graph' | 'virtual_document' | 'task' | 'artifact' | 'run'
 export type WorkspaceIdentityQuality = 'canonical' | 'legacy'
 export type WorkspaceRunStatus = WorkflowStatus | 'succeeded' | 'superseded'
 
@@ -463,12 +533,19 @@ export interface WorkspaceEntry {
   entryId: string
   kind: WorkspaceEntryKind
   name: string
+  title?: string | null
   group: 'overview' | 'steps' | 'output' | 'runs' | string
   parentEntryId?: string | null
   displayOrder: number
   semanticTaskKey?: string | null
   artifactKey?: string | null
   taskId?: string | null
+  logicalRole?: string | null
+  objective?: string | null
+  dependencyKeys?: string[]
+  attemptCount?: number
+  latestAttemptId?: string | null
+  artifactCount?: number
   artifactId?: string | null
   contentRef?: string | null
   artifactType?: string | null
@@ -481,7 +558,7 @@ export interface WorkspaceEntry {
   identityQuality?: WorkspaceIdentityQuality | null
   createdAt?: string | null
   runId?: string | null
-  status?: WorkspaceRunStatus | null
+  status?: string | null
   blueprintId?: string | null
   graphId?: string | null
   graphVersion?: number | null
@@ -1247,6 +1324,13 @@ export const agentosApi = {
     return response.data
   },
 
+  async listResources(options: { signal?: AbortSignal } = {}): Promise<{ items: RuntimeResourceItem[]; total: number }> {
+    const response = await agentosRequest.get<{ items: RuntimeResourceItem[]; total: number }>('/resources', {
+      signal: options.signal
+    })
+    return response.data
+  },
+
   async getWorkflowHistoryConfig(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowHistoryConfig> {
     const response = await agentosRequest.get<WorkflowHistoryConfig>(`${runPath(runId)}/history-config`, {
       signal: options.signal
@@ -1261,6 +1345,11 @@ export const agentosApi = {
 
   async getWorkflowTrace(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowTraceExport> {
     const response = await agentosRequest.get<WorkflowTraceExport>(`${runPath(runId)}/trace`, { signal: options.signal })
+    return response.data
+  },
+
+  async getRunProvenance(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunProvenanceProjection> {
+    const response = await agentosRequest.get<RunProvenanceProjection>(`${runPath(runId)}/provenance`, { signal: options.signal })
     return response.data
   },
 
