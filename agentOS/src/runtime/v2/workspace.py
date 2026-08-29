@@ -96,6 +96,10 @@ class WorkspaceGraphNode(DomainModel):
     task_id: str | None = Field(default=None, alias="taskId")
     identity_quality: WorkspaceIdentityQuality | None = Field(default=None, alias="identityQuality")
     display_order: int = Field(alias="displayOrder", ge=0)
+    status: str | None = None
+    attempt_id: str | None = Field(default=None, alias="attemptId")
+    artifact_count: int = Field(default=0, alias="artifactCount", ge=0)
+    artifact_ids: list[str] = Field(default_factory=list, alias="artifactIds")
 
 
 class WorkspaceDiagnostic(DomainModel):
@@ -157,9 +161,9 @@ class MissionWorkspaceProjector:
             blueprint = self.repositories.blueprints.get(selected_run.blueprint_id)
             if blueprint is None:
                 raise EntityNotFoundError(f"AcgBlueprint not found: {selected_run.blueprint_id}")
-            active_graph = self._graph_snapshot(selected_run, blueprint)
-            graph_nodes = self._graph_nodes(blueprint, tasks, diagnostics)
-            entries.extend(self._graph_entries(selected_run, blueprint))
+            active_graph = self._graph_snapshot(selected_run, blueprint, plan)
+            graph_nodes = self._graph_nodes(selected_run, blueprint, tasks, diagnostics)
+            entries.extend(self._graph_entries(selected_run, blueprint, plan))
         else:
             blueprint = None
 
@@ -238,7 +242,7 @@ class MissionWorkspaceProjector:
         ]
 
     @staticmethod
-    def _graph_entries(run: WorkflowRun, blueprint: AcgBlueprint) -> list[WorkspaceEntry]:
+    def _graph_entries(run: WorkflowRun, blueprint: AcgBlueprint, plan: Any | None = None) -> list[WorkspaceEntry]:
         return [WorkspaceEntry(
             entry_id="overview:graph.acg",
             kind=WorkspaceEntryKind.GRAPH,
@@ -250,25 +254,31 @@ class MissionWorkspaceProjector:
             blueprint_id=blueprint.blueprint_id,
             graph_id=blueprint.graph_id,
             graph_version=run.graph_version,
+            metadata={"taskPlanVersion": plan.plan_version} if plan is not None else {},
         )]
 
     @staticmethod
-    def _graph_snapshot(run: WorkflowRun, blueprint: AcgBlueprint) -> dict[str, Any]:
+    def _graph_snapshot(run: WorkflowRun, blueprint: AcgBlueprint, plan: Any | None = None) -> dict[str, Any]:
         return {
             **dict(blueprint.graph),
             "blueprintId": blueprint.blueprint_id,
             "graphId": blueprint.graph_id,
             "missionId": blueprint.mission_id,
             "graphVersion": run.graph_version,
+            "taskPlanVersion": plan.plan_version if plan is not None else None,
         }
 
     def _graph_nodes(
         self,
+        run: WorkflowRun,
         blueprint: AcgBlueprint,
         tasks: list[SemanticTask],
         diagnostics: list[WorkspaceDiagnostic],
     ) -> list[WorkspaceGraphNode]:
         task_by_id = {task.task_id: task for task in tasks}
+        attempts_by_task: dict[str, list[Any]] = {}
+        for attempt in self.repositories.attempts.list_for_run(run.run_id):
+            attempts_by_task.setdefault(attempt.task_id, []).append(attempt)
         result: list[WorkspaceGraphNode] = []
         raw_nodes = blueprint.graph.get("nodes") if isinstance(blueprint.graph, dict) else []
         for index, raw in enumerate(raw_nodes if isinstance(raw_nodes, list) else []):
@@ -279,6 +289,17 @@ class MissionWorkspaceProjector:
             binding = self._primary_binding(bindings)
             task = task_by_id.get(binding.task_id) if binding is not None else None
             key = self._task_key(task) if task is not None else None
+            attempts = attempts_by_task.get(task.task_id, []) if task is not None else []
+            latest_attempt = max(
+                attempts,
+                key=lambda item: (item.attempt_number, item.attempt_id),
+                default=None,
+            )
+            artifact_ids = [
+                artifact.artifact_id
+                for attempt in attempts
+                for artifact in self.repositories.artifacts.list_for_attempt(attempt.attempt_id)
+            ]
             if binding is not None and task is None:
                 diagnostics.append(WorkspaceDiagnostic(
                     code="GRAPH_TASK_NOT_FOUND",
@@ -296,6 +317,10 @@ class MissionWorkspaceProjector:
                     else WorkspaceIdentityQuality.LEGACY if task is not None else None
                 ),
                 display_order=index,
+                status=(latest_attempt.status.value if latest_attempt is not None else None),
+                attempt_id=(latest_attempt.attempt_id if latest_attempt is not None else None),
+                artifact_count=len(artifact_ids),
+                artifact_ids=artifact_ids,
             ))
         return result
 
