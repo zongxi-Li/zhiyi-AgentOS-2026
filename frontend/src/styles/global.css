@@ -157,6 +157,21 @@
   --wb-tab-height: 36px;
   --wb-toolbar-height: 44px;
   --wb-panel-tab-height: 34px;
+
+  /* App shell top chrome — stable across routed workbench surfaces. */
+  --app-topbar-bg: color-mix(in srgb, #ffffff 94%, var(--bg-sidebar));
+  --app-topbar-text: #22263a;
+  --app-topbar-muted: #737991;
+  --app-topbar-border: rgba(49, 55, 83, 0.1);
+  --app-topbar-hover: rgba(93, 102, 214, 0.07);
+  --app-topbar-active: rgba(93, 102, 214, 0.1);
+  --app-topbar-focus-ring: color-mix(in srgb, var(--primary-color) 26%, transparent);
+  --app-topbar-focus-border: color-mix(in srgb, var(--primary-color) 68%, #ffffff);
+  --app-topbar-input-bg: #f5f6fb;
+  --app-topbar-input-bg-hover: #eef0f8;
+  --app-topbar-input-border: rgba(71, 79, 116, 0.12);
+  --app-topbar-kbd-bg: #eceef7;
+  --app-topbar-logo-bg: #f5f6fb;
 }
 
 /* Base Reset */

@@ -3,22 +3,27 @@
   <ErrorBoundary>
     <div id="app">
       <el-container class="app-layout" :class="{ 'immersive-mode': isImmersive }">
-        <!-- Sidebar Navigation -->
-        <el-aside
-          v-if="!isImmersive && !usesDrawerNavigation"
-          :width="sidebarAsideWidth"
-          class="app-sidebar"
-          :class="{ collapsed: mainSidebarCompact, 'chat-panel-open': secondaryNavOpen, resizing: sidebarResizing || chatPanelResizing }"
-        >
+        <AppTopBar
+          v-if="!isImmersive"
+          :context-eyebrow="topChromeContext.eyebrow"
+          :context-title="topChromeContext.title"
+          :context-meta="topChromeMeta"
+          @menu="handleTopChromeMenu"
+          @home="handleTopChromeHome"
+          @navigate="handleTopChromeNavigate"
+        />
+
+        <el-container class="app-shell-body">
+          <!-- Sidebar Navigation -->
+          <el-aside
+            v-if="!isImmersive && !usesDrawerNavigation"
+            :width="sidebarAsideWidth"
+            class="app-sidebar"
+            :class="{ collapsed: mainSidebarCompact, 'chat-panel-open': secondaryNavOpen, resizing: sidebarResizing || chatPanelResizing }"
+          >
           <div class="primary-sidebar" :style="{ width: primarySidebarWidth }">
-          <!-- Logo Section -->
-          <div class="sidebar-header">
-            <button class="sidebar-brand" type="button" aria-label="返回对话" @click="router.push('/chat')">
-              <span class="logo-icon">
-                <img src="/logo.png" alt="" aria-hidden="true" />
-              </span>
-              <span v-if="!mainSidebarCompact" class="logo-text">知弈</span>
-            </button>
+          <!-- Sidebar controls only; brand identity is owned by the App Top Bar. -->
+          <div class="sidebar-header sidebar-controls">
             <button
               class="sidebar-collapse-btn"
               type="button"
@@ -91,6 +96,10 @@
               </el-menu-item>
 
               <div v-if="!mainSidebarCompact" class="menu-group-title">{{ $t('nav.system') }}</div>
+              <el-menu-item index="/agentos/resources">
+                <el-icon><Cpu /></el-icon>
+                <span>资源中心</span>
+              </el-menu-item>
               <el-menu-item index="/agentos-console">
                 <el-icon><Monitor /></el-icon>
                 <span>ACG 历史记录</span>
@@ -297,17 +306,7 @@
             @keydown="handleSidebarResizeKeydown"
             @dblclick="resetSidebarWidth"
           ></div>
-        </el-aside>
-
-        <button
-          v-if="usesDrawerNavigation"
-          class="simple-nav-toggle"
-          type="button"
-          aria-label="展开导航"
-          @click="simpleNavOpen = true"
-        >
-          <el-icon><MenuIcon /></el-icon>
-        </button>
+          </el-aside>
 
         <el-drawer
           v-if="usesDrawerNavigation"
@@ -318,11 +317,11 @@
           class="simple-nav-drawer"
         >
           <div class="drawer-sidebar">
-            <div class="sidebar-header drawer-header" @click="router.push('/chat'); simpleNavOpen = false">
-              <div class="logo-icon">
-                <img src="/logo.png" alt="" aria-hidden="true" />
-              </div>
-              <span class="logo-text">知弈</span>
+            <div class="sidebar-header drawer-header">
+              <button class="drawer-close" type="button" aria-label="关闭导航" title="关闭导航" @click="simpleNavOpen = false">
+                <el-icon><Fold /></el-icon>
+                <span>导航</span>
+              </button>
             </div>
 
             <el-menu
@@ -352,6 +351,10 @@
               </el-menu-item>
 
               <div class="menu-group-title">{{ $t('nav.system') }}</div>
+              <el-menu-item index="/agentos/resources">
+                <el-icon><Cpu /></el-icon>
+                <span>资源中心</span>
+              </el-menu-item>
               <el-menu-item index="/agentos-console">
                 <el-icon><Monitor /></el-icon>
                 <span>运行审计</span>
@@ -391,27 +394,29 @@
           </div>
         </el-drawer>
 
-        <!-- Main Content Area -->
-        <el-container class="main-container">
-          <!-- Global Error Banner (Floating) -->
-          <transition name="fade">
-            <div v-if="globalError" class="global-error-banner">
-              <el-alert
-                :title="globalError"
-                type="error"
-                show-icon
-                @close="clearGlobalError"
-              />
-            </div>
-          </transition>
+          <!-- Main Content Area -->
+          <el-container class="main-container">
+            <DesktopRuntimeStatus />
+            <!-- Global Error Banner (Floating) -->
+            <transition name="fade">
+              <div v-if="globalError" class="global-error-banner">
+                <el-alert
+                  :title="globalError"
+                  type="error"
+                  show-icon
+                  @close="clearGlobalError"
+                />
+              </div>
+            </transition>
 
-          <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable }">
-            <router-view v-slot="{ Component }">
-              <transition name="fade">
-                <component :is="Component" :key="route.path" />
-              </transition>
-            </router-view>
-          </el-main>
+            <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable }">
+              <router-view v-slot="{ Component }">
+                <transition name="fade">
+                  <component :is="Component" :key="route.path" />
+                </transition>
+              </router-view>
+            </el-main>
+          </el-container>
         </el-container>
       </el-container>
     </div>
@@ -425,9 +430,11 @@ import {
   ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, EditPen, User, Search,
   Clock, Setting, SwitchButton, Connection,
   Monitor, Cpu, Box,
-  Menu as MenuIcon, Fold, Expand
+  Fold, Expand
 } from '@element-plus/icons-vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
+import AppTopBar from '@/components/app/AppTopBar.vue'
+import DesktopRuntimeStatus from '@/components/platform/DesktopRuntimeStatus.vue'
 import { authApi } from '@/services/api/auth'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
@@ -538,6 +545,36 @@ const sidebarUserName = computed(() => {
 })
 const sidebarUserMeta = computed(() => userStore.currentUser?.email?.trim() || '已登录')
 const sidebarUserInitial = computed(() => sidebarUserName.value.charAt(0).toUpperCase())
+
+const topChromeContext = computed(() => {
+  const title = typeof route.meta.title === 'string' ? route.meta.title : '工作台'
+
+  if (isMissionWorkspacePath(route.path)) {
+    return {
+      eyebrow: 'Projects',
+      title: 'Mission Workspace'
+    }
+  }
+
+  if (isAcgRoute.value) {
+    return {
+      eyebrow: 'ACG',
+      title
+    }
+  }
+
+  return {
+    eyebrow: '知弈工作台',
+    title
+  }
+})
+
+const topChromeMeta = computed(() => {
+  const runId = typeof route.query.runId === 'string' ? route.query.runId : ''
+  if (runId) return `Run ${runId.slice(-10)}`
+  if (isMissionWorkspacePath(route.path)) return 'Read-only'
+  return ''
+})
 
 // Sidebar navigation state
 
@@ -820,6 +857,22 @@ const toggleSidebar = () => {
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed.value ? '1' : '0')
 }
 
+const handleTopChromeMenu = () => {
+  if (usesDrawerNavigation.value) {
+    simpleNavOpen.value = true
+    return
+  }
+  toggleSidebar()
+}
+
+const handleTopChromeHome = () => {
+  void router.push('/agentos/acg')
+}
+
+const handleTopChromeNavigate = (path: string) => {
+  void router.push(path)
+}
+
 const clampSidebarWidth = (width: number) => {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
 }
@@ -954,6 +1007,7 @@ const isRouteScrollable = computed(() => {
     path.startsWith('/federated-learning') ||
     path.startsWith('/federated-models') ||
     path.startsWith('/agentos-console') ||
+    path.startsWith('/agentos/resources') ||
     path.startsWith('/rag') ||
     path.startsWith('/voice-chat')
   )
@@ -963,6 +1017,7 @@ const activeMenu = computed(() => {
   const path = route.path
   if (path === '/chat' || path.startsWith('/chat')) return '/chat'
   if (path.startsWith('/agentos-console')) return '/agentos-console'
+  if (path.startsWith('/agentos/resources')) return '/agentos/resources'
   if (path.startsWith('/agentos/acg') || isMissionWorkspacePath(path)) return '/agentos/acg'
   if (path === '/roles' || path.startsWith('/roles')) return '/roles'
   if (path === '/rag' || path.startsWith('/rag')) return '/rag'
@@ -1055,6 +1110,16 @@ onUnmounted(() => {
   background: var(--app-layout-bg);
   overflow: hidden;
   display: flex;
+  flex-direction: column;
+}
+
+.app-shell-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* Sidebar Styles */
@@ -1132,16 +1197,19 @@ onUnmounted(() => {
 .sidebar-header {
   flex-shrink: 0;
   box-sizing: border-box;
-  height: 50px;
+  height: 42px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
+  padding: 0 8px;
   gap: 6px;
   border-bottom: 1px solid var(--sidebar-border);
 }
 
-.sidebar-brand,
+.sidebar-controls {
+  justify-content: flex-end;
+}
+
 .sidebar-collapse-btn {
   display: inline-flex;
   align-items: center;
@@ -1150,12 +1218,6 @@ onUnmounted(() => {
   color: inherit;
   font: inherit;
   cursor: pointer;
-}
-
-.sidebar-brand {
-  min-width: 0;
-  gap: 10px;
-  padding: 0;
 }
 
 .sidebar-collapse-btn {
@@ -1174,7 +1236,6 @@ onUnmounted(() => {
   color: var(--primary-color);
 }
 
-.sidebar-brand:focus-visible,
 .sidebar-collapse-btn:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
@@ -1183,10 +1244,6 @@ onUnmounted(() => {
 .app-sidebar.collapsed .sidebar-header {
   justify-content: center;
   padding: 0;
-}
-
-.app-sidebar.collapsed .sidebar-brand {
-  display: none;
 }
 
 .logo-icon {
@@ -1968,9 +2025,10 @@ onUnmounted(() => {
 
 .sidebar-footer {
   flex-shrink: 0;
-  padding: 10px 12px;
+  padding: 10px 10px 12px;
   margin-top: auto;
   border-top: 1px solid var(--sidebar-border);
+  background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-app));
 }
 
 .app-sidebar.collapsed .sidebar-footer {
@@ -1994,9 +2052,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 4px;
+  padding: 3px;
 }
 
 .user-identity,
@@ -2009,49 +2067,73 @@ onUnmounted(() => {
 }
 
 .user-identity {
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 2px;
+  padding: 5px 6px;
+  border-radius: 7px;
   text-align: left;
 }
 
+.user-identity:hover { background: var(--bg-input); }
+
 .user-avatar {
+  flex: 0 0 32px;
+  width: 32px !important;
+  height: 32px !important;
   background-color: var(--primary-color);
   color: white;
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .user-info {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
 }
 
 .user-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 10px;
-  color: var(--success);
+  color: var(--text-secondary);
   line-height: 1.2;
 }
 
+.user-status::before {
+  content: '●';
+  margin-right: 4px;
+  color: var(--success);
+  font-size: 7px;
+  vertical-align: 1px;
+}
+
 .user-logout {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   display: grid;
   place-items: center;
+  border: 1px solid transparent;
   border-radius: 7px;
   color: var(--text-secondary);
-  transition: color 160ms ease, background-color 160ms ease;
+  font-size: 16px;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
 }
 
 .user-identity:hover .user-name,
@@ -2059,45 +2141,10 @@ onUnmounted(() => {
   color: var(--danger);
 }
 
-.user-logout:hover { background: var(--danger-fade); }
+.user-logout:hover { border-color: color-mix(in srgb, var(--danger) 32%, var(--sidebar-border)); background: var(--danger-fade); }
 
 .user-identity:focus-visible,
 .user-logout:focus-visible {
-  outline: 2px solid var(--primary-color);
-  outline-offset: 2px;
-}
-
-.simple-nav-toggle {
-  position: fixed;
-  top: 9px;
-  left: 12px;
-  z-index: 2100;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 36px;
-  padding: 0;
-  border: 1px solid var(--primary-line);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-card) 90%, transparent);
-  color: var(--primary-color);
-  font: inherit;
-  font-size: 15px;
-  font-weight: 650;
-  cursor: pointer;
-  box-shadow: 0 10px 22px rgba(24, 39, 35, 0.08);
-  backdrop-filter: blur(14px);
-  transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
-}
-
-.simple-nav-toggle:hover {
-  border-color: var(--border-focus);
-  background: var(--surface-solid);
-  transform: translateY(-1px);
-}
-
-.simple-nav-toggle:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
 }
@@ -2117,6 +2164,32 @@ onUnmounted(() => {
 
 .drawer-header {
   flex-shrink: 0;
+  justify-content: flex-start;
+}
+
+.drawer-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.drawer-close:hover {
+  color: var(--primary-color);
+  background: var(--primary-fade);
+}
+
+.drawer-close:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 1px;
 }
 
 .drawer-menu {
@@ -2219,11 +2292,4 @@ onUnmounted(() => {
   background: rgba(99, 102, 241, 0.2);
 }
 
-@media (max-width: 620px) {
-  .simple-nav-toggle {
-    top: 9px;
-    left: 10px;
-    width: 34px;
-  }
-}
 </style>
