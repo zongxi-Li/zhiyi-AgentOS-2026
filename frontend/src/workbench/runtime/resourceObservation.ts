@@ -46,4 +46,3 @@ const collectBindings = (tree: RunExecutionTree): ResourceBindingObservation[] =
     }]
   })
 ))
-
