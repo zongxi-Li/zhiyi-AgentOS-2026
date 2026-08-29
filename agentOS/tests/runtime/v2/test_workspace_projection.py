@@ -59,7 +59,7 @@ def _mission_graph(service, bridge):
                 title="最终交付",
                 objective="汇总并交付最终方案",
                 capabilityRequirements=("artifact_generation",),
-                logicalRole="deliver",
+                logicalRole="deliverable",
             ),
         ),
     )
@@ -82,7 +82,7 @@ def _mission_graph(service, bridge):
                     name="最终交付",
                     agentName="delivery-agent",
                     capability="artifact_generation",
-                    logicalRole="deliver",
+                    logicalRole="deliverable",
                 ),
             ],
             edges=[ACGEdge(sourceId="equipment-node", targetId="final-node", edgeType=EdgeType.DEPENDENCY)],
@@ -176,6 +176,9 @@ def test_workspace_mission_one_run_has_default_virtual_structure_and_no_store(tm
             "folder:overview", "folder:steps", "folder:output", "folder:runs",
             "overview:graph.acg", "overview:mission.md", f"run:{run.run_id}",
         }
+        task_entries = [entry for entry in projection.entries if entry.kind is WorkspaceEntryKind.TASK]
+        assert [entry.semantic_task_key for entry in task_entries] == ["equipment_plan", "final_delivery"]
+        assert all(entry.artifact_count == 0 for entry in task_entries)
         with storage.read() as conn:
             assert conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspace'"
@@ -220,6 +223,12 @@ def test_workspace_graph_entry_and_graph_node_mapping_do_not_create_content(tmp_
         assert graph_entry.content_ref is None
         assert {node.semantic_task_key for node in projection.graph_nodes} >= {"equipment_plan", "final_delivery"}
         assert all(node.acg_node_id != "equipment_plan" for node in projection.graph_nodes)
+        equipment_task = next(entry for entry in projection.entries if entry.entry_id == "task:equipment_plan")
+        assert equipment_task.status == "completed"
+        assert equipment_task.attempt_count == 1
+        assert equipment_task.latest_attempt_id is not None
+        equipment_artifact = next(entry for entry in projection.entries if entry.kind is WorkspaceEntryKind.ARTIFACT)
+        assert equipment_artifact.parent_entry_id == equipment_task.entry_id
     finally:
         _close(foundation)
 
@@ -258,6 +267,8 @@ def test_workspace_artifact_entries_support_multiple_slots_and_final_output(tmp_
         assert {item.group for item in artifacts} == {"steps", "output"}
         final = next(item for item in artifacts if item.artifact_key == "primary" and item.group == "output")
         assert final.name == "final.md"
+        assert final.parent_entry_id == "folder:output"
+        assert next(item for item in projection.entries if item.entry_id == "task:final_delivery").artifact_count == 2
         assert all(item.content is None for item in artifacts)
     finally:
         _close(foundation)
@@ -318,6 +329,9 @@ def test_workspace_legacy_identity_is_explicit_and_never_guessed(tmp_path):
         assert legacy.identity_quality is WorkspaceIdentityQuality.LEGACY
         assert legacy.semantic_task_key is None
         assert legacy.artifact_id is None
+        legacy_task = next(item for item in projection.entries if item.kind is WorkspaceEntryKind.TASK)
+        assert legacy_task.entry_id == f"task:legacy:{legacy_task.task_id}"
+        assert legacy_task.identity_quality is WorkspaceIdentityQuality.LEGACY
         assert any(item.code == "LEGACY_ARTIFACT_IDENTITY" for item in projection.diagnostics)
         graph_node = next(item for item in projection.graph_nodes if item.acg_node_id == "legacy-node")
         assert graph_node.identity_quality is WorkspaceIdentityQuality.LEGACY
@@ -365,7 +379,8 @@ def test_workspace_entry_order_is_deterministic_and_unique(tmp_path):
         second_ids = [item["entryId"] for item in second["entries"]]
         assert first_ids == second_ids
         assert len(first_ids) == len(set(first_ids))
-        assert first_ids.index("task:equipment_plan:primary") < first_ids.index("task:final_delivery:assumptions")
+        assert first_ids.index("task:equipment_plan") < first_ids.index("task:equipment_plan:primary")
+        assert first_ids.index("task:final_delivery") < first_ids.index("task:final_delivery:assumptions")
     finally:
         _close(foundation)
 
@@ -433,5 +448,26 @@ def test_workspace_keeps_artifact_generation_capability_in_steps_without_final_r
         ]
         assert len(artifacts) == 1
         assert artifacts[0].group == "steps"
+    finally:
+        _close(foundation)
+
+
+def test_workspace_task_status_does_not_depend_on_artifact_count(tmp_path):
+    foundation = _foundation(tmp_path)
+    _storage, service, bridge, content, query = foundation
+    try:
+        mission, tasks, blueprint = _mission_graph(service, bridge)
+        run = _run(service, mission.mission_id, blueprint.blueprint_id, status=RunStatus.RUNNING)
+        _artifact(service, bridge, content, run, tasks["equipment_plan"].task_id, "equipment-node", "primary", "equipment")
+
+        task_entries = {
+            entry.semantic_task_key: entry
+            for entry in query.mission_workspace(mission.mission_id).entries
+            if entry.kind is WorkspaceEntryKind.TASK
+        }
+        assert task_entries["equipment_plan"].status == "completed"
+        assert task_entries["equipment_plan"].artifact_count == 1
+        assert task_entries["final_delivery"].status == "pending"
+        assert task_entries["final_delivery"].artifact_count == 0
     finally:
         _close(foundation)

@@ -15,13 +15,16 @@ from typing import Any, Literal
 from pydantic import Field
 
 from contracts.content import ContentKind
+from contracts.planning import SemanticTaskRelationType
 from domain.identity_graph import RunArtifactDisposition
 from domain.models import (
     AcgBlueprint,
+    AttemptStatus,
     Artifact,
     Mission,
     RunStatus,
     SemanticTask,
+    SemanticTaskStatus,
     WorkflowRun,
     DomainModel,
 )
@@ -32,6 +35,7 @@ class WorkspaceEntryKind(str, Enum):
     FOLDER = "folder"
     GRAPH = "graph"
     VIRTUAL_DOCUMENT = "virtual_document"
+    TASK = "task"
     ARTIFACT = "artifact"
     RUN = "run"
 
@@ -60,11 +64,18 @@ class WorkspaceEntry(DomainModel):
     kind: WorkspaceEntryKind
     name: str
     group: str
+    title: str | None = None
     parent_entry_id: str | None = Field(default=None, alias="parentEntryId")
     display_order: int = Field(default=0, alias="displayOrder", ge=0)
     semantic_task_key: str | None = Field(default=None, alias="semanticTaskKey")
     artifact_key: str | None = Field(default=None, alias="artifactKey")
     task_id: str | None = Field(default=None, alias="taskId")
+    logical_role: str | None = Field(default=None, alias="logicalRole")
+    objective: str | None = None
+    dependency_keys: list[str] = Field(default_factory=list, alias="dependencyKeys")
+    attempt_count: int = Field(default=0, alias="attemptCount", ge=0)
+    latest_attempt_id: str | None = Field(default=None, alias="latestAttemptId")
+    artifact_count: int = Field(default=0, alias="artifactCount", ge=0)
     artifact_id: str | None = Field(default=None, alias="artifactId")
     content_ref: str | None = Field(default=None, alias="contentRef")
     artifact_type: str | None = Field(default=None, alias="artifactType")
@@ -77,7 +88,7 @@ class WorkspaceEntry(DomainModel):
     identity_quality: WorkspaceIdentityQuality | None = Field(default=None, alias="identityQuality")
     created_at: datetime | None = Field(default=None, alias="createdAt")
     run_id: str | None = Field(default=None, alias="runId")
-    status: RunStatus | None = None
+    status: str | None = None
     blueprint_id: str | None = Field(default=None, alias="blueprintId")
     graph_id: str | None = Field(default=None, alias="graphId")
     graph_version: int | None = Field(default=None, alias="graphVersion")
@@ -125,7 +136,15 @@ class MissionWorkspaceProjector:
     """Build a workspace without creating or mutating any persistent state."""
 
     _ACTIVE_STATUSES = {RunStatus.PENDING, RunStatus.RUNNING}
-    _FINAL_ROLES = {"deliver", "delivery", "final", "final_output", "synthesis", "final_synthesis"}
+    _FINAL_ROLES = {
+        "deliver",
+        "delivery",
+        "deliverable",
+        "final",
+        "final_output",
+        "synthesis",
+        "final_synthesis",
+    }
 
     def __init__(self, repositories: RepositorySet, content_manifest_store: Any | None = None) -> None:
         self.repositories = repositories
@@ -184,6 +203,14 @@ class MissionWorkspaceProjector:
                 blueprint,
                 diagnostics,
             )
+            entries.extend(self._task_entries(
+                selected_run,
+                tasks,
+                plan,
+                blueprint,
+                artifact_entries,
+                diagnostics,
+            ))
             entries.extend(artifact_entries)
             entries.extend(self._run_entries(summaries))
         else:
@@ -324,6 +351,133 @@ class MissionWorkspaceProjector:
             ))
         return result
 
+    def _task_entries(
+        self,
+        run: WorkflowRun,
+        tasks: list[SemanticTask],
+        plan: Any | None,
+        blueprint: AcgBlueprint,
+        artifact_entries: list[WorkspaceEntry],
+        diagnostics: list[WorkspaceDiagnostic],
+    ) -> list[WorkspaceEntry]:
+        """Project the current Run's logical tasks independently of artifacts."""
+        task_by_key = {
+            key: task for task in tasks
+            if (key := self._task_key(task)) is not None
+        }
+        attempts_by_task: dict[str, list[Any]] = {}
+        for attempt in self.repositories.attempts.list_for_run(run.run_id):
+            attempts_by_task.setdefault(attempt.task_id, []).append(attempt)
+
+        primary_bindings: dict[str, Any] = {}
+        for task in tasks:
+            binding = self._primary_binding(
+                self.repositories.task_bindings.find_for_task(
+                    task.task_id,
+                    blueprint.blueprint_id,
+                )
+            )
+            if binding is not None:
+                primary_bindings[task.task_id] = binding
+
+        artifact_counts: dict[str, int] = {}
+        for entry in artifact_entries:
+            if entry.task_id is not None:
+                artifact_counts[entry.task_id] = artifact_counts.get(entry.task_id, 0) + 1
+
+        candidates: list[tuple[int, str, SemanticTask, Any | None]] = []
+        if plan is not None:
+            for index, node in enumerate(plan.nodes):
+                task = task_by_key.get(node.key)
+                if task is None:
+                    diagnostics.append(WorkspaceDiagnostic(
+                        code="TASK_PLAN_TASK_NOT_FOUND",
+                        message="TaskPlan references a SemanticTask that is not available in the Mission projection.",
+                        details={"semanticTaskKey": node.key, "runId": run.run_id},
+                    ))
+                    continue
+                candidates.append((index, node.key, task, node))
+        else:
+            # Without a historical plan snapshot, show only tasks proven by
+            # this Run's Attempt or Blueprint TaskBinding.
+            proven_ids = set(attempts_by_task) | set(primary_bindings)
+            for index, task in enumerate(tasks):
+                if task.task_id not in proven_ids:
+                    continue
+                key = self._task_key(task) or f"legacy:{task.task_id}"
+                candidates.append((index, key, task, None))
+
+        entries: list[WorkspaceEntry] = []
+        for display_order, key, task, plan_node in candidates:
+            attempts = sorted(
+                attempts_by_task.get(task.task_id, []),
+                key=lambda item: (item.attempt_number, item.attempt_id),
+            )
+            latest_attempt = attempts[-1] if attempts else None
+            task_key = self._task_key(task) or key
+            binding = primary_bindings.get(task.task_id)
+            plan_role = str(getattr(plan_node, "logical_role", "") or "").strip()
+            metadata = dict(task.metadata or {})
+            logical_role = plan_role or str(metadata.get("logicalRole") or "task")
+            objective = getattr(plan_node, "objective", None) or task.objective
+            dependencies = [
+                relation.source_key
+                for relation in (plan.relations if plan is not None else ())
+                if relation.target_key == key
+                and relation.relation_type is SemanticTaskRelationType.DEPENDS_ON
+            ]
+            entries.append(WorkspaceEntry(
+                entry_id=f"task:{task_key}",
+                kind=WorkspaceEntryKind.TASK,
+                name=getattr(plan_node, "title", None) or task.title,
+                title=getattr(plan_node, "title", None) or task.title,
+                group="steps",
+                parent_entry_id="folder:steps",
+                display_order=display_order,
+                semantic_task_key=task_key,
+                task_id=task.task_id,
+                logical_role=logical_role,
+                objective=objective,
+                dependency_keys=dependencies,
+                attempt_count=len(attempts),
+                latest_attempt_id=(latest_attempt.attempt_id if latest_attempt is not None else None),
+                acg_node_id=(binding.acg_node_id if binding is not None else None),
+                artifact_count=artifact_counts.get(task.task_id, 0),
+                identity_quality=(
+                    WorkspaceIdentityQuality.CANONICAL
+                    if self._task_key(task) is not None
+                    else WorkspaceIdentityQuality.LEGACY
+                ),
+                status=self._workspace_task_status(task, latest_attempt),
+                run_id=run.run_id,
+                metadata={
+                    "runtimeStatus": latest_attempt.status.value if latest_attempt is not None else None,
+                    "parentTaskId": task.parent_task_id,
+                },
+            ))
+        return entries
+
+    @staticmethod
+    def _workspace_task_status(task: SemanticTask, latest_attempt: Any | None) -> str:
+        if latest_attempt is not None:
+            return {
+                AttemptStatus.PENDING: "pending",
+                AttemptStatus.RUNNING: "running",
+                AttemptStatus.FAILED: "failed",
+                AttemptStatus.SUCCEEDED: "completed",
+                AttemptStatus.CANCELLED: "skipped",
+            }.get(latest_attempt.status, latest_attempt.status.value)
+        return {
+            SemanticTaskStatus.CREATED: "pending",
+            SemanticTaskStatus.READY: "ready",
+            SemanticTaskStatus.RUNNING: "running",
+            SemanticTaskStatus.BLOCKED: "pending",
+            SemanticTaskStatus.COMPLETED: "completed",
+            SemanticTaskStatus.CANCELLED: "skipped",
+            SemanticTaskStatus.RETIRED: "skipped",
+            SemanticTaskStatus.SUPERSEDED: "skipped",
+        }.get(task.status, "pending")
+
     def _artifact_entries(
         self,
         run: WorkflowRun,
@@ -350,7 +504,7 @@ class MissionWorkspaceProjector:
                 detail.artifact.artifact_id,
             ),
         )
-        for index, detail in enumerate(ordered_details):
+        for detail in ordered_details:
             artifact = detail.artifact
             task = task_by_id.get(artifact.task_id)
             task_key = artifact.semantic_task_key
@@ -369,8 +523,15 @@ class MissionWorkspaceProjector:
                 kind=WorkspaceEntryKind.ARTIFACT,
                 name=name,
                 group=group,
-                parent_entry_id=f"folder:{group}",
-                display_order=index,
+                parent_entry_id=(
+                    f"task:{task_key}" if not final else f"folder:{group}"
+                ),
+                display_order=self._task_order(
+                    artifact.task_id,
+                    artifact.semantic_task_key,
+                    tasks,
+                    plan,
+                ),
                 semantic_task_key=task_key,
                 artifact_key=artifact.artifact_key,
                 task_id=artifact.task_id,
