@@ -1973,6 +1973,7 @@ class ExecutionRuntime:
                 or workflow.description
             )
             planning_engine = self._planning_engine_for_run(run)
+            existing_semantic_tasks = self._existing_semantic_task_catalog(task.mission_id)
             plan = planning_engine.plan(
                 mission_id=task.mission_id,
                 intent=intent_text,
@@ -1988,6 +1989,7 @@ class ExecutionRuntime:
                 capability_catalog_revision=run.capability_catalog_revision,
                 required_capabilities=workflow.required_capabilities,
                 task_input=dict(run.input),
+                existing_semantic_tasks=existing_semantic_tasks,
             )
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
@@ -2050,6 +2052,34 @@ class ExecutionRuntime:
 
         blueprint = promote_workflow_to_acg(workflow, mission_id=task.mission_id)
         return blueprint, None, ()
+
+    def _existing_semantic_task_catalog(self, mission_id: str) -> tuple[dict[str, str], ...]:
+        """Read the latest V2 planning snapshot as a stable-key catalog.
+
+        The catalog is identity metadata only.  It lets a later Run reuse an existing
+        logical key for the same role/capability while leaving all semantic content in the
+        new Run-specific TaskPlan snapshot.
+        """
+        lifecycle = self.identity_lifecycle
+        repositories = getattr(lifecycle, "repositories", None)
+        if repositories is None:
+            return ()
+        catalog: list[dict[str, str]] = []
+        latest_plan = repositories.task_plans.latest(mission_id)
+        if latest_plan is not None:
+            catalog.extend(
+                {
+                    "key": node.key,
+                    "capabilityId": node.capability_requirements[0] if node.capability_requirements else "",
+                    "logicalRole": node.logical_role,
+                }
+                for node in latest_plan.nodes
+            )
+        for task in repositories.semantic_tasks.list_for_mission(mission_id):
+            if not task.semantic_task_key or any(item["key"] == task.semantic_task_key for item in catalog):
+                continue
+            catalog.append({"key": task.semantic_task_key, "capabilityId": "", "logicalRole": "task"})
+        return tuple(catalog)
 
     def _sync_run_steps_to_acg(
         self,

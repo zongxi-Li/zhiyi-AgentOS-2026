@@ -141,6 +141,67 @@ def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wordin
     assert "Mission contract:" not in prompt
 
 
+def test_ordinal_model_key_reuses_existing_logical_identity_without_content_hashing() -> None:
+    payload = {
+        "tasks": [{
+            "key": "task-1",
+            "title": "Updated planning step",
+            "objective": "Produce the updated planning result under the new constraints",
+            "capabilityId": "analysis",
+            "logicalRole": "analysis",
+            "acceptanceCriteria": ["The planning result is traceable"],
+        }],
+        "relations": [],
+    }
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=TaskSemanticProfile(
+            primaryGoal="Produce a planning result",
+            requiredCapabilities=["analysis"],
+            estimatedComplexity=ComplexityLevel.SIMPLE,
+        ),
+        strategy="dynamic_generation",
+        task_input={},
+        use_llm=True,
+        existing_semantic_tasks=(
+            {"key": "equipment_staff_plan", "capabilityId": "analysis", "logicalRole": "analysis"},
+        ),
+    )
+
+    assert plan.nodes[0].key == "equipment_staff_plan"
+    assert plan.nodes[0].objective.startswith("Produce the updated")
+
+
+def test_changed_model_key_reuses_unique_logical_role_without_content_hashing() -> None:
+    payload = {
+        "tasks": [{
+            "key": "new-planning-label",
+            "title": "Updated planning step",
+            "objective": "Produce the updated planning result under the new constraints",
+            "capabilityId": "analysis",
+            "logicalRole": "analysis",
+            "acceptanceCriteria": ["The planning result is traceable"],
+        }],
+        "relations": [],
+    }
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=TaskSemanticProfile(
+            primaryGoal="Produce a planning result",
+            requiredCapabilities=["analysis"],
+            estimatedComplexity=ComplexityLevel.SIMPLE,
+        ),
+        strategy="dynamic_generation",
+        task_input={},
+        use_llm=True,
+        existing_semantic_tasks=(
+            {"key": "equipment_staff_plan", "capabilityId": "analysis", "logicalRole": "analysis"},
+        ),
+    )
+
+    assert plan.nodes[0].key == "equipment_staff_plan"
+
+
 def test_reverse_catalog_dependency_is_reported_with_cycle_path_and_repaired() -> None:
     tasks = [
         {

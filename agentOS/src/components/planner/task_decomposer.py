@@ -16,7 +16,7 @@ from .complexity import PLANNING_BUDGETS
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v4"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v5"
 
 _SCHEMA = {
     "type": "object",
@@ -91,6 +91,7 @@ class TaskDecomposer:
         strategy: str,
         task_input: Mapping[str, Any] | None,
         use_llm: bool,
+        existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> TaskPlan:
         self.last_audit = {
             "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -101,7 +102,11 @@ class TaskDecomposer:
             "mode": "model" if use_llm and self.llm is not None else "deterministic",
         }
         if use_llm and self.llm is not None:
-            prompt = self.build_prompt(profile=profile, task_input=task_input)
+            prompt = self.build_prompt(
+                profile=profile,
+                task_input=task_input,
+                existing_semantic_tasks=existing_semantic_tasks,
+            )
             first: Any = None
             try:
                 first = self.llm.generate_json(
@@ -110,7 +115,14 @@ class TaskDecomposer:
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
                 )
                 self._capture_model_audit(first)
-                return self._to_plan(mission_id, profile, strategy, first, task_input=task_input)
+                return self._to_plan(
+                    mission_id,
+                    profile,
+                    strategy,
+                    first,
+                    task_input=task_input,
+                    existing_semantic_tasks=existing_semantic_tasks,
+                )
             except Exception as first_error:
                 try:
                     missing_refs = self._coverage_gap_refs(first_error)
@@ -134,7 +146,14 @@ class TaskDecomposer:
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
                     self.last_audit["promptVersion"] = repair_version
                     self._capture_model_audit(repaired)
-                    return self._to_plan(mission_id, profile, strategy, repaired, task_input=task_input)
+                    return self._to_plan(
+                        mission_id,
+                        profile,
+                        strategy,
+                        repaired,
+                        task_input=task_input,
+                        existing_semantic_tasks=existing_semantic_tasks,
+                    )
                 except Exception as repair_error:
                     self.last_audit["mode"] = "failed"
                     self.last_audit["error"] = type(repair_error).__name__
@@ -147,6 +166,7 @@ class TaskDecomposer:
             profile=profile,
             strategy=strategy,
             reason="model decomposition disabled or unavailable",
+            existing_semantic_tasks=existing_semantic_tasks,
         )
 
     @staticmethod
@@ -291,6 +311,7 @@ class TaskDecomposer:
         *,
         profile: TaskSemanticProfile,
         task_input: Mapping[str, Any] | None,
+        existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> str:
         level = profile.estimated_complexity
         catalog = []
@@ -332,6 +353,17 @@ class TaskDecomposer:
             },
         }
         budget_lo, budget_hi = PLANNING_BUDGETS[level]
+        identity_guidance = (
+            "This Mission already has a canonical semantic task key catalog. "
+            "Reuse an existing key when it represents the same logical step, even when "
+            "the objective, constraints, inputs or planning metadata changed. "
+            "Create a new key only when the logical step itself is new. Existing keys are "
+            f"{json.dumps(list(existing_semantic_tasks), ensure_ascii=False)}.\n"
+            if existing_semantic_tasks else
+            "Choose each key as a descriptive, Mission-scoped logical identity. Do not use "
+            "ordinal-only keys such as task-1 or step-2, and do not derive a key from a "
+            "title/objective/constraints hash.\n"
+        )
         return (
             f"Prompt version: {TASK_DECOMPOSITION_PROMPT_VERSION}\n"
             "Create an executable, acyclic, domain-neutral TaskPlan and return JSON only.\n"
@@ -346,7 +378,10 @@ class TaskDecomposer:
             "manufacture one business task per chunk.\n"
             "Every task must have one business-specific objective, one primary capabilityId, explicit acceptance criteria, "
             "sourceRefs and a decomposition rationale. Do not write objectives such as 'Complete cost analysis'.\n"
-            "The same capabilityId may be instantiated by multiple tasks when goals, alternatives or stages differ. "
+            "A task key is a stable logical identity across Runs, not a semantic-content version. "
+            "Planning content belongs to the Run-specific TaskPlan snapshot.\n"
+            + identity_guidance
+            + "The same capabilityId may be instantiated by multiple tasks when goals, alternatives or stages differ. "
             "Use depends_on relations as the authoritative execution topology and keep it acyclic.\n"
             "Capability catalog dependsOn entries are hard prerequisites that the system will enforce after generation. "
             "Never create a reverse path from a dependent task back to one of its prerequisite tasks. "
@@ -393,12 +428,16 @@ class TaskDecomposer:
         strategy: str,
         raw: Any,
         task_input: Mapping[str, Any] | None = None,
+        existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> TaskPlan:
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(tasks, list) or not tasks:
             raise TaskDecompositionError("decomposer returned no tasks")
         nodes: list[PlannedTask] = []
+        key_map: dict[str, str] = {}
+        raw_parent_keys: list[str | None] = []
+        used_keys: set[str] = set()
         for item in tasks:
             capability = str(item.get("capabilityId") or "").strip().lower()
             self.capability_catalog.get(capability)
@@ -408,9 +447,22 @@ class TaskDecomposer:
             criteria = tuple(str(value).strip() for value in item.get("acceptanceCriteria", []) if str(value).strip())
             if not criteria:
                 raise TaskDecompositionError(f"task {item.get('key')} has empty acceptance criteria")
+            raw_key = str(item.get("key") or "").strip()
+            key = self._resolve_semantic_task_key(
+                raw_key=raw_key,
+                capability=capability,
+                logical_role=str(item.get("logicalRole") or "task").strip(),
+                existing_semantic_tasks=existing_semantic_tasks,
+                used_keys=used_keys,
+            )
+            if raw_key in key_map:
+                raise TaskDecompositionError(f"duplicate semantic task key: {raw_key}")
+            key_map[raw_key] = key
+            used_keys.add(key)
+            raw_parent_keys.append(item.get("parentKey"))
             nodes.append(PlannedTask(
-                key=str(item.get("key") or "").strip(),
-                parentKey=item.get("parentKey"),
+                key=key,
+                parentKey=None,
                 title=str(item.get("title") or objective[:60]).strip(),
                 objective=objective,
                 constraints=self._normalize_constraints(item.get("constraints")),
@@ -422,6 +474,12 @@ class TaskDecomposer:
                 workset=(WorksetSpec.model_validate(item["workset"]) if item.get("workset") else None),
                 metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))
+        nodes = [
+            node.model_copy(update={
+                "parent_key": key_map.get(raw_parent, raw_parent) if raw_parent else None,
+            })
+            for node, raw_parent in zip(nodes, raw_parent_keys)
+        ]
         material_refs = tuple(
             str(item) for item in ((task_input or {}).get("materialRefs") or []) if str(item)
         )
@@ -444,7 +502,14 @@ class TaskDecomposer:
         self._complete_missing_capability_tasks(nodes, profile, strategy)
         relations = self._complete_capability_dependencies(
             nodes,
-            [TaskPlanRelation.model_validate(item) for item in payload.get("relations", [])],
+            [
+                TaskPlanRelation(
+                    sourceKey=key_map.get(str(item.get("sourceKey") or "").strip(), str(item.get("sourceKey") or "").strip()),
+                    targetKey=key_map.get(str(item.get("targetKey") or "").strip(), str(item.get("targetKey") or "").strip()),
+                    relationType=item.get("relationType"),
+                )
+                for item in payload.get("relations", [])
+            ],
         )
         relations = self._connect_terminal_results(nodes, relations)
         plan = TaskPlan(
@@ -461,6 +526,48 @@ class TaskDecomposer:
         )
         self._validate_coverage(plan, profile)
         return plan
+
+    @staticmethod
+    def _resolve_semantic_task_key(
+        *,
+        raw_key: str,
+        capability: str,
+        logical_role: str,
+        existing_semantic_tasks: tuple[Mapping[str, Any], ...],
+        used_keys: set[str],
+    ) -> str:
+        """Resolve unstable ordinal model keys without hashing semantic content.
+
+        A descriptive model key remains authoritative when it is already in the catalog.
+        Otherwise an existing key is reused only when its role/capability match is
+        unambiguous; ordinal placeholders fall back to a deterministic logical-role/
+        capability key without hashing semantic content.
+        """
+        if not raw_key:
+            raise TaskDecompositionError("task has no semantic logical key")
+        if raw_key in {str(item.get("key") or "").strip() for item in existing_semantic_tasks}:
+            return raw_key
+        matches = [
+            str(item.get("key") or "").strip()
+            for item in existing_semantic_tasks
+            if str(item.get("capabilityId") or item.get("capability") or "").strip().lower() == capability
+            and str(item.get("logicalRole") or item.get("logical_role") or "task").strip().lower() == (logical_role or "task").lower()
+        ]
+        matches = [item for item in matches if item and item not in used_keys]
+        if len(matches) == 1:
+            return matches[0]
+        ordinal = re.fullmatch(r"(?:task|step|node)[\s_:/-]*\d+(?:[\s_:/-].*)?", raw_key.lower())
+        if ordinal:
+            role = re.sub(r"[^a-z0-9]+", "_", (logical_role or "task").lower()).strip("_") or "task"
+            capability_slug = re.sub(r"[^a-z0-9]+", "_", capability.lower()).strip("_") or "capability"
+            base = f"{role}:{capability_slug}"
+            candidate = base
+            suffix = 2
+            while candidate in used_keys:
+                candidate = f"{base}:{suffix}"
+                suffix += 1
+            return candidate
+        return raw_key
 
     @staticmethod
     def _normalize_constraints(value: Any) -> list[dict[str, Any]]:
@@ -777,14 +884,24 @@ class TaskDecomposer:
         profile: TaskSemanticProfile,
         strategy: str,
         reason: str,
+        existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> TaskPlan:
         capabilities = list(dict.fromkeys(profile.required_capabilities))
         nodes: list[PlannedTask] = []
         selected = set(capabilities)
+        used_keys: set[str] = set()
         for index, capability in enumerate(capabilities, start=1):
             descriptor = self.capability_catalog.get(capability)
+            key = self._resolve_semantic_task_key(
+                raw_key=f"task-{index}",
+                capability=capability,
+                logical_role=descriptor.planning_stage,
+                existing_semantic_tasks=existing_semantic_tasks,
+                used_keys=used_keys,
+            )
+            used_keys.add(key)
             nodes.append(PlannedTask(
-                key=f"task:{index:02d}:{capability}",
+                key=key,
                 title=descriptor.display_name,
                 objective=f"Use {descriptor.display_name} to advance the mission goal: {profile.primary_goal}",
                 constraints=[{"type": "mission_constraint", "value": item} for item in profile.key_constraints],

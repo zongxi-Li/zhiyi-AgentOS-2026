@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import random
 import secrets
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from contracts.planning import (
     TaskImplementationBinding,
@@ -139,6 +139,7 @@ class PlanningEngine:
         capability_catalog_revision: str | None = None,
         required_capabilities: Sequence[str] | None = None,
         task_input: Dict[str, Any] | None = None,
+        existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
     ) -> PlanResult:
         """为任务选择模板或动态生成 ACG。
 
@@ -226,6 +227,7 @@ class PlanningEngine:
             strategy="dynamic_generation",
             task_input=task_input,
             use_llm=not deterministic_intent,
+            existing_semantic_tasks=existing_semantic_tasks,
         )
         variant_set = self.variant_generator.generate(
             profile=profile,

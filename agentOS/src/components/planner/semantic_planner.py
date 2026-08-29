@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from contracts.planning import (
@@ -33,6 +33,7 @@ class SemanticPlanner:
         strategy: str,
         task_input: dict[str, Any] | None = None,
         use_llm: bool = True,
+        existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
     ) -> TaskPlan:
         return self.task_decomposer.decompose(
             mission_id=mission_id,
@@ -40,6 +41,7 @@ class SemanticPlanner:
             strategy=strategy,
             task_input=task_input,
             use_llm=use_llm,
+            existing_semantic_tasks=tuple(existing_semantic_tasks),
         )
 
     def plan_capabilities(
