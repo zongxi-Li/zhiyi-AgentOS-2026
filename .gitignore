@@ -71,8 +71,15 @@ agent/data/rag/chroma_db/
 **/dist/
 **/build/
 **/.cache/
+**/target/
 .m2/
 .gradle/
+
+# Tauri / Rust generated artifacts
+desktop/src-tauri/gen/
+
+# Local preview export
+output/settings-preview-dist/
 
 # Local generated vector index artifacts
 agent/app/data/legal_chroma/*/
