@@ -4,7 +4,7 @@
     class="workbench-layout"
     :class="{
       'is-resizing': Boolean(resizingSide),
-      'is-left-collapsed': !leftPaneVisible,
+      'is-left-collapsed': !leftVisible,
       'is-right-collapsed': !rightPaneVisible
     }"
     :style="{
@@ -12,12 +12,12 @@
       '--workbench-right-width': `${effectiveRightPaneWidth}px`
     }"
   >
-    <aside v-if="leftPaneVisible" class="workbench-pane workbench-pane--left" aria-label="ACG 任务导航">
+    <aside v-if="leftVisible" class="workbench-pane workbench-pane--left" aria-label="项目导航">
       <slot name="left" />
     </aside>
 
     <ResizeHandle
-      v-if="leftPaneVisible || leftAutoHidden"
+      v-if="showLeft && (leftPaneVisible || leftAutoHidden)"
       side="left"
       :value="leftPaneWidth"
       :min="LEFT_MIN_WIDTH"
@@ -29,7 +29,25 @@
     />
 
     <main class="workbench-pane workbench-pane--main">
+      <WorkbenchVerticalSplit
+        v-if="showBottomPanel"
+        :storage-key="bottomPanelStorageKey"
+        :default-collapsed="bottomPanelDefaultCollapsed"
+      >
+        <template #graph>
+          <slot
+            name="main"
+            :left-auto-hidden="leftAutoHidden"
+            :right-auto-hidden="rightAutoHidden"
+            :right-enabled="rightEnabled"
+          />
+        </template>
+        <template #bottom="bottomState">
+          <slot name="bottom" v-bind="bottomState" />
+        </template>
+      </WorkbenchVerticalSplit>
       <slot
+        v-else
         name="main"
         :left-auto-hidden="leftAutoHidden"
         :right-auto-hidden="rightAutoHidden"
@@ -58,13 +76,22 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue'
 import ResizeHandle from './ResizeHandle.vue'
+import WorkbenchVerticalSplit from './WorkbenchVerticalSplit.vue'
 import { useWorkbenchLayout } from '@/composables/useWorkbenchLayout'
 
 const props = withDefaults(defineProps<{
+  showLeft?: boolean
   showRight?: boolean
+  showBottomPanel?: boolean
+  bottomPanelStorageKey?: string
+  bottomPanelDefaultCollapsed?: boolean
   storageKey?: string
 }>(), {
+  showLeft: true,
   showRight: true,
+  showBottomPanel: false,
+  bottomPanelStorageKey: 'zhiyi.workbench.bottom-panel.v1',
+  bottomPanelDefaultCollapsed: false,
   storageKey: 'zhiyi.acg.workbench.layout.v1'
 })
 
@@ -89,6 +116,8 @@ const {
   resetWidth
 } = layout
 
+const leftVisible = computed(() => props.showLeft && leftPaneVisible.value)
+
 const LEFT_MIN_WIDTH = 240
 const RIGHT_MIN_WIDTH = 300
 const leftMaxWidth = computed(() => {
@@ -96,7 +125,7 @@ const leftMaxWidth = computed(() => {
   return Math.max(LEFT_MIN_WIDTH, Math.min(520, available > 0 ? available : 520))
 })
 const rightMaxForHandle = computed(() => {
-  const available = layout.containerWidth.value - 560 - (leftPaneVisible.value ? leftPaneWidth.value + 8 : 0) - 8
+  const available = layout.containerWidth.value - 560 - (leftVisible.value ? leftPaneWidth.value + 8 : 0) - 8
   return Math.max(RIGHT_MIN_WIDTH, Math.min(rightMaxWidth.value, available > 0 ? available : rightMaxWidth.value))
 })
 </script>

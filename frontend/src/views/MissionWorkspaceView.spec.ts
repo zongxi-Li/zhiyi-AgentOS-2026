@@ -5,7 +5,8 @@ import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
 
 const workspaceLayoutStub = {
-  template: '<div class="workspace-layout-stub"><aside><slot name="left" /></aside><main><slot name="main" /></main><aside><slot name="right" /></aside></div>'
+  setup: () => ({ noop: () => undefined }),
+  template: '<div class="workspace-layout-stub"><aside><slot name="left" /></aside><main><slot name="main" /></main><aside><slot name="right" /></aside><section><slot name="bottom" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" /></section></div>'
 }
 
 const graphEditorStub = {
@@ -59,12 +60,15 @@ const projection = (overrides: Partial<MissionWorkspaceProjection> = {}): Missio
   ...overrides
 })
 
-const mountWorkspace = async (resolved: MissionWorkspaceProjection | ((runId?: string) => MissionWorkspaceProjection) = projection()) => {
+const mountWorkspace = async (
+  resolved: MissionWorkspaceProjection | ((runId?: string) => MissionWorkspaceProjection) = projection(),
+  url = '/agentos/missions/mission_1/workspace'
+) => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/agentos/missions/:missionId/workspace', component: MissionWorkspaceView }]
   })
-  await router.push('/agentos/missions/mission_1/workspace')
+  await router.push(url)
   await router.isReady()
   const getWorkspace = vi.isMockFunction(agentosApi.getMissionWorkspace)
     ? vi.mocked(agentosApi.getMissionWorkspace)
@@ -96,9 +100,9 @@ describe('MissionWorkspaceView', () => {
   it('loads one Mission Workspace projection and renders the project shell', async () => {
     const { wrapper } = await mountWorkspace()
     expect(agentosApi.getMissionWorkspace).toHaveBeenCalledTimes(1)
-    expect(wrapper.text()).toContain('Mission Project')
+    expect(wrapper.text()).toContain('PROJECT')
     expect(wrapper.text()).toContain('OVERVIEW')
-    expect(wrapper.text()).toContain('MISSION WORKSPACE')
+    expect(wrapper.text()).not.toContain('MISSION WORKSPACE')
   })
 
   it('opens graph.acg as the default editor and keeps graph separate from results', async () => {
@@ -201,7 +205,9 @@ describe('MissionWorkspaceView', () => {
   it('shows NO_ACTIVE_RUN diagnostics and falls back to mission.md', async () => {
     const empty = projection({ activeRun: null, entries: [...folders(), { entryId: 'overview:mission.md', kind: 'virtual_document', name: 'mission.md', group: 'overview', displayOrder: 1, content: '# Empty' }, ...runEntries()], diagnostics: [{ code: 'NO_ACTIVE_RUN', message: '没有 Run', severity: 'info' }] })
     const { wrapper } = await mountWorkspace(empty)
-    expect(wrapper.text()).toContain('NO_ACTIVE_RUN')
+    expect(wrapper.find('.workbench-bottom-panel__tab').text()).toContain('Problems')
+    expect(wrapper.find('.workbench-bottom-panel__tab small').text()).toBe('1')
+    expect(wrapper.find('.problems-panel').text()).toContain('NO_ACTIVE_RUN')
     expect(wrapper.text()).toContain('mission.md')
   })
 
@@ -210,6 +216,32 @@ describe('MissionWorkspaceView', () => {
     const { wrapper } = await mountWorkspace()
     expect(wrapper.text()).toContain('Mission Workspace unavailable')
     expect(wrapper.text()).toContain('重新加载')
+  })
+
+  it('waits for a deferred Run identity projection after the Runtime Run is accepted', async () => {
+    vi.useFakeTimers()
+    try {
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace')
+        .mockRejectedValueOnce({ response: { status: 404 } })
+        .mockResolvedValue(projection())
+      const getRun = vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue({
+        runId: 'run_2', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops',
+        status: 'running', steps: []
+      } as any)
+
+      const { wrapper } = await mountWorkspace(projection(), '/agentos/missions/mission_1/workspace?runId=run_2')
+      await flushPromises()
+
+      expect(getRun).toHaveBeenCalledWith('run_2', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+      expect(getWorkspace).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(250)
+      await flushPromises()
+
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      expect(wrapper.text()).toContain('PROJECT')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not request Artifact content while the default graph editor is open', async () => {

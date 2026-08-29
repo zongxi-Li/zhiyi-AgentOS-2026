@@ -1,14 +1,20 @@
 <template>
   <div class="mission-workspace-view">
-    <WorkbenchLayout :show-right="true" storage-key="zhiyi.mission.workspace.layout.v1">
+    <WorkbenchLayout
+      :show-right="true"
+      :show-bottom-panel="Boolean(projection)"
+      bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
+      :bottom-panel-default-collapsed="true"
+      storage-key="zhiyi.mission.workspace.layout.v1"
+    >
       <template #left>
-        <WorkspaceExplorer
+        <WorkbenchContributionRenderer
           v-if="projection"
-          :projection="projection"
-          :active-editor-id="activeEditorId"
-          :selected-run-id="selectedRunId"
+          :contribution="sidebarContribution"
+          :component-props="sidebarProps"
           @open="openEntry"
           @select-run="selectRun"
+          @back="returnToProjectList"
         />
         <section v-else class="workspace-loading-pane" aria-label="Workspace loading status">
           <span class="workspace-loading-pane__mark">MISSION</span>
@@ -27,6 +33,8 @@
           :selected-semantic-task-key="selectedSemanticTaskKey"
           :focus-node-id="focusNodeId"
           :is-historical="isHistorical"
+          :registry="registry"
+          :workbench-context="workbenchContext"
           @activate="activeEditorId = $event"
           @close="closeEditor"
           @select-semantic-task="selectSemanticTask"
@@ -44,12 +52,33 @@
         <RuntimeInspector
           :entry="inspectorEntry"
           :graph-node="inspectorGraphNode"
+          :graph-nodes="projection?.graphNodes || []"
           :available="inspectorAvailable"
           :run-id="projection?.activeRun?.runId || null"
           :mission-id="missionId"
+          :graph="projection?.activeGraph || null"
+          :run-status="projection?.activeRun?.status || null"
           :historical="isHistorical"
+          :registry="registry"
+          :workbench-context="workbenchContext"
           @locate-graph="inspectorEntry && locateGraph(inspectorEntry)"
         />
+      </template>
+
+      <template #bottom="{ collapsed, setCollapsed }">
+        <WorkbenchBottomPanel
+          :tabs="panelTabs"
+          :model-value="collapsed"
+          storage-key="zhiyi.mission.workspace.bottom-panel.v1"
+          @update:model-value="setCollapsed"
+        >
+          <template #default="{ activeTab }">
+            <WorkbenchContributionRenderer
+              :contribution="resolvePanel(activeTab)"
+              :component-props="panelProps(activeTab)"
+            />
+          </template>
+        </WorkbenchBottomPanel>
       </template>
     </WorkbenchLayout>
 
@@ -81,13 +110,17 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
-import WorkspaceExplorer from '@/components/workspace/WorkspaceExplorer.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
+import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
+import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
+import { createNativeWorkbenchRegistry } from '@/workbench/composition'
+import { createWorkbenchContext } from '@/workbench/context'
 
 const route = useRoute()
 const router = useRouter()
 const missionId = computed(() => String(route.params.missionId || route.query.missionId || ''))
+const registry = createNativeWorkbenchRegistry()
 
 const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
@@ -102,6 +135,11 @@ const selectedGraphNodeId = ref<string | null>(null)
 const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})
 let controller: AbortController | null = null
+
+const workspaceProjectionRetryDelays = [
+  250, 500, 1000, 2000, 3000,
+  ...Array.from({ length: 23 }, () => 5000)
+]
 
 const entriesById = computed(() => new Map((projection.value?.entries || []).map(entry => [entry.entryId, entry])))
 const openEntries = computed<OpenWorkspaceEntry[]>(() => openEditors.value.flatMap(entryId => {
@@ -124,6 +162,32 @@ const isHistorical = computed(() => Boolean(
   projection.value?.activeRun && currentRunId.value && projection.value.activeRun.runId !== currentRunId.value
 ))
 
+const workbenchContext = computed(() => createWorkbenchContext({
+  missionId: missionId.value,
+  runId: projection.value?.activeRun?.runId || null,
+  selectedSemanticTaskKey: selectedSemanticTaskKey.value,
+  selectedArtifactId: inspectorEntry.value?.artifactId || null,
+  selectedAcgNodeId: selectedGraphNodeId.value,
+  activeEditorId: activeEditorId.value,
+  activeEntryKind: activeOpened.value?.entry.kind || null,
+  historicalMode: isHistorical.value,
+  diagnostics: projection.value?.diagnostics || []
+}))
+
+const sidebarContribution = computed(() => registry.getSidebarViews(workbenchContext.value)[0] || null)
+const sidebarProps = computed(() => ({
+  projection: projection.value,
+  activeEditorId: activeEditorId.value,
+  selectedRunId: selectedRunId.value
+}))
+const panelTabs = computed<WorkbenchBottomTab[]>(() => registry.getPanels(workbenchContext.value).map(panel => ({
+  id: panel.id,
+  label: panel.label,
+  count: panel.count?.(workbenchContext.value)
+})))
+const resolvePanel = (panelId: string) => registry.resolvePanel(panelId, workbenchContext.value)
+const panelProps = (panelId: string) => resolvePanel(panelId)?.getProps?.(workbenchContext.value) || {}
+
 const defaultRunId = (items: MissionWorkspaceProjection['runs']) => {
   const active = items.filter(item => item.status === 'pending' || item.status === 'running')
   if (active.length) return active[active.length - 1].runId
@@ -143,6 +207,67 @@ const openDefaultEditor = (nextProjection: MissionWorkspaceProjection) => {
   }
 }
 
+const responseStatus = (error: unknown) => {
+  const status = (error as { response?: { status?: unknown } })?.response?.status
+  return typeof status === 'number' ? status : null
+}
+
+const isAbortError = (error: unknown) => {
+  const name = (error as { name?: unknown })?.name
+  return name === 'CanceledError' || name === 'AbortError'
+}
+
+const waitForWorkspaceRetry = (delayMs: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+  let timer: ReturnType<typeof setTimeout> | null = setTimeout(finish, delayMs)
+  const onAbort = () => {
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    signal.removeEventListener('abort', onAbort)
+    reject(new DOMException('Workspace projection request aborted', 'AbortError'))
+  }
+  function finish() {
+    timer = null
+    signal.removeEventListener('abort', onAbort)
+    resolve()
+  }
+  if (signal.aborted) {
+    onAbort()
+    return
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+})
+
+const requestWorkspaceProjection = async (runId: string | null, signal: AbortSignal) => {
+  let projectionPending = false
+  let attempt = 0
+  while (true) {
+    try {
+      return await agentosApi.getMissionWorkspace(missionId.value, {
+        runId: runId || undefined,
+        signal
+      })
+    } catch (error: unknown) {
+      if (!runId || responseStatus(error) !== 404 || attempt >= workspaceProjectionRetryDelays.length) {
+        throw error
+      }
+
+      if (!projectionPending) {
+        try {
+          const runtimeRun = await agentosApi.getWorkflowRun(runId, { signal })
+          projectionPending = runtimeRun.missionId === missionId.value
+        } catch (runtimeError: unknown) {
+          if (isAbortError(runtimeError)) throw runtimeError
+          throw error
+        }
+        if (!projectionPending) throw error
+      }
+
+      await waitForWorkspaceRetry(workspaceProjectionRetryDelays[attempt], signal)
+      attempt += 1
+    }
+  }
+}
+
 const loadWorkspace = async (runId = selectedRunId.value) => {
   if (!missionId.value) {
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
@@ -154,17 +279,14 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
   loading.value = true
   loadError.value = ''
   try {
-    const nextProjection = await agentosApi.getMissionWorkspace(missionId.value, {
-      runId: runId || undefined,
-      signal: requestController.signal
-    })
+    const nextProjection = await requestWorkspaceProjection(runId, requestController.signal)
     projection.value = nextProjection
     currentRunId.value ||= defaultRunId(nextProjection.runs)
     selectedRunId.value = nextProjection.activeRun?.runId || runId || null
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     openDefaultEditor(nextProjection)
   } catch (error: unknown) {
-    if ((error as { name?: string }).name === 'CanceledError' || (error as { name?: string }).name === 'AbortError') return
+    if (isAbortError(error)) return
     loadError.value = '无法加载 Mission Workspace Projection，请稍后重试。'
   } finally {
     if (controller === requestController && !requestController.signal.aborted) loading.value = false
@@ -217,6 +339,10 @@ const openSemanticTask = (semanticTaskKey: string | null) => {
 const chooseArtifact = (entry: WorkspaceEntry) => {
   artifactChoices.value = []
   openEntry(entry)
+}
+
+const returnToProjectList = () => {
+  void router.push({ name: 'AcgVisualization' })
 }
 
 const locateGraph = (entry: WorkspaceEntry) => {

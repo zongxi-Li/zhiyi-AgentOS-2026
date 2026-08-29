@@ -1,25 +1,19 @@
 <template>
   <aside class="workspace-explorer" aria-label="Mission Project Explorer">
     <header class="workspace-explorer__header">
+      <button class="workspace-explorer__back" type="button" @click="emit('back')">
+        <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
+        <span>Projects</span>
+      </button>
       <div class="workspace-explorer__title-row">
         <span class="workspace-explorer__mark" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
         <div>
           <strong>{{ projection.mission.goal }}</strong>
-          <small>Mission Project</small>
+          <small>PROJECT</small>
         </div>
       </div>
       <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
     </header>
-
-    <div v-if="projection.diagnostics.length" class="workspace-explorer__diagnostics" aria-label="Workspace diagnostics">
-      <article v-for="diagnostic in projection.diagnostics" :key="`${diagnostic.code}-${diagnostic.message}`" :class="`diagnostic diagnostic--${diagnostic.severity}`">
-        <el-icon><WarningFilled /></el-icon>
-        <div>
-          <strong>{{ diagnostic.code }}</strong>
-          <span>{{ diagnostic.message }}</span>
-        </div>
-      </article>
-    </div>
 
     <nav class="workspace-tree" aria-label="Project files">
       <section v-for="section in sections" :key="section.group" class="workspace-tree__section">
@@ -62,7 +56,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowRight, Document, Files, FolderOpened, Share, WarningFilled, Clock } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Document, Files, FolderOpened, Share, Clock } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceEntryKind, WorkspaceRunStatus } from '@/services/api/agentos'
 
 const props = defineProps<{
@@ -72,6 +66,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  back: []
   open: [entry: WorkspaceEntry]
   selectRun: [runId: string]
 }>()
@@ -149,6 +144,9 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   border-bottom: 1px solid var(--border-light);
 }
 
+.workspace-explorer__back { display: inline-flex; align-items: center; gap: 5px; margin: -4px 0 12px; padding: 0; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 11px; }
+.workspace-explorer__back:hover { color: var(--primary-color); }
+
 .workspace-explorer__title-row {
   display: flex;
   align-items: center;
@@ -201,28 +199,6 @@ const runLabel = (status?: WorkspaceRunStatus | null) => ({
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.workspace-explorer__diagnostics {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-light);
-  background: color-mix(in srgb, var(--warning) 5%, transparent);
-}
-
-.diagnostic {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 6px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.diagnostic .el-icon { flex: 0 0 auto; color: var(--warning); }
-.diagnostic--info .el-icon { color: var(--info); }
-.diagnostic strong,
-.diagnostic span { display: block; }
-.diagnostic strong { color: var(--text-primary); font: 10px var(--font-mono, monospace); }
 
 .workspace-tree {
   flex: 1;

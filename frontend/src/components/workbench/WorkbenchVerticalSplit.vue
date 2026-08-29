@@ -51,12 +51,14 @@ const props = withDefaults(defineProps<{
   minHeight?: number
   maxHeightRatio?: number
   minGraphHeight?: number
+  defaultCollapsed?: boolean
 }>(), {
   storageKey: 'zhiyi.acg.workbench.layout.v1',
   defaultHeight: 260,
   minHeight: 120,
   maxHeightRatio: 0.65,
-  minGraphHeight: 280
+  minGraphHeight: 280,
+  defaultCollapsed: false
 })
 
 const persisted = readWorkbenchLayoutPersistence(props.storageKey)
@@ -74,7 +76,7 @@ const panelHeight = ref(Math.min(
   fallbackMaxHeight,
   Math.max(props.minHeight, Math.round(persisted.bottomPanelHeight ?? props.defaultHeight))
 ))
-const internalCollapsed = ref(persisted.bottomPanelCollapsedByUser ?? false)
+const internalCollapsed = ref(persisted.bottomPanelCollapsedByUser ?? props.defaultCollapsed)
 const resizing = ref(false)
 let resizeObserver: ResizeObserver | null = null
 let resizeFrame: number | null = null

@@ -90,4 +90,15 @@ describe('WorkbenchVerticalSplit', () => {
     expect(wrapper.find('.workbench-vertical-split').classes()).toContain('is-collapsed')
     wrapper.unmount()
   })
+
+  it('can start collapsed when the host provides a default state', () => {
+    const wrapper = mount(WorkbenchVerticalSplit, {
+      props: { storageKey: STORAGE_KEY, defaultCollapsed: true },
+      slots: { graph: '<div />', bottom: '<div />' }
+    })
+
+    expect(wrapper.find('.workbench-vertical-split').classes()).toContain('is-collapsed')
+    expect(handle(wrapper).exists()).toBe(false)
+    wrapper.unmount()
+  })
 })

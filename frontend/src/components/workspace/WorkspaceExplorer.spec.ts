@@ -55,9 +55,9 @@ describe('WorkspaceExplorer', () => {
     expect(wrapper.emitted('selectRun')).toEqual([['run_2']])
   })
 
-  it('shows projection diagnostics inside the Explorer', () => {
+  it('keeps projection diagnostics out of the Explorer chrome', () => {
     const wrapper = mountExplorer({ diagnostics: [{ code: 'PLAN_SNAPSHOT_UNRESOLVED', message: '历史结构不可确定', severity: 'warning' }] })
-    expect(wrapper.find('.workspace-explorer__diagnostics').text()).toContain('PLAN_SNAPSHOT_UNRESOLVED')
-    expect(wrapper.text()).toContain('历史结构不可确定')
+    expect(wrapper.find('.workspace-explorer__diagnostics').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('PLAN_SNAPSHOT_UNRESOLVED')
   })
 })

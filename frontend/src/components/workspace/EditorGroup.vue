@@ -2,7 +2,7 @@
   <main class="editor-group" aria-label="Workspace editor">
     <header class="editor-group__toolbar">
       <div class="editor-group__context">
-        <span class="editor-group__product">MISSION WORKSPACE</span>
+        <span class="editor-group__product">PROJECT</span>
         <strong>{{ projection.mission.goal }}</strong>
       </div>
       <div class="editor-group__run">
@@ -17,7 +17,7 @@
       <div v-for="opened in openEntries" :key="opened.entry.entryId" class="editor-tab" :class="{ 'is-active': opened.entry.entryId === activeEditorId }">
         <button class="editor-tab__main" type="button" role="tab" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
           <span class="editor-tab__kind" aria-hidden="true">{{ tabMark(opened.entry.kind) }}</span>
-          <span class="editor-tab__name">{{ opened.entry.name }}</span>
+          <span class="editor-tab__name">{{ editorTitle(opened.entry) }}</span>
           <span v-if="!opened.available" class="editor-tab__missing">missing</span>
         </button>
         <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="emit('close', opened.entry.entryId)">×</button>
@@ -26,28 +26,21 @@
     </nav>
 
     <section class="editor-group__surface">
-      <GraphEditor
-        v-if="activeOpened?.entry.kind === 'graph'"
-        :key="activeOpened.entry.entryId"
+      <component
+        v-if="activeOpened && editorContribution"
+        :is="editorContribution.component"
+        :key="editorKey"
+        :entry="activeOpened.entry"
+        :projection="projection"
         :graph="projection.activeGraph || null"
         :graph-nodes="projection.graphNodes"
         :selected-semantic-task-key="selectedSemanticTaskKey"
         :focus-node-id="focusNodeId"
-        @select-semantic-task="emit('selectSemanticTask', $event)"
-        @open-semantic-task="emit('openSemanticTask', $event)"
-      />
-      <ArtifactEditor
-        v-else-if="activeOpened?.entry.kind === 'artifact'"
-        :key="`${activeOpened.entry.entryId}:${activeOpened.entry.artifactId || 'missing'}:${projection.activeRun?.runId || 'none'}`"
-        :entry="activeOpened.entry"
         :run-id="projection.activeRun?.runId || null"
         :available="activeOpened.available"
+        @select-semantic-task="emit('selectSemanticTask', $event)"
+        @open-semantic-task="emit('openSemanticTask', $event)"
         @locate-graph="emit('locateGraph', activeOpened.entry)"
-      />
-      <MissionEditor
-        v-else-if="activeOpened?.entry.kind === 'virtual_document'"
-        :projection="projection"
-        :entry="activeOpened.entry"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
     </section>
@@ -56,10 +49,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import ArtifactEditor from './ArtifactEditor.vue'
-import GraphEditor from './GraphEditor.vue'
-import MissionEditor from './MissionEditor.vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceEntryKind } from '@/services/api/agentos'
+import type { WorkbenchContext } from '@/workbench/types'
+import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 
 export interface OpenWorkspaceEntry {
   entry: WorkspaceEntry
@@ -73,6 +65,8 @@ const props = defineProps<{
   selectedSemanticTaskKey: string | null
   focusNodeId: string | null
   isHistorical: boolean
+  registry: WorkbenchContributionRegistry
+  workbenchContext: WorkbenchContext
 }>()
 
 const emit = defineEmits<{
@@ -84,6 +78,15 @@ const emit = defineEmits<{
 }>()
 
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
+const editorContribution = computed(() => props.registry.resolveEditor(activeOpened.value?.entry || null, props.workbenchContext))
+const editorKey = computed(() => {
+  if (!activeOpened.value) return 'empty'
+  return `${activeOpened.value.entry.entryId}:${activeOpened.value.entry.artifactId || 'entry'}:${props.projection.activeRun?.runId || 'none'}`
+})
+
+const editorTitle = (entry: WorkspaceEntry) => (
+  props.registry.resolveEditor(entry, props.workbenchContext)?.title?.(entry, props.workbenchContext) || entry.name
+)
 
 const tabMark = (kind: WorkspaceEntryKind) => ({ graph: '◇', virtual_document: 'M', artifact: '·', folder: '▾', run: 'R' }[kind])
 </script>

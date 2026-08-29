@@ -36,7 +36,9 @@
     </header>
 
     <div v-if="!collapsed" class="workbench-bottom-panel__body" role="tabpanel">
-      <slot :name="`tab-${activeTab}`" :active-tab="activeTab" />
+      <slot :name="`tab-${activeTab}`" :active-tab="activeTab">
+        <slot :active-tab="activeTab" />
+      </slot>
     </div>
   </section>
 </template>
@@ -54,15 +56,27 @@ export interface WorkbenchBottomTab {
 const props = withDefaults(defineProps<{
   tabs: WorkbenchBottomTab[]
   modelValue?: boolean
+  storageKey?: string
 }>(), {
-  modelValue: false
+  modelValue: false,
+  storageKey: ''
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
 
-const activeTab = ref(props.tabs[0]?.id || '')
+const readActiveTab = () => {
+  if (!props.storageKey || typeof window === 'undefined') return props.tabs[0]?.id || ''
+  try {
+    const value = window.localStorage.getItem(`${props.storageKey}.activeTab`)
+    return value && props.tabs.some(tab => tab.id === value) ? value : props.tabs[0]?.id || ''
+  } catch {
+    return props.tabs[0]?.id || ''
+  }
+}
+
+const activeTab = ref(readActiveTab())
 
 const collapsed = computed({
   get: () => Boolean(props.modelValue),
@@ -72,6 +86,11 @@ const collapsed = computed({
 watch(() => props.tabs, tabs => {
   if (!tabs.some(tab => tab.id === activeTab.value)) activeTab.value = tabs[0]?.id || ''
 }, { deep: true })
+
+watch(activeTab, value => {
+  if (!props.storageKey || typeof window === 'undefined' || !value) return
+  try { window.localStorage.setItem(`${props.storageKey}.activeTab`, value) } catch { /* storage is optional */ }
+})
 </script>
 
 <style scoped>

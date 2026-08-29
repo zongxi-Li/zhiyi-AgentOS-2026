@@ -157,4 +157,25 @@ describe('WorkbenchLayout', () => {
     expect(leftHandle.attributes('aria-valuenow')).toBe('320')
     wrapper.unmount()
   })
+
+  it('mounts the optional bottom-panel slot inside the shared vertical split', () => {
+    const wrapper = mount(WorkbenchLayout, {
+      props: {
+        storageKey: STORAGE_KEY,
+        showBottomPanel: true,
+        bottomPanelStorageKey: `${STORAGE_KEY}.bottom`,
+        bottomPanelDefaultCollapsed: true
+      },
+      slots: {
+        main: '<div class="slot-main-content">main</div>',
+        bottom: '<div class="slot-bottom">bottom</div>'
+      }
+    })
+
+    expect(wrapper.find('.workbench-vertical-split').exists()).toBe(true)
+    expect(wrapper.find('.slot-main-content').exists()).toBe(true)
+    expect(wrapper.find('.slot-bottom').exists()).toBe(true)
+    expect(wrapper.find('.workbench-vertical-split').classes()).toContain('is-collapsed')
+    wrapper.unmount()
+  })
 })
