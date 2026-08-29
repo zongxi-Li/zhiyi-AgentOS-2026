@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Zhiyi AgentOS",
+  "version": "0.1.0",
+  "identifier": "com.kinlin.zhiyi",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../frontend run dev:desktop -- --host 127.0.0.1 --port 3000",
+    "beforeBuildCommand": "npm --prefix ../frontend run build:desktop",
+    "devUrl": "http://127.0.0.1:3000",
+    "frontendDist": "../../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "知弈 AgentOS",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8080 ws://127.0.0.1:8080 https: wss:; img-src 'self' data: blob: http://127.0.0.1:8080 https:; media-src 'self' blob: http://127.0.0.1:8080 https:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https:; script-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/icon.png", "icons/icon.ico"]
+  }
+}
