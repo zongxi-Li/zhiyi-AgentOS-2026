@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
+import { apiUrl } from '@/platform'
 
 const USER_NOTIFIED_FLAG = '__kinlinUserNotified'
 
@@ -15,7 +16,7 @@ export const wasErrorUserNotified = (error: unknown): boolean =>
 
 // 创建axios实例
 const request = axios.create({
-  baseURL: '/api',
+  baseURL: apiUrl('/api'),
   timeout: 240000,
   headers: {
     'Content-Type': 'application/json'

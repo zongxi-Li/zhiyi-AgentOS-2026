@@ -74,6 +74,7 @@ import { Document, Delete, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ragApi } from '@/services/api/rag'
 import { fileApi } from '@/services/api/file'
+import { apiUrl } from '@/platform'
 
 interface Props {
   searchKeyword?: string
@@ -209,7 +210,7 @@ const handleDownload = async (file: FileItem) => {
   
   try {
     // 尝试从RAG API下载文档
-    const response = await fetch(`/api/rag/documents/${file.id}/download`)
+    const response = await fetch(apiUrl(`/api/rag/documents/${file.id}/download`))
     if (!response.ok) {
       throw new Error('下载失败')
     }

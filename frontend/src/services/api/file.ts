@@ -1,7 +1,8 @@
 import axios from 'axios'
+import { apiUrl } from '@/platform'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: apiUrl('/api'),
   timeout: 240000
 })
 

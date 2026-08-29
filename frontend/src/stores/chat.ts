@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { parseChatStreamData, parseSseDataLine, type ChatStreamEvent } from '@/utils/sse'
+import { apiUrl } from '@/platform'
 import { workflowApi, type AsyncWorkflowStartResponse } from '@/services/api/workflow'
 import { chatApi, type ChatRequest } from '@/services/api/chat'
 import { loadModelSettings, toModelRequestSettings, type ModelSettings } from '@/config/modelSettings'
@@ -526,7 +527,7 @@ export const useChatStore = defineStore('chat', () => {
     const streamController = new AbortController()
     activeStreamController = streamController
     try {
-      const resp = await fetch('/ai/chat/text/stream', {
+      const resp = await fetch(apiUrl('/ai/chat/text/stream'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

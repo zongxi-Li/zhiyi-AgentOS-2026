@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import ChatView from '@/views/ChatView.vue'
 import RoleView from '@/views/RoleView.vue'
@@ -6,6 +6,7 @@ import SettingsView from '@/views/SettingsView.vue'
 import LoginView from '@/views/LoginView.vue'
 import RagView from '@/views/RagView.vue'
 import { authApi } from '@/services/api/auth'
+import { isDesktop } from '@/platform'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -139,6 +140,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/agentos/resources',
+    name: 'ResourceCenter',
+    component: () => import('@/views/ResourceCenterView.vue'),
+    meta: {
+      title: 'Resource Center',
+      requiresAuth: true
+    }
+  },
+  {
     path: '/agentos/missions/new',
     name: 'CreateMission',
     component: () => import('@/views/CreateMissionView.vue'),
@@ -176,7 +186,9 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  // Tauri's bundled WebView has no server fallback for deep links. Keep the
+  // browser URL contract unchanged and use hashes only inside the desktop shell.
+  history: isDesktop() ? createWebHashHistory() : createWebHistory(),
   routes
 })
 

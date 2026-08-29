@@ -36,6 +36,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Cpu, Opportunity } from '@element-plus/icons-vue'
+import { apiUrl } from '@/platform'
 import {
   MODEL_SETTINGS_EVENT,
   SYSTEM_FALLBACK_MODELS,
@@ -73,7 +74,7 @@ async function loadSystemModels(): Promise<void> {
   modelsLoading.value = true
   try {
     const token = localStorage.getItem('token')
-    const response = await fetch('/ai/chat/models', {
+    const response = await fetch(apiUrl('/ai/chat/models'), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined
     })
     if (!response.ok) return

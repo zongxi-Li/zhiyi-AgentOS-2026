@@ -1,7 +1,8 @@
 import axios from 'axios'
+import { apiUrl } from '@/platform'
 
 export const agentosRequest = axios.create({
-  baseURL: '/api/agentos/v2',
+  baseURL: apiUrl('/api/agentos/v2'),
   timeout: 240000,
   headers: {
     'Content-Type': 'application/json'
