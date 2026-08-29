@@ -95,7 +95,7 @@ const graphIdentity = computed(() => {
 <style scoped>
 .sidebar-view-stack { display: contents; }
 .sidebar-status { display: flex; align-items: center; gap: 8px; min-height: 30px; margin-bottom: 4px; color: var(--wb-text); }
-.sidebar-status strong { font-size: 13px; font-weight: 650; }
+.sidebar-status strong { font-size: 14px; font-weight: 650; }
 .sidebar-status__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wb-text-muted); }
 .sidebar-status__dot.is-succeeded, .sidebar-status__dot.is-completed { background: var(--wb-success); }
 .sidebar-status__dot.is-failed { background: var(--wb-danger); }
@@ -103,6 +103,6 @@ const graphIdentity = computed(() => {
 .sidebar-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .sidebar-metrics--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sidebar-metrics > div { display: grid; gap: 2px; min-width: 0; }
-.sidebar-metrics strong { color: var(--wb-text); font: 16px var(--font-mono, monospace); }
+.sidebar-metrics strong { color: var(--wb-text); font: 21px var(--font-mono, monospace); line-height: 1; }
 .sidebar-metrics span { color: var(--wb-text-muted); font-size: 10px; }
 </style>
