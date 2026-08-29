@@ -132,23 +132,13 @@ const rightMaxForHandle = computed(() => {
 
 <style scoped>
 .workbench-layout {
-  --wb-bg: var(--bg-app, #f7f8fc);
-  --wb-sidebar-bg: var(--bg-card, #fff);
-  --wb-editor-bg: var(--bg-card, #fff);
-  --wb-panel-bg: var(--bg-card, #fff);
-  --wb-border: var(--border-light, #e5e7ef);
-  --wb-hover: var(--bg-input, #f3f4f8);
-  --wb-active: var(--primary-fade, #f0edff);
-  --wb-muted: var(--text-secondary, #73798c);
-  --wb-text: var(--text-primary, #25283a);
-  --wb-accent: var(--primary-color, #7562e8);
   display: flex;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--wb-bg);
+  background: var(--wb-surface-0);
 }
 
 .workbench-pane {
@@ -163,15 +153,15 @@ const rightMaxForHandle = computed(() => {
 .workbench-pane--left {
   flex: 0 0 var(--workbench-left-width);
   width: var(--workbench-left-width);
-  background: var(--wb-sidebar-bg);
+  border-right: 1px solid var(--wb-border);
+  background: var(--wb-surface-1);
 }
 
 .workbench-pane--main {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: auto;
 }
@@ -179,7 +169,8 @@ const rightMaxForHandle = computed(() => {
 .workbench-pane--right {
   flex: 0 0 var(--workbench-right-width);
   width: var(--workbench-right-width);
-  background: var(--wb-sidebar-bg);
+  border-left: 1px solid var(--wb-border);
+  background: var(--wb-surface-1);
 }
 
 .workbench-layout.is-resizing .workbench-pane {

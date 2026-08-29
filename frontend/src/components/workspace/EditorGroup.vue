@@ -38,9 +38,11 @@
         :focus-node-id="focusNodeId"
         :run-id="projection.activeRun?.runId || null"
         :available="activeOpened.available"
+        :runtime-observation="workbenchContext.runtimeObservation"
         @select-semantic-task="emit('selectSemanticTask', $event)"
         @open-semantic-task="emit('openSemanticTask', $event)"
         @locate-graph="emit('locateGraph', activeOpened.entry)"
+        @open-artifact="emit('openArtifact', $event)"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
     </section>
@@ -75,6 +77,7 @@ const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]
   openSemanticTask: [semanticTaskKey: string | null]
   locateGraph: [entry: WorkspaceEntry]
+  openArtifact: [entry: WorkspaceEntry]
 }>()
 
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
@@ -88,32 +91,33 @@ const editorTitle = (entry: WorkspaceEntry) => (
   props.registry.resolveEditor(entry, props.workbenchContext)?.title?.(entry, props.workbenchContext) || entry.name
 )
 
-const tabMark = (kind: WorkspaceEntryKind) => ({ graph: '◇', virtual_document: 'M', artifact: '·', folder: '▾', run: 'R' }[kind])
+const tabMark = (kind: WorkspaceEntryKind) => ({ graph: '◇', virtual_document: 'M', task: 'T', artifact: '·', folder: '▾', run: 'R' }[kind])
 </script>
 
 <style scoped>
-.editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--text-primary); background: var(--bg-card); }
-.editor-group__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 52px; padding: 8px 18px; border-bottom: 1px solid var(--border-light); }
+.editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
+.editor-group__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: var(--wb-toolbar-height); padding: 7px 16px; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-2); }
 .editor-group__context { min-width: 0; }
-.editor-group__product { display: block; color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
-.editor-group__context strong { display: block; margin-top: 3px; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.editor-group__run { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font: 10px var(--font-mono, monospace); white-space: nowrap; }
-.editor-group__run b { color: var(--warning); font-weight: 500; }
-.editor-group__run b:last-child { color: var(--text-muted); }
-.editor-tabs { display: flex; align-items: stretch; min-height: 36px; overflow-x: auto; border-bottom: 1px solid var(--border-light); background: var(--bg-input); scrollbar-width: thin; }
-.editor-tab { display: flex; align-items: stretch; flex: 0 0 auto; border-right: 1px solid var(--border-light); border-top: 2px solid transparent; }
-.editor-tab.is-active { border-top-color: var(--primary-color); background: var(--bg-card); }
-.editor-tab__main, .editor-tab__close { border: 0; color: var(--text-secondary); background: transparent; cursor: pointer; }
+.editor-group__product { display: block; color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
+.editor-group__context strong { display: block; margin-top: 3px; overflow: hidden; color: var(--wb-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.editor-group__run { display: flex; align-items: center; gap: 10px; color: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); white-space: nowrap; }
+.editor-group__run b { color: var(--wb-warning); font-weight: 500; }
+.editor-group__run b:last-child { color: var(--wb-text-muted); }
+.editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow-x: auto; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
+.editor-tab { display: flex; align-items: stretch; flex: 0 0 auto; border-right: 1px solid color-mix(in srgb, var(--wb-border) 78%, transparent); border-top: 2px solid transparent; }
+.editor-tab.is-active { border-top-color: var(--wb-accent); background: var(--wb-surface-2); }
+.editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
 .editor-tab__main { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 230px; padding: 0 5px 0 11px; font-size: 11px; }
-.editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--text-primary); }
-.editor-tab__kind { color: var(--primary-color); font: 12px var(--font-mono, monospace); }
+.editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--wb-text); }
+.editor-tab__main:focus-visible, .editor-tab__close:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
+.editor-tab__kind { color: var(--wb-accent); font: 12px var(--font-mono, monospace); }
 .editor-tab__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.editor-tab__missing { color: var(--warning); font: 9px var(--font-mono, monospace); }
-.editor-tab__close { width: 28px; color: var(--text-muted); font-size: 17px; }
-.editor-tab__close:hover { color: var(--danger); background: var(--bg-input); }
-.editor-tabs__empty { align-self: center; padding: 0 14px; color: var(--text-muted); font-size: 11px; }
-.editor-group__surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.editor-group__empty { display: grid; place-items: center; height: 100%; color: var(--text-muted); font-size: 12px; }
+.editor-tab__missing { color: var(--wb-warning); font: 9px var(--font-mono, monospace); }
+.editor-tab__close { width: 28px; color: var(--wb-text-muted); font-size: 17px; }
+.editor-tab__close:hover { color: var(--wb-danger); background: var(--wb-hover); }
+.editor-tabs__empty { align-self: center; padding: 0 14px; color: var(--wb-text-muted); font-size: 11px; }
+.editor-group__surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 10px 12px 12px; background: var(--wb-surface-shell); }
+.editor-group__empty { display: grid; place-items: center; height: 100%; color: var(--wb-text-muted); font-size: 12px; }
 
 @media (max-width: 720px) {
   .editor-group__toolbar { align-items: flex-start; flex-direction: column; gap: 4px; padding: 10px 12px; }

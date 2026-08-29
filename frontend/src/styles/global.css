@@ -118,6 +118,45 @@
   --backdrop-blur: blur(20px);
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), color 180ms var(--ease-out), box-shadow 180ms var(--ease-out), transform 180ms var(--ease-out);
+
+  /* Workbench visual language — derived from the active product theme. */
+  --wb-bg: var(--bg-app);
+  --wb-surface-shell: color-mix(in srgb, var(--bg-app) 90%, var(--bg-sidebar));
+  --wb-surface-pane: color-mix(in srgb, var(--bg-sidebar) 78%, var(--bg-app));
+  --wb-surface-section: var(--bg-card);
+  --wb-surface-inset: var(--bg-input);
+  /* Compatibility aliases for the first Workbench surface pass. */
+  --wb-surface-0: var(--wb-surface-shell);
+  --wb-surface-1: var(--wb-surface-pane);
+  --wb-surface-2: var(--wb-surface-section);
+  --wb-border-soft: color-mix(in srgb, var(--border-light) 58%, transparent);
+  --wb-border-default: color-mix(in srgb, var(--border-light) 82%, transparent);
+  --wb-border: var(--wb-border-default);
+  --wb-border-strong: var(--border-hover);
+  --wb-shadow-section: var(--shadow-sm);
+  --wb-radius-section: 10px;
+  --wb-text: var(--text-primary);
+  --wb-text-secondary: var(--text-secondary);
+  --wb-text-muted: var(--text-muted);
+  --wb-hover: color-mix(in srgb, var(--bg-input) 82%, var(--bg-card));
+  --wb-selected: var(--primary-fade);
+  --wb-active: var(--primary-fade);
+  --wb-accent: var(--primary-color);
+  --wb-accent-soft: var(--primary-fade);
+  --wb-success: var(--success);
+  --wb-warning: var(--warning);
+  --wb-danger: var(--danger);
+  --wb-radius-sm: 5px;
+  --wb-radius-md: 7px;
+  --wb-space-xs: 4px;
+  --wb-space-sm: 8px;
+  --wb-space-md: 12px;
+  --wb-space-lg: 16px;
+  --wb-sidebar-width: 320px;
+  --wb-inspector-width: 400px;
+  --wb-tab-height: 36px;
+  --wb-toolbar-height: 44px;
+  --wb-panel-tab-height: 34px;
 }
 
 /* Base Reset */

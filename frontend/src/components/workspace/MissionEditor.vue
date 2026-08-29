@@ -45,7 +45,11 @@ const renderedContent = computed(() => {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: 34px clamp(24px, 6vw, 92px) 56px;
-  color: var(--text-primary);
+  border: 1px solid var(--wb-border-soft);
+  border-radius: var(--wb-radius-section);
+  background: var(--wb-surface-section);
+  box-shadow: var(--wb-shadow-section);
+  color: var(--wb-text);
 }
 
 .editor-document__header {
@@ -53,32 +57,33 @@ const renderedContent = computed(() => {
   justify-content: space-between;
   gap: 24px;
   padding-bottom: 22px;
-  border-bottom: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--wb-border-soft);
 }
 
 .editor-document__header h1 { max-width: 820px; margin: 7px 0 4px; font-size: 19px; line-height: 1.3; text-wrap: pretty; overflow-wrap: anywhere; }
-.editor-document__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-.editor-document__header code { align-self: flex-start; max-width: 220px; overflow: hidden; color: var(--text-muted); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
-.editor-document__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
+.editor-document__header p { margin: 0; color: var(--wb-text-secondary); font-size: 12px; }
+.editor-document__header code { align-self: flex-start; max-width: 220px; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.editor-document__eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
 
 .editor-document__body { width: min(100%, 820px); padding-top: 24px; }
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
-.markdown-body :deep(h3) { color: var(--text-primary); line-height: 1.35; text-wrap: pretty; }
+.markdown-body :deep(h3) { color: var(--wb-text); line-height: 1.35; text-wrap: pretty; }
 .markdown-body :deep(h1) { margin: 0 0 18px; font-size: 25px; }
-.markdown-body :deep(h2) { margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-light); font-size: 17px; }
+.markdown-body :deep(h2) { margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--wb-border); font-size: 17px; }
 .markdown-body :deep(h3) { margin: 20px 0 8px; font-size: 14px; }
 .markdown-body :deep(p),
-.markdown-body :deep(li) { color: var(--text-secondary); font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+.markdown-body :deep(li) { color: var(--wb-text-secondary); font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) { padding-left: 23px; }
-.markdown-body :deep(code) { padding: 2px 4px; color: var(--text-primary); background: var(--bg-input); font: 11px var(--font-mono, monospace); }
-.markdown-body :deep(pre) { overflow: auto; padding: 12px; border: 1px solid var(--border-light); background: var(--bg-input); }
+.markdown-body :deep(code) { padding: 2px 4px; color: var(--wb-text); background: var(--wb-surface-inset); font: 11px var(--font-mono, monospace); }
+.markdown-body :deep(pre) { overflow: auto; padding: 12px; border: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
 .markdown-body :deep(pre code) { padding: 0; background: transparent; }
-.markdown-body :deep(blockquote) { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--primary-color); color: var(--text-secondary); }
-.markdown-body :deep(a) { color: var(--primary-color); }
+.markdown-body :deep(blockquote) { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--wb-accent); color: var(--wb-text-secondary); }
+.markdown-body :deep(a) { color: var(--wb-accent); }
 
-.mission-editor__meta { width: min(100%, 820px); margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--border-light); }
-.property-row { display: flex; justify-content: space-between; gap: 24px; min-height: 30px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border-light) 70%, transparent); color: var(--text-secondary); font-size: 12px; }
-.property-row code { color: var(--text-primary); font: 11px var(--font-mono, monospace); }
+.mission-editor__meta { width: min(100%, 820px); margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--wb-border-soft); }
+.property-row { display: flex; justify-content: space-between; gap: 24px; min-height: 30px; padding: 7px 0; color: var(--wb-text-secondary); font-size: 12px; }
+.property-row + .property-row { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
+.property-row code { color: var(--wb-text); font: 11px var(--font-mono, monospace); }
 </style>

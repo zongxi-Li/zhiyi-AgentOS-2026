@@ -897,20 +897,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .acg-topology {
-  --primary-color: #5b5bd6;
-  --primary-fade: #ececff;
-  --success: #387a5b;
-  --info: #4d7fdf;
-  --warning: #a97626;
-  --danger: #c94e54;
-  --text-primary: #26332f;
-  --text-secondary: #66736f;
-  --text-muted: #7e8985;
-  --text-disabled: #919b97;
-  --bg-panel: #ffffff;
-  --bg-input: #f3f5f4;
-  --border-light: #dfe4e8;
-  --border-strong: #bcc6c2;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -920,7 +906,7 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--bg-input) 48%, var(--bg-panel));
   border-color: var(--border-light);
-  box-shadow: 0 1px 3px rgba(34, 61, 52, 0.08);
+  box-shadow: var(--shadow-sm);
 }
 .acg-topology.is-workbench {
   height: 100%;
@@ -928,7 +914,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: var(--wb-editor-bg, var(--bg-panel));
+  background: var(--wb-surface-2);
   box-shadow: none;
 }
 .acg-topology.is-workbench .panel-head {
@@ -937,11 +923,11 @@ onBeforeUnmount(() => {
   min-height: 34px;
   margin: 0;
   padding: 0 10px;
-  border-bottom: 1px solid var(--wb-border, var(--border-light));
+  border-bottom: 1px solid var(--wb-border);
 }
-.acg-topology.is-workbench .action-group { padding: 2px; border: 1px solid var(--wb-border, var(--border-light)); border-radius: 5px; background: var(--wb-hover, var(--bg-input)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 1px 2px rgba(46, 50, 78, .06); }
+.acg-topology.is-workbench .action-group { padding: 2px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); box-shadow: none; }
 .acg-topology.is-workbench .action-btn { width: 28px; height: 28px; border-radius: 4px; }
-.acg-topology.is-workbench .action-btn:hover, .acg-topology.is-workbench .action-btn.active { border-color: var(--primary-line); background: var(--surface-solid); box-shadow: var(--shadow-sm); }
+.acg-topology.is-workbench .action-btn:hover, .acg-topology.is-workbench .action-btn.active { border-color: color-mix(in srgb, var(--wb-accent) 42%, var(--wb-border)); background: var(--wb-surface-2); box-shadow: none; }
 .acg-topology.is-workbench .graph-surface { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .acg-topology.is-workbench .graph-toolbar {
   position: static;
@@ -952,7 +938,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 0 10px;
   border: 0;
-  border-bottom: 1px solid var(--wb-border, var(--border-light));
+  border-bottom: 1px solid var(--wb-border);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -966,16 +952,30 @@ onBeforeUnmount(() => {
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
-  color: var(--wb-muted, var(--text-secondary));
+  color: var(--wb-text-muted);
 }
-.acg-topology.is-workbench .view-mode button:hover { background: var(--wb-hover, var(--bg-input)); color: var(--wb-text, var(--text-primary)); }
-.acg-topology.is-workbench .view-mode button.active { border-bottom-color: var(--wb-accent, var(--primary-color)); background: transparent; color: var(--wb-accent, var(--primary-color)); }
-.acg-topology.is-workbench .filter-trigger { min-height: 30px; border-left: 1px solid var(--wb-border, var(--border-light)); border-radius: 0; }
+.acg-topology.is-workbench .view-mode button:hover { background: var(--wb-hover); color: var(--wb-text); }
+.acg-topology.is-workbench .view-mode button.active { border-bottom-color: var(--wb-accent); background: transparent; color: var(--wb-accent); }
+.acg-topology.is-workbench .filter-trigger { min-height: 30px; border-left: 1px solid var(--wb-border); border-radius: 0; }
 .acg-topology.is-workbench .empty { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; }
 .acg-topology.is-workbench .graph-stage { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); border: 0; border-radius: 0; background: transparent; }
 .acg-topology.is-workbench .graph-canvas { flex: 1 1 auto; height: 100%; min-height: 0; }
 .acg-topology.is-workbench .node-detail { height: auto; min-height: 0; }
 .acg-topology.is-workbench .meta { padding: 2px 5px; border-radius: 3px; background: transparent; }
+.acg-topology.is-workbench .legend,
+.acg-topology.is-workbench .canvas-controls,
+.acg-topology.is-workbench .view-hint,
+.acg-topology.is-workbench .edge-filters { border-color: var(--wb-border); background: color-mix(in srgb, var(--wb-surface-2) 94%, transparent); box-shadow: none; }
+.acg-topology.is-workbench .legend-toggle,
+.acg-topology.is-workbench .canvas-controls button { color: var(--wb-text-secondary); }
+.acg-topology.is-workbench .legend-toggle:hover,
+.acg-topology.is-workbench .canvas-controls button:hover { background: var(--wb-hover); color: var(--wb-accent); }
+.acg-topology.is-workbench .node-detail { border-left-color: var(--wb-border); background: var(--wb-surface-1); }
+.acg-topology.is-workbench .node-detail header span,
+.acg-topology.is-workbench .node-detail header button:hover { color: var(--wb-accent); }
+.acg-topology.is-workbench .node-detail header button { background: var(--wb-surface-inset); color: var(--wb-text-secondary); }
+.acg-topology.is-workbench .runtime-detail-group,
+.acg-topology.is-workbench .runtime-summary { border-color: var(--wb-border); background: var(--wb-surface-inset); }
 .graph-surface { position: relative; min-width: 0; }
 .panel-head {
   display: flex;
@@ -1143,7 +1143,7 @@ onBeforeUnmount(() => {
   width: 100vw;
   height: 100vh;
   padding: 16px;
-  background: #fcfdfd;
+  background: var(--wb-surface-2, var(--bg-panel));
 }
 .acg-topology:fullscreen .graph-stage { flex: 1 1 auto; min-height: 0; }
 .acg-topology:fullscreen .graph-canvas,
