@@ -19,6 +19,18 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue()],
+    css: {
+      preprocessorOptions: {
+        scss: {
+          api: 'modern-compiler'
+        }
+      }
+    },
+    build: {
+      // The remaining large files are the app shell and lazy visualization
+      // libraries; keep a guard for meaningful growth after code-splitting.
+      chunkSizeWarningLimit: 800
+    },
     test: {
       environment: 'jsdom',
       globals: true,
