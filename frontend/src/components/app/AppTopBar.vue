@@ -1,22 +1,18 @@
 <template>
-  <header class="app-topbar" aria-label="应用工作栏">
+  <header
+    class="app-topbar"
+    :class="{ 'is-desktop-shell': desktopShell }"
+    v-bind="dragRegionProps"
+    aria-label="应用工作栏"
+  >
     <div class="app-topbar__brand-zone">
       <button
-        class="app-topbar__icon-button app-topbar__menu-button"
-        type="button"
-        aria-label="打开导航"
-        title="打开导航"
-        @click="emit('menu')"
-      >
-        <el-icon><Menu /></el-icon>
-      </button>
-
-      <button
         class="app-topbar__brand"
+        :class="{ 'is-collapsed': props.navigationState === 'collapsed', 'is-drawer': props.navigationState === 'drawer' }"
         type="button"
-        aria-label="知弈工作台"
-        title="知弈工作台"
-        @click="emit('home')"
+        :aria-label="navigationActionLabel"
+        :title="navigationActionLabel"
+        @click="emit('menu')"
       >
         <span class="app-topbar__logo" aria-hidden="true">
           <img src="/logo.png" alt="" />
@@ -30,14 +26,7 @@
       <button type="button" @click="emit('navigate', '/agentos/resources')">资源</button>
     </nav>
 
-    <div class="app-topbar__context" aria-label="当前工作区">
-      <span class="app-topbar__context-eyebrow">{{ contextEyebrow }}</span>
-      <span class="app-topbar__context-divider" aria-hidden="true">/</span>
-      <strong class="app-topbar__context-title" :title="contextTitle">{{ contextTitle }}</strong>
-      <span v-if="contextMeta" class="app-topbar__context-meta" :title="contextMeta">{{ contextMeta }}</span>
-    </div>
-
-    <div class="app-topbar__command">
+    <div class="app-topbar__command" v-bind="dragRegionProps">
       <label class="app-command-center" :class="{ 'is-focused': commandFocused }">
         <el-icon class="app-command-center__icon" aria-hidden="true"><Search /></el-icon>
         <input
@@ -54,22 +43,28 @@
       </label>
     </div>
 
+    <DesktopWindowControls v-if="desktopShell" />
   </header>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
-  Menu,
   Search
 } from '@element-plus/icons-vue'
+import DesktopWindowControls from '@window-controls'
+import { isDesktop, platform } from '@/platform'
 
-withDefaults(defineProps<{
-  contextEyebrow: string
-  contextTitle: string
-  contextMeta?: string
+// Desktop 构建下本栏即窗口标题栏（decorations:false）：
+// 空白区域承担拖拽与双击最大化，右侧挂窗口控制；
+// Web 构建通过 @window-controls 别名拿到空占位，不含任何 Tauri API。
+const desktopShell = isDesktop()
+const dragRegionProps = platform.dragRegionProps
+
+const props = withDefaults(defineProps<{
+  navigationState?: 'expanded' | 'collapsed' | 'drawer'
 }>(), {
-  contextMeta: ''
+  navigationState: 'expanded'
 })
 
 const emit = defineEmits<{
@@ -80,6 +75,10 @@ const emit = defineEmits<{
 
 const query = ref('')
 const commandFocused = ref(false)
+const navigationActionLabel = computed(() => {
+  if (props.navigationState === 'drawer') return '打开导航'
+  return props.navigationState === 'collapsed' ? '展开导航' : '收起导航'
+})
 
 const clearCommand = () => {
   query.value = ''
@@ -103,6 +102,11 @@ const clearCommand = () => {
   border-bottom: 1px solid var(--app-topbar-border);
 }
 
+/* Desktop 无边框窗口：关闭按钮必须贴住窗口右缘（Fitts's Law）。 */
+.app-topbar.is-desktop-shell {
+  padding-right: 0;
+}
+
 .app-topbar__brand-zone,
 .app-topbar__menu-links,
 .app-topbar__brand {
@@ -114,8 +118,7 @@ const clearCommand = () => {
   min-width: 0;
 }
 
-.app-topbar__brand,
-.app-topbar__icon-button {
+.app-topbar__brand {
   color: inherit;
   border: 0;
   background: transparent;
@@ -124,43 +127,52 @@ const clearCommand = () => {
 }
 
 .app-topbar__brand {
-  flex: 0 0 30px;
+  position: relative;
+  flex: 0 0 34px;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   padding: 2px;
-  border-radius: 6px;
+  border-radius: 10px;
   text-align: left;
 }
 
-.app-topbar__brand:hover,
-.app-topbar__icon-button:hover:not(:disabled) {
+.app-topbar__brand:hover {
   background: var(--app-topbar-hover);
 }
 
 .app-topbar__brand:focus-visible,
-.app-topbar__icon-button:focus-visible,
 .app-command-center:focus-within {
   outline: 2px solid var(--app-topbar-focus-ring);
   outline-offset: 1px;
 }
 
 .app-topbar__logo {
+  position: relative;
   display: grid;
-  flex: 0 0 24px;
+  flex: 0 0 28px;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  overflow: hidden;
+  width: 28px;
+  height: 28px;
+  overflow: visible;
   background: var(--app-topbar-logo-bg);
   border: 1px solid var(--app-topbar-border);
-  border-radius: 6px;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 1px color-mix(in srgb, white 78%, transparent) inset;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .app-topbar__logo img {
-  width: 19px;
-  height: 19px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
+}
+
+.app-topbar__brand:hover .app-topbar__logo,
+.app-topbar__brand:focus-visible .app-topbar__logo {
+  border-color: var(--app-topbar-focus-border);
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--app-topbar-text) 12%, transparent), 0 0 0 1px color-mix(in srgb, white 78%, transparent) inset;
+  transform: translateY(-1px);
 }
 
 .app-topbar__menu-links {
@@ -173,7 +185,10 @@ const clearCommand = () => {
   padding: 0 8px;
   color: var(--app-topbar-muted);
   font: inherit;
-  font-size: 12px;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 520;
+  letter-spacing: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -187,75 +202,17 @@ const clearCommand = () => {
   background: var(--app-topbar-hover);
 }
 
+.app-topbar__menu-links button:active {
+  transform: scale(0.98);
+}
+
 .app-topbar__menu-links button:focus-visible {
   outline: 2px solid var(--app-topbar-focus-ring);
   outline-offset: 1px;
 }
 
-.app-topbar__icon-button {
-  display: inline-grid;
-  flex: 0 0 28px;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 5px;
-}
-
-.app-topbar__icon-button:disabled {
-  color: var(--app-topbar-muted);
-  cursor: default;
-  opacity: 0.44;
-}
-
-.app-topbar__context,
 .app-topbar__command {
   min-width: 0;
-}
-
-.app-topbar__context {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  overflow: hidden;
-  min-width: 0;
-  padding-right: clamp(230px, 31vw, 510px);
-  color: var(--app-topbar-muted);
-  white-space: nowrap;
-}
-
-.app-topbar__context-eyebrow {
-  flex: 0 0 auto;
-  color: var(--app-topbar-muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.app-topbar__context-divider {
-  color: var(--app-topbar-muted);
-  opacity: 0.55;
-}
-
-.app-topbar__context-title,
-.app-topbar__context-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-topbar__context-title {
-  color: var(--app-topbar-text);
-  font-size: 13px;
-  font-weight: 560;
-}
-
-.app-topbar__context-meta {
-  flex: 0 0 auto;
-  max-width: 150px;
-  color: var(--app-topbar-muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
 }
 
 .app-command-center {
@@ -264,26 +221,27 @@ const clearCommand = () => {
   left: 50%;
   display: flex;
   align-items: center;
-  width: clamp(280px, 31vw, 500px);
-  height: 30px;
+  width: clamp(300px, 34vw, 520px);
+  height: 34px;
   margin: 0 auto;
-  padding: 0 8px;
+  padding: 0 9px;
   transform: translate(-50%, -50%);
-  color: var(--app-topbar-muted);
-  background: var(--app-topbar-input-bg);
-  border: 1px solid var(--app-topbar-input-border);
-  border-radius: 6px;
+  color: var(--app-topbar-text);
+  background: color-mix(in srgb, var(--app-topbar-logo-bg) 90%, white);
+  border: 1px solid color-mix(in srgb, var(--app-topbar-input-border) 92%, white);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 6%, transparent), 0 0 0 1px color-mix(in srgb, white 70%, transparent) inset;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .app-command-center:hover,
 .app-command-center.is-focused {
-  background: var(--app-topbar-input-bg-hover);
+  background: color-mix(in srgb, var(--app-topbar-input-bg-hover) 92%, white);
   border-color: var(--app-topbar-focus-border);
 }
 
 .app-command-center.is-focused {
-  box-shadow: 0 0 0 3px var(--app-topbar-focus-ring);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 3px var(--app-topbar-focus-ring), 0 0 0 1px color-mix(in srgb, white 70%, transparent) inset;
 }
 
 .app-command-center__icon {
@@ -298,7 +256,7 @@ const clearCommand = () => {
   height: 100%;
   color: var(--app-topbar-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   background: transparent;
   border: 0;
   outline: 0;
@@ -306,33 +264,28 @@ const clearCommand = () => {
 
 .app-command-center input::placeholder {
   color: var(--app-topbar-muted);
-  opacity: 0.8;
+  opacity: 0.84;
 }
 
 .app-command-center kbd {
   flex: 0 0 auto;
-  padding: 2px 5px;
+  min-width: 32px;
+  padding: 3px 6px;
   color: var(--app-topbar-muted);
   font-family: var(--font-mono);
   font-size: 9px;
   line-height: 1.2;
-  background: var(--app-topbar-kbd-bg);
-  border: 1px solid var(--app-topbar-border);
-  border-radius: 4px;
+  text-align: center;
+  background: color-mix(in srgb, var(--app-topbar-kbd-bg) 88%, white);
+  border: 1px solid color-mix(in srgb, var(--app-topbar-border) 82%, white);
+  border-radius: 6px;
+  box-shadow: 0 1px 1px color-mix(in srgb, var(--app-topbar-text) 5%, transparent);
 }
 
 @media (max-width: 1180px) {
   .app-topbar {
     grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 8px;
-  }
-
-  .app-topbar__context {
-    padding-right: clamp(200px, 32vw, 380px);
-  }
-
-  .app-topbar__context-meta {
-    display: none;
   }
 
   .app-topbar__menu-links {
@@ -343,10 +296,6 @@ const clearCommand = () => {
 @media (max-width: 860px) {
   .app-topbar {
     grid-template-columns: auto minmax(160px, 1fr) auto;
-  }
-
-  .app-topbar__context {
-    display: none;
   }
 
   .app-command-center {
@@ -372,7 +321,6 @@ const clearCommand = () => {
 
 @media (prefers-reduced-motion: reduce) {
   .app-topbar__brand,
-  .app-topbar__icon-button,
   .app-command-center {
     transition: none;
   }
