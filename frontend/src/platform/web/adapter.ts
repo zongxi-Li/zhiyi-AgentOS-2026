@@ -11,6 +11,8 @@ const selectedFileFromBrowser = (file: File): SelectedFile => ({
 const webAdapter: PlatformAdapter = {
   platform: 'web',
 
+  dragRegionProps: {},
+
   openFile(options = {}): Promise<SelectedFile | null> {
     return new Promise((resolve) => {
       const input = document.createElement('input')

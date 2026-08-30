@@ -12,6 +12,11 @@ export default defineConfig(({ mode }) => {
     __dirname,
     isDesktop ? 'src/platform/desktop/adapter.ts' : 'src/platform/web/adapter.ts'
   )
+  // 桌面构建把窗口控件打进顶栏；Web 构建换成空占位，保证永不解析 @tauri-apps/api/window。
+  const windowControls = resolve(
+    __dirname,
+    isDesktop ? 'src/components/desktop/DesktopWindowControls.vue' : 'src/platform/web/windowControlsStub.ts'
+  )
   const desktopNodeModules = resolve(__dirname, '../desktop/node_modules')
   const BACKEND_PROXY_TARGET =
     env.DEV_BACKEND_PROXY_TARGET ||
@@ -36,13 +41,18 @@ export default defineConfig(({ mode }) => {
       globals: true,
       include: ['src/**/*.spec.ts'],
       alias: {
-        '@': resolve(__dirname, 'src')
+        '@': resolve(__dirname, 'src'),
+        // 仅供 jsdom 测试解析 DesktopWindowControls 的 import（运行时被 vi.mock 替换）；
+        // 生产构建不经过这里，Web/desktop 隔离仍由 resolve.alias 决定。
+        '@tauri-apps/api': resolve(desktopNodeModules, '@tauri-apps/api')
       }
     },
     resolve: {
       alias: [
         { find: '@platform', replacement: platformAdapter },
+        { find: '@window-controls', replacement: windowControls },
         ...(isDesktop ? [
+          { find: '@tauri-apps/api', replacement: resolve(desktopNodeModules, '@tauri-apps/api') },
           { find: '@tauri-apps/plugin-dialog', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-dialog') },
           { find: '@tauri-apps/plugin-notification', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-notification') },
           { find: '@tauri-apps/plugin-opener', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-opener') }
@@ -62,7 +72,10 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 3000,
-      strictPort: false,
+      // 桌面模式端口是 tauri dev 的硬约定（tauri.conf.json devUrl=127.0.0.1:3000，
+      // 后端 CORS 白名单也只围绕该源设计）：端口被占就快速失败，
+      // 禁止 Vite 静默漂移到 3001 导致 API 全部落入 CORS 陷阱。
+      strictPort: isDesktop,
       // Windows 宿主目录 bind mount 进容器后不产生 inotify 事件，chokidar 常规监听
       // 会静默失效：源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
       // 轮询是 Dev 形态下保证"改完代码容器内可见"的唯一可靠通道。

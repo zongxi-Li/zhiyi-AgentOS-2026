@@ -18,10 +18,11 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@platform": ["src/platform/web/adapter.ts"]
+      "@platform": ["src/platform/web/adapter.ts"],
+      "@window-controls": ["src/platform/web/windowControlsStub.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],
-  "exclude": ["src/**/*.spec.ts", "src/platform/desktop/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts", "src/platform/desktop/**/*.ts", "src/components/desktop/**"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

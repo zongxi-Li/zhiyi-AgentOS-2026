@@ -4,6 +4,7 @@
     "paths": {
       "@/*": ["src/*"],
       "@platform": ["src/platform/desktop/adapter.ts"],
+      "@window-controls": ["src/components/desktop/DesktopWindowControls.vue"],
       "@tauri-apps/*": ["../desktop/node_modules/@tauri-apps/*"]
     }
   },

@@ -8,6 +8,8 @@ const fileNameFromPath = (path: string): string => path.split(/[\\/]/).pop() || 
 const desktopAdapter: PlatformAdapter = {
   platform: 'desktop',
 
+  dragRegionProps: { 'data-tauri-drag-region': '' },
+
   async openFile(options = {}): Promise<SelectedFile | null> {
     const selected = await open({
       multiple: false,
