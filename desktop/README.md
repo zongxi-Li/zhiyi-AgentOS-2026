@@ -24,7 +24,7 @@ npm install
 npm run dev
 ```
 
-The Tauri hook starts Vite in `desktop` mode at `http://127.0.0.1:3000`, so Vite keeps handling the existing `/api` and `/ai` proxy paths while resolving only the desktop adapter.
+The Tauri hook starts Vite in `desktop` mode at `http://127.0.0.1:3000`. Desktop API, SSE, WebSocket, and Runtime health requests use the same host Gateway as the browser frontend: `http://127.0.0.1:18088`.
 
 ## Build
 
@@ -34,7 +34,7 @@ npm install
 npm run build
 ```
 
-The build command first runs `frontend`'s `build:desktop` with the `desktop` mode. `frontend/.env.desktop` points API requests at `http://127.0.0.1:8080`, then Tauri bundles `frontend/dist`.
+The build command first runs `frontend`'s `build:desktop` with the `desktop` mode. `frontend/.env.desktop` points API requests at the host Gateway `http://127.0.0.1:18088`, then Tauri bundles `frontend/dist`.
 
 ## Architecture
 
@@ -47,9 +47,12 @@ Tauri 2 + native plugins
       v
 Existing Vue frontend (frontend/)
       |
-      +-- HTTP / SSE / WebSocket
+      +-- HTTP / SSE / WebSocket / health
       v
-Existing Spring Backend :8080
+Existing host HTTP Gateway :18088
+      |
+      v
+Existing Spring Backend :8080 (Docker internal)
       |
       v
 Existing AgentOS / WKN Runtime
