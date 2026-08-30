@@ -98,6 +98,119 @@ describe('RuntimeObservationAdapter', () => {
       contractViolationCount: 1,
       recoveryCount: 1
     })
+    expect(result.lowEntropy).toMatchObject({
+      observed: false,
+      source: null,
+      tokensAvailable: null,
+      tokensDelivered: null,
+      recoveryCount: 1,
+      contractViolationCount: 1
+    })
+  })
+
+  it('restores low-entropy metrics from real provenance records', async () => {
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run('run_1') as any)
+    vi.spyOn(agentosApi, 'getWorkflowTrace').mockResolvedValue(trace('run_1') as any)
+    vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue({
+      ...provenance('run_1'),
+      integrityStatus: 'verified',
+      interactions: [{
+        interactionId: 'interaction_1', eventId: 'event_1', edgeIds: [], producerStepIds: ['step_1'],
+        consumerStepId: 'step_2', producerAgentNames: [], consumerAgentName: 'agent', fieldsByProducer: {},
+        tokensAvailable: 1000, tokensDelivered: 400, savingRatio: 0.6, evidenceRefs: [], contractStatus: 'valid'
+      }, {
+        interactionId: 'interaction_2', eventId: 'event_2', edgeIds: [], producerStepIds: ['step_2'],
+        consumerStepId: 'step_3', producerAgentNames: [], consumerAgentName: 'agent', fieldsByProducer: {},
+        tokensAvailable: 500, tokensDelivered: 250, savingRatio: 0.5, evidenceRefs: [], contractStatus: 'valid'
+      }]
+    } as any)
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
+    vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
+
+    const result = await readRuntimeObservation('run_1')
+
+    expect(result.lowEntropy).toMatchObject({
+      observed: true,
+      source: 'provenance',
+      averageSavingRatio: 0.55,
+      effectiveSavingRatio: 0.5666666666666667,
+      tokensAvailable: 1500,
+      tokensDelivered: 650,
+      tokensSaved: 850,
+      interactionCount: 2,
+      integrityStatus: 'verified'
+    })
+  })
+
+  it('reads low-entropy metrics from ledger-backed provenance events', async () => {
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue({
+      ...run('run_1'),
+      executionState: { graphPatchRefs: ['patch_1'] }
+    } as any)
+    vi.spyOn(agentosApi, 'getWorkflowTrace').mockResolvedValue(trace('run_1') as any)
+    vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue({
+      ...provenance('run_1'),
+      integrityStatus: 'valid',
+      events: [
+        {
+          eventType: 'data_produced',
+          payload: { eventId: 'prod_1', producerStepId: 'step_1', fieldNames: ['brief'] }
+        },
+        {
+          eventType: 'data_consumed',
+          payload: {
+            eventId: 'cons_1',
+            consumerStepId: 'step_2',
+            producerStepIds: ['step_1'],
+            consumedFields: ['brief'],
+            tokensAvailable: 14702,
+            tokensDelivered: 11352,
+            savingRatio: 0.228,
+            contractStatus: 'valid'
+          }
+        }
+      ]
+    } as any)
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
+    vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({
+      nodes: [],
+      operational: {
+        lineage: {},
+        nodeExecutions: [],
+        controlFrames: [{ frameId: 'frame_1', status: 'joined' }],
+        communicationRefs: ['communication_ref_1'],
+        memoryRefs: ['memory_ref_1'],
+        evidenceRefs: ['evidence_1'],
+        leaseStatuses: { agent_1: 'released' },
+        loopIterations: { step_2: 1 },
+        consensusResults: { step_2: { accepted: true } },
+        debateSessions: {},
+        recoveryOutcome: null
+      }
+    } as any)
+
+    const result = await readRuntimeObservation('run_1')
+
+    expect(result.communication).toHaveLength(1)
+    expect(result.provenance).toMatchObject({
+      integrityStatus: 'valid',
+      productions: [{ eventId: 'prod_1' }],
+      consumptions: [{ eventId: 'cons_1', consumerStepId: 'step_2' }]
+    })
+    expect(result.operational?.controlFrames).toHaveLength(1)
+    expect(result.operational?.communicationRefs).toEqual(['communication_ref_1'])
+    expect(result.patchRefs).toEqual(['patch_1'])
+    expect(result.lowEntropy).toMatchObject({
+      observed: true,
+      source: 'provenance',
+      averageSavingRatio: 0.228,
+      tokensAvailable: 14702,
+      tokensDelivered: 11352,
+      tokensSaved: 3350,
+      interactionCount: 1,
+      integrityStatus: 'valid'
+    })
+    expect(result.lowEntropy.effectiveSavingRatio).toBeCloseTo(0.2279, 3)
   })
 
   it('drops a stale response after a fast Run switch', async () => {

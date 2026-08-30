@@ -46,14 +46,80 @@
         { label: 'runId', value: entry?.runId || runId, code: true }
       ]" />
     </InspectorSection>
+
+    <InspectorSection v-if="runtimeObservation" title="低熵通信" :badge="lowEntropyBadge">
+      <div class="low-entropy-hero">
+        <div>
+          <strong>{{ savingRatioLabel }}</strong>
+          <span>有效 Token 节省率</span>
+        </div>
+        <div class="low-entropy-hero__saved">
+          <span>累计节省</span>
+          <strong>{{ tokenLabel(lowEntropy?.tokensSaved) }}</strong>
+          <small v-if="lowEntropy?.tokensSaved != null">Token</small>
+        </div>
+      </div>
+      <div class="low-entropy-delivery">
+        <span>投递 / 可获取</span>
+        <strong>{{ tokenLabel(lowEntropy?.tokensDelivered) }} <i>/</i> {{ tokenLabel(lowEntropy?.tokensAvailable) }}</strong>
+      </div>
+      <div class="sidebar-signal-grid" aria-label="低熵通信信号">
+        <div><strong>{{ lowEntropy?.interactionCount || '—' }}</strong><span>运行交互</span></div>
+        <div><strong>{{ lowEntropy?.recoveryCount || '—' }}</strong><span>自愈恢复</span></div>
+        <div><strong>{{ lowEntropy?.contractViolationCount || '—' }}</strong><span>契约异常</span></div>
+      </div>
+      <p v-if="!lowEntropy?.observed" class="sidebar-empty">未观测到低熵通信指标。</p>
+      <div v-else class="low-entropy-footer">
+        <span>来源 {{ lowEntropy?.source || '未观测' }}</span>
+        <strong>{{ integrityLabel }}</strong>
+      </div>
+    </InspectorSection>
+
+    <InspectorSection v-if="runtimeObservation" title="运行内容" :badge="`${runtimeObservation.traces.length} traces`">
+      <div class="sidebar-metrics sidebar-metrics--four" aria-label="运行观测统计">
+        <div><strong>{{ runtimeObservation.traces.length }}</strong><span>Trace</span></div>
+        <div><strong>{{ runtimeObservation.events.length }}</strong><span>Events</span></div>
+        <div><strong>{{ runtimeObservation.communication.length }}</strong><span>通信</span></div>
+        <div><strong>{{ runtimeObservation.toolCalls.length }}</strong><span>Tool Calls</span></div>
+      </div>
+      <div v-if="recentTraces.length" class="recent-traces" aria-label="最近运行记录">
+        <div v-for="item in recentTraces" :key="item.eventId" class="recent-traces__item">
+          <div>
+            <strong>{{ item.eventType }}</strong>
+            <time>{{ formatTraceTime(item.timestamp) }}</time>
+          </div>
+          <span>{{ item.observation || item.stepId || 'Run' }}</span>
+        </div>
+      </div>
+      <p v-else class="sidebar-empty">未观测到运行内容。</p>
+    </InspectorSection>
+
+    <InspectorSection v-if="runtimeObservation?.operational" title="节点生命周期" :badge="String(nodeExecutions.length)">
+      <div v-if="nodeExecutions.length" class="record-list" aria-label="节点生命周期记录">
+        <article v-for="record in nodeExecutions" :key="record.executionInstanceId" class="record-list__item">
+          <div class="record-list__heading">
+            <strong>{{ record.stepId }}</strong>
+            <span class="phase" :class="record.phase">{{ phaseLabel(record.phase) }}</span>
+          </div>
+          <code :title="record.executionInstanceId">{{ shortId(record.executionInstanceId) }}</code>
+          <small>Attempt {{ shortId(record.attemptId) }}<template v-if="record.loopPath.length"> · Loop {{ record.loopPath.join('.') }}</template></small>
+          <small v-if="record.commitId">Commit {{ shortId(record.commitId) }}</small>
+          <small v-if="record.failureCode" class="record-list__failure">{{ record.failureCode }}</small>
+        </article>
+      </div>
+      <p v-else class="sidebar-empty">暂无 Identity 节点执行记录。</p>
+    </InspectorSection>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { NodeExecutionPhase } from '@/services/api/agentos'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
+import type { RuntimeObservation } from '@/workbench/runtime/observation'
+import type { WorkbenchInspectorContext } from '@/workbench/types'
 
 const props = defineProps<{
   entry: WorkspaceEntry | null
@@ -63,6 +129,8 @@ const props = defineProps<{
   graph: AcgBlueprint | null
   runStatus: string | null
   historical: boolean
+  context?: WorkbenchInspectorContext
+  runtimeObservation?: RuntimeObservation | null
 }>()
 
 const statusValue = computed(() => props.graphNode?.status || props.entry?.status || props.runStatus || null)
@@ -90,6 +158,39 @@ const graphIdentity = computed(() => {
   if (props.graphNodes.some(node => node.identityQuality === 'legacy')) return 'mixed / legacy'
   return 'unproven'
 })
+const runtimeObservation = computed(() => props.runtimeObservation || props.context?.runtimeObservation || null)
+const nodeExecutions = computed(() => runtimeObservation.value?.operational?.nodeExecutions || [])
+const lowEntropy = computed(() => runtimeObservation.value?.lowEntropy || null)
+const lowEntropyBadge = computed(() => lowEntropy.value?.observed ? 'Provenance' : '未观测')
+const savingRatioLabel = computed(() => {
+  const ratio = lowEntropy.value?.effectiveSavingRatio ?? lowEntropy.value?.averageSavingRatio
+  return ratio == null ? '未观测' : `${(ratio * 100).toFixed(1)}%`
+})
+const integrityLabel = computed(() => {
+  const status = lowEntropy.value?.integrityStatus
+  if (!status) return '完整性未观测'
+  if (['verified', 'valid'].includes(status.toLowerCase())) return '校验通过'
+  return status
+})
+const recentTraces = computed(() => runtimeObservation.value?.traces.slice(-3).reverse() || [])
+const tokenLabel = (value: number | null | undefined) => {
+  if (value == null) return '未观测'
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
+  return String(value)
+}
+const formatTraceTime = (value: string | null) => value
+  ? new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
+  : '时间未观测'
+const shortId = (value: string) => value.length > 26 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value
+const phaseLabel = (phase: NodeExecutionPhase) => ({
+  prepared: '已准备',
+  executed: '已执行',
+  audited: '已审计',
+  committed: '已提交',
+  waiting_review: '待审核',
+  failed: '失败',
+  cancelled: '已取消'
+}[phase] || phase)
 </script>
 
 <style scoped>
@@ -102,7 +203,43 @@ const graphIdentity = computed(() => {
 .sidebar-status__dot.is-running, .sidebar-status__dot.is-planning { background: var(--wb-accent); }
 .sidebar-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .sidebar-metrics--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.sidebar-metrics > div { display: grid; gap: 2px; min-width: 0; }
-.sidebar-metrics strong { color: var(--wb-text); font: 21px var(--font-mono, monospace); line-height: 1; }
-.sidebar-metrics span { color: var(--wb-text-muted); font-size: 10px; }
+.sidebar-metrics--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sidebar-metrics > div { display: grid; justify-items: center; gap: 2px; min-width: 0; text-align: center; }
+.sidebar-metrics strong { color: var(--wb-text); font: 500 22px/1.1 var(--font-serif, serif); font-variant-numeric: tabular-nums; }
+.sidebar-metrics span { color: var(--wb-text-muted); font: 10px/1.35 var(--font-sans, sans-serif); letter-spacing: .01em; }
+.low-entropy-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; min-height: 70px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--wb-accent) 18%, var(--wb-border-soft)); border-radius: var(--wb-radius-md); background: color-mix(in srgb, var(--wb-accent-soft) 62%, var(--wb-surface-section)); }
+.low-entropy-hero > div:first-child { display: grid; grid-column: 2; grid-row: 1; justify-items: center; gap: 4px; min-width: 0; text-align: center; }
+.low-entropy-hero > div:first-child strong { color: var(--wb-accent); font: 520 30px/1.05 var(--font-serif, serif); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.low-entropy-hero span, .low-entropy-hero small { color: var(--wb-text-muted); font: 11px/1.35 var(--font-sans, sans-serif); }
+.low-entropy-hero__saved { display: grid; grid-column: 3; grid-row: 1; justify-self: end; justify-items: center; gap: 2px; padding-left: 12px; border-left: 1px solid color-mix(in srgb, var(--wb-accent) 16%, var(--wb-border-soft)); text-align: center; }
+.low-entropy-hero__saved strong { color: var(--wb-success); font: 520 23px/1.05 var(--font-serif, serif); font-variant-numeric: tabular-nums; }
+.low-entropy-delivery { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 7px; padding: 8px 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); text-align: center; }
+.low-entropy-delivery span { color: var(--wb-text-muted); font: 11px/1.35 var(--font-sans, sans-serif); }
+.low-entropy-delivery strong { color: var(--wb-text); font: 600 13px/1.2 var(--font-sans, sans-serif); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.low-entropy-delivery i { color: var(--wb-text-muted); font-style: normal; }
+.sidebar-signal-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 7px; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
+.sidebar-signal-grid > div { display: grid; justify-items: center; gap: 3px; min-width: 0; padding: 8px 7px; border-right: 1px solid var(--wb-border-soft); text-align: center; }
+.sidebar-signal-grid > div:last-child { border-right: 0; }
+.sidebar-signal-grid strong { color: var(--wb-text); font: 500 18px/1.1 var(--font-serif, serif); font-variant-numeric: tabular-nums; }
+.sidebar-signal-grid span { color: var(--wb-text-muted); font: 10px/1.25 var(--font-sans, sans-serif); }
+.low-entropy-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; color: var(--wb-text-muted); font: 10px/1.35 var(--font-sans, sans-serif); }
+.low-entropy-footer strong { color: var(--wb-success); font-weight: 650; }
+.recent-traces { display: grid; gap: 8px; }
+.recent-traces__item { display: grid; gap: 3px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
+.recent-traces__item:first-child { padding-top: 0; border-top: 0; }
+.recent-traces__item > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.recent-traces__item strong { overflow: hidden; color: var(--wb-text); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.recent-traces__item time, .recent-traces__item span { overflow: hidden; color: var(--wb-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.recent-traces__item time { flex: 0 0 auto; }
+.record-list { display: grid; gap: 8px; }
+.record-list__item { display: grid; gap: 3px; min-width: 0; padding: 9px 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
+.record-list__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.record-list__heading strong { overflow: hidden; color: var(--wb-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.record-list__item code, .record-list__item small { overflow-wrap: anywhere; color: var(--wb-text-muted); font: 10px/1.4 var(--font-mono, monospace); }
+.record-list__failure { color: var(--wb-danger) !important; }
+.phase { flex: 0 0 auto; padding: 2px 6px; border-radius: 999px; color: var(--wb-accent); background: var(--wb-accent-soft); font-size: 9px; }
+.phase.committed { color: var(--wb-success); background: color-mix(in srgb, var(--wb-success) 12%, transparent); }
+.phase.failed, .phase.cancelled { color: var(--wb-danger); background: color-mix(in srgb, var(--wb-danger) 10%, transparent); }
+.phase.waiting_review { color: var(--wb-warning); background: color-mix(in srgb, var(--wb-warning) 12%, transparent); }
+@media (max-width: 360px) { .sidebar-metrics--four { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; } }
 </style>

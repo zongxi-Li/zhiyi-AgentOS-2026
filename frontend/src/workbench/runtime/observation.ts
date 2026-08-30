@@ -1,7 +1,9 @@
 import {
   agentosApi,
   type ProvenanceConsumption,
+  type ProvenanceProduction,
   type ResourceObservation,
+  type RunOperationalState,
   type RuntimeInteraction,
   type RunProvenanceProjection,
   type TraceEvent,
@@ -73,6 +75,29 @@ export interface RuntimeAuditObservation {
   recoveryCount: number
 }
 
+export interface RuntimeProvenanceObservation {
+  schemaVersion: number | null
+  integrityStatus: string | null
+  productions: ProvenanceProduction[]
+  consumptions: ProvenanceConsumption[]
+  interactions: RuntimeInteraction[]
+}
+
+export interface RuntimeLowEntropyObservation {
+  observed: boolean
+  source: 'provenance' | null
+  averageSavingRatio: number | null
+  effectiveSavingRatio: number | null
+  tokensAvailable: number | null
+  tokensDelivered: number | null
+  tokensSaved: number | null
+  recoveryCount: number
+  degradationCount: number
+  interactionCount: number
+  contractViolationCount: number
+  integrityStatus: string | null
+}
+
 export interface RuntimeSelection {
   stepId?: string | null
   semanticTaskKey?: string | null
@@ -87,6 +112,13 @@ export interface RuntimeObservation {
   toolCalls: RuntimeToolCallObservation[]
   problems: RuntimeProblem[]
   audit: RuntimeAuditObservation
+  provenance: RuntimeProvenanceObservation
+  operational: RunOperationalState | null
+  recoveryTrace: RuntimeTraceObservation[]
+  contractViolations: RuntimeTraceObservation[]
+  scheduleTrace: RuntimeTraceObservation[]
+  patchRefs: string[]
+  lowEntropy: RuntimeLowEntropyObservation
   resourceObservation: ResourceObservation | null
   unavailableSources: string[]
 }
@@ -107,6 +139,7 @@ export class RuntimeObservationStaleError extends Error {
 
 const ACTIVE_RUN_STATUSES = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
 const DEDICATED_TRACE_TYPES = new Set(['data_produced', 'data_consumed', 'model_called', 'tool_called'])
+const RECOVERY_TRACE_TYPES = new Set(['step_failed', 'run_recovered', 'run_degraded', 'contract_violation'])
 
 const asRecord = (value: unknown): Record<string, any> => (
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
@@ -180,27 +213,50 @@ const communicationItem = (
   }
 }
 
-const provenanceCommunication = (provenance: RunProvenanceProjection | null) => {
-  if (!provenance) return []
+const normalizeProvenance = (provenance: RunProvenanceProjection | null): RuntimeProvenanceObservation => {
+  if (!provenance) {
+    return { schemaVersion: null, integrityStatus: null, productions: [], consumptions: [], interactions: [] }
+  }
+
+  const events = provenance.events || []
+  if (!events.length) {
+    return {
+      schemaVersion: null,
+      integrityStatus: stringOrNull(provenance.integrityStatus),
+      productions: provenance.productions || [],
+      consumptions: provenance.consumptions || [],
+      interactions: provenance.interactions || []
+    }
+  }
+
+  const payloads: Record<string, any>[] = events.map(event => ({
+    ...asRecord(event.payload),
+    createdAt: stringOrNull(event.createdAt) || stringOrNull(asRecord(event.payload).createdAt) || undefined
+  }))
+  return {
+    schemaVersion: null,
+    integrityStatus: stringOrNull(provenance.integrityStatus),
+    productions: payloads.filter(item => item.producerStepId && !item.consumerStepId) as ProvenanceProduction[],
+    consumptions: payloads.filter(item => item.consumerStepId && !item.interactionId) as ProvenanceConsumption[],
+    interactions: payloads.filter(item => item.interactionId) as RuntimeInteraction[]
+  }
+}
+
+const provenanceCommunication = (provenance: RuntimeProvenanceObservation) => {
+  const normalizedProvenance = provenance
   const items: RuntimeCommunicationObservation[] = []
-  for (const [index, event] of (provenance.events || []).entries()) {
-    const payload = asRecord(event.payload)
-    const item = communicationItem(
+  for (const [index, interactionRecord] of normalizedProvenance.interactions.entries()) {
+    const payload = interactionPayload(interactionRecord)
+    const normalized = communicationItem(
       payload,
       'provenance',
-      stringOrNull(payload.eventId) || `event-${index}`,
-      stringOrNull(event.createdAt) || stringOrNull(payload.createdAt),
+      interactionRecord.eventId || `event-${index}`,
+      interactionRecord.createdAt || null,
       index
     )
-    if (item) items.push(item)
-  }
-  if (items.length || provenance.events?.length) return items
-  for (const [index, item] of (provenance.interactions || []).entries()) {
-    const interaction = interactionPayload(item)
-    const normalized = communicationItem(interaction, 'provenance', item.eventId, item.createdAt || null, index)
     if (normalized) items.push(normalized)
   }
-  for (const [index, item] of (provenance.consumptions || []).entries()) {
+  for (const [index, item] of normalizedProvenance.consumptions.entries()) {
     const consumption = consumptionPayload(item)
     const normalized = communicationItem(consumption, 'provenance', item.eventId, item.createdAt || null, index)
     if (normalized) items.push(normalized)
@@ -279,18 +335,76 @@ const normalizeProblems = (
 ]
 
 const normalizeAudit = (
-  provenance: RunProvenanceProjection | null,
+  provenance: RuntimeProvenanceObservation,
   traces: RuntimeTraceObservation[]
 ): RuntimeAuditObservation => ({
-  provenanceStatus: stringOrNull(provenance?.integrityStatus),
-  provenanceRecordCount: (provenance?.events?.length || 0)
-    + (provenance?.productions?.length || 0)
-    + (provenance?.consumptions?.length || 0)
-    + (provenance?.interactions?.length || 0),
-  evidenceCount: (provenance?.productions || []).reduce((count, production) => count + (production.evidenceRefs?.length || 0), 0),
+  provenanceStatus: provenance.integrityStatus,
+  provenanceRecordCount: provenance.productions.length + provenance.consumptions.length + provenance.interactions.length,
+  evidenceCount: provenance.productions.reduce((count, production) => count + (production.evidenceRefs?.length || 0), 0),
   contractViolationCount: traces.filter(event => event.eventType === 'contract_violation').length,
   recoveryCount: traces.filter(event => ['run_recovered', 'run_degraded'].includes(event.eventType)).length
 })
+
+type LowEntropyMetricRecord = {
+  tokensAvailable?: number
+  tokensDelivered?: number
+  savingRatio?: number
+}
+
+const hasLowEntropyMetric = (item: LowEntropyMetricRecord) => (
+  typeof item.tokensAvailable === 'number'
+  || typeof item.tokensDelivered === 'number'
+  || typeof item.savingRatio === 'number'
+)
+
+const provenanceMetricSource = (provenance: RuntimeProvenanceObservation): LowEntropyMetricRecord[] => {
+  // Both legacy arrays and ledger-backed events are normalized before this
+  // point. Prefer interactions when they carry metrics, then delivery
+  // envelopes. A production event is never a low-entropy metric record.
+  const interactions = provenance.interactions.filter(hasLowEntropyMetric)
+  if (interactions.length) return interactions
+
+  const consumptions = provenance.consumptions.filter(hasLowEntropyMetric)
+  if (consumptions.length) return consumptions
+
+  return []
+}
+
+const normalizeLowEntropy = (
+  provenance: RuntimeProvenanceObservation,
+  traces: RuntimeTraceObservation[]
+): RuntimeLowEntropyObservation => {
+  const metricSource = provenanceMetricSource(provenance)
+  const tokenSource = metricSource.filter(item => item.tokensAvailable != null || item.tokensDelivered != null)
+  const hasSavingRatios = metricSource.some(item => typeof item.savingRatio === 'number' && Number.isFinite(item.savingRatio))
+  const tokensAvailable = tokenSource.length
+    ? tokenSource.reduce((sum, item) => sum + Number(item.tokensAvailable || 0), 0)
+    : null
+  const tokensDelivered = tokenSource.length
+    ? tokenSource.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)
+    : null
+
+  return {
+    observed: metricSource.length > 0,
+    source: metricSource.length ? 'provenance' : null,
+    averageSavingRatio: hasSavingRatios
+      ? metricSource.reduce((sum, item) => sum + Number(item.savingRatio || 0), 0) / metricSource.length
+      : null,
+    effectiveSavingRatio: tokensAvailable && tokensAvailable > 0 && tokensDelivered != null
+      ? (tokensAvailable - tokensDelivered) / tokensAvailable
+      : null,
+    tokensAvailable,
+    tokensDelivered,
+    tokensSaved: tokensAvailable != null && tokensDelivered != null
+      ? Math.max(0, tokensAvailable - tokensDelivered)
+      : null,
+    recoveryCount: traces.filter(event => event.eventType === 'run_recovered').length,
+    degradationCount: traces.filter(event => event.eventType === 'run_degraded').length,
+    interactionCount: metricSource.length,
+    contractViolationCount: traces.filter(event => event.eventType === 'contract_violation').length,
+    integrityStatus: stringOrNull(provenance?.integrityStatus)
+  }
+}
 
 export const emptyRuntimeObservation = (runId: string, diagnostics: readonly WorkspaceDiagnostic[] = []): RuntimeObservation => ({
   runId,
@@ -307,6 +421,32 @@ export const emptyRuntimeObservation = (runId: string, diagnostics: readonly Wor
     contractViolationCount: 0,
     recoveryCount: 0
   },
+  provenance: {
+    schemaVersion: null,
+    integrityStatus: null,
+    productions: [],
+    consumptions: [],
+    interactions: []
+  },
+  operational: null,
+  recoveryTrace: [],
+  contractViolations: [],
+  scheduleTrace: [],
+  patchRefs: [],
+  lowEntropy: {
+    observed: false,
+    source: null,
+    averageSavingRatio: null,
+    effectiveSavingRatio: null,
+    tokensAvailable: null,
+    tokensDelivered: null,
+    tokensSaved: null,
+    recoveryCount: 0,
+    degradationCount: 0,
+    interactionCount: 0,
+    contractViolationCount: 0,
+    integrityStatus: null
+  },
   resourceObservation: null,
   unavailableSources: ['run', 'trace', 'provenance', 'resource']
 })
@@ -316,18 +456,31 @@ export const readRuntimeObservation = async (
   diagnostics: readonly WorkspaceDiagnostic[] = [],
   options: { signal?: AbortSignal } = {}
 ): Promise<RuntimeObservation> => {
+  const executionTreeRequest = agentosApi.getExecutionTree(runId, options)
   const results = await Promise.allSettled([
     agentosApi.getWorkflowRun(runId, options),
     agentosApi.getWorkflowTrace(runId, options),
     agentosApi.getRunProvenance(runId, options),
-    loadResourceObservation(runId, options)
+    executionTreeRequest,
+    loadResourceObservation(runId, options, executionTreeRequest)
   ])
   const run = results[0].status === 'fulfilled' ? results[0].value : null
   const trace = results[1].status === 'fulfilled' ? results[1].value : null
-  const provenance = results[2].status === 'fulfilled' ? results[2].value : null
-  const resourceObservation = results[3].status === 'fulfilled' ? results[3].value : null
+  const rawProvenance = results[2].status === 'fulfilled' ? results[2].value : null
+  const executionTree = results[3].status === 'fulfilled' ? results[3].value : null
+  const resourceObservation = results[4].status === 'fulfilled' ? results[4].value : null
+  const provenance = normalizeProvenance(rawProvenance)
   const traces = normalizeTrace(trace)
-  const unavailableSources = results.flatMap((result, index) => result.status === 'rejected' ? [['run', 'trace', 'provenance', 'resource'][index]] : [])
+  const unavailableSources = [
+    results[0].status === 'rejected' ? 'run' : null,
+    results[1].status === 'rejected' ? 'trace' : null,
+    results[2].status === 'rejected' ? 'provenance' : null,
+    results[3].status === 'rejected' ? 'operational' : null,
+    results[4].status === 'rejected' ? 'resource' : null
+  ].filter((value): value is string => Boolean(value))
+  const recoveryTrace = traces.filter(event => RECOVERY_TRACE_TYPES.has(event.eventType))
+  const contractViolations = traces.filter(event => event.eventType === 'contract_violation')
+  const scheduleTrace = traces.filter(event => event.eventType.includes('schedule') || event.eventType.includes('superstep'))
   return {
     runId,
     runStatus: run?.status || trace?.status || null,
@@ -337,6 +490,13 @@ export const readRuntimeObservation = async (
     toolCalls: normalizeToolCalls(traces),
     problems: normalizeProblems(traces, diagnostics),
     audit: normalizeAudit(provenance, traces),
+    provenance,
+    operational: executionTree?.operational || null,
+    recoveryTrace,
+    contractViolations,
+    scheduleTrace,
+    patchRefs: run?.executionState?.graphPatchRefs || [],
+    lowEntropy: normalizeLowEntropy(provenance, traces),
     resourceObservation,
     unavailableSources
   }

@@ -15,11 +15,12 @@ import {
  */
 export const loadResourceObservation = async (
   runId: string,
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal } = {},
+  executionTreeRequest?: Promise<RunExecutionTree>
 ): Promise<ResourceObservation> => {
   const [resourceResponse, executionTree] = await Promise.all([
     agentosApi.listResources(options),
-    agentosApi.getExecutionTree(runId, options)
+    executionTreeRequest || agentosApi.getExecutionTree(runId, options)
   ])
 
   return {
