@@ -5,11 +5,8 @@
       <el-container class="app-layout" :class="{ 'immersive-mode': isImmersive }">
         <AppTopBar
           v-if="!isImmersive"
-          :context-eyebrow="topChromeContext.eyebrow"
-          :context-title="topChromeContext.title"
-          :context-meta="topChromeMeta"
+          :navigation-state="usesDrawerNavigation ? 'drawer' : (mainSidebarCompact ? 'collapsed' : 'expanded')"
           @menu="handleTopChromeMenu"
-          @home="handleTopChromeHome"
           @navigate="handleTopChromeNavigate"
         />
 
@@ -22,19 +19,6 @@
             :class="{ collapsed: mainSidebarCompact, 'chat-panel-open': secondaryNavOpen, resizing: sidebarResizing || chatPanelResizing }"
           >
           <div class="primary-sidebar" :style="{ width: primarySidebarWidth }">
-          <!-- Sidebar controls only; brand identity is owned by the App Top Bar. -->
-          <div class="sidebar-header sidebar-controls">
-            <button
-              class="sidebar-collapse-btn"
-              type="button"
-              :aria-label="secondaryNavOpen ? '关闭任务面板' : (sidebarCollapsed ? '展开侧边栏' : '收起侧边栏')"
-              :title="secondaryNavOpen ? '关闭任务面板' : (sidebarCollapsed ? '展开侧边栏' : '收起侧边栏')"
-              @click="toggleSidebar"
-            >
-              <el-icon><Expand v-if="mainSidebarCompact" /><Fold v-else /></el-icon>
-            </button>
-          </div>
-
           <!-- Main Navigation -->
           <div class="sidebar-nav" ref="sidebarNav">
             <el-menu
@@ -430,7 +414,7 @@ import {
   ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, EditPen, User, Search,
   Clock, Setting, SwitchButton, Connection,
   Monitor, Cpu, Box,
-  Fold, Expand
+  Fold
 } from '@element-plus/icons-vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
 import AppTopBar from '@/components/app/AppTopBar.vue'
@@ -545,36 +529,6 @@ const sidebarUserName = computed(() => {
 })
 const sidebarUserMeta = computed(() => userStore.currentUser?.email?.trim() || '已登录')
 const sidebarUserInitial = computed(() => sidebarUserName.value.charAt(0).toUpperCase())
-
-const topChromeContext = computed(() => {
-  const title = typeof route.meta.title === 'string' ? route.meta.title : '工作台'
-
-  if (isMissionWorkspacePath(route.path)) {
-    return {
-      eyebrow: 'Projects',
-      title: 'Mission Workspace'
-    }
-  }
-
-  if (isAcgRoute.value) {
-    return {
-      eyebrow: 'ACG',
-      title
-    }
-  }
-
-  return {
-    eyebrow: '知弈工作台',
-    title
-  }
-})
-
-const topChromeMeta = computed(() => {
-  const runId = typeof route.query.runId === 'string' ? route.query.runId : ''
-  if (runId) return `Run ${runId.slice(-10)}`
-  if (isMissionWorkspacePath(route.path)) return 'Read-only'
-  return ''
-})
 
 // Sidebar navigation state
 
@@ -863,10 +817,6 @@ const handleTopChromeMenu = () => {
     return
   }
   toggleSidebar()
-}
-
-const handleTopChromeHome = () => {
-  void router.push('/agentos/acg')
 }
 
 const handleTopChromeNavigate = (path: string) => {
@@ -1206,87 +1156,17 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--sidebar-border);
 }
 
-.sidebar-controls {
-  justify-content: flex-end;
-}
-
-.sidebar-collapse-btn {
-  display: inline-flex;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.sidebar-collapse-btn {
-  flex: 0 0 auto;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  color: var(--text-secondary);
-  font-size: 17px;
-  transition: background-color 0.16s ease, color 0.16s ease;
-}
-
-.sidebar-collapse-btn:hover {
-  background: var(--primary-fade);
-  color: var(--primary-color);
-}
-
-.sidebar-collapse-btn:focus-visible {
-  outline: 2px solid var(--primary-color);
-  outline-offset: 2px;
-}
-
-.app-sidebar.collapsed .sidebar-header {
-  justify-content: center;
-  padding: 0;
-}
-
-.logo-icon {
-  width: 34px;
-  height: 34px;
-  background: var(--primary-fade);
-  border: none;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--primary-color);
-  font-weight: bold;
-  font-size: 18px;
-  overflow: hidden;
-}
-
-.logo-icon img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-
-.logo-text {
-  font-family: var(--font-serif);
-  font-size: 19px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: 0;
-}
-
 .sidebar-nav {
   flex: 1;
   min-height: 0;
-  padding: 0 8px 12px;
+  padding: 10px 8px 12px;
   overflow-y: auto;
   overflow-x: hidden;
   scroll-behavior: smooth;
 }
 
 .app-sidebar.collapsed .sidebar-nav {
-  padding: 18px 6px 10px;
+  padding: 12px 6px 10px;
 }
 
 .workspace-switch {
@@ -1433,15 +1313,17 @@ onUnmounted(() => {
   box-sizing: border-box;
   height: 33px;
   padding: 14px 16px 6px;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-disabled);
-  letter-spacing: 0;
+  letter-spacing: 0.04em;
   text-transform: none;
 }
 
 .sidebar-menu {
   --el-menu-item-font-size: 13px;
+  font-family: var(--font-sans);
   border: none;
   background: transparent;
 }
@@ -1476,9 +1358,10 @@ onUnmounted(() => {
   padding: 0 var(--sidebar-item-icon-inset);
   border: 1px solid transparent;
   border-radius: 10px;
+  font-family: var(--font-serif);
   font-size: 13px;
-  font-weight: 450;
-  letter-spacing: -0.01em;
+  font-weight: 500;
+  letter-spacing: -0.012em;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
@@ -1950,9 +1833,10 @@ onUnmounted(() => {
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--text-secondary);
+  font-family: var(--font-serif);
   font-size: 14px;
-  font-weight: 450;
-  letter-spacing: -0.01em;
+  font-weight: 500;
+  letter-spacing: -0.012em;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
   position: relative;
 }

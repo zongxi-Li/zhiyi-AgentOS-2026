@@ -91,6 +91,32 @@ const runtimeObservation = (runId: string): RuntimeObservation => ({
     contractViolationCount: 0,
     recoveryCount: 0
   },
+  provenance: {
+    schemaVersion: null,
+    integrityStatus: null,
+    productions: [],
+    consumptions: [],
+    interactions: []
+  },
+  operational: null,
+  recoveryTrace: [],
+  contractViolations: [],
+  scheduleTrace: [],
+  patchRefs: [],
+  lowEntropy: {
+    observed: false,
+    source: null,
+    averageSavingRatio: null,
+    effectiveSavingRatio: null,
+    tokensAvailable: null,
+    tokensDelivered: null,
+    tokensSaved: null,
+    recoveryCount: 0,
+    degradationCount: 0,
+    interactionCount: 0,
+    contractViolationCount: 0,
+    integrityStatus: null
+  },
   resourceObservation: null,
   unavailableSources: []
 })
@@ -177,6 +203,87 @@ describe('SecondarySidebar', () => {
     expect(wrapper.text()).toContain('图信息')
   })
 
+  it('restores low-entropy metrics and runtime content in the Run view', () => {
+    const observed = {
+      ...runtimeObservation('run_1'),
+      traces: [{
+        eventId: 'trace_1', runId: 'run_1', stepId: 'node_capacity', eventType: 'step_completed',
+        observation: '运行内容已记录', timestamp: '2026-08-29T00:01:00Z', durationMs: null,
+        status: 'completed', payload: {}, source: 'trace' as const
+      }],
+      events: [{
+        eventId: 'event_1', eventType: 'step_completed', timestamp: '2026-08-29T00:01:00Z',
+        stepId: 'node_capacity', target: 'node_capacity', summary: '运行内容已记录', source: 'trace' as const
+      }],
+      communication: [{
+        id: 'communication_1', source: 'provenance' as const, sourceEventId: 'event_2',
+        timestamp: '2026-08-29T00:01:00Z', producerStepId: 'node_a', consumerStepId: 'node_capacity',
+        artifactRef: null, fields: [], tokenCount: 400, status: 'valid', summary: 'node_a → node_capacity'
+      }],
+      toolCalls: [{
+        eventId: 'tool_1', tool: 'search', name: 'search', stepId: 'node_capacity', status: 'succeeded',
+        startedAt: '2026-08-29T00:01:00Z', durationMs: null, latencyMs: 42, source: 'trace' as const
+      }],
+      lowEntropy: {
+        observed: true, source: 'provenance' as const, averageSavingRatio: 0.6, effectiveSavingRatio: 0.6,
+        tokensAvailable: 1000, tokensDelivered: 400, tokensSaved: 600, recoveryCount: 0, degradationCount: 0,
+        interactionCount: 1, contractViolationCount: 0, integrityStatus: 'verified'
+      },
+      provenance: {
+        schemaVersion: null,
+        integrityStatus: 'verified',
+        productions: [{ eventId: 'production_1', producerStepId: 'node_a', fieldNames: ['brief'], evidenceRefs: ['evidence_1'] }],
+        consumptions: [{ eventId: 'consumption_1', producerStepIds: ['node_a'], consumerStepId: 'node_capacity', consumedFields: ['brief'], contractStatus: 'valid' }],
+        interactions: [{
+          interactionId: 'interaction_1', eventId: 'interaction_event_1', edgeIds: [], producerStepIds: ['node_a'],
+          consumerStepId: 'node_capacity', producerAgentNames: ['agent_a'], consumerAgentName: 'agent_capacity',
+          fieldsByProducer: { node_a: ['brief'] }, tokensDelivered: 400, tokensAvailable: 1000,
+          savingRatio: 0.6, evidenceRefs: ['evidence_1'], contractStatus: 'valid'
+        }]
+      },
+      operational: {
+        lineage: {},
+        nodeExecutions: [{
+          operationId: 'operation_1', executionInstanceId: 'execution_1', runId: 'run_1', stepId: 'node_capacity',
+          attemptId: 'attempt_capacity', phase: 'committed', artifactRefs: { primary: 'artifact_1' },
+          auditRef: 'audit_1', commitId: 'commit_1', loopPath: [1], failureCode: null
+        }],
+        controlFrames: [{ frameId: 'frame_1', type: 'parallel', status: 'joined' }],
+        communicationRefs: ['communication_ref_1'],
+        memoryRefs: ['memory_ref_1'],
+        evidenceRefs: ['evidence_1'],
+        leaseStatuses: { agent_capacity: 'released' },
+        loopIterations: { node_capacity: 1 },
+        consensusResults: { node_capacity: { decision: 'accepted' } },
+        debateSessions: { node_capacity: { rounds: 2 } },
+        recoveryOutcome: { strategy: 'checkpoint', status: 'recovered' }
+      },
+      recoveryTrace: [{
+        eventId: 'recovery_1', runId: 'run_1', stepId: 'node_capacity', eventType: 'run_recovered',
+        observation: '从检查点恢复', timestamp: '2026-08-29T00:05:00Z', durationMs: null,
+        status: 'recovered', payload: { strategy: 'checkpoint' }, source: 'trace'
+      }],
+      contractViolations: [],
+      scheduleTrace: [{
+        eventId: 'schedule_1', runId: 'run_1', stepId: 'node_capacity', eventType: 'schedule_batch_joined',
+        observation: '调度批次已汇合', timestamp: '2026-08-29T00:04:00Z', durationMs: null,
+        status: 'completed', payload: {}, source: 'trace'
+      }],
+      patchRefs: ['patch_1']
+    }
+    const context = inspectorContext({
+      context: createWorkbenchContext({ ...baseContext(), runtimeObservation: observed })
+    })
+    const wrapper = mountSidebar({ context })
+
+    expect(wrapper.text()).toContain('低熵通信')
+    expect(wrapper.text()).toContain('60.0%')
+    expect(wrapper.text()).toContain('600')
+    expect(wrapper.text()).toContain('运行内容')
+    expect(wrapper.text()).toContain('运行内容已记录')
+    expect(wrapper.text()).toContain('Tool Calls')
+  })
+
   it('switches views and persists only the selected view id', async () => {
     const wrapper = mountSidebar()
     for (const [label, content] of [['资源', '运行资源'], ['通信', '通信摘要'], ['审计', '审计状态'], ['上下文', '上下文数据']]) {
@@ -186,6 +293,66 @@ describe('SecondarySidebar', () => {
     }
     expect(localStorage.getItem('zhiyi.mission.workspace.secondary-sidebar.view.v1')).toBe('runtime.context-view')
     expect(localStorage.getItem('zhiyi.mission.workspace.secondary-sidebar.view.v1')).not.toContain('run_1')
+  })
+
+  it('migrates all seven legacy panel data groups into the current sidebar views', async () => {
+    const observed = {
+      ...runtimeObservation('run_1'),
+      operational: {
+        lineage: {},
+        nodeExecutions: [],
+        controlFrames: [{ frameId: 'frame_1', status: 'joined' }],
+        communicationRefs: ['communication_ref_1'],
+        memoryRefs: ['memory_ref_1'],
+        evidenceRefs: ['evidence_1'],
+        leaseStatuses: { agent_1: 'released' },
+        loopIterations: { task_1: 1 },
+        consensusResults: { task_1: { decision: 'accepted' } },
+        debateSessions: { task_1: { rounds: 1 } },
+        recoveryOutcome: { strategy: 'checkpoint', status: 'recovered' }
+      },
+      provenance: {
+        schemaVersion: null,
+        integrityStatus: 'verified',
+        productions: [{ eventId: 'production_1', producerStepId: 'step_1', fieldNames: ['brief'] }],
+        consumptions: [{ eventId: 'consumption_1', producerStepIds: ['step_1'], consumerStepId: 'step_2', consumedFields: ['brief'] }],
+        interactions: [{
+          interactionId: 'interaction_1', eventId: 'interaction_event_1', edgeIds: [], producerStepIds: ['step_1'],
+          consumerStepId: 'step_2', producerAgentNames: ['agent_1'], consumerAgentName: 'agent_2',
+          fieldsByProducer: { step_1: ['brief'] }, tokensDelivered: 40, tokensAvailable: 100, savingRatio: 0.6,
+          evidenceRefs: [], contractStatus: 'valid'
+        }]
+      },
+      recoveryTrace: [{
+        eventId: 'recovery_1', runId: 'run_1', stepId: 'step_1', eventType: 'run_recovered', observation: 'recovered',
+        timestamp: '2026-08-29T00:00:00Z', durationMs: null, status: 'succeeded', payload: { strategy: 'checkpoint' }, source: 'trace'
+      }],
+      contractViolations: [],
+      scheduleTrace: [],
+      patchRefs: ['patch_1']
+    } as RuntimeObservation
+    const context = inspectorContext({ context: createWorkbenchContext({ ...baseContext(), runtimeObservation: observed }) })
+    const wrapper = mountSidebar({ context })
+
+    await wrapper.findAll('.secondary-sidebar__tabs button').find(button => button.text() === '上下文')!.trigger('click')
+    expect(wrapper.text()).toContain('控制协同')
+    expect(wrapper.text()).toContain('frame_1')
+    expect(wrapper.text()).toContain('通信上下文')
+    expect(wrapper.text()).toContain('communication_ref_1')
+    expect(wrapper.text()).toContain('memory_ref_1')
+
+    await wrapper.findAll('.secondary-sidebar__tabs button').find(button => button.text() === '通信')!.trigger('click')
+    expect(wrapper.text()).toContain('数据血缘')
+    expect(wrapper.text()).toContain('production_1')
+    expect(wrapper.text()).toContain('consumption_1')
+    expect(wrapper.text()).toContain('运行交互')
+    expect(wrapper.text()).toContain('interaction_1')
+
+    await wrapper.findAll('.secondary-sidebar__tabs button').find(button => button.text() === '审计')!.trigger('click')
+    expect(wrapper.text()).toContain('恢复审计')
+    expect(wrapper.text()).toContain('patch_1')
+    expect(wrapper.text()).toContain('恢复轨迹')
+    expect(wrapper.text()).toContain('recovery_1')
   })
 
   it('renders task and artifact context without retaining the previous selection', async () => {
