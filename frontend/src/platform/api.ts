@@ -8,13 +8,19 @@ const normalizePath = (path: string): string => path.startsWith('/') ? path : `/
  * Resolve an API path against the configured Backend origin.
  *
  * Web builds keep relative URLs so the existing Vite/Nginx proxy contract is
- * unchanged. The desktop build sets VITE_API_BASE_URL to the local Backend.
+ * unchanged. The desktop build sets VITE_API_BASE_URL to that same host
+ * Gateway, so the API path semantics remain identical on both platforms.
  */
 export const apiUrl = (path: string): string => `${absoluteApiOrigin}${normalizePath(path)}`
 
-/** Backend health endpoints do not carry the public /api gateway prefix. */
-export const backendUrl = (path: string): string =>
-  absoluteApiOrigin ? `${absoluteApiOrigin}${normalizePath(path)}` : `/api${normalizePath(path)}`
+/** Resolve Backend health/readiness endpoints through the same /api Gateway path. */
+export const backendUrl = (path: string): string => {
+  const normalizedPath = normalizePath(path)
+  const gatewayPath = normalizedPath === '/api' || normalizedPath.startsWith('/api/')
+    ? normalizedPath
+    : `/api${normalizedPath}`
+  return `${absoluteApiOrigin}${gatewayPath}`
+}
 
 export const websocketUrl = (path: string): string => {
   const normalizedPath = normalizePath(path)
