@@ -97,8 +97,9 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowLeft, ArrowRight, Document, Files, FolderOpened, Share, Clock } from '@element-plus/icons-vue'
-import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceEntryKind } from '@/services/api/agentos'
+import { ArrowDown, ArrowLeft, ArrowRight, FolderOpened } from '@element-plus/icons-vue'
+import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
+import { workspaceEntryIcon } from './workspaceEntryIcon'
 
 const props = defineProps<{
   projection: MissionWorkspaceProjection
@@ -161,15 +162,7 @@ const handleEntryClick = (entry: WorkspaceEntry) => {
 }
 
 const entryIcon = (entry: WorkspaceEntry) => {
-  const icons: Record<WorkspaceEntryKind, typeof Document> = {
-    folder: FolderOpened,
-    graph: Share,
-    virtual_document: Document,
-    task: Document,
-    artifact: Files,
-    run: Clock
-  }
-  return icons[entry.kind]
+  return workspaceEntryIcon(entry.kind)
 }
 
 const runLabel = (status?: string | null) => ({

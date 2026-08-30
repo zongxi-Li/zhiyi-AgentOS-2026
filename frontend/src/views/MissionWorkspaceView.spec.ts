@@ -4,9 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
 
+const defaultLayoutStubState = {
+  leftAutoHidden: false,
+  restoreLeftPane: () => undefined
+}
+let layoutStubState = { ...defaultLayoutStubState }
+
 const workspaceLayoutStub = {
-  setup: () => ({ noop: () => undefined }),
-  template: '<div class="workspace-layout-stub"><aside><slot name="left" /></aside><main><slot name="main" /></main><aside><slot name="right" /></aside><section><slot name="bottom" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" /></section></div>'
+  setup: () => ({ noop: () => undefined, state: layoutStubState }),
+  template: '<div class="workspace-layout-stub"><aside><slot name="left" /></aside><main><slot name="main" :left-auto-hidden="state.leftAutoHidden" :restore-left-pane="state.restoreLeftPane" :right-auto-hidden="false" :right-enabled="true" :right-pane-visible="true" :right-collapsed-by-user="false" :toggle-right-pane="noop" /></main><aside><slot name="right" /></aside><section><slot name="bottom" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" /></section></div>'
 }
 
 const graphEditorStub = {
@@ -122,19 +128,36 @@ const mountWorkspace = async (
 }
 
 describe('MissionWorkspaceView', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    layoutStubState = { ...defaultLayoutStubState }
+    vi.restoreAllMocks()
+  })
 
   it('loads one Mission Workspace projection and renders the project shell', async () => {
     const { wrapper } = await mountWorkspace()
     expect(agentosApi.getMissionWorkspace).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('PROJECT')
     expect(wrapper.text()).toContain('OVERVIEW')
+    expect(wrapper.find('.editor-inspector-trigger').attributes('aria-label')).toBe('收起 Inspector')
+    expect(wrapper.find('.editor-navigator-trigger').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('MISSION WORKSPACE')
+  })
+
+  it('offers a click trigger to bring back the auto-hidden left navigator', async () => {
+    const restoreLeftPane = vi.fn()
+    layoutStubState.leftAutoHidden = true
+    layoutStubState.restoreLeftPane = restoreLeftPane
+    const { wrapper } = await mountWorkspace()
+
+    expect(wrapper.find('.editor-navigator-trigger').attributes('aria-label')).toBe('唤醒项目导航')
+    await wrapper.find('.editor-navigator-trigger').trigger('click')
+    expect(restoreLeftPane).toHaveBeenCalledTimes(1)
   })
 
   it('opens graph.acg as the default editor and keeps graph separate from results', async () => {
     const { wrapper } = await mountWorkspace()
     expect(wrapper.find('.editor-tab').text()).toContain('graph.acg')
+    expect(wrapper.find('.editor-group__toolbar').exists()).toBe(false)
     expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('最终答案')
   })

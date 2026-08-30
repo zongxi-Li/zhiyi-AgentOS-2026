@@ -24,7 +24,7 @@
         </section>
       </template>
 
-      <template #main>
+      <template #main="mainState">
         <EditorGroup
           v-if="projection"
           :projection="projection"
@@ -32,9 +32,13 @@
           :active-editor-id="activeEditorId"
           :selected-semantic-task-key="selectedSemanticTaskKey"
           :focus-node-id="focusNodeId"
-          :is-historical="isHistorical"
           :registry="registry"
           :workbench-context="workbenchContext"
+          :inspector-visible="mainState.rightPaneVisible"
+          :inspector-auto-hidden="mainState.rightAutoHidden"
+          :toggle-inspector="mainState.toggleRightPane"
+          :sidebar-hidden="mainState.leftAutoHidden"
+          @restore-sidebar="mainState.restoreLeftPane()"
           @activate="activeEditorId = $event"
           @close="closeEditor"
           @select-semantic-task="selectSemanticTask"

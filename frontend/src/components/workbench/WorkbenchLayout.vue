@@ -22,10 +22,11 @@
       :value="leftPaneWidth"
       :min="LEFT_MIN_WIDTH"
       :max="leftMaxWidth"
-      :ariaLabel="leftAutoHidden ? '拖动恢复左侧任务导航并调整宽度' : '调整左侧任务导航宽度'"
+      :ariaLabel="leftAutoHidden ? '拖动或单击恢复左侧任务导航并调整宽度' : '调整左侧任务导航宽度'"
       @resize-start="startResize('left', $event)"
       @resize-keydown="handleResizeKeydown('left', $event)"
       @reset="resetWidth('left')"
+      @click="leftAutoHidden && restoreLeftPane()"
     />
 
     <main class="workbench-pane workbench-pane--main">
@@ -38,21 +39,29 @@
           <slot
             name="main"
             :left-auto-hidden="leftAutoHidden"
+            :restore-left-pane="restoreLeftPane"
             :right-auto-hidden="rightAutoHidden"
             :right-enabled="rightEnabled"
+            :right-pane-visible="rightPaneVisible"
+            :right-collapsed-by-user="rightCollapsedByUser"
+            :toggle-right-pane="toggleRightPane"
           />
         </template>
         <template #bottom="bottomState">
           <slot name="bottom" v-bind="bottomState" />
         </template>
       </WorkbenchVerticalSplit>
-      <slot
-        v-else
-        name="main"
-        :left-auto-hidden="leftAutoHidden"
-        :right-auto-hidden="rightAutoHidden"
-        :right-enabled="rightEnabled"
-      />
+        <slot
+          v-else
+          name="main"
+          :left-auto-hidden="leftAutoHidden"
+          :restore-left-pane="restoreLeftPane"
+          :right-auto-hidden="rightAutoHidden"
+          :right-enabled="rightEnabled"
+          :right-pane-visible="rightPaneVisible"
+          :right-collapsed-by-user="rightCollapsedByUser"
+          :toggle-right-pane="toggleRightPane"
+        />
     </main>
 
     <ResizeHandle
@@ -107,10 +116,13 @@ const {
   rightMaxWidth,
   leftAutoHidden,
   rightAutoHidden,
+  rightCollapsedByUser,
   rightEnabled,
   resizingSide,
   leftPaneVisible,
   rightPaneVisible,
+  toggleRightPane,
+  restoreLeftPane,
   startResize,
   handleResizeKeydown,
   resetWidth

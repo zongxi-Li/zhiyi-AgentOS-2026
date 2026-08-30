@@ -90,6 +90,7 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
   const rightPaneWidth = ref(Math.min(right.maxWidth, Math.max(right.minWidth, Math.round(persisted.rightPaneWidth ?? right.defaultWidth))))
   const leftAutoHidden = ref(false)
   const rightAutoHidden = ref(false)
+  const rightCollapsedByUser = ref(false)
   const resizingSide = ref<WorkbenchPaneSide | null>(null)
 
   let resizeObserver: ResizeObserver | null = null
@@ -114,7 +115,31 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
 
   const effectiveRightPaneWidth = computed(() => Math.min(rightPaneWidth.value, rightMaxWidth.value))
   const leftPaneVisible = computed(() => !leftAutoHidden.value)
-  const rightPaneVisible = computed(() => rightEnabled.value && !rightAutoHidden.value)
+  const rightPaneVisible = computed(() => (
+    rightEnabled.value && !rightAutoHidden.value && !rightCollapsedByUser.value
+  ))
+
+  const toggleRightPane = () => {
+    rightCollapsedByUser.value = !rightCollapsedByUser.value
+  }
+
+  // 左侧导航被 auto-hide 后的"一键唤回"：窗口放不下"左+右+主"时先让右侧详情
+  // 收起让位（用户可随时再用眼睛按钮唤回），再把左侧宽度恢复到默认档。
+  const restoreLeftPane = () => {
+    if (
+      rightEnabled.value
+      && !rightCollapsedByUser.value
+      && containerWidth.value > 0
+      && containerWidth.value < requiredWidth(true, true)
+    ) {
+      rightCollapsedByUser.value = true
+    }
+    const availableLeft = containerWidth.value > 0
+      ? containerWidth.value - mainMinWidth - HANDLE_WIDTH
+      : left.defaultWidth
+    leftPaneWidth.value = Math.min(left.defaultWidth, Math.max(left.minWidth, Math.round(availableLeft)))
+    syncAutoHidden()
+  }
 
   const persist = () => {
     const value: Partial<WorkbenchLayoutPersistence> = {
@@ -310,9 +335,12 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
     rightEnabled,
     leftAutoHidden,
     rightAutoHidden,
+    rightCollapsedByUser,
     resizingSide,
     leftPaneVisible,
     rightPaneVisible,
+    toggleRightPane,
+    restoreLeftPane,
     startResize,
     stopResize,
     handleResizeKeydown,

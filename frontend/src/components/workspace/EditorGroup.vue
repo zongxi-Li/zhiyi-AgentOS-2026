@@ -1,28 +1,48 @@
 <template>
   <main class="editor-group" aria-label="Workspace editor">
-    <header class="editor-group__toolbar">
-      <div class="editor-group__context">
-        <span class="editor-group__product">PROJECT</span>
-        <strong>{{ projection.mission.goal }}</strong>
-      </div>
-      <div class="editor-group__run">
-        <span v-if="projection.activeRun">Run {{ projection.activeRun.runId }}</span>
-        <span v-else>No Run</span>
-        <b v-if="projection.activeRun && isHistorical">Historical / Read-only</b>
-        <b v-else>Read-only</b>
-      </div>
-    </header>
-
     <nav class="editor-tabs" aria-label="Open editors" role="tablist">
+      <button
+        v-if="sidebarHidden"
+        class="editor-navigator-trigger"
+        type="button"
+        aria-label="唤醒项目导航"
+        title="唤醒项目导航（窗口放不下时会让出右侧详情的空间）"
+        @click="emit('restoreSidebar')"
+      >
+        <span class="editor-navigator-trigger__mark" aria-hidden="true">
+          <el-icon><Expand /></el-icon>
+        </span>
+      </button>
       <div v-for="opened in openEntries" :key="opened.entry.entryId" class="editor-tab" :class="{ 'is-active': opened.entry.entryId === activeEditorId }">
         <button class="editor-tab__main" type="button" role="tab" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
-          <span class="editor-tab__kind" aria-hidden="true">{{ tabMark(opened.entry.kind) }}</span>
+          <span class="editor-tab__kind" aria-hidden="true">
+            <el-icon><component :is="workspaceEntryIcon(opened.entry.kind)" /></el-icon>
+          </span>
           <span class="editor-tab__name">{{ editorTitle(opened.entry) }}</span>
           <span v-if="!opened.available" class="editor-tab__missing">missing</span>
         </button>
         <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="emit('close', opened.entry.entryId)">×</button>
       </div>
       <span v-if="!openEntries.length" class="editor-tabs__empty">从 Explorer 打开一个文件</span>
+      <span class="editor-tabs__spacer" aria-hidden="true"></span>
+      <button
+        class="editor-inspector-trigger"
+        type="button"
+        :class="{
+          'is-active': inspectorVisible,
+          'is-unavailable': inspectorAutoHidden
+        }"
+        :aria-pressed="inspectorVisible"
+        :aria-label="inspectorVisible ? '收起 Inspector' : '唤醒 Inspector'"
+        :title="inspectorVisible
+          ? '收起 Inspector'
+          : (inspectorAutoHidden ? '唤醒 Inspector（当前窗口空间不足时会自动隐藏）' : '唤醒 Inspector')"
+        @click="toggleInspector"
+      >
+        <span class="editor-inspector-trigger__mark" aria-hidden="true">
+          <el-icon><View /></el-icon>
+        </span>
+      </button>
     </nav>
 
     <section class="editor-group__surface">
@@ -51,9 +71,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceEntryKind } from '@/services/api/agentos'
+import { Expand, View } from '@element-plus/icons-vue'
+import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import type { WorkbenchContext } from '@/workbench/types'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
+import { workspaceEntryIcon } from './workspaceEntryIcon'
 
 export interface OpenWorkspaceEntry {
   entry: WorkspaceEntry
@@ -66,9 +88,12 @@ const props = defineProps<{
   activeEditorId: string | null
   selectedSemanticTaskKey: string | null
   focusNodeId: string | null
-  isHistorical: boolean
   registry: WorkbenchContributionRegistry
   workbenchContext: WorkbenchContext
+  inspectorVisible: boolean
+  inspectorAutoHidden: boolean
+  toggleInspector: () => void
+  sidebarHidden?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -78,6 +103,7 @@ const emit = defineEmits<{
   openSemanticTask: [semanticTaskKey: string | null]
   locateGraph: [entry: WorkspaceEntry]
   openArtifact: [entry: WorkspaceEntry]
+  restoreSidebar: []
 }>()
 
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
@@ -91,36 +117,101 @@ const editorTitle = (entry: WorkspaceEntry) => (
   props.registry.resolveEditor(entry, props.workbenchContext)?.title?.(entry, props.workbenchContext) || entry.name
 )
 
-const tabMark = (kind: WorkspaceEntryKind) => ({ graph: '◇', virtual_document: 'M', task: 'T', artifact: '·', folder: '▾', run: 'R' }[kind])
 </script>
 
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
-.editor-group__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: var(--wb-toolbar-height); padding: 7px 16px; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-2); }
-.editor-group__context { min-width: 0; }
-.editor-group__product { display: block; color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
-.editor-group__context strong { display: block; margin-top: 3px; overflow: hidden; color: var(--wb-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.editor-group__run { display: flex; align-items: center; gap: 10px; color: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); white-space: nowrap; }
-.editor-group__run b { color: var(--wb-warning); font-weight: 500; }
-.editor-group__run b:last-child { color: var(--wb-text-muted); }
 .editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow-x: auto; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
-.editor-tab { display: flex; align-items: stretch; flex: 0 0 auto; border-right: 1px solid color-mix(in srgb, var(--wb-border) 78%, transparent); border-top: 2px solid transparent; }
+.editor-tab { display: flex; align-items: stretch; width: 220px; min-width: 220px; flex: 0 0 220px; box-sizing: border-box; border-right: 1px solid color-mix(in srgb, var(--wb-border) 78%, transparent); border-top: 2px solid transparent; }
 .editor-tab.is-active { border-top-color: var(--wb-accent); background: var(--wb-surface-2); }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
-.editor-tab__main { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 230px; padding: 0 5px 0 11px; font-size: 11px; }
+.editor-tab__main { display: flex; flex: 1 1 auto; align-items: center; gap: 7px; min-width: 0; width: 0; max-width: none; padding: 0 5px 0 11px; font-size: 11px; }
 .editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--wb-text); }
 .editor-tab__main:focus-visible, .editor-tab__close:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
-.editor-tab__kind { color: var(--wb-accent); font: 12px var(--font-mono, monospace); }
-.editor-tab__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-tab__kind { display: inline-flex; align-items: center; justify-content: center; width: 15px; min-width: 15px; color: var(--wb-accent); font: 12px var(--font-mono, monospace); }
+.editor-tab__kind .el-icon { font-size: 14px; }
+.editor-tab__name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-tab__missing { color: var(--wb-warning); font: 9px var(--font-mono, monospace); }
-.editor-tab__close { width: 28px; color: var(--wb-text-muted); font-size: 17px; }
+.editor-tab__close { width: 28px; min-width: 28px; flex: 0 0 28px; color: var(--wb-text-muted); font-size: 17px; }
 .editor-tab__close:hover { color: var(--wb-danger); background: var(--wb-hover); }
 .editor-tabs__empty { align-self: center; padding: 0 14px; color: var(--wb-text-muted); font-size: 11px; }
+.editor-tabs__spacer { flex: 1 1 auto; min-width: 8px; }
+.editor-navigator-trigger {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: grid;
+  flex: 0 0 38px;
+  place-items: center;
+  width: 38px;
+  min-width: 38px;
+  min-height: var(--wb-tab-height);
+  padding: 0 6px;
+  border: 0;
+  border-right: 1px solid var(--wb-border);
+  color: var(--wb-text-muted);
+  background: var(--wb-surface-inset);
+  cursor: pointer;
+}
+.editor-navigator-trigger__mark {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 15px;
+  transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+.editor-navigator-trigger:hover .editor-navigator-trigger__mark,
+.editor-navigator-trigger:focus-visible .editor-navigator-trigger__mark {
+  border-color: color-mix(in srgb, var(--wb-accent) 24%, var(--wb-border));
+  color: var(--wb-accent);
+  background: var(--wb-hover);
+}
+.editor-navigator-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
+.editor-inspector-trigger {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  display: grid;
+  flex: 0 0 38px;
+  place-items: center;
+  width: 38px;
+  min-height: var(--wb-tab-height);
+  margin-left: auto;
+  padding: 0 6px;
+  border: 0;
+  border-left: 1px solid var(--wb-border);
+  color: var(--wb-text-muted);
+  background: var(--wb-surface-inset);
+  cursor: pointer;
+}
+.editor-inspector-trigger__mark {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 15px;
+  transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out), color 140ms var(--ease-out), box-shadow 140ms var(--ease-out);
+}
+.editor-inspector-trigger:hover .editor-inspector-trigger__mark,
+.editor-inspector-trigger:focus-visible .editor-inspector-trigger__mark {
+  border-color: color-mix(in srgb, var(--wb-accent) 24%, var(--wb-border));
+  color: var(--wb-accent);
+  background: var(--wb-hover);
+}
+.editor-inspector-trigger.is-active .editor-inspector-trigger__mark {
+  border-color: color-mix(in srgb, var(--wb-accent) 28%, var(--wb-border));
+  color: var(--wb-accent);
+  background: var(--wb-active);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--wb-accent) 10%, transparent);
+}
+.editor-inspector-trigger.is-unavailable .editor-inspector-trigger__mark { opacity: .72; }
+.editor-inspector-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-group__surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 10px 12px 12px; background: var(--wb-surface-shell); }
 .editor-group__empty { display: grid; place-items: center; height: 100%; color: var(--wb-text-muted); font-size: 12px; }
 
-@media (max-width: 720px) {
-  .editor-group__toolbar { align-items: flex-start; flex-direction: column; gap: 4px; padding: 10px 12px; }
-  .editor-group__run { width: 100%; justify-content: space-between; }
-}
 </style>

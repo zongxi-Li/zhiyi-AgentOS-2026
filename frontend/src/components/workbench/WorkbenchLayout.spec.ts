@@ -31,8 +31,10 @@ const mountLayout = () => mount(WorkbenchLayout, {
     main: (state: Record<string, unknown>) => h('div', { class: 'slot-main' }, [
       h('span', { class: 'layout-state' }, JSON.stringify({
         leftAutoHidden: state.leftAutoHidden,
-        rightAutoHidden: state.rightAutoHidden
-      }))
+        rightAutoHidden: state.rightAutoHidden,
+        rightPaneVisible: state.rightPaneVisible
+      })),
+      h('button', { class: 'toggle-right', onClick: state.toggleRightPane }, 'toggle')
     ])
   }
 })
@@ -47,6 +49,7 @@ const setContainerWidth = async (wrapper: VueWrapper, width: number) => {
 const layoutState = (wrapper: VueWrapper) => JSON.parse(wrapper.find('.layout-state').text()) as {
   leftAutoHidden: boolean
   rightAutoHidden: boolean
+  rightPaneVisible: boolean
 }
 
 describe('WorkbenchLayout', () => {
@@ -155,6 +158,25 @@ describe('WorkbenchLayout', () => {
 
     await leftHandle.trigger('dblclick')
     expect(leftHandle.attributes('aria-valuenow')).toBe('320')
+    wrapper.unmount()
+  })
+
+  it('toggles the right inspector without persisting the manual visibility state', async () => {
+    const wrapper = mountLayout()
+
+    expect(wrapper.find('.workbench-pane--right').exists()).toBe(true)
+    await wrapper.find('.toggle-right').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.workbench-pane--right').exists()).toBe(false)
+    expect(layoutState(wrapper).rightPaneVisible).toBe(false)
+
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as Record<string, unknown>
+    expect(persisted).not.toHaveProperty('rightCollapsedByUser')
+
+    await wrapper.find('.toggle-right').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.workbench-pane--right').exists()).toBe(true)
+    expect(layoutState(wrapper).rightPaneVisible).toBe(true)
     wrapper.unmount()
   })
 
