@@ -45,7 +45,6 @@ import { computed, ref, watch } from 'vue'
 import { Download, FullScreen, Share } from '@element-plus/icons-vue'
 import MermaidRenderer from './MermaidRenderer.vue'
 import ImageViewer from '@/components/common/ImageViewer.vue'
-import mermaid from 'mermaid'
 
 interface DiagramGenerationData {
   title?: string
@@ -68,6 +67,7 @@ const mermaidCode = computed(() => (props.data?.mermaid_code || '').trim())
 const openFullscreen = async () => {
   if (!mermaidCode.value) return
   try {
+    const mermaid = (await import('mermaid')).default
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'loose',

@@ -1,10 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
-import ChatView from '@/views/ChatView.vue'
-import RoleView from '@/views/RoleView.vue'
-import SettingsView from '@/views/SettingsView.vue'
-import LoginView from '@/views/LoginView.vue'
-import RagView from '@/views/RagView.vue'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
 
@@ -16,7 +11,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'Login',
-    component: LoginView,
+    component: () => import('@/views/LoginView.vue'),
     meta: {
       title: '登录',
       requiresAuth: false
@@ -52,7 +47,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/chat',
     name: 'Chat',
-    component: ChatView,
+    component: () => import('@/views/ChatView.vue'),
     meta: {
       title: '对话',
       requiresAuth: true
@@ -61,7 +56,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/roles',
     name: 'Roles',
-    component: RoleView,
+    component: () => import('@/views/RoleView.vue'),
     meta: {
       title: '角色管理',
       requiresAuth: true
@@ -79,7 +74,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/settings',
     name: 'Settings',
-    component: SettingsView,
+    component: () => import('@/views/SettingsView.vue'),
     meta: {
       title: '设置',
       requiresAuth: true
@@ -88,7 +83,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/rag',
     name: 'RAG',
-    component: RagView,
+    component: () => import('@/views/RagView.vue'),
     meta: {
       title: '知识库查询',
       requiresAuth: true

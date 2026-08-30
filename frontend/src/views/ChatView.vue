@@ -890,7 +890,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -930,11 +930,11 @@ import DiagnosisRadar from '@/components/agent/DiagnosisRadar.vue'
 import LessonPlanViewer from '@/components/agent/LessonPlanViewer.vue'
 import GradingResultCard from '@/components/agent/GradingResultCard.vue'
 import QuestionPushList from '@/components/agent/QuestionPushList.vue'
-import DiagramViewer from '@/components/agent/DiagramViewer.vue'
-import MindMapViewer from '@/components/agent/MindMapViewer.vue'
-import RelationGraph from '@/components/agent/RelationGraph.vue'
+const DiagramViewer = defineAsyncComponent(() => import('@/components/agent/DiagramViewer.vue'))
+const MindMapViewer = defineAsyncComponent(() => import('@/components/agent/MindMapViewer.vue'))
+const RelationGraph = defineAsyncComponent(() => import('@/components/agent/RelationGraph.vue'))
 import RoleTemplateSwitchDialog from '@/components/RoleTemplateSwitchDialog.vue'
-import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
+const AcgTopologyGraph = defineAsyncComponent(() => import('@/components/agentos/AcgTopologyGraph.vue'))
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'

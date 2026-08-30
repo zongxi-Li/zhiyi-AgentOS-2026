@@ -12,7 +12,6 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import mermaid from 'mermaid'
 
 const props = defineProps<{
   code?: string
@@ -30,6 +29,7 @@ const renderDiagram = async () => {
   }
 
   try {
+    const mermaid = (await import('mermaid')).default
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'loose',
