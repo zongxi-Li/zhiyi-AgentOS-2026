@@ -476,7 +476,7 @@
                   title="切换角色与模板"
                   @click="openRoleTemplateDialog"
                 >
-                  <el-icon><component :is="agentIcon" /></el-icon>
+                  <el-icon class="composer-agent-mode__icon"><component :is="agentIcon" /></el-icon>
                   {{ composerModeLabel }}
                   <el-icon class="composer-agent-mode__chevron"><ArrowDownBold /></el-icon>
                 </button>
@@ -4557,7 +4557,7 @@ const handleHeroLogoPointerUp = () => {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: var(--primary-color);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -4576,7 +4576,12 @@ const handleHeroLogoPointerUp = () => {
 
 .composer-agent-mode__chevron {
   font-size: 9px;
-  opacity: 0.72;
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+
+.composer-agent-mode__icon {
+  color: var(--text-muted);
 }
 
 .composer-acg-toggle {
@@ -5431,6 +5436,21 @@ const handleHeroLogoPointerUp = () => {
   background: color-mix(in srgb, var(--primary-color) 9%, transparent);
 }
 
+.composer-agent-mode:hover,
+.composer-agent-mode[aria-expanded='true'] {
+  color: var(--text-primary);
+}
+
+.composer-agent-mode:hover .composer-agent-mode__icon,
+.composer-agent-mode[aria-expanded='true'] .composer-agent-mode__icon {
+  color: var(--primary-color);
+}
+
+.composer-agent-mode:hover .composer-agent-mode__chevron,
+.composer-agent-mode[aria-expanded='true'] .composer-agent-mode__chevron {
+  color: var(--text-secondary);
+}
+
 .mission-chip {
   height: 28px;
   color: var(--text-muted);
@@ -5451,7 +5471,26 @@ const handleHeroLogoPointerUp = () => {
 .composer-send.el-button {
   width: 38px;
   height: 38px;
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-color) 22%, transparent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text-primary) 13%, var(--bg-panel));
+  color: var(--text-primary);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.composer-send.el-button:hover,
+.composer-send.el-button:focus-visible {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text-primary) 21%, var(--bg-panel));
+  color: var(--text-primary);
+}
+
+.composer-send.el-button:active {
+  background: color-mix(in srgb, var(--text-primary) 27%, var(--bg-panel));
+}
+
+.composer-send.el-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text-primary) 34%, transparent);
+  outline-offset: 2px;
 }
 
 @media (max-width: 900px) {
