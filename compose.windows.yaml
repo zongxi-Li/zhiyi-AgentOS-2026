@@ -21,7 +21,7 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: ${KINLIN_WINDOWS_CHOKIDAR_USEPOLLING:-false}
       CHOKIDAR_INTERVAL: ${KINLIN_WINDOWS_POLL_INTERVAL_MS:-1000}
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "8080", "--strictPort"]
+    command: ["nginx", "-g", "daemon off;"]
     volumes:
       - frontend-node-modules:/app/node_modules
     healthcheck:

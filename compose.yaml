@@ -168,8 +168,8 @@ services:
   frontend:
     <<: *service-defaults
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     image: ${KINLIN_FRONTEND_IMAGE:-kinlin-ai-frontend:dev}
     networks: [web-network]
     depends_on:

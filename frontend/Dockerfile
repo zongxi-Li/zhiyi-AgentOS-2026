@@ -5,10 +5,11 @@ FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY frontend/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
-COPY . .
+COPY frontend/ .
+COPY ["ACG 提示词.md", "/ACG 提示词.md"]
 RUN npm run build
 
 FROM ${NGINX_IMAGE}
@@ -27,8 +28,8 @@ RUN addgroup -g 10003 -S kinlin \
 
 COPY --from=build --chown=10003:10003 /app/dist /usr/share/nginx/html
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY nginx-main.conf /etc/nginx/nginx.conf
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx-main.conf /etc/nginx/nginx.conf
 
 WORKDIR /usr/share/nginx/html
 EXPOSE 8080
