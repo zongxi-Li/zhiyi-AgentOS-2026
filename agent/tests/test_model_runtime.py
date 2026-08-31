@@ -64,6 +64,15 @@ def test_native_reasoning_options_cover_openai_and_qwen():
         "disabled",
     ) == {"extra_body": {"thinking": {"type": "disabled"}}}
 
+    assert completion_options(
+        "glm-5.3-flash",
+        "https://open.bigmodel.cn/api/paas/v4",
+        "high",
+    ) == {
+        "reasoning_effort": "high",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+
 
 def test_system_runtime_model_override_reuses_server_credentials(monkeypatch):
     from app.config import settings

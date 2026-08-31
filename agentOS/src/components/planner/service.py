@@ -60,6 +60,7 @@ class PlanResult:
     template_id: Optional[str] = None
     template_score: float = 0.0
     thinking_mode: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     planning_diversity: PlanningDiversity = "stable"
     planning_seed: Optional[int] = None
     planner_algorithm_version: str = PLANNER_ALGORITHM_VERSION
@@ -80,6 +81,7 @@ class PlanResult:
             "templateId": self.template_id,
             "templateScore": self.template_score,
             "thinkingMode": self.thinking_mode,
+            "reasoningEffort": self.reasoning_effort,
             "planningDiversity": self.planning_diversity,
             "planningSeed": self.planning_seed,
             "plannerAlgorithmVersion": self.planner_algorithm_version,
@@ -133,6 +135,7 @@ class PlanningEngine:
         task_type: str = "general",
         force_dynamic: bool = False,
         thinking_mode: str | None = None,
+        reasoning_effort: str | None = None,
         deterministic_intent: bool = False,
         planning_diversity: str = "stable",
         planning_seed: int | None = None,
@@ -155,6 +158,7 @@ class PlanningEngine:
             domain=domain,
             task_type=task_type,
             thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
             use_llm=not deterministic_intent,
             task_input=task_input,
             declared_capabilities=list(required_capabilities or ()),
@@ -201,6 +205,7 @@ class PlanningEngine:
                     template_id=match.workflow.workflow_id,
                     template_score=match.score,
                     thinking_mode=thinking_mode,
+                    reasoning_effort=reasoning_effort,
                     planning_diversity=diversity,
                     planning_seed=resolved_seed,
                     capability_catalog_revision=capability_catalog_revision,
@@ -226,6 +231,7 @@ class PlanningEngine:
             profile=profile,
             strategy="dynamic_generation",
             task_input=task_input,
+            reasoning_effort=reasoning_effort,
             use_llm=not deterministic_intent,
             existing_semantic_tasks=existing_semantic_tasks,
         )
@@ -316,6 +322,7 @@ class PlanningEngine:
             strategy="dynamic_generation",
             template_score=match.score if match else 0.0,
             thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
             planning_diversity=diversity,
             planning_seed=resolved_seed,
             capability_catalog_revision=capability_catalog_revision,

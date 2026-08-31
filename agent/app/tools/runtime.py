@@ -278,6 +278,7 @@ class AgentsToolRuntime:
         api_key: str,
         require_evidence: bool,
         thinking_mode: str,
+        parameters: dict[str, Any] | None = None,
     ) -> tuple[Agent[ToolInvocationContext], AsyncOpenAI, dict[str, Any]]:
         validate_runtime_config(model, base_url, api_key)
         normalized = normalize_model_request(model, thinking_mode)
@@ -285,6 +286,7 @@ class AgentsToolRuntime:
             model=normalized.effective_model,
             base_url=base_url,
             thinking_mode=normalized.effective_thinking_mode,
+            parameters=parameters,
         )
         model = normalized.effective_model
         client = AsyncOpenAI(
@@ -371,6 +373,7 @@ class AgentsToolRuntime:
         api_key: str = "",
         require_evidence: bool = False,
         thinking_mode: str = "disabled",
+        parameters: dict[str, Any] | None = None,
     ) -> ToolRunResult:
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
@@ -382,6 +385,7 @@ class AgentsToolRuntime:
             api_key=api_key,
             require_evidence=require_evidence,
             thinking_mode=thinking_mode,
+            parameters=parameters,
         )
         try:
             result = await Runner.run(
@@ -418,6 +422,7 @@ class AgentsToolRuntime:
         api_key: str = "",
         request_id: str,
         thinking_mode: str = "disabled",
+        parameters: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
@@ -429,6 +434,7 @@ class AgentsToolRuntime:
             api_key=api_key,
             require_evidence=False,
             thinking_mode=thinking_mode,
+            parameters=parameters,
         )
         sequence = 0
         emitted_content = False

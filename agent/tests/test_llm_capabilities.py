@@ -75,6 +75,56 @@ def test_glm_capabilities_use_openai_compatible_thinking_protocol():
     }
 
 
+def test_glm_5_3_flash_always_thinks_and_maps_disabled_to_low_effort():
+    capabilities = provider_model_capabilities(
+        "glm-5.3-flash", "https://open.bigmodel.cn/api/paas/v4"
+    )
+    assert capabilities.always_thinking is True
+    assert capabilities.supports_reasoning_effort is True
+    assert ThinkingMode.DISABLED not in capabilities.supported_thinking_modes
+
+    adapted = adapt_chat_completion_parameters(
+        model="glm-5.3-flash",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        thinking_mode=ThinkingMode.DISABLED,
+    )
+    assert adapted.effective_thinking_mode == ThinkingMode.STANDARD
+    assert adapted.effective_reasoning_effort == "low"
+    assert adapted.parameters == {
+        "reasoning_effort": "low",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+
+
+def test_glm_5_3_flash_preserves_each_official_reasoning_effort():
+    for effort in ("low", "high", "max"):
+        adapted = adapt_chat_completion_parameters(
+            model="glm-5.3-flash",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            thinking_mode=ThinkingMode.STANDARD,
+            parameters={"reasoning_effort": effort},
+        )
+        assert adapted.effective_reasoning_effort == effort
+        assert adapted.parameters == {
+            "reasoning_effort": effort,
+            "extra_body": {"thinking": {"type": "enabled"}},
+        }
+
+
+def test_glm_5_3_flash_rejects_non_official_reasoning_effort():
+    try:
+        adapt_chat_completion_parameters(
+            model="glm-5.3-flash",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            thinking_mode=ThinkingMode.STANDARD,
+            parameters={"reasoning_effort": "medium"},
+        )
+    except ValueError as exc:
+        assert "low, high, max" in str(exc)
+    else:
+        raise AssertionError("GLM-5.3-Flash accepted an unsupported reasoning effort")
+
+
 def test_custom_compatible_endpoint_does_not_inherit_official_model_limits():
     capabilities = provider_model_capabilities(
         "deepseek-v4-flash", "https://llm.internal.example/v1"

@@ -36,6 +36,51 @@ describe('ACG workbench request builder', () => {
     expect(request.enabledPluginIds).toEqual([])
   })
 
+  it('forwards the complete migrated planning strategy to the native planner', () => {
+    const draft = createNativeWorkbenchDraft()
+    draft.planningMode = 'template_preferred'
+    draft.planningDiversity = 'exploratory'
+    draft.planningSeed = 42
+    draft.thinkingMode = 'deep'
+    draft.webSearchEnabled = false
+
+    const request = buildWorkbenchStartRequest(draft, [], 'request-planning')
+
+    expect(request.input).toMatchObject({
+      planningMode: 'template_preferred',
+      usePlanner: true,
+      planningDiversity: 'exploratory',
+      planningSeed: 42,
+      thinkingMode: 'deep',
+      webSearchEnabled: false
+    })
+  })
+
+  it('keeps GLM reasoning_effort explicit in the ACG Run input', () => {
+    const draft = createNativeWorkbenchDraft()
+    draft.thinkingMode = 'deep'
+    draft.reasoningEffort = 'high'
+
+    const request = buildWorkbenchStartRequest(draft, [], 'request-glm-thinking')
+
+    expect(request.input).toMatchObject({
+      thinkingMode: 'deep',
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('restores GLM reasoning_effort without converting it to a disabled mode', () => {
+    const draft = createNativeWorkbenchDraft()
+    restoreWorkbenchDraft(draft, {
+      runId: 'run-glm-history',
+      title: 'GLM 历史任务',
+      input: { reasoningEffort: 'max', thinkingMode: 'disabled' }
+    }, [])
+
+    expect(draft.reasoningEffort).toBe('max')
+    expect(draft.thinkingMode).toBe('deep')
+  })
+
   it('forwards the user-controlled network choice', () => {
     const draft = createNativeWorkbenchDraft()
     draft.webSearchEnabled = false

@@ -41,7 +41,16 @@ class ChatRequest(BaseModel):
     tool_mode: Literal["auto", "disabled"] = "auto"
 
     def resolved_thinking_mode(self) -> str:
-        return self.thinking_mode or self.reasoning_effort or "disabled"
+        if self.thinking_mode:
+            return self.thinking_mode
+        if self.reasoning_effort in {"high", "xhigh", "max"}:
+            return "deep"
+        if self.reasoning_effort in {"low", "medium"}:
+            return "standard"
+        return self.reasoning_effort or "disabled"
+
+    def provider_parameters(self) -> Dict[str, str]:
+        return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
 
 class ChatResponse(BaseModel):
     text: str
@@ -83,6 +92,7 @@ async def chat_text(request: ChatRequest):
         base_url=base_url,
         api_key=api_key,
         thinking_mode=requested_thinking_mode,
+        parameters=request.provider_parameters(),
     )
     usage = response.usage
     tool_executions = [item.public_dict() for item in response.tool_executions]
@@ -220,6 +230,7 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
             base_url=chat_request.base_url or "",
             api_key=chat_request.api_key or "",
             thinking_mode=chat_request.resolved_thinking_mode(),
+            parameters=chat_request.provider_parameters(),
             request_id=request_id,
         )
         async for event in _stream_sse_events(

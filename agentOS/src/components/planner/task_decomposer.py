@@ -91,6 +91,7 @@ class TaskDecomposer:
         strategy: str,
         task_input: Mapping[str, Any] | None,
         use_llm: bool,
+        reasoning_effort: str | None = None,
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> TaskPlan:
         self.last_audit = {
@@ -112,6 +113,7 @@ class TaskDecomposer:
                 first = self.llm.generate_json(
                     prompt,
                     _SCHEMA,
+                    reasoning_effort=reasoning_effort,
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
                 )
                 self._capture_model_audit(first)
@@ -131,6 +133,7 @@ class TaskDecomposer:
                             raw=first,
                             profile=profile,
                             missing_refs=missing_refs,
+                            reasoning_effort=reasoning_effort,
                         )
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
                     else:
@@ -141,6 +144,7 @@ class TaskDecomposer:
                             + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
                             + f"Validation detail: {first_error}",
                             _SCHEMA,
+                            reasoning_effort=reasoning_effort,
                             prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
                         )
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
@@ -187,6 +191,7 @@ class TaskDecomposer:
         raw: Any,
         profile: TaskSemanticProfile,
         missing_refs: tuple[str, ...],
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Repair provenance annotations without rewriting valid task semantics/topology."""
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
@@ -254,6 +259,7 @@ class TaskDecomposer:
             f"Missing source registry entries: {json.dumps(missing_registry, ensure_ascii=False)}\n"
             f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}",
             schema,
+            reasoning_effort=reasoning_effort,
             prompt_version=repair_version,
         )
         self._capture_model_audit(assignment_result)

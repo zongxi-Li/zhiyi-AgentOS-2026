@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     # GLM / 智谱配置（OpenAI 兼容接口）
     GLM_API_KEY: str = ""  # 智谱 API 密钥
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"  # 智谱 OpenAI 兼容接口
-    GLM_MODEL: str = "glm-5.2"  # GLM 模型名称
+    GLM_MODEL: str = "glm-5.3-flash"  # GLM 模型名称
     GLM_ENABLED: bool = True  # 是否启用 GLM
 
     # 文本生成引擎选择: "deepseek" | "glm" | "qwen" | "auto"

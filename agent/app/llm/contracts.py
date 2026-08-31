@@ -41,6 +41,7 @@ class ResolvedModelPolicy(BaseModel):
 
 class ProviderModelCapabilities(BaseModel):
     supports_thinking: bool = False
+    always_thinking: bool = False
     supported_thinking_modes: Set[ThinkingMode] = Field(
         default_factory=lambda: {ThinkingMode.DISABLED}
     )

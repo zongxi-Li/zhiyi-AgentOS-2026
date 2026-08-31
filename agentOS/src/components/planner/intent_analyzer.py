@@ -69,6 +69,7 @@ class IntentParser:
         domain: str = "general",
         task_type: str = "general",
         thinking_mode: str | None = None,
+        reasoning_effort: str | None = None,
         use_llm: bool = True,
         task_input: Mapping[str, Any] | None = None,
         declared_capabilities: list[str] | tuple[str, ...] | None = None,
@@ -88,7 +89,11 @@ class IntentParser:
         }
         if use_llm and self.llm is not None:
             try:
-                return self._parse_with_llm(intent, domain, task_type, thinking_mode, task_input, declared_capabilities=declared_capabilities)
+                return self._parse_with_llm(
+                    intent, domain, task_type, thinking_mode, task_input,
+                    reasoning_effort=reasoning_effort,
+                    declared_capabilities=declared_capabilities,
+                )
             except Exception as first_error:
                 try:
                     profile = self._parse_with_llm(
@@ -97,6 +102,7 @@ class IntentParser:
                         task_type,
                         thinking_mode,
                         task_input,
+                        reasoning_effort=reasoning_effort,
                         prompt_version=f"{INTENT_PROFILE_PROMPT_VERSION}.repair1",
                         repair_error=str(first_error),
                         declared_capabilities=declared_capabilities,
@@ -119,6 +125,7 @@ class IntentParser:
         task_type: str,
         thinking_mode: str | None,
         task_input: Mapping[str, Any] | None,
+        reasoning_effort: str | None = None,
         prompt_version: str = INTENT_PROFILE_PROMPT_VERSION,
         repair_error: str | None = None,
         declared_capabilities: list[str] | tuple[str, ...] | None = None,
@@ -128,6 +135,7 @@ class IntentParser:
             + (f"\nRepair the previous contract error once: {repair_error}" if repair_error else ""),
             _PROFILE_SCHEMA,
             thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
             prompt_version=prompt_version,
         )
         if isinstance(result, dict):

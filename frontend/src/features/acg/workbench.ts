@@ -1,5 +1,6 @@
 import type { Component } from 'vue'
 import type { AsyncWorkflowStartRequest } from '@/services/api/workflow'
+import type { GlmReasoningEffort } from '@/config/modelSettings'
 
 export type WorkbenchPlanningMode = 'dynamic' | 'template_preferred'
 export type PlanningDiversity = 'stable' | 'balanced' | 'exploratory'
@@ -17,6 +18,7 @@ export interface WorkbenchDraft {
   planningSeed: number | null
   webSearchEnabled: boolean
   thinkingMode: 'disabled' | 'standard' | 'deep'
+  reasoningEffort?: GlmReasoningEffort
   reviewMode: 'auto' | 'human_in_loop'
   pluginData: Record<string, Record<string, unknown>>
 }
@@ -69,6 +71,7 @@ export const createNativeWorkbenchDraft = (): WorkbenchDraft => ({
   planningSeed: null,
   webSearchEnabled: true,
   thinkingMode: 'disabled',
+  reasoningEffort: undefined,
   reviewMode: 'auto',
   pluginData: {}
 })
@@ -105,6 +108,9 @@ export const restoreWorkbenchDraft = (
   if (typeof input.webSearchEnabled === 'boolean') draft.webSearchEnabled = input.webSearchEnabled
   const thinkingMode = enumValue(input.thinkingMode, ['disabled', 'standard', 'deep'] as const)
   if (thinkingMode) draft.thinkingMode = thinkingMode
+  const reasoningEffort = enumValue(input.reasoningEffort, ['low', 'high', 'max'] as const)
+  draft.reasoningEffort = reasoningEffort
+  if (reasoningEffort) draft.thinkingMode = reasoningEffort === 'low' ? 'standard' : 'deep'
   const reviewMode = enumValue(config.reviewMode, ['auto', 'human_in_loop'] as const)
   if (reviewMode) draft.reviewMode = reviewMode
   draft.pluginData = input.pluginData && typeof input.pluginData === 'object' && !Array.isArray(input.pluginData)
@@ -152,6 +158,7 @@ export const buildWorkbenchStartRequest = (
     usePlanner: true,
     webSearchEnabled: draft.webSearchEnabled,
     thinkingMode: draft.thinkingMode,
+    ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
     planningDiversity: draft.planningDiversity,
     ...(draft.planningSeed === null ? {} : { planningSeed: draft.planningSeed }),
     pluginData: clonePluginData(draft.pluginData)

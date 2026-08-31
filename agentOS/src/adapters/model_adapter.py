@@ -118,6 +118,7 @@ class StructuredGenerationRuntime(Protocol):
         prompt: str,
         schema: Dict[str, Any],
         thinking_mode: str = "disabled",
+        reasoning_effort: str | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",

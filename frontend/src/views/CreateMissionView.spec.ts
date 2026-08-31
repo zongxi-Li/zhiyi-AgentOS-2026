@@ -23,7 +23,105 @@ const workbenchLayoutStub = {
 describe('CreateMissionView', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('creates a Mission and hands the accepted Run to Workspace', async () => {
+  it('keeps the compact desktop form arrangement and restores runtime settings', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/agentos/missions/new', name: 'CreateMission', component: CreateMissionView },
+        { path: '/agentos/acg', name: 'AcgVisualization', component: { template: '<div />' } }
+      ]
+    })
+    await router.push({ name: 'CreateMission' })
+    await router.isReady()
+    const wrapper = mount(CreateMissionView, {
+      global: {
+        plugins: [router],
+        stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true }
+      }
+    })
+
+    expect(wrapper.find('#mission-title').exists()).toBe(true)
+    expect(wrapper.find('#mission-material').exists()).toBe(true)
+    expect(wrapper.find('#mission-goal').exists()).toBe(true)
+    expect(wrapper.find('#mission-constraints').exists()).toBe(true)
+    expect(wrapper.find('#mission-artifacts').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Runtime Configuration')
+    expect(wrapper.text()).toContain('更多规划设置')
+    expect(wrapper.find('.create-mission__submit').text()).toContain('启动任务')
+    expect(wrapper.find('.create-mission__back').text()).toContain('返回项目')
+    expect(wrapper.find('.create-mission__scroll-region').attributes('role')).toBe('region')
+    const promptSelect = wrapper.find('select[aria-label="ACG 提示词任务"]')
+    expect(promptSelect.exists()).toBe(true)
+    const taskOptions = promptSelect.findAll('option')
+    expect(taskOptions.length).toBeGreaterThan(1)
+    await promptSelect.setValue(taskOptions[1].attributes('value'))
+    expect((wrapper.find('#mission-title').element as HTMLInputElement).value).not.toBe('')
+    expect((wrapper.find('#mission-goal').element as HTMLTextAreaElement).value).not.toBe('')
+    wrapper.unmount()
+  })
+
+  it('returns to the project list without retaining the create route', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/agentos/missions/new', name: 'CreateMission', component: CreateMissionView },
+        { path: '/agentos/acg', name: 'AcgVisualization', component: { template: '<div />' } }
+      ]
+    })
+    await router.push({ name: 'CreateMission' })
+    await router.isReady()
+    const wrapper = mount(CreateMissionView, {
+      global: {
+        plugins: [router],
+        stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true }
+      }
+    })
+
+    await wrapper.find('.create-mission__back').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('AcgVisualization')
+    expect(router.currentRoute.value.query).toEqual({})
+    wrapper.unmount()
+  })
+
+  it('renders GLM reasoning_effort choices and excludes disabled thinking', async () => {
+    localStorage.setItem('kinlin.model_settings', JSON.stringify({
+      provider: 'glm',
+      apiKey: '',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      models: ['glm-5.3-flash'],
+      selectedModel: 'glm-5.3-flash',
+      thinkingMode: 'deep',
+      reasoningEffort: 'high'
+    }))
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/agentos/missions/new', name: 'CreateMission', component: CreateMissionView },
+        { path: '/agentos/acg', name: 'AcgVisualization', component: { template: '<div />' } }
+      ]
+    })
+    await router.push({ name: 'CreateMission' })
+    await router.isReady()
+    const wrapper = mount(CreateMissionView, {
+      global: {
+        plugins: [router],
+        stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true }
+      }
+    })
+
+    const select = wrapper.find('select[aria-label="Thinking strength"]')
+    expect(select.findAll('option').map(option => option.attributes('value'))).toEqual(['low', 'high', 'max'])
+    expect((select.element as HTMLSelectElement).value).toBe('high')
+    await select.setValue('low')
+    expect((select.element as HTMLSelectElement).value).toBe('low')
+
+    wrapper.unmount()
+    localStorage.removeItem('kinlin.model_settings')
+  })
+
+  it('starts a Run with the configured Mission and hands it to Workspace', async () => {
     vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue({
       missionId: 'mission_new',
       runId: 'run_new',
@@ -42,46 +140,37 @@ describe('CreateMissionView', () => {
     const wrapper = mount(CreateMissionView, {
       global: {
         plugins: [router],
-        stubs: { WorkbenchLayout: workbenchLayoutStub, 'el-icon': true }
+        stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true }
       }
     })
 
     await wrapper.find('#mission-title').setValue('新建工程')
     await wrapper.find('#mission-goal').setValue('输出可验收的实施方案')
+    await wrapper.findAll('.config-option').find(button => button.text().includes('Template preferred'))?.trigger('click')
+    await wrapper.find('select[aria-label="Planning diversity"]').setValue('exploratory')
+    await wrapper.find('input[type="number"]').setValue('42')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(workflowApi.startWorkflowAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '新建工程', input: expect.objectContaining({ taskGoal: '输出可验收的实施方案' }) }),
+      expect.objectContaining({
+        title: '新建工程',
+        input: expect.objectContaining({
+          taskGoal: '输出可验收的实施方案',
+          planningMode: 'template_preferred',
+          planningDiversity: 'exploratory',
+          planningSeed: 42,
+          usePlanner: true,
+          taskName: '新建工程',
+          debugTrace: false,
+          lowEntropyOptions: ['trace_provenance']
+        })
+      }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     expect(router.currentRoute.value.name).toBe('MissionWorkspace')
     expect(router.currentRoute.value.params.missionId).toBe('mission_new')
     expect(router.currentRoute.value.query.runId).toBe('run_new')
-    expect(wrapper.text()).not.toContain('ACG Dashboard')
-    wrapper.unmount()
-  })
-
-  it('keeps the create page separate from the Project list', async () => {
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [
-        { path: '/agentos/missions/new', name: 'CreateMission', component: CreateMissionView },
-        { path: '/agentos/acg', name: 'AcgVisualization', component: { template: '<div />' } }
-      ]
-    })
-    await router.push({ name: 'CreateMission' })
-    await router.isReady()
-    const wrapper = mount(CreateMissionView, {
-      global: {
-        plugins: [router],
-        stubs: { WorkbenchLayout: workbenchLayoutStub, 'el-icon': true }
-      }
-    })
-
-    expect(wrapper.find('[aria-label="Create Mission"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Runtime Configuration')
-    expect(wrapper.text()).not.toContain('工程项目')
     wrapper.unmount()
   })
 })

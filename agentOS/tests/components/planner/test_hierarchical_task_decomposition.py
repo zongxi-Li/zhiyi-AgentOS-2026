@@ -73,6 +73,7 @@ def test_repeated_capability_instances_survive_taskplan_and_acg_build() -> None:
         strategy="dynamic_generation",
         task_input={},
         use_llm=True,
+        reasoning_effort="high",
     )
     network = CollaborationNetwork(bindings=[
         CapabilityBinding(capability=capability, agent_name="native_general_agent", score=1)
@@ -91,6 +92,7 @@ def test_repeated_capability_instances_survive_taskplan_and_acg_build() -> None:
     assert next(step for step in blueprint.step_nodes() if step.name == "Candidate A").goal.startswith("Design candidate A")
     assert {item.plan_node_key for item in built.bindings} == {node.key for node in plan.nodes}
     assert llm.calls[0]["prompt_version"] == TASK_DECOMPOSITION_PROMPT_VERSION
+    assert llm.calls[0]["reasoning_effort"] == "high"
 
 
 def test_dependency_cycle_is_rejected() -> None:

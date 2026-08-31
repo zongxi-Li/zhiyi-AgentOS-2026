@@ -42,6 +42,11 @@ def _workset_recovery_bounded(context) -> bool:
     data = getattr(pack, "data", None) or {}
     return str(data.get("recoveryBoundary") or "") == "workset"
 
+
+def _requested_reasoning_effort(context: AgentRunContext) -> str | None:
+    value = str(context.task.input.get("reasoningEffort") or "").strip()
+    return value or None
+
 # Backward-compatible export derived from the native Catalog contribution.
 NATIVE_CAPABILITIES = NATIVE_CAPABILITY_IDS
 
@@ -199,6 +204,7 @@ class NativeGeneralAgent(BaseAgent):
                 prompt=prompt,
                 schema=generation_schema,
                 thinking_mode=thinking_mode,
+                reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
                 max_output_tokens=max_output_tokens,
                 prompt_version=base_prompt_version,
@@ -258,6 +264,7 @@ class NativeGeneralAgent(BaseAgent):
                     prompt=prompt,
                     schema=generation_schema,
                     thinking_mode=output_thinking_mode,
+                    reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
                     max_output_tokens=max_output_tokens,
                     prompt_version=(
@@ -276,6 +283,7 @@ class NativeGeneralAgent(BaseAgent):
                     ),
                     schema=generation_schema,
                     thinking_mode=output_thinking_mode,
+                    reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
                     max_output_tokens=max_output_tokens,
                     prompt_version=f"{base_prompt_version}.json-repair1",
@@ -324,6 +332,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=generation_schema,
                 thinking_mode=output_thinking_mode,
+                reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
                 max_output_tokens=max_output_tokens,
                 prompt_version=f"{base_prompt_version}.repair1",
@@ -402,6 +411,7 @@ class NativeGeneralAgent(BaseAgent):
                 "and acceptance criteria. Decide the useful subtask count. Return plan JSON only."
             ),
             schema=subtask_schema, thinking_mode=thinking_mode,
+            reasoning_effort=_requested_reasoning_effort(context),
             timeout_seconds=timeout_seconds, max_output_tokens=None,
             prompt_version=f"{prompt_version}.capacity-split1",
             commit_id=f"{context.commit_id or 'capability'}:split:{depth}",
@@ -422,6 +432,7 @@ class NativeGeneralAgent(BaseAgent):
                     "Return plan JSON only."
                 ),
                 schema=subtask_schema, thinking_mode=thinking_mode,
+                reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds, max_output_tokens=None,
                 prompt_version=f"{prompt_version}.capacity-split-retry1",
                 commit_id=f"{context.commit_id or 'capability'}:split:{depth}:retry",
@@ -451,6 +462,7 @@ class NativeGeneralAgent(BaseAgent):
             try:
                 generated = await runtime.generate_json(
                     prompt=subprompt, schema=output_schema, thinking_mode=thinking_mode,
+                    reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds, max_output_tokens=None,
                     prompt_version=f"{prompt_version}.capacity-part1",
                     commit_id=f"{context.commit_id or 'capability'}:part:{depth}:{index}",
@@ -488,6 +500,7 @@ class NativeGeneralAgent(BaseAgent):
                 try:
                     merged = await runtime.generate_json(
                         prompt=merge_prompt, schema=output_schema, thinking_mode=thinking_mode,
+                        reasoning_effort=_requested_reasoning_effort(context),
                         timeout_seconds=timeout_seconds, max_output_tokens=None,
                         prompt_version=f"{prompt_version}.capacity-reduce1",
                         commit_id=(
@@ -555,6 +568,7 @@ class NativeGeneralAgent(BaseAgent):
                 "prose yet. Return outline JSON only."
             ),
             schema=outline_schema, thinking_mode=thinking_mode,
+            reasoning_effort=_requested_reasoning_effort(context),
             timeout_seconds=timeout_seconds, max_output_tokens=None,
             prompt_version=f"{prompt_version}.capacity-outline1",
             commit_id=f"{context.commit_id or 'artifact'}:outline",
@@ -610,6 +624,7 @@ class NativeGeneralAgent(BaseAgent):
                 )
             ),
             schema=verification_schema, thinking_mode=thinking_mode,
+            reasoning_effort=_requested_reasoning_effort(context),
             timeout_seconds=timeout_seconds, max_output_tokens=None,
             prompt_version=f"{prompt_version}.capacity-verification1",
             commit_id=f"{context.commit_id or 'artifact'}:verification",
@@ -652,6 +667,7 @@ class NativeGeneralAgent(BaseAgent):
                     f"Return section JSON only.\nSECTION={json.dumps(section, ensure_ascii=False)}"
                 ),
                 schema=section_schema, thinking_mode=thinking_mode,
+                reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds, max_output_tokens=None,
                 prompt_version=f"{prompt_version}.section1",
                 commit_id=f"{context.commit_id or 'artifact'}:section:{path}",
@@ -690,6 +706,7 @@ class NativeGeneralAgent(BaseAgent):
                     f"goal and sources. Return subsection outline JSON only.\nSECTION={json.dumps(section, ensure_ascii=False)}"
                 ),
                 schema=subsection_schema, thinking_mode=thinking_mode,
+                reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds, max_output_tokens=None,
                 prompt_version=f"{prompt_version}.section-split1",
                 commit_id=f"{context.commit_id or 'artifact'}:section:{path}:split",

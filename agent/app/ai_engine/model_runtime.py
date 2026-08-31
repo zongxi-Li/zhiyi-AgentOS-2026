@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from openai import AsyncOpenAI
 
 from app.llm.capabilities import (
+    GLM_5_3_FLASH_REASONING_EFFORTS,
     adapt_chat_completion_parameters,
     normalize_deepseek_model,
     normalize_model_request,
@@ -148,10 +149,17 @@ def build_messages(
 
 
 def completion_options(model: str, base_url: str, reasoning_effort: str) -> Dict:
+    parameters = None
+    if (
+        model.strip().lower() == "glm-5.3-flash"
+        and reasoning_effort.strip().lower() in GLM_5_3_FLASH_REASONING_EFFORTS
+    ):
+        parameters = {"reasoning_effort": reasoning_effort}
     return adapt_chat_completion_parameters(
         model=model,
         base_url=base_url,
         thinking_mode=reasoning_effort,
+        parameters=parameters,
     ).parameters
 
 
@@ -217,6 +225,7 @@ async def generate_tool_conversation_with_runtime_model(
     base_url: str,
     api_key: str,
     reasoning_effort: str = "off",
+    parameters: Optional[Dict[str, Any]] = None,
     provider: str = "openai-compatible",
     context_revision: Optional[str] = None,
     conversation_manager: Optional[ProviderConversationManager] = None,
@@ -240,6 +249,7 @@ async def generate_tool_conversation_with_runtime_model(
         model=normalized.effective_model,
         base_url=base_url,
         thinking_mode=normalized.effective_thinking_mode,
+        parameters=parameters,
     )
     business_messages = [
         ProviderProtocolMessage(role=message["role"], content=message.get("content"))

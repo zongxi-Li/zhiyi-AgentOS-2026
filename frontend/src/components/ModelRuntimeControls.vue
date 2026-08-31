@@ -33,14 +33,14 @@
     </el-select>
 
     <el-select
-      v-model="settings.thinkingMode"
+      v-model="reasoningSelection"
       class="reasoning-select"
       aria-label="选择思考程度"
       @change="persistSettings"
     >
       <template #prefix><el-icon><Opportunity /></el-icon></template>
       <el-option
-        v-for="option in thinkingOptions"
+        v-for="option in reasoningOptions"
         :key="option.value"
         :label="compact ? option.shortLabel : option.label"
         :value="option.value"
@@ -57,12 +57,16 @@ import {
   MODEL_SETTINGS_EVENT,
   SYSTEM_FALLBACK_MODELS,
   applyProviderPreset,
+  glmReasoningOptions,
+  isGlmAlwaysThinkingModel,
   loadModelSettings,
   modelProviderPresets,
   thinkingOptions,
   saveModelSettings,
+  type GlmReasoningEffort,
   type ModelProviderId,
-  type ModelSettings
+  type ModelSettings,
+  type ThinkingMode
 } from '@/config/modelSettings'
 
 withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
@@ -71,6 +75,23 @@ const settings = ref(loadModelSettings())
 const modelsLoading = ref(false)
 let systemModelsRequest = 0
 const availableModels = computed(() => settings.value.models.length ? settings.value.models : SYSTEM_FALLBACK_MODELS)
+const usesGlmReasoningEffort = computed(() => isGlmAlwaysThinkingModel(settings.value.selectedModel))
+const reasoningOptions = computed(() => usesGlmReasoningEffort.value ? glmReasoningOptions : thinkingOptions)
+const reasoningSelection = computed<ThinkingMode | GlmReasoningEffort>({
+  get: () => usesGlmReasoningEffort.value
+    ? settings.value.reasoningEffort || 'max'
+    : settings.value.thinkingMode,
+  set: value => {
+    if (usesGlmReasoningEffort.value) {
+      const effort = value as GlmReasoningEffort
+      settings.value.reasoningEffort = effort
+      settings.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
+      return
+    }
+    settings.value.thinkingMode = value as ThinkingMode
+    settings.value.reasoningEffort = undefined
+  }
+})
 const providerTitle = computed(() => {
   const provider = modelProviderPresets.find(item => item.id === settings.value.provider)
   return provider ? `${provider.name} · ${provider.description}` : '选择模型服务商'
@@ -84,7 +105,7 @@ function compactModelLabel(model: string): string {
   const labels: Record<string, string> = {
     'deepseek-v4-flash': 'Flash',
     'deepseek-v4-pro': 'Pro',
-    'glm-5.2': 'GLM 5.2'
+    'glm-5.3-flash': 'GLM 5.3 Flash'
   }
   return labels[model] || model
 }
@@ -110,11 +131,12 @@ function selectProvider(provider: ModelProviderId): void {
 
 function syncSettings(event: Event): void {
   const detail = (event as CustomEvent<ModelSettings>).detail
+  const previousProvider = settings.value.provider
   settings.value = detail ? { ...detail, models: [...detail.models] } : loadModelSettings()
-  if (settings.value.provider === 'system') void loadSystemModels()
+  if (settings.value.provider === 'system' && previousProvider !== 'system') void loadSystemModels(true)
 }
 
-async function loadSystemModels(): Promise<void> {
+async function loadSystemModels(preferServerDefault = false): Promise<void> {
   if (settings.value.provider !== 'system') return
   const requestId = ++systemModelsRequest
   modelsLoading.value = true
@@ -136,7 +158,9 @@ async function loadSystemModels(): Promise<void> {
     settings.value = {
       ...settings.value,
       models,
-      selectedModel: models.includes(settings.value.selectedModel) ? settings.value.selectedModel : defaultModel
+      selectedModel: preferServerDefault || !models.includes(settings.value.selectedModel)
+        ? defaultModel
+        : settings.value.selectedModel
     }
     saveModelSettings(settings.value)
   } catch {
@@ -148,7 +172,7 @@ async function loadSystemModels(): Promise<void> {
 
 onMounted(() => {
   window.addEventListener(MODEL_SETTINGS_EVENT, syncSettings)
-  void loadSystemModels()
+  void loadSystemModels(true)
 })
 onUnmounted(() => window.removeEventListener(MODEL_SETTINGS_EVENT, syncSettings))
 </script>

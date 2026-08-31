@@ -182,6 +182,8 @@ class OpenAICompatibleProvider:
                 "prompt_version", "prompt_template_hash",
             } and value is not None
         }
+        if kwargs.get("reasoning_effort") is not None:
+            parameters["reasoning_effort"] = kwargs["reasoning_effort"]
         parameters.setdefault("temperature", 0.1)
         capabilities = provider_model_capabilities(self.model, self.base_url)
         if "max_tokens" in parameters and capabilities.max_tokens_field != "max_tokens":

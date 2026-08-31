@@ -396,6 +396,8 @@ export const useChatStore = defineStore('chat', () => {
   ) => {
     if ((!text.trim()) || loading.value) return
 
+    const modelRequestSettings = toModelRequestSettings(runtimeSettings)
+
     pushUserMessage(text)
     loading.value = true
     isStreaming.value = true
@@ -543,6 +545,7 @@ export const useChatStore = defineStore('chat', () => {
           base_url: runtimeSettings.provider === 'system' ? undefined : runtimeSettings.baseUrl,
           api_key: runtimeSettings.provider === 'system' ? undefined : runtimeSettings.apiKey,
           thinking_mode: runtimeSettings.thinkingMode,
+          reasoning_effort: modelRequestSettings.reasoningEffort,
           tool_mode: 'auto',
           context_id: contextId.value || undefined,
           workspace_mode: workspaceMode

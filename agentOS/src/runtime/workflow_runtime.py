@@ -1981,6 +1981,7 @@ class ExecutionRuntime:
                 task_type=task.intent or workflow.intent,
                 force_dynamic=force_dynamic,
                 thinking_mode=str(run.input.get("thinkingMode") or "").strip() or None,
+                reasoning_effort=str(run.input.get("reasoningEffort") or "").strip() or None,
                 # 仅显式 deterministicIntent 才禁用 v2 语义模型；强制动态规划
                 # 不能再隐式退回固定能力链。
                 deterministic_intent=bool(run.input.get("deterministicIntent")),

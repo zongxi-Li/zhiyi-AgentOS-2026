@@ -80,6 +80,7 @@ class GatewayStructuredGenerationRuntime:
         prompt: str,
         schema: Dict[str, Any],
         thinking_mode: str = "disabled",
+        reasoning_effort: str | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
@@ -99,6 +100,8 @@ class GatewayStructuredGenerationRuntime:
                 "thinking_mode": thinking_mode,
                 "commit_id": commit_id,
             }
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
             if max_output_tokens is not None:
                 kwargs["max_tokens"] = max_output_tokens
             return gateway.generate_json(prompt, schema, **kwargs)

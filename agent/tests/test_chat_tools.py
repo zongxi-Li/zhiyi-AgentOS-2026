@@ -46,6 +46,23 @@ class _ChatToolRuntimeStub:
         )
 
 
+class _CapturingChatToolRuntime:
+    def __init__(self):
+        self.kwargs = {}
+
+    def scoped(self, allowed_tools):
+        return self
+
+    async def run(self, text, **kwargs):
+        self.kwargs = kwargs
+        return ToolRunResult(
+            text="captured",
+            model="glm-5.3-flash",
+            usage={"total_tokens": 1},
+            metadata={"effectiveThinkingMode": "deep", "effectiveReasoningEffort": "high"},
+        )
+
+
 def test_non_stream_chat_returns_sources_and_execution_summary(monkeypatch):
     monkeypatch.setattr(chat, "get_tool_runtime", lambda: _ChatToolRuntimeStub())
 
@@ -68,6 +85,29 @@ def test_disabled_tool_mode_uses_empty_scope(monkeypatch):
     assert response.text == "answer without tools"
     assert response.metadata["toolsUsed"] == []
     assert response.sources == []
+
+
+def test_chat_endpoint_passes_glm_reasoning_effort_separately(monkeypatch):
+    runtime = _CapturingChatToolRuntime()
+    monkeypatch.setattr(chat, "get_tool_runtime", lambda: runtime)
+
+    response = asyncio.run(
+        chat.chat_text(
+            chat.ChatRequest(
+                text="use the selected GLM strength",
+                model="glm-5.3-flash",
+                base_url="https://open.bigmodel.cn/api/paas/v4",
+                api_key="test-key",
+                thinking_mode="standard",
+                reasoning_effort="high",
+                tool_mode="disabled",
+            )
+        )
+    )
+
+    assert response.text == "captured"
+    assert runtime.kwargs["thinking_mode"] == "standard"
+    assert runtime.kwargs["parameters"] == {"reasoning_effort": "high"}
 
 
 def test_sse_forwarder_preserves_tool_events():

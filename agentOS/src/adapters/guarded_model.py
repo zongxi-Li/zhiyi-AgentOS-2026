@@ -87,6 +87,7 @@ class GuardedModelRuntime:
         prompt: str,
         schema: dict,
         thinking_mode: str = "disabled",
+        reasoning_effort: str | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
@@ -97,17 +98,20 @@ class GuardedModelRuntime:
             raise StructuredGenerationError("MODEL_TIMEOUT", "model timeout must be positive")
         for attempt in range(1, self.retries + 2):
             try:
+                delegate_kwargs = {
+                    "prompt": prompt,
+                    "schema": schema,
+                    "thinking_mode": thinking_mode,
+                    "timeout_seconds": timeout_seconds,
+                    "max_output_tokens": max_output_tokens,
+                    "prompt_version": prompt_version,
+                    "commit_id": commit_id,
+                }
+                if reasoning_effort is not None:
+                    delegate_kwargs["reasoning_effort"] = reasoning_effort
                 return await self._gate.call(
                     lambda: asyncio.wait_for(
-                        self.delegate.generate_json(
-                            prompt=prompt,
-                            schema=schema,
-                            thinking_mode=thinking_mode,
-                            timeout_seconds=timeout_seconds,
-                            max_output_tokens=max_output_tokens,
-                            prompt_version=prompt_version,
-                            commit_id=commit_id,
-                        ),
+                        self.delegate.generate_json(**delegate_kwargs),
                         timeout=timeout_seconds,
                     )
                 )

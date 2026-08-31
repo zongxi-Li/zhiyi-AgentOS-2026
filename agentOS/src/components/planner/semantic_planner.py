@@ -32,6 +32,7 @@ class SemanticPlanner:
         profile: TaskSemanticProfile,
         strategy: str,
         task_input: dict[str, Any] | None = None,
+        reasoning_effort: str | None = None,
         use_llm: bool = True,
         existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
     ) -> TaskPlan:
@@ -40,6 +41,7 @@ class SemanticPlanner:
             profile=profile,
             strategy=strategy,
             task_input=task_input,
+            reasoning_effort=reasoning_effort,
             use_llm=use_llm,
             existing_semantic_tasks=tuple(existing_semantic_tasks),
         )

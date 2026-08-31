@@ -38,12 +38,14 @@ class _OversizedTextArrayModel:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.kwargs: list[dict] = []
 
     def is_available(self) -> bool:
         return True
 
     async def generate_json(self, **_kwargs) -> StructuredGenerationResult:
         self.calls += 1
+        self.kwargs.append(dict(_kwargs))
         return StructuredGenerationResult(
             data={
                 "task_summary": "理解任务",
@@ -181,7 +183,11 @@ def test_native_agent_losslessly_bounds_provider_text_arrays() -> None:
     agent = NativeGeneralAgent()
     model = _OversizedTextArrayModel()
     descriptor = build_default_capability_catalog().get("task_understanding")
-    task = RuntimeMissionRecord(missionId="task-2", title="understand")
+    task = RuntimeMissionRecord(
+        missionId="task-2",
+        title="understand",
+        input={"reasoningEffort": "high"},
+    )
     run = RuntimeRunRecord(
         missionId=task.mission_id,
         workflowId="native",
@@ -214,6 +220,7 @@ def test_native_agent_losslessly_bounds_provider_text_arrays() -> None:
     result = asyncio.run(agent.run(context))
 
     assert model.calls == 1
+    assert model.kwargs[0]["reasoning_effort"] == "high"
     assert len(result.output["assumptions"]) == 20
     assert "\n".join(result.output["assumptions"]) == "\n".join(
         f"假设 {index}" for index in range(20)

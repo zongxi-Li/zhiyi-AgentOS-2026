@@ -1,5 +1,7 @@
 export type ModelProviderId = 'system' | 'qwen' | 'deepseek' | 'glm' | 'openai' | 'custom'
 export type ThinkingMode = 'disabled' | 'standard' | 'deep'
+export const GLM_REASONING_EFFORTS = ['low', 'high', 'max'] as const
+export type GlmReasoningEffort = typeof GLM_REASONING_EFFORTS[number]
 
 export interface ModelProviderPreset {
   id: ModelProviderId
@@ -14,6 +16,8 @@ export interface ModelProviderConnection {
   baseUrl: string
   models: string[]
   selectedModel: string
+  thinkingMode?: ThinkingMode
+  reasoningEffort?: GlmReasoningEffort
 }
 
 export interface ModelSettings {
@@ -23,6 +27,7 @@ export interface ModelSettings {
   models: string[]
   selectedModel: string
   thinkingMode: ThinkingMode
+  reasoningEffort?: GlmReasoningEffort
   providerConnections?: Partial<Record<Exclude<ModelProviderId, 'system'>, ModelProviderConnection>>
 }
 
@@ -57,7 +62,7 @@ export const modelProviderPresets: ModelProviderPreset[] = [
     name: 'GLM / 智谱',
     description: '智谱 AI 官方 OpenAI 兼容接口',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    models: ['glm-5.2']
+    models: ['glm-5.3-flash']
   },
   {
     id: 'openai',
@@ -80,6 +85,26 @@ export const thinkingOptions: Array<{ value: ThinkingMode; label: string; shortL
   { value: 'standard', label: '标准思考', shortLabel: '标准' },
   { value: 'deep', label: '深度思考', shortLabel: '深度' }
 ]
+
+export const glmReasoningOptions: Array<{ value: GlmReasoningEffort; label: string; shortLabel: string }> = [
+  { value: 'low', label: 'low（较低思考强度）', shortLabel: 'low' },
+  { value: 'high', label: 'high（较高思考强度）', shortLabel: 'high' },
+  { value: 'max', label: 'max（最高思考强度）', shortLabel: 'max' }
+]
+
+export function isGlmAlwaysThinkingModel(model: string): boolean {
+  return model.trim().toLowerCase() === 'glm-5.3-flash'
+}
+
+function migrateReasoningEffort(value: unknown): GlmReasoningEffort {
+  return GLM_REASONING_EFFORTS.includes(value as GlmReasoningEffort)
+    ? value as GlmReasoningEffort
+    : 'max'
+}
+
+function thinkingModeForGlmEffort(effort: GlmReasoningEffort): ThinkingMode {
+  return effort === 'low' ? 'standard' : 'deep'
+}
 
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
   'deepseek-chat': 'deepseek-v4-flash',
@@ -135,13 +160,19 @@ export function loadModelSettings(): ModelSettings {
       ? storedSelectedModel
       : models[0] || fallback.selectedModel
 
+    const reasoningEffort = isGlmAlwaysThinkingModel(selectedModel)
+      ? migrateReasoningEffort(parsed.reasoningEffort)
+      : undefined
     return {
       ...fallback,
       ...parsed,
       provider,
       models: models.length ? models : fallback.models,
       selectedModel,
-      thinkingMode: migrateThinkingMode(parsed.thinkingMode ?? parsed.reasoningEffort, legacySelectedModel)
+      thinkingMode: reasoningEffort
+        ? thinkingModeForGlmEffort(reasoningEffort)
+        : migrateThinkingMode(parsed.thinkingMode ?? parsed.reasoningEffort, legacySelectedModel),
+      reasoningEffort
     }
   } catch {
     return fallback
@@ -155,12 +186,22 @@ export function saveModelSettings(settings: ModelSettings): void {
     ...(selectedModel ? [selectedModel] : [])
   ])]
   const providerConnections = { ...(settings.providerConnections || {}) }
+  const normalizedReasoningEffort = isGlmAlwaysThinkingModel(selectedModel)
+    ? migrateReasoningEffort(settings.reasoningEffort)
+    : undefined
+  const normalizedThinkingMode = normalizedReasoningEffort
+    ? thinkingModeForGlmEffort(normalizedReasoningEffort)
+    : settings.thinkingMode
   if (settings.provider !== 'system') {
     providerConnections[settings.provider] = {
       apiKey: settings.apiKey.trim(),
       baseUrl: settings.baseUrl.trim().replace(/\/$/, ''),
       models,
-      selectedModel
+      selectedModel,
+      thinkingMode: normalizedThinkingMode,
+      ...(isGlmAlwaysThinkingModel(selectedModel)
+        ? { reasoningEffort: normalizedReasoningEffort }
+        : {})
     }
   }
   const normalized: ModelSettings = {
@@ -169,6 +210,8 @@ export function saveModelSettings(settings: ModelSettings): void {
     baseUrl: settings.baseUrl.trim().replace(/\/$/, ''),
     models,
     selectedModel,
+    thinkingMode: normalizedThinkingMode,
+    reasoningEffort: normalizedReasoningEffort,
     providerConnections
   }
   localStorage.setItem(MODEL_SETTINGS_KEY, JSON.stringify(normalized))
@@ -183,7 +226,11 @@ export function applyProviderPreset(settings: ModelSettings, provider: ModelProv
       apiKey: settings.apiKey.trim(),
       baseUrl: settings.baseUrl.trim().replace(/\/$/, ''),
       models: [...settings.models],
-      selectedModel: settings.selectedModel.trim()
+      selectedModel: settings.selectedModel.trim(),
+      thinkingMode: settings.thinkingMode,
+      ...(isGlmAlwaysThinkingModel(settings.selectedModel)
+        ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) }
+        : {})
     }
   }
   const savedConnection = provider === 'system' ? undefined : providerConnections[provider]
@@ -191,13 +238,21 @@ export function applyProviderPreset(settings: ModelSettings, provider: ModelProv
   const selectedModel = savedConnection?.selectedModel && models.includes(savedConnection.selectedModel)
     ? savedConnection.selectedModel
     : models[0] || ''
+  const reasoningEffort = isGlmAlwaysThinkingModel(selectedModel)
+    ? migrateReasoningEffort(savedConnection?.reasoningEffort || settings.reasoningEffort)
+    : undefined
+  const thinkingMode = reasoningEffort
+    ? thinkingModeForGlmEffort(reasoningEffort)
+    : savedConnection?.thinkingMode || settings.thinkingMode
   return {
     ...settings,
     provider,
     baseUrl: savedConnection?.baseUrl || preset.baseUrl,
     models,
     selectedModel,
+    thinkingMode,
     apiKey: savedConnection?.apiKey || '',
+    reasoningEffort,
     providerConnections
   }
 }
@@ -206,13 +261,19 @@ export function toModelRequestSettings(settings: ModelSettings) {
   if (settings.provider === 'system') {
     return {
       model: settings.selectedModel === '系统默认' ? undefined : settings.selectedModel,
-      thinkingMode: settings.thinkingMode
+      thinkingMode: settings.thinkingMode,
+      ...(isGlmAlwaysThinkingModel(settings.selectedModel)
+        ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) }
+        : {})
     }
   }
   return {
     model: settings.selectedModel,
     baseUrl: settings.baseUrl,
     apiKey: settings.apiKey,
-    thinkingMode: settings.thinkingMode
+    thinkingMode: settings.thinkingMode,
+    ...(isGlmAlwaysThinkingModel(settings.selectedModel)
+      ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) }
+      : {})
   }
 }

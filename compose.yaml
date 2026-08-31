@@ -94,7 +94,7 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       DEEPSEEK_ENABLED: ${DEEPSEEK_ENABLED:-true}
       GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
-      GLM_MODEL: ${GLM_MODEL:-glm-5.2}
+      GLM_MODEL: ${GLM_MODEL:-glm-5.3-flash}
       GLM_ENABLED: ${GLM_ENABLED:-true}
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       QWEN_MODEL_BALANCED: ${QWEN_MODEL_BALANCED:-qwen-plus}

@@ -103,7 +103,7 @@ def _provider_settings(provider: str) -> dict[str, object]:
         return {
             "api_key": _read_secret_setting("GLM_API_KEY"),
             "base_url": (os.getenv("GLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4").strip(),
-            "model": (os.getenv("GLM_MODEL") or "glm-5.2").strip(),
+            "model": (os.getenv("GLM_MODEL") or "glm-5.3-flash").strip(),
             "enabled": _enabled_setting("GLM_ENABLED"),
         }
     if provider == "qwen":

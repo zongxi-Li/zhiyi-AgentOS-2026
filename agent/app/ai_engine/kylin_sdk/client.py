@@ -685,7 +685,7 @@ class KylinAIClient:
             self._glm_model = settings.GLM_MODEL
         except Exception:
             self._glm_api_key = ''
-            self._glm_model = 'glm-5.2'
+            self._glm_model = 'glm-5.3-flash'
 
         # 检查通义千问配置（备用引擎 + 图像/语音/多模态）
         try:

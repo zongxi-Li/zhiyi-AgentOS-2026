@@ -11,6 +11,7 @@ DEEPSEEK_LEGACY_MODELS = {
     "deepseek-chat": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.DISABLED),
     "deepseek-reasoner": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.STANDARD),
 }
+GLM_5_3_FLASH_REASONING_EFFORTS = ("low", "high", "max")
 
 _THINKING_MODE_ALIASES = {
     "": ThinkingMode.DISABLED,
@@ -93,14 +94,20 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
     normalized_url = (base_url or "").lower()
 
     if normalized_model.startswith("glm-") or "bigmodel.cn" in normalized_url:
+        always_thinking = normalized_model.startswith("glm-5.3-flash")
         return ProviderModelCapabilities(
             supports_thinking=True,
-            supported_thinking_modes={
-                ThinkingMode.DISABLED,
-                ThinkingMode.STANDARD,
-                ThinkingMode.DEEP,
-            },
-            supports_reasoning_effort=False,
+            always_thinking=always_thinking,
+            supported_thinking_modes=(
+                {ThinkingMode.STANDARD, ThinkingMode.DEEP}
+                if always_thinking
+                else {
+                    ThinkingMode.DISABLED,
+                    ThinkingMode.STANDARD,
+                    ThinkingMode.DEEP,
+                }
+            ),
+            supports_reasoning_effort=always_thinking,
             supports_tools=True,
             supports_json_object=True,
             supports_json_schema=False,
@@ -182,6 +189,10 @@ def adapt_chat_completion_parameters(
     request = dict(parameters or {})
     reasons: List[str] = []
 
+    if capabilities.always_thinking and mode == ThinkingMode.DISABLED:
+        reasons.append("thinking_mode_upgraded:disabled->standard")
+        mode = ThinkingMode.STANDARD
+
     if mode not in capabilities.supported_thinking_modes:
         if ThinkingMode.STANDARD in capabilities.supported_thinking_modes and mode == ThinkingMode.DEEP:
             reasons.append("thinking_mode_downgraded:deep->standard")
@@ -215,7 +226,27 @@ def adapt_chat_completion_parameters(
         request["extra_body"] = extra_body
     elif normalized_model.startswith("glm-") or "bigmodel.cn" in base_url.lower():
         extra_body = dict(request.get("extra_body") or {})
-        extra_body["thinking"] = {"type": "enabled" if mode != ThinkingMode.DISABLED else "disabled"}
+        if capabilities.always_thinking:
+            requested_effort = request.get("reasoning_effort")
+            if requested_effort is not None:
+                requested_effort = str(requested_effort).strip().lower()
+                if requested_effort not in GLM_5_3_FLASH_REASONING_EFFORTS:
+                    allowed = ", ".join(GLM_5_3_FLASH_REASONING_EFFORTS)
+                    raise ValueError(
+                        f"Model {model} only supports reasoning_effort: {allowed}"
+                    )
+                effective_effort = requested_effort
+            else:
+                # Backward-compatible callers still speak in the three internal
+                # semantic modes. When no exact provider value was supplied,
+                # choose the nearest official GLM strength without disabling
+                # thinking on an always-thinking model.
+                effective_effort = "max" if mode == ThinkingMode.DEEP else "low"
+            request["reasoning_effort"] = effective_effort
+            extra_body["thinking"] = {"type": "enabled"}
+            mode = ThinkingMode.DEEP if effective_effort in {"high", "max"} else ThinkingMode.STANDARD
+        else:
+            extra_body["thinking"] = {"type": "enabled" if mode != ThinkingMode.DISABLED else "disabled"}
         request["extra_body"] = extra_body
     elif "dashscope.aliyuncs.com" in base_url.lower() and "qwen3" in normalized_model:
         extra_body = dict(request.get("extra_body") or {})
@@ -247,6 +278,7 @@ __all__ = [
     "AdaptedProviderRequest",
     "DEEPSEEK_DEFAULT_MODEL",
     "DEEPSEEK_LEGACY_MODELS",
+    "GLM_5_3_FLASH_REASONING_EFFORTS",
     "NormalizedModelRequest",
     "adapt_chat_completion_parameters",
     "normalize_deepseek_model",
