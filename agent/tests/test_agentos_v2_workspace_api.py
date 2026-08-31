@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from components.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
 from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.workflow import WorkflowStatus
 from domain.models import RunStatus
 from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge, PlannerIdentityBridge
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
@@ -130,6 +132,53 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
         graph = next(item for item in payload["entries"] if item["kind"] == "graph")
         assert graph["graphId"] == blueprint.graph_id
         assert payload["graphNodes"][0]["semanticTaskKey"] == "api_step"
+    finally:
+        content.close()
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_api_projects_runtime_shell_while_identity_run_is_pending(tmp_path):
+    storage = SQLiteV2Storage(tmp_path / "identity-shell.sqlite3")
+    repositories = SQLiteV2Repositories(storage)
+    service = AcgIdentityLifecycleService(repositories)
+    content = SQLiteContentManifestStore(tmp_path / "content-shell.sqlite3")
+    bridge = IdentityProjectionBridge(service, repositories, content)
+    try:
+        mission = service.create_mission(user_id="user-1", goal="Planning shell")
+        now = datetime.now(timezone.utc)
+        runtime_run = SimpleNamespace(
+            run_id="run_planning_shell",
+            mission_id=mission.mission_id,
+            status=WorkflowStatus.PLANNING,
+            lifecycle_phase=None,
+            error=None,
+            created_at=now,
+            updated_at=now,
+            input={},
+        )
+        runtime = SimpleNamespace(
+            identity_lifecycle=bridge,
+            content_manifest_store=content,
+            get_status=lambda run_id: runtime_run if run_id == runtime_run.run_id else (_ for _ in ()).throw(KeyError(run_id)),
+        )
+        app = FastAPI()
+        app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/agentos/v2/missions/{mission.mission_id}/workspace",
+                params={"runId": runtime_run.run_id},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["activeRun"]["runId"] == runtime_run.run_id
+        assert payload["activeRun"]["status"] == "pending"
+        assert payload["diagnostics"][0]["code"] == "PLANNING_PROJECTION_PENDING"
+        assert payload["diagnostics"][0]["details"]["runtimeStatus"] == "planning"
     finally:
         content.close()
         service.close()

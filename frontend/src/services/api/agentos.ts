@@ -101,6 +101,9 @@ export interface WorkflowExecutionState {
   selectedCapabilities?: string[]
   selectedBindings?: Array<Record<string, string>>
   planningSelectionReasons?: string[]
+  requestedCapabilityProfile?: 'auto' | 'standard' | 'full'
+  effectiveCapabilityProfile?: 'standard' | 'full'
+  capabilityProfileReason?: string
 }
 
 export type StepStatus =

@@ -15,12 +15,17 @@ from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus
 from contracts.content import ContentKind
-from domain.models import MissionStatus
+from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
 from components.planner import ACGPlanningError, TaskDecompositionError
 from components.mission_manager.state_machine import InvalidStateTransition
 from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
+from runtime.v2.workspace import (
+    MissionWorkspaceProjection,
+    WorkspaceDiagnostic,
+    WorkspaceRunSummary,
+)
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 
 
@@ -209,6 +214,7 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
 _HISTORY_INPUT_KEYS = (
     "taskName", "taskGoal", "userIntent", "materialText", "materialIds", "materialRefs", "constraints",
     "expectedArtifacts", "planningMode", "planningDiversity", "planningSeed", "webSearchEnabled",
+    "capabilityProfile",
     "thinkingMode", "pluginData", "contractText", "contractType", "legalReviewGoal",
     "evidenceFirst", "riskParallel", "conservativeReview",
 )
@@ -672,14 +678,91 @@ def create_router(
         mission_id: str,
         run_id: str | None = Query(default=None, alias="runId"),
     ):
-        require_mission_access(mission_id)
+        mission_detail = require_mission_access(mission_id)
         try:
             projection = require_identity_queries().mission_workspace(
                 mission_id,
                 run_id=run_id,
             )
         except EntityNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="workspace source not found") from exc
+            if not run_id:
+                raise HTTPException(status_code=404, detail="workspace source not found") from exc
+            try:
+                runtime_run = runtime.get_status(run_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="workspace source not found") from exc
+            _require_access(runtime_run)
+            if runtime_run.mission_id != mission_id:
+                raise HTTPException(status_code=404, detail="workspace source not found") from exc
+
+            status_map = {
+                "completed": RunStatus.SUCCEEDED,
+                "failed": RunStatus.FAILED,
+                "cancelled": RunStatus.CANCELLED,
+                "superseded": RunStatus.SUPERSEDED,
+                "running": RunStatus.RUNNING,
+            }
+            projected_status = status_map.get(runtime_run.status.value, RunStatus.PENDING)
+            error = runtime_run.error if isinstance(runtime_run.error, dict) else {}
+            terminal_statuses = {
+                RunStatus.SUCCEEDED,
+                RunStatus.FAILED,
+                RunStatus.CANCELLED,
+                RunStatus.SUPERSEDED,
+            }
+
+            def run_summary(item: Any, *, is_active: bool) -> WorkspaceRunSummary:
+                metadata = item.metadata if isinstance(getattr(item, "metadata", None), dict) else {}
+                return WorkspaceRunSummary(
+                    runId=item.run_id,
+                    status=item.status,
+                    parentRunId=metadata.get("parentRunId"),
+                    sourceRunId=metadata.get("sourceRunId"),
+                    createdAt=item.created_at,
+                    completedAt=item.finished_at,
+                    isActive=is_active,
+                )
+
+            historical_summaries = [
+                run_summary(item, is_active=False)
+                for item in mission_detail.runs
+                if item.run_id != runtime_run.run_id
+            ]
+            runtime_state = getattr(runtime_run, "execution_state", None)
+            runtime_state = runtime_state if isinstance(runtime_state, dict) else {}
+            runtime_parent_id = runtime_state.get("parentRunId")
+            runtime_source_id = runtime_state.get("sourceRunId")
+            runtime_summary = WorkspaceRunSummary(
+                runId=runtime_run.run_id,
+                status=projected_status,
+                parentRunId=runtime_parent_id,
+                sourceRunId=runtime_source_id,
+                createdAt=runtime_run.created_at,
+                completedAt=(runtime_run.updated_at if projected_status in terminal_statuses else None),
+                isActive=True,
+            )
+            projection = MissionWorkspaceProjection(
+                mission=mission_detail.mission,
+                activeRun=runtime_summary,
+                runs=sorted(
+                    [*historical_summaries, runtime_summary],
+                    key=lambda item: (item.created_at, item.run_id),
+                ),
+                diagnostics=[WorkspaceDiagnostic(
+                    code="PLANNING_PROJECTION_PENDING",
+                    message="Run exists in the execution runtime; its identity graph is not available yet.",
+                    severity="warning",
+                    details={
+                        "runtimeStatus": runtime_run.status.value,
+                        "lifecyclePhase": (
+                            runtime_run.lifecycle_phase.value
+                            if runtime_run.lifecycle_phase is not None
+                            else None
+                        ),
+                        "errorCode": error.get("code"),
+                    },
+                )],
+            )
         return projection.model_dump(
             by_alias=True,
             mode="json",

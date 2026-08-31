@@ -4,6 +4,7 @@ import type { GlmReasoningEffort } from '@/config/modelSettings'
 
 export type WorkbenchPlanningMode = 'dynamic' | 'template_preferred'
 export type PlanningDiversity = 'stable' | 'balanced' | 'exploratory'
+export type CapabilityProfile = 'auto' | 'standard' | 'full'
 
 export interface WorkbenchDraft {
   title: string
@@ -15,6 +16,7 @@ export interface WorkbenchDraft {
   enabledPluginIds: string[]
   planningMode: WorkbenchPlanningMode
   planningDiversity: PlanningDiversity
+  capabilityProfile: CapabilityProfile
   planningSeed: number | null
   webSearchEnabled: boolean
   thinkingMode: 'disabled' | 'standard' | 'deep'
@@ -68,6 +70,7 @@ export const createNativeWorkbenchDraft = (): WorkbenchDraft => ({
   enabledPluginIds: [],
   planningMode: 'dynamic',
   planningDiversity: 'stable',
+  capabilityProfile: 'auto',
   planningSeed: null,
   webSearchEnabled: true,
   thinkingMode: 'disabled',
@@ -102,6 +105,8 @@ export const restoreWorkbenchDraft = (
   if (planningMode) draft.planningMode = planningMode
   const planningDiversity = enumValue(input.planningDiversity, ['stable', 'balanced', 'exploratory'] as const)
   if (planningDiversity) draft.planningDiversity = planningDiversity
+  const capabilityProfile = enumValue(input.capabilityProfile, ['auto', 'standard', 'full'] as const)
+  if (capabilityProfile) draft.capabilityProfile = capabilityProfile
   draft.planningSeed = typeof input.planningSeed === 'number' && Number.isInteger(input.planningSeed)
     ? input.planningSeed
     : null
@@ -160,6 +165,7 @@ export const buildWorkbenchStartRequest = (
     thinkingMode: draft.thinkingMode,
     ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
     planningDiversity: draft.planningDiversity,
+    capabilityProfile: draft.capabilityProfile,
     ...(draft.planningSeed === null ? {} : { planningSeed: draft.planningSeed }),
     pluginData: clonePluginData(draft.pluginData)
   }

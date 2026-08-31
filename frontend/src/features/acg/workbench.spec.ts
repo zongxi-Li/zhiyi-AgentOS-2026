@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { legalUiExtension } from '@/plugins/legal'
+import { industrialUiExtension } from '@/plugins/industrial'
 import {
   buildWorkbenchStartRequest,
   createNativeWorkbenchDraft,
@@ -18,6 +19,7 @@ describe('ACG workbench request builder', () => {
     })
     expect(request.input.source).toBe('acg')
     expect(request.input.webSearchEnabled).toBe(true)
+    expect(request.input.capabilityProfile).toBe('auto')
     expect(request.input).not.toHaveProperty('contractText')
     expect(draft.title).toBe('')
     expect(draft.taskGoal).toBe('')
@@ -157,5 +159,27 @@ describe('ACG workbench request builder', () => {
     draft.pluginData['kinlin.legal'].useTemplateWorkflow = true
     expect(buildWorkbenchStartRequest(draft, [legalUiExtension], 'template').workflowId)
       .toBe('legal_contract_review_v1')
+  })
+
+  it('keeps Industrial runs in the explicit industrial scope', () => {
+    const draft = createNativeWorkbenchDraft()
+    Object.assign(draft, industrialUiExtension.createDefaults?.())
+    draft.enabledPluginIds = ['industrial']
+
+    const request = buildWorkbenchStartRequest(draft, [industrialUiExtension], 'industrial-run')
+
+    expect(request).toMatchObject({
+      domain: 'industrial',
+      intent: 'industrial_design',
+      workflowId: 'industrial_design_v1',
+      enabledPluginIds: ['industrial'],
+      reviewMode: 'human_in_loop'
+    })
+    expect(request.input).toMatchObject({
+      capabilityProfile: 'full',
+      planningDiversity: 'exploratory',
+      webSearchEnabled: true,
+      industrialDesign: true
+    })
   })
 })

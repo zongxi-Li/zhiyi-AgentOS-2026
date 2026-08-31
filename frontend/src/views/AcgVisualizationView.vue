@@ -229,6 +229,14 @@
                 </el-select>
               </label>
               <label class="advanced-item">
+                <span class="advanced-item__label">能力档位</span>
+                <el-select v-model="draft.capabilityProfile" aria-label="能力档位">
+                  <el-option label="自动" value="auto" />
+                  <el-option label="标准" value="standard" />
+                  <el-option label="完整" value="full" />
+                </el-select>
+              </label>
+              <label class="advanced-item">
                 <span class="advanced-item__label">随机种子（可选）</span>
                 <el-input-number v-model="draft.planningSeed" :min="0" :max="2147483647" :controls="false" placeholder="留空则自动生成" />
               </label>
@@ -606,6 +614,7 @@ const closeAdvancedSettings = () => {
 }
 
 const applyAdvancedPreset = (preset: AdvancedPreset) => {
+  draft.capabilityProfile = preset === 'fast' ? 'standard' : preset === 'deep' ? 'full' : 'auto'
   if (preset === 'fast') {
     thinkingMode.value = 'disabled'
     draft.webSearchEnabled = false
@@ -806,6 +815,11 @@ const applyExtensionDefaults = (pluginId: string) => {
     draft.expectedArtifacts = [...defaults.expectedArtifacts]
   }
   if (defaults.reviewMode) draft.reviewMode = defaults.reviewMode
+  if (defaults.capabilityProfile && draft.capabilityProfile === nativeDefaults.capabilityProfile) draft.capabilityProfile = defaults.capabilityProfile
+  if (defaults.planningDiversity && draft.planningDiversity === nativeDefaults.planningDiversity) draft.planningDiversity = defaults.planningDiversity
+  if (typeof defaults.webSearchEnabled === 'boolean' && draft.webSearchEnabled === nativeDefaults.webSearchEnabled) draft.webSearchEnabled = defaults.webSearchEnabled
+  if (defaults.thinkingMode && draft.thinkingMode === nativeDefaults.thinkingMode) draft.thinkingMode = defaults.thinkingMode
+  if (defaults.reasoningEffort && !draft.reasoningEffort) draft.reasoningEffort = defaults.reasoningEffort
   if (defaults.pluginData) draft.pluginData = { ...draft.pluginData, ...defaults.pluginData }
 }
 

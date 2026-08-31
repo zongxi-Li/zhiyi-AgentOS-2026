@@ -133,6 +133,14 @@
                     </select>
                   </label>
                   <label class="advanced-field">
+                    <span>Capability profile</span>
+                    <select v-model="draft.capabilityProfile" aria-label="Capability profile">
+                      <option value="auto">Auto</option>
+                      <option value="standard">Standard</option>
+                      <option value="full">Full</option>
+                    </select>
+                  </label>
+                  <label class="advanced-field">
                     <span>Planning seed <small>optional</small></span>
                     <input v-model.number="draft.planningSeed" aria-label="Planning seed" type="number" min="0" max="2147483647" placeholder="Auto" />
                   </label>
@@ -275,6 +283,7 @@ const expectedArtifactsText = computed({
 })
 
 const applyAdvancedPreset = (preset: AdvancedPreset) => {
+  draft.value.capabilityProfile = preset === 'fast' ? 'standard' : preset === 'deep' ? 'full' : 'auto'
   if (usesGlmReasoningEffort.value) {
     const effort: GlmReasoningEffort = preset === 'fast' ? 'low' : preset === 'balanced' ? 'high' : 'max'
     draft.value.reasoningEffort = effort
@@ -399,10 +408,16 @@ const togglePlugin = (pluginId: string) => {
   draft.value.enabledPluginIds = [pluginId]
   const defaults = pluginUiExtensions.get(pluginId)?.createDefaults?.()
   if (!defaults) return
+  const nativeDefaults = createNativeWorkbenchDraft()
   if (!draft.value.title && defaults.title) draft.value.title = defaults.title
   if (!draft.value.taskGoal && defaults.taskGoal) draft.value.taskGoal = defaults.taskGoal
   if (!draft.value.expectedArtifacts.length && defaults.expectedArtifacts) draft.value.expectedArtifacts = [...defaults.expectedArtifacts]
   if (defaults.reviewMode) draft.value.reviewMode = defaults.reviewMode
+  if (defaults.capabilityProfile && draft.value.capabilityProfile === nativeDefaults.capabilityProfile) draft.value.capabilityProfile = defaults.capabilityProfile
+  if (defaults.planningDiversity && draft.value.planningDiversity === nativeDefaults.planningDiversity) draft.value.planningDiversity = defaults.planningDiversity
+  if (typeof defaults.webSearchEnabled === 'boolean' && draft.value.webSearchEnabled === nativeDefaults.webSearchEnabled) draft.value.webSearchEnabled = defaults.webSearchEnabled
+  if (defaults.thinkingMode && draft.value.thinkingMode === nativeDefaults.thinkingMode) draft.value.thinkingMode = defaults.thinkingMode
+  if (defaults.reasoningEffort && !draft.value.reasoningEffort) draft.value.reasoningEffort = defaults.reasoningEffort
   if (defaults.pluginData) draft.value.pluginData = { ...draft.value.pluginData, ...defaults.pluginData }
 }
 
