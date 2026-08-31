@@ -123,6 +123,7 @@ def test_failed_contract_raises_after_exactly_one_repair() -> None:
         )
 
     assert len(llm.calls) == 2
+    assert 'Previous invalid TaskPlan JSON: {"tasks": [], "relations": []}' in llm.calls[1]["prompt"]
 
 
 def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wording() -> None:
@@ -141,6 +142,40 @@ def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wordin
     assert '"capabilityId": "task_understanding"' in prompt
     assert "Mission requirements:" in prompt
     assert "Mission contract:" not in prompt
+    assert "sourceKey is the prerequisite or producer executed first" in prompt
+    assert "the reverse edge from extract to understand is forbidden" in prompt
+
+
+def test_full_profile_uses_outline_detail_and_relation_units() -> None:
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Resolve goals and constraints", "capabilityId": "task_understanding", "acceptanceCriteria": ["scope is explicit"], "sourceRefs": [], "decompositionRationale": "entry", "logicalRole": "task"},
+        {"key": "analyze", "title": "Analyze", "objective": "Analyze solution assumptions", "capabilityId": "analysis", "acceptanceCriteria": ["findings are explicit"], "sourceRefs": [], "decompositionRationale": "analysis", "logicalRole": "task"},
+    ]}
+    relations = {"relations": [
+        {"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"},
+    ], "controlPolicies": []}
+    llm = _SequencePlanLLM(outline, details, relations)
+
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=_profile(),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+        reasoning_effort="max",
+    )
+
+    assert len(plan.nodes) >= len(_profile().required_capabilities)
+    assert [call["prompt_version"] for call in llm.calls] == [
+        f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
+        f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
+        f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
+    ]
+    assert all(call["max_tokens"] == 16_384 for call in llm.calls)
 
 
 def test_ordinal_model_key_reuses_existing_logical_identity_without_content_hashing() -> None:
@@ -204,7 +239,7 @@ def test_changed_model_key_reuses_unique_logical_role_without_content_hashing() 
     assert plan.nodes[0].key == "equipment_staff_plan"
 
 
-def test_reverse_catalog_dependency_is_reported_with_cycle_path_and_repaired() -> None:
+def test_reverse_catalog_dependency_is_normalized_without_model_repair() -> None:
     tasks = [
         {
             "key": "understand",
@@ -227,13 +262,7 @@ def test_reverse_catalog_dependency_is_reported_with_cycle_path_and_repaired() -
             {"sourceKey": "analyze", "targetKey": "understand", "relationType": "depends_on"},
         ],
     }
-    repaired = {
-        "tasks": tasks,
-        "relations": [
-            {"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"},
-        ],
-    }
-    llm = _SequencePlanLLM(invalid, repaired)
+    llm = _PlanLLM(invalid)
     profile = TaskSemanticProfile(
         primaryGoal="Analyze a mission",
         requiredCapabilities=["task_understanding", "analysis"],
@@ -248,11 +277,13 @@ def test_reverse_catalog_dependency_is_reported_with_cycle_path_and_repaired() -
         use_llm=True,
     )
 
-    assert len(llm.calls) == 2
-    assert "understand -> analyze -> understand" in llm.calls[1]["prompt"]
-    assert llm.calls[1]["prompt_version"] == f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
+    assert len(llm.calls) == 1
     assert any(
         relation.source_key == "understand" and relation.target_key == "analyze"
+        for relation in plan.relations
+    )
+    assert not any(
+        relation.source_key == "analyze" and relation.target_key == "understand"
         for relation in plan.relations
     )
 

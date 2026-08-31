@@ -9,14 +9,21 @@ from copy import deepcopy
 from collections.abc import Mapping
 from typing import Any
 
-from contracts.planning import PlannedTask, SemanticTaskRelationType, TaskPlan, TaskPlanRelation, WorksetSpec
+from contracts.planning import (
+    PlannedTask,
+    SemanticTaskRelationType,
+    TaskPlan,
+    TaskPlanRelation,
+    VerificationLoopPolicy,
+    WorksetSpec,
+)
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
 
 from .complexity import PLANNING_BUDGETS
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v5"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v6"
 
 _SCHEMA = {
     "type": "object",
@@ -60,11 +67,37 @@ _SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "sourceKey": {"type": "string"},
-                    "targetKey": {"type": "string"},
+                    "sourceKey": {
+                        "type": "string",
+                        "description": "For depends_on, the prerequisite task executed first.",
+                    },
+                    "targetKey": {
+                        "type": "string",
+                        "description": "For depends_on, the dependent task executed afterward.",
+                    },
                     "relationType": {"type": "string", "enum": ["depends_on", "parent"]},
                 },
                 "required": ["sourceKey", "targetKey", "relationType"],
+            },
+        },
+        "controlPolicies": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["verification_loop"]},
+                    "bodyEntryKey": {"type": "string"},
+                    "bodyExitKey": {"type": "string"},
+                    "conditionSourceKey": {"type": "string"},
+                    "statusPointer": {"type": "string"},
+                    "repeatValues": {"type": "array", "items": {"type": "string"}},
+                    "maxRevisions": {"type": "integer", "minimum": 0, "maximum": 8},
+                    "onExhausted": {"type": "string", "enum": ["human_review", "fail"]},
+                },
+                "required": [
+                    "type", "bodyEntryKey", "bodyExitKey", "conditionSourceKey",
+                    "statusPointer", "repeatValues", "maxRevisions", "onExhausted",
+                ],
             },
         },
         "budgetRationale": {"type": "string"},
@@ -108,11 +141,22 @@ class TaskDecomposer:
                 task_input=task_input,
                 existing_semantic_tasks=existing_semantic_tasks,
             )
+            if (task_input or {}).get("_effectiveCapabilityProfile") == "full":
+                return self._decompose_staged(
+                    mission_id=mission_id,
+                    profile=profile,
+                    strategy=strategy,
+                    task_input=task_input,
+                    existing_semantic_tasks=existing_semantic_tasks,
+                    prompt=prompt,
+                    reasoning_effort=reasoning_effort,
+                )
             first: Any = None
             try:
                 first = self.llm.generate_json(
                     prompt,
                     _SCHEMA,
+                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
                 )
@@ -137,13 +181,16 @@ class TaskDecomposer:
                         )
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
                     else:
+                        invalid_plan = json.dumps(first, ensure_ascii=False, default=str)
                         repaired = self.llm.generate_json(
                             prompt
                             + "\nThe previous result failed TaskPlan schema or topology validation. "
                             + "Repair it once. Preserve valid task semantics, remove every reported "
                             + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
-                            + f"Validation detail: {first_error}",
+                            + f"Validation detail: {first_error}\n"
+                            + f"Previous invalid TaskPlan JSON: {invalid_plan}",
                             _SCHEMA,
+                            max_tokens=16_384,
                             reasoning_effort=reasoning_effort,
                             prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
                         )
@@ -172,6 +219,181 @@ class TaskDecomposer:
             reason="model decomposition disabled or unavailable",
             existing_semantic_tasks=existing_semantic_tasks,
         )
+
+    def _decompose_staged(
+        self,
+        *,
+        mission_id: str,
+        profile: TaskSemanticProfile,
+        strategy: str,
+        task_input: Mapping[str, Any] | None,
+        existing_semantic_tasks: tuple[Mapping[str, Any], ...],
+        prompt: str,
+        reasoning_effort: str | None,
+    ) -> TaskPlan:
+        """Build a large TaskPlan through bounded JSON units.
+
+        Stable semantic keys are fixed by the outline. Detail failures retry only
+        their five-task batch and relation failures retry only the relation unit.
+        """
+        task_item_schema = deepcopy(_SCHEMA["properties"]["tasks"]["items"])
+        outline_schema = {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "title": {"type": "string"},
+                            "capabilityId": {"type": "string"},
+                            "logicalRole": {"type": "string"},
+                            "sourceRefs": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["key", "title", "capabilityId", "logicalRole", "sourceRefs"],
+                    },
+                }
+            },
+            "required": ["tasks"],
+        }
+        self.last_audit.update({"mode": "model_staged", "stages": []})
+        try:
+            outline_result = self.llm.generate_json(
+                prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
+                outline_schema,
+                max_tokens=16_384,
+                reasoning_effort=reasoning_effort,
+                prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
+            )
+            outline_payload = outline_result.get("data", outline_result)
+            outline = outline_payload.get("tasks") if isinstance(outline_payload, dict) else None
+            if not isinstance(outline, list) or not outline:
+                raise TaskDecompositionError("staged outline returned no tasks")
+            keys = [str(item.get("key") or "").strip() for item in outline if isinstance(item, dict)]
+            if len(keys) != len(outline) or not all(keys) or len(keys) != len(set(keys)):
+                raise TaskDecompositionError("staged outline contains empty or duplicate task keys")
+            self.last_audit["stages"].append({"stage": "outline", "taskCount": len(keys)})
+
+            detailed_tasks: list[dict[str, Any]] = []
+            for offset in range(0, len(outline), 5):
+                batch = outline[offset:offset + 5]
+                batch_keys = [str(item["key"]) for item in batch]
+                detail_schema = {
+                    "type": "object",
+                    "properties": {
+                        "tasks": {
+                            "type": "array",
+                            "minItems": len(batch),
+                            "maxItems": len(batch),
+                            "items": task_item_schema,
+                        }
+                    },
+                    "required": ["tasks"],
+                }
+                detail_prompt = (
+                    "STAGE DETAIL: expand exactly this outline batch into complete TaskPlan task objects. "
+                    "Preserve every key and capabilityId exactly; return no other tasks and no relations. "
+                    "Every task needs a business objective, acceptance criteria, source refs and rationale.\n"
+                    f"Mission planning context: {prompt}\n"
+                    f"Frozen outline batch: {json.dumps(batch, ensure_ascii=False)}"
+                )
+                try:
+                    detail_result = self.llm.generate_json(
+                        detail_prompt,
+                        detail_schema,
+                        max_tokens=16_384,
+                        reasoning_effort=reasoning_effort,
+                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
+                    )
+                except Exception as exc:
+                    detail_result = self.llm.generate_json(
+                        detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
+                        detail_schema,
+                        max_tokens=16_384,
+                        reasoning_effort=reasoning_effort,
+                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
+                    )
+                detail_payload = detail_result.get("data", detail_result)
+                rows = detail_payload.get("tasks") if isinstance(detail_payload, dict) else None
+                returned_keys = [str(item.get("key") or "") for item in rows or [] if isinstance(item, dict)]
+                if set(returned_keys) != set(batch_keys) or len(returned_keys) != len(batch_keys):
+                    raise TaskDecompositionError("staged detail batch changed frozen task identities")
+                detailed_tasks.extend(rows)
+                self.last_audit["stages"].append({"stage": "detail", "keys": batch_keys})
+
+            relation_schema = {
+                "type": "object",
+                "properties": {
+                    "relations": deepcopy(_SCHEMA["properties"]["relations"]),
+                    "controlPolicies": deepcopy(_SCHEMA["properties"]["controlPolicies"]),
+                },
+                "required": ["relations", "controlPolicies"],
+            }
+            compact = [
+                {
+                    "key": item["key"],
+                    "capabilityId": item["capabilityId"],
+                    "logicalRole": item.get("logicalRole", "task"),
+                    "objective": item.get("objective", ""),
+                }
+                for item in detailed_tasks
+            ]
+            relation_prompt = (
+                "STAGE RELATIONS: create the acyclic prerequisite-to-dependent topology for these frozen tasks. "
+                "Add a verification_loop only when a refinement-to-verification region is present; use maxRevisions=2.\n"
+                f"Tasks: {json.dumps(compact, ensure_ascii=False)}"
+            )
+            try:
+                relation_result = self.llm.generate_json(
+                    relation_prompt,
+                    relation_schema,
+                    max_tokens=16_384,
+                    reasoning_effort=reasoning_effort,
+                    prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
+                )
+            except Exception as exc:
+                relation_result = self.llm.generate_json(
+                    relation_prompt + f"\nRepair the relation unit once. Previous error: {exc}",
+                    relation_schema,
+                    max_tokens=16_384,
+                    reasoning_effort=reasoning_effort,
+                    prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair1",
+                )
+            relation_payload = relation_result.get("data", relation_result)
+            combined = {
+                "tasks": detailed_tasks,
+                "relations": relation_payload.get("relations", []),
+                "controlPolicies": relation_payload.get("controlPolicies", []),
+            }
+            self.last_audit["stages"].append({"stage": "relations"})
+            try:
+                plan = self._to_plan(
+                    mission_id, profile, strategy, combined,
+                    task_input=task_input,
+                    existing_semantic_tasks=existing_semantic_tasks,
+                )
+            except Exception as exc:
+                missing_refs = self._coverage_gap_refs(exc)
+                if not missing_refs:
+                    raise
+                combined = self._repair_source_ref_coverage(
+                    raw=combined,
+                    profile=profile,
+                    missing_refs=missing_refs,
+                    reasoning_effort=reasoning_effort,
+                )
+                plan = self._to_plan(
+                    mission_id, profile, strategy, combined,
+                    task_input=task_input,
+                    existing_semantic_tasks=existing_semantic_tasks,
+                )
+            self._capture_model_audit(outline_result)
+            return plan
+        except Exception as exc:
+            self.last_audit["mode"] = "failed"
+            self.last_audit["error"] = type(exc).__name__
+            raise TaskDecompositionError(f"TASK_PLAN_STAGED_FAILED: {exc}") from exc
 
     @staticmethod
     def _coverage_gap_refs(error: Exception) -> tuple[str, ...]:
@@ -259,6 +481,7 @@ class TaskDecomposer:
             f"Missing source registry entries: {json.dumps(missing_registry, ensure_ascii=False)}\n"
             f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}",
             schema,
+            max_tokens=16_384,
             reasoning_effort=reasoning_effort,
             prompt_version=repair_version,
         )
@@ -389,9 +612,18 @@ class TaskDecomposer:
             + identity_guidance
             + "The same capabilityId may be instantiated by multiple tasks when goals, alternatives or stages differ. "
             "Use depends_on relations as the authoritative execution topology and keep it acyclic.\n"
+            "For every depends_on relation, sourceKey is the prerequisite or producer executed first, "
+            "and targetKey is the dependent or consumer executed afterward. "
+            "Example: if extraction depends on understanding, use "
+            "{\"sourceKey\":\"understand\",\"targetKey\":\"extract\",\"relationType\":\"depends_on\"}; "
+            "the reverse edge from extract to understand is forbidden.\n"
             "Capability catalog dependsOn entries are hard prerequisites that the system will enforce after generation. "
             "Never create a reverse path from a dependent task back to one of its prerequisite tasks. "
             "optionalDependencies are advisory and must not be added when they create a cycle.\n"
+            "For complex work with solution refinement and verification, declare a "
+            "verification_loop in controlPolicies instead of creating a dependency cycle. "
+            "The condition source must expose verification.status, maxRevisions must be 2, "
+            "and onExhausted must be human_review.\n"
             "Cover every hard constraint and expected artifact; do not invent facts or domain capabilities.\n"
             "When source material is represented by materialRefs, attach a WorksetSpec to the "
             "logical task that scans it. Consume pages by cursor; do not copy all fragments into "
@@ -506,7 +738,7 @@ class TaskDecomposer:
                 }
             )
         self._complete_missing_capability_tasks(nodes, profile, strategy)
-        relations = self._complete_capability_dependencies(
+        relations = self._normalize_direct_reversed_required_dependencies(
             nodes,
             [
                 TaskPlanRelation(
@@ -517,11 +749,32 @@ class TaskDecomposer:
                 for item in payload.get("relations", [])
             ],
         )
+        relations = self._complete_capability_dependencies(nodes, relations)
         relations = self._connect_terminal_results(nodes, relations)
+        control_policies = tuple(
+            VerificationLoopPolicy.model_validate({
+                **item,
+                "bodyEntryKey": key_map.get(
+                    str(item.get("bodyEntryKey") or "").strip(),
+                    str(item.get("bodyEntryKey") or "").strip(),
+                ),
+                "bodyExitKey": key_map.get(
+                    str(item.get("bodyExitKey") or "").strip(),
+                    str(item.get("bodyExitKey") or "").strip(),
+                ),
+                "conditionSourceKey": key_map.get(
+                    str(item.get("conditionSourceKey") or "").strip(),
+                    str(item.get("conditionSourceKey") or "").strip(),
+                ),
+            })
+            for item in payload.get("controlPolicies", [])
+            if isinstance(item, dict)
+        )
         plan = TaskPlan(
             missionId=mission_id,
             nodes=tuple(nodes),
             relations=tuple(relations),
+            controlPolicies=control_policies,
             metadata={
                 "strategy": strategy,
                 "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -714,6 +967,36 @@ class TaskDecomposer:
                 ))
                 existing.add(identity)
         return relations
+
+    def _normalize_direct_reversed_required_dependencies(
+        self,
+        nodes: list[PlannedTask],
+        relations: list[TaskPlanRelation],
+    ) -> list[TaskPlanRelation]:
+        """Remove only catalog-provable reversed hard-dependency edges.
+
+        The normal dependency completion pass then installs the authoritative
+        prerequisite -> dependent edge and performs the usual cycle checks.
+        """
+        capability_by_key = {
+            node.key: node.capability_requirements[0]
+            for node in nodes
+        }
+        normalized: list[TaskPlanRelation] = []
+        for relation in relations:
+            if relation.relation_type != SemanticTaskRelationType.DEPENDS_ON:
+                normalized.append(relation)
+                continue
+            source_capability = capability_by_key.get(relation.source_key)
+            target_capability = capability_by_key.get(relation.target_key)
+            is_proven_reverse = bool(
+                source_capability
+                and target_capability
+                and target_capability in self.capability_catalog.get(source_capability).depends_on
+            )
+            if not is_proven_reverse:
+                normalized.append(relation)
+        return normalized
 
     def _connect_terminal_results(
         self,

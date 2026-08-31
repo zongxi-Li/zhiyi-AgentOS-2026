@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,7 +21,8 @@ _ALLOWED_METADATA_KEYS = {
     "plannerAlgorithmVersion", "planningDiversity", "planningSeed",
     "capabilityCatalogRevision", "taskType", "domain",
     "degraded", "degradationReason", "promptVersion", "complexityBand",
-    "planningBudget",
+    "planningBudget", "reasoningEffort", "reasoningPolicyReason",
+    "requestedCapabilityProfile", "effectiveCapabilityProfile", "capabilityProfileReason",
 }
 
 
@@ -58,6 +59,30 @@ class TaskPlanRelation(BaseModel):
         if self.source_key == self.target_key:
             raise ValueError("TaskPlanRelation cannot point to itself")
         return self
+
+
+class VerificationLoopPolicy(BaseModel):
+    """Semantic declaration for a bounded refinement loop.
+
+    The TaskPlan remains a DAG. The ACG Builder owns the translation from this
+    declaration to Runtime LOOP controls and therefore no execution identity is
+    allowed in this contract.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    type: Literal["verification_loop"] = "verification_loop"
+    body_entry_key: SemanticTaskKey = Field(alias="bodyEntryKey")
+    body_exit_key: SemanticTaskKey = Field(alias="bodyExitKey")
+    condition_source_key: SemanticTaskKey = Field(alias="conditionSourceKey")
+    status_pointer: str = Field(default="/verification/status", alias="statusPointer")
+    repeat_values: tuple[str, ...] = Field(
+        default=("partial", "failed"), alias="repeatValues", min_length=1
+    )
+    max_revisions: int = Field(default=2, alias="maxRevisions", ge=0, le=8)
+    on_exhausted: Literal["human_review", "fail"] = Field(
+        default="human_review", alias="onExhausted"
+    )
 
 
 class PlannedTask(BaseModel):
@@ -103,6 +128,9 @@ class TaskPlan(BaseModel):
     plan_version: int = Field(default=1, alias="planVersion", ge=1)
     nodes: tuple[PlannedTask, ...] = Field(min_length=1)
     relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
+    control_policies: tuple[VerificationLoopPolicy, ...] = Field(
+        default_factory=tuple, alias="controlPolicies"
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -117,6 +145,14 @@ class TaskPlan(BaseModel):
         for relation in self.relations:
             if relation.source_key not in known or relation.target_key not in known:
                 raise ValueError("TaskPlan relation references an unknown semantic key")
+        for policy in self.control_policies:
+            referenced = {
+                policy.body_entry_key,
+                policy.body_exit_key,
+                policy.condition_source_key,
+            }
+            if not referenced <= known:
+                raise ValueError("TaskPlan control policy references an unknown semantic key")
         unresolved = {node.key: node.parent_key for node in self.nodes}
         resolved: set[str] = set()
         while unresolved:
@@ -231,5 +267,6 @@ __all__ = [
     "PlannedTask",
     "TaskPlanPatch",
     "TaskPlanRelation",
+    "VerificationLoopPolicy",
     "WorksetSpec",
 ]

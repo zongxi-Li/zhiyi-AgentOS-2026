@@ -12,10 +12,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import random
 import secrets
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence
 
 from contracts.planning import (
     TaskImplementationBinding,
@@ -23,7 +23,7 @@ from contracts.planning import (
     TaskPlanPatch,
 )
 from service.agents import AgentRegistry
-from support.acg.models import ACGBlueprint, CapabilityCandidate
+from support.acg.models import ACGBlueprint, CapabilityCandidate, ControlNode
 from .acg_builder import ACGBuilder
 from .semantic_planner import SemanticPlanner
 from support.acg.models import CapabilityCatalog
@@ -39,6 +39,16 @@ from .algorithms import (
     normalize_planning_diversity,
 )
 from components.mission_manager.store import WorkflowRegistry
+
+
+CapabilityProfile = Literal["auto", "standard", "full"]
+
+
+def normalize_capability_profile(value: object | None) -> CapabilityProfile:
+    normalized = str(value or "auto").strip().lower()
+    if normalized not in {"auto", "standard", "full"}:
+        raise ValueError("capabilityProfile must be one of: auto, standard, full")
+    return normalized  # type: ignore[return-value]
 
 
 class ACGPlanningError(ValueError):
@@ -61,6 +71,9 @@ class PlanResult:
     template_score: float = 0.0
     thinking_mode: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    requested_capability_profile: CapabilityProfile = "auto"
+    effective_capability_profile: Literal["standard", "full"] = "standard"
+    capability_profile_reason: str = "simple_or_medium_auto"
     planning_diversity: PlanningDiversity = "stable"
     planning_seed: Optional[int] = None
     planner_algorithm_version: str = PLANNER_ALGORITHM_VERSION
@@ -82,6 +95,9 @@ class PlanResult:
             "templateScore": self.template_score,
             "thinkingMode": self.thinking_mode,
             "reasoningEffort": self.reasoning_effort,
+            "requestedCapabilityProfile": self.requested_capability_profile,
+            "effectiveCapabilityProfile": self.effective_capability_profile,
+            "capabilityProfileReason": self.capability_profile_reason,
             "planningDiversity": self.planning_diversity,
             "planningSeed": self.planning_seed,
             "plannerAlgorithmVersion": self.planner_algorithm_version,
@@ -143,6 +159,7 @@ class PlanningEngine:
         required_capabilities: Sequence[str] | None = None,
         task_input: Dict[str, Any] | None = None,
         existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
+        capability_profile: str = "auto",
     ) -> PlanResult:
         """为任务选择模板或动态生成 ACG。
 
@@ -150,9 +167,7 @@ class PlanningEngine:
         随机选择的复现性，目录或绑定不满足约束时抛出 ``ACGPlanningError``；不持久化结果。
         """
         diversity = normalize_planning_diversity(planning_diversity)
-        resolved_seed = planning_seed
-        if diversity != "stable" and resolved_seed is None:
-            resolved_seed = secrets.randbits(53)
+        requested_profile = normalize_capability_profile(capability_profile)
         profile = self.intent_parser.parse(
             intent=intent,
             domain=domain,
@@ -163,6 +178,23 @@ class PlanningEngine:
             task_input=task_input,
             declared_capabilities=list(required_capabilities or ()),
         )
+        auto_full = profile.estimated_complexity.value in {"complex", "extreme"}
+        effective_profile: Literal["standard", "full"] = (
+            "full" if requested_profile == "full" or (requested_profile == "auto" and auto_full)
+            else "standard"
+        )
+        profile_reason = (
+            "explicit_full" if requested_profile == "full"
+            else "explicit_standard" if requested_profile == "standard"
+            else "complexity_auto_full" if auto_full
+            else "simple_or_medium_auto"
+        )
+        if effective_profile == "full" and diversity != "exploratory":
+            diversity = "exploratory"
+        resolved_seed = planning_seed
+        if diversity != "stable" and resolved_seed is None:
+            resolved_seed = secrets.randbits(53)
+        planning_reasoning_effort = "max" if effective_profile == "full" else reasoning_effort
         if required_capabilities:
             selected = self.capability_catalog.expand_dependencies(required_capabilities)
             existing = {
@@ -206,6 +238,9 @@ class PlanningEngine:
                     template_score=match.score,
                     thinking_mode=thinking_mode,
                     reasoning_effort=reasoning_effort,
+                    requested_capability_profile=requested_profile,
+                    effective_capability_profile=effective_profile,
+                    capability_profile_reason=profile_reason,
                     planning_diversity=diversity,
                     planning_seed=resolved_seed,
                     capability_catalog_revision=capability_catalog_revision,
@@ -230,11 +265,22 @@ class PlanningEngine:
             mission_id=mission_id,
             profile=profile,
             strategy="dynamic_generation",
-            task_input=task_input,
-            reasoning_effort=reasoning_effort,
+            task_input={
+                **dict(task_input or {}),
+                "_effectiveCapabilityProfile": effective_profile,
+            },
+            reasoning_effort=planning_reasoning_effort,
             use_llm=not deterministic_intent,
             existing_semantic_tasks=existing_semantic_tasks,
         )
+        task_plan = task_plan.model_copy(update={
+            "metadata": {
+                **task_plan.metadata,
+                "requestedCapabilityProfile": requested_profile,
+                "effectiveCapabilityProfile": effective_profile,
+                "capabilityProfileReason": profile_reason,
+            }
+        })
         variant_set = self.variant_generator.generate(
             profile=profile,
             domain=domain,
@@ -244,6 +290,12 @@ class PlanningEngine:
         valid: list[tuple[Any, ACGBlueprint]] = []
         rejected: list[str] = []
         for variant in variant_set.variants:
+            if effective_profile == "full" and not variant.enable_parallel_controls:
+                variant = replace(
+                    variant,
+                    enable_parallel_controls=True,
+                    selection_reasons=(*variant.selection_reasons, "full profile requires explicit parallel controls"),
+                )
             if variant.network.unresolved_capabilities or variant.network.over_budget:
                 rejected.append(f"{variant.variant_id}: unresolved capability or entropy budget")
                 continue
@@ -263,9 +315,16 @@ class PlanningEngine:
 
         stochastic_fallback = False
         if valid:
+            scored = [
+                (self._score_candidate(task_plan, candidate), variant, candidate)
+                for variant, candidate in valid
+            ]
+            best_score = max(item[0] for item in scored)
+            tied = [item for item in scored if item[0] == best_score]
             selection_random = random.Random(resolved_seed)
-            selected_index = selection_random.randrange(len(valid)) if len(valid) > 1 else 0
-            selected_variant, blueprint = valid[selected_index]
+            _, selected_variant, blueprint = (
+                tied[selection_random.randrange(len(tied))] if len(tied) > 1 else tied[0]
+            )
         else:
             stochastic_fallback = diversity != "stable"
             stable_set = self.variant_generator.generate(
@@ -293,6 +352,10 @@ class PlanningEngine:
                 "capabilityCatalogRevision": capability_catalog_revision,
                 "candidateCount": len(valid),
                 "selectedVariantId": selected_variant.variant_id,
+                "selectedVariantScore": self._score_candidate(task_plan, blueprint),
+                "requestedCapabilityProfile": requested_profile,
+                "effectiveCapabilityProfile": effective_profile,
+                "capabilityProfileReason": profile_reason,
                 "promptAudit": [
                     dict(self.intent_parser.last_audit),
                     dict(self.semantic_planner.task_decomposer.last_audit),
@@ -307,6 +370,10 @@ class PlanningEngine:
             else "no template hit; generated ACG dynamically"
         ]
         notes.extend(selected_variant.network.notes)
+        notes.append(
+            f"selected {selected_variant.variant_id} by deterministic quality score "
+            f"{self._score_candidate(task_plan, blueprint):.3f}"
+        )
         notes.extend(rejected)
         if task_plan.metadata.get("degraded"):
             notes.append(str(task_plan.metadata.get("degradationReason") or "v2 decomposition used explicit degraded plan"))
@@ -323,6 +390,9 @@ class PlanningEngine:
             template_score=match.score if match else 0.0,
             thinking_mode=thinking_mode,
             reasoning_effort=reasoning_effort,
+            requested_capability_profile=requested_profile,
+            effective_capability_profile=effective_profile,
+            capability_profile_reason=profile_reason,
             planning_diversity=diversity,
             planning_seed=resolved_seed,
             capability_catalog_revision=capability_catalog_revision,
@@ -363,6 +433,45 @@ class PlanningEngine:
                 missing.append(step.agent_name or step.node_id)
         if missing:
             raise ACGPlanningError("ACG references unregistered Agents: " + ", ".join(sorted(set(missing))))
+
+    @staticmethod
+    def _score_candidate(task_plan: TaskPlan, blueprint: ACGBlueprint) -> float:
+        """Score only auditable graph properties; the seed breaks exact ties."""
+        steps = blueprint.step_nodes()
+        expected_refs = {
+            ref
+            for node in task_plan.nodes
+            for ref in node.source_refs
+            if str(ref).startswith(("constraint:", "artifact:"))
+        }
+        covered_refs = {
+            ref
+            for step in steps
+            for ref in step.source_refs
+            if str(ref).startswith(("constraint:", "artifact:"))
+        }
+        coverage = 1.0 if not expected_refs else len(expected_refs & covered_refs) / len(expected_refs)
+        controls = [node for node in blueprint.nodes if isinstance(node, ControlNode)]
+        verification = any(
+            step.capability in {"verification", "industrial_acceptance_validation"}
+            for step in steps
+        )
+        graph_quality = 1.0 if verification else 0.6
+        evidence = sum(bool(step.metadata.get("requiresEvidence")) for step in steps) / max(1, len(steps))
+        control_types = {str(node.control_type.value) for node in controls}
+        control_quality = min(1.0, len(control_types & {"parallel", "consensus", "loop"}) / 3)
+        binding_quality = sum(
+            min(1.0, max(0.0, float(step.metadata.get("routerScore") or 0)) / 4)
+            for step in steps
+        ) / max(1, len(steps))
+        return round(
+            coverage * 0.35
+            + graph_quality * 0.25
+            + evidence * 0.15
+            + control_quality * 0.15
+            + binding_quality * 0.10,
+            6,
+        )
 
 
 # Facade 和引擎共用一个实现，避免迁移期间分裂规划入口。

@@ -13,10 +13,13 @@ from support.acg.models import (
     AgentNode,
     ControlNode,
     ControlType,
+    ConditionOperator,
+    ConditionSpec,
     EdgeType,
     EvidenceNode,
     MemoryNode,
     ParallelSpec,
+    LoopSpec,
     ConsensusSpec,
     StepNode,
     validate_blueprint,
@@ -128,6 +131,7 @@ class ACGBuilder:
             descriptors,
             data_dependencies,
         )
+        self._wire_control_policies(blueprint, task_plan, step_by_capability)
         blueprint.touch()
         validate_blueprint(blueprint)
         return blueprint
@@ -256,6 +260,8 @@ class ACGBuilder:
                         else None
                     ),
                     "capabilityPromptProfileVersion": descriptor.prompt_profile.prompt_profile_version,
+                    "reasoningEffort": self._reasoning_effort(task, descriptor),
+                    "reasoningPolicyReason": self._reasoning_policy_reason(task, descriptor),
                 },
             )
             blueprint.nodes.append(step)
@@ -309,6 +315,81 @@ class ACGBuilder:
                 step.memory_ids.append(memory.node_id)
 
         return steps, step_by_capability
+
+    @staticmethod
+    def _reasoning_effort(task, descriptor) -> str:
+        explicit = str(task.metadata.get("reasoningEffort") or "").strip().lower()
+        if explicit in {"low", "high", "max"}:
+            return explicit
+        capability = descriptor.capability_id
+        role = str(task.logical_role or "").strip().lower()
+        if (
+            descriptor.risk_level_hint in {"high", "critical"}
+            or descriptor.requires_review
+            or descriptor.produces_artifact
+            or role in {"decision", "review", "verification", "join", "sink", "final"}
+            or capability in {
+                "solution_design", "comparative_analysis", "verification",
+                "artifact_generation", "industrial_safety_analysis",
+                "industrial_acceptance_validation",
+            }
+        ):
+            return "max"
+        if capability in {"information_extraction", "information_retrieval"}:
+            return "low"
+        return "high"
+
+    @staticmethod
+    def _reasoning_policy_reason(task, descriptor) -> str:
+        if str(task.metadata.get("reasoningEffort") or "").strip().lower() in {"low", "high", "max"}:
+            return "task_plan_explicit"
+        if descriptor.risk_level_hint in {"high", "critical"} or descriptor.requires_review:
+            return "risk_or_review_critical"
+        if descriptor.produces_artifact or str(task.logical_role or "").strip().lower() in {
+            "decision", "review", "verification", "join", "sink", "final",
+        }:
+            return "topology_or_delivery_critical"
+        if descriptor.capability_id in {"information_extraction", "information_retrieval"}:
+            return "bounded_retrieval_or_extraction"
+        return "analytical_default"
+
+    def _wire_control_policies(self, blueprint, task_plan, step_by_key) -> None:
+        for index, policy in enumerate(task_plan.control_policies, start=1):
+            entry = step_by_key[policy.body_entry_key].node_id
+            exit_id = step_by_key[policy.body_exit_key].node_id
+            source = step_by_key[policy.condition_source_key].node_id
+            control_id = f"ctrl_verification_loop_{index}"
+            edge = ACGEdge(
+                sourceId=control_id,
+                targetId=entry,
+                edgeType=EdgeType.CONTROL_FLOW,
+            )
+            cases = {value: edge.edge_id for value in policy.repeat_values}
+            blueprint.nodes.append(
+                ControlNode(
+                    nodeId=control_id,
+                    name="VERIFICATION_LOOP",
+                    controlType=ControlType.LOOP,
+                    loopSpec=LoopSpec(
+                        bodyEntryId=entry,
+                        bodyExitId=exit_id,
+                        condition=ConditionSpec(
+                            sourceNodeId=source,
+                            jsonPointer=policy.status_pointer,
+                            operator=ConditionOperator.IN,
+                            cases=cases,
+                        ),
+                        # Runtime counts the initial pass as iteration zero.
+                        maxIterations=policy.max_revisions + 1,
+                        onLimit=("review" if policy.on_exhausted == "human_review" else "fail"),
+                    ),
+                    metadata={
+                        "taskPlanPolicy": "verification_loop",
+                        "maxRevisions": policy.max_revisions,
+                    },
+                )
+            )
+            blueprint.edges.append(edge)
 
     def _wire_execution_graph(
         self,
