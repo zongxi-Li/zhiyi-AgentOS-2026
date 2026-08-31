@@ -631,12 +631,21 @@ def create_router(
             mission_status = MissionStatus(status_value) if status_value else None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="invalid mission status") from exc
+
+        def is_visible_project_mission(mission_id: str) -> bool:
+            try:
+                task = runtime.workflow_store.get_mission(mission_id)
+            except KeyError:
+                return False
+            return task.record_state is MissionRecordState.ACTIVE
+
         items, total = query.list_mission_items(
             user_id=(actor.user_id if actor else None),
             tenant_id=(actor.tenant_id if actor else None),
             status=mission_status,
             page=page,
             page_size=page_size,
+            mission_visibility=is_visible_project_mission,
         )
         return {
             "items": [
@@ -686,7 +695,21 @@ def create_router(
         except RuntimeRunRecordNotTerminalError as exc:
             raise HTTPException(status_code=409, detail="mission has active runs") from exc
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if (
+                state is MissionRecordState.DELETED
+                and str(exc) == "deleted mission record state is immutable"
+            ):
+                # DELETE is idempotent at the API boundary. The identity
+                # projection can retain a stale row until its next read, so a
+                # repeated delete should converge it instead of surfacing a
+                # misleading conflict.
+                try:
+                    task = runtime.workflow_store.get_mission(mission_id)
+                except KeyError as missing:
+                    raise HTTPException(status_code=404, detail="mission not found") from missing
+                affected_runs = 0
+            else:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
             "missionId": task.mission_id,
             "recordState": task.record_state.value,

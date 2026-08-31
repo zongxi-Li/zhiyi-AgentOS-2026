@@ -445,6 +445,212 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   color: var(--text-secondary);
 }
 
+/* Apple-style destructive confirmation: one quiet surface, title first. */
+.el-overlay.apple-delete-message-box__overlay {
+  background: color-mix(in srgb, var(--overlay-backdrop) 72%, transparent) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.apple-delete-message-box.el-message-box {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0 22px 18px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent) !important;
+  border-radius: 18px !important;
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-app)) !important;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.52), 0 1px 0 rgba(255, 255, 255, 0.05) inset !important;
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+.apple-delete-message-box .el-message-box__header {
+  padding: 21px 32px 0 0;
+}
+
+.apple-delete-message-box .el-message-box__title {
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+}
+
+.apple-delete-message-box .el-message-box__headerbtn {
+  top: 14px;
+  right: 7px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.apple-delete-message-box .el-message-box__headerbtn:hover,
+.apple-delete-message-box .el-message-box__headerbtn:focus-visible {
+  background: var(--surface-subtle);
+  outline: none;
+}
+
+.apple-delete-message-box .el-message-box__headerbtn .el-message-box__close {
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.apple-delete-message-box .el-message-box__content {
+  padding: 14px 0 0;
+}
+
+.apple-delete-message-box .el-message-box__container {
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.apple-delete-message-box .el-message-box__status {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--warning);
+  font-size: 18px;
+}
+
+.apple-delete-message-box .el-message-box__message {
+  min-width: 0;
+}
+
+.mission-delete-message {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.mission-delete-message p {
+  margin: 0;
+}
+
+.mission-delete-message__prompt {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mission-delete-message__title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mission-delete-message__note {
+  margin-top: 3px !important;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.apple-delete-message-box .el-message-box__btns {
+  gap: 8px;
+  padding-top: 20px;
+}
+
+.apple-delete-message-box .el-message-box__btns .el-button {
+  min-width: 76px;
+  height: 36px;
+  margin-left: 0;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  transition: var(--transition);
+}
+
+.apple-delete-message-box .apple-delete-cancel-button {
+  border-color: transparent !important;
+  color: var(--text-secondary) !important;
+  background: var(--surface-subtle) !important;
+}
+
+.apple-delete-message-box .apple-delete-cancel-button:hover,
+.apple-delete-message-box .apple-delete-cancel-button:focus-visible {
+  color: var(--text-primary) !important;
+  background: var(--surface-hover) !important;
+}
+
+.apple-delete-message-box .apple-delete-confirm-button {
+  border-color: var(--danger) !important;
+  color: #fff !important;
+  background: var(--danger) !important;
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--danger) 26%, transparent);
+}
+
+.apple-delete-message-box .apple-delete-confirm-button:hover,
+.apple-delete-message-box .apple-delete-confirm-button:focus-visible {
+  filter: brightness(1.08);
+  box-shadow: 0 9px 22px color-mix(in srgb, var(--danger) 34%, transparent);
+}
+
+/* Quiet task feedback: keep the semantic green on the mark, not the whole card. */
+.el-message.mission-toast {
+  display: inline-flex;
+  width: max-content;
+  min-width: 0 !important;
+  max-width: min(360px, calc(100vw - 32px));
+  min-height: 42px;
+  padding: 9px 16px 9px 12px !important;
+  border: 1px solid color-mix(in srgb, var(--success) 24%, var(--border-light)) !important;
+  border-radius: 12px !important;
+  color: var(--text-primary) !important;
+  background: color-mix(in srgb, var(--bg-card) 91%, var(--success) 9%) !important;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.34), 0 1px 0 rgba(255, 255, 255, 0.06) inset !important;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.el-message.mission-toast .el-message__icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-right: 9px;
+  color: var(--success) !important;
+  font-size: 18px;
+}
+
+.el-message.mission-toast .el-message__content {
+  overflow: hidden;
+  color: var(--text-primary) !important;
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .el-message.mission-toast {
+    animation: mission-toast-enter 180ms var(--ease-out);
+  }
+
+  @keyframes mission-toast-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-5px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}
+
+@media (max-width: 520px) {
+  .apple-delete-message-box.el-message-box {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+}
+
 /* Menus */
 .el-menu {
   background: transparent !important;

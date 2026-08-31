@@ -17,6 +17,7 @@ from contracts.content import ContentKind
 from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
 from contracts.planning import PlannedTask
 from contracts.workflow import (
+    MissionRecordState,
     StepStatus,
     TraceEventType,
     WorkflowDefinition,
@@ -829,6 +830,36 @@ async def test_v2_identity_queries_and_graph_read_from_identity_source(tmp_path)
         assert attempt.json()["executionBinding"]["attemptId"] == attempts[0].attempt_id
         assert step.json()["origin"]["mission"]["missionId"] == task.mission_id
         assert provenance.json()["stepExecutionId"] == execution.step_execution_id
+    finally:
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_v2_failed_mission_can_be_deleted_and_stale_deleted_rows_are_hidden(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    task = runtime.create_mission("Failed mission can be deleted", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    run.status = WorkflowStatus.FAILED
+    runtime.workflow_store.save_run(run)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listed = await client.get("/agentos/v2/missions")
+            deleted = await client.delete(f"/agentos/v2/missions/{task.mission_id}")
+            listed_after_delete = await client.get("/agentos/v2/missions")
+            repeated = await client.delete(f"/agentos/v2/missions/{task.mission_id}")
+
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["missionId"] == task.mission_id
+        assert deleted.status_code == 200
+        assert deleted.json()["recordState"] == MissionRecordState.DELETED.value
+        assert listed_after_delete.status_code == 200
+        assert task.mission_id not in {
+            item["missionId"] for item in listed_after_delete.json()["items"]
+        }
+        assert repeated.status_code == 200
+        assert repeated.json()["recordState"] == MissionRecordState.DELETED.value
     finally:
         runtime.identity_lifecycle.lifecycle_service.close()
 

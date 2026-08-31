@@ -83,7 +83,7 @@
               <span class="project-row__status" :class="`is-${statusTone(mission)}`">
                 <i aria-hidden="true"></i>{{ statusLabel(mission) }}
               </span>
-              <span>{{ mission.runCount }} Runs</span>
+              <span>{{ mission.runCount }} 次运行</span>
               <time :datetime="mission.updatedAt">{{ formatDate(mission.updatedAt) }}</time>
             </span>
             <button
@@ -148,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CopyDocument, Delete as DeleteIcon, FolderAdd, FolderOpened, Grid, List, MoreFilled, Plus, Search, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -203,7 +203,8 @@ const formatDate = (value: string) => {
 const missionIdentity = (mission: MissionListItem) => mission.missionId
 const isTerminalMission = (mission: MissionListItem) => {
   if (mission.runCount === 0) return true
-  return ['completed', 'succeeded', 'failed', 'cancelled', 'superseded'].includes(mission.latestRunStatus || '')
+  const status = mission.latestRunStatus || mission.status
+  return ['completed', 'succeeded', 'failed', 'cancelled', 'superseded'].includes(status)
 }
 const mutationDisabledReason = (mission: MissionListItem) => (
   isTerminalMission(mission) ? '' : '运行中的任务不能归档或删除'
@@ -288,15 +289,42 @@ const copyActionMissionId = () => {
 
 const missionMutationError = (error: unknown, action: string) => {
   const response = (error as { response?: { status?: number; data?: { detail?: unknown; message?: unknown } } })?.response
-  if (response?.status === 409) return `任务仍有活动执行，暂时不能${action}`
-  if (response?.status === 404) return '任务不存在或当前账户无权操作'
   const detail = [response?.data?.message, response?.data?.detail]
     .find(value => typeof value === 'string' && value.trim())
+  if (response?.status === 409 && detail === 'mission has active runs') {
+    return `任务仍有活动执行，暂时不能${action}`
+  }
+  if (response?.status === 404) return '任务不存在或当前账户无权操作'
   return typeof detail === 'string' ? `${action}失败：${detail.slice(0, 160)}` : `任务${action}失败，请稍后重试`
 }
 
 const removeMission = (missionId: string) => {
   missions.value = missions.value.filter(mission => mission.missionId !== missionId)
+}
+
+const missionDisplayTitle = (mission: MissionListItem) => {
+  const title = mission.title?.replace(/\s+/g, ' ').trim()
+  return title || '未命名工程'
+}
+
+const missionDeleteMessage = (mission: MissionListItem) => {
+  const title = missionDisplayTitle(mission)
+  return h('div', { class: 'mission-delete-message' }, [
+    h('p', { class: 'mission-delete-message__prompt' }, '确定删除以下任务？'),
+    h('p', { class: 'mission-delete-message__title', 'aria-label': title }, title),
+    h('p', { class: 'mission-delete-message__note' }, '删除后，执行审计事实仍会保留。')
+  ])
+}
+
+const showMissionSuccess = (message: string) => {
+  ElMessage({
+    message,
+    type: 'success',
+    customClass: 'mission-toast mission-toast--success',
+    duration: 2400,
+    showClose: false,
+    offset: 18
+  })
 }
 
 const archiveActionMission = async () => {
@@ -306,7 +334,7 @@ const archiveActionMission = async () => {
     await agentosApi.archiveMission(missionIdentity(mission))
     removeMission(missionIdentity(mission))
     closeActionMenu()
-    ElMessage.success('任务已归档')
+    showMissionSuccess('任务已归档')
   } catch (error: unknown) {
     ElMessage.error(missionMutationError(error, '归档'))
   }
@@ -317,9 +345,20 @@ const deleteActionMission = async () => {
   if (!mission || !isTerminalMission(mission)) return
   try {
     await ElMessageBox.confirm(
-      `“${mission.title || '未命名工程'}”将从项目列表永久移除，执行审计事实仍会保留。`,
+      missionDeleteMessage(mission),
       '删除任务',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        customClass: 'apple-delete-message-box',
+        modalClass: 'apple-delete-message-box__overlay',
+        confirmButtonClass: 'apple-delete-confirm-button',
+        cancelButtonClass: 'apple-delete-cancel-button',
+        roundButton: true,
+        showClose: true,
+        closeOnClickModal: true
+      }
     )
   } catch {
     return
@@ -328,7 +367,7 @@ const deleteActionMission = async () => {
     await agentosApi.deleteMission(missionIdentity(mission))
     removeMission(missionIdentity(mission))
     closeActionMenu()
-    ElMessage.success('任务已删除')
+    showMissionSuccess('任务已删除')
   } catch (error: unknown) {
     ElMessage.error(missionMutationError(error, '删除'))
   }

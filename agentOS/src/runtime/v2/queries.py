@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .query_models import (
     AttemptDetail,
     AttemptHistory,
@@ -19,7 +21,7 @@ from .query_models import (
     RunArtifactDetail,
 )
 from domain.identity_graph import IdentityResolver
-from domain.models import Artifact, MissionStatus
+from domain.models import Artifact, Mission, MissionStatus
 from domain.repository import EntityNotFoundError, RepositorySet
 from .workspace import MissionWorkspaceProjection, MissionWorkspaceProjector
 
@@ -61,15 +63,50 @@ class IdentityQueryService:
         status: MissionStatus | None = None,
         page: int = 1,
         page_size: int = 20,
+        mission_visibility: Callable[[str], bool] | None = None,
     ) -> tuple[list[MissionListItem], int]:
-        """Return a Mission-level Project list without treating Runs as projects."""
-        missions, total = self.repositories.missions.list(
-            user_id=user_id,
-            tenant_id=tenant_id,
-            status=status,
-            offset=(max(1, page) - 1) * max(1, page_size),
-            limit=page_size,
-        )
+        """Return a Mission-level Project list without treating Runs as projects.
+
+        ``MissionRecordState`` lives in the Execution Runtime rather than the
+        identity projection. Callers that need a user-facing visibility
+        boundary can provide a predicate; it is applied before pagination so
+        deleted or archived runtime records cannot leave stale Project rows.
+        """
+        safe_page = max(1, page)
+        safe_page_size = max(1, page_size)
+        filters = {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "status": status,
+        }
+        if mission_visibility is None:
+            missions, total = self.repositories.missions.list(
+                **filters,
+                offset=(safe_page - 1) * safe_page_size,
+                limit=safe_page_size,
+            )
+        else:
+            all_missions: list[Mission] = []
+            offset = 0
+            scan_limit = max(100, safe_page_size)
+            source_total = 0
+            while True:
+                batch, source_total = self.repositories.missions.list(
+                    **filters,
+                    offset=offset,
+                    limit=scan_limit,
+                )
+                all_missions.extend(
+                    mission
+                    for mission in batch
+                    if mission_visibility(mission.mission_id)
+                )
+                offset += len(batch)
+                if not batch or offset >= source_total:
+                    break
+            total = len(all_missions)
+            start = (safe_page - 1) * safe_page_size
+            missions = all_missions[start:start + safe_page_size]
         items: list[MissionListItem] = []
         for mission in missions:
             runs = self.repositories.runs.list_for_mission(mission.mission_id)

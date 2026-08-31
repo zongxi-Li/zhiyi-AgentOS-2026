@@ -22,7 +22,7 @@ const missions = [
 
 const mountedWrappers: Array<{ unmount: () => void }> = []
 
-const mountPage = async () => {
+const mountPage = async (items = missions) => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -33,7 +33,7 @@ const mountPage = async () => {
   })
   await router.push('/agentos/acg')
   await router.isReady()
-  vi.spyOn(agentosApi, 'listMissions').mockResolvedValue({ items: missions, total: missions.length, page: 1, pageSize: 100 })
+  vi.spyOn(agentosApi, 'listMissions').mockResolvedValue({ items, total: items.length, page: 1, pageSize: 100 })
   const wrapper = mount(ProjectListView, {
     global: { plugins: [router], stubs: { WorkbenchLayout: layoutStub, 'el-icon': true } }
   })
@@ -54,8 +54,8 @@ describe('ProjectListView', () => {
     const { wrapper } = await mountPage()
     expect(agentosApi.listMissions).toHaveBeenCalledWith({ page: 1, pageSize: 100 }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.findAll('.project-row')).toHaveLength(2)
-    expect(wrapper.text()).toContain('1 Runs')
-    expect(wrapper.text()).toContain('2 Runs')
+    expect(wrapper.text()).toContain('1 次运行')
+    expect(wrapper.text()).toContain('2 次运行')
   })
 
   it('filters Project rows by title or Mission ID', async () => {
@@ -130,10 +130,25 @@ describe('ProjectListView', () => {
     remove?.click()
     await flushPromises()
 
+    const deleteMessage = vi.mocked(ElMessageBox.confirm).mock.calls[0]?.[0] as any
+    expect(deleteMessage).toEqual(expect.objectContaining({
+      type: 'div',
+      props: expect.objectContaining({ class: 'mission-delete-message' })
+    }))
+    const deleteMessageChildren = deleteMessage.children as Array<{ children?: unknown }>
+    expect(deleteMessageChildren.map(child => child.children).join(' ')).toContain('设备人员规划')
+    expect(deleteMessageChildren.map(child => child.children).join(' ')).not.toContain('目标')
     expect(ElMessageBox.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('执行审计事实仍会保留'),
+      expect.anything(),
       '删除任务',
-      expect.objectContaining({ confirmButtonText: '删除' })
+      expect.objectContaining({
+        confirmButtonText: '删除',
+        customClass: 'apple-delete-message-box',
+        modalClass: 'apple-delete-message-box__overlay',
+        confirmButtonClass: 'apple-delete-confirm-button',
+        cancelButtonClass: 'apple-delete-cancel-button',
+        roundButton: true
+      })
     )
     expect(deleteMission).toHaveBeenCalledWith('mission_1')
     expect(deleteMission).not.toHaveBeenCalledWith('run_1')
@@ -144,5 +159,29 @@ describe('ProjectListView', () => {
     const activeArchive = activeMenu?.querySelector<HTMLButtonElement>('[data-action="archive"]')
     expect(activeArchive?.disabled).toBe(true)
     expect(activeArchive?.title).toContain('运行中的任务')
+  })
+
+  it('allows deletion when a failed Mission only exposes its terminal mission status', async () => {
+    const failedMission = {
+      missionId: 'mission_failed', userId: 'user_1', title: '失败的任务', description: '失败任务正文不应出现在确认框', status: 'failed',
+      latestRunId: 'run_failed', latestRunStatus: null, createdAt: '2026-08-28T00:00:00Z', updatedAt: '2026-08-28T03:00:00Z', runCount: 1
+    }
+    const deleteMission = vi.spyOn(agentosApi, 'deleteMission').mockResolvedValue({
+      missionId: 'mission_failed', recordState: 'deleted', affectedRunCount: 1
+    })
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const { wrapper } = await mountPage([failedMission])
+
+    await wrapper.find('.project-row').trigger('contextmenu', { clientX: 120, clientY: 160 })
+    await flushPromises()
+    const menu = document.body.querySelector<HTMLElement>('#project-action-menu')
+    const remove = menu?.querySelector<HTMLButtonElement>('[data-action="delete"]')
+
+    expect(remove?.disabled).toBe(false)
+    remove?.click()
+    await flushPromises()
+
+    expect(deleteMission).toHaveBeenCalledWith('mission_failed')
+    expect(wrapper.findAll('.project-row')).toHaveLength(0)
   })
 })
