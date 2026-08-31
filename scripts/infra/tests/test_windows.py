@@ -62,7 +62,7 @@ def test_windows_preflight_accepts_empty_optional_secret_files_on_powershell_51(
     script = (ROOT / "scripts" / "infra" / "windows" / "preflight.ps1").read_text(encoding="utf-8")
 
     assert "if ($null -eq $rawSecretValue)" in script
-    assert '"deepseek_api_key", "dashscope_api_key"' in script
+    assert '"deepseek_api_key", "glm_api_key", "dashscope_api_key"' in script
 
 
 def test_backend_restart_syncs_then_uses_safe_maven_compile():

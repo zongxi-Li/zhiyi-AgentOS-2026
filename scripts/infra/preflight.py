@@ -11,7 +11,7 @@ from scripts.infra.common import docker_is_supported_rootful, validate_deploymen
 
 
 REQUIRED_SECRETS = ("db_admin_password", "db_password", "redis_password", "jwt_secret", "ai_internal_token")
-OPTIONAL_FILE_SECRETS = ("deepseek_api_key", "dashscope_api_key", "tavily_api_key")
+OPTIONAL_FILE_SECRETS = ("deepseek_api_key", "glm_api_key", "dashscope_api_key", "tavily_api_key")
 
 
 def validate_secret_files(secret_root: Path) -> dict[str, str]:

@@ -41,12 +41,12 @@ try {
 }
 
 $modelProviderConfigured = $false
-foreach ($name in @("db_admin_password", "db_password", "redis_password", "jwt_secret", "ai_internal_token", "deepseek_api_key", "dashscope_api_key", "tavily_api_key")) {
+foreach ($name in @("db_admin_password", "db_password", "redis_password", "jwt_secret", "ai_internal_token", "deepseek_api_key", "glm_api_key", "dashscope_api_key", "tavily_api_key")) {
     $secretPath = Join-Path $context.SecretsDir $name
     $rawSecretValue = Get-Content -LiteralPath $secretPath -Raw -Encoding UTF8
     $secretValue = if ($null -eq $rawSecretValue) { "" } else { ([string]$rawSecretValue).Trim() }
     if ($secretValue -and $rendered.Contains($secretValue)) { throw "Secret value leaked into rendered Compose: $name" }
-    if ($name -in @("deepseek_api_key", "dashscope_api_key") -and $secretValue) { $modelProviderConfigured = $true }
+    if ($name -in @("deepseek_api_key", "glm_api_key", "dashscope_api_key") -and $secretValue) { $modelProviderConfigured = $true }
 }
 if (-not $modelProviderConfigured) { Write-Warning "No model provider API Key is configured; local services can start, but real model requests will be unavailable" }
 

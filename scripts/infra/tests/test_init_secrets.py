@@ -9,6 +9,7 @@ def test_init_secrets_migrates_model_key_without_overwriting_it(tmp_path, monkey
     legacy_env = tmp_path / ".env"
     legacy_env.write_text(
         "DEEPSEEK_API_KEY='first-secret'\n"
+        "GLM_API_KEY=glm-secret\n"
         "DASHSCOPE_API_KEY=your-dashscope-key\n",
         encoding="utf-8",
     )
@@ -21,9 +22,9 @@ def test_init_secrets_migrates_model_key_without_overwriting_it(tmp_path, monkey
     )
     assert init_secrets.main() == 0
     assert (secret_root / "deepseek_api_key").read_text(encoding="utf-8") == "first-secret\n"
+    assert (secret_root / "glm_api_key").read_text(encoding="utf-8") == "glm-secret\n"
     assert (secret_root / "dashscope_api_key").read_bytes() == b""
 
     legacy_env.write_text("DEEPSEEK_API_KEY=second-secret\n", encoding="utf-8")
     assert init_secrets.main() == 0
     assert (secret_root / "deepseek_api_key").read_text(encoding="utf-8") == "first-secret\n"
-

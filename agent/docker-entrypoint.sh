@@ -16,6 +16,7 @@ copy_secret() {
 }
 copy_secret /run/secrets/ai_internal_token ai_internal_token
 copy_secret /run/secrets/deepseek_api_key deepseek_api_key false
+copy_secret /run/secrets/glm_api_key glm_api_key false
 copy_secret /run/secrets/dashscope_api_key dashscope_api_key false
 copy_secret /run/secrets/tavily_api_key tavily_api_key false
 copy_secret /run/secrets/redis_password redis_password false

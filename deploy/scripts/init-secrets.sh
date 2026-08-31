@@ -11,6 +11,7 @@ random_value 24 > "$target/redis_password"
 random_value 48 > "$target/jwt_secret"
 random_value 48 > "$target/ai_internal_token"
 : > "$target/deepseek_api_key"
+: > "$target/glm_api_key"
 : > "$target/dashscope_api_key"
 chmod 0600 "$target"/*
 echo "Secret files initialized in $target"

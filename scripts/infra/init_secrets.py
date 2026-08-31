@@ -9,6 +9,7 @@ from pathlib import Path
 
 MODEL_SECRET_ENV_NAMES = {
     "deepseek_api_key": "DEEPSEEK_API_KEY",
+    "glm_api_key": "GLM_API_KEY",
     "dashscope_api_key": "DASHSCOPE_API_KEY",
     "tavily_api_key": "TAVILY_API_KEY",
 }
@@ -45,7 +46,7 @@ def main() -> int:
     parser.add_argument(
         "--legacy-env-file",
         type=Path,
-        help="migrate DEEPSEEK_API_KEY/DASHSCOPE_API_KEY without printing their values",
+        help="migrate DEEPSEEK_API_KEY/GLM_API_KEY/DASHSCOPE_API_KEY without printing their values",
     )
     args = parser.parse_args()
     root = Path(args.directory)
