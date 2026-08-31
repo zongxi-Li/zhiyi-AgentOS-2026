@@ -5254,6 +5254,7 @@ const handleHeroLogoPointerUp = () => {
   place-items: center;
   margin: 0 auto 12px;
   isolation: isolate;
+  pointer-events: auto;
   cursor: default;
   touch-action: none;
 }
