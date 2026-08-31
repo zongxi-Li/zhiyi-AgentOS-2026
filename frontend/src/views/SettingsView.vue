@@ -32,7 +32,7 @@
       </nav>
 
       <button class="rail-account" type="button" @click="router.push({ path: '/settings', query: { tab: 'profile' } })">
-        <el-avatar :size="30" class="rail-avatar">{{ accountInitial }}</el-avatar>
+        <UserAvatar :size="30" class="rail-avatar" :fallback="accountInitial" />
         <span class="rail-account-copy">
           <strong>{{ accountName }}</strong>
           <small>打开个人中心</small>
@@ -328,6 +328,7 @@ import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import UserAvatar from '@/components/UserAvatar.vue'
 import UserView from '@/views/UserView.vue'
 import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting, User } from '@element-plus/icons-vue'
 import { applyFontSize, useTheme } from '@/composables/useTheme'

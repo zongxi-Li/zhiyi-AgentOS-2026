@@ -275,15 +275,16 @@ const handleAvatarChange = async (event: Event) => {
   avatarUploading.value = true
   try {
     const updatedUser = await userApi.uploadAvatar(userId, file)
+    const avatar = updatedUser.avatar || userStore.currentUser?.avatar || ''
     userStore.setCurrentUser({
       id: updatedUser.id || userId,
       username: updatedUser.username || userInfo.value.username,
       email: updatedUser.email || userInfo.value.email,
-      avatar: updatedUser.avatar,
+      avatar,
       createdAt: updatedUser.createdAt || userStore.currentUser?.createdAt
     })
-    userInfo.value.avatar = updatedUser.avatar || ''
-    await loadAvatar(userId, updatedUser.avatar)
+    userInfo.value.avatar = avatar
+    await loadAvatar(userId, avatar)
     ElMessage.success('头像上传成功')
   } catch (error: any) {
     ElMessage.error('头像上传失败：' + (error?.response?.data?.message || error?.message || '请稍后重试'))
@@ -355,4 +356,41 @@ onBeforeUnmount(releaseAvatarObjectUrl)
 .security-panel { width: min(100%, 560px); margin: 10px auto 0; padding: 20px 22px 22px; } .security-hero .hero-name { font-size: 23px; }
 @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } .stats-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } .stats-cell:nth-child(3) { border-right: 0; } .stats-cell:nth-child(-n + 3) { border-bottom: 1px solid var(--border-light); } }
 @media (max-width: 640px) { .user-content { padding: 22px 14px 38px; } .content-header { flex-direction: column; } .content-actions { width: 100%; flex-wrap: wrap; } .profile-status { margin-left: auto; } .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats-cell:nth-child(2n) { border-right: 0; } .stats-cell:nth-child(n + 3) { border-top: 1px solid var(--border-light); } .activity-card { padding: 18px 14px 13px; } .activity-card__header { flex-direction: column; gap: 10px; } .activity-card__footer { flex-direction: column; gap: 4px; } }
+
+/* Keep the calendar rhythm compact instead of stretching cells across the card. */
+.activity-months,
+.activity-grid-shell,
+.activity-legend {
+  width: 875px;
+  min-width: 875px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.activity-months {
+  padding-left: 31px;
+  margin-left: auto;
+  grid-template-columns: repeat(53, 12px);
+  column-gap: 4px;
+}
+
+.activity-grid-shell {
+  grid-template-columns: 23px 844px;
+}
+
+.heatmap-grid {
+  width: 844px;
+  grid-template-columns: repeat(53, 12px);
+  gap: 4px;
+}
+
+.heatmap-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+
+.activity-legend {
+  justify-content: flex-end;
+}
 </style>

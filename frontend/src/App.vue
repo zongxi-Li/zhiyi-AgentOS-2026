@@ -111,7 +111,7 @@
           <div class="sidebar-footer">
             <div class="user-profile">
               <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } })">
-              <el-avatar :size="28" class="user-avatar">{{ sidebarUserInitial }}</el-avatar>
+              <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
               <div v-if="!mainSidebarCompact" class="user-info">
                 <span class="user-name">{{ sidebarUserName }}</span>
                 <span class="user-status">{{ sidebarUserMeta }}</span>
@@ -364,7 +364,7 @@
             <div class="sidebar-footer drawer-footer">
               <div class="user-profile">
                 <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } }); simpleNavOpen = false">
-                <el-avatar :size="28" class="user-avatar">{{ sidebarUserInitial }}</el-avatar>
+                <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
                 <div class="user-info">
                   <span class="user-name">{{ sidebarUserName }}</span>
                   <span class="user-status">{{ sidebarUserMeta }}</span>
@@ -425,6 +425,7 @@ import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { useUserStore } from '@/stores/user'
+import UserAvatar from '@/components/UserAvatar.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getConversationWorkspace,
