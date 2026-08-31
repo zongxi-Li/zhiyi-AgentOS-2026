@@ -168,3 +168,29 @@ def test_scoped_runtime_cannot_expand_parent_allowlist():
     scoped = runtime.scoped({"current_datetime", "web_search"})
 
     assert scoped.allowed_tools == frozenset({"current_datetime"})
+
+
+def test_industrial_calculator_preserves_formula_inputs_units_and_result(monkeypatch):
+    monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
+    catalog = ReadOnlyToolCatalog()
+
+    payload = asyncio.run(catalog.execute("industrial_calculator", {
+        "operation": "capacity",
+        "inputs": {
+            "available_time_seconds": 28_800,
+            "cycle_time_seconds": 60,
+            "oee": 0.85,
+        },
+    }))
+
+    assert payload.data == {
+        "operation": "capacity",
+        "formula": "available_time_seconds / cycle_time_seconds * oee",
+        "inputs": {
+            "available_time_seconds": 28_800.0,
+            "cycle_time_seconds": 60.0,
+            "oee": 0.85,
+        },
+        "result": 408.0,
+        "unit": "units",
+    }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,7 @@ class ReadOnlyToolCatalog:
         "knowledge_search",
         "codebase_search",
         "current_datetime",
+        "industrial_calculator",
     )
 
     def __init__(self) -> None:
@@ -83,6 +85,7 @@ class ReadOnlyToolCatalog:
             "knowledge_search": {"available": enabled, "provider": "configured-rag", "readOnly": True},
             "codebase_search": {"available": enabled, "provider": "agentos-code-index", "readOnly": True},
             "current_datetime": {"available": enabled, "provider": "system-clock", "readOnly": True},
+            "industrial_calculator": {"available": enabled, "provider": "deterministic", "readOnly": True},
         }
 
     def is_available(self, name: str) -> bool:
@@ -154,6 +157,59 @@ class ReadOnlyToolCatalog:
             summary=f"Found {len(results)} web result(s) for the query.",
             data={"results": results},
             sources=sources,
+        )
+
+    async def _industrial_calculator(self, arguments: dict[str, Any], **_: Any) -> ToolPayload:
+        operation = str(arguments.get("operation") or "").strip().lower()
+        raw_inputs = arguments.get("inputs") or {}
+        if not isinstance(raw_inputs, dict):
+            raise ValueError("inputs must be an object")
+        inputs: dict[str, float] = {}
+        for key, value in raw_inputs.items():
+            number = float(value)
+            if not math.isfinite(number):
+                raise ValueError(f"input {key} must be finite")
+            inputs[str(key)] = number
+
+        formulas = {
+            "takt_time": ("available_time_seconds / demand", ("available_time_seconds", "demand")),
+            "capacity": ("available_time_seconds / cycle_time_seconds * oee", ("available_time_seconds", "cycle_time_seconds", "oee")),
+            "utilization": ("load / capacity", ("load", "capacity")),
+            "buffer": ("throughput_per_second * coverage_seconds", ("throughput_per_second", "coverage_seconds")),
+            "cost": ("quantity * unit_cost", ("quantity", "unit_cost")),
+        }
+        if operation not in formulas:
+            raise ValueError("unsupported industrial calculation operation")
+        formula, required = formulas[operation]
+        missing = [key for key in required if key not in inputs]
+        if missing:
+            raise ValueError("missing calculator inputs: " + ", ".join(missing))
+        if operation == "takt_time":
+            result = inputs["available_time_seconds"] / inputs["demand"]
+            unit = "seconds/unit"
+        elif operation == "capacity":
+            result = inputs["available_time_seconds"] / inputs["cycle_time_seconds"] * inputs["oee"]
+            unit = "units"
+        elif operation == "utilization":
+            result = inputs["load"] / inputs["capacity"]
+            unit = "ratio"
+        elif operation == "buffer":
+            result = inputs["throughput_per_second"] * inputs["coverage_seconds"]
+            unit = "units"
+        else:
+            result = inputs["quantity"] * inputs["unit_cost"]
+            unit = str(arguments.get("unit") or "currency")
+        if not math.isfinite(result):
+            raise ValueError("industrial calculation produced a non-finite result")
+        return ToolPayload(
+            summary=f"Calculated {operation} deterministically.",
+            data={
+                "operation": operation,
+                "formula": formula,
+                "inputs": inputs,
+                "result": result,
+                "unit": unit,
+            },
         )
 
     async def _web_extract(self, arguments: dict[str, Any], **_: Any) -> ToolPayload:

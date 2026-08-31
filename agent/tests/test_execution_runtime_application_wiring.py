@@ -84,6 +84,7 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         assert runtime.workflow_registry.all()
         assert {manifest.pack_id for manifest in runtime.plugin_manifests} == {
             "education",
+            "industrial",
             "kinlin.legal",
             "programmer",
             "writer",

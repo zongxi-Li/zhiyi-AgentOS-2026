@@ -1213,6 +1213,7 @@ class CapabilityCatalog:
             if not domain
             or not descriptor.domain_hints
             or domain in descriptor.domain_hints
+            or "general" in descriptor.domain_hints
         ]
         return tuple(sorted(descriptors, key=lambda item: (item.priority, item.capability_id)))
 

@@ -199,12 +199,28 @@ async def current_datetime(
     )
 
 
+@function_tool(strict_mode=False, timeout=15.0)
+async def industrial_calculator(
+    context: ToolContext[ToolInvocationContext],
+    operation: str,
+    inputs: dict[str, float],
+    unit: str = "",
+) -> str:
+    """Calculate takt, capacity, utilization, buffer or cost deterministically."""
+    return await context.context.invoke(
+        "industrial_calculator",
+        {"operation": operation, "inputs": inputs, "unit": unit},
+        call_id=context.tool_call_id,
+    )
+
+
 SDK_TOOLS = {
     "web_search": web_search,
     "web_extract": web_extract,
     "knowledge_search": knowledge_search,
     "codebase_search": codebase_search,
     "current_datetime": current_datetime,
+    "industrial_calculator": industrial_calculator,
 }
 
 
