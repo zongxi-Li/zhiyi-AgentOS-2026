@@ -1,4 +1,4 @@
-export type ModelProviderId = 'system' | 'qwen' | 'deepseek' | 'openai' | 'custom'
+export type ModelProviderId = 'system' | 'qwen' | 'deepseek' | 'glm' | 'openai' | 'custom'
 export type ThinkingMode = 'disabled' | 'standard' | 'deep'
 
 export interface ModelProviderPreset {
@@ -9,6 +9,13 @@ export interface ModelProviderPreset {
   models: string[]
 }
 
+export interface ModelProviderConnection {
+  apiKey: string
+  baseUrl: string
+  models: string[]
+  selectedModel: string
+}
+
 export interface ModelSettings {
   provider: ModelProviderId
   apiKey: string
@@ -16,6 +23,7 @@ export interface ModelSettings {
   models: string[]
   selectedModel: string
   thinkingMode: ThinkingMode
+  providerConnections?: Partial<Record<Exclude<ModelProviderId, 'system'>, ModelProviderConnection>>
 }
 
 export const MODEL_SETTINGS_KEY = 'kinlin.model_settings'
@@ -43,6 +51,13 @@ export const modelProviderPresets: ModelProviderPreset[] = [
     description: 'DeepSeek 官方 OpenAI 兼容接口',
     baseUrl: 'https://api.deepseek.com/v1',
     models: ['deepseek-v4-flash', 'deepseek-v4-pro']
+  },
+  {
+    id: 'glm',
+    name: 'GLM / 智谱',
+    description: '智谱 AI 官方 OpenAI 兼容接口',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    models: ['glm-5.2']
   },
   {
     id: 'openai',
@@ -139,12 +154,22 @@ export function saveModelSettings(settings: ModelSettings): void {
     ...settings.models.map(model => model.trim()).filter(Boolean),
     ...(selectedModel ? [selectedModel] : [])
   ])]
+  const providerConnections = { ...(settings.providerConnections || {}) }
+  if (settings.provider !== 'system') {
+    providerConnections[settings.provider] = {
+      apiKey: settings.apiKey.trim(),
+      baseUrl: settings.baseUrl.trim().replace(/\/$/, ''),
+      models,
+      selectedModel
+    }
+  }
   const normalized: ModelSettings = {
     ...settings,
     apiKey: settings.apiKey.trim(),
     baseUrl: settings.baseUrl.trim().replace(/\/$/, ''),
     models,
-    selectedModel
+    selectedModel,
+    providerConnections
   }
   localStorage.setItem(MODEL_SETTINGS_KEY, JSON.stringify(normalized))
   window.dispatchEvent(new CustomEvent(MODEL_SETTINGS_EVENT, { detail: normalized }))
@@ -152,13 +177,28 @@ export function saveModelSettings(settings: ModelSettings): void {
 
 export function applyProviderPreset(settings: ModelSettings, provider: ModelProviderId): ModelSettings {
   const preset = modelProviderPresets.find(item => item.id === provider) || modelProviderPresets[0]
+  const providerConnections = { ...(settings.providerConnections || {}) }
+  if (settings.provider !== 'system') {
+    providerConnections[settings.provider] = {
+      apiKey: settings.apiKey.trim(),
+      baseUrl: settings.baseUrl.trim().replace(/\/$/, ''),
+      models: [...settings.models],
+      selectedModel: settings.selectedModel.trim()
+    }
+  }
+  const savedConnection = provider === 'system' ? undefined : providerConnections[provider]
+  const models = savedConnection?.models?.length ? [...savedConnection.models] : [...preset.models]
+  const selectedModel = savedConnection?.selectedModel && models.includes(savedConnection.selectedModel)
+    ? savedConnection.selectedModel
+    : models[0] || ''
   return {
     ...settings,
     provider,
-    baseUrl: preset.baseUrl,
-    models: [...preset.models],
-    selectedModel: preset.models[0] || '',
-    apiKey: provider === 'system' ? '' : settings.apiKey
+    baseUrl: savedConnection?.baseUrl || preset.baseUrl,
+    models,
+    selectedModel,
+    apiKey: savedConnection?.apiKey || '',
+    providerConnections
   }
 }
 
