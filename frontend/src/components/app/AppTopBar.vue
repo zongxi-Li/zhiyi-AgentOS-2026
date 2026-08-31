@@ -158,7 +158,7 @@ const clearCommand = () => {
   background: var(--app-topbar-logo-bg);
   border: 1px solid var(--app-topbar-border);
   border-radius: 8px;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 1px color-mix(in srgb, white 78%, transparent) inset;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 1px color-mix(in srgb, var(--app-topbar-text) 18%, transparent) inset;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
@@ -171,7 +171,7 @@ const clearCommand = () => {
 .app-topbar__brand:hover .app-topbar__logo,
 .app-topbar__brand:focus-visible .app-topbar__logo {
   border-color: var(--app-topbar-focus-border);
-  box-shadow: 0 2px 5px color-mix(in srgb, var(--app-topbar-text) 12%, transparent), 0 0 0 1px color-mix(in srgb, white 78%, transparent) inset;
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--app-topbar-text) 12%, transparent), 0 0 0 1px color-mix(in srgb, var(--app-topbar-text) 22%, transparent) inset;
   transform: translateY(-1px);
 }
 
@@ -227,21 +227,21 @@ const clearCommand = () => {
   padding: 0 9px;
   transform: translate(-50%, -50%);
   color: var(--app-topbar-text);
-  background: color-mix(in srgb, var(--app-topbar-logo-bg) 90%, white);
-  border: 1px solid color-mix(in srgb, var(--app-topbar-input-border) 92%, white);
+  background: var(--app-topbar-input-bg);
+  border: 1px solid var(--app-topbar-input-border);
   border-radius: 10px;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 6%, transparent), 0 0 0 1px color-mix(in srgb, white 70%, transparent) inset;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 6%, transparent), 0 0 0 1px color-mix(in srgb, var(--app-topbar-text) 16%, transparent) inset;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .app-command-center:hover,
 .app-command-center.is-focused {
-  background: color-mix(in srgb, var(--app-topbar-input-bg-hover) 92%, white);
+  background: var(--app-topbar-input-bg-hover);
   border-color: var(--app-topbar-focus-border);
 }
 
 .app-command-center.is-focused {
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 3px var(--app-topbar-focus-ring), 0 0 0 1px color-mix(in srgb, white 70%, transparent) inset;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 3px var(--app-topbar-focus-ring), 0 0 0 1px color-mix(in srgb, var(--app-topbar-text) 16%, transparent) inset;
 }
 
 .app-command-center__icon {
@@ -276,8 +276,8 @@ const clearCommand = () => {
   font-size: 9px;
   line-height: 1.2;
   text-align: center;
-  background: color-mix(in srgb, var(--app-topbar-kbd-bg) 88%, white);
-  border: 1px solid color-mix(in srgb, var(--app-topbar-border) 82%, white);
+  background: var(--app-topbar-kbd-bg);
+  border: 1px solid var(--app-topbar-border);
   border-radius: 6px;
   box-shadow: 0 1px 1px color-mix(in srgb, var(--app-topbar-text) 5%, transparent);
 }
@@ -324,5 +324,21 @@ const clearCommand = () => {
   .app-command-center {
     transition: none;
   }
+}
+
+/* Screenshot refinement: keep the top chrome quiet and precise. */
+.app-topbar__menu-links button {
+  height: 30px;
+  border-radius: 6px;
+}
+
+.app-command-center {
+  height: 32px;
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+.app-command-center.is-focused {
+  box-shadow: 0 0 0 3px var(--app-topbar-focus-ring), 0 2px 8px rgba(0, 0, 0, 0.26);
 }
 </style>

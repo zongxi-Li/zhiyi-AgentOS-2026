@@ -231,7 +231,9 @@ describe('ChatView ACG progress integration', () => {
     roleStoreMock.currentRole = null
     const { wrapper, router } = await mountPage('?workspace=agent')
 
-    expect(wrapper.text()).toContain('通用 Agent 对话')
+    expect(wrapper.find('.hero-greeting').exists()).toBe(true)
+    expect(wrapper.find('.mission-chip').exists()).toBe(true)
+    expect(wrapper.find('.mission-chip').text()).toContain('运行记录')
     expect(wrapper.get('.composer-agent-mode').text()).toContain('通用 Agent')
     expect(roleStoreMock.setCurrentRole).not.toHaveBeenCalled()
     expect(chatStoreMock.setRole).toHaveBeenCalledWith(null)
@@ -240,23 +242,39 @@ describe('ChatView ACG progress integration', () => {
     window.dispatchEvent(new CustomEvent('workspace-mode-change', { detail: 'chat' }))
     await flushPromises()
 
-    expect(wrapper.text()).toContain('通用 Chat 对话')
+    expect(wrapper.find('.hero-greeting').exists()).toBe(true)
     expect(wrapper.get('.composer-agent-mode').text()).toContain('通用 Chat')
     wrapper.unmount()
   })
 
-  it('uses the current workspace name in vertical-role conversation titles', async () => {
+  it('keeps the active role visible in the composer while the hero stays greeting-only', async () => {
     roleStoreMock.currentRole = { id: 'role_2', name: '教师' }
     const { wrapper, router } = await mountPage('?workspace=chat')
 
-    expect(wrapper.text()).toContain('教师 Chat 对话')
-    expect(wrapper.text()).not.toContain('教师 Agent 对话')
+    expect(wrapper.find('.hero-greeting').exists()).toBe(true)
+    expect(wrapper.find('.mission-chip').text()).toContain('对话记录')
+    expect(wrapper.get('.composer-agent-mode').text()).toContain('教师 模式')
 
     await router.push('/chat?workspace=agent')
     window.dispatchEvent(new CustomEvent('workspace-mode-change', { detail: 'agent' }))
     await flushPromises()
 
-    expect(wrapper.text()).toContain('教师 Agent 对话')
+    expect(wrapper.get('.composer-agent-mode').text()).toContain('教师 模式')
+    wrapper.unmount()
+  })
+
+  it('keeps secondary composer controls behind the Codex-style tools button', async () => {
+    const { wrapper } = await mountPage('?workspace=chat')
+
+    expect(wrapper.find('.composer-tools-menu').exists()).toBe(false)
+
+    await wrapper.get('.composer-tools-toggle').trigger('click')
+
+    expect(wrapper.get('.composer-tools-menu').text()).toContain('添加文件')
+    expect(wrapper.get('.composer-tools-menu').text()).toContain('模型设置')
+
+    await wrapper.get('.composer-tools-toggle').trigger('click')
+    expect(wrapper.find('.composer-tools-menu').exists()).toBe(false)
     wrapper.unmount()
   })
 

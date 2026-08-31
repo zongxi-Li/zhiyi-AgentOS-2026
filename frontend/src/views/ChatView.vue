@@ -129,20 +129,42 @@
 
         <div class="messages" ref="messagesRef">
           <div v-if="showHeroMode" class="empty-state">
-            <div class="rgb-orb" aria-hidden="true">
-              <span class="rgb-orb__aura"></span>
-              <span class="rgb-orb__core"></span>
-              <span class="rgb-orb__ring rgb-orb__ring--outer"></span>
-              <span class="rgb-orb__ring rgb-orb__ring--inner"></span>
-              <span class="rgb-orb__particle rgb-orb__particle--1"></span>
-              <span class="rgb-orb__particle rgb-orb__particle--2"></span>
-              <span class="rgb-orb__particle rgb-orb__particle--3"></span>
-              <span class="rgb-orb__particle rgb-orb__particle--4"></span>
-              <span class="rgb-orb__particle rgb-orb__particle--5"></span>
-              <span class="rgb-orb__particle rgb-orb__particle--6"></span>
+            <div
+              ref="heroLogoFieldRef"
+              class="hero-logo-field"
+              :class="{ 'is-pressed': heroLogoPressed }"
+              aria-hidden="true"
+              @pointermove="handleHeroLogoPointerMove"
+              @pointerleave="handleHeroLogoPointerLeave"
+              @pointerdown="handleHeroLogoPointerDown"
+              @pointerup="handleHeroLogoPointerUp"
+              @pointercancel="handleHeroLogoPointerUp"
+            >
+              <svg class="hero-logo-filter-defs" aria-hidden="true" focusable="false">
+                <defs>
+                  <filter id="hero-logo-fluid" x="-24%" y="-24%" width="148%" height="148%" color-interpolation-filters="sRGB">
+                    <feTurbulence
+                      ref="heroLogoTurbulenceRef"
+                      type="fractalNoise"
+                      baseFrequency="0.012 0.018"
+                      numOctaves="2"
+                      seed="11"
+                      result="hero-logo-noise"
+                    />
+                    <feDisplacementMap
+                      ref="heroLogoDisplacementRef"
+                      in="SourceGraphic"
+                      in2="hero-logo-noise"
+                      scale="0"
+                      xChannelSelector="R"
+                      yChannelSelector="B"
+                    />
+                  </filter>
+                </defs>
+              </svg>
+              <img class="hero-watermark" src="/logo.png" alt="" />
             </div>
-            <h2>{{ agentTitle }}</h2>
-            <p>{{ agentSubtitle }}</p>
+            <h2 class="hero-greeting">{{ heroGreeting }}</h2>
           </div>
 
           <section v-else-if="showWorkflowHistoryDetail" class="workflow-history-detail" aria-label="Agent 历史任务详情">
@@ -342,12 +364,8 @@
             </div>
           </div>
 
-          <div class="composer-shelf">
-            <button class="composer-shelf-action" type="button" @click="handleControl('folder')">
-              <el-icon><Folder /></el-icon>
-              <span>选择文件</span>
-            </button>
-            <button v-if="isTeacherMode" class="composer-shelf-action" type="button" @click="openTeacherUploadDialog">
+          <div v-if="isTeacherMode" class="composer-shelf">
+            <button class="composer-shelf-action" type="button" @click="openTeacherUploadDialog">
               <el-icon><UploadFilled /></el-icon>
               <span>上传作业</span>
             </button>
@@ -360,6 +378,58 @@
             />
           </div>
 
+          <div v-if="showHeroMode" class="composer-missions">
+            <div ref="missionAnchorRef" class="mission-anchor">
+              <button
+                class="mission-chip"
+                type="button"
+                :aria-expanded="missionMenuOpen"
+                aria-haspopup="listbox"
+                title="选择对话记录进入 Mission"
+                @click="toggleMissionMenu"
+              >
+                <el-icon><Clock /></el-icon>
+                <span>{{ isAgentMode ? '运行记录' : '对话记录' }}</span>
+                <el-icon class="mission-chip__chevron"><ArrowDownBold /></el-icon>
+              </button>
+              <Transition name="mission-pop">
+                <div v-if="missionMenuOpen" class="mission-menu" role="listbox" aria-label="选择对话记录进入 Mission">
+                  <div v-if="missionRecordsLoading" class="mission-menu-hint">正在加载…</div>
+                  <template v-else-if="isAgentMode">
+                    <button
+                      v-for="run in missionRecentRuns"
+                      :key="run.runId"
+                      class="mission-option"
+                      type="button"
+                      role="option"
+                      :title="resolveAcgTaskTitle(run)"
+                      @click="openMissionRecord(run, null)"
+                    >
+                      <strong>{{ resolveAcgTaskTitle(run) }}</strong>
+                      <span>{{ missionRunState(run) }}</span>
+                    </button>
+                    <div v-if="!missionRecentRuns.length" class="mission-menu-hint">暂无运行记录</div>
+                  </template>
+                  <template v-else>
+                    <button
+                      v-for="conversation in missionRecentConversations"
+                      :key="conversation.id"
+                      class="mission-option"
+                      type="button"
+                      role="option"
+                      :title="conversation.title || '未命名对话'"
+                      @click="openMissionRecord(null, conversation)"
+                    >
+                      <strong>{{ conversation.title || '未命名对话' }}</strong>
+                      <span>{{ formatMissionTime(conversation.updatedAt || conversation.createdAt) }}</span>
+                    </button>
+                    <div v-if="!missionRecentConversations.length" class="mission-menu-hint">暂无历史对话</div>
+                  </template>
+                </div>
+              </Transition>
+            </div>
+          </div>
+
           <div class="composer-card">
             <el-input
               v-model="inputText"
@@ -370,11 +440,34 @@
               :placeholder="$t('chat.placeholder')"
               @keydown="handleKeydown"
             />
-            <div class="composer-footer">
-              <div class="left-actions">
-                <button class="composer-icon-action" type="button" aria-label="添加文件" title="添加文件" @click="handleControl('folder')">
-                  <el-icon><Plus /></el-icon>
-                </button>
+              <div class="composer-footer">
+                <div class="left-actions">
+                <div ref="composerToolsAnchorRef" class="composer-tools-anchor">
+                  <button
+                    class="composer-icon-action composer-tools-toggle"
+                    :class="{ active: composerToolsOpen }"
+                    type="button"
+                    aria-label="更多输入工具"
+                    aria-haspopup="menu"
+                    :aria-expanded="composerToolsOpen"
+                    title="更多输入工具"
+                    @click="toggleComposerTools"
+                  >
+                    <el-icon><Plus /></el-icon>
+                  </button>
+                  <Transition name="composer-tools-pop">
+                    <div v-if="composerToolsOpen" class="composer-tools-menu" role="menu" aria-label="输入工具">
+                      <button class="composer-tools-menu__item" type="button" role="menuitem" @click="openComposerFileManager">
+                        <el-icon><UploadFilled /></el-icon>
+                        <span>添加文件</span>
+                      </button>
+                      <div v-if="!isAgentMode" class="composer-tools-menu__runtime">
+                        <span class="composer-tools-menu__label">模型设置</span>
+                        <ModelRuntimeControls compact />
+                      </div>
+                    </div>
+                  </Transition>
+                </div>
                 <button
                   class="composer-agent-mode"
                   type="button"
@@ -401,7 +494,6 @@
                 </button>
               </div>
               <div class="right-actions">
-                <ModelRuntimeControls v-if="!isAgentMode" compact />
                 <span v-if="inputText.length" class="word-count" :class="{ warning: inputText.length > 500 }">
                   {{ inputText.length }} 字
                 </span>
@@ -898,12 +990,12 @@ import {
   ArrowDownBold,
   ArrowUp,
   Check,
+  Clock,
   Close,
   Cpu,
   DArrowLeft,
   DArrowRight,
   EditPen,
-  Folder,
   Loading,
   Microphone,
   Notebook,
@@ -953,6 +1045,8 @@ import {
   type WorkflowRun
 } from '@/services/api/agentos'
 import type { WorkflowProgress } from '@/services/api/workflow'
+import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
+import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { agentTeacherApi } from '@/services/api/agentTeacher'
 import { federatedModelApi } from '@/services/api/federatedModel'
 import { fileApi } from '@/services/api/file'
@@ -963,6 +1057,7 @@ import { extractContractReviewArtifacts } from '@/utils/agentos/contractReviewAr
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
+import { ACG_HISTORY_SOURCES, acgHistoryRoleDomain, loadAcgHistoryRole } from '@/utils/acgHistoryFilter'
 import { loadModelSettings } from '@/config/modelSettings'
 import { roleTemplateGroups, type RoleId } from '@/config/agentWorkbench'
 
@@ -1007,6 +1102,10 @@ const isRecording = ref(false)
 const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLElement | null>(null)
 const chatPanelRef = ref<HTMLElement | null>(null)
+const heroLogoFieldRef = ref<HTMLElement | null>(null)
+const heroLogoTurbulenceRef = ref<SVGFETurbulenceElement | null>(null)
+const heroLogoDisplacementRef = ref<SVGFEDisplacementMapElement | null>(null)
+const heroLogoPressed = ref(false)
 const teacherUploadInputRef = ref<HTMLInputElement | null>(null)
 const showAssistTools = ref(false)
 const isNearBottom = ref(true)
@@ -1671,25 +1770,14 @@ const agentIcon = computed(() => {
   return Cpu
 })
 
-const agentTitle = computed(() => {
-  const workspaceLabel = isAgentMode.value ? 'Agent' : 'Chat'
-  if (isLawyerMode.value) return `律师 ${workspaceLabel} 对话`
-  if (isTeacherMode.value) return `教师 ${workspaceLabel} 对话`
-  if (isProgrammerMode.value) return `程序员 ${workspaceLabel} 对话`
-  if (isWriterMode.value) return `作家 ${workspaceLabel} 对话`
-  if (currentRole.value?.name) return `${currentRole.value.name} ${workspaceLabel} 对话`
-  return `通用 ${workspaceLabel} 对话`
-})
-
-const agentSubtitle = computed(() => {
-  if (isLawyerMode.value) return '专业法律咨询，智能证据分析与风险评估'
-  if (isTeacherMode.value) return '智能学情诊断、个性化教案与作业批改'
-  if (isProgrammerMode.value) return '需求分析、代码库语义检索、代码生成与 Mermaid 图表'
-  if (isWriterMode.value) return '灵感拓展、大纲生成、正文写作与人物关系图'
-  if (currentRole.value?.description) return currentRole.value.description
-  return isAgentMode.value
-    ? '理解复杂任务，动态规划并协同多个智能体完成交付'
-    : '面向日常问答、知识检索、分析与内容创作'
+const heroGreeting = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 5) return '夜深了，把任务交给 Agent 值守吧'
+  if (hour < 9) return '早上好呀，新的一天开始啦'
+  if (hour < 12) return '上午好，把想法交给 Agent 去执行'
+  if (hour < 14) return '中午好，休息之余也可以派个任务'
+  if (hour < 18) return '下午好，继续推进手头的事'
+  return '晚上好，适合深度工作的时段'
 })
 
 const composerModeLabel = computed(() => {
@@ -2264,6 +2352,98 @@ const roleNameAliases: Record<RoleId, string[]> = {
 
 const openRoleTemplateDialog = () => {
   roleTemplateDialogOpen.value = true
+}
+
+const missionAnchorRef = ref<HTMLElement | null>(null)
+const missionMenuOpen = ref(false)
+const composerToolsAnchorRef = ref<HTMLElement | null>(null)
+const composerToolsOpen = ref(false)
+const missionRecordsLoading = ref(false)
+const missionRecordsLoaded = ref(false)
+const missionRecentRuns = ref<WorkflowRunSummary[]>([])
+const missionRecentConversations = ref<Conversation[]>([])
+
+const loadMissionRecords = async () => {
+  if (missionRecordsLoaded.value || missionRecordsLoading.value) return
+  missionRecordsLoading.value = true
+  try {
+    if (isAgentMode.value) {
+      const page = await workflowApi.listRuns({
+        sources: ACG_HISTORY_SOURCES,
+        domain: acgHistoryRoleDomain(loadAcgHistoryRole()),
+        summary: true,
+        page: 1,
+        pageSize: 8
+      })
+      missionRecentRuns.value = page.items || []
+    } else {
+      const userId = localStorage.getItem('userId') || undefined
+      const conversations = await conversationApi.getUserConversations(userId, 'chat')
+      missionRecentConversations.value = [...conversations]
+        .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime())
+        .slice(0, 8)
+    }
+    missionRecordsLoaded.value = true
+  } catch {
+    // 加载失败保持空态提示，不打断输入
+  } finally {
+    missionRecordsLoading.value = false
+  }
+}
+
+const toggleMissionMenu = () => {
+  missionMenuOpen.value = !missionMenuOpen.value
+  if (missionMenuOpen.value) void loadMissionRecords()
+}
+
+const toggleComposerTools = () => {
+  composerToolsOpen.value = !composerToolsOpen.value
+}
+
+const openComposerFileManager = () => {
+  composerToolsOpen.value = false
+  handleControl('folder')
+}
+
+const missionRunState = (run: WorkflowRunSummary) => {
+  if (run.status === 'completed' || run.phase === 'completed') return '已完成'
+  if (run.status === 'failed' || run.phase === 'failed') return '执行失败'
+  if (run.status === 'cancelled' || run.phase === 'cancelled') return '已取消'
+  if (run.status === 'waiting_review' || run.phase === 'review') return '等待审核'
+  return '运行中'
+}
+
+const formatMissionTime = (value?: string) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+}
+
+const openMissionRecord = async (run: WorkflowRunSummary | null, conversation: Conversation | null) => {
+  missionMenuOpen.value = false
+  if (run) {
+    chatStore.clearMessages()
+    await router.push({
+      path: `/agentos/missions/${encodeURIComponent(run.missionId)}/workspace`,
+      query: { runId: run.runId }
+    })
+    return
+  }
+  if (conversation) {
+    const contextId = conversation.contextId || conversation.id
+    await router.push({ path: '/chat', query: { contextId, workspace: 'chat' } })
+  }
+}
+
+const handleMissionOutsideClick = (event: MouseEvent) => {
+  const target = event.target as Node
+  if (missionMenuOpen.value && !missionAnchorRef.value?.contains(target)) {
+    missionMenuOpen.value = false
+  }
+  if (composerToolsOpen.value && !composerToolsAnchorRef.value?.contains(target)) {
+    composerToolsOpen.value = false
+  }
 }
 
 const findRuntimeRole = (roleId: RoleId) => {
@@ -2867,9 +3047,11 @@ watch(
 )
 
 onMounted(async () => {
+  heroLogoMotion.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   window.addEventListener('workspace-mode-change', handleWorkspaceModeChange)
   window.addEventListener('agent-new-task', handleNewAgentTask)
   window.addEventListener('resize', handleWorkflowPanelViewportResize)
+  window.addEventListener('pointerdown', handleMissionOutsideClick)
   if (showHeroMode.value) {
     setContextPanelOpen(false)
     setWorkflowPanelOpen(false)
@@ -2905,16 +3087,137 @@ onUnmounted(() => {
   window.removeEventListener('workspace-mode-change', handleWorkspaceModeChange)
   window.removeEventListener('agent-new-task', handleNewAgentTask)
   window.removeEventListener('resize', handleWorkflowPanelViewportResize)
+  window.removeEventListener('pointerdown', handleMissionOutsideClick)
   composerResizeObserver?.disconnect()
   stopAgentPanelResize()
   stopWorkflowPanelResize()
   stopContextPanelResize()
+  if (heroLogoMotion.frame !== null) window.cancelAnimationFrame(heroLogoMotion.frame)
+  heroLogoMotion.frame = null
   workflowProgressState.reset()
   invalidateWorkflowResultRequest()
   if (messagesRef.value) {
     messagesRef.value.removeEventListener('scroll', checkScrollState)
   }
 })
+
+type HeroLogoMotionState = {
+  x: number
+  y: number
+  intensity: number
+  targetX: number
+  targetY: number
+  targetIntensity: number
+  pointerActive: boolean
+  pressed: boolean
+  frame: number | null
+  reducedMotion: boolean
+}
+
+const heroLogoMotion: HeroLogoMotionState = {
+  x: 0,
+  y: 0,
+  intensity: 0,
+  targetX: 0,
+  targetY: 0,
+  targetIntensity: 0,
+  pointerActive: false,
+  pressed: false,
+  frame: null,
+  reducedMotion: false
+}
+
+const clampHeroLogo = (value: number) => Math.max(-1, Math.min(1, value))
+
+const scheduleHeroLogoMotion = () => {
+  if (heroLogoMotion.reducedMotion || heroLogoMotion.frame !== null || typeof window.requestAnimationFrame !== 'function') return
+  heroLogoMotion.frame = window.requestAnimationFrame(animateHeroLogoMotion)
+}
+
+const animateHeroLogoMotion = (timestamp: number) => {
+  heroLogoMotion.frame = null
+  const field = heroLogoFieldRef.value
+  const logo = field?.querySelector<HTMLImageElement>('.hero-watermark')
+  const turbulence = heroLogoTurbulenceRef.value
+  const displacement = heroLogoDisplacementRef.value
+
+  if (!field || !logo || !turbulence || !displacement || heroLogoMotion.reducedMotion) return
+
+  const smoothing = heroLogoMotion.intensity > 0.02 ? 0.14 : 0.1
+  heroLogoMotion.x += (heroLogoMotion.targetX - heroLogoMotion.x) * smoothing
+  heroLogoMotion.y += (heroLogoMotion.targetY - heroLogoMotion.y) * smoothing
+  heroLogoMotion.intensity += (heroLogoMotion.targetIntensity - heroLogoMotion.intensity) * smoothing
+
+  const wave = Math.sin(timestamp / 780) * heroLogoMotion.intensity
+  const intensity = heroLogoMotion.intensity
+  const rotation = heroLogoMotion.x * 2.4 - heroLogoMotion.y * 1.1
+  const skewX = heroLogoMotion.x * intensity * 2.2
+  const skewY = heroLogoMotion.y * intensity * -1.4
+  const scale = 1 + intensity * 0.035
+  const displacementScale = 5 + intensity * 24 + wave * 2
+  const frequencyX = 0.009 + intensity * 0.006 + wave * 0.0007
+  const frequencyY = 0.014 + intensity * 0.007 - wave * 0.0007
+
+  logo.style.transform = `translate3d(${(heroLogoMotion.x * intensity * 4).toFixed(2)}px, ${(heroLogoMotion.y * intensity * 3).toFixed(2)}px, 0) rotate(${rotation.toFixed(2)}deg) skew(${skewX.toFixed(2)}deg, ${skewY.toFixed(2)}deg) scale(${scale.toFixed(4)})`
+  displacement.setAttribute('scale', displacementScale.toFixed(2))
+  turbulence.setAttribute('baseFrequency', `${frequencyX.toFixed(4)} ${frequencyY.toFixed(4)}`)
+  field.style.setProperty('--hero-logo-aura-opacity', (0.12 + intensity * 0.2).toFixed(3))
+  field.style.setProperty('--hero-logo-aura-scale', (1 + intensity * 0.12).toFixed(3))
+
+  const settled = Math.abs(heroLogoMotion.targetIntensity - intensity) < 0.006
+    && Math.abs(heroLogoMotion.targetX - heroLogoMotion.x) < 0.006
+    && Math.abs(heroLogoMotion.targetY - heroLogoMotion.y) < 0.006
+
+  if (heroLogoMotion.pointerActive || heroLogoMotion.pressed || !settled) scheduleHeroLogoMotion()
+}
+
+const updateHeroLogoPointer = (event: PointerEvent) => {
+  const field = heroLogoFieldRef.value
+  if (!field || heroLogoMotion.reducedMotion) return
+
+  const rect = field.getBoundingClientRect()
+  const x = clampHeroLogo(((event.clientX - rect.left) / rect.width) * 2 - 1)
+  const y = clampHeroLogo(((event.clientY - rect.top) / rect.height) * 2 - 1)
+  const distance = Math.min(1, Math.hypot(x, y) * 0.72 + 0.08)
+
+  heroLogoMotion.targetX = x
+  heroLogoMotion.targetY = y
+  heroLogoMotion.targetIntensity = Math.max(distance, heroLogoMotion.pressed ? 0.72 : 0)
+  scheduleHeroLogoMotion()
+}
+
+const handleHeroLogoPointerMove = (event: PointerEvent) => {
+  heroLogoMotion.pointerActive = true
+  updateHeroLogoPointer(event)
+}
+
+const handleHeroLogoPointerLeave = () => {
+  heroLogoMotion.pointerActive = false
+  heroLogoMotion.pressed = false
+  heroLogoPressed.value = false
+  heroLogoMotion.targetX = 0
+  heroLogoMotion.targetY = 0
+  heroLogoMotion.targetIntensity = 0
+  scheduleHeroLogoMotion()
+}
+
+const handleHeroLogoPointerDown = (event: PointerEvent) => {
+  heroLogoMotion.pointerActive = true
+  heroLogoMotion.pressed = true
+  heroLogoPressed.value = true
+  updateHeroLogoPointer(event)
+  const field = event.currentTarget
+  if (field instanceof HTMLElement && field.setPointerCapture) field.setPointerCapture(event.pointerId)
+}
+
+const handleHeroLogoPointerUp = () => {
+  heroLogoMotion.pressed = false
+  heroLogoPressed.value = false
+  heroLogoMotion.targetIntensity = heroLogoMotion.pointerActive
+    ? Math.min(heroLogoMotion.targetIntensity, 0.18)
+    : 0
+  scheduleHeroLogoMotion()
+}
 </script>
 
 <style scoped>
@@ -3418,8 +3721,8 @@ onUnmounted(() => {
 }
 
 .chat-panel.hero-mode {
-  --hero-composer-center-y: 52%;
-  --hero-slogan-offset-y: 164px;
+  --hero-composer-center-y: 57%;
+  --hero-slogan-offset-y: 236px;
 }
 
 .chat-panel.hero-mode .messages {
@@ -3493,130 +3796,23 @@ onUnmounted(() => {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.rgb-orb {
-  --orb-cyan: rgb(75 220 255);
-  --orb-magenta: rgb(210 99 255);
-  --orb-green: rgb(92 255 177);
-  position: relative;
-  width: 52px;
-  height: 52px;
-  display: inline-block;
-  margin-bottom: 20px;
-  isolation: isolate;
-  filter: saturate(1.08);
-  animation: rgb-orb-breathe 3.8s ease-in-out infinite;
-}
-
-.rgb-orb__aura,
-.rgb-orb__core,
-.rgb-orb__ring,
-.rgb-orb__particle {
-  position: absolute;
+.hero-watermark {
   display: block;
+  width: 190px;
+  height: auto;
+  margin: 0 auto 4px;
+  opacity: 1;
+  user-select: none;
   pointer-events: none;
 }
 
-.rgb-orb__aura {
-  inset: 5px;
-  z-index: -1;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 30% 32%, color-mix(in srgb, var(--orb-cyan) 68%, transparent), transparent 48%),
-    radial-gradient(circle at 68% 35%, color-mix(in srgb, var(--orb-magenta) 68%, transparent), transparent 50%),
-    radial-gradient(circle at 48% 72%, color-mix(in srgb, var(--orb-green) 58%, transparent), transparent 52%);
-  filter: blur(9px);
-  opacity: 0.72;
-}
-
-.rgb-orb__core {
-  inset: 11px;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 24%, transparent);
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 35% 28%, rgb(255 255 255 / 0.78) 0 3%, transparent 12%),
-    conic-gradient(from 215deg, var(--orb-cyan), var(--orb-magenta), var(--orb-green), var(--orb-cyan));
-  box-shadow:
-    inset -5px -7px 13px rgb(21 22 39 / 0.48),
-    inset 4px 3px 10px rgb(255 255 255 / 0.16),
-    0 0 12px color-mix(in srgb, var(--orb-magenta) 42%, transparent);
-  animation: rgb-orb-core 7s linear infinite;
-}
-
-.rgb-orb__core::after {
-  content: '';
-  position: absolute;
-  inset: 5px;
-  border-radius: inherit;
-  background: radial-gradient(circle, rgb(30 31 46 / 0.08), rgb(30 31 46 / 0.52));
-  backdrop-filter: blur(1px);
-}
-
-.rgb-orb__ring {
-  inset: 4px;
-  border-radius: 50%;
-  border: 1px solid transparent;
-  border-top-color: color-mix(in srgb, var(--orb-cyan) 74%, transparent);
-  border-right-color: color-mix(in srgb, var(--orb-magenta) 54%, transparent);
-  animation: rgb-orb-orbit 8s linear infinite;
-}
-
-.rgb-orb__ring--inner {
-  inset: 8px;
-  border-top-color: color-mix(in srgb, var(--orb-green) 68%, transparent);
-  border-right-color: transparent;
-  border-bottom-color: color-mix(in srgb, var(--orb-magenta) 46%, transparent);
-  animation-duration: 5.8s;
-  animation-direction: reverse;
-}
-
-.rgb-orb__particle {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 6px 1px currentColor;
-  animation: rgb-orb-particle 2.8s ease-in-out infinite;
-}
-
-.rgb-orb__particle--1 { top: 3px; left: 25px; color: var(--orb-cyan); }
-.rgb-orb__particle--2 { top: 12px; right: 4px; color: var(--orb-magenta); animation-delay: -0.6s; }
-.rgb-orb__particle--3 { right: 8px; bottom: 8px; color: var(--orb-green); animation-delay: -1.2s; }
-.rgb-orb__particle--4 { bottom: 3px; left: 20px; color: var(--orb-cyan); animation-delay: -1.8s; }
-.rgb-orb__particle--5 { top: 27px; left: 2px; color: var(--orb-magenta); animation-delay: -2.2s; }
-.rgb-orb__particle--6 { top: 9px; left: 9px; color: var(--orb-green); animation-delay: -2.6s; }
-
-@keyframes rgb-orb-breathe {
-  0%, 100% { transform: scale(0.96); filter: saturate(1.02) brightness(0.94); }
-  50% { transform: scale(1.04); filter: saturate(1.18) brightness(1.08); }
-}
-
-@keyframes rgb-orb-core {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes rgb-orb-orbit {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes rgb-orb-particle {
-  0%, 100% { opacity: 0.28; transform: scale(0.72); }
-  48% { opacity: 1; transform: scale(1.18); }
-}
-
-.empty-state h2 {
+.hero-greeting {
   font-family: var(--font-serif);
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.01em;
   color: var(--text-primary);
-  margin: 0 0 10px;
-}
-
-.empty-state p {
-  font-size: 14px;
-  color: var(--text-secondary);
   margin: 0;
-  line-height: 1.7;
 }
 
 .message-list {
@@ -3762,13 +3958,6 @@ onUnmounted(() => {
   .agent-panel-slide-enter-active,
   .agent-panel-slide-leave-active {
     transition: none;
-  }
-
-  .rgb-orb,
-  .rgb-orb__core,
-  .rgb-orb__ring,
-  .rgb-orb__particle {
-    animation: none;
   }
 }
 
@@ -4190,6 +4379,140 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 4px 10px 8px;
+}
+
+/* ZCode 式两层输入卡：上层深一档托盘条与卡片同宽（略内收），下层浅色卡片叠压其上 */
+.composer-missions {
+  order: 0;
+  position: relative;
+  z-index: 1;
+  width: calc(60% - 32px);
+  margin: 0 auto;
+  display: flex;
+  padding: 10px 12px 28px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-card));
+}
+
+.chat-panel.hero-mode .composer-card {
+  width: 60%;
+  margin-top: -20px;
+  min-height: 140px;
+  box-shadow:
+    0 22px 48px color-mix(in srgb, var(--text-primary) 13%, transparent),
+    0 4px 16px color-mix(in srgb, var(--primary-color) 9%, transparent),
+    -28px 10px 46px color-mix(in srgb, var(--bg-app) 58%, transparent),
+    28px 10px 46px color-mix(in srgb, var(--bg-app) 58%, transparent);
+}
+
+.mission-anchor {
+  position: relative;
+}
+
+.mission-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.mission-chip > .el-icon {
+  font-size: 12px;
+  color: var(--primary-color);
+}
+
+.mission-chip__chevron {
+  color: var(--text-disabled) !important;
+  font-size: 9px !important;
+}
+
+.mission-chip:hover {
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.mission-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary-color) 58%, transparent);
+  outline-offset: 2px;
+}
+
+.mission-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: 300px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  scrollbar-width: thin;
+}
+
+.mission-menu-hint {
+  padding: 12px 8px;
+  color: var(--text-disabled);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.mission-option {
+  width: 100%;
+  display: grid;
+  gap: 1px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.14s ease;
+}
+
+.mission-option strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-option span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mission-option:hover {
+  background: var(--bg-panel);
+}
+
+.mission-pop-enter-active,
+.mission-pop-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.mission-pop-enter-from,
+.mission-pop-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 
@@ -4817,6 +5140,10 @@ onUnmounted(() => {
     width: 100%;
   }
 
+  .composer-missions {
+    width: calc(100% - 32px);
+  }
+
   .workflow-run-strip {
     flex-wrap: wrap;
     overflow: visible;
@@ -4836,19 +5163,12 @@ onUnmounted(() => {
     padding: 0 12px;
   }
 
-  .chat-main .empty-state .rgb-orb {
-    width: 44px;
-    height: 44px;
-    margin-bottom: 12px;
+  .chat-main .hero-watermark {
+    width: 128px;
   }
 
-  .chat-main .empty-state h2 {
-    margin-bottom: 6px;
-    font-size: 22px;
-  }
-
-  .chat-main .empty-state p {
-    line-height: 1.5;
+  .chat-main .hero-greeting {
+    font-size: 24px;
   }
 
   .chat-main .template-row {
@@ -4904,6 +5224,251 @@ onUnmounted(() => {
 
   .programmer-grid.two-cols {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Screenshot refinement: quieter surfaces, clearer focus, and a lighter hero rhythm. */
+.chat-panel.hero-mode {
+  --hero-composer-center-y: 55.5%;
+  --hero-slogan-offset-y: 218px;
+}
+
+.chat-panel.hero-mode .empty-state {
+  width: min(calc(100% - 48px), 720px);
+}
+
+.hero-watermark {
+  width: 170px;
+  margin-bottom: 12px;
+  opacity: 0.94;
+  filter: saturate(0.9) brightness(0.94);
+}
+
+.hero-logo-field {
+  --hero-logo-aura-opacity: 0.12;
+  --hero-logo-aura-scale: 1;
+  position: relative;
+  width: 170px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 12px;
+  isolation: isolate;
+  cursor: default;
+  touch-action: none;
+}
+
+.hero-logo-field::before {
+  position: absolute;
+  inset: 22%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--primary-color) 18%, transparent), transparent 70%);
+  content: '';
+  opacity: var(--hero-logo-aura-opacity);
+  transform: scale(var(--hero-logo-aura-scale));
+  filter: blur(18px);
+  pointer-events: none;
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.hero-logo-filter-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hero-logo-field .hero-watermark {
+  width: 100%;
+  margin: 0;
+  filter: url('#hero-logo-fluid') saturate(0.9) brightness(0.94);
+  transform-origin: center;
+  will-change: transform, filter;
+  pointer-events: none;
+  transition: filter 240ms ease;
+}
+
+.hero-logo-field.is-pressed::before {
+  opacity: 0.38;
+}
+
+.hero-greeting {
+  font-size: 32px;
+  font-weight: 580;
+  letter-spacing: 0.015em;
+  text-wrap: balance;
+}
+
+.composer-card {
+  border: 0;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-panel));
+  overflow: visible;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.3);
+}
+
+.composer-card:focus-within {
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.38),
+    0 0 30px color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+.chat-panel.hero-mode .composer-card {
+  margin-top: -16px;
+  min-height: 134px;
+  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.36);
+}
+
+.composer-footer {
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 0;
+}
+
+.composer-missions {
+  padding: 8px 12px 24px;
+  border: 0;
+  border-radius: 18px 18px 0 0;
+  background: color-mix(in srgb, var(--bg-card) 54%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.composer-card :deep(.model-runtime-controls) {
+  gap: 2px;
+}
+
+.composer-card :deep(.model-runtime-controls .el-select__wrapper) {
+  min-height: 26px;
+  padding: 0 4px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.composer-card :deep(.model-runtime-controls .el-select__wrapper:hover),
+.composer-card :deep(.model-runtime-controls .el-select__wrapper.is-focused) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent) !important;
+  box-shadow: none !important;
+}
+
+.composer-tools-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-tools-toggle.active {
+  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+  color: var(--primary-color);
+}
+
+.composer-tools-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  z-index: 30;
+  width: min(360px, calc(100vw - 36px));
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-card) 96%, var(--bg-panel));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+}
+
+.composer-tools-menu__item {
+  width: 100%;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-tools-menu__item:hover,
+.composer-tools-menu__item:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.composer-tools-menu__runtime {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 4px 0 0;
+}
+
+.composer-tools-menu__label {
+  padding: 0 7px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.composer-tools-menu__runtime :deep(.model-runtime-controls) {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.composer-agent-mode:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--primary-color) 9%, transparent);
+}
+
+.mission-chip {
+  height: 28px;
+  color: var(--text-muted);
+}
+
+.mission-chip:hover,
+.mission-chip:focus-visible {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.composer-icon-action:hover,
+.composer-icon-action.active {
+  background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+}
+
+.composer-send.el-button {
+  width: 38px;
+  height: 38px;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-color) 22%, transparent);
+}
+
+@media (max-width: 900px) {
+  .hero-watermark { width: 128px; }
+  .hero-logo-field { width: 128px; }
+  .hero-greeting { font-size: 24px; }
+  .composer-footer { margin-top: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-logo-field::before {
+    display: none;
+  }
+
+  .hero-logo-field .hero-watermark {
+    filter: saturate(0.9) brightness(0.94);
+    transform: none !important;
+    transition: none;
   }
 }
 </style>

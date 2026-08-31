@@ -7,43 +7,45 @@
 */
 
 :root {
-  /* Color Palette — Codex Dark (default) */
-  --primary-color: #A78BFA;
-  --primary-hover: #B8A2FC;
-  --primary-active: #8F73E6;
-  --primary-fade: rgba(167, 139, 250, 0.14);
-  --primary-line: rgba(167, 139, 250, 0.3);
+  /* Color Palette — VS Code Classic Dark (default) */
+  --primary-color: #0E639C;
+  --primary-hover: #1177BB;
+  --primary-active: #005A9E;
+  --primary-fade: rgba(14, 99, 156, 0.2);
+  --primary-line: rgba(79, 193, 255, 0.48);
 
-  --accent-color: #C4B5FD;
-  --accent-fade: rgba(196, 181, 253, 0.12);
+  --accent-color: #4FC1FF;
+  --accent-fade: rgba(79, 193, 255, 0.14);
 
   /* Backgrounds */
-  --bg-app: #1E1F2E;
-  --bg-sidebar: #292A3D;
-  --bg-card: #2D2E42;
-  --bg-panel: #343548;
-  --bg-input: #252638;
-  --bg-glass: rgba(42, 43, 62, 0.86);
+  --bg-app: #181818;
+  --bg-sidebar: #1F1F1F;
+  --bg-card: #252526;
+  --bg-panel: #2D2D2D;
+  --bg-input: #1F1F1F;
+  --bg-glass: rgba(37, 37, 38, 0.88);
   --surface-solid: var(--bg-card);
   --surface-raised: color-mix(in srgb, var(--bg-card) 88%, transparent);
   --surface-subtle: color-mix(in srgb, var(--bg-panel) 80%, transparent);
   --surface-hover: var(--bg-panel);
-  --overlay-backdrop: rgba(8, 9, 18, 0.72);
-  --shadow-color: rgba(8, 9, 18, 0.22);
+  --overlay-backdrop: rgba(0, 0, 0, 0.72);
+  --shadow-color: rgba(0, 0, 0, 0.34);
   --on-primary: #FFFFFF;
   --app-layout-bg: var(--bg-app);
-  --sidebar-bg: rgba(35, 36, 53, 0.96);
-  --drawer-bg: rgba(35, 36, 53, 0.98);
-  --sidebar-border: rgba(90, 91, 119, 0.42);
-  --scrollbar-thumb: rgba(170, 169, 190, 0.24);
-  --scrollbar-thumb-hover: rgba(196, 181, 253, 0.38);
+  --sidebar-bg: rgba(31, 31, 31, 0.98);
+  --drawer-bg: rgba(31, 31, 31, 0.99);
+  --sidebar-border: rgba(60, 60, 60, 0.9);
+  --scrollbar-thumb: rgba(133, 133, 133, 0.34);
+  --scrollbar-thumb-hover: rgba(79, 193, 255, 0.48);
+  --selection-bg: rgba(0, 122, 204, 0.35);
+  --selection-text: #FFFFFF;
 
   /* Text Colors */
-  --text-primary: #E8E7F0;
-  --text-regular: #D2D1DE;
-  --text-secondary: #AAA9BE;
-  --text-muted: #85859B;
-  --text-disabled: #68697D;
+  --text-primary: #D4D4D4;
+  --text-regular: #C8C8C8;
+  --text-secondary: #A6A6A6;
+  --text-muted: #858585;
+  --text-disabled: #5A5A5A;
 
   /* Compatibility aliases for older components */
   --text-color-primary: var(--text-primary);
@@ -57,17 +59,17 @@
   --bg: var(--bg-app);
 
   /* Borders */
-  --border-light: #414257;
-  --border-hover: #595A73;
-  --border-focus: rgba(167, 139, 250, 0.55);
+  --border-light: #3C3C3C;
+  --border-hover: #4E4E4E;
+  --border-focus: rgba(79, 193, 255, 0.68);
   --border-color: var(--border-light);
   --color-primary: var(--primary-color);
 
   /* Status Colors */
-  --success: #75C69A;
-  --warning: #D9B66F;
-  --danger: #E88787;
-  --info: #8FB4E8;
+  --success: #89D185;
+  --warning: #CCA700;
+  --danger: #F48771;
+  --info: #75BEFF;
   --success-fade: color-mix(in srgb, var(--success) 12%, transparent);
   --warning-fade: color-mix(in srgb, var(--warning) 12%, transparent);
   --danger-fade: color-mix(in srgb, var(--danger) 12%, transparent);
@@ -111,10 +113,10 @@
   --radius-full: 9999px;
 
   /* Effects */
-  --shadow-sm: 0 1px 2px rgba(8, 9, 18, 0.22);
-  --shadow-md: 0 10px 26px rgba(8, 9, 18, 0.28);
-  --shadow-lg: 0 20px 52px rgba(8, 9, 18, 0.36);
-  --shadow-glow: 0 12px 30px rgba(167, 139, 250, 0.18);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 10px 26px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.52);
+  --shadow-glow: 0 10px 24px rgba(0, 122, 204, 0.24);
   --backdrop-blur: blur(20px);
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), color 180ms var(--ease-out), box-shadow 180ms var(--ease-out), transform 180ms var(--ease-out);
@@ -353,8 +355,8 @@ html[data-color-scheme='codex-dark'] body {
 }
 
 html[data-color-scheme='codex-dark'] ::selection {
-  color: var(--text-primary);
-  background: rgba(167, 139, 250, 0.32);
+  color: var(--selection-text);
+  background: var(--selection-bg);
 }
 
 html[data-color-scheme='codex-dark'] ::-webkit-scrollbar-thumb {
@@ -501,7 +503,7 @@ html[data-color-scheme='codex-dark'] .el-overlay {
 .glass-panel {
   background: var(--bg-glass);
   backdrop-filter: var(--backdrop-blur);
-  border: 1px solid rgba(255, 255, 255, 0.72);
+  border: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
   box-shadow: var(--shadow-md);
 }
 

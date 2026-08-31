@@ -25,6 +25,30 @@ function applySchemeVariables(schemeId: ColorSchemeId): void {
   // Keep the semantic layer derived from the active scheme, so legacy pages can
   // consume one vocabulary instead of baking a light-only surface into CSS.
   const isDark = scheme.id === 'codex-dark'
+  const darkTopbarKeys = [
+    '--app-topbar-bg',
+    '--app-topbar-text',
+    '--app-topbar-muted',
+    '--app-topbar-border',
+    '--app-topbar-hover',
+    '--app-topbar-active',
+    '--app-topbar-focus-ring',
+    '--app-topbar-focus-border',
+    '--app-topbar-input-bg',
+    '--app-topbar-input-bg-hover',
+    '--app-topbar-input-border',
+    '--app-topbar-kbd-bg',
+    '--app-topbar-logo-bg'
+  ]
+  if (isDark) {
+    for (const key of darkTopbarKeys) {
+      root.style.setProperty(key, scheme.variables[key])
+    }
+  } else {
+    for (const key of darkTopbarKeys) {
+      root.style.removeProperty(key)
+    }
+  }
   root.style.setProperty('--surface-solid', 'var(--bg-card)')
   root.style.setProperty('--surface-raised', 'color-mix(in srgb, var(--bg-card) 88%, transparent)')
   root.style.setProperty('--surface-subtle', 'color-mix(in srgb, var(--bg-panel) 80%, transparent)')

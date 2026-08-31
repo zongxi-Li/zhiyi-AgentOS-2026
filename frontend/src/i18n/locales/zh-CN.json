@@ -78,7 +78,7 @@
     "saveButton": "保存设置"
   },
   "chat": {
-    "placeholder": "输入消息...",
+    "placeholder": "描述你的任务，协同多个智能体完成交付",
     "send": "发送",
     "clear": "清空",
     "newChat": "选择角色开始沉浸式对话",

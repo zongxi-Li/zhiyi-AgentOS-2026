@@ -110,7 +110,7 @@
           <!-- User Profile / Bottom Section -->
           <div class="sidebar-footer">
             <div class="user-profile">
-              <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push('/user')">
+              <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } })">
               <el-avatar :size="28" class="user-avatar">{{ sidebarUserInitial }}</el-avatar>
               <div v-if="!mainSidebarCompact" class="user-info">
                 <span class="user-name">{{ sidebarUserName }}</span>
@@ -363,7 +363,7 @@
 
             <div class="sidebar-footer drawer-footer">
               <div class="user-profile">
-                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push('/user'); simpleNavOpen = false">
+                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } }); simpleNavOpen = false">
                 <el-avatar :size="28" class="user-avatar">{{ sidebarUserInitial }}</el-avatar>
                 <div class="user-info">
                   <span class="user-name">{{ sidebarUserName }}</span>
@@ -975,7 +975,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/history')) return '/history'
   if (path.startsWith('/federated-models')) return '/federated-models'
   if (path.startsWith('/federated-learning')) return '/federated-learning'
-  if (path.startsWith('/user')) return '/settings' // User goes to settings
+  if (path.startsWith('/user')) return '/settings'
   return path
 })
 
@@ -1447,20 +1447,19 @@ onUnmounted(() => {
 }
 
 .new-chat-action {
-  min-height: 38px;
+  min-height: 34px;
   margin-bottom: 8px;
-  justify-content: center;
-  padding: 0 10px;
-  border: 1px solid var(--border-light);
-  background: color-mix(in srgb, var(--bg-card) 84%, transparent);
+  justify-content: flex-start;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
   color: var(--text-primary);
-  font-weight: 650;
-  box-shadow: var(--shadow-sm);
+  font-weight: 550;
+  box-shadow: none;
 }
 
 .new-chat-action:hover {
-  border-color: var(--primary-line);
-  background: var(--bg-card);
+  background: var(--bg-panel);
   color: var(--primary-color);
 }
 
@@ -1496,13 +1495,13 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 6px;
-  border: 1px solid var(--border-light);
+  padding: 0 4px;
+  border: 0;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 650;
+  background: transparent;
+  color: var(--text-disabled);
+  font-size: 11px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
@@ -1597,34 +1596,33 @@ onUnmounted(() => {
 }
 
 .chat-project-row {
-  min-height: 50px;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   gap: 2px;
-  border: 1px solid var(--border-light);
+  border: 0;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-card) 72%, transparent);
-  color: var(--text-muted);
+  background: transparent;
+  color: var(--text-secondary);
   overflow: hidden;
-  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+  transition: background-color 0.16s ease, color 0.16s ease;
 }
 
 .chat-project-item {
   min-width: 0;
-  min-height: 48px;
-  gap: 9px;
-  padding: 7px 5px 7px 8px;
-  border-radius: 7px 0 0 7px;
+  min-height: 32px;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
   color: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 450;
   transition: background-color 0.16s ease, color 0.16s ease;
 }
 
 .chat-project-row:hover {
-  border-color: var(--primary-line);
-  background: var(--bg-card);
+  background: var(--bg-panel);
   color: var(--text-primary);
 }
 
@@ -1634,14 +1632,7 @@ onUnmounted(() => {
 }
 
 .chat-project-icon {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--bg-panel);
-  color: var(--text-secondary);
+  display: none;
 }
 
 .chat-project-icon .el-icon {
@@ -1650,10 +1641,11 @@ onUnmounted(() => {
 
 .chat-project-copy {
   min-width: 0;
-  flex: 1 1 0;
+  flex: 1 1 auto;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
 }
 
 .chat-project-title,
@@ -1665,22 +1657,23 @@ onUnmounted(() => {
 }
 
 .chat-project-title {
+  min-width: 0;
+  flex: 0 1 auto;
   color: inherit;
-  line-height: 1.25;
+  line-height: 1.35;
 }
 
 .chat-project-time {
+  flex: 0 0 auto;
+  margin-left: auto;
   color: var(--text-disabled);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
 
 .chat-project-arrow {
-  flex: 0 0 auto;
-  color: var(--text-disabled);
-  font-size: 12px;
-  transition: color 0.16s ease, transform 0.16s ease;
+  display: none;
 }
 
 .chat-project-item:hover .chat-project-arrow,
@@ -1690,10 +1683,9 @@ onUnmounted(() => {
 }
 
 .chat-project-row.active {
-  border-color: var(--primary-line);
-  color: var(--primary-color);
   background: var(--primary-fade);
-  font-weight: 650;
+  color: var(--primary-color);
+  font-weight: 550;
 }
 
 .chat-project-row.active .chat-project-icon {
@@ -1702,8 +1694,8 @@ onUnmounted(() => {
 }
 
 .chat-project-delete {
-  width: 32px;
-  min-height: 48px;
+  width: 30px;
+  min-height: 32px;
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -1712,8 +1704,8 @@ onUnmounted(() => {
   background: transparent;
   color: var(--text-disabled);
   cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.16s ease, color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
+  opacity: 0;
+  transition: opacity 0.16s ease, color 0.16s ease, background-color 0.16s ease;
 }
 
 .chat-project-delete .el-icon {
@@ -1722,8 +1714,8 @@ onUnmounted(() => {
 
 .chat-project-row:hover .chat-project-delete,
 .chat-project-delete:focus-visible {
-  border-left-color: var(--border-light);
-  opacity: 1;
+  border-left-color: transparent;
+  opacity: 0.7;
 }
 
 .chat-project-delete:hover,
@@ -1743,38 +1735,38 @@ onUnmounted(() => {
 
 .history-action {
   box-sizing: border-box;
-  height: 38px;
-  min-height: 38px;
-  flex: 0 0 38px;
+  height: 34px;
+  min-height: 34px;
+  flex: 0 0 34px;
   gap: 7px;
   margin-top: 5px;
-  padding: 0 8px;
-  border: 1px solid var(--primary-line);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--primary-fade) 72%, var(--bg-card));
-  color: var(--primary-color);
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 .history-action:hover {
-  border-color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-fade) 88%, var(--bg-card));
-  color: var(--primary-color);
+  background: var(--bg-panel);
+  color: var(--text-primary);
 }
 
 .history-action__icon {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   display: inline-grid;
   place-items: center;
   border-radius: 5px;
-  background: var(--bg-card);
+  background: transparent;
 }
 
 .history-action__copy {
   min-width: 0;
   flex: 1 1 0;
-  display: block;
+  display: flex;
+  align-items: center;
 }
 
 .history-action__copy strong,
@@ -1786,9 +1778,9 @@ onUnmounted(() => {
 }
 
 .history-action__copy strong {
-  color: var(--text-primary);
+  color: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   line-height: 1.2;
 }
 
@@ -1798,7 +1790,7 @@ onUnmounted(() => {
 
 .history-action__arrow {
   flex: 0 0 auto;
-  color: var(--primary-color);
+  color: var(--text-disabled);
   font-size: 13px;
   transition: transform 0.16s ease;
 }
@@ -2151,7 +2143,7 @@ onUnmounted(() => {
 
 /* Immersive Mode Overrides */
 .immersive-mode .main-container {
-  background-color: #0f1115;
+  background-color: var(--bg-app);
 }
 
 .immersive-mode .app-main {
@@ -2168,12 +2160,87 @@ onUnmounted(() => {
 }
 
 .app-main::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.1);
+  background: var(--scrollbar-thumb);
   border-radius: 10px;
 }
 
 .app-main::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.2);
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Screenshot refinement: make the shell read as one calm, layered workbench. */
+.app-sidebar {
+  border-right-color: var(--sidebar-border);
+}
+
+.primary-sidebar,
+.chat-side-panel {
+  background: var(--sidebar-bg);
+}
+
+.chat-side-panel {
+  box-shadow: 14px 0 28px rgba(0, 0, 0, 0.14);
+}
+
+.chat-panel-content {
+  padding: 12px 10px 12px;
+}
+
+.workspace-switch {
+  margin: 0 2px 10px;
+  border-color: var(--border-light);
+  background: color-mix(in srgb, var(--bg-app) 76%, var(--bg-sidebar));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.workspace-switch-btn.active {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.chat-submenu-section-head {
+  min-height: 36px;
+  padding: 4px 8px 6px;
+  color: var(--text-muted);
+}
+
+.chat-project-list {
+  gap: 3px;
+  padding: 2px 2px 8px;
+}
+
+.chat-project-row {
+  border-left: 2px solid transparent;
+  border-radius: 8px;
+}
+
+.chat-project-row:hover {
+  background: var(--bg-panel);
+}
+
+.chat-project-row.active {
+  border-left-color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-fade) 72%, var(--bg-card));
+  color: var(--text-primary);
+}
+
+.chat-project-item {
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.chat-project-time {
+  color: var(--text-muted);
+}
+
+.history-action {
+  color: var(--text-muted);
+}
+
+.history-action:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
 }
 
 </style>
