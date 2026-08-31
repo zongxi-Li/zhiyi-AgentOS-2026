@@ -92,6 +92,22 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
     normalized_model = normalize_deepseek_model(model).lower()
     normalized_url = (base_url or "").lower()
 
+    if normalized_model.startswith("glm-") or "bigmodel.cn" in normalized_url:
+        return ProviderModelCapabilities(
+            supports_thinking=True,
+            supported_thinking_modes={
+                ThinkingMode.DISABLED,
+                ThinkingMode.STANDARD,
+                ThinkingMode.DEEP,
+            },
+            supports_reasoning_effort=False,
+            supports_tools=True,
+            supports_json_object=True,
+            supports_json_schema=False,
+            supports_stream_usage=False,
+            max_tokens_field="max_tokens",
+        )
+
     if normalized_model.startswith("deepseek-v4") or "api.deepseek.com" in normalized_url:
         official_metadata = {
             "deepseek-v4-flash": ("DeepSeek-V4-Flash-0731", 1_000_000, 384_000),
@@ -196,6 +212,10 @@ def adapt_chat_completion_parameters(
                 request.pop(key, None)
             if not capabilities.supports_tool_choice_in_thinking:
                 request.pop("tool_choice", None)
+        request["extra_body"] = extra_body
+    elif normalized_model.startswith("glm-") or "bigmodel.cn" in base_url.lower():
+        extra_body = dict(request.get("extra_body") or {})
+        extra_body["thinking"] = {"type": "enabled" if mode != ThinkingMode.DISABLED else "disabled"}
         request["extra_body"] = extra_body
     elif "dashscope.aliyuncs.com" in base_url.lower() and "qwen3" in normalized_model:
         extra_body = dict(request.get("extra_body") or {})

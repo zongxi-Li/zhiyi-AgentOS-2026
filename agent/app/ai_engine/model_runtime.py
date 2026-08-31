@@ -33,38 +33,68 @@ REASONING_INSTRUCTIONS = {
 }
 
 
-def resolve_system_runtime_config(model: str = "") -> tuple[str, str, str]:
-    """Resolve a request-level model override against server-managed credentials."""
+def _resolve_system_provider_config(model: str = "") -> tuple[str, str, str, str]:
+    """Resolve the selected system provider without exposing credentials."""
     from app.config import settings
 
-    deepseek_key = (settings.DEEPSEEK_API_KEY or "").strip()
-    if deepseek_key:
-        return (
-            normalize_deepseek_model(model.strip() or settings.DEEPSEEK_MODEL),
-            settings.DEEPSEEK_BASE_URL,
-            deepseek_key,
-        )
+    provider_settings = {
+        "deepseek": {
+            "key": (settings.DEEPSEEK_API_KEY or "").strip(),
+            "base_url": (settings.DEEPSEEK_BASE_URL or "").strip(),
+            "model": (settings.DEEPSEEK_MODEL or "").strip(),
+            "enabled": bool(settings.DEEPSEEK_ENABLED),
+        },
+        "glm": {
+            "key": (settings.GLM_API_KEY or "").strip(),
+            "base_url": (settings.GLM_BASE_URL or "").strip(),
+            "model": (settings.GLM_MODEL or "").strip(),
+            "enabled": bool(settings.GLM_ENABLED),
+        },
+        "qwen": {
+            "key": (settings.DASHSCOPE_API_KEY or settings.QWEN_API_KEY or "").strip(),
+            "base_url": (settings.QWEN_BASE_URL or "").strip(),
+            "model": (settings.QWEN_MODEL_BALANCED or "").strip(),
+            "enabled": bool(settings.QWEN_ENABLED),
+        },
+    }
+    configured_engine = (settings.TEXT_ENGINE or "auto").strip().lower()
+    aliases = {"zhipu": "glm", "dashscope": "qwen"}
+    selected_engine = aliases.get(configured_engine, configured_engine)
+    if selected_engine not in {"auto", *provider_settings}:
+        raise ValueError("TEXT_ENGINE must be one of: auto, deepseek, glm, qwen")
 
-    qwen_key = (settings.DASHSCOPE_API_KEY or settings.QWEN_API_KEY or "").strip()
-    if qwen_key:
-        return (
-            model.strip() or settings.QWEN_MODEL_BALANCED,
-            settings.QWEN_BASE_URL,
-            qwen_key,
-        )
+    candidates = (
+        (selected_engine,) if selected_engine != "auto"
+        else ("deepseek", "glm", "qwen")
+    )
+    for provider in candidates:
+        values = provider_settings[provider]
+        if values["enabled"] and values["key"]:
+            effective_model = model.strip() or values["model"]
+            if provider == "deepseek":
+                effective_model = normalize_deepseek_model(effective_model)
+            return provider, effective_model, values["base_url"], values["key"]
 
+    if selected_engine != "auto":
+        raise ValueError(f"已选择 {selected_engine}，但未配置可用的模型 API Key")
     raise ValueError("服务端尚未配置可用的模型 API Key")
+
+
+def resolve_system_runtime_config(model: str = "") -> tuple[str, str, str]:
+    """Resolve a request-level model override against server-managed credentials."""
+    _, effective_model, base_url, api_key = _resolve_system_provider_config(model)
+    return effective_model, base_url, api_key
 
 
 async def list_system_runtime_models() -> Dict[str, object]:
     """Read the real model catalog without exposing the server API key."""
-    default_model, base_url, api_key = resolve_system_runtime_config()
+    provider, default_model, base_url, api_key = _resolve_system_provider_config()
     client = AsyncOpenAI(api_key=api_key, base_url=base_url.rstrip("/"))
     try:
         page = await client.models.list()
         models = sorted(
             {
-                normalize_deepseek_model(item.id)
+                normalize_deepseek_model(item.id) if provider == "deepseek" else item.id
                 for item in page.data
                 if getattr(item, "id", "")
             }
@@ -77,7 +107,7 @@ async def list_system_runtime_models() -> Dict[str, object]:
 
     if default_model not in models:
         models.insert(0, default_model)
-    return {"models": models, "default_model": default_model}
+    return {"models": models, "default_model": default_model, "provider": provider}
 
 
 def validate_runtime_config(model: str, base_url: str, api_key: str) -> None:
@@ -133,6 +163,7 @@ async def generate_with_runtime_model(
     base_url: str,
     api_key: str,
     reasoning_effort: str = "off",
+    parameters: Optional[Dict[str, Any]] = None,
 ) -> Dict:
     validate_runtime_config(model, base_url, api_key)
     started = time.perf_counter()
@@ -141,6 +172,7 @@ async def generate_with_runtime_model(
         model=normalized.effective_model,
         base_url=base_url,
         thinking_mode=normalized.effective_thinking_mode,
+        parameters=parameters,
     )
     client = AsyncOpenAI(api_key=api_key, base_url=base_url.rstrip("/"))
     try:
@@ -276,6 +308,7 @@ async def stream_with_runtime_model(
     api_key: str,
     reasoning_effort: str = "off",
     request_id: str = "anonymous",
+    parameters: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[ChatStreamEvent]:
     validate_runtime_config(model, base_url, api_key)
     started = time.perf_counter()
@@ -284,6 +317,7 @@ async def stream_with_runtime_model(
         model=normalized.effective_model,
         base_url=base_url,
         thinking_mode=normalized.effective_thinking_mode,
+        parameters=parameters,
     )
     client = AsyncOpenAI(api_key=api_key, base_url=base_url.rstrip("/"))
     sequence = 0

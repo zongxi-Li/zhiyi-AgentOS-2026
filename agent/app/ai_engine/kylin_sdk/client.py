@@ -1,7 +1,7 @@
 """
 麒麟AI SDK客户端封装
-支持麒麟OS原生SDK和通义千问大模型
-智能选择：麒麟操作系统使用麒麟SDK，其他系统使用通义千问
+支持麒麟OS原生SDK和 OpenAI 兼容模型服务
+文本请求统一复用可选的 DeepSeek / GLM / Qwen Runtime
 """
 import logging
 import asyncio
@@ -327,7 +327,7 @@ class KylinSDKClient:
             # 否则使用模拟响应（开发模式）
             logger.warning("使用模拟响应模式（未配置API密钥）")
             logger.warning("如需使用真实AI，请配置以下任一选项：")
-            logger.warning("1. DASHSCOPE_API_KEY 或 QWEN_API_KEY（推荐，使用通义千问）")
+            logger.warning("1. DEEPSEEK_API_KEY、GLM_API_KEY 或 DASHSCOPE_API_KEY（OpenAI 兼容模型）")
             logger.warning("2. KYLIN_AI_API_KEY 和 KYLIN_AI_ENDPOINT（使用麒麟AI API）")
             return {
                 "text": f"这是对'{prompt}'的AI回复（模拟）。如需使用真实AI，请配置API密钥。",
@@ -678,6 +678,15 @@ class KylinAIClient:
             self._deepseek_api_key = ''
             self._deepseek_model = 'deepseek-v4-flash'
 
+        # GLM 配置由统一文本 Runtime 使用；保留旧 SDK 字段以兼容已有初始化路径。
+        try:
+            from app.config import settings
+            self._glm_api_key = settings.GLM_API_KEY or ''
+            self._glm_model = settings.GLM_MODEL
+        except Exception:
+            self._glm_api_key = ''
+            self._glm_model = 'glm-5.2'
+
         # 检查通义千问配置（备用引擎 + 图像/语音/多模态）
         try:
             from app.config import settings
@@ -691,14 +700,16 @@ class KylinAIClient:
             self._qwen_model = 'qwen-plus'
 
         # 日志摘要
-        if self._deepseek_api_key:
+        if self._glm_api_key:
+            logger.info(f"AI 引擎候选: GLM({self._glm_model}) + DeepSeek/Qwen 回切")
+        elif self._deepseek_api_key:
             logger.info(f"AI 引擎: DeepSeek({self._deepseek_model}) 文本 + Qwen 图像/语音")
         elif self._qwen_api_key:
             logger.info(f"AI 引擎: Qwen({self._qwen_model}) 全功能")
         
         # 如果API key为空，记录信息
         global _api_key_warning_printed
-        if not self._qwen_api_key and not self._api_key and not _api_key_warning_printed:
+        if not self._qwen_api_key and not self._deepseek_api_key and not self._glm_api_key and not self._api_key and not _api_key_warning_printed:
             logger.info("未配置API密钥，将使用模拟响应模式")
             logger.info("如需使用通义千问大模型，请通过对应 Secret 文件配置 API Key")
             logger.info("获取API密钥: https://dashscope.aliyuncs.com/")
@@ -776,6 +787,20 @@ class KylinAIClient:
                     "style": "professional"
                 }
         
+        try:
+            return await self._generate_with_selected_runtime(
+                prompt=prompt_text,
+                context=context,
+                role_config=role_config,
+                **kwargs,
+            )
+        except ValueError:
+            # Keep the historical Kylin/mock path available in auto mode when
+            # no server-managed model key is configured.
+            from app.config import settings
+            if (settings.TEXT_ENGINE or "auto").strip().lower() not in {"auto", ""}:
+                raise
+
         return await self._sdk_client.generate_text(
             prompt=prompt_text,
             context=context,
@@ -786,6 +811,43 @@ class KylinAIClient:
     def _build_role_system_prompt(self, role_data: Dict) -> str:
         """Return the persisted role prompt without injecting hidden identity rules."""
         return str(role_data.get("systemPrompt") or role_data.get("system_prompt") or "").strip()
+
+    async def _generate_with_selected_runtime(
+        self,
+        *,
+        prompt: str,
+        context: Optional[List[Dict[str, str]]],
+        role_config: Optional[Dict],
+        **kwargs,
+    ) -> Dict:
+        """Route legacy text callers through the same selectable model path."""
+        from app.ai_engine.model_runtime import (
+            generate_with_runtime_model,
+            resolve_system_runtime_config,
+        )
+
+        model, base_url, api_key = resolve_system_runtime_config()
+        runtime_context = list(context or [])
+        system_prompt = (role_config or {}).get("system_prompt")
+        if system_prompt:
+            runtime_context.insert(0, {"role": "system", "content": str(system_prompt)})
+        parameters = {
+            key: value
+            for key, value in {
+                "temperature": kwargs.get("temperature"),
+                "max_tokens": kwargs.get("max_tokens"),
+            }.items()
+            if value is not None
+        }
+        return await generate_with_runtime_model(
+            text=prompt,
+            context=runtime_context,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            reasoning_effort=kwargs.get("thinking_mode", "disabled"),
+            parameters=parameters,
+        )
     
     async def generate_text_stream(self, text=None, prompt=None, role_id=None, context=None, **kwargs):
         """流式文本生成"""
@@ -800,6 +862,37 @@ class KylinAIClient:
                 "system_prompt": "",
                 "style": "professional"
             }
+
+        try:
+            from app.ai_engine.model_runtime import (
+                resolve_system_runtime_config,
+                stream_with_runtime_model,
+            )
+
+            model, base_url, api_key = resolve_system_runtime_config()
+            async for event in stream_with_runtime_model(
+                text=prompt_text,
+                context=context,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                reasoning_effort=kwargs.get("thinking_mode", "disabled"),
+                parameters={
+                    key: value
+                    for key, value in {
+                        "temperature": kwargs.get("temperature"),
+                        "max_tokens": kwargs.get("max_tokens"),
+                    }.items()
+                    if value is not None
+                },
+            ):
+                if event.event.value == "content_delta":
+                    yield event.data.get("delta", "")
+            return
+        except ValueError:
+            from app.config import settings
+            if (settings.TEXT_ENGINE or "auto").strip().lower() not in {"auto", ""}:
+                raise
 
         async for chunk in self._sdk_client.generate_text_stream(
             prompt=prompt_text, context=context, role_config=role_config, **kwargs

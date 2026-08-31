@@ -32,7 +32,15 @@ class LLMProviderError(RuntimeError):
 class OpenAICompatibleProvider:
     provider_name = "openai-compatible"
 
-    def __init__(self, *, base_url: str, api_key: str, model: str, timeout_seconds: float = 120.0):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout_seconds: float = 120.0,
+        provider_name: str | None = None,
+    ):
         if not base_url:
             raise LLMProviderError("AGENTOS_LLM_BASE_URL is required for openai-compatible provider")
         if not api_key:
@@ -43,6 +51,7 @@ class OpenAICompatibleProvider:
 
         normalized = normalize_model_request(model)
         self.base_url = base_url
+        self.provider_name = provider_name or type(self).provider_name
         self.requested_model = normalized.requested_model
         self.model = normalized.effective_model
         self.default_thinking_mode = normalized.effective_thinking_mode

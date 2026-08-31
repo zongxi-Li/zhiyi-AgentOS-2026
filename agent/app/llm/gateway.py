@@ -104,7 +104,10 @@ class LLMGateway:
     def _build_provider(config: LLMConfig) -> LLMProvider:
         if config.provider == "mock":
             return MockLLMProvider()
-        if config.provider in {"openai-compatible", "openai_compatible", "openai"}:
+        if config.provider in {
+            "openai-compatible", "openai_compatible", "openai",
+            "deepseek", "glm", "qwen",
+        }:
             if not config.api_key or not config.base_url or not config.model:
                 logger.warning(
                     "AGENTOS_LLM_PROVIDER=%s is missing base_url/api_key/model; provider is unavailable.",
@@ -117,6 +120,7 @@ class LLMGateway:
                     api_key=config.api_key,
                     model=config.model,
                     timeout_seconds=config.timeout_seconds,
+                    provider_name=config.provider,
                 )
             except LLMProviderError as exc:
                 logger.warning("Failed to initialize openai-compatible provider; provider is unavailable. error=%s", exc)

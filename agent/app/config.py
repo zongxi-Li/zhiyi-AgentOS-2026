@@ -41,6 +41,7 @@ _secret_file_values = {
     for variable in (
         "AI_INTERNAL_TOKEN",
         "DEEPSEEK_API_KEY",
+        "GLM_API_KEY",
         "DASHSCOPE_API_KEY",
         "QWEN_API_KEY",
         "KYLIN_AI_API_KEY",
@@ -124,8 +125,14 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = "deepseek-v4-flash"  # DeepSeek模型名称
     DEEPSEEK_ENABLED: bool = True  # 是否启用DeepSeek
 
-    # 文本生成引擎选择: "deepseek" | "qwen" | "auto"
-    TEXT_ENGINE: str = "auto"  # auto=优先DeepSeek，未配置key则回退Qwen
+    # GLM / 智谱配置（OpenAI 兼容接口）
+    GLM_API_KEY: str = ""  # 智谱 API 密钥
+    GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"  # 智谱 OpenAI 兼容接口
+    GLM_MODEL: str = "glm-5.2"  # GLM 模型名称
+    GLM_ENABLED: bool = True  # 是否启用 GLM
+
+    # 文本生成引擎选择: "deepseek" | "glm" | "qwen" | "auto"
+    TEXT_ENGINE: str = "auto"  # auto=按DeepSeek、GLM、Qwen顺序选择已配置引擎
 
     # 模型配置
     TEXT_MODEL_NAME: str = "default"
@@ -184,7 +191,7 @@ try:
     )
     
     # 验证关键配置项是否加载（在Settings初始化后检查）
-    if not settings.DEEPSEEK_API_KEY and not settings.DASHSCOPE_API_KEY and not settings.QWEN_API_KEY:
+    if not settings.DEEPSEEK_API_KEY and not settings.GLM_API_KEY and not settings.DASHSCOPE_API_KEY and not settings.QWEN_API_KEY:
         import logging
         _warn_logger = logging.getLogger(__name__)
         _warn_logger.warning("未配置可用的模型 API Key")
@@ -198,6 +205,8 @@ try:
         _info_logger = logging.getLogger(__name__)
         if settings.DEEPSEEK_API_KEY:
             _info_logger.info("DeepSeek API key loaded from config.")
+        elif settings.GLM_API_KEY:
+            _info_logger.info("GLM API key loaded from config.")
         elif settings.DASHSCOPE_API_KEY:
             _info_logger.info("DashScope API key loaded from config.")
         else:
@@ -267,13 +276,16 @@ _env_file_path_correct = Path(".env")
 _dashscope_key_env = os.getenv('DASHSCOPE_API_KEY', '') or ''
 _qwen_key_env = os.getenv('QWEN_API_KEY', '') or ''
 _deepseek_key_env = os.getenv('DEEPSEEK_API_KEY', '') or ''
+_glm_key_env = os.getenv('GLM_API_KEY', '') or ''
 _dashscope_key_raw = settings.DASHSCOPE_API_KEY or _dashscope_key_env or ''
 _qwen_key_raw = settings.QWEN_API_KEY or _qwen_key_env or ''
 _deepseek_key_raw = settings.DEEPSEEK_API_KEY or _deepseek_key_env or ''
+_glm_key_raw = settings.GLM_API_KEY or _glm_key_env or ''
 _dashscope_key = _clean_config_value(_dashscope_key_raw)
 _qwen_key = _clean_config_value(_qwen_key_raw)
 _deepseek_key = _clean_config_value(_deepseek_key_raw)
-_api_key_configured = bool(_deepseek_key or _dashscope_key or _qwen_key)
+_glm_key = _clean_config_value(_glm_key_raw)
+_api_key_configured = bool(_deepseek_key or _glm_key or _dashscope_key or _qwen_key)
 
 # 更新settings中的值（如果从环境变量读取到了，或需要清理）
 if _dashscope_key and _dashscope_key != settings.DASHSCOPE_API_KEY:
@@ -282,6 +294,8 @@ if _qwen_key and _qwen_key != settings.QWEN_API_KEY:
     object.__setattr__(settings, 'QWEN_API_KEY', _qwen_key)
 if _deepseek_key and _deepseek_key != settings.DEEPSEEK_API_KEY:
     object.__setattr__(settings, 'DEEPSEEK_API_KEY', _deepseek_key)
+if _glm_key and _glm_key != settings.GLM_API_KEY:
+    object.__setattr__(settings, 'GLM_API_KEY', _glm_key)
 
 if _api_key_configured:
     # 配置正常时不输出详细信息，只在未配置时输出警告

@@ -209,7 +209,7 @@ async def readiness_check():
 
 @app.get("/health/dependencies")
 async def dependency_check():
-    configured = bool(settings.DEEPSEEK_API_KEY or settings.DASHSCOPE_API_KEY or settings.QWEN_API_KEY or settings.KYLIN_AI_API_KEY)
+    configured = bool(settings.DEEPSEEK_API_KEY or settings.GLM_API_KEY or settings.DASHSCOPE_API_KEY or settings.QWEN_API_KEY or settings.KYLIN_AI_API_KEY)
     provider_state = {"status": "DISABLED", "affectsReadiness": False}
     if settings.PROVIDER_STATE_ENABLED:
         try:

@@ -53,6 +53,28 @@ def test_deepseek_capabilities_include_tool_call_protocol_requirements():
     assert capabilities.max_output_tokens == 384_000
 
 
+def test_glm_capabilities_use_openai_compatible_thinking_protocol():
+    capabilities = provider_model_capabilities(
+        "glm-5.2", "https://open.bigmodel.cn/api/paas/v4"
+    )
+    assert capabilities.supports_thinking is True
+    assert capabilities.supports_tools is True
+    assert capabilities.supports_json_object is True
+    assert capabilities.supports_reasoning_effort is False
+
+    adapted = adapt_chat_completion_parameters(
+        model="glm-5.2",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        thinking_mode=ThinkingMode.DEEP,
+        parameters={"temperature": 0.2},
+    )
+    assert adapted.effective_reasoning_effort is None
+    assert adapted.parameters == {
+        "temperature": 0.2,
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+
+
 def test_custom_compatible_endpoint_does_not_inherit_official_model_limits():
     capabilities = provider_model_capabilities(
         "deepseek-v4-flash", "https://llm.internal.example/v1"
@@ -152,6 +174,30 @@ def test_openai_compatible_provider_uses_one_explicit_request_budget(monkeypatch
 def test_llm_config_default_budget_supports_deep_report_generation(monkeypatch):
     monkeypatch.delenv("AGENTOS_LLM_TIMEOUT_SECONDS", raising=False)
     assert LLMConfig.from_env().timeout_seconds == 120
+
+
+def test_llm_config_can_select_glm_without_removing_deepseek_fallback(monkeypatch):
+    for name in (
+        "AGENTOS_LLM_BASE_URL",
+        "AGENTOS_LLM_API_KEY",
+        "AGENTOS_LLM_API_KEY_FILE",
+        "AGENTOS_LLM_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENTOS_LLM_PROVIDER", "glm")
+    monkeypatch.setenv("GLM_API_KEY", "glm-secret")
+    monkeypatch.setenv("GLM_MODEL", "glm-test")
+    monkeypatch.setenv("GLM_BASE_URL", "https://glm.example/v1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-secret")
+
+    config = LLMConfig.from_env()
+
+    assert (config.provider, config.model, config.base_url, config.api_key) == (
+        "glm",
+        "glm-test",
+        "https://glm.example/v1",
+        "glm-secret",
+    )
 
 
 def test_openai_provider_maps_commit_id_to_idempotency_header():

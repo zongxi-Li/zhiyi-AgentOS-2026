@@ -84,6 +84,29 @@ def test_system_runtime_model_override_reuses_server_credentials(monkeypatch):
     )
 
 
+def test_system_runtime_config_selects_glm_and_leaves_deepseek_selectable(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "TEXT_ENGINE", "glm")
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "deepseek-secret")
+    monkeypatch.setattr(settings, "GLM_API_KEY", "glm-secret")
+    monkeypatch.setattr(settings, "GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    monkeypatch.setattr(settings, "GLM_MODEL", "glm-5.2")
+
+    assert resolve_system_runtime_config() == (
+        "glm-5.2",
+        "https://open.bigmodel.cn/api/paas/v4",
+        "glm-secret",
+    )
+
+    monkeypatch.setattr(settings, "TEXT_ENGINE", "deepseek")
+    assert resolve_system_runtime_config() == (
+        "deepseek-v4-flash",
+        "https://api.deepseek.com/v1",
+        "deepseek-secret",
+    )
+
+
 async def test_stream_separates_reasoning_content_and_final_content(monkeypatch):
     captured = {}
 
