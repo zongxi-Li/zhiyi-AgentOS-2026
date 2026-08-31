@@ -83,6 +83,17 @@
             </div>
           </template>
           <p v-if="!section.items.length" class="workspace-tree__empty">{{ section.empty }}</p>
+          <button
+            v-if="section.group === 'runs'"
+            type="button"
+            class="workspace-tree__rerun"
+            :disabled="!canRerun || rerunPending"
+            :title="rerunDisabledReason"
+            @click="emit('rerun')"
+          >
+            <span aria-hidden="true">+</span>
+            <span>{{ rerunPending ? '正在创建…' : '再次运行' }}</span>
+          </button>
         </div>
       </section>
     </nav>
@@ -101,16 +112,24 @@ import { ArrowDown, ArrowLeft, ArrowRight, FolderOpened } from '@element-plus/ic
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   projection: MissionWorkspaceProjection
   activeEditorId: string | null
   selectedRunId: string | null
-}>()
+  canRerun?: boolean
+  rerunPending?: boolean
+  rerunDisabledReason?: string
+}>(), {
+  canRerun: false,
+  rerunPending: false,
+  rerunDisabledReason: '当前运行尚未结束'
+})
 
 const emit = defineEmits<{
   back: []
   open: [entry: WorkspaceEntry]
   selectRun: [runId: string]
+  rerun: []
 }>()
 
 const expandedSections = ref<Record<string, boolean>>({
@@ -218,6 +237,10 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 
 .workspace-explorer__back { display: inline-flex; align-items: center; gap: 5px; margin: -3px 0 9px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 11px; }
 .workspace-explorer__back:hover { color: var(--wb-accent); }
+
+.workspace-tree__rerun { display: flex; align-items: center; gap: 7px; width: calc(100% - 16px); margin: 5px 8px 3px; padding: 6px 9px; border: 1px dashed var(--wb-border); border-radius: var(--wb-radius-sm); color: var(--wb-text-muted); background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.workspace-tree__rerun:hover:not(:disabled) { color: var(--wb-accent); border-color: var(--wb-accent); background: var(--wb-accent-soft); }
+.workspace-tree__rerun:disabled { cursor: not-allowed; opacity: .55; }
 
 .workspace-explorer__title-row {
   display: flex;

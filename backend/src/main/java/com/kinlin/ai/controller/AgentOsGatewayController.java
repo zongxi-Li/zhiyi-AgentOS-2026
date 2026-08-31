@@ -3,6 +3,7 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.dto.agentos.AgentOsReviewRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
+import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -70,6 +71,14 @@ public class AgentOsGatewayController {
     @GetMapping("/missions/{missionId}/runs")
     public ResponseEntity<Map<String, Object>> getMissionRuns(@PathVariable String missionId) {
         return response(gateway.get(missionPath(missionId) + "/runs"));
+    }
+
+    @PostMapping("/missions/{missionId}/runs")
+    public ResponseEntity<Map<String, Object>> createMissionRun(
+            @PathVariable String missionId,
+            @Valid @RequestBody AgentOsMissionRunCreateRequest body
+    ) {
+        return response(gateway.post(missionPath(missionId) + "/runs", body));
     }
 
     @GetMapping("/missions/{missionId}/workspace")

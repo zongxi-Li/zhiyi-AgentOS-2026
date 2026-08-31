@@ -65,6 +65,19 @@ describe('WorkspaceExplorer', () => {
     expect(wrapper.emitted('selectRun')).toEqual([['run_2']])
   })
 
+  it('enables rerun only when the selected Run is terminal', async () => {
+    const terminal = mount(WorkspaceExplorer, {
+      props: { projection: projection(), activeEditorId: null, selectedRunId: 'run_1', canRerun: true, rerunPending: false, rerunDisabledReason: '' },
+      global: { stubs: { 'el-icon': true } }
+    })
+    await terminal.find('.workspace-tree__rerun').trigger('click')
+    expect(terminal.emitted('rerun')).toHaveLength(1)
+
+    const active = mountExplorer()
+    expect(active.find<HTMLButtonElement>('.workspace-tree__rerun').element.disabled).toBe(true)
+    expect(active.find('.workspace-tree__rerun').attributes('title')).toContain('当前运行尚未结束')
+  })
+
   it('keeps projection diagnostics out of the Explorer chrome', () => {
     const wrapper = mountExplorer({ diagnostics: [{ code: 'PLAN_SNAPSHOT_UNRESOLVED', message: '历史结构不可确定', severity: 'warning' }] })
     expect(wrapper.find('.workspace-explorer__diagnostics').exists()).toBe(false)

@@ -3,6 +3,7 @@ package com.kinlin.ai.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.config.AgentProperties;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
+import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -134,6 +135,35 @@ class AgentOsGatewayControllerTest {
                 .andExpect(jsonPath("$.missionId").value("mission 001"));
 
         assertEquals(workspacePath, gateway.lastGetPath);
+    }
+
+    @Test
+    void createMissionRunPostsTheExactContractAndPreservesUpstreamStatus() throws Exception {
+        String upstream = "/ai/agentos/v2/missions/mission%20001/runs";
+        gateway.postResponses.put(upstream, response(202, Map.of(
+                "missionId", "mission 001", "runId", "run_002", "status", "pending"
+        )));
+
+        mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/runs", "mission 001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "workflowId", "workflow_1",
+                                "reviewMode", "auto",
+                                "input", Map.of("taskGoal", "再次执行"),
+                                "enabledPluginIds", List.of("plugin_1"),
+                                "clientRequestId", "rerun-request-1",
+                                "sourceRunId", "run_001",
+                                "rerunReason", "manual_rerun"
+                        ))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.runId").value("run_002"));
+
+        assertEquals(upstream, gateway.lastPostPath);
+        AgentOsMissionRunCreateRequest request = (AgentOsMissionRunCreateRequest) gateway.lastPostBody;
+        assertEquals("run_001", request.sourceRunId());
+        assertEquals("manual_rerun", request.rerunReason());
+        assertEquals("再次执行", request.input().get("taskGoal"));
+        assertEquals(List.of("plugin_1"), request.enabledPluginIds());
     }
 
     @Test

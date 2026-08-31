@@ -244,6 +244,32 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.text()).not.toContain('Historical / Read-only')
   })
 
+  it('creates a successor from the selected terminal Run and switches to it', async () => {
+    const source = projection({
+      activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }
+    })
+    const successor = projection({
+      activeRun: { runId: 'run_3', status: 'running', createdAt: '2026-08-28T00:03:00Z', isActive: true },
+      runs: [...source.runs, { runId: 'run_3', status: 'running', createdAt: '2026-08-28T00:03:00Z', isActive: true }]
+    })
+    vi.spyOn(agentosApi, 'getWorkflowHistoryConfig').mockResolvedValue({
+      runId: 'run_1', reviewMode: 'auto', enabledPluginIds: ['plugin_1'], input: { taskGoal: '设备规划' }
+    })
+    const rerun = vi.spyOn(agentosApi, 'rerunWorkflowAsync').mockResolvedValue({
+      runId: 'run_3', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'pending', steps: []
+    } as any)
+    const { wrapper, router } = await mountWorkspace(runId => runId === 'run_3' ? successor : source, '/agentos/missions/mission_1/workspace?runId=run_1')
+
+    await wrapper.find('.workspace-tree__rerun').trigger('click')
+    await flushPromises()
+
+    expect(rerun).toHaveBeenCalledWith('mission_1', expect.objectContaining({
+      sourceRunId: 'run_1', rerunReason: 'manual_rerun', input: { taskGoal: '设备规划' }, clientRequestId: expect.any(String)
+    }))
+    expect(router.currentRoute.value.query.runId).toBe('run_3')
+    expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith('mission_1', expect.objectContaining({ runId: 'run_3' }))
+  })
+
   it('keeps the stable artifact tab identity and shows missing content in a historical Run', async () => {
     const historical = projection({ activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }, entries: projection().entries.filter(item => item.entryId !== 'task:capacity:primary') })
     const { wrapper } = await mountWorkspace((_runId) => _runId === 'run_1' ? historical : projection())

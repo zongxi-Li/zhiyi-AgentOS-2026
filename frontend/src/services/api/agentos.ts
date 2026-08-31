@@ -93,6 +93,14 @@ export interface WorkflowExecutionState {
   controlFrames?: Array<Record<string, unknown>>
   loopIterations?: Record<string, number>
   loopPaths?: Record<string, number[]>
+  planningDiversity?: 'stable' | 'balanced' | 'exploratory'
+  planningSeed?: number | null
+  plannerAlgorithmVersion?: string | null
+  planningCandidateCount?: number
+  selectedPlanningVariantId?: string | null
+  selectedCapabilities?: string[]
+  selectedBindings?: Array<Record<string, string>>
+  planningSelectionReasons?: string[]
 }
 
 export type StepStatus =
@@ -208,6 +216,11 @@ export interface WorkflowRun {
   updatedAt?: string
   runtimeRevision?: number
   startedAt?: string | null
+  planningDiversity?: 'stable' | 'balanced' | 'exploratory'
+  planningSeed?: number | null
+  plannerAlgorithmVersion?: string | null
+  planningCandidateCount?: number
+  selectedPlanningVariantId?: string | null
 }
 
 export interface WorkflowTraceExport {
@@ -738,7 +751,7 @@ export interface WorkflowRerunRequest {
   materialRefs?: string[]
   clientRequestId: string
   sourceRunId: string
-  rerunReason: 'current_configuration' | 'retry_after_failure' | 'planning_variant' | 'review_rerun'
+  rerunReason: 'manual_rerun' | 'current_configuration' | 'retry_after_failure' | 'planning_variant' | 'review_rerun'
 }
 
 export type AsyncWorkflowStartResponse = WorkflowRun

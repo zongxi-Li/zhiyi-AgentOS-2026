@@ -14,6 +14,7 @@
           :component-props="sidebarProps"
           @open="openEntry"
           @select-run="selectRun"
+          @rerun="rerunSelectedRun"
           @back="returnToProjectList"
         />
         <section v-else class="workspace-loading-pane" aria-label="Workspace loading status">
@@ -132,6 +133,7 @@ const registry = createNativeWorkbenchRegistry()
 const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+const rerunPending = ref(false)
 const selectedRunId = ref<string | null>(typeof route.query.runId === 'string' ? route.query.runId : null)
 const currentRunId = ref<string | null>(null)
 const openEditors = ref<string[]>([])
@@ -173,6 +175,14 @@ const inspectorGraphNode = computed<WorkspaceGraphNode | null>(() => {
 const isHistorical = computed(() => Boolean(
   projection.value?.activeRun && currentRunId.value && projection.value.activeRun.runId !== currentRunId.value
 ))
+const terminalRunStatuses = new Set(['completed', 'succeeded', 'failed', 'cancelled', 'superseded'])
+const canRerunSelectedRun = computed(() => Boolean(
+  projection.value?.activeRun?.runId && terminalRunStatuses.has(projection.value.activeRun.status || '')
+))
+const rerunDisabledReason = computed(() => {
+  if (rerunPending.value) return '正在创建新的 Run'
+  return canRerunSelectedRun.value ? '从当前 Run 创建新的执行版本' : '当前运行尚未结束'
+})
 
 const workbenchContext = computed(() => createWorkbenchContext({
   missionId: missionId.value,
@@ -191,7 +201,10 @@ const sidebarContribution = computed(() => registry.getSidebarViews(workbenchCon
 const sidebarProps = computed(() => ({
   projection: projection.value,
   activeEditorId: activeEditorId.value,
-  selectedRunId: selectedRunId.value
+  selectedRunId: selectedRunId.value,
+  canRerun: canRerunSelectedRun.value,
+  rerunPending: rerunPending.value,
+  rerunDisabledReason: rerunDisabledReason.value
 }))
 const panelTabs = computed<WorkbenchBottomTab[]>(() => registry.getPanels(workbenchContext.value).map(panel => ({
   id: panel.id,
@@ -329,6 +342,46 @@ const selectRun = async (runId: string) => {
   selectedRunId.value = runId
   await persistRunInUrl(runId)
   await loadWorkspace(runId)
+}
+
+const createClientRequestId = () => globalThis.crypto?.randomUUID?.()
+  || `rerun-${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+const rerunErrorMessage = (error: unknown) => {
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown; message?: unknown } } })?.response
+  const detail = [response?.data?.detail, response?.data?.message]
+    .find(value => typeof value === 'string' && value.trim())
+  if (typeof detail === 'string') return detail
+  if (response?.status === 401 || response?.status === 403) return '当前账户无权创建新的 Run'
+  if (response?.status === 404) return '当前 Mission 或源 Run 不存在'
+  if (response?.status === 422) return '历史运行配置无法用于再次运行'
+  return '创建新的 Run 失败，请稍后重试'
+}
+
+const rerunSelectedRun = async () => {
+  const sourceRunId = projection.value?.activeRun?.runId
+  if (!sourceRunId || !canRerunSelectedRun.value || rerunPending.value) return
+  rerunPending.value = true
+  loadError.value = ''
+  const clientRequestId = createClientRequestId()
+  try {
+    const history = await agentosApi.getWorkflowHistoryConfig(sourceRunId)
+    const nextRun = await agentosApi.rerunWorkflowAsync(missionId.value, {
+      reviewMode: history.reviewMode || 'auto',
+      input: history.input || {},
+      enabledPluginIds: history.enabledPluginIds || null,
+      clientRequestId,
+      sourceRunId,
+      rerunReason: 'manual_rerun'
+    })
+    selectedRunId.value = nextRun.runId
+    await persistRunInUrl(nextRun.runId)
+    await loadWorkspace(nextRun.runId)
+  } catch (error: unknown) {
+    if (!isAbortError(error)) loadError.value = rerunErrorMessage(error)
+  } finally {
+    rerunPending.value = false
+  }
 }
 
 const openEntry = (entry: WorkspaceEntry) => {
