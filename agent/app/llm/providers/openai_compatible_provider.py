@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from typing import Any, Dict
 
@@ -157,7 +158,7 @@ class OpenAICompatibleProvider:
                     code=exc.code,
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
-                    metadata={"outputBudget": output_budget},
+                    metadata={"outputBudget": output_budget, **exc.metadata},
                 ) from exc
             return {
                 "data": data,
@@ -252,6 +253,17 @@ class OpenAICompatibleProvider:
             raise LLMProviderError(
                 f"Invalid JSON returned by provider: {exc}",
                 code="MODEL_OUTPUT_INVALID_JSON",
+                metadata={
+                    "contentLength": len(cleaned),
+                    "contentSha256": hashlib.sha256(cleaned.encode("utf-8")).hexdigest(),
+                    "parseOffset": exc.pos,
+                    "parseLine": exc.lineno,
+                    "parseColumn": exc.colno,
+                    "truncationType": (
+                        "possible_eof" if exc.pos >= max(0, len(cleaned) - 16)
+                        else "invalid_structure"
+                    ),
+                },
             ) from exc
         if not isinstance(parsed, dict):
             raise LLMProviderError(

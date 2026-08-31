@@ -108,6 +108,7 @@ from components.planner.algorithms import (
 )
 from components.planner.service import (
     apply_task_plan_patch,
+    normalize_capability_profile,
 )
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
@@ -445,6 +446,8 @@ class ExecutionRuntime:
         run_input = dict(task.input)
         if input_override is not None:
             run_input.update(input_override)
+        capability_profile = normalize_capability_profile(run_input.get("capabilityProfile"))
+        run_input["capabilityProfile"] = capability_profile
         planning_diversity = normalize_planning_diversity(
             run_input.get("planningDiversity")
         )
@@ -498,6 +501,7 @@ class ExecutionRuntime:
                     0, len(tuple(self.agent_registry.all())) - len(scope.agent_ids)
                 ),
                 "planningDiversity": planning_diversity,
+                "requestedCapabilityProfile": capability_profile,
                 "planningSeed": planning_seed,
                 "plannerAlgorithmVersion": PLANNER_ALGORITHM_VERSION,
             },
@@ -1991,6 +1995,7 @@ class ExecutionRuntime:
                 required_capabilities=workflow.required_capabilities,
                 task_input=dict(run.input),
                 existing_semantic_tasks=existing_semantic_tasks,
+                capability_profile=str(run.input.get("capabilityProfile") or "auto"),
             )
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
@@ -2007,6 +2012,9 @@ class ExecutionRuntime:
                     "selectedCapabilities": list(plan.selected_capabilities),
                     "selectedBindings": list(plan.selected_bindings),
                     "planningSelectionReasons": list(plan.selection_reasons),
+                    "requestedCapabilityProfile": plan.requested_capability_profile,
+                    "effectiveCapabilityProfile": plan.effective_capability_profile,
+                    "capabilityProfileReason": plan.capability_profile_reason,
                 }
             )
             self.trace_store.append(
@@ -2094,6 +2102,11 @@ class ExecutionRuntime:
             # Blueprint 是规划期唯一真源。这里把记忆策略复制到本次运行步骤，后续
             # 即使蓝图对象被修改，也不能反向改变已创建 run 的读取、写入和预算边界。
             node_input = dict(node.input_spec)
+            if node.metadata.get("reasoningEffort"):
+                node_input["reasoningEffort"] = node.metadata["reasoningEffort"]
+                node_input["reasoningPolicyReason"] = node.metadata.get(
+                    "reasoningPolicyReason", "planner_policy"
+                )
             memory_policy = node.metadata.get("memoryPolicy")
             if memory_policy is not None:
                 if not isinstance(memory_policy, dict):

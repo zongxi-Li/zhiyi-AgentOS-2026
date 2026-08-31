@@ -159,7 +159,9 @@ def test_native_retrieval_forwards_snake_case_commit_id() -> None:
     """原生检索必须与工具保护层使用同一 ``commit_id`` 参数名。"""
     agent = NativeGeneralAgent()
     tool = _SearchTool()
-    task = RuntimeMissionRecord(missionId="task-1", title="retrieve")
+    task = RuntimeMissionRecord(
+        missionId="task-1", title="retrieve", input={"webSearchEnabled": False}
+    )
     run = RuntimeRunRecord(missionId=task.mission_id, workflowId="native", domain="general", runtimeEngine="acg")
     workflow = WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg")
     context = AgentRunContext(
@@ -312,7 +314,7 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
     result = asyncio.run(agent.run(context))
 
     assert len(model.calls) == 5
-    assert all(call["max_output_tokens"] is None for call in model.calls)
+    assert all(call["max_output_tokens"] == 65_536 for call in model.calls)
     assert len(result.output["deliverable"]["sections"]) == 2
     assert "## 第1章" in result.output["final_answer"]
     assert "完整内容 2" in result.output["artifact"]["content"]

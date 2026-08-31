@@ -130,3 +130,27 @@ def test_exhaustion_error_carries_output_budget_metadata(monkeypatch) -> None:
     assert budget.get("reason") == "catalog_default"
     # 服务端确实收到了显式 max_tokens，而不是默默用默认额度。
     assert completions.captured.get("max_tokens") == 65536
+
+
+def test_invalid_json_records_safe_parse_diagnostics_without_raw_content(monkeypatch) -> None:
+    completions = _CapturingCompletions(
+        finish_reason="stop", content='{"tasks":[{"key":"x"}'
+    )
+    monkeypatch.setattr(
+        provider_module,
+        "provider_model_capabilities",
+        lambda model, base_url="": _capability_stub(65_536),
+    )
+    provider = _provider()
+    provider._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        provider.generate_json_result(prompt="plan", schema={"type": "object"})
+
+    metadata = exc_info.value.metadata
+    assert exc_info.value.code == "MODEL_OUTPUT_INVALID_JSON"
+    assert metadata["contentLength"] == len(completions.content)
+    assert metadata["parseOffset"] > 0
+    assert metadata["truncationType"] == "possible_eof"
+    assert len(metadata["contentSha256"]) == 64
+    assert completions.content not in str(metadata)

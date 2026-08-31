@@ -44,8 +44,24 @@ def _workset_recovery_bounded(context) -> bool:
 
 
 def _requested_reasoning_effort(context: AgentRunContext) -> str | None:
-    value = str(context.task.input.get("reasoningEffort") or "").strip()
+    value = str(
+        context.step.input.get("reasoningEffort")
+        or context.task.input.get("reasoningEffort")
+        or ""
+    ).strip()
     return value or None
+
+
+def _output_budget_for(capability: str) -> int:
+    if capability in {
+        "solution_design", "comparative_analysis", "verification",
+        "artifact_generation", "industrial_safety_analysis",
+        "industrial_acceptance_validation", "industrial_visualization",
+    }:
+        return 65_536
+    if capability in {"information_extraction", "information_retrieval"}:
+        return 16_384
+    return 32_768
 
 # Backward-compatible export derived from the native Catalog contribution.
 NATIVE_CAPABILITIES = NATIVE_CAPABILITY_IDS
@@ -68,6 +84,8 @@ class NativeGeneralAgent(BaseAgent):
                 capacity=4,
                 allowedTools=[
                     "knowledge_search",
+                    "web_search",
+                    "web_extract",
                     "current_datetime",
                 ],
                 description="Executes domain-neutral understanding, analysis, and artifact delivery.",
@@ -120,6 +138,56 @@ class NativeGeneralAgent(BaseAgent):
                 if isinstance(item, dict)
                 and str(item.get("snippet") or item.get("content") or "").strip()
             ]
+            tool_executions = [item.public_dict() for item in result.tool_executions]
+            evidence_gaps: list[dict[str, str]] = []
+            if context.task.input.get("webSearchEnabled") is not False:
+                try:
+                    web_result = await context.tool_runtime.execute(
+                        "web_search",
+                        {"query": task_summary[:500], "max_results": 5},
+                        commit_id=f"{context.commit_id}:web-search" if context.commit_id else None,
+                    )
+                    web_envelope = json.loads(web_result.text)
+                    if not web_envelope.get("ok"):
+                        raise RuntimeError(str(web_envelope.get("error") or "web search failed"))
+                    sources.extend(item.public_dict() for item in web_result.sources)
+                    evidence_refs.extend(item.citation_id for item in web_result.sources)
+                    tool_executions.extend(item.public_dict() for item in web_result.tool_executions)
+                    web_rows = [
+                        item for item in ((web_envelope.get("data") or {}).get("results") or [])
+                        if isinstance(item, dict)
+                    ]
+                    retrieved_information.extend(
+                        str(item.get("snippet") or item.get("content") or "").strip()
+                        for item in web_rows
+                        if str(item.get("snippet") or item.get("content") or "").strip()
+                    )
+                    urls = [str(item.get("url") or "").strip() for item in web_rows]
+                    urls = list(dict.fromkeys(url for url in urls if url))[:3]
+                    if urls:
+                        extracted = await context.tool_runtime.execute(
+                            "web_extract",
+                            {"urls": urls},
+                            commit_id=f"{context.commit_id}:web-extract" if context.commit_id else None,
+                        )
+                        extract_envelope = json.loads(extracted.text)
+                        if extract_envelope.get("ok"):
+                            sources.extend(item.public_dict() for item in extracted.sources)
+                            evidence_refs.extend(item.citation_id for item in extracted.sources)
+                            tool_executions.extend(
+                                item.public_dict() for item in extracted.tool_executions
+                            )
+                            retrieved_information.extend(
+                                str(item.get("content") or item.get("text") or "").strip()
+                                for item in ((extract_envelope.get("data") or {}).get("results") or [])
+                                if isinstance(item, dict)
+                                and str(item.get("content") or item.get("text") or "").strip()
+                            )
+                except Exception as exc:
+                    evidence_gaps.append({
+                        "source": "web",
+                        "reason": str(getattr(exc, "code", "") or type(exc).__name__),
+                    })
             if not evidence_refs:
                 citation_id = "src_task_input_" + hashlib.sha256(
                     task_summary.encode("utf-8")
@@ -135,22 +203,58 @@ class NativeGeneralAgent(BaseAgent):
                 }]
                 evidence_refs = [citation_id]
                 retrieved_information = [task_summary]
+            evidence_refs = list(dict.fromkeys(evidence_refs))
+            unique_sources: dict[str, dict[str, Any]] = {}
+            for source in sources:
+                key = str(source.get("citationId") or source.get("url") or len(unique_sources))
+                unique_sources.setdefault(key, source)
             return AgentOutput(
                 output={
-                    "retrieved_information": retrieved_information,
-                    "sources": sources,
+                    "retrieved_information": list(dict.fromkeys(retrieved_information)),
+                    "sources": list(unique_sources.values()),
                     "evidence_refs": evidence_refs,
                     "retrieval_mode": (
-                        "local_knowledge" if result.sources else "task_input_only"
+                        "local_and_web"
+                        if context.task.input.get("webSearchEnabled") is not False
+                        and any(source.get("url") for source in unique_sources.values())
+                        else "local_knowledge" if result.sources else "task_input_only"
                     ),
+                    "evidence_gaps": evidence_gaps,
                 },
                 summary=f"Prepared {len(evidence_refs)} offline evidence source(s).",
-                sources=sources,
-                toolExecutions=[item.public_dict() for item in result.tool_executions],
+                sources=list(unique_sources.values()),
+                toolExecutions=tool_executions,
                 evidenceRefs=evidence_refs,
             )
         if capability == "evidence_analysis" and not upstream.get("evidence_refs"):
             raise RuntimeError("evidence_analysis requires upstream evidence references")
+
+        deterministic_tool_executions: list[dict[str, Any]] = []
+        if capability == "industrial_capacity_analysis":
+            requested_calculations = context.task.input.get("industrialCalculations") or []
+            if requested_calculations and context.tool_runtime is None:
+                raise RuntimeError("industrial calculator runtime is not configured")
+            calculated: list[dict[str, Any]] = []
+            for index, calculation in enumerate(requested_calculations[:5]):
+                if not isinstance(calculation, dict):
+                    continue
+                result = await context.tool_runtime.execute(
+                    "industrial_calculator",
+                    calculation,
+                    commit_id=f"{context.commit_id or 'industrial'}:calculation:{index}",
+                )
+                envelope = json.loads(result.text)
+                if not envelope.get("ok"):
+                    raise RuntimeError(
+                        "industrial calculator failed: "
+                        f"{envelope.get('error') or 'unknown error'}"
+                    )
+                calculated.append(dict(envelope.get("data") or {}))
+                deterministic_tool_executions.extend(
+                    item.public_dict() for item in result.tool_executions
+                )
+            if calculated:
+                upstream["deterministic_calculations"] = calculated
 
         descriptor = context.capability_descriptor
         if descriptor is None:
@@ -190,10 +294,10 @@ class NativeGeneralAgent(BaseAgent):
         )
         thinking_mode = str(context.task.input.get("thinkingMode") or "disabled")
         output_thinking_mode = thinking_mode
-        timeout_seconds = 180.0 if capability == "artifact_generation" else 120.0
+        timeout_seconds = 600.0 if capability == "artifact_generation" else 300.0
         # 默认由精确模型 API/适配器决定单次输出能力。Harness 不用 capability 名称
         # 猜测 4096/8192，也不通过人为缩短内容获得表面上的合同成功。
-        max_output_tokens = None
+        max_output_tokens = _output_budget_for(capability)
         invocations: list[dict[str, Any]] = []
         base_prompt_version = prompt_version_for_capability(capability)
         repair_used = False
@@ -362,6 +466,7 @@ class NativeGeneralAgent(BaseAgent):
         return AgentOutput(
             output=output,
             summary=f"Native capability completed: {capability}.",
+            toolExecutions=deterministic_tool_executions,
             modelInvocations=invocations,
         )
 
@@ -412,7 +517,7 @@ class NativeGeneralAgent(BaseAgent):
             ),
             schema=subtask_schema, thinking_mode=thinking_mode,
             reasoning_effort=_requested_reasoning_effort(context),
-            timeout_seconds=timeout_seconds, max_output_tokens=None,
+            timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
             prompt_version=f"{prompt_version}.capacity-split1",
             commit_id=f"{context.commit_id or 'capability'}:split:{depth}",
         )
@@ -433,7 +538,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=subtask_schema, thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds, max_output_tokens=None,
+                timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
                 prompt_version=f"{prompt_version}.capacity-split-retry1",
                 commit_id=f"{context.commit_id or 'capability'}:split:{depth}:retry",
             )
@@ -463,7 +568,7 @@ class NativeGeneralAgent(BaseAgent):
                 generated = await runtime.generate_json(
                     prompt=subprompt, schema=output_schema, thinking_mode=thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
-                    timeout_seconds=timeout_seconds, max_output_tokens=None,
+                    timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
                     prompt_version=f"{prompt_version}.capacity-part1",
                     commit_id=f"{context.commit_id or 'capability'}:part:{depth}:{index}",
                 )
@@ -501,7 +606,7 @@ class NativeGeneralAgent(BaseAgent):
                     merged = await runtime.generate_json(
                         prompt=merge_prompt, schema=output_schema, thinking_mode=thinking_mode,
                         reasoning_effort=_requested_reasoning_effort(context),
-                        timeout_seconds=timeout_seconds, max_output_tokens=None,
+                        timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
                         prompt_version=f"{prompt_version}.capacity-reduce1",
                         commit_id=(
                             f"{context.commit_id or 'capability'}:reduce:"
@@ -569,7 +674,7 @@ class NativeGeneralAgent(BaseAgent):
             ),
             schema=outline_schema, thinking_mode=thinking_mode,
             reasoning_effort=_requested_reasoning_effort(context),
-            timeout_seconds=timeout_seconds, max_output_tokens=None,
+            timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
             prompt_version=f"{prompt_version}.capacity-outline1",
             commit_id=f"{context.commit_id or 'artifact'}:outline",
         )
@@ -625,7 +730,7 @@ class NativeGeneralAgent(BaseAgent):
             ),
             schema=verification_schema, thinking_mode=thinking_mode,
             reasoning_effort=_requested_reasoning_effort(context),
-            timeout_seconds=timeout_seconds, max_output_tokens=None,
+            timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
             prompt_version=f"{prompt_version}.capacity-verification1",
             commit_id=f"{context.commit_id or 'artifact'}:verification",
         )
@@ -668,7 +773,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=section_schema, thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds, max_output_tokens=None,
+                timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
                 prompt_version=f"{prompt_version}.section1",
                 commit_id=f"{context.commit_id or 'artifact'}:section:{path}",
             )
@@ -707,7 +812,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=subsection_schema, thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds, max_output_tokens=None,
+                timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
                 prompt_version=f"{prompt_version}.section-split1",
                 commit_id=f"{context.commit_id or 'artifact'}:section:{path}:split",
             )

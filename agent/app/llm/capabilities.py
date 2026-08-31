@@ -113,6 +113,10 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
             supports_json_schema=False,
             supports_stream_usage=False,
             max_tokens_field="max_tokens",
+            # A conservative explicit ceiling for structured AgentOS calls.
+            # Individual operations request smaller budgets and the provider
+            # adapter clamps them to this declared maximum.
+            max_output_tokens=65_536,
         )
 
     if normalized_model.startswith("deepseek-v4") or "api.deepseek.com" in normalized_url:
