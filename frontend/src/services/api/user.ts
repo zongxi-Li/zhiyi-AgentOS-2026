@@ -13,6 +13,10 @@ export interface UpdateUserRequest {
   email?: string
 }
 
+export interface AvatarUploadResponse extends User {
+  avatar?: string
+}
+
 export interface ChangePasswordRequest {
   currentPassword: string
   newPassword: string
@@ -34,6 +38,24 @@ export const userApi = {
   // 更新用户信息
   async updateUser(userId: string, userData: UpdateUserRequest): Promise<User> {
     const response = await request.put<User>(`/users/${userId}`, userData)
+    return response.data
+  },
+
+  async uploadAvatar(userId: string, file: File): Promise<AvatarUploadResponse> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await request.post<AvatarUploadResponse>(`/users/${userId}/avatar`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+    return response.data
+  },
+
+  async getAvatar(userId: string): Promise<Blob> {
+    const response = await request.get<Blob>(`/users/${userId}/avatar`, {
+      responseType: 'blob'
+    })
     return response.data
   },
 

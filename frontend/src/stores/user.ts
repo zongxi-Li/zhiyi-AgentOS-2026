@@ -6,7 +6,8 @@ export interface User {
   id: string
   username: string
   email?: string
-  createdAt?: Date
+  avatar?: string
+  createdAt?: Date | string
 }
 
 export const useUserStore = defineStore('user', () => {

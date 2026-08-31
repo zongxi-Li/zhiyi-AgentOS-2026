@@ -31,7 +31,7 @@
         <p v-if="!visibleSections.length" class="settings-empty">没有匹配的设置</p>
       </nav>
 
-      <button class="rail-account" type="button" @click="router.push('/user')">
+      <button class="rail-account" type="button" @click="router.push({ path: '/settings', query: { tab: 'profile' } })">
         <el-avatar :size="30" class="rail-avatar">{{ accountInitial }}</el-avatar>
         <span class="rail-account-copy">
           <strong>{{ accountName }}</strong>
@@ -41,7 +41,9 @@
       </button>
     </aside>
 
-    <main class="settings-content">
+    <main class="settings-content" :class="{ 'account-mode': isAccountTab }">
+      <UserView v-if="isAccountTab" :section="activeTab === 'security' ? 'security' : 'profile'" />
+      <template v-else>
       <header class="settings-header">
         <div>
           <span class="settings-eyebrow">PERSONAL SETTINGS</span>
@@ -316,6 +318,7 @@
           <el-button type="primary" @click="saveSettings">保存设置</el-button>
         </div>
       </footer>
+      </template>
     </main>
   </div>
 </template>
@@ -325,6 +328,7 @@ import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import UserView from '@/views/UserView.vue'
 import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting, User } from '@element-plus/icons-vue'
 import { applyFontSize, useTheme } from '@/composables/useTheme'
 import { colorSchemes, type ColorSchemeId } from '@/themes/presets'
@@ -337,9 +341,9 @@ import {
   type ModelProviderId
 } from '@/config/modelSettings'
 
-type TabId = 'general' | 'appearance' | 'privacy' | 'chat' | 'model' | 'voice'
+type TabId = 'general' | 'appearance' | 'privacy' | 'chat' | 'model' | 'voice' | 'profile' | 'security'
 type NavigationItem = {
-  id: TabId | 'profile'
+  id: TabId
   label: string
   icon: Component
   description?: string
@@ -387,7 +391,8 @@ const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
     label: '个人',
     items: [
       { id: 'general', label: '常规', icon: Setting, description: '管理工作区权限、默认目录与基础偏好。' },
-      { id: 'profile', label: '个人资料', icon: User, route: '/user' },
+      { id: 'profile', label: '个人资料', icon: User },
+      { id: 'security', label: '账户安全', icon: Lock },
       { id: 'appearance', label: '外观', icon: Brush, description: '调整主题、密度与界面显示方式。' },
       { id: 'voice', label: '语音', icon: Microphone, description: '管理语音讲解的声音与播放参数。' },
       { id: 'privacy', label: '隐私', icon: Key, description: '控制数据存储、历史记录与敏感设置。' }
@@ -413,7 +418,7 @@ const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
 
 const themeOptions = colorSchemes.slice(0, 3).map((theme, index) => ({
   id: theme.id,
-  label: index === 0 ? '深色' : index === 1 ? '暖色' : '蓝紫',
+  label: theme.name,
   tone: index === 0 ? 'dark' : index === 1 ? 'light' : 'soft',
   previewColor: theme.previewColor
 }))
@@ -441,12 +446,15 @@ const defaultSettings = (): AppSettings => ({
 
 const settings = ref<AppSettings>(defaultSettings())
 const modelSettings = ref(getDefaultModelSettings())
-const activeTab = ref<TabId>('general')
+const tabIds: TabId[] = ['general', 'appearance', 'privacy', 'chat', 'model', 'voice', 'profile', 'security']
+const isTabId = (value: unknown): value is TabId => typeof value === 'string' && tabIds.includes(value as TabId)
+const activeTab = ref<TabId>(isTabId(route.query.tab) ? route.query.tab : 'general')
 const searchTerm = ref('')
 const lastSaved = ref<Date | null>(null)
 const inlineHint = ref('修改后点击“保存设置”即可生效。')
 
 const currentTab = computed(() => tabs.find((tab) => tab.id === activeTab.value) || tabs[0])
+const isAccountTab = computed(() => activeTab.value === 'profile' || activeTab.value === 'security')
 const visibleSections = computed(() => {
   const query = searchTerm.value.trim().toLowerCase()
   if (!query) return settingsSections
@@ -485,7 +493,18 @@ function selectSettingsItem(item: NavigationItem): void {
     return
   }
   activeTab.value = item.id as TabId
+  if (item.id === 'profile' || item.id === 'security') {
+    void router.replace({ path: '/settings', query: { tab: item.id } })
+  } else if (route.query.tab) {
+    void router.replace({ path: '/settings', query: {} })
+  }
 }
+
+watch(() => route.query.tab, value => {
+  if (isTabId(value) && value !== activeTab.value) {
+    activeTab.value = value
+  }
+})
 
 function loadSettings(): void {
   const saved = localStorage.getItem('appSettings')
@@ -1192,6 +1211,11 @@ function ensureSelectedModel(models: string[]): void {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 42px clamp(24px, 5vw, 76px) 56px;
+}
+
+.settings-content.account-mode {
+  padding: 0;
+  overflow: hidden;
 }
 
 .settings-header,

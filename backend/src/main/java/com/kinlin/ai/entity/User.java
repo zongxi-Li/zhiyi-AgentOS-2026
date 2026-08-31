@@ -31,6 +31,9 @@ public class User {
     @Column(name = "password_hash")
     private String passwordHash; // 密码哈希（未来实现）
 
+    @Column(name = "avatar_url", length = 512)
+    private String avatar;
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
