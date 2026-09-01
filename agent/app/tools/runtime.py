@@ -62,11 +62,22 @@ def _tool_call_id(item: Any) -> str:
     return str(getattr(raw, "call_id", None) or getattr(raw, "id", ""))
 
 
+def _provider_for_model(model: str, base_url: str) -> str | None:
+    normalized_model = str(model or "").strip().lower()
+    normalized_url = str(base_url or "").strip().lower()
+    if "deepseek" in normalized_model or "deepseek" in normalized_url:
+        return "deepseek"
+    if normalized_model.startswith("glm-") or "bigmodel.cn" in normalized_url:
+        return "glm"
+    return None
+
+
 @dataclass
 class ToolInvocationContext:
     catalog: ReadOnlyToolCatalog
     allowed_tools: frozenset[str]
     role_id: str | None = None
+    provider: str | None = None
     max_calls: int = 8
     records: list[ToolExecutionRecord] = field(default_factory=list)
     sources: dict[str, SourceReference] = field(default_factory=dict)
@@ -91,8 +102,11 @@ class ToolInvocationContext:
                 self._call_count += 1
             if name not in self.allowed_tools:
                 raise PermissionError(f"tool is not allowed in this run: {name}")
+            catalog_kwargs: dict[str, Any] = {"role_id": self.role_id}
+            if self.provider:
+                catalog_kwargs["provider"] = self.provider
             payload = await asyncio.wait_for(
-                self.catalog.execute(name, arguments, role_id=self.role_id),
+                self.catalog.execute(name, arguments, **catalog_kwargs),
                 timeout=max(0.1, float(settings.TOOL_TIMEOUT_SECONDS)),
             )
             for source in payload.sources:
@@ -105,6 +119,7 @@ class ToolInvocationContext:
                 inputSummary=", ".join(sorted(arguments.keys())),
                 outputSummary=payload.summary[:500],
                 sourceRefs=[source.citation_id for source in payload.sources],
+                provider=self.provider,
             )
             self.records.append(record)
             return json.dumps(
@@ -131,6 +146,7 @@ class ToolInvocationContext:
                     inputSummary=", ".join(sorted(arguments.keys())),
                     outputSummary="Tool execution failed.",
                     errorCode=str(code)[:120],
+                    provider=self.provider,
                 )
             )
             return json.dumps(
@@ -251,7 +267,9 @@ class AgentsToolRuntime:
     async def warmup(self) -> dict[str, Any]:
         return await self.catalog.warmup()
 
-    def _context(self, role_id: str | None = None) -> ToolInvocationContext:
+    def _context(
+        self, role_id: str | None = None, *, provider: str | None = None
+    ) -> ToolInvocationContext:
         # Keep optional-provider tools registered while the runtime itself is enabled. Some
         # OpenAI-compatible models may still emit a call for a tool named in the conversation
         # even when it was omitted from the tools schema. A registered failure tool lets the
@@ -262,6 +280,7 @@ class AgentsToolRuntime:
             catalog=self.catalog,
             allowed_tools=frozenset(allowed),
             role_id=role_id,
+            provider=provider,
             max_calls=max(1, int(settings.TOOL_MAX_CALLS)),
         )
 
@@ -272,12 +291,13 @@ class AgentsToolRuntime:
         *,
         role_id: str | None = None,
         commit_id: str | None = None,
+        provider: str | None = None,
     ) -> ToolRunResult:
         # Read-only catalog calls have no external mutation to deduplicate, but the
         # runtime accepts the node commit boundary so guarded callers keep one
         # uniform invocation contract across tool implementations.
         del commit_id
-        context = self._context(role_id)
+        context = self._context(role_id, provider=provider)
         output = await context.invoke(name, arguments)
         return ToolRunResult(
             text=output,
@@ -318,7 +338,7 @@ class AgentsToolRuntime:
             buffer_streamed_tool_calls=True,
         )
         tools = [SDK_TOOLS[name] for name in sorted(context.allowed_tools) if name in SDK_TOOLS]
-        availability = self.catalog.availability()
+        availability = self.catalog.availability(context.provider)
         available_names = sorted(
             name for name in context.allowed_tools if availability.get(name, {}).get("available")
         )
@@ -393,7 +413,10 @@ class AgentsToolRuntime:
     ) -> ToolRunResult:
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
-        context = self._context(role_id)
+        context = self._context(
+            role_id,
+            provider=_provider_for_model(model, base_url),
+        )
         agent, client, metadata = self._build_agent(
             context,
             model=model,
@@ -442,7 +465,10 @@ class AgentsToolRuntime:
     ) -> AsyncIterator[ChatStreamEvent]:
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
-        context = self._context(role_id)
+        context = self._context(
+            role_id,
+            provider=_provider_for_model(model, base_url),
+        )
         agent, client, metadata = self._build_agent(
             context,
             model=model,

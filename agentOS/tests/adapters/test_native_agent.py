@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
 from adapters.model.native import NativeGeneralAgent
@@ -27,10 +28,17 @@ class _SearchTool:
 
     def __init__(self) -> None:
         self.commit_id: str | None = None
+        self.providers: list[str | None] = []
 
     async def execute(self, _name: str, _arguments: dict, **kwargs) -> _SearchResult:
         self.commit_id = kwargs.get("commit_id")
+        self.providers.append(kwargs.get("provider"))
         return _SearchResult()
+
+
+class _GlmModel:
+    def describe_model(self):
+        return SimpleNamespace(provider="openai-compatible", model="glm-5.3-flash")
 
 
 class _OversizedTextArrayModel:
@@ -178,6 +186,29 @@ def test_native_retrieval_forwards_snake_case_commit_id() -> None:
     asyncio.run(agent.run(context))
 
     assert tool.commit_id == "commit:run-1:retrieve:0"
+
+
+def test_native_retrieval_forwards_model_provider_to_web_tools() -> None:
+    agent = NativeGeneralAgent()
+    tool = _SearchTool()
+    task = RuntimeMissionRecord(missionId="task-1b", title="retrieve", input={})
+    run = RuntimeRunRecord(missionId=task.mission_id, workflowId="native", domain="general", runtimeEngine="acg")
+    workflow = WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg")
+    context = AgentRunContext(
+        task=task,
+        run=run,
+        workflow=workflow,
+        step=WorkflowStep(stepId="retrieve", name="retrieve", agentName=agent.profile.agent_name, capability="information_retrieval"),
+        memory=[],
+        contextPack=ContextPack(runId=run.run_id, stepId="retrieve"),
+        toolRuntime=tool,
+        modelRuntime=_GlmModel(),
+        commitId="commit:run-1b:retrieve:0",
+    )
+
+    asyncio.run(agent.run(context))
+
+    assert tool.providers == [None, "glm"]
 
 
 def test_native_agent_losslessly_bounds_provider_text_arrays() -> None:

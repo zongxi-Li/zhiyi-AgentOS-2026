@@ -40,6 +40,33 @@ class _FakeTavily:
         }
 
 
+async def _fake_zhipu_request(url, payload):
+    assert url.endswith("/web_search")
+    assert payload["search_engine"] == "search_std"
+    assert payload["search_query"] == "current GLM news"
+    return {
+        "search_result": [{
+            "title": "智谱原生结果",
+            "link": "https://example.com/glm-reference",
+            "content": "A result returned by the native provider.",
+            "publish_date": "2026-09-01",
+        }]
+    }
+
+
+async def _fake_zhipu_reader(url, payload):
+    assert url.endswith("/reader")
+    assert payload["url"] == "https://example.com/glm-reference"
+    assert payload["return_format"] == "markdown"
+    return {
+        "reader_result": {
+            "title": "智谱阅读结果",
+            "url": payload["url"],
+            "content": "Native reader content.",
+        }
+    }
+
+
 class _CatalogStub:
     async def execute(self, name, arguments, *, role_id=None):
         if arguments.get("sleep"):
@@ -66,6 +93,47 @@ def test_tavily_search_normalizes_sources_and_skips_local_urls(monkeypatch):
     assert payload.sources[0].url == "https://example.com/reference"
     assert payload.sources[0].provider == "tavily"
     assert payload.data["results"][0]["citationId"] == payload.sources[0].citation_id
+
+
+def test_glm_uses_native_search_and_reader_without_touching_tavily(monkeypatch):
+    monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
+    monkeypatch.setattr(settings, "TAVILY_API_KEY", "tavily-key")
+    monkeypatch.setattr(settings, "GLM_API_KEY", "glm-key")
+    catalog = ReadOnlyToolCatalog()
+    requests = []
+
+    async def fake_request(url, payload):
+        requests.append((url, payload))
+        if url.endswith("/web_search"):
+            return await _fake_zhipu_request(url, payload)
+        return await _fake_zhipu_reader(url, payload)
+
+    catalog._zhipu_request = fake_request
+
+    search = asyncio.run(catalog.execute(
+        "web_search", {"query": "current GLM news"}, provider="glm"
+    ))
+    extracted = asyncio.run(catalog.execute(
+        "web_extract", {"urls": ["https://example.com/glm-reference"]}, provider="glm"
+    ))
+
+    assert search.sources[0].provider == "zhipu-native-search"
+    assert extracted.sources[0].provider == "zhipu-native-reader"
+    assert [url.rsplit("/", 1)[-1] for url, _ in requests] == ["web_search", "reader"]
+
+
+def test_deepseek_explicitly_keeps_tavily_route(monkeypatch):
+    monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
+    monkeypatch.setattr(settings, "TAVILY_API_KEY", "tavily-key")
+    monkeypatch.setattr(settings, "GLM_API_KEY", "glm-key")
+    catalog = ReadOnlyToolCatalog()
+    catalog._tavily = _FakeTavily()
+
+    payload = asyncio.run(catalog.execute(
+        "web_search", {"query": "current law"}, provider="deepseek"
+    ))
+
+    assert payload.sources[0].provider == "tavily"
 
 
 def test_web_extract_rejects_private_url_before_provider_call(monkeypatch):

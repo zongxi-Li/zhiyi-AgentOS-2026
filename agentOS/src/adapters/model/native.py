@@ -93,6 +93,22 @@ class NativeGeneralAgent(BaseAgent):
         )
         self.prompt_builder = NativeCapabilityPromptBuilder()
 
+    @staticmethod
+    def _search_provider(context: AgentRunContext) -> str | None:
+        """Bind web tools to the same provider that owns this ACG model run."""
+        runtime = context.model_runtime
+        describe = getattr(runtime, "describe_model", None)
+        if not callable(describe):
+            return None
+        descriptor = describe()
+        provider = str(getattr(descriptor, "provider", "") or "").strip().lower()
+        model = str(getattr(descriptor, "model", "") or "").strip().lower()
+        if provider in {"glm", "zhipu", "zhipuai"} or model.startswith("glm-"):
+            return "glm"
+        if provider == "deepseek" or "deepseek" in model:
+            return "deepseek"
+        return provider or None
+
     async def run(self, context: AgentRunContext) -> AgentOutput:
         """执行 ``context`` 所声明的一项能力并返回受合同约束的输出。
 
@@ -140,12 +156,14 @@ class NativeGeneralAgent(BaseAgent):
             ]
             tool_executions = [item.public_dict() for item in result.tool_executions]
             evidence_gaps: list[dict[str, str]] = []
+            search_provider = self._search_provider(context)
             if context.task.input.get("webSearchEnabled") is not False:
                 try:
                     web_result = await context.tool_runtime.execute(
                         "web_search",
                         {"query": task_summary[:500], "max_results": 5},
                         commit_id=f"{context.commit_id}:web-search" if context.commit_id else None,
+                        provider=search_provider,
                     )
                     web_envelope = json.loads(web_result.text)
                     if not web_envelope.get("ok"):
@@ -169,6 +187,7 @@ class NativeGeneralAgent(BaseAgent):
                             "web_extract",
                             {"urls": urls},
                             commit_id=f"{context.commit_id}:web-extract" if context.commit_id else None,
+                            provider=search_provider,
                         )
                         extract_envelope = json.loads(extracted.text)
                         if extract_envelope.get("ok"):

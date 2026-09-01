@@ -130,6 +130,12 @@ class Settings(BaseSettings):
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"  # 智谱 OpenAI 兼容接口
     GLM_MODEL: str = "glm-5.3-flash"  # GLM 模型名称
     GLM_ENABLED: bool = True  # 是否启用 GLM
+    GLM_NATIVE_SEARCH_ENABLED: bool = True  # GLM 使用智谱原生网络搜索与网页阅读
+    GLM_WEB_SEARCH_URL: str = "https://open.bigmodel.cn/api/paas/v4/web_search"
+    GLM_WEB_READER_URL: str = "https://open.bigmodel.cn/api/paas/v4/reader"
+    GLM_WEB_SEARCH_ENGINE: str = "search_std"  # search_std/search_pro/search_pro_sogou/search_pro_quark
+    GLM_WEB_SEARCH_CONTENT_SIZE: str = "medium"  # low/medium/high
+    GLM_WEB_SEARCH_RECENCY_FILTER: str = "noLimit"
 
     # 文本生成引擎选择: "deepseek" | "glm" | "qwen" | "auto"
     TEXT_ENGINE: str = "auto"  # auto=按DeepSeek、GLM、Qwen顺序选择已配置引擎

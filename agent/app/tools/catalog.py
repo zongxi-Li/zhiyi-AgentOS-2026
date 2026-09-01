@@ -6,12 +6,14 @@ import asyncio
 import hashlib
 import ipaddress
 import math
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from tavily import AsyncTavilyClient
 
 from app.config import settings
@@ -61,6 +63,11 @@ def _validate_public_url(value: str) -> str:
     return raw
 
 
+def _uses_glm_native_search(provider: str | None) -> bool:
+    normalized = str(provider or "").strip().lower()
+    return normalized in {"glm", "zhipu", "zhipuai", "zhipu-native", "zhipu-native-search"}
+
+
 class ReadOnlyToolCatalog:
     """Dispatches only allowlisted read operations and normalizes their evidence."""
 
@@ -76,27 +83,59 @@ class ReadOnlyToolCatalog:
     def __init__(self) -> None:
         self._tavily: AsyncTavilyClient | None = None
 
-    def availability(self) -> dict[str, dict[str, Any]]:
+    def availability(self, provider: str | None = None) -> dict[str, dict[str, Any]]:
         enabled = bool(settings.TOOL_RUNTIME_ENABLED)
-        web = enabled and bool(settings.TAVILY_API_KEY.strip())
+        tavily = enabled and bool(settings.TAVILY_API_KEY.strip())
+        glm_native = (
+            enabled
+            and bool(getattr(settings, "GLM_NATIVE_SEARCH_ENABLED", True))
+            and bool(settings.GLM_API_KEY.strip())
+        )
+        if _uses_glm_native_search(provider):
+            web = glm_native
+            routed_providers = ["zhipu-native"] if glm_native else []
+        elif str(provider or "").strip().lower() == "deepseek":
+            web = tavily
+            routed_providers = ["tavily"] if tavily else []
+        else:
+            web = tavily or glm_native
+            routed_providers = [value for value in ("zhipu-native" if glm_native else None, "tavily" if tavily else None) if value]
         return {
-            "web_search": {"available": web, "provider": "tavily", "readOnly": True},
-            "web_extract": {"available": web, "provider": "tavily", "readOnly": True},
+            "web_search": {
+                "available": web,
+                "provider": "model-routed",
+                "providers": routed_providers,
+                "readOnly": True,
+            },
+            "web_extract": {
+                "available": web,
+                "provider": "model-routed",
+                "providers": routed_providers,
+                "readOnly": True,
+            },
             "knowledge_search": {"available": enabled, "provider": "configured-rag", "readOnly": True},
             "codebase_search": {"available": enabled, "provider": "agentos-code-index", "readOnly": True},
             "current_datetime": {"available": enabled, "provider": "system-clock", "readOnly": True},
             "industrial_calculator": {"available": enabled, "provider": "deterministic", "readOnly": True},
         }
 
-    def is_available(self, name: str) -> bool:
-        return bool(self.availability().get(name, {}).get("available"))
+    def is_available(self, name: str, provider: str | None = None) -> bool:
+        return bool(self.availability(provider).get(name, {}).get("available"))
 
     async def execute(
-        self, name: str, arguments: dict[str, Any], *, role_id: str | None = None
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        role_id: str | None = None,
+        provider: str | None = None,
     ) -> ToolPayload:
-        if name not in self.TOOL_NAMES or not self.is_available(name):
+        if name not in self.TOOL_NAMES or not self.is_available(name, provider):
             raise ToolUnavailableError(f"read-only tool is unavailable: {name}")
-        return await getattr(self, f"_{name}")(arguments, role_id=role_id)
+        handler = getattr(self, f"_{name}")
+        if name in {"web_search", "web_extract"}:
+            return await handler(arguments, role_id=role_id, provider=provider)
+        return await handler(arguments, role_id=role_id)
 
     async def warmup(self) -> dict[str, Any]:
         """Prepare local read-only indexes before the first user tool call."""
@@ -113,7 +152,18 @@ class ReadOnlyToolCatalog:
             self._tavily = AsyncTavilyClient(api_key=key, client_source="kinlin-ai")
         return self._tavily
 
-    async def _web_search(self, arguments: dict[str, Any], **_: Any) -> ToolPayload:
+    async def _web_search(
+        self,
+        arguments: dict[str, Any],
+        *,
+        provider: str | None = None,
+        **_: Any,
+    ) -> ToolPayload:
+        if _uses_glm_native_search(provider):
+            return await self._zhipu_web_search(arguments)
+        return await self._tavily_web_search(arguments)
+
+    async def _tavily_web_search(self, arguments: dict[str, Any]) -> ToolPayload:
         query = _validate_query(arguments.get("query", ""))
         requested = int(arguments.get("max_results", settings.TOOL_SEARCH_MAX_RESULTS) or 1)
         max_results = max(1, min(requested, settings.TOOL_SEARCH_MAX_RESULTS, 5))
@@ -156,6 +206,87 @@ class ReadOnlyToolCatalog:
         return ToolPayload(
             summary=f"Found {len(results)} web result(s) for the query.",
             data={"results": results},
+            sources=sources,
+        )
+
+    async def _zhipu_request(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        key = settings.GLM_API_KEY.strip()
+        if not key:
+            raise ToolUnavailableError("GLM native web search API key is not configured")
+        async with httpx.AsyncClient(timeout=max(0.1, float(settings.TOOL_TIMEOUT_SECONDS))) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("Zhipu native web service returned an invalid payload")
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise RuntimeError(str(error.get("message") or error.get("code") or "Zhipu web service failed"))
+        return body
+
+    async def _zhipu_web_search(self, arguments: dict[str, Any]) -> ToolPayload:
+        query = _validate_query(arguments.get("query", ""))
+        requested = int(arguments.get("max_results", settings.TOOL_SEARCH_MAX_RESULTS) or 1)
+        count = max(1, min(requested, settings.TOOL_SEARCH_MAX_RESULTS, 50))
+        engine = str(arguments.get("search_engine") or getattr(settings, "GLM_WEB_SEARCH_ENGINE", "search_std")).strip()
+        if engine not in {"search_std", "search_pro", "search_pro_sogou", "search_pro_quark"}:
+            engine = "search_std"
+        content_size = str(
+            arguments.get("content_size") or getattr(settings, "GLM_WEB_SEARCH_CONTENT_SIZE", "medium")
+        ).strip().lower()
+        if content_size not in {"low", "medium", "high"}:
+            content_size = "medium"
+        payload: dict[str, Any] = {
+            "search_query": query[:70],
+            "search_engine": engine,
+            "search_intent": False,
+            "count": count,
+            "search_recency_filter": getattr(settings, "GLM_WEB_SEARCH_RECENCY_FILTER", "noLimit"),
+            "content_size": content_size,
+            "request_id": f"kinlin-{uuid.uuid4().hex}",
+        }
+        domain = str(arguments.get("search_domain_filter") or "").strip()
+        if domain:
+            payload["search_domain_filter"] = domain[:200]
+        response = await self._zhipu_request(
+            getattr(settings, "GLM_WEB_SEARCH_URL", "https://open.bigmodel.cn/api/paas/v4/web_search"),
+            payload,
+        )
+        rows = [item for item in response.get("search_result", []) if isinstance(item, dict)]
+        sources: list[SourceReference] = []
+        results: list[dict[str, Any]] = []
+        for item in rows[:count]:
+            try:
+                url = _validate_public_url(str(item.get("link") or ""))
+            except ValueError:
+                continue
+            source = SourceReference(
+                citationId=_citation_id("zhipu-native", url),
+                title=_trim(item.get("title") or url, 240),
+                url=url,
+                snippet=_trim(item.get("content"), 600),
+                provider="zhipu-native-search",
+                retrievedAt=_now_iso(),
+            )
+            sources.append(source)
+            results.append({
+                "citationId": source.citation_id,
+                "title": source.title,
+                "url": source.url,
+                "snippet": source.snippet,
+                "media": _trim(item.get("media"), 120),
+                "publishDate": _trim(item.get("publish_date"), 80),
+            })
+        return ToolPayload(
+            summary=f"Found {len(results)} web result(s) via Zhipu native search.",
+            data={"results": results, "provider": "zhipu-native-search", "searchEngine": engine},
             sources=sources,
         )
 
@@ -212,7 +343,18 @@ class ReadOnlyToolCatalog:
             },
         )
 
-    async def _web_extract(self, arguments: dict[str, Any], **_: Any) -> ToolPayload:
+    async def _web_extract(
+        self,
+        arguments: dict[str, Any],
+        *,
+        provider: str | None = None,
+        **_: Any,
+    ) -> ToolPayload:
+        if _uses_glm_native_search(provider):
+            return await self._zhipu_web_extract(arguments)
+        return await self._tavily_web_extract(arguments)
+
+    async def _tavily_web_extract(self, arguments: dict[str, Any]) -> ToolPayload:
         raw_urls = arguments.get("urls") or []
         if isinstance(raw_urls, str):
             raw_urls = [raw_urls]
@@ -250,6 +392,53 @@ class ReadOnlyToolCatalog:
         return ToolPayload(
             summary=f"Extracted {len(results)} web page(s).",
             data={"results": results},
+            sources=sources,
+        )
+
+    async def _zhipu_web_extract(self, arguments: dict[str, Any]) -> ToolPayload:
+        raw_urls = arguments.get("urls") or []
+        if isinstance(raw_urls, str):
+            raw_urls = [raw_urls]
+        if not isinstance(raw_urls, list) or not raw_urls:
+            raise ValueError("urls must contain at least one URL")
+        urls = [
+            _validate_public_url(item)
+            for item in raw_urls[: settings.TOOL_EXTRACT_MAX_URLS]
+        ]
+        sources: list[SourceReference] = []
+        results: list[dict[str, Any]] = []
+        for url in urls:
+            response = await self._zhipu_request(
+                getattr(settings, "GLM_WEB_READER_URL", "https://open.bigmodel.cn/api/paas/v4/reader"),
+                {
+                    "url": url,
+                    "timeout": max(1, int(settings.TOOL_TIMEOUT_SECONDS)),
+                    "return_format": "markdown",
+                    "retain_images": False,
+                },
+            )
+            reader = response.get("reader_result")
+            if not isinstance(reader, dict):
+                continue
+            content = str(reader.get("content") or "")[:20000]
+            resolved_url = _validate_public_url(str(reader.get("url") or url))
+            source = SourceReference(
+                citationId=_citation_id("zhipu-native-reader", resolved_url),
+                title=_trim(reader.get("title") or resolved_url, 240),
+                url=resolved_url,
+                snippet=_trim(content, 600),
+                provider="zhipu-native-reader",
+                retrievedAt=_now_iso(),
+            )
+            sources.append(source)
+            results.append({
+                "citationId": source.citation_id,
+                "url": resolved_url,
+                "content": content,
+            })
+        return ToolPayload(
+            summary=f"Extracted {len(results)} web page(s) via Zhipu native reader.",
+            data={"results": results, "provider": "zhipu-native-reader"},
             sources=sources,
         )
 
