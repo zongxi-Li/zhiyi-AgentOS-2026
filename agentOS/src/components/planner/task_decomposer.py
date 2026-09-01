@@ -25,6 +25,17 @@ from .intent_analyzer import IntentLLM
 
 TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v6"
 
+# 规划期模型调用的传输层超时预算。重型 Mission 的分阶段 outline/detail 推理
+# 常超 2 分钟（provider 客户端默认 120s 读超时不足以覆盖），规划调用必须
+# 显式声明更大的每调用预算；该值随调用透传到 provider 连接层。
+PLANNING_MODEL_TIMEOUT_SECONDS = 480.0
+
+
+def _is_model_timeout(exc: Exception) -> bool:
+    """识别超时类异常（跨层不绑定具体错误类型，按稳定特征识别）。"""
+    text = f"{getattr(exc, 'code', '')} {exc}".lower()
+    return "timeout" in text or "timed out" in text
+
 _SCHEMA = {
     "type": "object",
     "properties": {
@@ -111,10 +122,36 @@ class TaskDecompositionError(ValueError):
 
 
 class TaskDecomposer:
-    def __init__(self, capability_catalog: CapabilityCatalog, llm: IntentLLM | None) -> None:
+    def __init__(
+        self,
+        capability_catalog: CapabilityCatalog,
+        llm: IntentLLM | None,
+        model_timeout_seconds: float | None = None,
+    ) -> None:
         self.capability_catalog = capability_catalog
         self.llm = llm
+        self.model_timeout_seconds = float(
+            model_timeout_seconds or PLANNING_MODEL_TIMEOUT_SECONDS
+        )
+        if self.model_timeout_seconds <= 0:
+            raise ValueError("model_timeout_seconds must be positive")
         self.last_audit: dict[str, Any] = {}
+
+    def _call_llm(self, *, stage: str, prompt: str, schema: dict, **kwargs) -> Any:
+        """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
+
+        瞬态读超时不应判死整条规划链（2026-09-01 run_1a25f0d4ad89 根因），
+        但也不得无限放大延迟：同一调用点最多两次尝试，持续超时按既有失败
+        路径上抛。
+        """
+        kwargs.setdefault("timeout_seconds", self.model_timeout_seconds)
+        try:
+            return self.llm.generate_json(prompt, schema, **kwargs)
+        except Exception as exc:
+            if not _is_model_timeout(exc):
+                raise
+            self.last_audit.setdefault("timeoutRetries", []).append(stage)
+            return self.llm.generate_json(prompt, schema, **kwargs)
 
     def decompose(
         self,
@@ -153,9 +190,10 @@ class TaskDecomposer:
                 )
             first: Any = None
             try:
-                first = self.llm.generate_json(
-                    prompt,
-                    _SCHEMA,
+                first = self._call_llm(
+                    stage="decompose",
+                    prompt=prompt,
+                    schema=_SCHEMA,
                     max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -182,14 +220,15 @@ class TaskDecomposer:
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
                     else:
                         invalid_plan = json.dumps(first, ensure_ascii=False, default=str)
-                        repaired = self.llm.generate_json(
-                            prompt
+                        repaired = self._call_llm(
+                            stage="repair",
+                            prompt=prompt
                             + "\nThe previous result failed TaskPlan schema or topology validation. "
                             + "Repair it once. Preserve valid task semantics, remove every reported "
                             + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
                             + f"Validation detail: {first_error}\n"
                             + f"Previous invalid TaskPlan JSON: {invalid_plan}",
-                            _SCHEMA,
+                            schema=_SCHEMA,
                             max_tokens=16_384,
                             reasoning_effort=reasoning_effort,
                             prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
@@ -259,9 +298,10 @@ class TaskDecomposer:
         }
         self.last_audit.update({"mode": "model_staged", "stages": []})
         try:
-            outline_result = self.llm.generate_json(
-                prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
-                outline_schema,
+            outline_result = self._call_llm(
+                stage="outline",
+                prompt=prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
+                schema=outline_schema,
                 max_tokens=16_384,
                 reasoning_effort=reasoning_effort,
                 prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
@@ -299,17 +339,19 @@ class TaskDecomposer:
                     f"Frozen outline batch: {json.dumps(batch, ensure_ascii=False)}"
                 )
                 try:
-                    detail_result = self.llm.generate_json(
-                        detail_prompt,
-                        detail_schema,
+                    detail_result = self._call_llm(
+                        stage="detail",
+                        prompt=detail_prompt,
+                        schema=detail_schema,
                         max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
                     )
                 except Exception as exc:
-                    detail_result = self.llm.generate_json(
-                        detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
-                        detail_schema,
+                    detail_result = self._call_llm(
+                        stage="detail.repair",
+                        prompt=detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
+                        schema=detail_schema,
                         max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
@@ -345,17 +387,19 @@ class TaskDecomposer:
                 f"Tasks: {json.dumps(compact, ensure_ascii=False)}"
             )
             try:
-                relation_result = self.llm.generate_json(
-                    relation_prompt,
-                    relation_schema,
+                relation_result = self._call_llm(
+                    stage="relations",
+                    prompt=relation_prompt,
+                    schema=relation_schema,
                     max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
                 )
             except Exception as exc:
-                relation_result = self.llm.generate_json(
-                    relation_prompt + f"\nRepair the relation unit once. Previous error: {exc}",
-                    relation_schema,
+                relation_result = self._call_llm(
+                    stage="relations.repair",
+                    prompt=relation_prompt + f"\nRepair the relation unit once. Previous error: {exc}",
+                    schema=relation_schema,
                     max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair1",
@@ -473,14 +517,15 @@ class TaskDecomposer:
         ]
         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
         self.last_audit["promptVersion"] = repair_version
-        assignment_result = self.llm.generate_json(
-            "Repair only the missing TaskPlan source-reference annotations. "
+        assignment_result = self._call_llm(
+            stage="repair_coverage",
+            prompt="Repair only the missing TaskPlan source-reference annotations. "
             "Do not create, delete, rename or rewrite tasks and do not change relations. "
             "Assign every missing sourceRef exactly once to the existing task whose objective "
             "and acceptance criteria will produce or verify that requirement. Return JSON only.\n"
             f"Missing source registry entries: {json.dumps(missing_registry, ensure_ascii=False)}\n"
             f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}",
-            schema,
+            schema=schema,
             max_tokens=16_384,
             reasoning_effort=reasoning_effort,
             prompt_version=repair_version,
@@ -1230,4 +1275,9 @@ class TaskDecomposer:
         )
 
 
-__all__ = ["TASK_DECOMPOSITION_PROMPT_VERSION", "TaskDecomposer", "TaskDecompositionError"]
+__all__ = [
+    "PLANNING_MODEL_TIMEOUT_SECONDS",
+    "TASK_DECOMPOSITION_PROMPT_VERSION",
+    "TaskDecomposer",
+    "TaskDecompositionError",
+]

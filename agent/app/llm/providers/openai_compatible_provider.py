@@ -30,6 +30,26 @@ class LLMProviderError(RuntimeError):
         self.metadata = dict(metadata or {})
 
 
+def _looks_like_timeout(exc: Exception) -> bool:
+    """超时类异常识别（含 SDK 包装前后的形态）。
+
+    openai.APITimeoutError 的消息是 "Request timed out."，httpx 是
+    "The read operation timed out"；为避免在模块顶层绑定 SDK 类型，
+    按稳定消息特征识别，``code`` 属性优先。
+    """
+    text = f"{getattr(exc, 'code', '')} {exc}".lower()
+    return "timeout" in text or "timed out" in text
+
+
+def _pop_timeout_budget(kwargs: Dict[str, Any]) -> float | None:
+    """取出调用方声明的传输层超时预算（不进入 SDK 请求体）。"""
+    try:
+        timeout_seconds = float(kwargs.pop("timeout_seconds"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return timeout_seconds if timeout_seconds > 0 else None
+
+
 class OpenAICompatibleProvider:
     provider_name = "openai-compatible"
 
@@ -68,6 +88,7 @@ class OpenAICompatibleProvider:
         )
 
     def generate_text(self, prompt: str, **kwargs) -> str:
+        timeout_budget = _pop_timeout_budget(kwargs)
         try:
             adapted = self._adapt_parameters(kwargs)
             completion = self._client.chat.completions.create(
@@ -77,12 +98,18 @@ class OpenAICompatibleProvider:
                     {"role": "user", "content": prompt},
                 ],
                 **adapted,
+                **({"timeout": timeout_budget} if timeout_budget else {}),
             )
             content = self._extract_raw_result(completion).content
             if not content:
                 raise LLMProviderError("OpenAI-compatible provider returned empty content")
             return content
         except Exception as exc:
+            if _looks_like_timeout(exc):
+                raise LLMProviderError(
+                    f"OpenAI-compatible text generation failed: {exc}",
+                    code="MODEL_TIMEOUT",
+                ) from exc
             raise LLMProviderError(f"OpenAI-compatible text generation failed: {exc}") from exc
 
     def generate_json(self, prompt: str, schema: Dict[str, Any], **kwargs) -> Dict[str, Any]:
@@ -95,7 +122,12 @@ class OpenAICompatibleProvider:
         ``maxOutputTokens`` 显式随请求发送——"未指定"不得再等价于供应商服务端
         默认额度（那会导致结构化 JSON 被静默截断）。解析出的预算以 ``outputBudget``
         元数据随结果/异常上浮，供审计层盖章 requested/effective/reason。
+
+        传输预算合同：调用方可显式声明 ``timeout_seconds`` 每调用超时（规划/执行
+        档位守护据此下探到连接层）；未声明时保持客户端默认。超时类异常一律以
+        ``MODEL_TIMEOUT`` 码上浮（可重试语义），并携带实际生效预算供审计对账。
         """
+        timeout_budget = _pop_timeout_budget(kwargs)
         capabilities = provider_model_capabilities(self.model, self.base_url)
         budget_field = getattr(capabilities, "max_tokens_field", None) or "max_tokens"
         requested_budget = kwargs.get("max_tokens")
@@ -127,6 +159,7 @@ class OpenAICompatibleProvider:
                     {"role": "user", "content": prompt},
                 ],
                 **adapted,
+                **({"timeout": timeout_budget} if timeout_budget else {}),
             )
             raw = self._extract_raw_result(completion)
             finish_reason = str(raw.raw_response_metadata.get("finish_reason") or "") or None
@@ -170,6 +203,15 @@ class OpenAICompatibleProvider:
         except LLMProviderError:
             raise
         except Exception as exc:
+            if _looks_like_timeout(exc):
+                raise LLMProviderError(
+                    f"OpenAI-compatible JSON generation failed: {exc}",
+                    code="MODEL_TIMEOUT",
+                    metadata={
+                        "outputBudget": output_budget,
+                        **({"timeoutSeconds": timeout_budget} if timeout_budget else {}),
+                    },
+                ) from exc
             raise LLMProviderError(f"OpenAI-compatible JSON generation failed: {exc}") from exc
 
     def _adapt_parameters(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:

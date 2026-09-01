@@ -137,3 +137,45 @@ def test_structured_runtime_propagates_stable_commit_id(monkeypatch):
     )
 
     assert gateway.kwargs[0]["commit_id"] == "commit:run:step:0"
+
+
+def test_structured_runtime_forwards_timeout_budget_to_gateway(monkeypatch):
+    """档位守护预算必须下探到 provider 层：内层留 5 秒余量先于守护触发。
+
+    历史缺陷：native 侧已给执行节点 300/600s 守护，但 gateway/provider 层
+    仍是构造期固定 120s 读超时——外层守护从未真正生效。
+    """
+    gateway = _Gateway()
+    monkeypatch.setattr(
+        "app.execution.model_runtime.get_llm_gateway", lambda: gateway
+    )
+    runtime = GatewayStructuredGenerationRuntime(max_concurrency=1)
+
+    asyncio.run(
+        runtime.generate_json(
+            prompt="task",
+            schema={"type": "object", "required": ["answer"]},
+            timeout_seconds=300,
+        )
+    )
+
+    assert gateway.kwargs[0]["timeout_seconds"] == 295.0
+
+
+def test_structured_runtime_timeout_budget_has_positive_floor(monkeypatch):
+    """极小守护预算下内层不得低于 1 秒，避免非法超时值。"""
+    gateway = _Gateway()
+    monkeypatch.setattr(
+        "app.execution.model_runtime.get_llm_gateway", lambda: gateway
+    )
+    runtime = GatewayStructuredGenerationRuntime(max_concurrency=1)
+
+    asyncio.run(
+        runtime.generate_json(
+            prompt="task",
+            schema={"type": "object", "required": ["answer"]},
+            timeout_seconds=3,
+        )
+    )
+
+    assert gateway.kwargs[0]["timeout_seconds"] == 1.0

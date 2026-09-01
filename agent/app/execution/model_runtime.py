@@ -99,6 +99,11 @@ class GatewayStructuredGenerationRuntime:
             kwargs: Dict[str, Any] = {
                 "thinking_mode": thinking_mode,
                 "commit_id": commit_id,
+                # 档位守护预算必须下探到 provider 连接层，否则客户端构造期
+                # 固定的读超时会先掐线，外层守护形同虚设。留 5 秒余量让
+                # provider 侧以干净的 MODEL_TIMEOUT 先触发，保住在途调用的
+                # 用量对账，而不是被 wait_for 取消后照常计费。
+                "timeout_seconds": max(1.0, float(timeout_seconds) - 5.0),
             }
             if reasoning_effort is not None:
                 kwargs["reasoning_effort"] = reasoning_effort
