@@ -77,5 +77,22 @@ PLANNING_BUDGETS = {
     ComplexityLevel.EXTREME: (20, 40),
 }
 
+# 规划期模型调用的传输层超时预算。重型 Mission 的意图解析/分阶段 outline 推理
+# 常超 2 分钟（provider 客户端默认 120s 读超时不足以覆盖），规划调用必须
+# 显式声明更大的每调用预算；该值随调用透传到 provider 连接层。
+PLANNING_MODEL_TIMEOUT_SECONDS = 480.0
 
-__all__ = ["DIMENSIONS", "PLANNING_BUDGETS", "assess_complexity"]
+
+def is_model_timeout(exc: Exception) -> bool:
+    """识别超时类异常（跨层不绑定具体错误类型，按稳定特征识别）。"""
+    text = f"{getattr(exc, 'code', '')} {exc}".lower()
+    return "timeout" in text or "timed out" in text
+
+
+__all__ = [
+    "DIMENSIONS",
+    "PLANNING_BUDGETS",
+    "PLANNING_MODEL_TIMEOUT_SECONDS",
+    "assess_complexity",
+    "is_model_timeout",
+]

@@ -19,22 +19,11 @@ from contracts.planning import (
 )
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
 
-from .complexity import PLANNING_BUDGETS
+from .complexity import PLANNING_BUDGETS, PLANNING_MODEL_TIMEOUT_SECONDS, is_model_timeout
 from .intent_analyzer import IntentLLM
 
 
 TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v6"
-
-# 规划期模型调用的传输层超时预算。重型 Mission 的分阶段 outline/detail 推理
-# 常超 2 分钟（provider 客户端默认 120s 读超时不足以覆盖），规划调用必须
-# 显式声明更大的每调用预算；该值随调用透传到 provider 连接层。
-PLANNING_MODEL_TIMEOUT_SECONDS = 480.0
-
-
-def _is_model_timeout(exc: Exception) -> bool:
-    """识别超时类异常（跨层不绑定具体错误类型，按稳定特征识别）。"""
-    text = f"{getattr(exc, 'code', '')} {exc}".lower()
-    return "timeout" in text or "timed out" in text
 
 _SCHEMA = {
     "type": "object",
@@ -148,7 +137,7 @@ class TaskDecomposer:
         try:
             return self.llm.generate_json(prompt, schema, **kwargs)
         except Exception as exc:
-            if not _is_model_timeout(exc):
+            if not is_model_timeout(exc):
                 raise
             self.last_audit.setdefault("timeoutRetries", []).append(stage)
             return self.llm.generate_json(prompt, schema, **kwargs)

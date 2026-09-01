@@ -13,7 +13,11 @@ from support.acg.models import (
 )
 from support.acg.models import build_default_capability_catalog
 from support.acg.models import CapabilityCandidate, TaskSemanticProfile
-from .complexity import assess_complexity
+from .complexity import (
+    PLANNING_MODEL_TIMEOUT_SECONDS,
+    assess_complexity,
+    is_model_timeout,
+)
 
 
 INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v2"
@@ -57,10 +61,31 @@ class IntentParser:
         self,
         llm: Optional[IntentLLM] = None,
         capability_catalog: CapabilityCatalog | None = None,
+        model_timeout_seconds: float | None = None,
     ) -> None:
         self.llm = llm
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
+        self.model_timeout_seconds = float(
+            model_timeout_seconds or PLANNING_MODEL_TIMEOUT_SECONDS
+        )
+        if self.model_timeout_seconds <= 0:
+            raise ValueError("model_timeout_seconds must be positive")
         self.last_audit: dict[str, Any] = {}
+
+    def _call_llm(self, *, stage: str, prompt: str, schema: dict, **kwargs) -> Any:
+        """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
+
+        与分解器同合同（2026-09-01 run_5c100bb2ec7a：意图解析裸走 120s 默认
+        超时，修复通道两连超时判死整个 Run）。同一调用点最多两次尝试。
+        """
+        kwargs.setdefault("timeout_seconds", self.model_timeout_seconds)
+        try:
+            return self.llm.generate_json(prompt, schema, **kwargs)
+        except Exception as exc:
+            if not is_model_timeout(exc):
+                raise
+            self.last_audit.setdefault("timeoutRetries", []).append(stage)
+            return self.llm.generate_json(prompt, schema, **kwargs)
 
     def parse(
         self,
@@ -130,10 +155,11 @@ class IntentParser:
         repair_error: str | None = None,
         declared_capabilities: list[str] | tuple[str, ...] | None = None,
     ) -> TaskSemanticProfile:
-        result = self.llm.generate_json(
-            self.build_prompt(intent=intent, domain=domain, task_type=task_type, task_input=task_input)
+        result = self._call_llm(
+            stage="intent_profile",
+            prompt=self.build_prompt(intent=intent, domain=domain, task_type=task_type, task_input=task_input)
             + (f"\nRepair the previous contract error once: {repair_error}" if repair_error else ""),
-            _PROFILE_SCHEMA,
+            schema=_PROFILE_SCHEMA,
             thinking_mode=thinking_mode,
             reasoning_effort=reasoning_effort,
             prompt_version=prompt_version,
