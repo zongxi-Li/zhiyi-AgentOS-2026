@@ -34,10 +34,12 @@ describe('LandingView', () => {
   it('presents the refined product message and capability cards', async () => {
     const { wrapper } = await mountLanding()
 
-    expect(wrapper.text()).toContain('让智能体，成为复杂工作的协作者')
+    expect(wrapper.text()).toContain('让智能体成为协作者')
     expect(wrapper.findAll('.capability-card')).toHaveLength(4)
     expect(wrapper.findAll('.landing-info-card')).toHaveLength(5)
-    expect(wrapper.text()).toContain('理解与规划')
-    expect(wrapper.text()).toContain('连接模型、知识与智能体')
+    expect(wrapper.find('[data-testid="landing-scroll-hint"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('从目标，到结果')
+    expect(wrapper.text()).toContain('模型、知识、工具')
+    expect(wrapper.text()).not.toContain('从理解任务、动态规划到结果复核')
   })
 })

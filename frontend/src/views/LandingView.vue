@@ -1,5 +1,5 @@
 <template>
-  <main class="landing-view">
+  <main ref="landingRoot" class="landing-view" @wheel="handleWheel">
     <header class="landing-header">
       <a class="landing-brand" href="/" aria-label="知弈 AgentOS 首页">
         <span class="landing-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
@@ -15,10 +15,10 @@
 
     <section id="home" class="landing-hero" aria-labelledby="landing-title">
       <div class="landing-hero__copy">
-        <p class="landing-eyebrow">A WORKSPACE FOR COLLECTIVE INTELLIGENCE</p>
+        <p class="landing-eyebrow">COLLECTIVE INTELLIGENCE</p>
         <h1 id="landing-title">知弈 <span>AgentOS</span></h1>
-        <h2>让智能体，成为复杂工作的协作者</h2>
-        <p class="landing-lead">从理解任务、动态规划到协同执行与结果复核，构建一条清晰、可追踪的智能工作链。</p>
+        <h2>让智能体成为协作者</h2>
+        <p class="landing-lead">理解、规划、执行，一条智能工作链。</p>
 
         <div class="landing-capabilities" aria-label="产品能力">
           <article v-for="capability in capabilities" :key="capability.title" class="capability-card">
@@ -30,7 +30,6 @@
             </div>
             <strong>{{ capability.title }}</strong>
             <small>{{ capability.subtitle }}</small>
-            <p>{{ capability.detail }}</p>
           </article>
         </div>
 
@@ -60,12 +59,17 @@
         <span><b>Dynamic Planning</b><small>动态规划 · online</small></span>
         <i class="landing-orbit-label__signal"></i>
       </div>
+      <div class="landing-scroll-hint" data-testid="landing-scroll-hint" aria-hidden="true">
+        <span class="landing-scroll-hint__line"></span>
+        <span>SCROLL TO EXPLORE</span>
+        <el-icon><ArrowDown /></el-icon>
+      </div>
     </section>
 
     <section id="features" class="landing-section" aria-labelledby="features-title">
-      <p class="landing-eyebrow">ONE OPERATING SYSTEM, MANY POSSIBILITIES</p>
-      <h2 id="features-title">把每一个复杂任务，变成可协作的执行网络</h2>
-      <p class="landing-section__intro">从任务理解、动态规划到结果复核，知弈 AgentOS 让专业能力以清晰、可追踪的方式协同工作。</p>
+      <p class="landing-eyebrow">HOW IT WORKS</p>
+      <h2 id="features-title">从目标，到结果</h2>
+      <p class="landing-section__intro">把复杂任务交给一组会协作的智能体。</p>
       <div class="landing-info-grid landing-info-grid--three">
         <article v-for="item in workflowFeatures" :key="item.title" class="landing-info-card">
           <span class="landing-info-card__index">{{ item.index }}</span>
@@ -79,7 +83,7 @@
     <section id="ecosystem" class="landing-section" aria-labelledby="ecosystem-title">
       <p class="landing-eyebrow">CONNECTED ECOSYSTEM</p>
       <h2 id="ecosystem-title">连接模型、知识与智能体</h2>
-      <p class="landing-section__intro">统一管理模型与资源，让不同能力在同一工作流中被发现、调用和持续优化。</p>
+      <p class="landing-section__intro">模型、知识、工具，需要什么就调用什么。</p>
       <div class="landing-info-grid landing-info-grid--two">
         <article v-for="item in ecosystemFeatures" :key="item.title" class="landing-info-card">
           <span class="landing-info-card__index">{{ item.index }}</span>
@@ -93,7 +97,7 @@
     <section id="about" class="landing-section landing-section--last" aria-labelledby="about-title">
       <p class="landing-eyebrow">ABOUT ZHIYI</p>
       <h2 id="about-title">让智能真正参与工作</h2>
-      <p class="landing-section__intro">知弈 AgentOS 面向真实业务场景，关注协作效率、过程透明度与专业结果质量。</p>
+      <p class="landing-section__intro">清晰、协作、可交付。</p>
       <div class="about-ribbon" aria-label="知弈 AgentOS 产品原则">
         <span><b>可理解</b><small>每一步都有上下文</small></span>
         <span><b>可协作</b><small>每个角色都有边界</small></span>
@@ -106,10 +110,11 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { Connection, Cpu, MagicStick, Operation, ArrowRight } from '@element-plus/icons-vue'
+import { ArrowDown, Connection, Cpu, MagicStick, Operation, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
+const landingRoot = ref<HTMLElement | null>(null)
 const activeSection = ref('home')
 const navigation = [
   { id: 'home', label: '首页' },
@@ -119,21 +124,21 @@ const navigation = [
 ]
 
 const capabilities = [
-  { index: '01', title: '多智能体协作', subtitle: 'Multi-Agent', detail: '让不同角色围绕同一目标协同推进。', icon: Connection },
-  { index: '02', title: '动态任务规划', subtitle: 'Dynamic Planning', detail: '根据上下文拆解任务并持续调整路径。', icon: ArrowRight },
-  { index: '03', title: '异构资源调度', subtitle: 'Heterogeneous', detail: '让模型、知识与工具在需要时被调用。', icon: Cpu },
-  { index: '04', title: '自进化学习', subtitle: 'Self-Evolution', detail: '沉淀过程经验，让下一次协作更顺畅。', icon: MagicStick }
+  { index: '01', title: '多智能体协作', subtitle: 'Multi-Agent', icon: Connection },
+  { index: '02', title: '动态任务规划', subtitle: 'Dynamic Planning', icon: ArrowRight },
+  { index: '03', title: '异构资源调度', subtitle: 'Heterogeneous', icon: Cpu },
+  { index: '04', title: '自进化学习', subtitle: 'Self-Evolution', icon: MagicStick }
 ]
 
 const workflowFeatures = [
-  { index: '01 / UNDERSTAND', title: '理解与规划', description: '把目标、约束与上下文组织成清晰的任务结构。', meta: 'Context → Plan' },
-  { index: '02 / COLLABORATE', title: '协作与执行', description: '让不同智能体在明确分工下并行工作、互相补位。', meta: 'Roles → Actions' },
-  { index: '03 / DELIVER', title: '复核与交付', description: '保留过程证据与结果依据，让专业输出更值得信任。', meta: 'Evidence → Outcome' }
+  { index: '01 / UNDERSTAND', title: '理解与规划', description: '拆解目标，建立任务路径。', meta: 'Context → Plan' },
+  { index: '02 / COLLABORATE', title: '协作与执行', description: '明确分工，并行推进。', meta: 'Roles → Actions' },
+  { index: '03 / DELIVER', title: '复核与交付', description: '保留依据，交付结果。', meta: 'Evidence → Outcome' }
 ]
 
 const ecosystemFeatures = [
-  { index: 'MODEL LAYER', title: '模型与资源', description: '集中管理可用模型、工具与智能体能力，按任务需要组合调用。', meta: 'One workspace for every capability' },
-  { index: 'KNOWLEDGE LAYER', title: '知识与工作流', description: '把知识、规则和历史经验放进可持续演进的工作流中。', meta: 'From knowledge to action' }
+  { index: 'MODEL LAYER', title: '模型与资源', description: '统一管理模型与工具。', meta: 'Every capability, one place' },
+  { index: 'KNOWLEDGE LAYER', title: '知识与工作流', description: '让知识进入真实工作流。', meta: 'Knowledge → Action' }
 ]
 
 let sectionObserver: IntersectionObserver | null = null
@@ -152,6 +157,31 @@ onMounted(() => {
 
 onUnmounted(() => sectionObserver?.disconnect())
 
+let wheelLocked = false
+let wheelUnlockTimer: number | undefined
+
+const handleWheel = (event: WheelEvent) => {
+  const root = landingRoot.value
+  if (!root || Math.abs(event.deltaY) < 8) return
+  const currentIndex = navigation.findIndex(item => item.id === activeSection.value)
+  const nextIndex = currentIndex + (event.deltaY > 0 ? 1 : -1)
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= navigation.length) return
+  event.preventDefault()
+  if (wheelLocked) return
+  const target = document.getElementById(navigation[nextIndex].id)
+  if (!target) return
+  wheelLocked = true
+  activeSection.value = navigation[nextIndex].id
+  root.scrollTo({
+    top: target.offsetTop,
+    behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  })
+  window.clearTimeout(wheelUnlockTimer)
+  wheelUnlockTimer = window.setTimeout(() => { wheelLocked = false }, 680)
+}
+
+onUnmounted(() => window.clearTimeout(wheelUnlockTimer))
+
 const goToLogin = () => router.push('/login')
 </script>
 
@@ -166,8 +196,14 @@ const goToLogin = () => router.push('/login')
   overflow-x: hidden;
   overflow-y: auto;
   color: var(--ink);
-  background: #d9eaff url('/bg.jpeg') center top / cover fixed no-repeat;
+  background: #d9eaff;
+  background-image: url('/bg.jpeg');
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: auto 100vh;
+  background-attachment: fixed;
   scroll-behavior: smooth;
+  scroll-snap-type: y mandatory;
 }
 
 .landing-view::before {
@@ -182,6 +218,7 @@ const goToLogin = () => router.push('/login')
 .landing-header,
 .landing-hero,
 .landing-section { position: relative; z-index: 1; }
+.landing-hero, .landing-section { scroll-snap-align: start; scroll-snap-stop: always; }
 
 .landing-header {
   width: min(100% - 96px, 1920px);
@@ -257,7 +294,7 @@ const goToLogin = () => router.push('/login')
 .landing-hero h1 { margin: 0; color: var(--ink); font-size: clamp(54px, 5vw, 86px); font-weight: 520; line-height: .98; letter-spacing: -.065em; }
 .landing-hero h1 span { font-weight: 450; }
 .landing-hero h2 { margin: 23px 0 0; color: #183665; font-size: clamp(26px, 2.2vw, 39px); font-weight: 520; letter-spacing: -.04em; }
-.landing-lead { margin: 24px 0 0; color: #6e88b0; font-size: 16px; line-height: 1.7; }
+.landing-lead { margin: 24px 0 0; color: #5e7da9; font-size: 16px; line-height: 1.7; }
 
 .landing-capabilities { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 40px; }
 .capability-card { min-width: 0; min-height: 150px; padding: 14px 13px 13px; box-sizing: border-box; border: 1px solid rgba(255,255,255,.62); border-radius: 15px; background: rgba(255,255,255,.25); box-shadow: 0 10px 24px rgba(80,128,198,.06), inset 0 1px 0 rgba(255,255,255,.6); backdrop-filter: blur(10px); transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
@@ -265,10 +302,9 @@ const goToLogin = () => router.push('/login')
 .capability-card__top { display: flex; align-items: center; justify-content: space-between; }
 .capability-card__index { color: #7d9ac2; font-size: 9px; font-weight: 750; letter-spacing: .13em; }
 .capability-card__icon { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid rgba(78,160,241,.18); border-radius: 9px; color: var(--blue); background: rgba(228,246,255,.72); font-size: 18px; }
-.capability-card strong, .capability-card small, .capability-card p { display: block; }
+.capability-card strong, .capability-card small { display: block; }
 .capability-card strong { margin-top: 16px; color: #183866; font-size: 12px; font-weight: 750; white-space: nowrap; }
 .capability-card small { margin-top: 4px; color: #7190bb; font-size: 9px; letter-spacing: .04em; }
-.capability-card p { margin: 10px 0 0; color: #6684ac; font-size: 10px; line-height: 1.55; }
 
 .landing-cta { min-height: 52px; margin-top: 48px; padding: 0 28px; display: inline-flex; align-items: center; gap: 20px; border: 0; border-radius: 999px; color: white; background: linear-gradient(105deg, #28a9f3, #6352f5); box-shadow: 0 15px 28px rgba(70, 116, 239, .28), inset 0 1px 0 rgba(255,255,255,.65); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform 180ms ease, box-shadow 180ms ease; }
 .landing-cta:hover { transform: translateY(-2px); box-shadow: 0 18px 34px rgba(70, 116, 239, .36), inset 0 1px 0 rgba(255,255,255,.65); }
@@ -285,6 +321,10 @@ const goToLogin = () => router.push('/login')
 .landing-orbit-label--right { top: 14%; right: 4%; transform: rotate(5deg); }
 .landing-orbit-label--bottom { right: 14%; bottom: 18%; transform: rotate(3deg); }
 .landing-orbit-label--left-bottom { bottom: 23%; left: 40%; transform: rotate(-3deg); }
+.landing-scroll-hint { position: absolute; bottom: 7%; left: 2%; display: flex; align-items: center; gap: 9px; color: #6f8cae; font-size: 9px; font-weight: 700; letter-spacing: .2em; }
+.landing-scroll-hint__line { width: 1px; height: 31px; background: linear-gradient(180deg, var(--blue), transparent); }
+.landing-scroll-hint .el-icon { color: var(--blue); font-size: 14px; animation: landing-scroll-pulse 1.8s ease-in-out infinite; }
+@keyframes landing-scroll-pulse { 0%, 100% { opacity: .45; transform: translateY(-2px); } 50% { opacity: 1; transform: translateY(3px); } }
 
 .landing-section { width: min(1100px, calc(100% - 48px)); margin: 0 auto; padding: 100px 0 120px; text-align: center; }
 .landing-section h2 { margin: 0; color: var(--ink); font-size: clamp(28px, 4vw, 52px); font-weight: 520; letter-spacing: -.05em; }
@@ -308,6 +348,10 @@ const goToLogin = () => router.push('/login')
 .landing-cta--small { margin-top: 36px; }
 
 .landing-brand:focus-visible, .landing-nav a:focus-visible, .landing-cta:focus-visible { outline: 3px solid rgba(36, 143, 240, .5); outline-offset: 4px; }
+
+.landing-view::-webkit-scrollbar { width: 8px; }
+.landing-view::-webkit-scrollbar-track { background: rgba(255,255,255,.18); }
+.landing-view::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 99px; background: rgba(79,128,199,.36); background-clip: padding-box; }
 
 @media (max-width: 900px) {
   .landing-header, .landing-hero { width: min(100% - 48px, 720px); }
@@ -334,6 +378,7 @@ const goToLogin = () => router.push('/login')
 
 @media (prefers-reduced-motion: reduce) {
   .landing-view { scroll-behavior: auto; }
-  .landing-nav a, .landing-nav a::after, .landing-cta { transition: none; }
+  .landing-nav a, .landing-nav a::after, .landing-cta, .capability-card, .landing-info-card { transition: none; }
+  .landing-scroll-hint .el-icon { animation: none; }
 }
 </style>

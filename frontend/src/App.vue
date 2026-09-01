@@ -395,7 +395,7 @@
 
             <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable, 'public-main': isPublicRoute }">
               <router-view v-slot="{ Component }">
-                <transition name="fade">
+                <transition :name="isPublicRoute ? 'public-fade' : 'fade'" mode="out-in">
                   <component :is="Component" :key="route.path" />
                 </transition>
               </router-view>
@@ -2161,6 +2161,28 @@ onUnmounted(() => {
 .fade-leave-to {
   opacity: 0;
   transform: translateY(4px);
+}
+
+.public-fade-enter-active,
+.public-fade-leave-active {
+  transition: opacity 280ms ease, transform 320ms cubic-bezier(.22, .8, .24, 1);
+}
+
+.public-fade-enter-from {
+  opacity: 0;
+  transform: translateY(14px) scale(.985);
+}
+
+.public-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-10px) scale(1.01);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-fade-enter-active,
+  .public-fade-leave-active {
+    transition: none;
+  }
 }
 
 /* Immersive Mode Overrides */
