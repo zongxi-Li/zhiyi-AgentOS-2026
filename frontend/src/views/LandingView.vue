@@ -7,10 +7,7 @@
       </a>
 
       <nav class="landing-nav" aria-label="主导航">
-        <a class="is-active" href="#home">首页</a>
-        <a href="#features">功能</a>
-        <a href="#ecosystem">生态</a>
-        <a href="#about">关于</a>
+        <a v-for="item in navigation" :key="item.id" :class="{ 'is-active': activeSection === item.id }" :href="`#${item.id}`" @click="activeSection = item.id">{{ item.label }}</a>
       </nav>
 
       <span class="landing-header__note">More Agents <i aria-hidden="true">·</i> More Possibilities</span>
@@ -18,20 +15,22 @@
 
     <section id="home" class="landing-hero" aria-labelledby="landing-title">
       <div class="landing-hero__copy">
-        <p class="landing-eyebrow">DYNAMIC HETEROGENEOUS AGENT SWARM</p>
+        <p class="landing-eyebrow">A WORKSPACE FOR COLLECTIVE INTELLIGENCE</p>
         <h1 id="landing-title">知弈 <span>AgentOS</span></h1>
-        <h2>动态异构群体智能操作系统</h2>
-        <p class="landing-lead">让智能体协作更简单，让复杂问题有更好的解。</p>
+        <h2>让智能体，成为复杂工作的协作者</h2>
+        <p class="landing-lead">从理解任务、动态规划到协同执行与结果复核，构建一条清晰、可追踪的智能工作链。</p>
 
         <div class="landing-capabilities" aria-label="产品能力">
-          <article v-for="capability in capabilities" :key="capability.title" class="capability-item">
-            <span class="capability-item__icon" aria-hidden="true">
+          <article v-for="capability in capabilities" :key="capability.title" class="capability-card">
+            <div class="capability-card__top">
+              <span class="capability-card__index">{{ capability.index }}</span>
+              <span class="capability-card__icon" aria-hidden="true">
               <el-icon><component :is="capability.icon" /></el-icon>
-            </span>
-            <span>
-              <strong>{{ capability.title }}</strong>
-              <small>{{ capability.subtitle }}</small>
-            </span>
+              </span>
+            </div>
+            <strong>{{ capability.title }}</strong>
+            <small>{{ capability.subtitle }}</small>
+            <p>{{ capability.detail }}</p>
           </article>
         </div>
 
@@ -43,51 +42,115 @@
 
       <div class="landing-orbit-label landing-orbit-label--top" aria-hidden="true">
         <span class="landing-orbit-label__icon"><el-icon><Connection /></el-icon></span>
-        <span><b>Multi-Agent</b><small>Collaborative Intelligence</small></span>
+        <span><b>Multi-Agent</b><small>协同智能体 · 06 active</small></span>
+        <i class="landing-orbit-label__signal"></i>
       </div>
       <div class="landing-orbit-label landing-orbit-label--right" aria-hidden="true">
         <span class="landing-orbit-label__icon"><el-icon><Cpu /></el-icon></span>
-        <span><b>Heterogeneous</b><small>Resource Orchestration</small></span>
+        <span><b>Heterogeneous</b><small>异构资源 · ready</small></span>
+        <i class="landing-orbit-label__signal"></i>
       </div>
       <div class="landing-orbit-label landing-orbit-label--bottom" aria-hidden="true">
         <span class="landing-orbit-label__icon"><el-icon><MagicStick /></el-icon></span>
-        <span><b>Self-Evolution</b><small>Continuous Learning</small></span>
+        <span><b>Self-Evolution</b><small>持续学习 · improving</small></span>
+        <i class="landing-orbit-label__signal"></i>
+      </div>
+      <div class="landing-orbit-label landing-orbit-label--left-bottom" aria-hidden="true">
+        <span class="landing-orbit-label__icon"><el-icon><Operation /></el-icon></span>
+        <span><b>Dynamic Planning</b><small>动态规划 · online</small></span>
+        <i class="landing-orbit-label__signal"></i>
       </div>
     </section>
 
     <section id="features" class="landing-section" aria-labelledby="features-title">
       <p class="landing-eyebrow">ONE OPERATING SYSTEM, MANY POSSIBILITIES</p>
       <h2 id="features-title">把每一个复杂任务，变成可协作的执行网络</h2>
-      <p>从任务理解、动态规划到结果复核，知弈 AgentOS 让专业能力以清晰、可追踪的方式协同工作。</p>
+      <p class="landing-section__intro">从任务理解、动态规划到结果复核，知弈 AgentOS 让专业能力以清晰、可追踪的方式协同工作。</p>
+      <div class="landing-info-grid landing-info-grid--three">
+        <article v-for="item in workflowFeatures" :key="item.title" class="landing-info-card">
+          <span class="landing-info-card__index">{{ item.index }}</span>
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.description }}</p>
+          <span class="landing-info-card__meta">{{ item.meta }}</span>
+        </article>
+      </div>
     </section>
 
     <section id="ecosystem" class="landing-section" aria-labelledby="ecosystem-title">
       <p class="landing-eyebrow">CONNECTED ECOSYSTEM</p>
       <h2 id="ecosystem-title">连接模型、知识与智能体</h2>
-      <p>统一管理模型与资源，让不同能力在同一工作流中被发现、调用和持续优化。</p>
+      <p class="landing-section__intro">统一管理模型与资源，让不同能力在同一工作流中被发现、调用和持续优化。</p>
+      <div class="landing-info-grid landing-info-grid--two">
+        <article v-for="item in ecosystemFeatures" :key="item.title" class="landing-info-card">
+          <span class="landing-info-card__index">{{ item.index }}</span>
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.description }}</p>
+          <span class="landing-info-card__meta">{{ item.meta }}</span>
+        </article>
+      </div>
     </section>
 
     <section id="about" class="landing-section landing-section--last" aria-labelledby="about-title">
       <p class="landing-eyebrow">ABOUT ZHIYI</p>
       <h2 id="about-title">让智能真正参与工作</h2>
-      <p>知弈 AgentOS 面向真实业务场景，关注协作效率、过程透明度与专业结果质量。</p>
+      <p class="landing-section__intro">知弈 AgentOS 面向真实业务场景，关注协作效率、过程透明度与专业结果质量。</p>
+      <div class="about-ribbon" aria-label="知弈 AgentOS 产品原则">
+        <span><b>可理解</b><small>每一步都有上下文</small></span>
+        <span><b>可协作</b><small>每个角色都有边界</small></span>
+        <span><b>可交付</b><small>每个结果都可追踪</small></span>
+      </div>
       <button class="landing-cta landing-cta--small" type="button" @click="goToLogin">立即进入</button>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { Connection, Cpu, MagicStick, ArrowRight } from '@element-plus/icons-vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { Connection, Cpu, MagicStick, Operation, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
+const activeSection = ref('home')
+const navigation = [
+  { id: 'home', label: '首页' },
+  { id: 'features', label: '功能' },
+  { id: 'ecosystem', label: '生态' },
+  { id: 'about', label: '关于' }
+]
 
 const capabilities = [
-  { title: '多智能体协作', subtitle: 'Multi-Agent', icon: Connection },
-  { title: '动态任务规划', subtitle: 'Dynamic Planning', icon: ArrowRight },
-  { title: '异构资源调度', subtitle: 'Heterogeneous', icon: Cpu },
-  { title: '自进化学习', subtitle: 'Self-Evolution', icon: MagicStick }
+  { index: '01', title: '多智能体协作', subtitle: 'Multi-Agent', detail: '让不同角色围绕同一目标协同推进。', icon: Connection },
+  { index: '02', title: '动态任务规划', subtitle: 'Dynamic Planning', detail: '根据上下文拆解任务并持续调整路径。', icon: ArrowRight },
+  { index: '03', title: '异构资源调度', subtitle: 'Heterogeneous', detail: '让模型、知识与工具在需要时被调用。', icon: Cpu },
+  { index: '04', title: '自进化学习', subtitle: 'Self-Evolution', detail: '沉淀过程经验，让下一次协作更顺畅。', icon: MagicStick }
 ]
+
+const workflowFeatures = [
+  { index: '01 / UNDERSTAND', title: '理解与规划', description: '把目标、约束与上下文组织成清晰的任务结构。', meta: 'Context → Plan' },
+  { index: '02 / COLLABORATE', title: '协作与执行', description: '让不同智能体在明确分工下并行工作、互相补位。', meta: 'Roles → Actions' },
+  { index: '03 / DELIVER', title: '复核与交付', description: '保留过程证据与结果依据，让专业输出更值得信任。', meta: 'Evidence → Outcome' }
+]
+
+const ecosystemFeatures = [
+  { index: 'MODEL LAYER', title: '模型与资源', description: '集中管理可用模型、工具与智能体能力，按任务需要组合调用。', meta: 'One workspace for every capability' },
+  { index: 'KNOWLEDGE LAYER', title: '知识与工作流', description: '把知识、规则和历史经验放进可持续演进的工作流中。', meta: 'From knowledge to action' }
+]
+
+let sectionObserver: IntersectionObserver | null = null
+
+onMounted(() => {
+  if (typeof IntersectionObserver === 'undefined') return
+  sectionObserver = new IntersectionObserver((entries) => {
+    const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
+    if (visible) activeSection.value = visible.target.id
+  }, { rootMargin: '-24% 0px -58% 0px', threshold: [0.1, 0.35, 0.6] })
+  navigation.forEach(item => {
+    const section = document.getElementById(item.id)
+    if (section) sectionObserver?.observe(section)
+  })
+})
+
+onUnmounted(() => sectionObserver?.disconnect())
 
 const goToLogin = () => router.push('/login')
 </script>
@@ -100,7 +163,8 @@ const goToLogin = () => router.push('/login')
   --purple: #6655f4;
   min-height: 100vh;
   min-height: 100dvh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   color: var(--ink);
   background: #d9eaff url('/bg.jpeg') center top / cover fixed no-repeat;
   scroll-behavior: smooth;
@@ -195,30 +259,51 @@ const goToLogin = () => router.push('/login')
 .landing-hero h2 { margin: 23px 0 0; color: #183665; font-size: clamp(26px, 2.2vw, 39px); font-weight: 520; letter-spacing: -.04em; }
 .landing-lead { margin: 24px 0 0; color: #6e88b0; font-size: 16px; line-height: 1.7; }
 
-.landing-capabilities { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin-top: 48px; }
-.capability-item { min-width: 0; display: flex; align-items: flex-start; gap: 9px; color: #183866; }
-.capability-item__icon { flex: 0 0 24px; width: 24px; height: 24px; display: grid; place-items: center; color: var(--blue); font-size: 22px; }
-.capability-item strong, .capability-item small { display: block; white-space: nowrap; }
-.capability-item strong { font-size: 12px; font-weight: 700; }
-.capability-item small { margin-top: 5px; color: #7893ba; font-size: 9px; }
+.landing-capabilities { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 40px; }
+.capability-card { min-width: 0; min-height: 150px; padding: 14px 13px 13px; box-sizing: border-box; border: 1px solid rgba(255,255,255,.62); border-radius: 15px; background: rgba(255,255,255,.25); box-shadow: 0 10px 24px rgba(80,128,198,.06), inset 0 1px 0 rgba(255,255,255,.6); backdrop-filter: blur(10px); transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+.capability-card:hover { transform: translateY(-3px); background: rgba(255,255,255,.46); box-shadow: 0 16px 28px rgba(80,128,198,.12), inset 0 1px 0 rgba(255,255,255,.78); }
+.capability-card__top { display: flex; align-items: center; justify-content: space-between; }
+.capability-card__index { color: #7d9ac2; font-size: 9px; font-weight: 750; letter-spacing: .13em; }
+.capability-card__icon { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid rgba(78,160,241,.18); border-radius: 9px; color: var(--blue); background: rgba(228,246,255,.72); font-size: 18px; }
+.capability-card strong, .capability-card small, .capability-card p { display: block; }
+.capability-card strong { margin-top: 16px; color: #183866; font-size: 12px; font-weight: 750; white-space: nowrap; }
+.capability-card small { margin-top: 4px; color: #7190bb; font-size: 9px; letter-spacing: .04em; }
+.capability-card p { margin: 10px 0 0; color: #6684ac; font-size: 10px; line-height: 1.55; }
 
 .landing-cta { min-height: 52px; margin-top: 48px; padding: 0 28px; display: inline-flex; align-items: center; gap: 20px; border: 0; border-radius: 999px; color: white; background: linear-gradient(105deg, #28a9f3, #6352f5); box-shadow: 0 15px 28px rgba(70, 116, 239, .28), inset 0 1px 0 rgba(255,255,255,.65); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform 180ms ease, box-shadow 180ms ease; }
 .landing-cta:hover { transform: translateY(-2px); box-shadow: 0 18px 34px rgba(70, 116, 239, .36), inset 0 1px 0 rgba(255,255,255,.65); }
 .landing-cta:active { transform: translateY(0); }
 .landing-cta .el-icon { font-size: 18px; }
 
-.landing-orbit-label { position: absolute; min-width: 180px; padding: 12px 16px; display: flex; align-items: center; gap: 11px; border: 1px solid rgba(255,255,255,.72); border-radius: 12px; background: rgba(255,255,255,.36); box-shadow: 0 12px 26px rgba(73, 125, 207, .08), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(10px); transform: rotate(-4deg); }
+.landing-orbit-label { position: absolute; min-width: 180px; padding: 12px 40px 12px 16px; display: flex; align-items: center; gap: 11px; border: 1px solid rgba(255,255,255,.72); border-radius: 12px; background: rgba(255,255,255,.36); box-shadow: 0 12px 26px rgba(73, 125, 207, .08), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(10px); transform: rotate(-4deg); }
 .landing-orbit-label__icon { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; color: var(--blue); background: rgba(226,245,255,.78); font-size: 17px; }
 .landing-orbit-label b, .landing-orbit-label small { display: block; }
 .landing-orbit-label b { color: #224370; font-size: 12px; font-weight: 700; }
 .landing-orbit-label small { margin-top: 3px; color: #7692b9; font-size: 9px; }
+.landing-orbit-label__signal { position: absolute; top: 14px; right: 14px; width: 6px; height: 6px; border-radius: 50%; background: #34c5ee; box-shadow: 0 0 0 4px rgba(52,197,238,.12); }
 .landing-orbit-label--top { top: 14%; left: 49%; }
 .landing-orbit-label--right { top: 14%; right: 4%; transform: rotate(5deg); }
 .landing-orbit-label--bottom { right: 14%; bottom: 18%; transform: rotate(3deg); }
+.landing-orbit-label--left-bottom { bottom: 23%; left: 40%; transform: rotate(-3deg); }
 
-.landing-section { width: min(900px, calc(100% - 48px)); margin: 0 auto; padding: 100px 0 120px; text-align: center; }
+.landing-section { width: min(1100px, calc(100% - 48px)); margin: 0 auto; padding: 100px 0 120px; text-align: center; }
 .landing-section h2 { margin: 0; color: var(--ink); font-size: clamp(28px, 4vw, 52px); font-weight: 520; letter-spacing: -.05em; }
-.landing-section > p:last-of-type { max-width: 620px; margin: 22px auto 0; color: #6884ad; font-size: 16px; line-height: 1.8; }
+.landing-section__intro { max-width: 620px; margin: 22px auto 0; color: #6884ad; font-size: 16px; line-height: 1.8; }
+.landing-info-grid { display: grid; gap: 14px; margin-top: 42px; text-align: left; }
+.landing-info-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.landing-info-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.landing-info-card { position: relative; min-height: 190px; padding: 24px 24px 21px; box-sizing: border-box; border: 1px solid rgba(255,255,255,.74); border-radius: 18px; background: rgba(255,255,255,.32); box-shadow: 0 14px 30px rgba(73,125,207,.08), inset 0 1px 0 rgba(255,255,255,.78); backdrop-filter: blur(12px); transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+.landing-info-card:hover { transform: translateY(-4px); background: rgba(255,255,255,.5); box-shadow: 0 20px 38px rgba(73,125,207,.13), inset 0 1px 0 rgba(255,255,255,.88); }
+.landing-info-card__index, .landing-info-card__meta { display: block; color: #6e91c0; font-size: 10px; font-weight: 750; letter-spacing: .14em; }
+.landing-info-card h3 { margin: 28px 0 0; color: #173963; font-size: 21px; font-weight: 650; letter-spacing: -.03em; }
+.landing-info-card p { max-width: 300px; margin: 12px 0 0; color: #6884ad; font-size: 13px; line-height: 1.75; }
+.landing-info-card__meta { position: absolute; right: 24px; bottom: 21px; color: #8aa5c8; font-size: 9px; font-weight: 600; letter-spacing: .06em; }
+.about-ribbon { max-width: 720px; margin: 42px auto 0; padding: 20px 24px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; border: 1px solid rgba(255,255,255,.72); border-radius: 18px; background: rgba(255,255,255,.29); box-shadow: 0 14px 30px rgba(73,125,207,.07), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(12px); }
+.about-ribbon span { position: relative; }
+.about-ribbon span + span::before { content: ''; position: absolute; top: 3px; bottom: 3px; left: -8px; width: 1px; background: rgba(115,155,204,.22); }
+.about-ribbon b, .about-ribbon small { display: block; }
+.about-ribbon b { color: #214572; font-size: 14px; }
+.about-ribbon small { margin-top: 6px; color: #7792b8; font-size: 10px; }
 .landing-section--last { padding-bottom: 150px; }
 .landing-cta--small { margin-top: 36px; }
 
