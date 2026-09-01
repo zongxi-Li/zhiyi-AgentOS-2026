@@ -521,7 +521,7 @@ export interface IdentityProjectionState {
   message?: string
 }
 
-export type WorkspaceEntryKind = 'folder' | 'graph' | 'virtual_document' | 'task' | 'artifact' | 'run'
+export type WorkspaceEntryKind = 'folder' | 'graph' | 'virtual_document' | 'task' | 'artifact' | 'run' | 'progress'
 export type WorkspaceIdentityQuality = 'canonical' | 'legacy'
 export type WorkspaceRunStatus = WorkflowStatus | 'succeeded' | 'superseded'
 

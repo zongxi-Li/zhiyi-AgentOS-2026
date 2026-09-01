@@ -2,6 +2,7 @@ import { FolderOpened } from '@element-plus/icons-vue'
 import GraphEditor from '@/components/workspace/GraphEditor.vue'
 import ArtifactEditor from '@/components/workspace/ArtifactEditor.vue'
 import MissionEditor from '@/components/workspace/MissionEditor.vue'
+import ProgressEditor from '@/components/workspace/ProgressEditor.vue'
 import TaskEditor from '@/components/workspace/TaskEditor.vue'
 import WorkspaceExplorer from '@/components/workspace/WorkspaceExplorer.vue'
 import ProblemsPanel from '@/components/workbench/ProblemsPanel.vue'
@@ -28,6 +29,7 @@ export const projectContribution: WorkbenchContribution = {
     { id: 'project.graph-editor', entryKinds: ['graph'], component: GraphEditor, title: entry => entry.name },
     { id: 'project.artifact-editor', entryKinds: ['artifact'], component: ArtifactEditor, title: entry => entry.name },
     { id: 'project.task-editor', entryKinds: ['task'], component: TaskEditor, title: entry => entry.name },
+    { id: 'project.progress-editor', entryKinds: ['progress'], component: ProgressEditor, title: entry => entry.name },
     { id: 'project.mission-editor', entryKinds: ['virtual_document'], component: MissionEditor, title: entry => entry.name }
   ],
   inspectors: [

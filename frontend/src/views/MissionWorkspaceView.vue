@@ -152,7 +152,24 @@ const workspaceProjectionRetryDelays = [
   ...Array.from({ length: 23 }, () => 5000)
 ]
 
-const entriesById = computed(() => new Map((projection.value?.entries || []).map(entry => [entry.entryId, entry])))
+// 运行进度是工作台注入的前端合成 entry：与后端投影 entries 共用同一套标签页系统，
+// 挂在 OVERVIEW 分组首位，活跃 Run 存在时默认打开并激活。
+const PROGRESS_ENTRY_ID = 'overview:progress'
+const progressEntry: WorkspaceEntry = {
+  entryId: PROGRESS_ENTRY_ID,
+  kind: 'progress',
+  name: '运行进度',
+  title: '运行进度',
+  group: 'overview',
+  displayOrder: -1
+}
+const entriesWithProgress = computed<WorkspaceEntry[]>(() => (
+  projection.value ? [progressEntry, ...projection.value.entries] : []
+))
+const augmentedProjection = computed<MissionWorkspaceProjection | null>(() => (
+  projection.value ? { ...projection.value, entries: entriesWithProgress.value } : null
+))
+const entriesById = computed(() => new Map(entriesWithProgress.value.map(entry => [entry.entryId, entry])))
 const openEntries = computed<OpenWorkspaceEntry[]>(() => openEditors.value.flatMap(entryId => {
   const current = entriesById.value.get(entryId)
   const snapshot = entryCache.value[entryId]
@@ -199,7 +216,7 @@ const workbenchContext = computed(() => createWorkbenchContext({
 
 const sidebarContribution = computed(() => registry.getSidebarViews(workbenchContext.value)[0] || null)
 const sidebarProps = computed(() => ({
-  projection: projection.value,
+  projection: augmentedProjection.value,
   activeEditorId: activeEditorId.value,
   selectedRunId: selectedRunId.value,
   canRerun: canRerunSelectedRun.value,
@@ -226,11 +243,20 @@ const openDefaultEditor = (nextProjection: MissionWorkspaceProjection) => {
   if (openEditors.value.length) return
   const first = nextProjection.entries.find(entry => entry.entryId === 'overview:graph.acg')
     || nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
-  if (first) {
-    entryCache.value[first.entryId] = first
-    openEditors.value = [first.entryId]
-    activeEditorId.value = first.entryId
-  }
+  const runActive = nextProjection.activeRun?.status === 'running' || nextProjection.activeRun?.status === 'pending'
+  const openIds = [
+    ...(runActive ? [PROGRESS_ENTRY_ID] : []),
+    ...(first ? [first.entryId] : [])
+  ]
+  if (!openIds.length) return
+  openIds.forEach(entryId => {
+    const entry = entryId === PROGRESS_ENTRY_ID
+      ? progressEntry
+      : nextProjection.entries.find(item => item.entryId === entryId)
+    if (entry) entryCache.value[entry.entryId] = entry
+  })
+  openEditors.value = openIds
+  activeEditorId.value = runActive ? PROGRESS_ENTRY_ID : openIds[0]
 }
 
 const responseStatus = (error: unknown) => {

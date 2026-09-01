@@ -28,6 +28,11 @@ const artifactEditorStub = {
 
 const missionEditorStub = { template: '<div class="mission-editor-stub">mission.md</div>' }
 
+const progressEditorStub = {
+  props: ['entry', 'runId'],
+  template: '<div class="progress-editor-stub">运行进度 {{ runId }}</div>'
+}
+
 const taskEntry = (): WorkspaceEntry => ({
   entryId: 'task:capacity', kind: 'task', name: 'Capacity', group: 'steps', displayOrder: 0,
   semanticTaskKey: 'capacity', taskId: 'task_capacity', objective: 'Form a capacity plan',
@@ -119,6 +124,7 @@ const mountWorkspace = async (
         GraphEditor: graphEditorStub,
         ArtifactEditor: artifactEditorStub,
         MissionEditor: missionEditorStub,
+        ProgressEditor: progressEditorStub,
         'el-icon': true
       }
     }
@@ -154,11 +160,13 @@ describe('MissionWorkspaceView', () => {
     expect(restoreLeftPane).toHaveBeenCalledTimes(1)
   })
 
-  it('opens graph.acg as the default editor and keeps graph separate from results', async () => {
+  it('opens the live progress tab for an active Run with graph.acg one click away', async () => {
     const { wrapper } = await mountWorkspace()
-    expect(wrapper.find('.editor-tab').text()).toContain('graph.acg')
+    const tabs = wrapper.findAll('.editor-tab')
+    expect(tabs[0].text()).toContain('运行进度')
+    expect(tabs.map(tab => tab.text()).some(text => text.includes('graph.acg'))).toBe(true)
+    expect(wrapper.find('.progress-editor-stub').exists()).toBe(true)
     expect(wrapper.find('.editor-group__toolbar').exists()).toBe(false)
-    expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('最终答案')
   })
 
@@ -168,7 +176,7 @@ describe('MissionWorkspaceView', () => {
     await entries.find(item => item.text().includes('mission.md'))?.trigger('click')
     await entries.find(item => item.text().includes('primary.md'))?.trigger('click')
     await entries.find(item => item.text().includes('primary.md'))?.trigger('click')
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
     expect(wrapper.find('.artifact-editor-stub').text()).toContain('primary.md')
   })
 
@@ -177,12 +185,18 @@ describe('MissionWorkspaceView', () => {
     const mission = wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('mission.md'))
     await mission?.trigger('click')
     await wrapper.find('.editor-tab.is-active .editor-tab__close').trigger('click')
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(1)
-    expect(wrapper.find('.editor-tab').text()).toContain('graph.acg')
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(2)
+    expect(wrapper.findAll('.editor-tab').at(-1)?.text()).toContain('graph.acg')
   })
+
+  const activateGraphTab = async (wrapper: VueWrapper) => {
+    const tab = wrapper.findAll('.editor-tab').find(tab => tab.text().includes('graph.acg'))
+    await tab?.find('.editor-tab__main').trigger('click')
+  }
 
   it('maps a graph double click to the matching TaskEditor', async () => {
     const { wrapper } = await mountWorkspace()
+    await activateGraphTab(wrapper)
     await wrapper.find('.graph-open').trigger('click')
     expect(wrapper.find('.task-editor').exists()).toBe(true)
     expect(wrapper.find('.task-editor').text()).toContain('capacity')
@@ -191,6 +205,7 @@ describe('MissionWorkspaceView', () => {
   it('keeps multiple Artifacts inside the matching TaskEditor', async () => {
     const multi = projection({ entries: [...projection().entries, artifact('assumptions', 'artifact_2')] })
     const { wrapper } = await mountWorkspace(multi)
+    await activateGraphTab(wrapper)
     await wrapper.find('.graph-open').trigger('click')
     expect(wrapper.find('.artifact-choice').exists()).toBe(false)
     expect(wrapper.findAll('.task-editor__artifacts button')).toHaveLength(2)
@@ -202,6 +217,7 @@ describe('MissionWorkspaceView', () => {
   it('selects a graph node even when no artifact is available', async () => {
     const noArtifact = projection({ entries: projection().entries.filter(item => item.kind !== 'artifact') })
     const { wrapper } = await mountWorkspace(noArtifact)
+    await activateGraphTab(wrapper)
     await wrapper.find('.graph-open').trigger('click')
     expect(wrapper.find('.artifact-choice').exists()).toBe(false)
     expect(wrapper.find('.task-editor').exists()).toBe(true)
@@ -213,7 +229,7 @@ describe('MissionWorkspaceView', () => {
     await artifactRow?.trigger('click')
     await wrapper.find('.artifact-locate').trigger('click')
     expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(2)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
   })
 
   it('disables graph positioning for legacy artifacts', async () => {
@@ -277,7 +293,7 @@ describe('MissionWorkspaceView', () => {
     await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_1'))?.trigger('click')
     await flushPromises()
     expect(wrapper.find('.artifact-editor-stub').text()).toContain('Not available in this Run')
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(2)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
   })
 
   it('shows NO_ACTIVE_RUN diagnostics and falls back to mission.md', async () => {
