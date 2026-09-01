@@ -2,9 +2,9 @@
 <template>
   <ErrorBoundary>
     <div id="app">
-      <el-container class="app-layout" :class="{ 'immersive-mode': isImmersive }">
+      <el-container class="app-layout" :class="{ 'immersive-mode': isImmersive, 'public-layout': isPublicRoute }">
         <AppTopBar
-          v-if="!isImmersive"
+          v-if="!isImmersive && !isPublicRoute"
           :navigation-state="usesDrawerNavigation ? 'drawer' : (mainSidebarCompact ? 'collapsed' : 'expanded')"
           @menu="handleTopChromeMenu"
           @navigate="handleTopChromeNavigate"
@@ -13,7 +13,7 @@
         <el-container class="app-shell-body">
           <!-- Sidebar Navigation -->
           <el-aside
-            v-if="!isImmersive && !usesDrawerNavigation"
+            v-if="!isImmersive && !isPublicRoute && !usesDrawerNavigation"
             :width="sidebarAsideWidth"
             class="app-sidebar"
             :class="{ collapsed: mainSidebarCompact, 'chat-panel-open': secondaryNavOpen, resizing: sidebarResizing || chatPanelResizing }"
@@ -380,7 +380,7 @@
 
           <!-- Main Content Area -->
           <el-container class="main-container">
-            <DesktopRuntimeStatus />
+            <DesktopRuntimeStatus v-if="!isPublicRoute" />
             <!-- Global Error Banner (Floating) -->
             <transition name="fade">
               <div v-if="globalError" class="global-error-banner">
@@ -393,7 +393,7 @@
               </div>
             </transition>
 
-            <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable }">
+            <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable, 'public-main': isPublicRoute }">
               <router-view v-slot="{ Component }">
                 <transition name="fade">
                   <component :is="Component" :key="route.path" />
@@ -444,6 +444,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const isPublicRoute = computed(() => route.path === '/' || route.path === '/login')
 const chatStore = useChatStore()
 const workflowRunsStore = useWorkflowRunsStore()
 const userStore = useUserStore()
@@ -1064,6 +1065,13 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
+.app-layout.public-layout {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+  background: transparent;
+}
+
 .app-shell-body {
   display: flex;
   flex: 1 1 auto;
@@ -1071,6 +1079,13 @@ onUnmounted(() => {
   min-height: 0;
   width: 100%;
   overflow: hidden;
+}
+
+.public-layout .app-shell-body {
+  display: block;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
 }
 
 /* Sidebar Styles */
@@ -2114,6 +2129,12 @@ onUnmounted(() => {
   overflow: hidden;
   width: 100%;
   position: relative;
+}
+
+.app-main.public-main {
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
 }
 
 .app-main.route-scrollable {
