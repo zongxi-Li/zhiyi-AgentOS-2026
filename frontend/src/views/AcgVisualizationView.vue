@@ -214,7 +214,7 @@
                 </div>
               </div>
               <div class="advanced-item advanced-item--switch">
-                <div class="advanced-item__heading"><span>联网检索</span><small>优先补充公开网页信息</small></div>
+                <div class="advanced-item__heading"><span>联网检索</span><small>按模型隔离：GLM → 智谱原生 · DeepSeek → Tavily</small></div>
                 <button class="settings-switch" type="button" role="switch" :aria-checked="draft.webSearchEnabled" :disabled="isSubmitting" @click="draft.webSearchEnabled = !draft.webSearchEnabled">
                   <span class="settings-switch__track"><span></span></span>
                   <span>{{ draft.webSearchEnabled ? '开启' : '关闭' }}</span>

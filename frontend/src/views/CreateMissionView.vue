@@ -145,7 +145,7 @@
                     <input v-model.number="draft.planningSeed" aria-label="Planning seed" type="number" min="0" max="2147483647" placeholder="Auto" />
                   </label>
                   <label class="advanced-toggle">
-                    <span><strong>Web search</strong><small>补充公开网页信息</small></span>
+                    <span><strong>Web search</strong><small>按模型隔离：GLM → 智谱原生 · DeepSeek → Tavily</small></span>
                     <input v-model="draft.webSearchEnabled" type="checkbox" />
                   </label>
                   <label class="advanced-toggle">
