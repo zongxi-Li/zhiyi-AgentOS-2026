@@ -1,11 +1,13 @@
 <!-- 登录/注册页面 — 轻量双栏布局，右侧使用 ACG 动态群体智能拓扑作为品牌视觉 -->
 <template>
-  <main class="login-view ui-shell">
-    <header class="brand-bar">
+  <main class="login-view ui-shell" :class="{ 'is-desktop-shell': desktopShell }">
+    <header class="brand-bar" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
       <a class="brand" href="/" aria-label="知弈首页">
         <span class="logo-box"><img src="/logo.png" alt="" aria-hidden="true" /></span>
         <span class="brand-name">知弈</span>
       </a>
+
+      <DesktopWindowControls v-if="desktopShell" />
     </header>
 
     <div class="login-layout">
@@ -155,9 +157,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { User, Lock, Message } from '@element-plus/icons-vue'
 import { ElMessage, FormInstance, FormRules } from 'element-plus'
 import { authApi } from '@/services/api/auth'
+import DesktopWindowControls from '@window-controls'
+import { isDesktop, platform } from '@/platform'
 // 登录页使用独立快照组件，避免业务 ACG 后续迭代改变登录页展示。
 import LoginAcgDemo from '@/components/agentos/LoginAcgDemo.vue'
 import type { AcgBlueprint, AcgStepState } from '@/services/api/agentos'
+
+const desktopShell = isDesktop()
+const dragRegionProps = platform.dragRegionProps
 
 const router = useRouter()
 const route = useRoute()
@@ -347,6 +354,19 @@ const handleRegister = async () => {
   left: 32px;
   display: flex;
   align-items: center;
+}
+
+/* Tauri disables the native title bar, so the login route needs its own
+   lightweight shell chrome while it remains in immersive mode. */
+.login-view.is-desktop-shell .brand-bar {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 42px;
+  padding-left: 32px;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--login-line);
+  background: color-mix(in srgb, var(--bg-app) 94%, transparent);
 }
 
 .brand {
