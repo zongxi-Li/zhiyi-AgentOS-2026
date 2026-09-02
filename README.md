@@ -67,7 +67,7 @@
 | 动态异构拓扑与低熵通信 | ACG、conditional routing、parallel superstep、Communication Broker、字段级投递、Provenance | ✅ 已实现并有测试 |
 | 动态异常与需求变更 | GraphPatch、review barrier、contract repair、Recovery Recipe、orphan reference ownership | ✅ 已实现并有测试 |
 | 多模型兼容与角色扩展 | AgentProfile binding、模型 failover、版本协商、健康刷新、Pack 注册 | ✅ 已实现并有测试 |
-| 端-边-云资源自适应调度 | ResourceProfile 分层画像、远程观测、约束过滤、租约、执行 Adapter、边缘故障后云端切换 | 🚧 模型位置选择与故障切换已实现；真实多设备部署、跨进程持久化和模型层切分待验收 |
+| 端-边-云资源自适应调度 | ResourceProfile 分层画像、顺序校验的远程观测、约束过滤、租约、快照竞态保护、执行 Adapter、边缘故障后云端切换 | 🚧 模型位置选择与故障切换已实现；真实多设备部署、远程鉴权和模型层切分待验收 |
 | 典型产业场景验证 | Legal 黄金纵切；Programmer、Education、Writer、General/Native Packs | 🚧 法律链路完整，第二个高完成度跨领域长任务仍需比赛级演示 |
 | 决策过程与推理轨迹展示 | Milan Workbench、Graph、Trace、Provenance、Checkpoint、Review、Output | ✅ 已完成 |
 
@@ -312,7 +312,7 @@ py -3.14 -m pytest tests -q
 - 当前项目是比赛稳定候选和工程原型，不等同于生产级商业系统。
 - 法律场景输出是辅助材料，不构成正式法律意见。
 - 六类运行 Store 当前使用独立 SQLite 文件；这是单实例部署选择，不代表已经完成生产级横向扩展。
-- 当前已完成端、边、云资源的“位置选择”基础链路：资源画像、远程观测、约束调度、远程执行 Adapter，以及边缘失败后的云端重绑定。仍需在隔离环境中接入真实多设备、签名鉴权、跨进程快照持久化和故障演示。
+- 当前已完成端、边、云资源的“位置选择”基础链路：资源画像、带观测序号校验的远程观测、约束调度、租约后快照版本确认、远程执行 Adapter，以及边缘失败后的云端重绑定。仍需在隔离环境中接入真实多设备、签名鉴权和故障演示。
 - 当前没有实现神经网络层级切分：一次模型调用仍由一个完整执行节点在单个资源上完成，不能把模型的不同层拆到端、边、云之间协同执行。
 - README 中的测试数字来自 2026-08-19 集成回归；代码变化后必须重新执行测试，不应把历史数字当作当前证明。
 
