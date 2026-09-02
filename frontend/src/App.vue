@@ -1368,6 +1368,7 @@ onUnmounted(() => {
 
 .chat-nav-trigger > .el-icon:first-child {
   flex: 0 0 auto;
+  margin-right: 17px;
   font-size: 18px;
 }
 
@@ -1378,6 +1379,8 @@ onUnmounted(() => {
   display: block;
   border-radius: 4px;
   object-fit: cover;
+  /* The raster artwork has built-in side padding; align its visible mark with the line icons. */
+  transform: translateX(-6px);
 }
 
 .chat-nav-label {
@@ -1419,6 +1422,14 @@ onUnmounted(() => {
 .app-sidebar.collapsed .chat-nav-trigger {
   justify-content: center;
   padding: 0;
+}
+
+.app-sidebar.collapsed .chat-nav-trigger > .el-icon:first-child {
+  margin-right: 0;
+}
+
+.app-sidebar.collapsed .acg-nav-logo {
+  transform: none;
 }
 
 .chat-submenu-action,
@@ -1837,7 +1848,7 @@ onUnmounted(() => {
 .sidebar-menu :deep(.el-menu-item .el-icon) {
   flex: 0 0 18px;
   width: 18px;
-  margin-right: 0;
+  margin-right: 17px;
   font-size: 18px;
 }
 
