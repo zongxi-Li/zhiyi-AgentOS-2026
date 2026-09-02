@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from threading import RLock
 from typing import Protocol
 
@@ -19,6 +21,17 @@ class VersionConflict(ValueError):
 
 class StaleResourceObservation(ValueError):
     """资源节点上报的观测序号早于当前权威快照。"""
+
+
+@dataclass(frozen=True)
+class ResourceCredentialRecord:
+    """只包含服务端可持久化的资源凭据元数据和哈希。"""
+
+    resource_id: str
+    credential_id: str
+    owner_scope: str
+    secret_hash: str
+    created_at: datetime
 
 
 class ResourceStore(Protocol):
@@ -56,6 +69,25 @@ class ResourceStore(Protocol):
         """CAS 更新同一资源的静态容量并同步可用槽位。"""
         ...
 
+    def save_credential(self, record: ResourceCredentialRecord) -> None:
+        """保存一个资源凭据；同一资源不可静默覆盖已有凭据。"""
+        ...
+
+    def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
+        """读取资源凭据元数据；未登记凭据应抛出 ``KeyError``。"""
+        ...
+
+    def consume_nonce(
+        self,
+        resource_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime,
+    ) -> bool:
+        """原子登记 nonce；已使用或已过期返回 False。"""
+        ...
+
 
 class InMemoryResourceStore:
     """面向单进程运行的资源存储。
@@ -67,6 +99,8 @@ class InMemoryResourceStore:
     def __init__(self) -> None:
         self._profiles: dict[str, ResourceProfile] = {}
         self._snapshots: dict[str, VersionedResourceSnapshot] = {}
+        self._credentials: dict[str, ResourceCredentialRecord] = {}
+        self._nonces: dict[tuple[str, str], datetime] = {}
         # 注册和快照更新共享同一把可重入锁，保证版本读取、校验、写入不可穿插。
         self._lock = RLock()
 
@@ -161,6 +195,39 @@ class InMemoryResourceStore:
             self._snapshots[resource_id] = versioned
             return self._copy_versioned(versioned)
 
+    def save_credential(self, record: ResourceCredentialRecord) -> None:
+        with self._lock:
+            if record.resource_id not in self._profiles:
+                raise KeyError(f"unknown resource: {record.resource_id}")
+            if record.resource_id in self._credentials:
+                raise ValueError(f"resource credential already exists: {record.resource_id}")
+            self._credentials[record.resource_id] = record
+
+    def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
+        with self._lock:
+            try:
+                return self._credentials[resource_id]
+            except KeyError as error:
+                raise KeyError(f"resource credential not found: {resource_id}") from error
+
+    def consume_nonce(
+        self,
+        resource_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime,
+    ) -> bool:
+        with self._lock:
+            self._nonces = {
+                key: expiry for key, expiry in self._nonces.items() if expiry > now
+            }
+            key = (resource_id, nonce)
+            if expires_at <= now or key in self._nonces:
+                return False
+            self._nonces[key] = expires_at
+            return True
+
     @staticmethod
     def _copy_versioned(value: VersionedResourceSnapshot) -> VersionedResourceSnapshot:
         return VersionedResourceSnapshot(snapshot=value.snapshot.model_copy(deep=True), version=value.version)
@@ -179,6 +246,23 @@ class SQLiteResourceStore:
                 profile_json TEXT NOT NULL,
                 snapshot_json TEXT NOT NULL,
                 version INTEGER NOT NULL CHECK(version >= 1)
+            )"""
+        )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS resource_credentials (
+                resource_id TEXT PRIMARY KEY,
+                credential_id TEXT NOT NULL UNIQUE,
+                owner_scope TEXT NOT NULL,
+                secret_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS resource_auth_nonces (
+                resource_id TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY(resource_id, nonce)
             )"""
         )
         for resource_id, payload in self._connection.execute(
@@ -332,6 +416,78 @@ class SQLiteResourceStore:
                     snapshot=updated_snapshot.model_copy(deep=True),
                     version=version + 1,
                 )
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def save_credential(self, record: ResourceCredentialRecord) -> None:
+        with self._lock:
+            try:
+                self._connection.execute(
+                    "INSERT INTO resource_credentials(resource_id, credential_id, owner_scope, secret_hash, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        record.resource_id,
+                        record.credential_id,
+                        record.owner_scope,
+                        record.secret_hash,
+                        record.created_at.astimezone(timezone.utc).isoformat(),
+                    ),
+                )
+                self._connection.commit()
+            except sqlite3.IntegrityError as error:
+                self._connection.rollback()
+                raise ValueError(
+                    f"resource credential already exists: {record.resource_id}"
+                ) from error
+
+    def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
+        row = self._connection.execute(
+            "SELECT credential_id, owner_scope, secret_hash, created_at "
+            "FROM resource_credentials WHERE resource_id = ?",
+            (resource_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"resource credential not found: {resource_id}")
+        return ResourceCredentialRecord(
+            resource_id=resource_id,
+            credential_id=str(row[0]),
+            owner_scope=str(row[1]),
+            secret_hash=str(row[2]),
+            created_at=datetime.fromisoformat(str(row[3])).astimezone(timezone.utc),
+        )
+
+    def consume_nonce(
+        self,
+        resource_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime,
+    ) -> bool:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    "DELETE FROM resource_auth_nonces WHERE expires_at <= ?",
+                    (now.astimezone(timezone.utc).isoformat(),),
+                )
+                if expires_at <= now:
+                    self._connection.commit()
+                    return False
+                self._connection.execute(
+                    "INSERT INTO resource_auth_nonces(resource_id, nonce, expires_at) VALUES (?, ?, ?)",
+                    (
+                        resource_id,
+                        nonce,
+                        expires_at.astimezone(timezone.utc).isoformat(),
+                    ),
+                )
+                self._connection.commit()
+                return True
+            except sqlite3.IntegrityError:
+                self._connection.rollback()
+                return False
             except Exception:
                 self._connection.rollback()
                 raise

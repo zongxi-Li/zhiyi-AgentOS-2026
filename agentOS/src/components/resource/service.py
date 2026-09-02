@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
+import hmac
+import secrets
+import uuid
+from dataclasses import dataclass
 from typing import Literal
 
 from contracts.resource import (
@@ -17,7 +22,17 @@ from .algorithms import health_score, is_resource_available
 from .health import ResourceHealthMonitor
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .registry import ResourceRegistry
-from .store import InMemoryResourceStore, ResourceStore
+from .store import InMemoryResourceStore, ResourceCredentialRecord, ResourceStore
+
+
+@dataclass(frozen=True)
+class IssuedResourceCredential:
+    """注册响应中一次性返回的资源密钥。"""
+
+    resource_id: str
+    credential_id: str
+    owner_scope: str
+    secret: str
 
 
 class ResourceService:
@@ -69,6 +84,61 @@ class ResourceService:
     def profiles(self) -> list[ResourceProfile]:
         """List authoritative profiles in stable order."""
         return self.store.list_profiles()
+
+    def issue_credential(self, resource_id: str) -> IssuedResourceCredential:
+        """为远程资源生成一次性可交付的资源密钥。"""
+        profile = self.registry.get(resource_id)
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            raise ValueError("resource credentials require a remote resource")
+        if not profile.owner_scope:
+            raise ValueError("remote resource owner_scope is required")
+        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
+            raise ValueError("remote resource execution endpoint is required")
+        secret = secrets.token_urlsafe(32)
+        record = ResourceCredentialRecord(
+            resource_id=resource_id,
+            credential_id=f"rc_{uuid.uuid4().hex}",
+            owner_scope=profile.owner_scope,
+            secret_hash=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            created_at=datetime.now().astimezone(),
+        )
+        self.store.save_credential(record)
+        return IssuedResourceCredential(
+            resource_id=resource_id,
+            credential_id=record.credential_id,
+            owner_scope=record.owner_scope,
+            secret=secret,
+        )
+
+    def verify_credential(
+        self, resource_id: str, credential_id: str, secret: str
+    ) -> ResourceCredentialRecord:
+        """校验资源凭据并返回不含明文密钥的记录。"""
+        profile = self.registry.get(resource_id)
+        try:
+            record = self.store.get_credential(resource_id)
+        except KeyError as error:
+            raise ValueError("resource credential not found") from error
+        expected_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+        if (
+            record.credential_id != credential_id
+            or record.owner_scope != profile.owner_scope
+            or not hmac.compare_digest(record.secret_hash, expected_hash)
+        ):
+            raise ValueError("resource credential is invalid")
+        return record
+
+    def consume_nonce(
+        self,
+        resource_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        self.registry.get(resource_id)
+        current = now or datetime.now().astimezone()
+        return self.store.consume_nonce(resource_id, nonce, expires_at, now=current)
 
     def heartbeat(
         self,
