@@ -124,7 +124,7 @@ const mountWorkspace = async (
         GraphEditor: graphEditorStub,
         ArtifactEditor: artifactEditorStub,
         MissionEditor: missionEditorStub,
-        ProgressEditor: progressEditorStub,
+        RunProgressEditor: progressEditorStub,
         'el-icon': true
       }
     }
@@ -309,7 +309,7 @@ describe('MissionWorkspaceView', () => {
   it('exposes the fixed runtime observation panels through the Workbench registry', async () => {
     const { wrapper } = await mountWorkspace()
     expect(wrapper.findAll('.workbench-bottom-panel__tab').map(tab => tab.text())).toEqual([
-      'Problems0', 'Communication0', 'Trace0', 'Model Output0', 'Events0', 'Tool Calls0'
+      'Problems0', 'Communication0', 'Trace0', 'Events0', 'Tool Calls0'
     ])
   })
 

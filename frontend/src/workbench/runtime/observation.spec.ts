@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi } from '@/services/api/agentos'
-import { RuntimeObservationAdapter, readRuntimeObservation } from './observation'
+import { RuntimeObservationAdapter, projectModelOutput, readRuntimeObservation, type RuntimeTraceObservation } from './observation'
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
@@ -238,5 +238,102 @@ describe('RuntimeObservationAdapter', () => {
     expect(getWorkflowRun).toHaveBeenCalledWith('run_2', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(getWorkflowTrace).toHaveBeenCalledWith('run_2', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     adapter.stop()
+  })
+})
+
+const traceEvent = (eventId: string, payload: Record<string, any>): RuntimeTraceObservation => ({
+  eventId,
+  runId: 'run_1',
+  stepId: null,
+  eventType: 'task_status_changed',
+  observation: null,
+  timestamp: '2026-09-02T00:00:00Z',
+  durationMs: null,
+  status: String(payload.status || ''),
+  payload,
+  source: 'trace'
+})
+
+describe('projectModelOutput', () => {
+  it('renders deterministic facts from real planner events', () => {
+    const items = projectModelOutput([
+      traceEvent('e1', { planningProgress: true, category: 'planner', kind: 'started' }),
+      traceEvent('e2', {
+        planningProgress: true, category: 'planner', kind: 'plan_parsed',
+        stage: 'planning', status: 'plan_parsed', taskCount: 6, dependencyCount: 8
+      }),
+      traceEvent('e3', {
+        planningProgress: true, category: 'planner', kind: 'graph_compiled',
+        nodeCount: 7, edgeCount: 11
+      }),
+      traceEvent('e4', { planningProgress: true, category: 'planner', kind: 'completed' })
+    ])
+
+    expect(items.map(item => item.title)).toEqual([
+      '开始规划任务',
+      '任务规划完成 · 6 个任务 · 8 条依赖',
+      'ACG 编译完成 · 7 个节点 · 11 条边',
+      '规划完成'
+    ])
+    expect(items[items.length - 1].status).toBe('success')
+  })
+
+  it('falls back to engineering stage wording for legacy payloads', () => {
+    const items = projectModelOutput([
+      traceEvent('legacy_1', { planningProgress: true, stage: 'intent_profile', status: 'started' }),
+      traceEvent('legacy_2', { planningProgress: true, stage: 'intent_profile', status: 'completed' })
+    ])
+
+    expect(items.map(item => item.title)).toEqual(['意图解析开始', '意图解析完成'])
+    expect(items.every(item => item.category === 'runtime')).toBe(true)
+    expect(items.some(item => item.title.includes('正在理解'))).toBe(false)
+  })
+
+  it('replaces a still-running stage start when a retried attempt begins', () => {
+    const items = projectModelOutput([
+      traceEvent('s1', {
+        planningProgress: true, category: 'planner', kind: 'stage_started',
+        stage: 'outline', status: 'started', attempt: 1, retryCount: 0
+      }),
+      traceEvent('r1', {
+        planningProgress: true, category: 'planner', kind: 'retry',
+        stage: 'outline', status: 'retrying', attempt: 1, retryCount: 1,
+        errorCode: 'MODEL_TIMEOUT'
+      }),
+      traceEvent('s2', {
+        planningProgress: true, category: 'planner', kind: 'stage_started',
+        stage: 'outline', status: 'started', attempt: 2, retryCount: 1
+      }),
+      traceEvent('c1', {
+        planningProgress: true, category: 'planner', kind: 'stage_completed',
+        stage: 'outline', status: 'completed', attempt: 2
+      })
+    ])
+
+    const starts = items.filter(item => item.kind === 'stage_started')
+    expect(starts).toHaveLength(1)
+    expect(starts[0].attempt).toBe(2)
+    expect(items.map(item => item.kind)).toEqual(['stage_started', 'retry', 'stage_completed'])
+    expect(items.find(item => item.kind === 'retry')?.detail).toBe('错误码 MODEL_TIMEOUT')
+    expect(items[items.length - 1].status).toBe('success')
+  })
+
+  it('never invents numbers when counts are missing and ignores foreign events', () => {
+    const items = projectModelOutput([
+      traceEvent('plain', { eventType: 'other', observation: 'not a planning event' }),
+      traceEvent('parsed', {
+        planningProgress: true, category: 'planner', kind: 'plan_parsed', stage: 'planning'
+      }),
+      traceEvent('failed', {
+        planningProgress: true, category: 'planner', kind: 'failed',
+        errorCode: 'ACGPlanningError', safeSummary: 'ACGPlanningError during planning'
+      })
+    ])
+
+    expect(items).toHaveLength(2)
+    expect(items[0].title).toBe('任务规划完成')
+    expect(items[0].title).not.toMatch(/\d/)
+    expect(items[1].status).toBe('failed')
+    expect(items[1].title).toBe('规划失败')
   })
 })

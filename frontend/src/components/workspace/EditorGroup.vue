@@ -15,6 +15,7 @@
       </button>
       <div v-for="opened in openEntries" :key="opened.entry.entryId" class="editor-tab" :class="{ 'is-active': opened.entry.entryId === activeEditorId }">
         <button class="editor-tab__main" type="button" role="tab" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
+          <span v-if="tabStatusMark(opened.entry)" class="editor-tab__status" :class="'is-' + tabStatus(opened.entry)" aria-hidden="true">{{ tabStatusMark(opened.entry) }}</span>
           <span class="editor-tab__kind" aria-hidden="true">
             <el-icon><component :is="workspaceEntryIcon(opened.entry.kind)" /></el-icon>
           </span>
@@ -61,7 +62,7 @@
         :runtime-observation="workbenchContext.runtimeObservation"
         @select-semantic-task="emit('selectSemanticTask', $event)"
         @open-semantic-task="emit('openSemanticTask', $event)"
-        @locate-graph="emit('locateGraph', activeOpened.entry)"
+        @locate-graph="emit('locateGraph', $event || activeOpened.entry)"
         @open-artifact="emit('openArtifact', $event)"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
@@ -117,6 +118,27 @@ const editorTitle = (entry: WorkspaceEntry) => (
   props.registry.resolveEditor(entry, props.workbenchContext)?.title?.(entry, props.workbenchContext) || entry.name
 )
 
+// Run / Progress 标签的运行状态符号：● 运行中 ✓ 成功 × 失败
+const TAB_RUNNING = new Set(['running', 'pending', 'planning', 'retrying'])
+const TAB_OK = new Set(['completed', 'succeeded'])
+const TAB_BAD = new Set(['failed', 'cancelled'])
+const tabStatus = (entry: WorkspaceEntry) => {
+  const status = entry.kind === 'run'
+    ? entry.status
+    : entry.kind === 'progress'
+      ? props.workbenchContext.runtimeObservation?.runStatus
+      : null
+  if (!status) return 'idle'
+  if (TAB_OK.has(status)) return 'success'
+  if (TAB_BAD.has(status)) return 'failed'
+  if (TAB_RUNNING.has(status)) return 'running'
+  return 'idle'
+}
+const tabStatusMark = (entry: WorkspaceEntry) => {
+  const state = tabStatus(entry)
+  return state === 'running' ? '●' : state === 'success' ? '✓' : state === 'failed' ? '×' : null
+}
+
 </script>
 
 <style scoped>
@@ -130,6 +152,9 @@ const editorTitle = (entry: WorkspaceEntry) => (
 .editor-tab__main:focus-visible, .editor-tab__close:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-tab__kind { display: inline-flex; align-items: center; justify-content: center; width: 15px; min-width: 15px; color: var(--wb-accent); font: 12px var(--font-mono, monospace); }
 .editor-tab__kind .el-icon { font-size: 14px; }
+.editor-tab__status { flex: 0 0 auto; color: var(--wb-accent); font-size: 10px; }
+.editor-tab__status.is-success { color: var(--wb-success); }
+.editor-tab__status.is-failed { color: var(--wb-danger); }
 .editor-tab__name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-tab__missing { color: var(--wb-warning); font: 9px var(--font-mono, monospace); }
 .editor-tab__close { width: 28px; min-width: 28px; flex: 0 0 28px; color: var(--wb-text-muted); font-size: 15px; opacity: 0; transition: opacity 140ms var(--ease-out), color 140ms var(--ease-out), background-color 140ms var(--ease-out); }

@@ -322,6 +322,34 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
   }
 }
 
+// 降级投影重拉：PLANNING_PROJECTION_PENDING 表示 identity graph 尚未注册，
+// Run 活跃期间周期性重拉投影，注册完成后 STEPS/OUTPUT/RUNS/Graph 即刻出现。
+const PROJECTION_REFRESH_MS = 8000
+const ACTIVE_PROJECTION_RUN_STATUSES = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
+let projectionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+const stopProjectionRefresh = () => {
+  if (projectionRefreshTimer !== null) {
+    clearTimeout(projectionRefreshTimer)
+    projectionRefreshTimer = null
+  }
+}
+
+const projectionPending = (projection: MissionWorkspaceProjection) => Boolean(
+  projection.diagnostics?.some(item => item.code === 'PLANNING_PROJECTION_PENDING')
+  && ACTIVE_PROJECTION_RUN_STATUSES.has(projection.activeRun?.status || '')
+)
+
+const scheduleProjectionRefresh = () => {
+  stopProjectionRefresh()
+  projectionRefreshTimer = setTimeout(async () => {
+    projectionRefreshTimer = null
+    if (loading.value) return
+    const projectionSnapshot = projection.value
+    if (projectionSnapshot && projectionPending(projectionSnapshot)) await loadWorkspace(selectedRunId.value)
+  }, PROJECTION_REFRESH_MS)
+}
+
 const loadWorkspace = async (runId = selectedRunId.value) => {
   if (!missionId.value) {
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
@@ -329,6 +357,7 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
   }
   controller?.abort()
   runtimeObservationAdapter.stop()
+  stopProjectionRefresh()
   controller = new AbortController()
   const requestController = controller
   runtimeObservation.value = null
@@ -353,6 +382,8 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
         }
       })
     }
+    // 降级投影等待 identity 注册：活跃 Run 期间周期重拉，直到 PLANNING_PROJECTION_PENDING 消失。
+    if (projectionPending(nextProjection)) scheduleProjectionRefresh()
   } catch (error: unknown) {
     if (isAbortError(error)) return
     loadError.value = '无法加载 Mission Workspace Projection，请稍后重试。'
@@ -472,7 +503,13 @@ const returnToProjectList = () => {
 }
 
 const locateGraph = (entry: WorkspaceEntry) => {
-  if (entry.identityQuality === 'legacy' || !entry.semanticTaskKey || !projection.value) return
+  if (!projection.value) return
+  // Run Progress 的 ACG Compile 直接携带 graph entry：打开既有 Graph Editor 即可。
+  if (entry.kind === 'graph') {
+    openEntry(entry)
+    return
+  }
+  if (entry.identityQuality === 'legacy' || !entry.semanticTaskKey) return
   const graphEntry = projection.value.entries.find(item => item.kind === 'graph')
   const graphNode = projection.value.graphNodes.find(item => item.semanticTaskKey === entry.semanticTaskKey)
   if (!graphEntry || !graphNode) return
@@ -486,6 +523,7 @@ void loadWorkspace()
 onBeforeUnmount(() => {
   controller?.abort()
   runtimeObservationAdapter.stop()
+  stopProjectionRefresh()
 })
 </script>
 

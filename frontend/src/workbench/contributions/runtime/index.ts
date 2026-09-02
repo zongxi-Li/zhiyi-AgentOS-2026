@@ -2,7 +2,6 @@ import RuntimeCommunicationPanel from './RuntimeCommunicationPanel.vue'
 import RuntimeEventsPanel from './RuntimeEventsPanel.vue'
 import RuntimeToolCallsPanel from './RuntimeToolCallsPanel.vue'
 import RuntimeTracePanel from './RuntimeTracePanel.vue'
-import RuntimeModelOutputPanel from './RuntimeModelOutputPanel.vue'
 import RuntimeAuditSidebarView from './RuntimeAuditSidebarView.vue'
 import RuntimeCommunicationSidebarView from './RuntimeCommunicationSidebarView.vue'
 import RuntimeContextSidebarView from './RuntimeContextSidebarView.vue'
@@ -47,13 +46,6 @@ export const runtimeContribution: WorkbenchContribution = {
       label: 'Trace',
       component: RuntimeTracePanel,
       count: context => context.runtimeObservation?.traces.length ?? 0,
-      getProps: context => ({ runtimeObservation: context.runtimeObservation })
-    },
-    {
-      id: 'model-output',
-      label: 'Model Output',
-      component: RuntimeModelOutputPanel,
-      count: context => context.runtimeObservation?.traces.filter(item => item.payload.planningProgress).length ?? 0,
       getProps: context => ({ runtimeObservation: context.runtimeObservation })
     },
     {
