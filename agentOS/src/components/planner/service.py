@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import random
 import secrets
-from typing import Any, Dict, Literal, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Literal, Mapping, Optional, Sequence
 
 from contracts.planning import (
     TaskImplementationBinding,
@@ -160,6 +160,7 @@ class PlanningEngine:
         task_input: Dict[str, Any] | None = None,
         existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
         capability_profile: str = "auto",
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> PlanResult:
         """为任务选择模板或动态生成 ACG。
 
@@ -168,6 +169,10 @@ class PlanningEngine:
         """
         diversity = normalize_planning_diversity(planning_diversity)
         requested_profile = normalize_capability_profile(capability_profile)
+        self.intent_parser.progress_callback = progress_callback
+        self.semantic_planner.task_decomposer.progress_callback = progress_callback
+        if progress_callback:
+            progress_callback({"stage": "planning", "status": "started"})
         profile = self.intent_parser.parse(
             intent=intent,
             domain=domain,

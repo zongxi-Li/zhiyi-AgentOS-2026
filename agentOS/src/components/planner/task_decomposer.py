@@ -7,7 +7,7 @@ import hashlib
 import re
 from copy import deepcopy
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable
 
 from contracts.planning import (
     PlannedTask,
@@ -19,7 +19,10 @@ from contracts.planning import (
 )
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
 
-from .complexity import PLANNING_BUDGETS, PLANNING_MODEL_TIMEOUT_SECONDS, is_model_timeout
+from .complexity import (
+    PLANNING_BUDGETS, PLANNING_MODEL_TIMEOUT_SECONDS, call_planning_model,
+    transport_error_code,
+)
 from .intent_analyzer import IntentLLM
 
 
@@ -107,7 +110,10 @@ _SCHEMA = {
 
 
 class TaskDecompositionError(ValueError):
-    pass
+    def __init__(self, message: str, *, cause_code: str | None = None, metadata: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.cause_code = cause_code
+        self.metadata = dict(metadata or {})
 
 
 class TaskDecomposer:
@@ -116,6 +122,7 @@ class TaskDecomposer:
         capability_catalog: CapabilityCatalog,
         llm: IntentLLM | None,
         model_timeout_seconds: float | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.capability_catalog = capability_catalog
         self.llm = llm
@@ -125,6 +132,7 @@ class TaskDecomposer:
         if self.model_timeout_seconds <= 0:
             raise ValueError("model_timeout_seconds must be positive")
         self.last_audit: dict[str, Any] = {}
+        self.progress_callback = progress_callback
 
     def _call_llm(self, *, stage: str, prompt: str, schema: dict, **kwargs) -> Any:
         """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
@@ -133,14 +141,11 @@ class TaskDecomposer:
         但也不得无限放大延迟：同一调用点最多两次尝试，持续超时按既有失败
         路径上抛。
         """
-        kwargs.setdefault("timeout_seconds", self.model_timeout_seconds)
-        try:
-            return self.llm.generate_json(prompt, schema, **kwargs)
-        except Exception as exc:
-            if not is_model_timeout(exc):
-                raise
-            self.last_audit.setdefault("timeoutRetries", []).append(stage)
-            return self.llm.generate_json(prompt, schema, **kwargs)
+        return call_planning_model(
+            self.llm, stage=stage, prompt=prompt, schema=schema,
+            audit=self.last_audit, model_timeout_seconds=self.model_timeout_seconds,
+            progress_callback=self.progress_callback, **kwargs,
+        )
 
     def decompose(
         self,
@@ -183,7 +188,6 @@ class TaskDecomposer:
                     stage="decompose",
                     prompt=prompt,
                     schema=_SCHEMA,
-                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
                 )
@@ -197,6 +201,14 @@ class TaskDecomposer:
                     existing_semantic_tasks=existing_semantic_tasks,
                 )
             except Exception as first_error:
+                if transport_error_code(first_error):
+                    self.last_audit["mode"] = "failed"
+                    self.last_audit["error"] = type(first_error).__name__
+                    raise TaskDecompositionError(
+                        f"TASK_PLAN_TRANSPORT_FAILED: {transport_error_code(first_error)}",
+                        cause_code=transport_error_code(first_error),
+                        metadata=dict(self.last_audit.get("lastTransportError") or {}),
+                    ) from first_error
                 try:
                     missing_refs = self._coverage_gap_refs(first_error)
                     if missing_refs and first is not None:
@@ -218,7 +230,6 @@ class TaskDecomposer:
                             + f"Validation detail: {first_error}\n"
                             + f"Previous invalid TaskPlan JSON: {invalid_plan}",
                             schema=_SCHEMA,
-                            max_tokens=16_384,
                             reasoning_effort=reasoning_effort,
                             prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
                         )
@@ -291,7 +302,6 @@ class TaskDecomposer:
                 stage="outline",
                 prompt=prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
                 schema=outline_schema,
-                max_tokens=16_384,
                 reasoning_effort=reasoning_effort,
                 prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
             )
@@ -332,16 +342,16 @@ class TaskDecomposer:
                         stage="detail",
                         prompt=detail_prompt,
                         schema=detail_schema,
-                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
                     )
                 except Exception as exc:
+                    if transport_error_code(exc):
+                        raise
                     detail_result = self._call_llm(
                         stage="detail.repair",
                         prompt=detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
                         schema=detail_schema,
-                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
                     )
@@ -380,16 +390,16 @@ class TaskDecomposer:
                     stage="relations",
                     prompt=relation_prompt,
                     schema=relation_schema,
-                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
                 )
             except Exception as exc:
+                if transport_error_code(exc):
+                    raise
                 relation_result = self._call_llm(
                     stage="relations.repair",
                     prompt=relation_prompt + f"\nRepair the relation unit once. Previous error: {exc}",
                     schema=relation_schema,
-                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair1",
                 )
@@ -426,7 +436,12 @@ class TaskDecomposer:
         except Exception as exc:
             self.last_audit["mode"] = "failed"
             self.last_audit["error"] = type(exc).__name__
-            raise TaskDecompositionError(f"TASK_PLAN_STAGED_FAILED: {exc}") from exc
+            cause_code = transport_error_code(exc)
+            raise TaskDecompositionError(
+                f"TASK_PLAN_STAGED_FAILED: {exc}",
+                cause_code=cause_code,
+                metadata=dict(self.last_audit.get("lastTransportError") or {}),
+            ) from exc
 
     @staticmethod
     def _coverage_gap_refs(error: Exception) -> tuple[str, ...]:
@@ -515,7 +530,6 @@ class TaskDecomposer:
             f"Missing source registry entries: {json.dumps(missing_registry, ensure_ascii=False)}\n"
             f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}",
             schema=schema,
-            max_tokens=16_384,
             reasoning_effort=reasoning_effort,
             prompt_version=repair_version,
         )

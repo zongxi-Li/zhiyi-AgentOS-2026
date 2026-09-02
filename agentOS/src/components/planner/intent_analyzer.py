@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from collections.abc import Mapping
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Callable, Dict, Optional, Protocol
 
 from support.acg.models import (
     CapabilityCatalog,
@@ -16,7 +16,8 @@ from support.acg.models import CapabilityCandidate, TaskSemanticProfile
 from .complexity import (
     PLANNING_MODEL_TIMEOUT_SECONDS,
     assess_complexity,
-    is_model_timeout,
+    call_planning_model,
+    transport_error_code,
 )
 
 
@@ -62,6 +63,7 @@ class IntentParser:
         llm: Optional[IntentLLM] = None,
         capability_catalog: CapabilityCatalog | None = None,
         model_timeout_seconds: float | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.llm = llm
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
@@ -71,6 +73,7 @@ class IntentParser:
         if self.model_timeout_seconds <= 0:
             raise ValueError("model_timeout_seconds must be positive")
         self.last_audit: dict[str, Any] = {}
+        self.progress_callback = progress_callback
 
     def _call_llm(self, *, stage: str, prompt: str, schema: dict, **kwargs) -> Any:
         """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
@@ -78,14 +81,11 @@ class IntentParser:
         与分解器同合同（2026-09-01 run_5c100bb2ec7a：意图解析裸走 120s 默认
         超时，修复通道两连超时判死整个 Run）。同一调用点最多两次尝试。
         """
-        kwargs.setdefault("timeout_seconds", self.model_timeout_seconds)
-        try:
-            return self.llm.generate_json(prompt, schema, **kwargs)
-        except Exception as exc:
-            if not is_model_timeout(exc):
-                raise
-            self.last_audit.setdefault("timeoutRetries", []).append(stage)
-            return self.llm.generate_json(prompt, schema, **kwargs)
+        return call_planning_model(
+            self.llm, stage=stage, prompt=prompt, schema=schema,
+            audit=self.last_audit, model_timeout_seconds=self.model_timeout_seconds,
+            progress_callback=self.progress_callback, **kwargs,
+        )
 
     def parse(
         self,
@@ -120,6 +120,12 @@ class IntentParser:
                     declared_capabilities=declared_capabilities,
                 )
             except Exception as first_error:
+                if transport_error_code(first_error):
+                    self.last_audit["mode"] = "failed"
+                    self.last_audit["error"] = type(first_error).__name__
+                    raise ValueError(
+                        f"INTENT_PROFILE_CONTRACT_FAILED: {transport_error_code(first_error)}"
+                    ) from first_error
                 try:
                     profile = self._parse_with_llm(
                         intent,
