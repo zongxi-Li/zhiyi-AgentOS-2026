@@ -79,18 +79,10 @@
                 <span>{{ $t('nav.history') }}</span>
               </el-menu-item>
 
-              <div v-if="!mainSidebarCompact" class="menu-group-title">{{ $t('nav.system') }}</div>
+              <div v-if="!mainSidebarCompact" class="menu-group-title">资源</div>
               <el-menu-item index="/agentos/resources">
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
-              </el-menu-item>
-              <el-menu-item index="/agentos-console">
-                <el-icon><Monitor /></el-icon>
-                <span>ACG 历史记录</span>
-              </el-menu-item>
-              <el-menu-item index="/roles">
-                <el-icon><User /></el-icon>
-                <span>{{ $t('nav.roles') }}</span>
               </el-menu-item>
               <el-menu-item index="/federated-learning">
                 <el-icon><Connection /></el-icon>
@@ -99,6 +91,16 @@
               <el-menu-item index="/federated-models">
                 <el-icon><Box /></el-icon>
                 <span>模型管理</span>
+              </el-menu-item>
+
+              <div v-if="!mainSidebarCompact" class="menu-group-title">{{ $t('nav.system') }}</div>
+              <el-menu-item index="/agentos-console">
+                <el-icon><Monitor /></el-icon>
+                <span>ACG 历史记录</span>
+              </el-menu-item>
+              <el-menu-item index="/roles">
+                <el-icon><User /></el-icon>
+                <span>{{ $t('nav.roles') }}</span>
               </el-menu-item>
               <el-menu-item index="/settings">
                 <el-icon><Setting /></el-icon>
@@ -334,18 +336,10 @@
                 <span>{{ $t('nav.history') }}</span>
               </el-menu-item>
 
-              <div class="menu-group-title">{{ $t('nav.system') }}</div>
+              <div class="menu-group-title">资源</div>
               <el-menu-item index="/agentos/resources">
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
-              </el-menu-item>
-              <el-menu-item index="/agentos-console">
-                <el-icon><Monitor /></el-icon>
-                <span>运行审计</span>
-              </el-menu-item>
-              <el-menu-item index="/roles">
-                <el-icon><User /></el-icon>
-                <span>{{ $t('nav.roles') }}</span>
               </el-menu-item>
               <el-menu-item index="/federated-learning">
                 <el-icon><Connection /></el-icon>
@@ -354,6 +348,16 @@
               <el-menu-item index="/federated-models">
                 <el-icon><Box /></el-icon>
                 <span>模型管理</span>
+              </el-menu-item>
+
+              <div class="menu-group-title">{{ $t('nav.system') }}</div>
+              <el-menu-item index="/agentos-console">
+                <el-icon><Monitor /></el-icon>
+                <span>运行审计</span>
+              </el-menu-item>
+              <el-menu-item index="/roles">
+                <el-icon><User /></el-icon>
+                <span>{{ $t('nav.roles') }}</span>
               </el-menu-item>
               <el-menu-item index="/settings">
                 <el-icon><Setting /></el-icon>
