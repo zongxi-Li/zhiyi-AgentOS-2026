@@ -164,6 +164,7 @@ describe('MissionWorkspaceView', () => {
     const { wrapper } = await mountWorkspace()
     const tabs = wrapper.findAll('.editor-tab')
     expect(tabs[0].text()).toContain('运行进度')
+    expect(tabs.map(tab => tab.text()).some(text => text.includes('mission.md'))).toBe(true)
     expect(tabs.map(tab => tab.text()).some(text => text.includes('graph.acg'))).toBe(true)
     expect(wrapper.find('.progress-editor-stub').exists()).toBe(true)
     expect(wrapper.find('.editor-group__toolbar').exists()).toBe(false)
@@ -229,7 +230,7 @@ describe('MissionWorkspaceView', () => {
     await artifactRow?.trigger('click')
     await wrapper.find('.artifact-locate').trigger('click')
     expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
   })
 
   it('disables graph positioning for legacy artifacts', async () => {
@@ -293,7 +294,7 @@ describe('MissionWorkspaceView', () => {
     await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_1'))?.trigger('click')
     await flushPromises()
     expect(wrapper.find('.artifact-editor-stub').text()).toContain('Not available in this Run')
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
   })
 
   it('shows NO_ACTIVE_RUN diagnostics and falls back to mission.md', async () => {
@@ -308,7 +309,7 @@ describe('MissionWorkspaceView', () => {
   it('exposes the fixed runtime observation panels through the Workbench registry', async () => {
     const { wrapper } = await mountWorkspace()
     expect(wrapper.findAll('.workbench-bottom-panel__tab').map(tab => tab.text())).toEqual([
-      'Problems0', 'Communication0', 'Trace0', 'Events0', 'Tool Calls0'
+      'Problems0', 'Communication0', 'Trace0', 'Model Output0', 'Events0', 'Tool Calls0'
     ])
   })
 

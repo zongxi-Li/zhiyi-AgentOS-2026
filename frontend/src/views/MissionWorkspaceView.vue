@@ -241,13 +241,15 @@ const defaultRunId = (items: MissionWorkspaceProjection['runs']) => {
 
 const openDefaultEditor = (nextProjection: MissionWorkspaceProjection) => {
   if (openEditors.value.length) return
+  const promptEntry = nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
   const first = nextProjection.entries.find(entry => entry.entryId === 'overview:graph.acg')
-    || nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
   const runActive = nextProjection.activeRun?.status === 'running' || nextProjection.activeRun?.status === 'pending'
   const openIds = [
     ...(runActive ? [PROGRESS_ENTRY_ID] : []),
+    ...(runActive && promptEntry ? [promptEntry.entryId] : []),
     ...(first ? [first.entryId] : [])
   ]
+  if (!openIds.length && promptEntry) openIds.push(promptEntry.entryId)
   if (!openIds.length) return
   openIds.forEach(entryId => {
     const entry = entryId === PROGRESS_ENTRY_ID

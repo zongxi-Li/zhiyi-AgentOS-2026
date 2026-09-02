@@ -326,7 +326,11 @@ const normalizeProblems = (
     .filter(event => event.eventType.includes('failed') || event.eventType.includes('violation') || event.eventType.includes('error'))
     .map(event => ({
       code: stringOrNull(event.payload.errorCode) || event.eventType.toUpperCase(),
-      message: eventSummary(event),
+      message: event.payload.errorCode === 'model_connection_interrupted'
+        ? '模型服务连接中断，系统已完成一次重试，请稍后重新运行。'
+        : event.payload.errorCode === 'model_timeout'
+          ? '模型服务响应超时，系统已完成一次重试，请稍后重新运行。'
+          : eventSummary(event),
       severity: 'warning' as const,
       details: event.payload,
       source: 'trace' as const,
