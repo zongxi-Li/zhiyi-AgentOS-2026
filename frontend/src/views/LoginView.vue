@@ -157,6 +157,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { User, Lock, Message } from '@element-plus/icons-vue'
 import { ElMessage, FormInstance, FormRules } from 'element-plus'
 import { authApi } from '@/services/api/auth'
+import { useUserStore } from '@/stores/user'
 import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 // 登录页使用独立快照组件，避免业务 ACG 后续迭代改变登录页展示。
@@ -168,6 +169,7 @@ const dragRegionProps = platform.dragRegionProps
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
 
 const activeTab = ref('login')
 const loading = ref(false)
@@ -281,6 +283,9 @@ const handleLogin = async () => {
       if (response.token) {
         localStorage.setItem('token', response.token)
         localStorage.setItem('userId', response.userId?.toString() || '')
+        // SPA 内跳转不会重跑 App.vue 的 onMounted，这里主动加载一次用户信息，
+        // 否则侧栏会整个会话停留在“当前用户”兜底头像上。
+        await userStore.loadCurrentUser()
         ElMessage.success(response.message || '登录成功')
 
         const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/chat'
