@@ -25,7 +25,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/user',
     name: 'User',
-    redirect: { path: '/settings', query: { tab: 'profile' } },
+    component: () => import('@/views/UserView.vue'),
     meta: {
       title: '用户中心',
       requiresAuth: true

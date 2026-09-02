@@ -68,7 +68,11 @@ describe('RuntimeObservationAdapter', () => {
         },
         {
           eventId: 'recovery_event', runId: 'run_1', eventType: 'run_recovered',
-          observation: 'recovered', payload: {}, createdAt: '2026-08-29T00:04:00Z'
+          observation: 'recovered', payload: {
+            action: 'resource_failover',
+            resources: [{ stepId: 'step_1', resourceId: 'edge-01', error: 'edge down' }],
+            retryStepIds: ['step_1']
+          }, createdAt: '2026-08-29T00:04:00Z'
         }
       ]
     } as any)
@@ -106,6 +110,13 @@ describe('RuntimeObservationAdapter', () => {
       recoveryCount: 1,
       contractViolationCount: 1
     })
+    expect(result.resourceObservation?.failoverEvents).toEqual([{
+      eventId: 'recovery_event',
+      stepId: null,
+      timestamp: '2026-08-29T00:04:00Z',
+      failedResources: [{ stepId: 'step_1', resourceId: 'edge-01', error: 'edge down' }],
+      retryStepIds: ['step_1']
+    }])
   })
 
   it('restores low-entropy metrics from real provenance records', async () => {

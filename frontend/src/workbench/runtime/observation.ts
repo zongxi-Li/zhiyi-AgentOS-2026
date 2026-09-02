@@ -2,6 +2,7 @@ import {
   agentosApi,
   type ProvenanceConsumption,
   type ProvenanceProduction,
+  type ResourceFailoverObservation,
   type ResourceObservation,
   type RunOperationalState,
   type RuntimeInteraction,
@@ -170,6 +171,39 @@ const normalizeTrace = (trace: WorkflowTraceExport | null): RuntimeTraceObservat
       payload,
       source: 'trace'
     }
+  })
+)
+
+const normalizeResourceFailoverEvents = (traces: RuntimeTraceObservation[]): ResourceFailoverObservation[] => (
+  traces.flatMap(event => {
+    if (event.eventType !== 'run_recovered') return []
+    const payload = asRecord(event.payload)
+    if (payload.action !== 'resource_failover' && !Array.isArray(payload.resources) && !Array.isArray(payload.failedResources)) {
+      return []
+    }
+    const rawResources = Array.isArray(payload.resources)
+      ? payload.resources
+      : Array.isArray(payload.failedResources) ? payload.failedResources : []
+    const failedResources = rawResources.flatMap(value => {
+      const item = asRecord(value)
+      const resourceId = stringOrNull(item.resourceId)
+      if (!resourceId) return []
+      return [{
+        stepId: stringOrNull(item.stepId) || undefined,
+        resourceId,
+        error: stringOrNull(item.error)
+      }]
+    })
+    if (!failedResources.length) return []
+    return [{
+      eventId: event.eventId,
+      stepId: event.stepId,
+      timestamp: event.timestamp,
+      failedResources,
+      retryStepIds: Array.isArray(payload.retryStepIds)
+        ? payload.retryStepIds.filter((value): value is string => typeof value === 'string')
+        : []
+    }]
   })
 )
 
@@ -468,9 +502,12 @@ export const readRuntimeObservation = async (
   const trace = results[1].status === 'fulfilled' ? results[1].value : null
   const rawProvenance = results[2].status === 'fulfilled' ? results[2].value : null
   const executionTree = results[3].status === 'fulfilled' ? results[3].value : null
-  const resourceObservation = results[4].status === 'fulfilled' ? results[4].value : null
   const provenance = normalizeProvenance(rawProvenance)
   const traces = normalizeTrace(trace)
+  const resourceObservationBase = results[4].status === 'fulfilled' ? results[4].value : null
+  const resourceObservation = resourceObservationBase
+    ? { ...resourceObservationBase, failoverEvents: normalizeResourceFailoverEvents(traces) }
+    : null
   const unavailableSources = [
     results[0].status === 'rejected' ? 'run' : null,
     results[1].status === 'rejected' ? 'trace' : null,

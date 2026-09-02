@@ -12,3 +12,12 @@ describe('public route contract', () => {
     expect(router.currentRoute.value.name).toBe('Landing')
   })
 })
+
+describe('application route boundaries', () => {
+  it('keeps the user center as an independent route instead of a settings tab', () => {
+    const userRecord = router.resolve('/user').matched.at(-1)
+
+    expect(userRecord?.redirect).toBeUndefined()
+    expect(userRecord?.components?.default).toBeDefined()
+  })
+})

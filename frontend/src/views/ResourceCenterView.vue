@@ -15,6 +15,12 @@
             </button>
           </header>
 
+          <nav class="resource-center__nav" aria-label="资源导航">
+            <router-link to="/agentos/resources" exact-active-class="is-active">资源中心</router-link>
+            <router-link to="/federated-learning" exact-active-class="is-active">联邦管理</router-link>
+            <router-link to="/federated-models" exact-active-class="is-active">模型管理</router-link>
+          </nav>
+
           <section class="resource-center__toolbar" aria-label="资源筛选">
             <label class="resource-center__search">
               <el-icon aria-hidden="true"><Search /></el-icon>
@@ -42,7 +48,7 @@
                 <span class="resource-row__icon" aria-hidden="true"><el-icon><Cpu /></el-icon></span>
                 <div>
                   <strong>{{ item.profile.resourceId }}</strong>
-                  <span>{{ item.profile.resourceType }} · v{{ item.profile.version }}</span>
+                  <span>{{ tierLabel(item.profile.deploymentTier) }} · {{ item.profile.resourceType }} · v{{ item.profile.version }}</span>
                 </div>
               </div>
               <div class="resource-row__capabilities">
@@ -51,9 +57,13 @@
               <dl class="resource-row__facts">
                 <div><dt>Health</dt><dd :class="`is-${item.snapshot.healthStatus}`">{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
                 <div><dt>Slots</dt><dd>{{ item.snapshot.availableSlots }} / {{ item.profile.capacity }}</dd></div>
+                <div><dt>Latency</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
                 <div><dt>Observed</dt><dd>{{ formatDate(item.snapshot.observedAt) }}</dd></div>
-                <div><dt>Enabled</dt><dd>{{ item.profile.enabled ? '已启用' : '已停用' }}</dd></div>
               </dl>
+              <div class="resource-row__load">
+                <span>利用率 {{ formatPercent(item.snapshot.utilization) }}</span>
+                <span>{{ item.profile.privacyLevel || 'internal' }}</span>
+              </div>
             </article>
           </section>
         </main>
@@ -80,6 +90,7 @@ const filteredResources = computed(() => {
   return resources.value.filter(item => [
     item.profile.resourceId,
     item.profile.resourceType,
+    item.profile.deploymentTier || '',
     ...item.profile.capabilities
   ].some(value => value.toLocaleLowerCase().includes(query)))
 })
@@ -90,6 +101,19 @@ const healthLabel = (value: RuntimeResourceHealth) => ({
   degraded: 'Degraded',
   offline: 'Offline'
 }[value] || `${value} / 未知`)
+
+const tierLabel = (value?: string | null) => ({
+  local: '本地',
+  terminal: '端侧',
+  edge: '边缘',
+  cloud: '云端'
+}[value || ''] || value || '未分层')
+
+const formatMetric = (value: number | null | undefined, unit: string) => (
+  typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value)} ${unit}` : '未观测'
+)
+
+const formatPercent = (value: number) => `${Math.round(value * 100)}%`
 
 const formatDate = (value: string) => {
   const date = new Date(value)
@@ -126,13 +150,17 @@ onBeforeUnmount(() => controller?.abort())
 .resource-center__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
 .resource-center h1 { margin: 8px 0 5px; font-family: var(--font-serif, Georgia, serif); font-size: 30px; font-weight: 650; }
 .resource-center__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
+.resource-center__nav { display: flex; align-items: center; gap: 6px; padding: 14px 0 2px; border-bottom: 1px solid var(--border-light); }
+.resource-center__nav a { min-height: 34px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 6px; color: var(--text-muted); font-size: 12px; text-decoration: none; transition: var(--transition); }
+.resource-center__nav a:hover, .resource-center__nav a.is-active { color: var(--text-primary); background: var(--primary-fade); }
+.resource-center__nav a.is-active { box-shadow: inset 0 -2px var(--primary-color); }
 .resource-center__refresh, .resource-center__state button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--primary-line); border-radius: 5px; color: var(--primary-color); background: var(--primary-fade); cursor: pointer; font: inherit; font-size: 11px; }
 .resource-center__refresh:disabled { cursor: wait; opacity: .6; }
 .resource-center__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0; color: var(--text-muted); font-size: 11px; }
 .resource-center__search { display: flex; align-items: center; gap: 8px; width: min(480px, 100%); min-height: 34px; padding: 0 10px; border-bottom: 1px solid var(--border-light); color: var(--text-muted); }
 .resource-center__search input { width: 100%; border: 0; outline: 0; color: var(--text-primary); background: transparent; font: inherit; }
 .resource-center__list { border-top: 1px solid var(--border-light); }
-.resource-row { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(180px, 1fr) minmax(310px, 1.3fr); align-items: center; gap: 24px; padding: 18px 16px; border-bottom: 1px solid var(--border-light); background: var(--bg-card); }
+.resource-row { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(180px, 1fr) minmax(310px, 1.3fr); align-items: center; gap: 10px 24px; padding: 18px 16px; border-bottom: 1px solid var(--border-light); background: var(--bg-card); }
 .resource-row:hover { background: var(--bg-input); }
 .resource-row__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .resource-row__icon { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--primary-line); border-radius: 5px; color: var(--primary-color); background: var(--primary-fade); }
@@ -147,6 +175,7 @@ onBeforeUnmount(() => controller?.abort())
 .resource-row__facts dt { color: var(--text-muted); font-size: 10px; }
 .resource-row__facts dd { margin: 4px 0 0; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .resource-row__facts dd.is-unknown { color: var(--warning, #a36a16); }
+.resource-row__load { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 10px; }
 .resource-center__state { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 280px; color: var(--text-secondary); font-size: 12px; text-align: center; }
 .resource-center__state strong { color: var(--text-primary); font-size: 14px; }
 .resource-center__state span { line-height: 1.6; }
