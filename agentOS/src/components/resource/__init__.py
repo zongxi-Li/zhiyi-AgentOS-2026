@@ -1,6 +1,14 @@
 """资源部件的公开入口。"""
 
 from .health import ResourceHealthMonitor
+from .auth import (
+    ResourceRequestAuthenticator,
+    ResourceRequestExpired,
+    ResourceRequestInvalid,
+    ResourceRequestNotFound,
+    ResourceRequestReplay,
+    build_resource_signature,
+)
 from .directory import AgentResource, ResourceConflictError, ResourceDirectory, ResourceNotFoundError
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .service import IssuedResourceCredential, ResourceService
@@ -21,6 +29,11 @@ __all__ = [
     "ResourceDirectory",
     "ResourceHealth",
     "ResourceHealthMonitor",
+    "ResourceRequestAuthenticator",
+    "ResourceRequestExpired",
+    "ResourceRequestInvalid",
+    "ResourceRequestNotFound",
+    "ResourceRequestReplay",
     "ResourceNotFoundError",
     "ResourceService",
     "ResourceStore",
@@ -28,4 +41,5 @@ __all__ = [
     "IssuedResourceCredential",
     "VersionConflict",
     "VersionedResourceSnapshot",
+    "build_resource_signature",
 ]

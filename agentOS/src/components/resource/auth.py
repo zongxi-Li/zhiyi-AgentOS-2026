@@ -18,6 +18,14 @@ class ResourceRequestReplay(ValueError):
     """The signed request nonce has already been consumed."""
 
 
+class ResourceRequestNotFound(ValueError):
+    """The request names an unknown resource."""
+
+
+class ResourceRequestInvalid(ValueError):
+    """The credential or signature does not match the named resource."""
+
+
 def _canonical_request(
     *, method: str, path: str, timestamp: int, nonce: str, body: bytes
 ) -> bytes:
@@ -87,9 +95,9 @@ class ResourceRequestAuthenticator:
         try:
             record = self.resource_service.credential(resource_id)
         except KeyError as error:
-            raise ValueError("resource not found") from error
+            raise ResourceRequestNotFound("resource not found") from error
         if record.credential_id != credential_id:
-            raise ValueError("resource credential is invalid")
+            raise ResourceRequestInvalid("resource credential is invalid")
 
         try:
             signed_at = datetime.fromtimestamp(timestamp, tz=timezone.utc)
@@ -110,7 +118,7 @@ class ResourceRequestAuthenticator:
             hashlib.sha256,
         ).hexdigest()
         if not hmac.compare_digest(expected, signature):
-            raise ValueError("resource signature is invalid")
+            raise ResourceRequestInvalid("resource signature is invalid")
 
         expires_at = signed_at + self.clock_skew
         if not self.resource_service.consume_nonce(

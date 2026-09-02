@@ -57,6 +57,19 @@ class ResourceService:
 
     register_resource = register
 
+    def register_remote(
+        self, profile: ResourceProfile, snapshot: ResourceSnapshot
+    ) -> IssuedResourceCredential:
+        """登记远程资源并生成只能在注册响应中读取一次的凭据。"""
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            raise ValueError("remote resource must use a non-local deployment tier")
+        if not profile.owner_scope:
+            raise ValueError("remote resource owner_scope is required")
+        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
+            raise ValueError("remote resource execution endpoint is required")
+        self.register(profile, snapshot)
+        return self.issue_credential(profile.resource_id)
+
     def update_snapshot(
         self, snapshot: ResourceSnapshot, *, expected_version: int | None = None
     ) -> VersionedResourceSnapshot:

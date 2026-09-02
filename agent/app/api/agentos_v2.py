@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
@@ -18,6 +18,14 @@ from contracts.content import ContentKind
 from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
 from components.planner import ACGPlanningError, TaskDecompositionError
+from components.resource.auth import (
+    ResourceRequestAuthenticator,
+    ResourceRequestExpired,
+    ResourceRequestInvalid,
+    ResourceRequestNotFound,
+    ResourceRequestReplay,
+)
+from contracts.resource import ResourceProfile, ResourceSnapshot
 from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
 from runtime import ExecutionRuntime
@@ -81,6 +89,13 @@ class RemoteResourceObservationRequest(BaseModel):
     observed_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), alias="observedAt"
     )
+
+
+class RemoteResourceRegistrationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    profile: ResourceProfile
+    snapshot: ResourceSnapshot
 
 
 class ReviewApplyRequest(BaseModel):
@@ -518,6 +533,15 @@ def create_router(
             "manifestId": artifact.content_ref,
         }
 
+    def require_resource_operator(owner_scope: str) -> None:
+        actor = current_trusted_user()
+        if actor is None:
+            raise HTTPException(status_code=401, detail="trusted operator context required")
+        if actor.role.strip().lower() not in {"admin", "operator", "system"}:
+            raise HTTPException(status_code=403, detail="resource registration requires operator role")
+        if actor.tenant_id and actor.tenant_id != owner_scope:
+            raise HTTPException(status_code=403, detail="resource owner scope does not match operator tenant")
+
     def prepare_execution_input(
         payload: dict[str, Any],
         material_refs: list[str] | None,
@@ -638,15 +662,67 @@ def create_router(
             })
         return {"items": items, "total": len(items)}
 
+    @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
+    async def register_remote_resource(request: RemoteResourceRegistrationRequest):
+        """Register a remote resource and issue its one-time credential secret."""
+        resource_service = getattr(runtime, "resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource registration source unavailable")
+        profile = request.profile
+        if request.snapshot.resource_id != profile.resource_id:
+            raise HTTPException(status_code=422, detail="profile and snapshot resourceId must match")
+        require_resource_operator(str(profile.owner_scope or ""))
+        try:
+            issued = resource_service.register_remote(profile, request.snapshot)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "resourceId": issued.resource_id,
+            "credentialId": issued.credential_id,
+            "ownerScope": issued.owner_scope,
+            "secret": issued.secret,
+            "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
+        }
+
     @router.post("/resources/{resource_id}/observation")
     async def post_remote_resource_observation(
         resource_id: str,
         request: RemoteResourceObservationRequest,
+        raw_request: Request,
+        resource_credential: str | None = Header(default=None, alias="X-Resource-Credential"),
+        resource_timestamp: str | None = Header(default=None, alias="X-Resource-Timestamp"),
+        resource_nonce: str | None = Header(default=None, alias="X-Resource-Nonce"),
+        resource_signature: str | None = Header(default=None, alias="X-Resource-Signature"),
     ):
         """Accept a remote node's heartbeat plus its latest schedulable snapshot."""
         resource_service = getattr(runtime, "resource_service", None)
         if resource_service is None:
             raise HTTPException(status_code=503, detail="resource observation source unavailable")
+        if not all((resource_credential, resource_timestamp, resource_nonce, resource_signature)):
+            raise HTTPException(status_code=401, detail="resource authentication headers are required")
+        try:
+            timestamp = int(resource_timestamp)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=401, detail="resource request timestamp is invalid") from exc
+        try:
+            ResourceRequestAuthenticator(resource_service).authenticate(
+                resource_id=resource_id,
+                credential_id=resource_credential,
+                method=raw_request.method,
+                path=raw_request.url.path,
+                timestamp=timestamp,
+                nonce=resource_nonce,
+                signature=resource_signature,
+                body=await raw_request.body(),
+            )
+        except ResourceRequestNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ResourceRequestExpired as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except ResourceRequestReplay as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ResourceRequestInvalid as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
         try:
             health = resource_service.observe_remote(
                 resource_id,
