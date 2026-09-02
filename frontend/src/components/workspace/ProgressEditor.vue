@@ -5,7 +5,19 @@
         <span class="progress-editor__mark" aria-hidden="true">RUN</span>
         <strong>{{ runId || '未关联 Run' }}</strong>
       </div>
-      <span v-if="phaseLabel" class="progress-editor__phase">{{ phaseLabel }}</span>
+      <div class="progress-editor__actions">
+        <span v-if="phaseLabel" class="progress-editor__phase">{{ phaseLabel }}</span>
+        <button
+          v-if="canCancelRun"
+          type="button"
+          class="progress-editor__cancel"
+          :disabled="cancelPending"
+          :aria-busy="cancelPending"
+          @click="emit('cancelRun')"
+        >
+          {{ cancelPending ? '停止中…' : '停止运行' }}
+        </button>
+      </div>
     </header>
 
     <div v-if="!runId" class="progress-editor__empty">当前 Mission 尚无可展示的 Run。</div>
@@ -59,10 +71,13 @@ const props = defineProps<{
   entry: WorkspaceEntry
   projection: MissionWorkspaceProjection
   runId: string | null
+  runStatus?: string | null
+  cancelPending?: boolean
 }>()
 
 const emit = defineEmits<{
   openSemanticTask: [semanticTaskKey: string]
+  cancelRun: []
 }>()
 
 const progressTracker = useWorkflowProgress()
@@ -85,6 +100,13 @@ const PHASE_LABELS: Record<string, string> = {
   failed: '已失败',
   cancelled: '已取消'
 }
+
+const TERMINAL_STATUSES = new Set(['completed', 'succeeded', 'failed', 'cancelled', 'superseded'])
+const canCancelRun = computed(() => {
+  if (!props.runId || TERMINAL_STATUSES.has(props.runStatus || '')) return false
+  const observedStatus = progressTracker.progress.value?.status || progressTracker.progress.value?.phase
+  return Boolean(props.runStatus || observedStatus) && !TERMINAL_STATUSES.has(observedStatus || '')
+})
 
 const phaseLabel = computed(() => {
   const phase = progressTracker.progress.value?.phase
@@ -130,8 +152,13 @@ const formatTime = (value: string) => {
 .progress-editor__title { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .progress-editor__mark { padding: 4px 6px; border-radius: 5px; color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 10%, transparent); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
 .progress-editor__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.progress-editor__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .progress-editor__phase { position: relative; flex: 0 0 auto; padding: 5px 10px 5px 18px; border-radius: 999px; color: var(--wb-text-secondary); background: color-mix(in srgb, var(--wb-surface-2) 72%, transparent); font-size: 11px; }
 .progress-editor__phase::before { position: absolute; top: 50%; left: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--wb-accent); content: ''; transform: translateY(-50%); box-shadow: 0 0 0 3px color-mix(in srgb, var(--wb-accent) 12%, transparent); }
+.progress-editor__cancel { padding: 5px 10px; border: 1px solid color-mix(in srgb, var(--wb-danger) 45%, var(--wb-border)); border-radius: 5px; color: var(--wb-danger); background: transparent; cursor: pointer; font-size: 11px; transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out); }
+.progress-editor__cancel:hover:not(:disabled), .progress-editor__cancel:focus-visible { border-color: var(--wb-danger); background: color-mix(in srgb, var(--wb-danger) 10%, transparent); }
+.progress-editor__cancel:focus-visible { outline: 2px solid var(--wb-danger); outline-offset: 2px; }
+.progress-editor__cancel:disabled { cursor: wait; opacity: .68; }
 .progress-editor__empty { display: grid; place-items: center; flex: 1; color: var(--wb-text-muted); font-size: 12px; }
 .progress-editor__body { display: flex; flex-direction: column; gap: 18px; }
 .progress-editor__counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 8px 0; border-top: 1px solid var(--wb-border-soft); border-bottom: 1px solid var(--wb-border-soft); }

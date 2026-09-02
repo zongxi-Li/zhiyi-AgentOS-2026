@@ -57,12 +57,15 @@
         :selected-semantic-task-key="selectedSemanticTaskKey"
         :focus-node-id="focusNodeId"
         :run-id="projection.activeRun?.runId || null"
+        :run-status="projection.activeRun?.status || null"
+        :cancel-pending="cancelPending"
         :available="activeOpened.available"
         :runtime-observation="workbenchContext.runtimeObservation"
         @select-semantic-task="emit('selectSemanticTask', $event)"
         @open-semantic-task="emit('openSemanticTask', $event)"
         @locate-graph="emit('locateGraph', activeOpened.entry)"
         @open-artifact="emit('openArtifact', $event)"
+        @cancel-run="emit('cancelRun')"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
     </section>
@@ -94,6 +97,7 @@ const props = defineProps<{
   inspectorAutoHidden: boolean
   toggleInspector: () => void
   sidebarHidden?: boolean
+  cancelPending?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -104,6 +108,7 @@ const emit = defineEmits<{
   locateGraph: [entry: WorkspaceEntry]
   openArtifact: [entry: WorkspaceEntry]
   restoreSidebar: []
+  cancelRun: []
 }>()
 
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
