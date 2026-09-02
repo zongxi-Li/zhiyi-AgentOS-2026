@@ -6,7 +6,12 @@ import { isDesktop } from '@/platform'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: '/chat'
+    name: 'Landing',
+    component: () => import('@/views/LandingView.vue'),
+    meta: {
+      title: '首页',
+      requiresAuth: false
+    }
   },
   {
     path: '/login',
