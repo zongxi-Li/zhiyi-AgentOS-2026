@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -122,6 +123,60 @@ def test_cancel_midstream_stops_graph_and_returns_cancelled(monkeypatch) -> None
     assert result.status is WorkflowStatus.CANCELLED
     # 取消之后，下游 follower 步骤不得再获得任何一次 Agent 调用。
     assert gated.calls.count("follower") == 0
+
+
+def test_cancel_during_deferred_planning_does_not_materialize_or_restart(monkeypatch) -> None:
+    """规划线程返回后，取消终态不得被旧快照覆盖，也不得重新启动执行。"""
+    gated = _GatedAgent(AgentProfile(agentName="gated", domain="general"))
+    agents, workflows = _registry("gated", gated, workflow_id="cancel-planning")
+    runtime = ExecutionRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=MemoryWorkflowStore(),
+    )
+    blueprint = ACGBlueprint(
+        graphId="cancel-planning-graph",
+        nodes=[
+            StepNode(
+                nodeId="only-step",
+                agentName="gated",
+                outputSpec={"type": "object", "properties": {"summary": {"type": "string"}}},
+            )
+        ],
+    )
+    planner_started = threading.Event()
+    release_planner = threading.Event()
+
+    def blocked_planner(*_args, **_kwargs):
+        planner_started.set()
+        assert release_planner.wait(timeout=5)
+        return blueprint, None, ()
+
+    monkeypatch.setattr(runtime, "_build_acg_blueprint", blocked_planner)
+    mission = runtime.create_mission("cancel during planning", workflow_id="cancel-planning")
+    _, run = runtime.prepare_run(mission.mission_id, defer_acg_planning=True)
+
+    async def scenario():
+        execution = asyncio.create_task(runtime.execute_prepared_run(run.run_id))
+        await asyncio.wait_for(asyncio.to_thread(planner_started.wait, 5), timeout=6)
+        cancelled = runtime.cancel(run.run_id)
+        release_planner.set()
+        result = await asyncio.wait_for(execution, timeout=10)
+        repeated = await runtime.execute_prepared_run(run.run_id)
+        return cancelled, result, repeated
+
+    try:
+        cancelled, result, repeated = asyncio.run(scenario())
+    finally:
+        release_planner.set()
+
+    assert cancelled.status is WorkflowStatus.CANCELLED
+    assert result.status is WorkflowStatus.CANCELLED
+    assert repeated.status is WorkflowStatus.CANCELLED
+    latest = runtime.workflow_store.get_run(run.run_id)
+    assert latest.status is WorkflowStatus.CANCELLED
+    assert latest.acg_blueprint is None
+    assert latest.execution_state["planningDeferred"] is True
 
 
 def test_concurrent_checkpoint_resume_allows_exactly_one_executor(monkeypatch) -> None:
