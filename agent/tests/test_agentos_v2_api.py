@@ -426,6 +426,42 @@ async def test_v2_resources_projects_authoritative_profile_and_unknown_health(tm
     assert "gpu" not in item["snapshot"]["metrics"]
 
 
+async def test_v2_remote_resource_observation_updates_health_and_capacity(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.resource_service.register(
+        ResourceProfile(
+            resourceId="edge-observe",
+            resourceType=ResourceType.WORKER,
+            deploymentTier="edge",
+            capabilities=["vision.infer"],
+            executionEndpoint={"protocol": "http", "address": "http://edge-observe:9000"},
+        ),
+        ResourceSnapshot(
+            resourceId="edge-observe",
+            availableSlots=0,
+            utilization=1.0,
+            healthStatus=ResourceHealthStatus.UNKNOWN,
+        ),
+    )
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/agentos/v2/resources/edge-observe/observation",
+            json={
+                "availableSlots": 2,
+                "utilization": 0.25,
+                "latencyMs": 18,
+                "observedAt": "2026-09-01T00:00:00Z",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["health"]["healthy"] is True
+    assert response.json()["snapshot"]["availableSlots"] == 2
+
+
 async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     coordinator = RunExecutionCoordinator(runtime)

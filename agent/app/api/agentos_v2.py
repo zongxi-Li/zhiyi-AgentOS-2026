@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -68,6 +68,17 @@ class MaterialCreateRequest(BaseModel):
 
     content: str
     media_type: str = Field(default="text/plain", alias="mediaType", min_length=1)
+
+
+class RemoteResourceObservationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    available_slots: int = Field(alias="availableSlots", ge=0)
+    utilization: float = Field(ge=0.0, le=1.0)
+    latency_ms: float | None = Field(default=None, alias="latencyMs", ge=0.0)
+    observed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), alias="observedAt"
+    )
 
 
 class ReviewApplyRequest(BaseModel):
@@ -624,6 +635,44 @@ def create_router(
                 "snapshotVersion": versioned.version,
             })
         return {"items": items, "total": len(items)}
+
+    @router.post("/resources/{resource_id}/observation")
+    async def post_remote_resource_observation(
+        resource_id: str,
+        request: RemoteResourceObservationRequest,
+    ):
+        """Accept a remote node's heartbeat plus its latest schedulable snapshot."""
+        resource_service = getattr(runtime, "resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource observation source unavailable")
+        try:
+            health = resource_service.observe_remote(
+                resource_id,
+                available_slots=request.available_slots,
+                utilization=request.utilization,
+                latency_ms=request.latency_ms,
+                observed_at=request.observed_at,
+            )
+            versioned = resource_service.snapshot(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "resourceId": resource_id,
+            "health": {
+                "healthy": health.healthy,
+                "reliability": health.reliability,
+                "latencyMs": health.latency_ms,
+                "lastHeartbeat": (
+                    health.last_heartbeat.isoformat()
+                    if health.last_heartbeat is not None
+                    else None
+                ),
+            },
+            "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
+            "snapshotVersion": versioned.version,
+        }
 
     @router.get("/missions")
     async def list_missions(

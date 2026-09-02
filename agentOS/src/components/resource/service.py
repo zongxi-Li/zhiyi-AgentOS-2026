@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Literal
 
-from contracts.resource import BindingRequirement, ResourceProfile, ResourceSnapshot
+from contracts.resource import (
+    BindingRequirement,
+    DeploymentTier,
+    ResourceHealthStatus,
+    ResourceProfile,
+    ResourceSnapshot,
+)
 
 from .algorithms import health_score, is_resource_available
 from .health import ResourceHealthMonitor
@@ -63,9 +70,17 @@ class ResourceService:
         """List authoritative profiles in stable order."""
         return self.store.list_profiles()
 
-    def heartbeat(self, resource_id: str, *, received_at: datetime | None = None) -> ResourceHealth:
-        """记录已登记资源的存活信号，未知资源不会被静默接纳。"""
-        self.registry.get(resource_id)
+    def heartbeat(
+        self,
+        resource_id: str,
+        *,
+        received_at: datetime | None = None,
+        source: Literal["local", "external"] = "local",
+    ) -> ResourceHealth:
+        """记录已登记资源的存活信号，远程资源必须由外部节点主动上报。"""
+        profile = self.registry.get(resource_id)
+        if profile.deployment_tier is not DeploymentTier.LOCAL and source != "external":
+            raise ValueError("remote resource heartbeat must come from an external heartbeat")
         return self.health_monitor.heartbeat(resource_id, received_at=received_at)
 
     def observe(
@@ -83,6 +98,39 @@ class ResourceService:
             success=success,
             latency_ms=latency_ms,
             observed_at=observed_at,
+        )
+
+    def observe_remote(
+        self,
+        resource_id: str,
+        *,
+        available_slots: int,
+        utilization: float,
+        latency_ms: float | None = None,
+        observed_at: datetime | None = None,
+    ) -> ResourceHealth:
+        """接收远程资源的一次完整观测，并同步快照与存活信号。"""
+        profile = self.registry.get(resource_id)
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            raise ValueError("remote observation requires a non-local resource")
+        current = self.store.get_snapshot(resource_id)
+        timestamp = observed_at or datetime.now().astimezone()
+        updated = ResourceSnapshot(
+            resourceId=resource_id,
+            observedAt=timestamp,
+            availableSlots=available_slots,
+            utilization=utilization,
+            healthStatus=ResourceHealthStatus.ONLINE,
+            latencyMs=latency_ms,
+        )
+        self.store.update_snapshot(updated, expected_version=current.version)
+        if latency_ms is None:
+            return self.heartbeat(resource_id, received_at=timestamp, source="external")
+        return self.health_monitor.observe(
+            resource_id,
+            success=True,
+            latency_ms=latency_ms,
+            observed_at=timestamp,
         )
 
     def set_health(self, resource_id: str, *, healthy: bool) -> ResourceHealth:

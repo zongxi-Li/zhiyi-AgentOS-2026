@@ -88,4 +88,5 @@ class ResourceHealthMonitor:
     calculate = health
 
 
-# TODO: 后续接入远程心跳上报，使跨进程资源可将存活信号安全汇聚到本监测器。
+# TODO: 继续补齐跨进程心跳的签名鉴权、重放保护和持久化；当前由 ResourceService
+# 接收远程观测并更新本进程监测器，尚不等同于生产级多节点健康中心。
