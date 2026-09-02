@@ -644,13 +644,21 @@ class ExecutionRuntime:
         run = self.workflow_store.get_run(run_id)
         if not run.execution_state.get("planningDeferred"):
             return run
+        self._raise_if_run_cancelled(run_id)
         task = self.mission_manager.get_mission(run.mission_id)
         workflow = self._workflow_for_run(run)
         scope = run.execution_scope
         if scope is None:
             raise ValueError("deferred ACG planning requires a frozen execution scope")
         self._materialize_acg_run(task=task, run=run, workflow=workflow, scope=scope)
-        self.workflow_store.save_run(run)
+        # Planning runs in a worker thread. Re-check and commit under the same
+        # short run lock used by cancel(), otherwise a stale planner snapshot
+        # can overwrite CANCELLED and hand the run back to the executor.
+        with self.run_lock_manager.lock_for(run_id):
+            latest = self.workflow_store.get_run(run_id)
+            if latest.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run_id):
+                return latest
+            self.workflow_store.save_run(run)
         if self.identity_lifecycle is not None:
             self._flush_identity_outbox()
         return run
@@ -660,9 +668,12 @@ class ExecutionRuntime:
 
         run = self.workflow_store.get_run(run_id)
         if self._normalize_runtime_engine(run.runtime_engine) == "acg":
+            if run.status in _TERMINAL_RUN_STATUSES:
+                return run
             if run.status == WorkflowStatus.WAITING_REVIEW:
                 return run
             if run.execution_state.get("planningDeferred"):
+                self._cancellation_event(run.run_id)
                 run = self._set_run_lifecycle(
                     run,
                     status=WorkflowStatus.PLANNING,
@@ -671,10 +682,21 @@ class ExecutionRuntime:
                     set_started_at=True,
                 )
                 self.workflow_store.save_run(run)
-                run = await asyncio.to_thread(
-                    self._materialize_deferred_acg_run,
-                    run.run_id,
-                )
+                try:
+                    run = await asyncio.to_thread(
+                        self._materialize_deferred_acg_run,
+                        run.run_id,
+                    )
+                except ExecutionRunCancelled:
+                    self._discard_run_cancellation(run.run_id)
+                    return self.workflow_store.get_run(run.run_id)
+                except BaseException:
+                    self._discard_run_cancellation(run.run_id)
+                    raise
+                if run.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run.run_id):
+                    latest = self.workflow_store.get_run(run.run_id)
+                    self._discard_run_cancellation(run.run_id)
+                    return latest
             return await self._execute_acg(run)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
@@ -1948,13 +1970,18 @@ class ExecutionRuntime:
             observation += f" [{stage}]"
         if status:
             observation += f" {status}"
-        self.trace_store.append(
-            run=run,
-            event_type=TraceEventType.TASK_STATUS_CHANGED,
-            observation=observation,
-            payload={"planningProgress": True, "category": "planner", **payload},
-        )
-        self.workflow_store.save_run(run)
+        # Planning runs in a worker thread. Re-check under the same short run
+        # lock used by cancel(), so a cancelled run never gets planner events
+        # (or a stale snapshot save) committed over its terminal state.
+        with self.run_lock_manager.lock_for(run.run_id):
+            self._raise_if_run_cancelled(run.run_id)
+            self.trace_store.append(
+                run=run,
+                event_type=TraceEventType.TASK_STATUS_CHANGED,
+                observation=observation,
+                payload={"planningProgress": True, "category": "planner", **payload},
+            )
+            self.workflow_store.save_run(run)
 
     def _build_acg_blueprint(
         self,
@@ -2078,6 +2105,9 @@ class ExecutionRuntime:
                     "safeSummary": f"{type(exc).__name__} during planning",
                 })
                 raise
+            # 规划成功也不代表可以继续：取消发生在最后一次事件之后时，
+            # 在提交 run 状态更新前再复查一次（取自 mission-cancellation 的取消边界）。
+            self._raise_if_run_cancelled(run.run_id)
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
             run.planner_algorithm_version = plan.planner_algorithm_version
@@ -2301,6 +2331,17 @@ class ExecutionRuntime:
         with self._run_cancel_guard:
             event = self._run_cancel_events.get(run_id)
             return bool(event is not None and event.is_set())
+
+    def _raise_if_run_cancelled(self, run_id: str) -> None:
+        """在规划/物化边界读取持久化终态，阻止取消后的旧快照继续推进。"""
+        if self._run_cancellation_requested(run_id):
+            raise ExecutionRunCancelled(f"run {run_id} cancelled")
+        try:
+            run = self.workflow_store.get_run(run_id)
+        except KeyError:
+            return
+        if run.status is WorkflowStatus.CANCELLED:
+            raise ExecutionRunCancelled(f"run {run_id} cancelled")
 
     def _discard_run_cancellation(self, run_id: str) -> None:
         with self._run_cancel_guard:

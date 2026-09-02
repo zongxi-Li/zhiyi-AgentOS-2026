@@ -1,5 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
@@ -29,8 +30,9 @@ const artifactEditorStub = {
 const missionEditorStub = { template: '<div class="mission-editor-stub">mission.md</div>' }
 
 const progressEditorStub = {
-  props: ['entry', 'runId'],
-  template: '<div class="progress-editor-stub">运行进度 {{ runId }}</div>'
+  props: ['entry', 'runId', 'runStatus', 'cancelPending'],
+  emits: ['cancelRun'],
+  template: '<div class="progress-editor-stub">运行进度 {{ runId }}<button v-if="runStatus === \'running\' || runStatus === \'pending\'" class="progress-editor-stub__cancel" :disabled="cancelPending" @click="$emit(\'cancelRun\')">停止运行</button></div>'
 }
 
 const taskEntry = (): WorkspaceEntry => ({
@@ -169,6 +171,20 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.find('.progress-editor-stub').exists()).toBe(true)
     expect(wrapper.find('.editor-group__toolbar').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('最终答案')
+  })
+
+  it('stops the active Run from the project workspace', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const cancel = vi.spyOn(agentosApi, 'cancelWorkflowRun').mockResolvedValue({
+      runId: 'run_2', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'cancelled', steps: []
+    } as any)
+    const { wrapper } = await mountWorkspace()
+
+    await wrapper.find('.progress-editor-stub__cancel').trigger('click')
+    await flushPromises()
+
+    expect(cancel).toHaveBeenCalledWith('run_2')
+    expect(wrapper.find('.progress-editor-stub__cancel').exists()).toBe(false)
   })
 
   it('opens mission.md and artifacts as separate tabs without duplicate identities', async () => {
