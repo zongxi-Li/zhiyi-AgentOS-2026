@@ -19,6 +19,7 @@ from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
 from components.planner import ACGPlanningError, TaskDecompositionError
 from components.mission_manager.state_machine import InvalidStateTransition
+from components.resource.store import StaleResourceObservation
 from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
 from runtime.v2.workspace import (
@@ -74,6 +75,7 @@ class RemoteResourceObservationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     available_slots: int = Field(alias="availableSlots", ge=0)
+    observation_sequence: int = Field(alias="observationSequence", ge=0)
     utilization: float = Field(ge=0.0, le=1.0)
     latency_ms: float | None = Field(default=None, alias="latencyMs", ge=0.0)
     observed_at: datetime = Field(
@@ -652,10 +654,13 @@ def create_router(
                 utilization=request.utilization,
                 latency_ms=request.latency_ms,
                 observed_at=request.observed_at,
+                observation_sequence=request.observation_sequence,
             )
             versioned = resource_service.snapshot(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
+        except StaleResourceObservation as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {

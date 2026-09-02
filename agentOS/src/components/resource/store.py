@@ -17,6 +17,10 @@ class VersionConflict(ValueError):
     """调用方基于过期快照版本提交更新时抛出的乐观锁冲突。"""
 
 
+class StaleResourceObservation(ValueError):
+    """资源节点上报的观测序号早于当前权威快照。"""
+
+
 class ResourceStore(Protocol):
     """资源服务依赖的最小存储边界，便于替换存储介质。
 
@@ -114,6 +118,12 @@ class InMemoryResourceStore:
                 raise VersionConflict(
                     f"snapshot version conflict for {snapshot.resource_id}: "
                     f"expected {expected_version}, current {current.version}"
+                )
+            if snapshot.observation_sequence < current.snapshot.observation_sequence:
+                raise StaleResourceObservation(
+                    f"stale observation for {snapshot.resource_id}: "
+                    f"received {snapshot.observation_sequence}, "
+                    f"current {current.snapshot.observation_sequence}"
                 )
             # 版本派生和字典写回也在锁内，令一次更新成为不可分割的状态转换。
             versioned = VersionedResourceSnapshot(
@@ -246,15 +256,23 @@ class SQLiteResourceStore:
     ) -> VersionedResourceSnapshot:
         with self._lock:
             row = self._connection.execute(
-                "SELECT version FROM resources WHERE resource_id = ?", (snapshot.resource_id,)
+                "SELECT snapshot_json, version FROM resources WHERE resource_id = ?",
+                (snapshot.resource_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(f"unknown resource: {snapshot.resource_id}")
-            current_version = int(row[0])
+            current_snapshot = ResourceSnapshot.model_validate(json.loads(str(row[0])))
+            current_version = int(row[1])
             if expected_version is not None and expected_version != current_version:
                 raise VersionConflict(
                     f"snapshot version conflict for {snapshot.resource_id}: "
                     f"expected {expected_version}, current {current_version}"
+                )
+            if snapshot.observation_sequence < current_snapshot.observation_sequence:
+                raise StaleResourceObservation(
+                    f"stale observation for {snapshot.resource_id}: "
+                    f"received {snapshot.observation_sequence}, "
+                    f"current {current_snapshot.observation_sequence}"
                 )
             next_version = current_version + 1
             cursor = self._connection.execute(

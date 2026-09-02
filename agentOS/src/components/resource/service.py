@@ -108,6 +108,7 @@ class ResourceService:
         utilization: float,
         latency_ms: float | None = None,
         observed_at: datetime | None = None,
+        observation_sequence: int = 0,
     ) -> ResourceHealth:
         """接收远程资源的一次完整观测，并同步快照与存活信号。"""
         profile = self.registry.get(resource_id)
@@ -117,6 +118,7 @@ class ResourceService:
         timestamp = observed_at or datetime.now().astimezone()
         updated = ResourceSnapshot(
             resourceId=resource_id,
+            observationSequence=observation_sequence,
             observedAt=timestamp,
             availableSlots=available_slots,
             utilization=utilization,

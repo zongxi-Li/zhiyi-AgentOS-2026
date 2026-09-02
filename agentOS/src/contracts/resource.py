@@ -104,6 +104,7 @@ class ResourceSnapshot(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="被观测资源标识。")
+    observation_sequence: int = Field(default=0, ge=0, alias="observationSequence", description="资源节点单调递增的观测序号。")
     observed_at: datetime = Field(default_factory=_utc_now, alias="observedAt", description="观测发生的 UTC 时间。")
     available_slots: int = Field(ge=0, alias="availableSlots", description="当前可供分配的空闲槽位数。")
     utilization: float = Field(ge=0.0, le=1.0, description="资源利用率，范围为 0 到 1。")

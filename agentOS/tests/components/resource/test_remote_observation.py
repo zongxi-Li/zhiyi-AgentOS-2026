@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from components.resource.service import ResourceService
+from components.resource.store import SQLiteResourceStore
 from contracts.resource import (
     DeploymentTier,
     ResourceEndpoint,
@@ -71,4 +72,73 @@ def test_remote_observation_updates_snapshot_and_health_atomically() -> None:
     assert snapshot.snapshot.available_slots == 3
     assert snapshot.snapshot.utilization == 0.25
     assert snapshot.snapshot.latency_ms == 18
+    assert snapshot.snapshot.observation_sequence == 0
     assert snapshot.snapshot.health_status is ResourceHealthStatus.ONLINE
+
+
+def test_remote_observation_rejects_older_sequence_without_mutating_snapshot() -> None:
+    resources = _register_edge()
+
+    resources.observe_remote(
+        "edge-01",
+        available_slots=3,
+        utilization=0.25,
+        latency_ms=18,
+        observed_at=NOW,
+        observation_sequence=2,
+    )
+
+    with pytest.raises(ValueError, match="stale observation"):
+        resources.observe_remote(
+            "edge-01",
+            available_slots=0,
+            utilization=1.0,
+            latency_ms=900,
+            observed_at=NOW - timedelta(seconds=1),
+            observation_sequence=1,
+        )
+
+    snapshot = resources.snapshot("edge-01")
+    assert snapshot.snapshot.observation_sequence == 2
+    assert snapshot.snapshot.available_slots == 3
+
+
+def test_sqlite_remote_observation_rejects_older_sequence(tmp_path) -> None:
+    store = SQLiteResourceStore(tmp_path / "resources.sqlite3")
+    resources = ResourceService(store=store)
+    try:
+        resources.register(
+            ResourceProfile(
+                resourceId="edge-sqlite",
+                resourceType=ResourceType.WORKER,
+                deploymentTier=DeploymentTier.EDGE,
+                capabilities=["vision.infer"],
+                executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-sqlite:9000"),
+            ),
+            ResourceSnapshot(
+                resourceId="edge-sqlite",
+                availableSlots=1,
+                utilization=0.0,
+                healthStatus=ResourceHealthStatus.UNKNOWN,
+            ),
+        )
+        resources.observe_remote(
+            "edge-sqlite",
+            available_slots=1,
+            utilization=0.0,
+            observation_sequence=2,
+            observed_at=NOW,
+        )
+
+        with pytest.raises(ValueError, match="stale observation"):
+            resources.observe_remote(
+                "edge-sqlite",
+                available_slots=0,
+                utilization=1.0,
+                observation_sequence=1,
+                observed_at=NOW,
+            )
+
+        assert resources.snapshot("edge-sqlite").snapshot.observation_sequence == 2
+    finally:
+        store.close()

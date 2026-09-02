@@ -451,6 +451,7 @@ async def test_v2_remote_resource_observation_updates_health_and_capacity(tmp_pa
             "/agentos/v2/resources/edge-observe/observation",
             json={
                 "availableSlots": 2,
+                "observationSequence": 2,
                 "utilization": 0.25,
                 "latencyMs": 18,
                 "observedAt": "2026-09-01T00:00:00Z",
@@ -460,6 +461,20 @@ async def test_v2_remote_resource_observation_updates_health_and_capacity(tmp_pa
     assert response.status_code == 200
     assert response.json()["health"]["healthy"] is True
     assert response.json()["snapshot"]["availableSlots"] == 2
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        stale = await client.post(
+            "/agentos/v2/resources/edge-observe/observation",
+            json={
+                "availableSlots": 0,
+                "observationSequence": 1,
+                "utilization": 1.0,
+                "observedAt": "2026-09-01T00:00:01Z",
+            },
+        )
+
+    assert stale.status_code == 409
+    assert "stale observation" in stale.json()["detail"]
 
 
 async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
