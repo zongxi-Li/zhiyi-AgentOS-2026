@@ -17,11 +17,11 @@
 - Modify: `agentOS/src/components/resource/service.py`
 - Test: `agentOS/tests/components/resource/test_resource_auth.py`
 
-- [ ] **Step 1: Write failing tests** for issuing a credential, verifying a secret after reopening SQLite, rejecting unknown credentials, and consuming a nonce only once.
-- [ ] **Step 2: Run `agent\\.venv\\Scripts\\python.exe -m pytest agentOS/tests/components/resource/test_resource_auth.py -q` and confirm collection or assertion failure because credential APIs do not exist.
-- [ ] **Step 3: Add a private credential record and store methods for issue, lookup, and atomic nonce consumption; keep only a SHA-256 secret hash and never persist the raw secret.
-- [ ] **Step 4: Expose minimal `ResourceService.issue_credential`, `credential`, and `consume_nonce` methods and run the focused test until it passes.
-- [ ] **Step 5: Commit with `feat: persist remote resource credentials`.
+- [x] **Step 1: Write failing tests** for issuing a credential, verifying a secret after reopening SQLite, rejecting unknown credentials, and consuming a nonce only once.
+- [x] **Step 2: Run `agent\\.venv\\Scripts\\python.exe -m pytest agentOS/tests/components/resource/test_resource_auth.py -q` and confirm collection or assertion failure because credential APIs do not exist.
+- [x] **Step 3: Add a private credential record and store methods for issue, lookup, and atomic nonce consumption; keep only a SHA-256 secret hash and never persist the raw secret.
+- [x] **Step 4: Expose minimal `ResourceService.issue_credential`, `credential`, and `consume_nonce` methods and run the focused test until it passes.
+- [x] **Step 5: Commit with `feat: persist remote resource credentials`.
 
 ### Task 2: Implement canonical HMAC authentication
 
@@ -29,11 +29,11 @@
 - Create: `agentOS/src/components/resource/auth.py`
 - Test: `agentOS/tests/components/resource/test_resource_auth.py`
 
-- [ ] **Step 1: Add failing tests** for canonical signing, wrong resource ID, wrong credential ID, mismatched signature, expired timestamp, and replayed nonce.
-- [ ] **Step 2: Run the focused authentication tests and confirm failure because the verifier is absent.
-- [ ] **Step 3: Implement `ResourceRequestAuthenticator` with `method + path + timestamp + nonce + sha256(body)` canonicalization, constant-time HMAC comparison, bounded clock skew, and atomic nonce consumption.
-- [ ] **Step 4: Run the focused authentication tests and refactor only after all remain green.
-- [ ] **Step 5: Commit with `feat: authenticate signed resource requests`.
+- [x] **Step 1: Add failing tests** for canonical signing, wrong resource ID, wrong credential ID, mismatched signature, expired timestamp, and replayed nonce.
+- [x] **Step 2: Run the focused authentication tests and confirm failure because the verifier is absent.
+- [x] **Step 3: Implement `ResourceRequestAuthenticator` with `method + path + timestamp + nonce + sha256(body)` canonicalization, constant-time HMAC comparison, bounded clock skew, and atomic nonce consumption.
+- [x] **Step 4: Run the focused authentication tests and refactor only after all remain green.
+- [x] **Step 5: Commit with `feat: authenticate signed resource requests`.
 
 ### Task 3: Add protected registration and observation API
 
@@ -42,11 +42,11 @@
 - Modify: `agentOS/src/components/resource/service.py`
 - Modify: `agent/tests/test_agentos_v2_api.py`
 
-- [ ] **Step 1: Add failing API tests** for authorized registration, one-time secret response, unauthenticated registration, signed observation success, missing signature, wrong resource credential, expired timestamp, replayed nonce, and stale observation sequence.
-- [ ] **Step 2: Run the selected API tests and confirm they fail because registration and resource headers are not implemented.
-- [ ] **Step 3: Add strict registration request/response models, require a trusted operator/system actor, validate remote profile constraints, and return the secret only in the registration response.
-- [ ] **Step 4: Require resource credential headers on the observation route, verify the raw request body before applying `observe_remote`, and map authentication failures to explicit HTTP statuses.
-- [ ] **Step 5: Run the selected API tests and commit with `feat: expose authenticated remote resource API`.
+- [x] **Step 1: Add failing API tests** for authorized registration, one-time secret response, unauthenticated registration, signed observation success, missing signature, wrong resource credential, expired timestamp, replayed nonce, and stale observation sequence.
+- [x] **Step 2: Run the selected API tests and confirm they fail because registration and resource headers are not implemented.
+- [x] **Step 3: Add strict registration request/response models, require a trusted operator/system actor, validate remote profile constraints, and return the secret only in the registration response.
+- [x] **Step 4: Require resource credential headers on the observation route, verify the raw request body before applying `observe_remote`, and map authentication failures to explicit HTTP statuses.
+- [x] **Step 5: Run the selected API tests and commit with `feat: expose authenticated remote resource API`.
 
 ### Task 4: Wire configuration and document the boundary
 
@@ -56,10 +56,10 @@
 - Modify: `README.md`
 - Modify: `docs/superpowers/specs/2026-09-02-agentos-remote-resource-auth-design.md`
 
-- [ ] **Step 1: Add a failing wiring test showing the production SQLite resource service has credential storage enabled.
-- [ ] **Step 2: Pass the existing SQLite resource store into the authenticator without introducing a second database or an in-memory production fallback.
-- [ ] **Step 3: Document required headers, signature construction, one-time secret handling, and the fact that this is resource placement rather than model-layer splitting.
-- [ ] **Step 4: Run targeted resource/API/wiring tests and commit with `docs: document remote resource authentication boundary`.
+- [x] **Step 1: Add a wiring regression test showing the production SQLite resource service has credential storage enabled.
+- [x] **Step 2: Confirm the existing SQLite resource store is passed to the service without introducing a second database or an in-memory production fallback.
+- [x] **Step 3: Document required headers, signature construction, one-time secret handling, and the fact that this is resource placement rather than model-layer splitting.
+- [x] **Step 4: Run targeted resource/API/wiring tests and commit with `docs: document remote resource authentication boundary`.
 
 ### Task 5: Full verification and branch hygiene
 
@@ -70,4 +70,3 @@
 - [ ] **Step 2: Run `agent\\.venv\\Scripts\\python.exe -m pytest -q` from the `agent` directory.
 - [ ] **Step 3: Run `git diff --check` and inspect `git diff --name-only master...HEAD` to confirm only backend and backend documentation changed.
 - [ ] **Step 4: Report exact test counts, warnings, commits, and any remaining deployment limitations without claiming real multi-device deployment has been validated.
-

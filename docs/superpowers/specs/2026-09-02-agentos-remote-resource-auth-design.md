@@ -23,7 +23,7 @@
 1. 继续经过现有服务级内部 Token，不改变 Python 业务路由的内部访问边界。
 2. 额外携带资源级凭据 ID、时间戳、nonce 和 HMAC-SHA256 签名，服务端校验资源身份、归属、时间窗口和 nonce 唯一性。
 
-签名覆盖 HTTP 方法、请求路径、时间戳、nonce 和请求体摘要。签名成功后才调用 `ResourceService.observe_remote`；观测序号递增校验继续保留，旧观测仍返回冲突而不覆盖新状态。
+签名覆盖 HTTP 方法、请求路径、时间戳、nonce 和请求体摘要。HMAC 密钥使用注册 secret 的 SHA-256 派生值，服务端只保存该派生值。签名成功后才调用 `ResourceService.observe_remote`；观测序号递增校验继续保留，旧观测仍返回冲突而不覆盖新状态。
 
 ## Data and error rules
 
@@ -36,4 +36,3 @@
 ## Testing and acceptance
 
 测试覆盖：注册返回一次性密钥、数据库重启后凭据仍可验证、未认证注册被拒绝、错误资源凭据被拒绝、过期时间戳被拒绝、重复 nonce 被拒绝、签名成功后观测更新、旧 observation sequence 仍返回 409。完整 AgentOS 和 agent 测试必须继续通过，且提交只包含后端 worktree 文件。
-
