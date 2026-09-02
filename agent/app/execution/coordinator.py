@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from time import monotonic
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from components.planner import ACGPlanningError, TaskDecompositionError
 
@@ -78,6 +78,7 @@ class RunExecutionCoordinator:
                     run_id,
                     error_code=self._error_code(exc),
                     error_message=self.runtime._safe_error_message(exc),
+                    error_metadata=self._error_metadata(exc),
                 )
             except Exception:
                 logger.exception("failed to persist managed run failure", extra={"runId": run_id})
@@ -97,11 +98,41 @@ class RunExecutionCoordinator:
 
     @staticmethod
     def _error_code(exc: Exception) -> str:
+        cause_code = RunExecutionCoordinator._cause_code(exc)
+        if cause_code == "MODEL_CONNECTION_INTERRUPTED":
+            return "model_connection_interrupted"
+        if cause_code == "MODEL_TIMEOUT":
+            return "model_timeout"
         if isinstance(exc, TaskDecompositionError):
             return "task_decomposition_failed"
         if isinstance(exc, ACGPlanningError):
             return "acg_planning_failed"
         return "workflow_execution_failed"
+
+    @staticmethod
+    def _cause_code(exc: BaseException) -> str | None:
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            code = str(getattr(current, "cause_code", None) or getattr(current, "code", None) or "").upper()
+            if code in {"MODEL_CONNECTION_INTERRUPTED", "MODEL_TIMEOUT"}:
+                return code
+            current = current.__cause__ or current.__context__
+        return None
+
+    @staticmethod
+    def _error_metadata(exc: BaseException) -> dict[str, Any]:
+        current: BaseException | None = exc
+        while current is not None:
+            metadata = getattr(current, "metadata", None)
+            if isinstance(metadata, dict):
+                return {key: metadata[key] for key in (
+                    "stage", "attemptCount", "retryCount", "streamUsed",
+                    "timeoutSeconds", "elapsedMs", "transportErrorClass",
+                ) if key in metadata}
+            current = current.__cause__ or current.__context__
+        return {}
 
 
 __all__ = ["RunExecutionCoordinator"]

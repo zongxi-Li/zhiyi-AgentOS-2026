@@ -14,7 +14,7 @@ import secrets
 import threading
 from time import monotonic
 from contracts.identity import new_attempt_id, new_step_execution_id
-from typing import Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from uuid import uuid4
 
 from service.agents import AgentRegistry
@@ -1977,6 +1977,19 @@ class ExecutionRuntime:
                 or workflow.description
             )
             planning_engine = self._planning_engine_for_run(run)
+            def planning_progress(event: dict[str, Any]) -> None:
+                safe = {
+                    key: value for key, value in event.items()
+                    if key in {"stage", "status", "attempt", "retryCount", "timeoutSeconds", "errorCode"}
+                    and isinstance(value, (str, int, float, bool))
+                }
+                self.trace_store.append(
+                    run=run,
+                    event_type=TraceEventType.TASK_STATUS_CHANGED,
+                    observation=f"Planning {safe.get('stage', 'run')}: {safe.get('status', 'updated')}",
+                    payload={"planningProgress": True, **safe},
+                )
+                self.workflow_store.save_run(run)
             existing_semantic_tasks = self._existing_semantic_task_catalog(task.mission_id)
             plan = planning_engine.plan(
                 mission_id=task.mission_id,
@@ -1996,6 +2009,7 @@ class ExecutionRuntime:
                 task_input=dict(run.input),
                 existing_semantic_tasks=existing_semantic_tasks,
                 capability_profile=str(run.input.get("capabilityProfile") or "auto"),
+                progress_callback=planning_progress,
             )
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
@@ -2332,6 +2346,7 @@ class ExecutionRuntime:
         *,
         error_code: str,
         error_message: str,
+        error_metadata: Mapping[str, Any] | None = None,
     ) -> RuntimeRunRecord:
         """在受管执行边界尽力收敛为失败终态，并写入有界错误信息和追踪事件。"""
 
@@ -2342,6 +2357,16 @@ class ExecutionRuntime:
             "code": error_code,
             "message": error_message[:500],
         }
+        safe_metadata = {
+            key: value
+            for key, value in dict(error_metadata or {}).items()
+            if key in {
+                "provider", "model", "stage", "attemptCount", "retryCount",
+                "streamUsed", "timeoutSeconds", "elapsedMs", "transportErrorClass",
+            }
+            and isinstance(value, (str, int, float, bool))
+        }
+        error.update(safe_metadata)
         self._terminalize_active_execution(run, error["message"])
         run = self._set_run_lifecycle(
             run,
@@ -2361,7 +2386,7 @@ class ExecutionRuntime:
             run=run,
             event_type=TraceEventType.RUN_FAILED,
             observation=error["message"],
-            payload=error,
+            payload={"errorCode": error_code, **error},
         )
         run.updated_at = utc_now()
         self.workflow_store.save_run(run)
@@ -2494,6 +2519,20 @@ class ExecutionRuntime:
 
     @staticmethod
     def _safe_error_message(exc: BaseException) -> str:
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            code = str(
+                getattr(current, "cause_code", None)
+                or getattr(current, "code", None)
+                or ""
+            ).upper()
+            if code == "MODEL_CONNECTION_INTERRUPTED":
+                return "模型服务连接中断，系统已完成一次重试，请稍后重新运行。"
+            if code == "MODEL_TIMEOUT":
+                return "模型服务响应超时，系统已完成一次重试，请稍后重新运行。"
+            current = current.__cause__ or current.__context__
         message = str(exc).strip()
         return (message or type(exc).__name__)[:500]
 
