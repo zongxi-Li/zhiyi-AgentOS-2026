@@ -20,6 +20,22 @@ from contracts.resource import (
 NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
 
+class _RacingResourceService(ResourceService):
+    def __init__(self) -> None:
+        super().__init__(heartbeat_timeout=timedelta(minutes=5))
+        self._snapshot_calls = 0
+
+    def snapshot(self, resource_id: str):
+        current = super().snapshot(resource_id)
+        self._snapshot_calls += 1
+        if self._snapshot_calls == 2:
+            self.update_snapshot(
+                current.snapshot.model_copy(update={"available_slots": 0, "utilization": 1.0}),
+                expected_version=current.version,
+            )
+        return current
+
+
 def _resource(
     resources: ResourceService,
     resource_id: str,
@@ -112,3 +128,22 @@ def test_local_only_requirement_rejects_remote_resources() -> None:
     assert result.status == "queued"
     assert result.reason == "NO_ELIGIBLE_RESOURCE"
     assert result.candidates[0].reasons[0].value == "REMOTE_EXECUTION_DISABLED"
+
+
+def test_scheduler_does_not_return_binding_for_a_stale_snapshot() -> None:
+    resources = _RacingResourceService()
+    _resource(resources, "edge-race", tier=DeploymentTier.EDGE)
+    coordinator = InMemoryLeaseCoordinator()
+    scheduler = SchedulerService(resource_service=resources, coordinator=coordinator)
+
+    result = scheduler.schedule_ready(
+        run_id="run-race",
+        step_id="infer",
+        attempt_id="attempt-1",
+        requirement=BindingRequirement(requiredCapabilities=["vision.infer"]),
+        now=NOW,
+    )
+
+    assert result.status == "queued"
+    assert result.binding is None
+    assert coordinator.active_slots("edge-race", now=NOW) == 0

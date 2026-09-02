@@ -125,6 +125,10 @@ class SchedulerService:
             )
             if lease is None:
                 continue
+            confirmed = self.resource_service.snapshot(profile.resource_id)
+            if confirmed.version != versioned.version:
+                self.coordinator.release(lease.lease_id)
+                continue
             health = self.resource_service.health_monitor.health(
                 profile.resource_id, now=current
             )
@@ -135,18 +139,18 @@ class SchedulerService:
                 attemptId=attempt_id,
                 resourceId=profile.resource_id,
                 resourceType=profile.resource_type,
-                snapshotVersion=versioned.version,
+                snapshotVersion=confirmed.version,
                 metadata={
                     "score": decision.score,
                     "deploymentTier": profile.deployment_tier.value,
                     "placementReasons": [
                         f"deploymentTier={profile.deployment_tier.value}",
                         f"resourceType={profile.resource_type.value}",
-                        f"latencyMs={versioned.snapshot.latency_ms}",
+                        f"latencyMs={confirmed.snapshot.latency_ms}",
                     ],
                     "scoreFactors": placement_score(
                         profile,
-                        versioned.snapshot,
+                        confirmed.snapshot,
                         reliability=health.reliability,
                         latency_ms=health.latency_ms,
                         requirement=requirement,
