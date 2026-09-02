@@ -114,7 +114,8 @@ const clearAll = async () => {
     await ElMessageBox.confirm('确定要清空所有历史记录吗？此操作不可恢复。', '确认清空', {
       confirmButtonText: '确定清空',
       cancelButtonText: '取消',
-      type: 'warning'
+      type: 'warning',
+      customClass: 'destructive-confirm'
     })
     
     const userId = userStore.currentUser?.id

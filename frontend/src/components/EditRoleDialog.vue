@@ -211,11 +211,11 @@ watch(() => props.modelValue, (val) => {
 <style scoped lang="scss">
 // Same styles as CreateRoleDialog to maintain consistency
 :deep(.role-dialog) {
-  border-radius: 24px;
-  background: color-mix(in srgb, var(--bg-card) 85%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
   backdrop-filter: blur(24px);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, var(--border-light));
   padding: 0;
   overflow: hidden;
 
@@ -225,7 +225,7 @@ watch(() => props.modelValue, (val) => {
   }
   
   .el-dialog__body {
-    padding: 24px 32px;
+    padding: 20px 24px;
   }
   
   .el-dialog__footer {
@@ -234,8 +234,8 @@ watch(() => props.modelValue, (val) => {
 }
 
 .dialog-header {
-  padding: 20px 32px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-light);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -257,7 +257,7 @@ watch(() => props.modelValue, (val) => {
     transition: all 0.2s;
     
     &:hover {
-      background: rgba(0, 0, 0, 0.05);
+      background: var(--surface-hover);
       color: var(--text-primary);
     }
   }
@@ -267,20 +267,20 @@ watch(() => props.modelValue, (val) => {
   .custom-input {
     :deep(.el-input__wrapper),
     :deep(.el-textarea__inner) {
-      background: color-mix(in srgb, var(--bg-card) 50%, transparent);
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1) inset;
+      background: var(--bg-input);
+      box-shadow: 0 0 0 1px var(--border-light) inset;
       border-radius: 12px;
       padding: 10px 12px;
       transition: all 0.3s;
       
       &:hover {
-        background: white;
-        box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.3) inset;
+        background: var(--surface-solid);
+        box-shadow: 0 0 0 1px var(--border-hover) inset;
       }
       
       &.is-focus, &:focus {
-        background: white;
-        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) inset;
+        background: var(--surface-solid);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 20%, transparent) inset;
       }
     }
   }
@@ -296,9 +296,9 @@ watch(() => props.modelValue, (val) => {
 }
 
 .dialog-footer {
-  padding: 20px 32px;
-  background: rgba(249, 250, 251, 0.6);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 18px 24px;
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--border-light);
   display: flex;
   justify-content: flex-end;
   gap: 12px;
@@ -306,8 +306,8 @@ watch(() => props.modelValue, (val) => {
   .cancel-btn {
     border-radius: 12px;
     padding: 10px 24px;
-    border: 1px solid #e5e7eb;
-    background: white;
+    border: 1px solid var(--border-light);
+    background: var(--surface-subtle);
     
     &:hover {
       background: var(--bg-input);
@@ -318,13 +318,13 @@ watch(() => props.modelValue, (val) => {
   .submit-btn {
     border-radius: 12px;
     padding: 10px 24px;
-    background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
-    border: none;
+    background: var(--primary-color);
+    border: 1px solid var(--primary-color);
     font-weight: 600;
     
     &:hover {
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+      box-shadow: var(--shadow-glow);
     }
   }
 }

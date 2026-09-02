@@ -188,7 +188,8 @@ const handleDelete = async (file: FileItem) => {
       {
         confirmButtonText: '确定删除',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        customClass: 'destructive-confirm'
       }
     )
     

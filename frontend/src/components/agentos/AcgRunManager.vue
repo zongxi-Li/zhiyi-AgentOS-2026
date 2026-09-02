@@ -380,7 +380,7 @@ const deleteActionMission = async () => {
     await ElMessageBox.confirm(
       `“${displayTitle(run)}”将从任务列表永久移除，执行审计事实仍会保留。`,
       '删除任务',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning', customClass: 'destructive-confirm', confirmButtonClass: 'el-button--danger' }
     )
   } catch { return }
   try {

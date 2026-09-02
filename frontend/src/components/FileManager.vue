@@ -203,7 +203,8 @@ const handleDownload = async (file: FileInfo) => {
 const handleDelete = async (file: FileInfo) => {
   try {
     await ElMessageBox.confirm('确定要删除这个文件吗？', '确认删除', {
-      type: 'warning'
+      type: 'warning',
+      customClass: 'destructive-confirm'
     })
     
     await fileApi.deleteFile(file.type, file.name)
@@ -263,7 +264,7 @@ watch(() => props.modelValue, (val) => {
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .file-list {
@@ -282,26 +283,26 @@ watch(() => props.modelValue, (val) => {
 }
 
 :deep(.el-dialog) {
-  border-radius: var(--border-radius-large);
-  box-shadow: var(--box-shadow-base);
-  border: 1px solid var(--border-color-base);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-light);
 }
 
 :deep(.el-dialog__header) {
-  background: var(--bg-color);
-  border-bottom: 1px solid var(--border-color-light);
-  padding: var(--spacing-lg) var(--spacing-xl);
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-light);
+  padding: 20px 24px;
   
   .el-dialog__title {
-    font-size: var(--font-size-xl);
+    font-size: 17px;
     font-weight: 700;
-    color: var(--text-color-primary);
+    color: var(--text-primary);
     letter-spacing: -0.01em;
   }
 }
 
 :deep(.el-dialog__body) {
-  padding: 24px;
+  padding: 20px 24px;
 }
 </style>
 

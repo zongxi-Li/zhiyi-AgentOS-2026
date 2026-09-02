@@ -724,7 +724,8 @@ const deleteSidebarConversation = async (conversation: Conversation) => {
       {
         confirmButtonText: '删除',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        customClass: 'destructive-confirm'
       }
     )
 

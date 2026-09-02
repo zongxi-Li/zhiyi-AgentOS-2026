@@ -630,7 +630,8 @@ async function resetSystem() {
     await ElMessageBox.confirm('确定要重置系统吗？', '确认重置', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
-      type: 'warning'
+      type: 'warning',
+      customClass: 'destructive-confirm'
     })
     stopDemo()
     resetTraining()
