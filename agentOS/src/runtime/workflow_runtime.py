@@ -106,6 +106,7 @@ from components.planner.algorithms import (
     normalize_planning_diversity,
     normalize_planning_seed,
 )
+from components.planner.complexity import transport_error_code
 from components.planner.service import (
     apply_task_plan_patch,
     normalize_capability_profile,
@@ -142,6 +143,14 @@ _LIFECYCLE_MESSAGES = {
 
 _ERROR_UNSET = object()
 ExecutionAdapterFactory = Callable[..., object]
+
+# Planner Runtime Event 允许进入 Trace 的字段白名单（全部为标量安全事实）。
+# 计数字段必须由 Runtime 从真实对象计算得出，禁止携带任何模型文本。
+_PLANNER_PROGRESS_FIELDS = frozenset({
+    "stage", "status", "attempt", "retryCount", "timeoutSeconds", "errorCode",
+    "kind", "taskCount", "dependencyCount", "nodeCount", "edgeCount",
+    "constraintCount", "safeSummary",
+})
 
 
 class ReviewConflictError(ValueError):
@@ -561,6 +570,10 @@ class ExecutionRuntime:
         scope: RunExecutionScope,
     ) -> None:
         """Run the existing L1-L3 plan/build/compile path for one persisted Run."""
+        # 显式 Blueprint 兼容入口（必须同时提供 taskPlan/bindings）没有 Planner
+        # 运行，绝不能伪造 planner started/parsed/compiled/completed 事件。
+        provided_explicit = run.input.get("acgBlueprint") or run.acg_blueprint or None
+        explicit_blueprint = isinstance(provided_explicit, dict) and bool(provided_explicit.get("nodes"))
         blueprint, task_plan, task_bindings = self._build_acg_blueprint(
             task,
             run,
@@ -579,6 +592,14 @@ class ExecutionRuntime:
         )
         self._sync_run_steps_to_acg(run, blueprint)
         compiled_package = ACGGraphCompiler().compile_package(blueprint, run_id=run.run_id)
+        if task_plan is not None and not explicit_blueprint:
+            # 计数取自编译产物 CompiledACGPackage（已过滤 retired 与资源节点），
+            # 而非编译输入 Blueprint；compiler 未来插入节点时这里自动跟随最终图。
+            self._append_planner_event(run, {
+                "kind": "graph_compiled",
+                "nodeCount": len(compiled_package.nodes),
+                "edgeCount": len(compiled_package.edges),
+            })
         self._register_and_freeze_resources(
             run=run,
             workflow=workflow,
@@ -616,6 +637,8 @@ class ExecutionRuntime:
         if self.identity_lifecycle is not None and task_plan is None:
             raise ValueError("identity-enabled ACG execution requires Planner output")
         run.execution_state.pop("planningDeferred", None)
+        if task_plan is not None and not explicit_blueprint:
+            self._append_planner_event(run, {"kind": "completed"})
 
     def _materialize_deferred_acg_run(self, run_id: str) -> RuntimeRunRecord:
         run = self.workflow_store.get_run(run_id)
@@ -1905,6 +1928,34 @@ class ExecutionRuntime:
             retries=1,
         )
 
+    def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any]) -> None:
+        """Append one planner Runtime Event as an auditable Trace entry.
+
+        The payload whitelist is the security boundary: only scalar planning
+        facts pass through, so prompt/model text can never ride along. All
+        planner events carry ``planningProgress`` for legacy projections and
+        ``category="planner"`` for the event-driven Model Output panel.
+        """
+        payload = {
+            key: value for key, value in event.items()
+            if key in _PLANNER_PROGRESS_FIELDS and isinstance(value, (str, int, float, bool))
+        }
+        kind = str(payload.get("kind") or "progress")
+        stage = payload.get("stage")
+        status = payload.get("status")
+        observation = "Planner " + kind
+        if stage:
+            observation += f" [{stage}]"
+        if status:
+            observation += f" {status}"
+        self.trace_store.append(
+            run=run,
+            event_type=TraceEventType.TASK_STATUS_CHANGED,
+            observation=observation,
+            payload={"planningProgress": True, "category": "planner", **payload},
+        )
+        self.workflow_store.save_run(run)
+
     def _build_acg_blueprint(
         self,
         task: RuntimeMissionRecord,
@@ -1977,40 +2028,56 @@ class ExecutionRuntime:
                 or workflow.description
             )
             planning_engine = self._planning_engine_for_run(run)
+
             def planning_progress(event: dict[str, Any]) -> None:
-                safe = {
-                    key: value for key, value in event.items()
-                    if key in {"stage", "status", "attempt", "retryCount", "timeoutSeconds", "errorCode"}
-                    and isinstance(value, (str, int, float, bool))
+                # Planner 阶段回调统一建模为带 kind 的 Runtime Event；stage/status
+                # 原样保留，旧 Run 的 legacy 投影继续可用。
+                kind_by_status = {
+                    "started": "stage_started",
+                    "completed": "stage_completed",
+                    "retrying": "retry",
+                    "profile_resolved": "profile_resolved",
+                    "plan_parsed": "plan_parsed",
                 }
-                self.trace_store.append(
-                    run=run,
-                    event_type=TraceEventType.TASK_STATUS_CHANGED,
-                    observation=f"Planning {safe.get('stage', 'run')}: {safe.get('status', 'updated')}",
-                    payload={"planningProgress": True, **safe},
+                payload = dict(event)
+                payload["kind"] = str(
+                    payload.get("kind")
+                    or kind_by_status.get(str(payload.get("status")), "stage_updated")
                 )
-                self.workflow_store.save_run(run)
+                self._append_planner_event(run, payload)
+
+            self._append_planner_event(run, {"kind": "started"})
             existing_semantic_tasks = self._existing_semantic_task_catalog(task.mission_id)
-            plan = planning_engine.plan(
-                mission_id=task.mission_id,
-                intent=intent_text,
-                domain=workflow.domain or task.domain,
-                task_type=task.intent or workflow.intent,
-                force_dynamic=force_dynamic,
-                thinking_mode=str(run.input.get("thinkingMode") or "").strip() or None,
-                reasoning_effort=str(run.input.get("reasoningEffort") or "").strip() or None,
-                # 仅显式 deterministicIntent 才禁用 v2 语义模型；强制动态规划
-                # 不能再隐式退回固定能力链。
-                deterministic_intent=bool(run.input.get("deterministicIntent")),
-                planning_diversity=run.planning_diversity,
-                planning_seed=run.planning_seed,
-                capability_catalog_revision=run.capability_catalog_revision,
-                required_capabilities=workflow.required_capabilities,
-                task_input=dict(run.input),
-                existing_semantic_tasks=existing_semantic_tasks,
-                capability_profile=str(run.input.get("capabilityProfile") or "auto"),
-                progress_callback=planning_progress,
-            )
+            try:
+                plan = planning_engine.plan(
+                    mission_id=task.mission_id,
+                    intent=intent_text,
+                    domain=workflow.domain or task.domain,
+                    task_type=task.intent or workflow.intent,
+                    force_dynamic=force_dynamic,
+                    thinking_mode=str(run.input.get("thinkingMode") or "").strip() or None,
+                    reasoning_effort=str(run.input.get("reasoningEffort") or "").strip() or None,
+                    # 仅显式 deterministicIntent 才禁用 v2 语义模型；强制动态规划
+                    # 不能再隐式退回固定能力链。
+                    deterministic_intent=bool(run.input.get("deterministicIntent")),
+                    planning_diversity=run.planning_diversity,
+                    planning_seed=run.planning_seed,
+                    capability_catalog_revision=run.capability_catalog_revision,
+                    required_capabilities=workflow.required_capabilities,
+                    task_input=dict(run.input),
+                    existing_semantic_tasks=existing_semantic_tasks,
+                    capability_profile=str(run.input.get("capabilityProfile") or "auto"),
+                    progress_callback=planning_progress,
+                )
+            except Exception as exc:
+                # 只落稳定错误码与异常类型名；异常消息可能携带 prompt 或模型
+                # 输出片段，禁止进入 Trace。
+                self._append_planner_event(run, {
+                    "kind": "failed",
+                    "errorCode": transport_error_code(exc) or type(exc).__name__,
+                    "safeSummary": f"{type(exc).__name__} during planning",
+                })
+                raise
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
             run.planner_algorithm_version = plan.planner_algorithm_version

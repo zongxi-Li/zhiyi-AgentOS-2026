@@ -184,6 +184,13 @@ class PlanningEngine:
             declared_capabilities=list(required_capabilities or ()),
         )
         auto_full = profile.estimated_complexity.value in {"complex", "extreme"}
+        if progress_callback:
+            # 解析结果产生后的确定性事实；计数来自真实 profile，禁止由模型生成。
+            progress_callback({
+                "stage": "intent_profile",
+                "status": "profile_resolved",
+                "constraintCount": len(profile.key_constraints),
+            })
         effective_profile: Literal["standard", "full"] = (
             "full" if requested_profile == "full" or (requested_profile == "auto" and auto_full)
             else "standard"
@@ -231,6 +238,13 @@ class PlanningEngine:
                     workflow=match.workflow,
                     task_plan=task_plan,
                 )
+                if progress_callback:
+                    progress_callback({
+                        "stage": "planning",
+                        "status": "plan_parsed",
+                        "taskCount": len(task_plan.nodes),
+                        "dependencyCount": len(task_plan.relations),
+                    })
                 blueprint = built.blueprint
                 blueprint.objective = profile.primary_goal or blueprint.objective
                 return PlanResult(
@@ -286,6 +300,13 @@ class PlanningEngine:
                 "capabilityProfileReason": profile_reason,
             }
         })
+        if progress_callback:
+            progress_callback({
+                "stage": "planning",
+                "status": "plan_parsed",
+                "taskCount": len(task_plan.nodes),
+                "dependencyCount": len(task_plan.relations),
+            })
         variant_set = self.variant_generator.generate(
             profile=profile,
             domain=domain,
