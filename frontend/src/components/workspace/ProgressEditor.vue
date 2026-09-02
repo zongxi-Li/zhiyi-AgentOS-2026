@@ -125,16 +125,17 @@ const formatTime = (value: string) => {
 </script>
 
 <style scoped>
-.progress-editor { display: flex; flex-direction: column; gap: 16px; height: 100%; overflow: auto; color: var(--wb-text); }
-.progress-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.progress-editor__title { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
-.progress-editor__mark { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
+.progress-editor { display: flex; flex-direction: column; gap: 18px; height: 100%; overflow: auto; color: var(--wb-text); }
+.progress-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--wb-border-soft); }
+.progress-editor__title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.progress-editor__mark { padding: 4px 6px; border-radius: 5px; color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 10%, transparent); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
 .progress-editor__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.progress-editor__phase { flex: 0 0 auto; padding: 3px 9px; border: 1px solid var(--wb-border); border-radius: 999px; color: var(--wb-text-secondary); font-size: 11px; }
+.progress-editor__phase { position: relative; flex: 0 0 auto; padding: 5px 10px 5px 18px; border-radius: 999px; color: var(--wb-text-secondary); background: color-mix(in srgb, var(--wb-surface-2) 72%, transparent); font-size: 11px; }
+.progress-editor__phase::before { position: absolute; top: 50%; left: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--wb-accent); content: ''; transform: translateY(-50%); box-shadow: 0 0 0 3px color-mix(in srgb, var(--wb-accent) 12%, transparent); }
 .progress-editor__empty { display: grid; place-items: center; flex: 1; color: var(--wb-text-muted); font-size: 12px; }
-.progress-editor__body { display: flex; flex-direction: column; gap: 16px; }
-.progress-editor__counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); gap: 8px; margin: 0; }
-.progress-editor__counter { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--wb-border); background: var(--wb-surface-2); }
+.progress-editor__body { display: flex; flex-direction: column; gap: 18px; }
+.progress-editor__counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 8px 0; border-top: 1px solid var(--wb-border-soft); border-bottom: 1px solid var(--wb-border-soft); }
+.progress-editor__counter { display: grid; gap: 4px; min-width: 0; padding: 9px 12px; }
 .progress-editor__counter dt { color: var(--wb-text-muted); font-size: 10px; }
 .progress-editor__counter dd { margin: 0; font: 600 16px var(--font-mono, monospace); }
 .progress-editor__counter dd.is-done { color: var(--wb-accent); }
@@ -144,8 +145,12 @@ const formatTime = (value: string) => {
 .progress-editor__section-label { color: var(--wb-text-muted); font-size: 10px; letter-spacing: .06em; }
 .progress-editor__active { display: grid; gap: 8px; }
 .progress-editor__chips { display: flex; flex-wrap: wrap; gap: 7px; }
-.progress-editor__chip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 11px; border: 1px solid color-mix(in srgb, var(--wb-accent) 32%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 11px; }
+.progress-editor__chip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 11px; border: 1px solid color-mix(in srgb, var(--wb-accent) 32%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 11px; transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out); }
 .progress-editor__chip:disabled { color: var(--wb-text-secondary); border-color: var(--wb-border); cursor: default; }
-.progress-editor__chip:not(:disabled):hover { background: var(--wb-hover); }
+.progress-editor__chip:not(:disabled):hover { border-color: color-mix(in srgb, var(--wb-accent) 58%, var(--wb-border)); background: var(--wb-hover); }
 .progress-editor__meta { display: flex; gap: 16px; color: var(--wb-text-muted); font-size: 10px; }
+
+@media (max-width: 640px) {
+  .progress-editor__counters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>

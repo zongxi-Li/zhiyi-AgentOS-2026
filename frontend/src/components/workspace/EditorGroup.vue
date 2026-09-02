@@ -122,8 +122,8 @@ const editorTitle = (entry: WorkspaceEntry) => (
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
 .editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow-x: auto; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
-.editor-tab { display: flex; align-items: stretch; width: 220px; min-width: 220px; flex: 0 0 220px; box-sizing: border-box; border-right: 1px solid color-mix(in srgb, var(--wb-border) 78%, transparent); border-top: 2px solid transparent; }
-.editor-tab.is-active { border-top-color: var(--wb-accent); background: var(--wb-surface-2); }
+.editor-tab { display: flex; align-items: stretch; width: 220px; min-width: 180px; flex: 0 1 220px; box-sizing: border-box; border-top: 2px solid transparent; border-radius: 7px 7px 0 0; transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out); }
+.editor-tab.is-active { border-top-color: var(--wb-accent); background: color-mix(in srgb, var(--wb-surface-2) 82%, var(--wb-accent)); }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
 .editor-tab__main { display: flex; flex: 1 1 auto; align-items: center; gap: 7px; min-width: 0; width: 0; max-width: none; padding: 0 5px 0 11px; font-size: 11px; }
 .editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--wb-text); }
@@ -132,7 +132,8 @@ const editorTitle = (entry: WorkspaceEntry) => (
 .editor-tab__kind .el-icon { font-size: 14px; }
 .editor-tab__name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-tab__missing { color: var(--wb-warning); font: 9px var(--font-mono, monospace); }
-.editor-tab__close { width: 28px; min-width: 28px; flex: 0 0 28px; color: var(--wb-text-muted); font-size: 17px; }
+.editor-tab__close { width: 28px; min-width: 28px; flex: 0 0 28px; color: var(--wb-text-muted); font-size: 15px; opacity: 0; transition: opacity 140ms var(--ease-out), color 140ms var(--ease-out), background-color 140ms var(--ease-out); }
+.editor-tab:hover .editor-tab__close, .editor-tab.is-active .editor-tab__close, .editor-tab__close:focus-visible { opacity: 1; }
 .editor-tab__close:hover { color: var(--wb-danger); background: var(--wb-hover); }
 .editor-tabs__empty { align-self: center; padding: 0 14px; color: var(--wb-text-muted); font-size: 11px; }
 .editor-tabs__spacer { flex: 1 1 auto; min-width: 8px; }
@@ -148,7 +149,7 @@ const editorTitle = (entry: WorkspaceEntry) => (
   min-height: var(--wb-tab-height);
   padding: 0 6px;
   border: 0;
-  border-right: 1px solid var(--wb-border);
+  border-right: 1px solid var(--wb-border-soft);
   color: var(--wb-text-muted);
   background: var(--wb-surface-inset);
   cursor: pointer;
@@ -182,7 +183,7 @@ const editorTitle = (entry: WorkspaceEntry) => (
   margin-left: auto;
   padding: 0 6px;
   border: 0;
-  border-left: 1px solid var(--wb-border);
+  border-left: 1px solid var(--wb-border-soft);
   color: var(--wb-text-muted);
   background: var(--wb-surface-inset);
   cursor: pointer;
