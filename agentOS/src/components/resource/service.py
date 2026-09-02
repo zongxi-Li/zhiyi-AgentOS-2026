@@ -128,6 +128,11 @@ class ResourceService:
             raise ValueError("resource credential is invalid")
         return record
 
+    def credential(self, resource_id: str) -> ResourceCredentialRecord:
+        """Read resource credential metadata without exposing a secret."""
+        self.registry.get(resource_id)
+        return self.store.get_credential(resource_id)
+
     def consume_nonce(
         self,
         resource_id: str,

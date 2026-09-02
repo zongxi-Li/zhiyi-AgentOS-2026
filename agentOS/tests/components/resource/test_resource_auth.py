@@ -5,6 +5,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from components.resource.service import ResourceService
+from components.resource.auth import (
+    ResourceRequestAuthenticator,
+    ResourceRequestExpired,
+    ResourceRequestReplay,
+    build_resource_signature,
+)
 from components.resource.store import SQLiteResourceStore
 from contracts.resource import DeploymentTier, ResourceEndpoint, ResourceProfile, ResourceSnapshot, ResourceType
 
@@ -82,3 +88,138 @@ def test_nonce_can_be_consumed_only_once_until_expiry() -> None:
     assert resources.consume_nonce("edge-auth", "nonce-1", expires_at, now=NOW) is True
     assert resources.consume_nonce("edge-auth", "nonce-1", expires_at, now=NOW) is False
     assert resources.consume_nonce("edge-auth", "nonce-2", NOW - timedelta(seconds=1), now=NOW) is False
+
+
+def test_signed_request_uses_method_path_timestamp_nonce_and_body_digest() -> None:
+    resources = _service()
+    issued = resources.issue_credential("edge-auth")
+    body = b'{"availableSlots":1}'
+    timestamp = int(NOW.timestamp())
+    nonce = "nonce-signed-1"
+    signature = build_resource_signature(
+        issued.secret,
+        method="POST",
+        path="/agentos/v2/resources/edge-auth/observation",
+        timestamp=timestamp,
+        nonce=nonce,
+        body=body,
+    )
+    authenticator = ResourceRequestAuthenticator(resources, clock_skew=timedelta(minutes=5))
+
+    record = authenticator.authenticate(
+        resource_id="edge-auth",
+        credential_id=issued.credential_id,
+        method="POST",
+        path="/agentos/v2/resources/edge-auth/observation",
+        timestamp=timestamp,
+        nonce=nonce,
+        signature=signature,
+        body=body,
+        now=NOW,
+    )
+
+    assert record.owner_scope == "tenant-a"
+
+
+def test_signed_request_rejects_tampering_wrong_credential_and_replay() -> None:
+    resources = _service()
+    issued = resources.issue_credential("edge-auth")
+    body = b'{"availableSlots":1}'
+    timestamp = int(NOW.timestamp())
+    authenticator = ResourceRequestAuthenticator(resources, clock_skew=timedelta(minutes=5))
+    signature = build_resource_signature(
+        issued.secret,
+        method="POST",
+        path="/agentos/v2/resources/edge-auth/observation",
+        timestamp=timestamp,
+        nonce="nonce-signed-2",
+        body=body,
+    )
+
+    with pytest.raises(ValueError, match="signature"):
+        authenticator.authenticate(
+            resource_id="edge-auth",
+            credential_id=issued.credential_id,
+            method="POST",
+            path="/agentos/v2/resources/edge-auth/observation",
+            timestamp=timestamp,
+            nonce="nonce-signed-2",
+            signature=signature,
+            body=b'{"availableSlots":0}',
+            now=NOW,
+        )
+    with pytest.raises(ValueError, match="credential"):
+        authenticator.authenticate(
+            resource_id="edge-auth",
+            credential_id="wrong",
+            method="POST",
+            path="/agentos/v2/resources/edge-auth/observation",
+            timestamp=timestamp,
+            nonce="nonce-signed-3",
+            signature=signature,
+            body=body,
+            now=NOW,
+        )
+    authenticator.authenticate(
+        resource_id="edge-auth",
+        credential_id=issued.credential_id,
+        method="POST",
+        path="/agentos/v2/resources/edge-auth/observation",
+        timestamp=timestamp,
+        nonce="nonce-signed-4",
+        signature=build_resource_signature(
+            issued.secret,
+            method="POST",
+            path="/agentos/v2/resources/edge-auth/observation",
+            timestamp=timestamp,
+            nonce="nonce-signed-4",
+            body=body,
+        ),
+        body=body,
+        now=NOW,
+    )
+    with pytest.raises(ResourceRequestReplay):
+        authenticator.authenticate(
+            resource_id="edge-auth",
+            credential_id=issued.credential_id,
+            method="POST",
+            path="/agentos/v2/resources/edge-auth/observation",
+            timestamp=timestamp,
+            nonce="nonce-signed-4",
+            signature=build_resource_signature(
+                issued.secret,
+                method="POST",
+                path="/agentos/v2/resources/edge-auth/observation",
+                timestamp=timestamp,
+                nonce="nonce-signed-4",
+                body=body,
+            ),
+            body=body,
+            now=NOW,
+        )
+
+
+def test_signed_request_rejects_expired_timestamp() -> None:
+    resources = _service()
+    issued = resources.issue_credential("edge-auth")
+    timestamp = int((NOW - timedelta(minutes=6)).timestamp())
+    body = b"{}"
+    with pytest.raises(ResourceRequestExpired):
+        ResourceRequestAuthenticator(resources, clock_skew=timedelta(minutes=5)).authenticate(
+            resource_id="edge-auth",
+            credential_id=issued.credential_id,
+            method="POST",
+            path="/agentos/v2/resources/edge-auth/observation",
+            timestamp=timestamp,
+            nonce="nonce-expired",
+            signature=build_resource_signature(
+                issued.secret,
+                method="POST",
+                path="/agentos/v2/resources/edge-auth/observation",
+                timestamp=timestamp,
+                nonce="nonce-expired",
+                body=body,
+            ),
+            body=body,
+            now=NOW,
+        )
