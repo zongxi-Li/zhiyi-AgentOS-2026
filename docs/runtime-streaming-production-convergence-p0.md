@@ -344,11 +344,13 @@ Fake Provider
 
 ### Baseline Regression Waiver
 
-| test | baseline `840f630` | current `8ac6c16` | classification |
+| test | baseline `840f630` | current `6c3204d` | classification |
 | --- | --- | --- | --- |
 | `tests/runtime/test_identity_projection_lifecycle.py::test_projection_replay_repairs_partial_blueprint_registration` | FAIL；`StopIteration`，`run.prepared` 未进入 pending projection queue | FAIL；同一 `StopIteration` | `ACCEPTED_BASELINE_FAILURE` |
 
 该测试在本轮前后均以同一栈失败，且不触及 RuntimeEvent、SSE、Broker、Native binding 或 Frontend Store。结论：`Streaming-introduced failures = 0`。本轮不修复该明确的 PRE_EXISTING_FAILURE。
+
+The final clean detached-HEAD rerun at `6c3204d` completed with `417 passed, 1 failed, 54 warnings`; the single failure is the waived projection replay `StopIteration`. A separate main-worktree run produced one additional heartbeat timeout, but the same test passed in a clean `6c3204d` worktree and the tracked runtime source had no commit difference, so it is recorded as a local timing/worktree observation rather than a Streaming regression.
 
 ## 19. Remaining P1/P2
 
