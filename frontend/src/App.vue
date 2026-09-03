@@ -403,9 +403,10 @@
               <Suspense>
                 <template #default>
                   <router-view v-slot="{ Component }">
-                    <transition :name="isPublicRoute ? 'public-fade' : 'fade'" mode="out-in">
-                      <component :is="Component" :key="route.path" />
-                    </transition>
+                    <!-- Route transitions can remain in a pending leave state in
+                         the Tauri WebView, hiding every later route. Keep the
+                         shell deterministic and let views own their animation. -->
+                    <component :is="Component" :key="route.path" />
                   </router-view>
                 </template>
                 <template #fallback>
@@ -2216,40 +2217,6 @@ onUnmounted(() => {
   transform: translateX(-50%);
   z-index: 2000;
   min-width: 300px;
-}
-
-/* Transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.18s var(--ease-out), transform 0.18s var(--ease-out);
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-  transform: translateY(4px);
-}
-
-.public-fade-enter-active,
-.public-fade-leave-active {
-  transition: opacity 280ms ease, transform 320ms cubic-bezier(.22, .8, .24, 1);
-}
-
-.public-fade-enter-from {
-  opacity: 0;
-  transform: translateY(14px) scale(.985);
-}
-
-.public-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-10px) scale(1.01);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .public-fade-enter-active,
-  .public-fade-leave-active {
-    transition: none;
-  }
 }
 
 /* Immersive Mode Overrides */

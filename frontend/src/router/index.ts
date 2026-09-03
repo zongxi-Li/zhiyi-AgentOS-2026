@@ -4,6 +4,12 @@ import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
 import LoginView from '@/views/LoginView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+// Sidebar destinations are part of the desktop shell's primary workflow.
+// Keep them in the entry graph so a Tauri WebView never blanks the outgoing
+// view while waiting for a route chunk that may be stale or unavailable.
+import HistoryView from '@/views/HistoryView.vue'
+import RoleView from '@/views/RoleView.vue'
+import ResourceCenterView from '@/views/ResourceCenterView.vue'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -48,7 +54,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/history',
     name: 'History',
-    component: () => import('@/views/HistoryView.vue'),
+    component: HistoryView,
     meta: {
       title: '历史记录',
       requiresAuth: true
@@ -66,7 +72,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/roles',
     name: 'Roles',
-    component: () => import('@/views/RoleView.vue'),
+    component: RoleView,
     meta: {
       title: '角色管理',
       requiresAuth: true
@@ -149,7 +155,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/agentos/resources',
     name: 'ResourceCenter',
-    component: () => import('@/views/ResourceCenterView.vue'),
+    component: ResourceCenterView,
     meta: {
       title: 'Resource Center',
       requiresAuth: true
