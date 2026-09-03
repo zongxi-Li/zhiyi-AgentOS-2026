@@ -621,6 +621,7 @@ class ACGExecutionGraph:
             "commitId": result.get("commitId"),
             "outputSummary": state.output_summaries.get(step_id, ""),
             "modelInvocations": list(result.get("modelInvocations") or []),
+            "runtimeEvents": list(result.get("runtimeEvents") or []),
             "toolCalls": list(result.get("toolCalls") or []),
             "provenanceEvents": list(result.get("provenanceEvents") or []),
             "communicationReads": list(result.get("communicationReads") or []),

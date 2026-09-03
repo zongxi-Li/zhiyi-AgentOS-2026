@@ -107,6 +107,7 @@ from .evolution import (
     TrajectoryStep,
 )
 from .execution import ExecutionOutcomeRef, ExecutionPackageRef, NodeExecutionPhase, NodeExecutionRecord
+from .runtime_events import RuntimeEvent
 from .identity import (
     AttemptId,
     BindingId,
@@ -165,7 +166,7 @@ __all__ = [
     "CommunicationManifestSpec", "CommunicationMode", "CommunicationRuleSpec", "ControlManifest",
     "ControlRule", "ConditionalControlSpec", "LoopControlSpec", "ParallelControlSpec", "ConsensusControlSpec",
     "AttemptId", "BindingId", "BlueprintId", "CapabilityManifest", "ContextPackRef", "EvolutionAction", "ExecutionOutcomeRef",
-    "ExecutionPackageRef", "NodeExecutionPhase", "NodeExecutionRecord", "FailureEvent", "FailureSource", "FailureType", "RecoveryAction", "GraphEdgeRef", "GraphEvolutionProposal",
+    "ExecutionPackageRef", "NodeExecutionPhase", "NodeExecutionRecord", "RuntimeEvent", "FailureEvent", "FailureSource", "FailureType", "RecoveryAction", "GraphEdgeRef", "GraphEvolutionProposal",
     "GraphNodeRef", "GraphPatch", "GraphPatchRef", "GraphPatchResult", "GraphRef", "MemoryPolicy", "MemoryQuery",
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
     "ModelCapabilityEnvelope", "ModelCapabilitySource", "ModelFeatureSet",

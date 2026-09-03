@@ -49,6 +49,7 @@ class AgentOutput(BaseModel):
     tool_executions: List[Dict[str, Any]] = Field(default_factory=list, alias="toolExecutions")
     evidence_refs: List[str] = Field(default_factory=list, alias="evidenceRefs")
     model_invocations: List[Dict[str, Any]] = Field(default_factory=list, alias="modelInvocations")
+    runtime_events: List[Dict[str, Any]] = Field(default_factory=list, alias="runtimeEvents")
 
 
 class AgentRunContext(BaseModel):

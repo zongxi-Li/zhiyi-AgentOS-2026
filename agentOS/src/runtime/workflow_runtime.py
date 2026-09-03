@@ -149,7 +149,9 @@ ExecutionAdapterFactory = Callable[..., object]
 _PLANNER_PROGRESS_FIELDS = frozenset({
     "stage", "status", "attempt", "retryCount", "timeoutSeconds", "errorCode",
     "kind", "taskCount", "dependencyCount", "nodeCount", "edgeCount",
-    "constraintCount", "safeSummary",
+    "constraintCount", "requiredCapabilityCount", "expectedArtifactCount",
+    "callKey", "retryIndex", "elapsedMs", "idleMs", "receivedChunks", "receivedLength",
+    "safeSummary",
 })
 
 
@@ -1453,6 +1455,16 @@ class ExecutionRuntime:
                 item for item in state.active_step_ids
                 if item not in state.completed_step_ids
             ]
+            for runtime_event in event.get("runtimeEvents") or []:
+                if not isinstance(runtime_event, dict):
+                    continue
+                target = runtime_event.get("nodeId") or step_id
+                payload = {key: value for key, value in runtime_event.items() if key not in {"eventId", "eventType", "runId", "nodeId"}}
+                node_trace_batch.append(self.trace_store.build_event(
+                    run, event_type=TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                    step_id=str(target), observation=str(runtime_event.get("eventType") or "runtime event"),
+                    payload={"runtimeEvent": str(runtime_event.get("eventType") or ""), **payload},
+                ))
         elif event_type == "superstep_completed":
             self._project_completed_phase_capsules(run=run, state=state)
             checkpoint_id = self._save_acg_checkpoint(run, state)
@@ -1954,15 +1966,65 @@ class ExecutionRuntime:
         """Append one planner Runtime Event as an auditable Trace entry.
 
         The payload whitelist is the security boundary: only scalar planning
-        facts pass through, so prompt/model text can never ride along. All
-        planner events carry ``planningProgress`` for legacy projections and
-        ``category="planner"`` for the event-driven Model Output panel.
+        facts pass through, so prompt/model text can never ride along. Durable
+        planner lifecycle events carry ``planningProgress`` for legacy
+        projections; high-frequency model activity is transient-only.
         """
         payload = {
             key: value for key, value in event.items()
             if key in _PLANNER_PROGRESS_FIELDS and isinstance(value, (str, int, float, bool))
         }
-        kind = str(payload.get("kind") or "progress")
+        planner_event_type = str(event.get("eventType") or "")
+        if planner_event_type not in {
+            "planner.started", "planner.stage.started", "planner.stage.retry",
+            "planner.model.started", "planner.model.first_token",
+            "planner.model.activity", "planner.model.completed",
+            "planner.stage.completed", "planner.profile.resolved",
+            "planner.plan.parsed", "planner.graph.compiled", "planner.completed",
+            "planner.failed",
+        }:
+            planner_event_type = {
+                "started": "planner.started",
+                "stage_started": "planner.stage.started",
+                "stage_completed": "planner.stage.completed",
+                "retry": "planner.stage.retry",
+                "profile_resolved": "planner.profile.resolved",
+                "plan_parsed": "planner.plan.parsed",
+                "graph_compiled": "planner.graph.compiled",
+                "completed": "planner.completed",
+                "failed": "planner.failed",
+            }.get(str(payload.get("kind")), "")
+        persist_trace = bool(event.get("persistTrace", True))
+        if planner_event_type:
+            # Mirror planner lifecycle/activity onto the existing transient broker.
+            # The planning phase is run-scoped, so node/attempt identity remains null.
+            self._raise_if_run_cancelled(run.run_id)
+            from contracts.runtime_events import RuntimeEvent
+            from runtime.live_events import runtime_event_broker
+            runtime_event_broker.publish_from_thread(
+                run.run_id,
+                RuntimeEvent(
+                    eventType=planner_event_type,
+                    runId=run.run_id,
+                    nodeId=None,
+                    attemptId=None,
+                    sequence=0,
+                    payload=payload,
+                ),
+            )
+        if not persist_trace:
+            return
+        kind = str(payload.get("kind") or {
+            "planner.started": "started",
+            "planner.stage.started": "stage_started",
+            "planner.stage.retry": "retry",
+            "planner.stage.completed": "stage_completed",
+            "planner.profile.resolved": "profile_resolved",
+            "planner.plan.parsed": "plan_parsed",
+            "planner.graph.compiled": "graph_compiled",
+            "planner.completed": "completed",
+            "planner.failed": "failed",
+        }.get(planner_event_type, "progress"))
         stage = payload.get("stage")
         status = payload.get("status")
         observation = "Planner " + kind
@@ -2067,10 +2129,11 @@ class ExecutionRuntime:
                     "plan_parsed": "plan_parsed",
                 }
                 payload = dict(event)
-                payload["kind"] = str(
-                    payload.get("kind")
-                    or kind_by_status.get(str(payload.get("status")), "stage_updated")
-                )
+                if not payload.get("eventType"):
+                    payload["kind"] = str(
+                        payload.get("kind")
+                        or kind_by_status.get(str(payload.get("status")), "stage_updated")
+                    )
                 self._append_planner_event(run, payload)
 
             self._append_planner_event(run, {"kind": "started"})
@@ -2094,6 +2157,7 @@ class ExecutionRuntime:
                     task_input=dict(run.input),
                     existing_semantic_tasks=existing_semantic_tasks,
                     capability_profile=str(run.input.get("capabilityProfile") or "auto"),
+                    run_id=run.run_id,
                     progress_callback=planning_progress,
                 )
             except Exception as exc:

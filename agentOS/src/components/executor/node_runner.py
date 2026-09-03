@@ -30,6 +30,8 @@ from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryM
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from contracts.content import ContentKind
 from service.agents.base import BaseAgent, AgentRunContext
+from contracts.runtime_events import RuntimeEvent
+from runtime.live_events import runtime_event_broker
 
 from .graph import ACGExecutionState
 from .value_store import ExecutionValueStore, InMemoryExecutionValueStore
@@ -359,6 +361,11 @@ class ACGNodeRunner:
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
             commitId=commit_id,
         )
+        await runtime_event_broker.publish(
+            state.run_id,
+            RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
+                         attemptId=commit_id or step_id, sequence=0),
+        )
         output = (
             await self.agent_invoker.invoke(context=agent_context, agent=agent)
             if self.agent_invoker is not None
@@ -577,6 +584,7 @@ class ACGNodeRunner:
             "memoryEvent": memory_event_payload,
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
+            "runtimeEvents": list(getattr(output, "runtime_events", []) or []),
         }
         if not requires_review:
             result["memoryRef"] = (
@@ -597,6 +605,11 @@ class ACGNodeRunner:
             run_id=state.run_id,
             commit_id=commit_id,
             payload=commit_record,
+        )
+        await runtime_event_broker.publish(
+            state.run_id,
+            RuntimeEvent(eventType="node.completed", runId=state.run_id, nodeId=step_id,
+                         attemptId=commit_id or step_id, sequence=0),
         )
         self._publish_committed_memory(
             run_id=state.run_id,
@@ -1092,7 +1105,6 @@ class ACGNodeRunner:
             output_refs=output_refs,
             max_tokens=None,
         )
-
     def _build_content_workset_session(
         self, *, state: ACGExecutionState, step_id: str, step: WorkflowStep, commit_id: str
     ) -> ContentWorksetSession | None:
