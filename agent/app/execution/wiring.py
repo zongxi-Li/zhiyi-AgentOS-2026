@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import asyncio
+import json
 from pathlib import Path
+from threading import Thread
 from typing import Any, Mapping
 
 from adapters.model.native import register_native_runtime
@@ -21,6 +24,8 @@ from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
 from components.mission_manager.store import WorkflowRegistry
 from runtime import ApplicationSetup, ExecutionRuntime
+from adapters.guarded_model import GuardedModelRuntime
+from adapters.model_runtime import RegisteredModelRuntime
 from runtime.v2 import (
     AcgIdentityLifecycleService,
     IdentityProjectionReconciler,
@@ -52,6 +57,77 @@ class GatewayIntentLLM:
         from app.llm.gateway import get_llm_gateway
 
         return get_llm_gateway().generate_json(prompt, schema, **kwargs)
+
+
+def _run_coroutine_sync(factory):
+    """Bridge the legacy synchronous planner boundary to the async model runtime."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+    result: dict[str, Any] = {}
+    failure: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(factory())
+        except BaseException as exc:  # pragma: no cover - only reached in nested-loop hosts
+            failure.append(exc)
+
+    thread = Thread(target=runner, name="agentos-planner-model-bridge", daemon=True)
+    thread.start()
+    thread.join()
+    if failure:
+        raise failure[0]
+    return result.get("value")
+
+
+class RegisteredPlannerLLM:
+    """Planner adapter backed by the Runtime-owned registered model stream."""
+
+    def __init__(self, runtime: ExecutionRuntime) -> None:
+        from app.llm.gateway import get_llm_gateway
+
+        gateway = get_llm_gateway()
+        self.provider = gateway.provider_name
+        self.model = gateway.model
+        self._runtime = GuardedModelRuntime(
+            delegate=RegisteredModelRuntime(
+                registry=runtime.model_registry,
+                provider=self.provider,
+                model=self.model,
+            ),
+            # Planning owns the retry budget so retries cannot restart a stream
+            # underneath the one shared planning deadline.
+            retries=0,
+        )
+
+    def is_available(self) -> bool:
+        return self._runtime.is_available()
+
+    def describe_model(self):
+        return self._runtime.describe_model()
+
+    def stream_generate_json(self, **kwargs):
+        return self._runtime.stream_generate_json(**kwargs)
+
+    def generate_json(self, prompt: str, schema: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        result = _run_coroutine_sync(
+            lambda: self._runtime.generate_json(prompt=prompt, schema=schema, **kwargs)
+        )
+        return result.model_dump(by_alias=True, mode="json")
+
+
+def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
+    """Switch the production planner to the same registry used by node runtime."""
+    current = getattr(runtime, "_intent_llm", None)
+    if not isinstance(current, GatewayIntentLLM):
+        return False
+    candidate = RegisteredPlannerLLM(runtime)
+    if not candidate.is_available():
+        return False
+    runtime.set_intent_llm(candidate)
+    return True
 
 
 def _workflow_db_path(environment: Mapping[str, str]) -> Path:
@@ -102,8 +178,35 @@ def build_model_setup(
     environment: Mapping[str, str] | None = None,
 ) -> ApplicationSetup:
     """Bind configured adapters to the Runtime-owned model registry."""
+    values = dict(os.environ if environment is None else environment)
+    if not str(values.get("AGENTOS_MODELS") or "").strip():
+        # The application historically configured the same provider through the
+        # legacy gateway variables. Promote that route into the Runtime registry
+        # so Planner never silently falls back to a synchronous provider call.
+        from app.llm.gateway import get_llm_gateway
+
+        gateway = get_llm_gateway()
+        config = gateway.config
+        if (
+            gateway.provider_name not in {"", "mock", "unavailable"}
+            and gateway.model
+            and config.base_url
+            and config.api_key
+        ):
+            key_env = "AGENTOS_RUNTIME_MODEL_API_KEY"
+            values[key_env] = config.api_key
+            values["AGENTOS_MODELS"] = json.dumps([{
+                "capabilityId": f"model.gateway.{gateway.provider_name}",
+                "provider": gateway.provider_name,
+                "models": [gateway.model],
+                "baseUrl": config.base_url,
+                "apiKeyEnv": key_env,
+                "version": "1.0.0",
+                "priority": 100,
+                "requestTimeoutSeconds": config.timeout_seconds,
+            }])
     return ApplicationSetup.from_environment(
-        os.environ if environment is None else environment,
+        values,
         model_registry=runtime.model_registry,
     )
 
@@ -219,6 +322,8 @@ def close_runtime(runtime: ExecutionRuntime) -> None:
 
 __all__ = [
     "GatewayIntentLLM",
+    "RegisteredPlannerLLM",
+    "bind_registered_planner_llm",
     "build_default_runtime",
     "build_model_setup",
     "close_runtime",

@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
@@ -27,6 +28,7 @@ from runtime.v2.workspace import (
     WorkspaceRunSummary,
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
+from runtime.live_events import runtime_event_broker
 
 
 logger = logging.getLogger(__name__)
@@ -1256,6 +1258,26 @@ def create_router(
         exported = runtime.trace_store.export_json(run)
         exported["events"] = [_redact(item) for item in exported.get("events", [])]
         return exported
+
+    @router.get("/runs/{run_id}/events")
+    async def stream_runtime_events(run_id: str):
+        # Authorize before opening the long-lived broker subscription.  The
+        # broker is run-scoped, but it is not an access-control boundary.
+        load_run(run_id)
+
+        async def body():
+            async for event in runtime_event_broker.subscribe(run_id):
+                payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+                yield f"event: {event.event_type}\ndata: {payload}\n\n"
+        return StreamingResponse(
+            body(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.get("/runs/{run_id}/provenance")
     async def get_provenance(run_id: str):
