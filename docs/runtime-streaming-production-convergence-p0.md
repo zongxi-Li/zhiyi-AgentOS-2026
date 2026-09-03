@@ -77,6 +77,7 @@
 
 - `agent/tests/test_runtime_streaming_production_e2e.py`
 - `agentOS/tests/adapters/test_model_runtime_streaming.py`
+- `scripts/runtime_streaming_combined_acceptance.py`
 - `agent/tests/test_agentos_v2_api.py`
 - `agentOS/tests/test_runtime_live_events.py`
 - `agentOS/tests/adapters/test_guarded_runtime.py`
@@ -303,22 +304,67 @@ node.completed
 | Runtime containers | AI/Backend/Frontend healthy | 通过 |
 | Browser public entry | 首页、登录页真实浏览器快照通过 | 通过；无登录凭据，未进入正式 Workbench |
 
-此前全量结果中的 identity projection 与 resource binding 失败均在本轮范围外；本轮只修复 Streaming 相关路径，没有借机重构无关模块。当前全量回归仍未清零，故不升级为 completed。
+### Combined Java → Python E2E
+
+由 `scripts/runtime_streaming_combined_acceptance.py` 运行真实跨进程链路：
+
+```text
+Fake Provider
+  → RegisteredModelRuntime
+  → NativeGeneralAgent / PlanningEngine
+  → RuntimeEventBroker
+  → Python FastAPI SSE
+  → Java Spring Boot SSE Gateway
+  → Java-facing HTTP client
+```
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| Native combined E2E | PASS | 事件顺序包含 `node.started → model.started → model.first_token → model.output.delta → model.completed → node.completed → run.completed` |
+| Planner combined E2E | PASS | 收到 `planner.started`、`planner.model.started`、`planner.model.first_token`、`planner.model.activity`，并在 `planner.completed` 前到达 |
+| Early SSE delivery | PASS | Native `firstDeltaBeforeNodeCompleted=true`；Java client 在 Python upstream 完成前收到事件 |
+| Disconnect isolation | PASS | Java client 收到首个事件后断开；Python subscription closed，Workflow 仍为 `completed` |
+
+该脚本没有直接访问 `broker._queues`，没有 mock Java service method，也没有跳过 Java HTTP。Java Gateway 使用当前 Backend jar 的真实 Spring Boot HTTP endpoint；Java dev profile 仅用于自包含验收会话，不代表正式产品认证验收。
+
+### Real Product Acceptance
+
+| 验收项 | 结果 | 说明 |
+| --- | --- | --- |
+| Authentication | BLOCKED | 没有可用于正式产品 Workbench 的认证会话；未绕过鉴权 |
+| Real Provider | BLOCKED | 未取得真实 Provider 正式调用凭据 |
+| Planning live | NO | 未进入正式登录后的真实 Mission/Run |
+| Graph materialized | NO | 未进入正式登录后的真实 Mission/Run |
+| Node STREAMING | NO | 未进入正式登录后的真实 Mission/Run |
+| Inspector output before completion | NO | 未进入正式登录后的真实 Mission/Run |
+| Output continued growing | NO | 未进入正式登录后的真实 Mission/Run |
+| Refresh did not cancel Run | NO | 未执行正式 Workbench 刷新验收 |
+
+因此正式产品验收状态为 `REAL_PRODUCT_ACCEPTANCE_BLOCKED_BY_AUTH`，不能把自包含 dev profile 组合测试等同于真实 Provider Workbench 验收。
+
+### Baseline Regression Waiver
+
+| test | baseline `840f630` | current `8ac6c16` | classification |
+| --- | --- | --- | --- |
+| `tests/runtime/test_identity_projection_lifecycle.py::test_projection_replay_repairs_partial_blueprint_registration` | FAIL；`StopIteration`，`run.prepared` 未进入 pending projection queue | FAIL；同一 `StopIteration` | `ACCEPTED_BASELINE_FAILURE` |
+
+该测试在本轮前后均以同一栈失败，且不触及 RuntimeEvent、SSE、Broker、Native binding 或 Frontend Store。结论：`Streaming-introduced failures = 0`。本轮不修复该明确的 PRE_EXISTING_FAILURE。
 
 ## 19. Remaining P1/P2
 
 剩余 P0 验收阻断：
 
 1. 提供可用的正式登录/授权流程，创建真实 Mission/Run，记录 Planner、Node、SSE、Inspector 的完整时间线。
-2. 增加并运行一条组合 HTTP E2E：Fake Provider/Planner → Python FastAPI SSE → Java SSE Gateway → HTTP client；当前已有两端分段证据，但组合证据未完成。
-3. 处理或建立明确基线豁免：AgentOS identity projection replay 的 1 个全量失败，以及既有 resource binding 类失败的历史归因。
+2. 在真实 Provider Workbench 中完成 Ctrl+Shift+R 刷新验收，证明 Workflow 继续运行、SSE 重新建立且后续事件继续到达。
+
+跨进程 Java→Python 组合 E2E 已完成；identity projection replay 的全量失败已建立基线豁免，不再作为 Streaming 封板阻断。
 
 P1/P2：前端既有大 chunk warning、少量 Vue unresolved icon warning、以及非 Streaming 的 resource binding/identity projection 稳定性，不在本轮 P0 Streaming 收敛范围内。
 
 ## 20. Final Verdict
 
-**Runtime Streaming Production Convergence P0：`PARTIAL / ACCEPTANCE BLOCKED`。**
+**Runtime Streaming Production Convergence P0：`PARTIAL / REAL PRODUCT ACCEPTANCE BLOCKED BY AUTH`。**
 
 本轮已完成代码层和自动化层的主要 P0 收敛：Java/Python SSE、Broker 分类、Native/Planner 真流绑定、正式 Workbench shared Store、retry attempt 隔离、cancel iterator close、node.failed 和生命周期 cleanup 均有实现与测试证据；当前 HEAD 的镜像也已正确重建并启动。
 
-但是完成定义要求的真实 Provider 正式 Workbench 时间线、完整 Java→Python→HTTP 组合 E2E，以及全量回归清零尚未满足。根据审计基线和本轮完成定义，不能写 `Runtime Streaming Production Convergence P0 COMPLETED`。本轮在 P0 边界停止，不进入 Phase 3，不继续新增 Streaming 功能。
+但是完成定义要求的真实 Provider 正式 Workbench 时间线和刷新验收仍因认证会话不可用而未完成。组合 Java→Python→HTTP E2E 已通过，唯一全量失败已被证明是 `ACCEPTED_BASELINE_FAILURE`，Streaming-introduced regression 为 0；但这不能替代真实产品验收。根据本轮要求，不能写 `Runtime Streaming Production Convergence P0 COMPLETED`。本轮在 P0 边界停止，不进入 Phase 3，不继续新增 Streaming 功能。
