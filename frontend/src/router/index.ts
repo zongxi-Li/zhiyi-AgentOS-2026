@@ -2,6 +2,8 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
+import LoginView from '@/views/LoginView.vue'
+import SettingsView from '@/views/SettingsView.vue'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -16,7 +18,10 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'Login',
-    component: () => import('@/views/LoginView.vue'),
+    // Authentication is the recovery surface after logout and token expiry.
+    // Keep it in the entry bundle so a missing/stale route chunk cannot leave
+    // the user with no page to recover the session.
+    component: LoginView,
     meta: {
       title: '登录',
       requiresAuth: false
@@ -79,7 +84,9 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/settings',
     name: 'Settings',
-    component: () => import('@/views/SettingsView.vue'),
+    // Settings is the main route used to recover identity and client state.
+    // It should remain available even when a deployed lazy chunk is stale.
+    component: SettingsView,
     meta: {
       title: '设置',
       requiresAuth: true
@@ -192,6 +199,40 @@ const router = createRouter({
   routes
 })
 
+const ROUTE_CHUNK_RELOAD_KEY = 'kinlin:route-chunk-reload'
+const isRouteChunkError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk .* failed|ChunkLoadError/i.test(message)
+}
+
+// A long-lived tab can keep an old index while a deployment replaces hashed
+// route chunks. Retry the failed navigation once so a normal click recovers
+// without asking the user to refresh manually, while avoiding a reload loop
+// when the chunk is genuinely unavailable.
+router.onError((error, to, from) => {
+  if (!isRouteChunkError(error)) return
+
+  if (sessionStorage.getItem(ROUTE_CHUNK_RELOAD_KEY) === to.fullPath) {
+    sessionStorage.removeItem(ROUTE_CHUNK_RELOAD_KEY)
+    if (from.fullPath !== to.fullPath) {
+      void router.replace(from.fullPath)
+    }
+    window.dispatchEvent(new CustomEvent('global-error', {
+      detail: { message: '页面资源加载失败，已返回上一页，请稍后重试。' }
+    }))
+    return
+  }
+
+  sessionStorage.setItem(ROUTE_CHUNK_RELOAD_KEY, to.fullPath)
+  window.location.reload()
+})
+
+router.afterEach((to) => {
+  if (sessionStorage.getItem(ROUTE_CHUNK_RELOAD_KEY) === to.fullPath) {
+    sessionStorage.removeItem(ROUTE_CHUNK_RELOAD_KEY)
+  }
+})
+
 const clearAuthState = () => {
   localStorage.removeItem('token')
   localStorage.removeItem('userId')
@@ -209,6 +250,14 @@ router.beforeEach(async (to, _from, next) => {
 
   const token = localStorage.getItem('token')
   const requiresAuth = Boolean(to.meta.requiresAuth)
+
+  // The desktop shell opens on the authenticated product surface. Keep the
+  // public landing page as the browser entry point, but never show it inside
+  // the Tauri app before login.
+  if (to.path === '/' && isDesktop()) {
+    next({ path: '/login', replace: true })
+    return
+  }
 
   // Validate login state for protected routes
   if (requiresAuth) {
