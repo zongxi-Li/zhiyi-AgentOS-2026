@@ -36,6 +36,8 @@ class SemanticPlanner:
         reasoning_effort: str | None = None,
         use_llm: bool = True,
         existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
     ) -> TaskPlan:
         return self.task_decomposer.decompose(
             mission_id=mission_id,
@@ -45,6 +47,8 @@ class SemanticPlanner:
             reasoning_effort=reasoning_effort,
             use_llm=use_llm,
             existing_semantic_tasks=tuple(existing_semantic_tasks),
+            planning_deadline=planning_deadline,
+            run_id=run_id,
         )
 
     def plan_capabilities(

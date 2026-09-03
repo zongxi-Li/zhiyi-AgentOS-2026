@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Mapping, Sequence
+from threading import Thread
 from time import monotonic
 from typing import Any, Callable
 
@@ -101,7 +103,10 @@ def transport_error_code(exc: BaseException) -> str | None:
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         code = str(getattr(current, "code", "") or "").upper()
-        if code in {"MODEL_CONNECTION_INTERRUPTED", "MODEL_TIMEOUT"}:
+        if code in {
+            "MODEL_CONNECTION_INTERRUPTED", "MODEL_TIMEOUT", "MODEL_TTFT_TIMEOUT",
+            "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT",
+        }:
             return code
         text = f"{type(current).__name__} {current}".lower()
         if "timeout" in text or "timed out" in text:
@@ -125,22 +130,141 @@ def transport_error_metadata(exc: BaseException) -> dict[str, Any]:
     return {}
 
 
+def _run_async(coro_factory: Callable[[], Any]) -> Any:
+    """Run one streaming coroutine from sync planner code, including loop-owned callers."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+
+    result: dict[str, Any] = {}
+    failure: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            result["value"] = asyncio.run(coro_factory())
+        except BaseException as exc:  # re-raise in the planner caller
+            failure.append(exc)
+
+    thread = Thread(target=worker, name="agentos-planner-stream", daemon=True)
+    thread.start()
+    thread.join()
+    if failure:
+        raise failure[0]
+    return result.get("value")
+
+
+def _stream_planning_call(
+    llm: Any,
+    *,
+    stage: str,
+    call_key: str,
+    prompt: str,
+    schema: dict[str, Any],
+    timeout: float,
+    run_id: str,
+    retry_index: int,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    extra_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Consume a true model stream and expose only safe planner activity facts."""
+    streamer = getattr(llm, "stream_generate_json", None)
+    if not callable(streamer):
+        raise AttributeError("stream_generate_json is not available")
+
+    async def consume() -> dict[str, Any]:
+        data: dict[str, Any] | None = None
+        provider = str(getattr(llm, "provider", "") or "")
+        model = str(getattr(llm, "model", "") or "")
+        stream_kwargs = {
+            key: value
+            for key, value in extra_kwargs.items()
+            if key != "timeout_seconds"
+        }
+        if "max_tokens" in stream_kwargs and "max_output_tokens" not in stream_kwargs:
+            stream_kwargs["max_output_tokens"] = stream_kwargs.pop("max_tokens")
+        stream_kwargs.update({
+            "prompt": prompt,
+            "schema": schema,
+            "run_id": run_id,
+            "node_id": None,
+            "attempt_id": None,
+            "ttft_timeout": min(30.0, timeout),
+            "idle_timeout": min(60.0, timeout),
+            "total_timeout": timeout,
+            "emit_output_deltas": False,
+        })
+        async for event in streamer(**stream_kwargs):
+            event_type = str(
+                getattr(event, "event_type", None)
+                or (event.get("eventType") if isinstance(event, Mapping) else "")
+                or (event.get("event_type") if isinstance(event, Mapping) else "")
+            )
+            payload = getattr(event, "payload", None)
+            if not isinstance(payload, Mapping) and isinstance(event, Mapping):
+                payload = event.get("payload")
+            payload = dict(payload) if isinstance(payload, Mapping) else {}
+            if event_type in {"model.output.delta", "planner.model.output.delta"}:
+                # The structured JSON buffer remains inside the model runtime.
+                continue
+            if event_type in {"model.completed", "planner.model.completed"}:
+                candidate = payload.get("data")
+                if isinstance(candidate, dict):
+                    data = candidate
+                provider = str(payload.get("provider") or provider)
+                model = str(payload.get("model") or model)
+            normalized = event_type if event_type.startswith("planner.") else f"planner.{event_type}"
+            if normalized not in {
+                "planner.model.started", "planner.model.first_token",
+                "planner.model.activity", "planner.model.completed",
+            }:
+                continue
+            safe = {
+                "eventType": normalized,
+                "stage": stage,
+                "callKey": call_key,
+                "retryIndex": retry_index,
+                "persistTrace": False,
+            }
+            for key in ("elapsedMs", "idleMs", "receivedChunks", "receivedLength"):
+                value = payload.get(key)
+                if isinstance(value, (int, float)) and value >= 0:
+                    safe[key] = value
+            if progress_callback:
+                progress_callback(safe)
+        if data is None:
+            raise ValueError("stream completed without a structured JSON object")
+        return {
+            "data": data,
+            "provider": provider,
+            "model": model,
+            "streamUsed": True,
+        }
+
+    return _run_async(consume)
+
+
 def call_planning_model(
     llm: Any, *, stage: str, prompt: str, schema: dict[str, Any],
     audit: dict[str, Any], model_timeout_seconds: float,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    call_key: str | None = None,
+    planning_deadline: float | None = None,
+    run_id: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Execute one logical planning call inside a shared 660-second deadline."""
     started = monotonic()
-    deadline = started + PLANNING_TOTAL_TIMEOUT_SECONDS
+    deadline = planning_deadline or (started + PLANNING_TOTAL_TIMEOUT_SECONDS)
+    logical_call_key = call_key or stage
     max_attempts = 1 + PLANNING_MAX_RETRIES
     attempts = audit.setdefault("attemptsByStage", {})
     audit.setdefault("transportRetries", [])
+    audit.setdefault("transportRetryCallKeys", [])
     audit["timeoutBudget"] = {
         "initialSeconds": model_timeout_seconds,
         "retrySeconds": PLANNING_RETRY_TIMEOUT_SECONDS,
-        "totalSeconds": PLANNING_TOTAL_TIMEOUT_SECONDS,
+        "totalSeconds": max(0.0, deadline - started) if planning_deadline else PLANNING_TOTAL_TIMEOUT_SECONDS,
     }
     for attempt in range(1, max_attempts + 1):
         remaining = max(0.0, deadline - monotonic())
@@ -152,19 +276,38 @@ def call_planning_model(
             raise error
         call_kwargs = dict(kwargs)
         call_kwargs["timeout_seconds"] = timeout
-        attempts[stage] = attempt
+        attempts[logical_call_key] = attempt
         if progress_callback:
             progress_callback({
-                "stage": stage, "status": "started", "attempt": attempt,
+                "eventType": "planner.stage.started", "kind": "stage_started",
+                "stage": stage, "callKey": logical_call_key, "status": "started", "attempt": attempt,
                 "retryCount": attempt - 1, "timeoutSeconds": timeout,
             })
         try:
-            result = llm.generate_json(prompt, schema, **call_kwargs)
+            streamer = getattr(llm, "stream_generate_json", None)
+            if callable(streamer) and run_id:
+                result = _stream_planning_call(
+                    llm,
+                    stage=stage,
+                    call_key=logical_call_key,
+                    prompt=prompt,
+                    schema=schema,
+                    timeout=timeout,
+                    run_id=run_id,
+                    retry_index=attempt - 1,
+                    progress_callback=progress_callback,
+                    extra_kwargs=call_kwargs,
+                )
+                audit["streamUsed"] = True
+                audit.setdefault("streamCalls", []).append(logical_call_key)
+            else:
+                result = llm.generate_json(prompt, schema, **call_kwargs)
             if isinstance(result, Mapping):
                 audit["streamUsed"] = bool(result.get("streamUsed", audit.get("streamUsed", False)))
             if progress_callback:
                 progress_callback({
-                    "stage": stage, "status": "completed", "attempt": attempt,
+                    "eventType": "planner.stage.completed", "kind": "stage_completed",
+                    "stage": stage, "callKey": logical_call_key, "status": "completed", "attempt": attempt,
                     "retryCount": attempt - 1,
                 })
             return result
@@ -173,24 +316,34 @@ def call_planning_model(
             if code is None or attempt >= max_attempts:
                 if code:
                     error_metadata = transport_error_metadata(exc)
-                    error_metadata.update({"stage": stage, "attemptCount": attempt, "retryCount": attempt - 1})
+                    error_metadata.update({
+                        "stage": stage,
+                        "callKey": logical_call_key,
+                        "attemptCount": attempt,
+                        "retryCount": attempt - 1,
+                    })
                     if hasattr(exc, "metadata"):
                         exc.metadata = error_metadata
                     audit["lastTransportError"] = {
-                        "code": code, "stage": stage,
+                        "code": code, "stage": stage, "callKey": logical_call_key,
                         **error_metadata,
                     }
                 raise
+            # Keep the historical stage arrays stable for existing Trace
+            # consumers, while exposing the exact logical call separately.
             audit["transportRetries"].append(stage)
-            if code == "MODEL_TIMEOUT":
+            audit["transportRetryCallKeys"].append(logical_call_key)
+            if code in {"MODEL_TIMEOUT", "MODEL_TTFT_TIMEOUT", "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT"}:
                 audit.setdefault("timeoutRetries", []).append(stage)
+                audit.setdefault("timeoutRetryCallKeys", []).append(logical_call_key)
             audit["lastTransportError"] = {
-                "code": code, "stage": stage,
+                "code": code, "stage": stage, "callKey": logical_call_key,
                 **transport_error_metadata(exc),
             }
             if progress_callback:
                 progress_callback({
-                    "stage": stage, "status": "retrying", "attempt": attempt,
+                    "eventType": "planner.stage.retry", "kind": "retry",
+                    "stage": stage, "callKey": logical_call_key, "status": "retrying", "attempt": attempt,
                     "retryCount": attempt, "errorCode": code,
                 })
     raise AssertionError("unreachable planning retry state")
@@ -202,6 +355,7 @@ __all__ = [
     "PLANNING_MODEL_TIMEOUT_SECONDS",
     "PLANNING_TOTAL_TIMEOUT_SECONDS",
     "PLANNING_MAX_RETRIES",
+    "_stream_planning_call",
     "assess_complexity",
     "call_planning_model",
     "is_model_timeout",

@@ -75,7 +75,17 @@ class IntentParser:
         self.last_audit: dict[str, Any] = {}
         self.progress_callback = progress_callback
 
-    def _call_llm(self, *, stage: str, prompt: str, schema: dict, **kwargs) -> Any:
+    def _call_llm(
+        self,
+        *,
+        stage: str,
+        prompt: str,
+        schema: dict,
+        call_key: str | None = None,
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
+        **kwargs,
+    ) -> Any:
         """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
 
         与分解器同合同（2026-09-01 run_5c100bb2ec7a：意图解析裸走 120s 默认
@@ -84,7 +94,8 @@ class IntentParser:
         return call_planning_model(
             self.llm, stage=stage, prompt=prompt, schema=schema,
             audit=self.last_audit, model_timeout_seconds=self.model_timeout_seconds,
-            progress_callback=self.progress_callback, **kwargs,
+            progress_callback=self.progress_callback, call_key=call_key,
+            planning_deadline=planning_deadline, run_id=run_id, **kwargs,
         )
 
     def parse(
@@ -98,6 +109,8 @@ class IntentParser:
         use_llm: bool = True,
         task_input: Mapping[str, Any] | None = None,
         declared_capabilities: list[str] | tuple[str, ...] | None = None,
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
     ) -> TaskSemanticProfile:
         """把用户意图解析为标准语义画像。
 
@@ -118,6 +131,8 @@ class IntentParser:
                     intent, domain, task_type, thinking_mode, task_input,
                     reasoning_effort=reasoning_effort,
                     declared_capabilities=declared_capabilities,
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
                 )
             except Exception as first_error:
                 if transport_error_code(first_error):
@@ -137,6 +152,8 @@ class IntentParser:
                         prompt_version=f"{INTENT_PROFILE_PROMPT_VERSION}.repair1",
                         repair_error=str(first_error),
                         declared_capabilities=declared_capabilities,
+                        planning_deadline=planning_deadline,
+                        run_id=run_id,
                     )
                     self.last_audit["promptVersion"] = f"{INTENT_PROFILE_PROMPT_VERSION}.repair1"
                     return profile
@@ -160,6 +177,8 @@ class IntentParser:
         prompt_version: str = INTENT_PROFILE_PROMPT_VERSION,
         repair_error: str | None = None,
         declared_capabilities: list[str] | tuple[str, ...] | None = None,
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
     ) -> TaskSemanticProfile:
         result = self._call_llm(
             stage="intent_profile",
@@ -169,6 +188,9 @@ class IntentParser:
             thinking_mode=thinking_mode,
             reasoning_effort=reasoning_effort,
             prompt_version=prompt_version,
+            call_key="intent_profile.repair1" if repair_error else "intent_profile",
+            planning_deadline=planning_deadline,
+            run_id=run_id,
         )
         if isinstance(result, dict):
             if result.get("model"):

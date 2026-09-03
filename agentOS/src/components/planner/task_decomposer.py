@@ -134,7 +134,17 @@ class TaskDecomposer:
         self.last_audit: dict[str, Any] = {}
         self.progress_callback = progress_callback
 
-    def _call_llm(self, *, stage: str, prompt: str, schema: dict, **kwargs) -> Any:
+    def _call_llm(
+        self,
+        *,
+        stage: str,
+        prompt: str,
+        schema: dict,
+        call_key: str | None = None,
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
+        **kwargs,
+    ) -> Any:
         """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
 
         瞬态读超时不应判死整条规划链（2026-09-01 run_1a25f0d4ad89 根因），
@@ -144,7 +154,8 @@ class TaskDecomposer:
         return call_planning_model(
             self.llm, stage=stage, prompt=prompt, schema=schema,
             audit=self.last_audit, model_timeout_seconds=self.model_timeout_seconds,
-            progress_callback=self.progress_callback, **kwargs,
+            progress_callback=self.progress_callback, call_key=call_key,
+            planning_deadline=planning_deadline, run_id=run_id, **kwargs,
         )
 
     def decompose(
@@ -157,6 +168,8 @@ class TaskDecomposer:
         use_llm: bool,
         reasoning_effort: str | None = None,
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
     ) -> TaskPlan:
         self.last_audit = {
             "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -181,6 +194,8 @@ class TaskDecomposer:
                     existing_semantic_tasks=existing_semantic_tasks,
                     prompt=prompt,
                     reasoning_effort=reasoning_effort,
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
                 )
             first: Any = None
             try:
@@ -190,6 +205,9 @@ class TaskDecomposer:
                     schema=_SCHEMA,
                     reasoning_effort=reasoning_effort,
                     prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
+                    call_key="decompose",
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
                 )
                 self._capture_model_audit(first)
                 return self._to_plan(
@@ -217,6 +235,8 @@ class TaskDecomposer:
                             profile=profile,
                             missing_refs=missing_refs,
                             reasoning_effort=reasoning_effort,
+                            planning_deadline=planning_deadline,
+                            run_id=run_id,
                         )
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
                     else:
@@ -232,6 +252,9 @@ class TaskDecomposer:
                             schema=_SCHEMA,
                             reasoning_effort=reasoning_effort,
                             prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
+                            call_key="repair",
+                            planning_deadline=planning_deadline,
+                            run_id=run_id,
                         )
                         repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
                     self.last_audit["promptVersion"] = repair_version
@@ -269,6 +292,8 @@ class TaskDecomposer:
         existing_semantic_tasks: tuple[Mapping[str, Any], ...],
         prompt: str,
         reasoning_effort: str | None,
+        planning_deadline: float | None,
+        run_id: str | None,
     ) -> TaskPlan:
         """Build a large TaskPlan through bounded JSON units.
 
@@ -302,8 +327,12 @@ class TaskDecomposer:
                 stage="outline",
                 prompt=prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
                 schema=outline_schema,
+                max_tokens=16_384,
                 reasoning_effort=reasoning_effort,
                 prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
+                call_key="outline",
+                planning_deadline=planning_deadline,
+                run_id=run_id,
             )
             outline_payload = outline_result.get("data", outline_result)
             outline = outline_payload.get("tasks") if isinstance(outline_payload, dict) else None
@@ -317,6 +346,7 @@ class TaskDecomposer:
             detailed_tasks: list[dict[str, Any]] = []
             for offset in range(0, len(outline), 5):
                 batch = outline[offset:offset + 5]
+                detail_index = offset // 5 + 1
                 batch_keys = [str(item["key"]) for item in batch]
                 detail_schema = {
                     "type": "object",
@@ -342,8 +372,12 @@ class TaskDecomposer:
                         stage="detail",
                         prompt=detail_prompt,
                         schema=detail_schema,
+                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
+                        call_key=f"detail:{detail_index}",
+                        planning_deadline=planning_deadline,
+                        run_id=run_id,
                     )
                 except Exception as exc:
                     if transport_error_code(exc):
@@ -354,6 +388,9 @@ class TaskDecomposer:
                         schema=detail_schema,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
+                        call_key=f"detail:{detail_index}.repair",
+                        planning_deadline=planning_deadline,
+                        run_id=run_id,
                     )
                 detail_payload = detail_result.get("data", detail_result)
                 rows = detail_payload.get("tasks") if isinstance(detail_payload, dict) else None
@@ -390,8 +427,12 @@ class TaskDecomposer:
                     stage="relations",
                     prompt=relation_prompt,
                     schema=relation_schema,
+                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
+                    call_key="relations",
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
                 )
             except Exception as exc:
                 if transport_error_code(exc):
@@ -402,6 +443,9 @@ class TaskDecomposer:
                     schema=relation_schema,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair1",
+                    call_key="relations.repair",
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
                 )
             relation_payload = relation_result.get("data", relation_result)
             combined = {
@@ -425,6 +469,8 @@ class TaskDecomposer:
                     profile=profile,
                     missing_refs=missing_refs,
                     reasoning_effort=reasoning_effort,
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
                 )
                 plan = self._to_plan(
                     mission_id, profile, strategy, combined,
@@ -462,6 +508,8 @@ class TaskDecomposer:
         profile: TaskSemanticProfile,
         missing_refs: tuple[str, ...],
         reasoning_effort: str | None = None,
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
     ) -> Any:
         """Repair provenance annotations without rewriting valid task semantics/topology."""
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
@@ -532,6 +580,9 @@ class TaskDecomposer:
             schema=schema,
             reasoning_effort=reasoning_effort,
             prompt_version=repair_version,
+            call_key="repair_coverage",
+            planning_deadline=planning_deadline,
+            run_id=run_id,
         )
         self._capture_model_audit(assignment_result)
         assignment_payload = (

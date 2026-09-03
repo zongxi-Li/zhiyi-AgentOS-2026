@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import random
 import secrets
+from time import monotonic
 from typing import Any, Callable, Dict, Literal, Mapping, Optional, Sequence
 
 from contracts.planning import (
@@ -161,6 +162,7 @@ class PlanningEngine:
         existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
         capability_profile: str = "auto",
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        run_id: str | None = None,
     ) -> PlanResult:
         """为任务选择模板或动态生成 ACG。
 
@@ -169,6 +171,7 @@ class PlanningEngine:
         """
         diversity = normalize_planning_diversity(planning_diversity)
         requested_profile = normalize_capability_profile(capability_profile)
+        planning_deadline = monotonic() + self._planning_total_timeout_seconds()
         self.intent_parser.progress_callback = progress_callback
         self.semantic_planner.task_decomposer.progress_callback = progress_callback
         if progress_callback:
@@ -182,6 +185,8 @@ class PlanningEngine:
             use_llm=not deterministic_intent,
             task_input=task_input,
             declared_capabilities=list(required_capabilities or ()),
+            planning_deadline=planning_deadline,
+            run_id=run_id,
         )
         auto_full = profile.estimated_complexity.value in {"complex", "extreme"}
         if progress_callback:
@@ -190,6 +195,8 @@ class PlanningEngine:
                 "stage": "intent_profile",
                 "status": "profile_resolved",
                 "constraintCount": len(profile.key_constraints),
+                "requiredCapabilityCount": len(profile.required_capabilities),
+                "expectedArtifactCount": len(profile.expected_artifacts),
             })
         effective_profile: Literal["standard", "full"] = (
             "full" if requested_profile == "full" or (requested_profile == "auto" and auto_full)
@@ -291,6 +298,8 @@ class PlanningEngine:
             reasoning_effort=planning_reasoning_effort,
             use_llm=not deterministic_intent,
             existing_semantic_tasks=existing_semantic_tasks,
+            planning_deadline=planning_deadline,
+            run_id=run_id,
         )
         task_plan = task_plan.model_copy(update={
             "metadata": {
@@ -445,6 +454,14 @@ class PlanningEngine:
                 dict(self.semantic_planner.task_decomposer.last_audit),
             ],
         )
+
+    @staticmethod
+    def _planning_total_timeout_seconds() -> float:
+        # Import lazily so planner tests can patch the environment before the
+        # budget is created and so the engine has one deadline per Plan call.
+        from .complexity import PLANNING_TOTAL_TIMEOUT_SECONDS
+
+        return PLANNING_TOTAL_TIMEOUT_SECONDS
 
     def _validate_agents(self, blueprint: ACGBlueprint, *, domain: str) -> None:
         missing: list[str] = []
