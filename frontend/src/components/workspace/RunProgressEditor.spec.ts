@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import RunProgressEditor from './RunProgressEditor.vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
+import { RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 
 const traceEvent = (eventId: string, payload: Record<string, any>, overrides: Partial<{ stepId: string | null; eventType: string; timestamp: string; durationMs: number | null }> = {}) => ({
   eventId,
@@ -94,6 +95,16 @@ const mountEditor = (props: Record<string, unknown> = {}) => mount(RunProgressEd
     runtimeObservation: observation(plannerEvents()),
     ...props
   }
+})
+const runtimeEvent = (sequence: number, eventType: string) => ({
+  eventId: `runtime-${sequence}`,
+  eventType,
+  runId: 'run_1',
+  nodeId: null,
+  attemptId: null,
+  sequence,
+  timestamp: new Date(sequence * 1000).toISOString(),
+  payload: {}
 })
 
 describe('RunProgressEditor', () => {
@@ -224,6 +235,25 @@ describe('RunProgressEditor', () => {
 
     expect(wrapper.text()).toContain('意图解析开始')
     expect(wrapper.text()).not.toContain('正在理解')
+  })
+
+  it('renders live planner stream facts before Trace projection catches up', () => {
+    const runtimeStore = new RunRuntimeStore('run_1')
+    runtimeStore.apply(runtimeEvent(1, 'planner.started'))
+    runtimeStore.apply({ ...runtimeEvent(2, 'planner.stage.started'), payload: { stage: 'outline', callKey: 'outline' } })
+    runtimeStore.apply({ ...runtimeEvent(3, 'planner.model.first_token'), payload: { elapsedMs: 83 } })
+    runtimeStore.apply({ ...runtimeEvent(4, 'planner.model.activity'), payload: { elapsedMs: 102, idleMs: 5, receivedChunks: 4, receivedLength: 28 } })
+    runtimeStore.apply({ ...runtimeEvent(5, 'planner.profile.resolved'), payload: { requiredCapabilityCount: 2, expectedArtifactCount: 1 } })
+
+    const wrapper = mountEditor({ runtimeObservation: observation([]), runtimeStore })
+
+    expect(wrapper.text()).toContain('PLANNING')
+    expect(wrapper.text()).toContain('生成任务骨架')
+    expect(wrapper.text()).toContain('模型响应中')
+    expect(wrapper.text()).toContain('TTFT 83 ms')
+    expect(wrapper.text()).toContain('Idle 5 ms')
+    expect(wrapper.text()).toContain('Call outline')
+    expect(wrapper.text()).toContain('Profile: 2 capabilities · 1 artifacts')
   })
 
   it('never renders reasoning, prompt or raw json markers', () => {
