@@ -9,14 +9,14 @@
       </dl>
     </ResourceSection>
 
-    <ResourceSection title="Run 用量" :meta="`${usage?.usage.callCount ?? 0} 次调用`">
+    <ResourceSection title="Run 用量" :meta="`${usage?.usage?.callCount ?? 0} 次调用`">
       <div class="metric-grid">
-        <div><span>输入</span><strong>{{ observedTokens(usage?.usage.inputTokens) }}</strong></div>
-        <div><span>输出</span><strong>{{ observedTokens(usage?.usage.outputTokens) }}</strong></div>
-        <div><span>缓存读取</span><strong>{{ observedTokens(usage?.usage.cacheReadTokens) }}</strong></div>
-        <div><span>推理</span><strong>{{ observedTokens(usage?.usage.reasoningTokens) }}</strong></div>
-        <div><span>总 Token</span><strong>{{ observedTokens(usage?.usage.totalTokens) }}</strong></div>
-        <div><span>总耗时</span><strong>{{ usage?.usage.callCount ? `${usage.usage.latencyMs.toLocaleString()} ms` : '未观测' }}</strong></div>
+        <div><span>输入</span><strong>{{ observedTokens(usage?.usage?.inputTokens) }}</strong></div>
+        <div><span>输出</span><strong>{{ observedTokens(usage?.usage?.outputTokens) }}</strong></div>
+        <div><span>缓存读取</span><strong>{{ observedTokens(usage?.usage?.cacheReadTokens) }}</strong></div>
+        <div><span>推理</span><strong>{{ observedTokens(usage?.usage?.reasoningTokens) }}</strong></div>
+        <div><span>总 Token</span><strong>{{ observedTokens(usage?.usage?.totalTokens) }}</strong></div>
+        <div><span>总耗时</span><strong>{{ usage?.usage?.callCount ? `${usage.usage.latencyMs.toLocaleString()} ms` : '未观测' }}</strong></div>
       </div>
       <p class="resource-note">推理 Token 已包含在供应商输出明细中，不重复计入总 Token。</p>
     </ResourceSection>
@@ -32,7 +32,7 @@
         </div>
         <div class="pressure-track"><i :style="pressureStyle"></i></div>
         <div class="pressure-card__meta">
-          <span>峰值 {{ percent(usage?.contextPressure.peak, '未计算') }}<small v-if="peakInputTokens != null"> · {{ tokens(peakInputTokens) }} Token</small></span>
+          <span>峰值 {{ percent(usage?.contextPressure?.peak, '未计算') }}<small v-if="peakInputTokens != null"> · {{ tokens(peakInputTokens) }} Token</small></span>
           <span>上限 {{ tokens(contextWindow, '未声明') }}</span>
         </div>
       </div>
@@ -88,25 +88,25 @@ const ResourceSection = defineComponent({
   }
 })
 const tokens = (value?: number | null, empty = '—') => value === null || value === undefined ? empty : value.toLocaleString()
-const observedTokens = (value?: number | null) => props.usage?.usage.callCount ? tokens(value) : '未观测'
+const observedTokens = (value?: number | null) => props.usage?.usage?.callCount ? tokens(value) : '未观测'
 const percent = (value?: number | null, empty = '—') => value === null || value === undefined ? empty : `${Math.round(value * 100)}%`
 const capabilitySource = computed(() => ({
   provider_reported: 'API 报告', adapter_declared: '适配器声明', runtime_observed: '运行观测', unknown: '未知'
 }[props.usage?.capability?.source || 'unknown']))
-const contextWindow = computed(() => props.usage?.contextPressure.contextWindowTokens ?? props.usage?.capability?.contextWindowTokens ?? null)
-const currentInputTokens = computed(() => props.usage?.contextPressure.currentInputTokens ?? null)
-const peakInputTokens = computed(() => props.usage?.contextPressure.peakInputTokens ?? null)
-const hasPressure = computed(() => props.usage?.contextPressure.current != null || props.usage?.contextPressure.peak != null)
-const pressureLabel = computed(() => hasPressure.value ? `${Math.round((props.usage?.contextPressure.peak || 0) * 100)}% 峰值` : contextWindow.value ? '等待调用' : '上限未声明')
-const currentPressureLabel = computed(() => props.usage?.contextPressure.current == null ? '未计算' : `当前 ${Math.round(props.usage.contextPressure.current * 100)}%`)
-const pressureStyle = computed(() => ({ width: `${Math.round((props.usage?.contextPressure.peak || 0) * 100)}%` }))
+const contextWindow = computed(() => props.usage?.contextPressure?.contextWindowTokens ?? props.usage?.capability?.contextWindowTokens ?? null)
+const currentInputTokens = computed(() => props.usage?.contextPressure?.currentInputTokens ?? null)
+const peakInputTokens = computed(() => props.usage?.contextPressure?.peakInputTokens ?? null)
+const hasPressure = computed(() => props.usage?.contextPressure?.current != null || props.usage?.contextPressure?.peak != null)
+const pressureLabel = computed(() => hasPressure.value ? `${Math.round((props.usage?.contextPressure?.peak || 0) * 100)}% 峰值` : contextWindow.value ? '等待调用' : '上限未声明')
+const currentPressureLabel = computed(() => props.usage?.contextPressure?.current == null ? '未计算' : `当前 ${Math.round(props.usage.contextPressure.current * 100)}%`)
+const pressureStyle = computed(() => ({ width: `${Math.round((props.usage?.contextPressure?.peak || 0) * 100)}%` }))
 const pressureNote = computed(() => {
   if (!contextWindow.value) return currentInputTokens.value == null
     ? '等待模型调用数据；模型未声明上下文上限，暂不计算压力比例。'
     : '已记录调用输入 Token，但模型未声明上下文上限，暂不计算压力比例。'
   return '按每次调用输入 Token ÷ 上下文上限计算，多个活动节点取峰值。'
 })
-const assemblyLabel = computed(() => props.usage?.composition.assemblyComplete ? '已装配' : '进行中')
+const assemblyLabel = computed(() => props.usage?.composition?.assemblyComplete ? '已装配' : '进行中')
 
 async function load(reset = false) {
   if (!props.runId || loading.value) return

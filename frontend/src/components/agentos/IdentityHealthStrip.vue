@@ -12,7 +12,7 @@
       <span><small>未应用</small><b>{{ health.unappliedEventCount }}</b></span>
       <span><small>已检查</small><b>{{ examinedCount }}</b></span>
       <span><small>已修复</small><b>{{ repairedCount }}</b></span>
-      <span><small>已重放</small><b>{{ health.startupReconciliation.replayedEvents }}</b></span>
+      <span><small>已重放</small><b>{{ health.startupReconciliation?.replayedEvents ?? 0 }}</b></span>
     </div>
     <div class="health-meta">
       <span v-if="health?.oldestEventAt">最早事件 {{ formatTime(health.oldestEventAt) }}</span>
@@ -37,8 +37,8 @@ const props = defineProps<{
 const statusLabel = computed(() => props.error
   ? '数据已过期'
   : props.health?.status === 'healthy' ? '健康' : props.health?.status === 'degraded' ? '降级' : '等待首次同步')
-const examinedCount = computed(() => (props.health?.startupReconciliation.examinedMissions || 0) + (props.health?.startupReconciliation.examinedRuns || 0))
-const repairedCount = computed(() => (props.health?.startupReconciliation.repairedMissions || 0) + (props.health?.startupReconciliation.repairedRuns || 0))
+const examinedCount = computed(() => (props.health?.startupReconciliation?.examinedMissions || 0) + (props.health?.startupReconciliation?.examinedRuns || 0))
+const repairedCount = computed(() => (props.health?.startupReconciliation?.repairedMissions || 0) + (props.health?.startupReconciliation?.repairedRuns || 0))
 const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN')
 </script>
 

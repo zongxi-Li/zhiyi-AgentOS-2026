@@ -182,7 +182,7 @@
           <dl v-if="progressTracker.progress.value" class="run-facts ui-surface">
             <div><dt>Workflow</dt><dd>{{ progressTracker.progress.value.workflowId }}</dd></div>
             <div><dt>当前步骤</dt><dd>{{ progressTracker.progress.value.currentStepId || '准备中' }}</dd></div>
-            <div><dt>活动节点</dt><dd>{{ progressTracker.progress.value.activeStepIds.length }}</dd></div>
+            <div><dt>活动节点</dt><dd>{{ progressTracker.progress.value.activeStepIds?.length ?? 0 }}</dd></div>
             <div><dt>开始时间</dt><dd>{{ formatTime(progressTracker.progress.value.startedAt) }}</dd></div>
             <div><dt>更新时间</dt><dd>{{ formatTime(progressTracker.progress.value.updatedAt) }}</dd></div>
           </dl>
@@ -240,7 +240,7 @@
           <div v-if="selectedAcgView" class="acg-summary__facts">
             <span>节点 {{ selectedAcgView.stepStates.length }}</span>
             <span>交付物 {{ selectedAcgView.deliverables.length }}</span>
-            <span>恢复 {{ selectedAcgView.lowEntropyMetrics.recoveryCount }}</span>
+            <span>恢复 {{ selectedAcgView.lowEntropyMetrics?.recoveryCount ?? 0 }}</span>
           </div>
           <p v-else>终态、人工审核或展开详情时才读取完整 ACG，不参与列表轮询。</p>
         </section>
