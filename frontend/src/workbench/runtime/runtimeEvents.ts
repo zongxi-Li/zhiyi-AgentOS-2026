@@ -48,6 +48,7 @@ export interface PlanningRuntimeState {
 
 export interface RuntimeEventStore {
   readonly runId: string
+  terminal: boolean
   lastSequence: number
   readonly nodes: Record<string, NodeRuntimeState>
   readonly planning: PlanningRuntimeState
@@ -111,6 +112,7 @@ const numberOrNull = (value: unknown) => {
 
 export class RunRuntimeStore {
   readonly runId: string
+  terminal = false
   lastSequence = 0
   readonly nodes = reactive<Record<string, NodeRuntimeState>>({})
   readonly planning = reactive<PlanningRuntimeState>(createPlanningState())
@@ -141,17 +143,24 @@ export class RunRuntimeStore {
       this.applyPlanner(event)
       return
     }
+    if (event.eventType === 'run.completed' || event.eventType === 'run.failed' || event.eventType === 'run.cancelled') {
+      this.terminal = true
+      return
+    }
     const id = event.nodeId || ''
     if (!id) return
     const n = this.node(id)
     const p = event.payload || {}
     const attempt = event.attemptId || n.currentAttemptId
-    if (n.status === 'COMPLETED' || n.status === 'FAILED') return
+    const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
     if (attempt && n.currentAttemptId !== attempt) {
       n.currentAttemptId = attempt
+      n.status = 'WAITING'
+      n.phase = 'WAITING'
       n.outputBuffer = ''
       n.chunkCount = 0
     }
+    if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
     if (event.eventType === 'node.started') n.status = 'RUNNING'
     else if (event.eventType === 'model.started') {
       n.phase = 'MODEL_STARTING'
@@ -286,6 +295,14 @@ export class RuntimeEventClient {
       source.addEventListener(eventType, consume)
       this.listeners.push([eventType, consume])
     }
+    for (const eventType of ['run.completed', 'run.failed', 'run.cancelled']) {
+      const terminalListener: EventListener = event => {
+        consume(event)
+        this.disconnect()
+      }
+      source.addEventListener(eventType, terminalListener)
+      this.listeners.push([eventType, terminalListener])
+    }
     this.source = source
   }
 
@@ -299,16 +316,38 @@ export class RuntimeEventClient {
   }
 }
 
-const shared = new Map<string, { store: RunRuntimeStore; client: RuntimeEventClient }>()
-export const getRunRuntimeStore = (runId: string | null) => {
-  if (!runId) return null
+const shared = new Map<string, { store: RunRuntimeStore; client: RuntimeEventClient; refs: number }>()
+const ensureShared = (runId: string) => {
   let item = shared.get(runId)
   if (!item) {
     const store = new RunRuntimeStore(runId)
     const client = new RuntimeEventClient(store)
-    client.connect()
-    item = { store, client }
+    item = { store, client, refs: 0 }
     shared.set(runId, item)
+    client.connect()
   }
+  return item
+}
+
+export const getRunRuntimeStore = (runId: string | null) => {
+  if (!runId) return null
+  return ensureShared(runId).store
+}
+
+export const acquireRunRuntimeStore = (runId: string | null) => {
+  if (!runId) return null
+  const item = ensureShared(runId)
+  item.refs += 1
   return item.store
+}
+
+export const releaseRunRuntimeStore = (runId: string | null, store?: RuntimeEventStore | null) => {
+  if (!runId) return
+  const item = shared.get(runId)
+  if (!item || (store && item.store !== store)) return
+  item.refs = Math.max(0, item.refs - 1)
+  if (item.refs === 0) {
+    item.client.disconnect()
+    shared.delete(runId)
+  }
 }

@@ -27,7 +27,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { getRunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import type { AcgBlueprint, WorkspaceGraphNode } from '@/services/api/agentos'
 
@@ -37,8 +37,9 @@ const props = defineProps<{
   selectedSemanticTaskKey: string | null
   focusNodeId: string | null
   runId?: string | null
+  runtimeStore?: RuntimeEventStore | null
 }>()
-const runtimePhases = computed(() => Object.fromEntries(Object.entries(getRunRuntimeStore(props.runId || null)?.nodes || {}).map(([id, state]) => [id, state.phase])))
+const runtimePhases = computed(() => Object.fromEntries(Object.entries(props.runtimeStore?.nodes || {}).map(([id, state]) => [id, state.phase])))
 
 const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]

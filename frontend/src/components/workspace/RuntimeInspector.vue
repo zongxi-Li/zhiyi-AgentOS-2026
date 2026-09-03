@@ -40,6 +40,7 @@ import SecondarySidebar from '@/components/workbench/SecondarySidebar.vue'
 import type { WorkbenchContext, WorkbenchInspectorContext } from '@/workbench/types'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import { RunRuntimeStore, getRunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
 const props = defineProps<{
   registry: WorkbenchContributionRegistry
@@ -53,10 +54,12 @@ const props = defineProps<{
   graph: AcgBlueprint | null
   runStatus: string | null
   historical: boolean
+  runtimeStore?: RuntimeEventStore | null
 }>()
-const runtimeStore = ref<RunRuntimeStore | null>(null)
+const ownedRuntimeStore = ref<RunRuntimeStore | null>(null)
+const runtimeStore = computed(() => props.runtimeStore || ownedRuntimeStore.value)
 const liveNode = computed(() => props.graphNode?.acgNodeId ? runtimeStore.value?.nodes[props.graphNode.acgNodeId] || null : null)
-const connectRuntime = (runId: string | null) => { runtimeStore.value = getRunRuntimeStore(runId) }
+const connectRuntime = (runId: string | null) => { if (!props.runtimeStore) ownedRuntimeStore.value = getRunRuntimeStore(runId) }
 watch(() => props.runId, connectRuntime)
 onMounted(() => connectRuntime(props.runId))
 onBeforeUnmount(() => undefined)
@@ -90,6 +93,7 @@ const baseProps = computed(() => ({
   graph: props.graph,
   runStatus: props.runStatus,
   historical: props.historical,
+  runtimeStore: runtimeStore.value,
   resourceObservation: props.workbenchContext.runtimeObservation?.resourceObservation || null,
   runtimeObservation: props.workbenchContext.runtimeObservation || null
 }))

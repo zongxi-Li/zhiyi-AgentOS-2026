@@ -68,6 +68,7 @@
           :graph="projection?.activeGraph || null"
           :run-status="projection?.activeRun?.status || null"
           :historical="isHistorical"
+          :runtime-store="runtimeStore"
           :registry="registry"
           :workbench-context="workbenchContext"
           @locate-graph="inspectorEntry && locateGraph(inspectorEntry)"
@@ -128,7 +129,7 @@ import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContr
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
-import { getRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 
 const route = useRoute()
 const router = useRouter()
@@ -149,6 +150,7 @@ const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
 const runtimeObservation = ref<RuntimeObservation | null>(null)
 const runtimeStore = ref<RunRuntimeStore | null>(null)
+let runtimeStoreRunId: string | null = null
 const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})
 let controller: AbortController | null = null
@@ -385,7 +387,11 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     openDefaultEditor(nextProjection)
     const nextRunId = nextProjection.activeRun?.runId || runId || null
-    runtimeStore.value = getRunRuntimeStore(nextRunId)
+    if (runtimeStoreRunId !== nextRunId) {
+      releaseRunRuntimeStore(runtimeStoreRunId, runtimeStore.value)
+      runtimeStore.value = acquireRunRuntimeStore(nextRunId)
+      runtimeStoreRunId = nextRunId
+    }
     if (nextRunId) {
       runtimeObservationAdapter.start(nextRunId, {
         historical: Boolean(currentRunId.value && currentRunId.value !== nextRunId),
@@ -588,6 +594,9 @@ onBeforeUnmount(() => {
   controller?.abort()
   runtimeObservationAdapter.stop()
   stopProjectionRefresh()
+  releaseRunRuntimeStore(runtimeStoreRunId, runtimeStore.value)
+  runtimeStore.value = null
+  runtimeStoreRunId = null
 })
 </script>
 

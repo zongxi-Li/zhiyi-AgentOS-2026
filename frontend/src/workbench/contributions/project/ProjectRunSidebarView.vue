@@ -12,6 +12,16 @@
       ]" />
     </InspectorSection>
 
+    <InspectorSection v-if="liveNode" title="Live Output" :badge="liveNode.phase">
+      <InspectorPropertyList :rows="[
+        { label: 'Node', value: objectLabel },
+        { label: 'Phase', value: liveNode.phase },
+        { label: 'Attempt', value: liveNode.currentAttemptId, code: true },
+        { label: 'Duration', value: liveDuration }
+      ]" />
+      <pre class="live-output" data-testid="formal-live-output">{{ liveNode.outputBuffer || 'Waiting for model output...' }}</pre>
+    </InspectorSection>
+
     <InspectorSection v-if="showGraphSummary" title="图信息" :badge="graphIdentity">
       <div class="sidebar-metrics" aria-label="图统计">
         <div><strong>{{ nodeCount }}</strong><span>节点</span></div>
@@ -120,6 +130,7 @@ import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { WorkbenchInspectorContext } from '@/workbench/types'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
 const props = defineProps<{
   entry: WorkspaceEntry | null
@@ -131,7 +142,18 @@ const props = defineProps<{
   historical: boolean
   context?: WorkbenchInspectorContext
   runtimeObservation?: RuntimeObservation | null
+  runtimeStore?: RuntimeEventStore | null
 }>()
+
+const liveNode = computed(() => (
+  props.graphNode?.acgNodeId ? props.runtimeStore?.nodes[props.graphNode.acgNodeId] || null : null
+))
+const liveDuration = computed(() => {
+  if (!liveNode.value?.modelStartedAt) return '—'
+  const end = liveNode.value.completedAt ? Date.parse(liveNode.value.completedAt) : Date.now()
+  const start = Date.parse(liveNode.value.modelStartedAt)
+  return Number.isFinite(start) && Number.isFinite(end) ? `${Math.max(0, end - start)} ms` : '—'
+})
 
 const statusValue = computed(() => props.graphNode?.status || props.entry?.status || props.runStatus || null)
 const statusLabel = computed(() => statusValue.value || '未观测')
@@ -241,5 +263,6 @@ const phaseLabel = (phase: NodeExecutionPhase) => ({
 .phase.committed { color: var(--wb-success); background: color-mix(in srgb, var(--wb-success) 12%, transparent); }
 .phase.failed, .phase.cancelled { color: var(--wb-danger); background: color-mix(in srgb, var(--wb-danger) 10%, transparent); }
 .phase.waiting_review { color: var(--wb-warning); background: color-mix(in srgb, var(--wb-warning) 12%, transparent); }
+.live-output { max-height: 220px; overflow: auto; margin: 9px 0 0; padding: 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-surface-inset); font: 11px/1.55 var(--font-mono, monospace); white-space: pre-wrap; word-break: break-word; }
 @media (max-width: 360px) { .sidebar-metrics--four { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; } }
 </style>
