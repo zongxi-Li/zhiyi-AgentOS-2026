@@ -1,16 +1,18 @@
 <template>
-  <main ref="landingRoot" class="landing-view" @wheel="handleWheel">
-    <header class="landing-header">
-      <a class="landing-brand" href="/" aria-label="知弈 AgentOS 首页">
+  <main ref="landingRoot" class="landing-view" :class="{ 'is-desktop-shell': desktopShell }" @wheel="handleWheel">
+    <header class="landing-header" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
+      <a class="landing-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="goHome">
         <span class="landing-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
         <span>知弈 <strong>AgentOS</strong></span>
       </a>
 
       <nav class="landing-nav" aria-label="主导航">
-        <a v-for="item in navigation" :key="item.id" :class="{ 'is-active': activeSection === item.id }" :href="`#${item.id}`" @click="activeSection = item.id">{{ item.label }}</a>
+        <a v-for="item in navigation" :key="item.id" :class="{ 'is-active': activeSection === item.id }" :href="`#${item.id}`" @click.prevent="scrollToSection(item.id)">{{ item.label }}</a>
       </nav>
 
       <span class="landing-header__note">More Agents <i aria-hidden="true">·</i> More Possibilities</span>
+
+      <DesktopWindowControls v-if="desktopShell" />
     </header>
 
     <section id="home" class="landing-hero" aria-labelledby="landing-title">
@@ -112,8 +114,12 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { ArrowDown, Connection, Cpu, MagicStick, Operation, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
+import DesktopWindowControls from '@window-controls'
+import { isDesktop, platform } from '@/platform'
 
 const router = useRouter()
+const desktopShell = isDesktop()
+const dragRegionProps = platform.dragRegionProps
 const landingRoot = ref<HTMLElement | null>(null)
 const activeSection = ref('home')
 const navigation = [
@@ -183,6 +189,18 @@ const handleWheel = (event: WheelEvent) => {
 onUnmounted(() => window.clearTimeout(wheelUnlockTimer))
 
 const goToLogin = () => router.push('/login')
+
+const goHome = () => router.push('/')
+
+// 桌面端是 hash 路由：原生锚点 href="#features" 会把 URL 从 #/ 顶成 #/features，
+// 路由失配后整个落地页被顶掉。这里统一拦截，改为程序化滚动，
+// history 模式（Web）与 hash 模式（桌面）行为一致。
+const scrollToSection = (id: string) => {
+  activeSection.value = id
+  document.getElementById(id)?.scrollIntoView({
+    behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  })
+}
 </script>
 
 <style scoped lang="scss">
@@ -191,8 +209,11 @@ const goToLogin = () => router.push('/login')
   --muted-ink: #6b85ad;
   --blue: #248ff0;
   --purple: #6655f4;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* 应用壳的 html/body/#app 全是 overflow:hidden，页面高度若用 min-height 会撑破
+     #app 被 canvas 裁切——这里必须自封顶成为真正的滚动容器，
+     滚轮换段、scroll-snap 与锚点导航才有载体。 */
+  height: 100vh;
+  height: 100dvh;
   overflow-x: hidden;
   overflow-y: auto;
   color: var(--ink);
@@ -348,6 +369,31 @@ const goToLogin = () => router.push('/login')
 .landing-cta--small { margin-top: 36px; }
 
 .landing-brand:focus-visible, .landing-nav a:focus-visible, .landing-cta:focus-visible { outline: 3px solid rgba(36, 143, 240, .5); outline-offset: 4px; }
+
+/* Tauri 隐藏了原生标题栏：桌面 shell 下落地页顶栏兼任窗口拖拽区，右上角承载窗口控制按钮
+   （纯 Web 版不渲染桌面 shell）。页面可滚动，顶栏须 sticky 常驻，
+   滚到任意区块时拖拽区与窗口按钮仍然可达。窗口控件的取色变量在这里指向
+   落地页自己的配色体系，不借用工作台顶栏的灰。 */
+.landing-view.is-desktop-shell {
+  --app-topbar-muted: var(--muted-ink);
+  --app-topbar-hover: rgba(36, 143, 240, .08);
+  --app-topbar-active: rgba(36, 143, 240, .13);
+  --app-topbar-focus-ring: rgba(36, 143, 240, .45);
+}
+
+.landing-view.is-desktop-shell .landing-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  width: 100%;
+  padding-left: 24px;
+  background: linear-gradient(180deg, rgba(246, 251, 255, .92), rgba(246, 251, 255, .78));
+  backdrop-filter: blur(14px);
+}
+
+.landing-view.is-desktop-shell .landing-header__note { margin-left: auto; }
+
+.landing-view.is-desktop-shell .landing-header :deep(.desktop-window-controls) { height: 52px; align-self: center; }
 
 .landing-view::-webkit-scrollbar { width: 8px; }
 .landing-view::-webkit-scrollbar-track { background: rgba(255,255,255,.18); }
