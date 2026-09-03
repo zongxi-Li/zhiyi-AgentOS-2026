@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from contracts.capability import ModelCapabilityEnvelope, ModelOutputPolicy
+from contracts.runtime_events import RuntimeEvent
 
 
 class StructuredGenerationError(RuntimeError):
@@ -130,6 +131,31 @@ class StructuredGenerationRuntime(Protocol):
         JSON 无效或合同不符应抛出 ``StructuredGenerationError``。实现必须遵守
         调用者的资源参数或明确拒绝。``commit_id`` 是节点尝试的稳定幂等标识，
         需要原样透传给支持幂等的提供方；重试与并发策略由保护包装器统一实现。
+        """
+        ...
+
+    def stream_generate_json(
+        self,
+        *,
+        prompt: str,
+        schema: Dict[str, Any],
+        run_id: str,
+        node_id: str | None = None,
+        attempt_id: str | None = None,
+        ttft_timeout: float = 30.0,
+        idle_timeout: float = 60.0,
+        total_timeout: float = 300.0,
+        thinking_mode: str = "disabled",
+        reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
+        prompt_version: str = "native-capability.v3",
+        commit_id: str | None = None,
+        emit_output_deltas: bool = True,
+    ) -> AsyncIterator[RuntimeEvent]:
+        """Stream transient model events; final JSON validation remains a later phase.
+
+        ``emit_output_deltas`` is true for business-node output and false for
+        planner calls, whose structured JSON buffer is deliberately private.
         """
         ...
 

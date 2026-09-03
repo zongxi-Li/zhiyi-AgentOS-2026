@@ -211,7 +211,13 @@ class OpenAICompatibleRuntime:
                             )
                 if isinstance(choice.get("finish_reason"), str):
                     completed = True
-                    yield ModelStreamEvent(requestId=request.request_id, eventType="completed", provider=self._manifest.provider, model=model)
+                    yield ModelStreamEvent(
+                        requestId=request.request_id,
+                        eventType="completed",
+                        provider=self._manifest.provider,
+                        model=model,
+                        metadata={"finishReason": choice["finish_reason"]},
+                    )
                     return
         except HttpTransportError as exc:
             raise ModelInvocationError(exc.code, "OpenAI compatible provider stream failed") from exc
