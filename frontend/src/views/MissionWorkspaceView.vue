@@ -117,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
@@ -149,7 +149,7 @@ const selectedSemanticTaskKey = ref<string | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
 const runtimeObservation = ref<RuntimeObservation | null>(null)
-const runtimeStore = ref<RunRuntimeStore | null>(null)
+const runtimeStore = shallowRef<RunRuntimeStore | null>(null)
 let runtimeStoreRunId: string | null = null
 const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})

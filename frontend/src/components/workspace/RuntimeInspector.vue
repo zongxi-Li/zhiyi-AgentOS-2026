@@ -32,14 +32,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
 import SecondarySidebar from '@/components/workbench/SecondarySidebar.vue'
 import type { WorkbenchContext, WorkbenchInspectorContext } from '@/workbench/types'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
-import { RunRuntimeStore, getRunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import {
+  RunRuntimeStore,
+  acquireRunRuntimeStore,
+  releaseRunRuntimeStore
+} from '@/workbench/runtime/runtimeEvents'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
 const props = defineProps<{
@@ -56,13 +60,29 @@ const props = defineProps<{
   historical: boolean
   runtimeStore?: RuntimeEventStore | null
 }>()
-const ownedRuntimeStore = ref<RunRuntimeStore | null>(null)
+const ownedRuntimeStore = shallowRef<RunRuntimeStore | null>(null)
+const ownedRunId = ref<string | null>(null)
 const runtimeStore = computed(() => props.runtimeStore || ownedRuntimeStore.value)
 const liveNode = computed(() => props.graphNode?.acgNodeId ? runtimeStore.value?.nodes[props.graphNode.acgNodeId] || null : null)
-const connectRuntime = (runId: string | null) => { if (!props.runtimeStore) ownedRuntimeStore.value = getRunRuntimeStore(runId) }
-watch(() => props.runId, connectRuntime)
+const connectRuntime = (runId: string | null) => {
+  if (props.runtimeStore) {
+    releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
+    ownedRuntimeStore.value = null
+    ownedRunId.value = null
+    return
+  }
+  if (ownedRunId.value === runId) return
+  releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
+  ownedRuntimeStore.value = acquireRunRuntimeStore(runId)
+  ownedRunId.value = runId
+}
+watch([() => props.runId, () => props.runtimeStore], () => connectRuntime(props.runId))
 onMounted(() => connectRuntime(props.runId))
-onBeforeUnmount(() => undefined)
+onBeforeUnmount(() => {
+  releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
+  ownedRuntimeStore.value = null
+  ownedRunId.value = null
+})
 
 const emit = defineEmits<{ locateGraph: [] }>()
 

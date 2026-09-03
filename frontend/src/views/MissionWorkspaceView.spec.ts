@@ -138,6 +138,7 @@ const mountWorkspace = async (
 describe('MissionWorkspaceView', () => {
   afterEach(() => {
     layoutStubState = { ...defaultLayoutStubState }
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -210,6 +211,85 @@ describe('MissionWorkspaceView', () => {
     const tab = wrapper.findAll('.editor-tab').find(tab => tab.text().includes('graph.acg'))
     await tab?.find('.editor-tab__main').trigger('click')
   }
+
+  it('streams one shared runtime store into the formal Workbench inspector before completion', async () => {
+    class FakeEventSource {
+      static latest: FakeEventSource | null = null
+      readonly listeners = new Map<string, Set<EventListener>>()
+      closed = false
+
+      constructor(readonly url: string) {
+        FakeEventSource.latest = this
+      }
+
+      addEventListener(type: string, listener: EventListener) {
+        const listeners = this.listeners.get(type) || new Set<EventListener>()
+        listeners.add(listener)
+        this.listeners.set(type, listeners)
+      }
+
+      removeEventListener(type: string, listener: EventListener) {
+        this.listeners.get(type)?.delete(listener)
+      }
+
+      close() {
+        this.closed = true
+      }
+
+      dispatch(type: string, payload: Record<string, unknown>) {
+        const event = new MessageEvent('message', { data: JSON.stringify(payload) })
+        this.listeners.get(type)?.forEach(listener => listener(event))
+      }
+    }
+
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const formalRunId = 'run_formal_streaming'
+    const formal = projection({
+      activeRun: { runId: formalRunId, status: 'running', createdAt: '2026-08-28T00:02:00Z', isActive: true },
+      runs: [{ runId: formalRunId, status: 'running', createdAt: '2026-08-28T00:02:00Z', isActive: true }],
+      entries: projection().entries.map(entry => entry.kind === 'run' && entry.runId === 'run_2'
+        ? { ...entry, entryId: `run:${formalRunId}`, name: formalRunId, runId: formalRunId }
+        : entry)
+    })
+    const { wrapper } = await mountWorkspace(formal)
+    await activateGraphTab(wrapper)
+    await wrapper.find('.graph-select').trigger('click')
+
+    const source = FakeEventSource.latest
+    expect(source).not.toBeNull()
+    expect(source?.url).toContain(`/api/agentos/v2/runs/${formalRunId}/events`)
+    const event = (sequence: number, eventType: string, payload: Record<string, unknown> = {}) => ({
+      eventId: `runtime-${sequence}`,
+      eventType,
+      runId: formalRunId,
+      nodeId: 'node_capacity',
+      attemptId: 'attempt-stream-1',
+      sequence,
+      timestamp: new Date(Date.now() + sequence).toISOString(),
+      payload
+    })
+
+    source?.dispatch('node.started', event(1, 'node.started'))
+    source?.dispatch('model.started', event(2, 'model.started', {
+      provider: 'fake-provider', model: 'fake-streaming-model', streamingCapability: true
+    }))
+    source?.dispatch('model.first_token', event(3, 'model.first_token', { elapsedMs: 12 }))
+    source?.dispatch('model.output.delta', event(4, 'model.output.delta', { delta: 'A' }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('A')
+    expect(wrapper.text()).toContain('STREAMING')
+
+    source?.dispatch('model.output.delta', event(5, 'model.output.delta', { delta: 'B' }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('AB')
+    expect(wrapper.text()).not.toContain('COMPLETED')
+
+    wrapper.unmount()
+    await flushPromises()
+    expect(source?.closed).toBe(true)
+  })
 
   it('maps a graph double click to the matching TaskEditor', async () => {
     const { wrapper } = await mountWorkspace()
