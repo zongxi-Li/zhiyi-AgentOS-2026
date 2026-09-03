@@ -503,6 +503,7 @@
               :view="acgView"
               :audit-events="acgAuditEvents"
               :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+              :runtime-store="runtimeEventStore"
               @export-audit="exportAudit"
             />
             <section v-if="acgView" class="side-provenance ui-surface" aria-label="数据血缘与通信轨迹">
@@ -543,6 +544,7 @@ import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import AcgRunManager from '@/components/agentos/AcgRunManager.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
+import { getRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 import RunResourceStrip from '@/components/agentos/RunResourceStrip.vue'
 import AcgResourceInspector from '@/components/agentos/AcgResourceInspector.vue'
@@ -714,6 +716,11 @@ const route = useRoute()
 const router = useRouter()
 const workflowRunsStore = useWorkflowRunsStore()
 const activeRunId = ref('')
+const runtimeEventStore = ref<RunRuntimeStore | null>(null)
+const reconnectRuntimeEvents = (runId: string) => {
+  runtimeEventStore.value = getRunRuntimeStore(runId || null)
+}
+watch(activeRunId, runId => reconnectRuntimeEvents(runId))
 type AcgEditorTab = {
   id: string
   runId?: string
@@ -1619,6 +1626,7 @@ const startErrorMessage = (error: unknown): string => {
 }
 
 onMounted(() => {
+  reconnectRuntimeEvents(activeRunId.value)
   window.addEventListener('acg-new-task', enterNewAcgDraft)
   window.addEventListener('resize', handleAdvancedSettingsViewportChange)
   window.addEventListener('pointerdown', handleAdvancedSettingsDismiss)

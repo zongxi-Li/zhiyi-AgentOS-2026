@@ -27,21 +27,44 @@
       <div ref="scrollBody" class="run-progress__body" @scroll="onScroll">
         <div class="run-progress__stream">
           <section
-            v-if="showPlanner && timeline.planner"
+            v-if="showPlanner && displayPlanner"
             class="run-progress-group"
             :class="{ 'is-open': plannerOpen }"
           >
-            <button type="button" class="run-progress-group__head" @click="toggleExpanded('planner', timeline.planner.status)">
-              <span class="run-progress-group__mark" :class="'is-' + timeline.planner.status" aria-hidden="true">{{ statusMark(timeline.planner.status) }}</span>
-              <span class="run-progress-group__title">{{ timeline.planner.headline }}</span>
+            <button type="button" class="run-progress-group__head" @click="toggleExpanded('planner', displayPlanner.status)">
+              <span class="run-progress-group__mark" :class="'is-' + displayPlanner.status" aria-hidden="true">{{ statusMark(displayPlanner.status) }}</span>
+              <span class="run-progress-group__title">{{ displayPlanner.headline }}</span>
               <span v-if="!plannerOpen" class="run-progress-group__digest">{{ plannerDigest }}</span>
             </button>
             <div v-if="plannerOpen" class="run-progress-group__body">
-              <p v-if="timeline.planner.status !== 'success' && timeline.planner.phaseNotes.length" class="run-progress-group__note" :class="{ 'is-failed': timeline.planner.status === 'failed' }">
-                {{ timeline.planner.phaseNotes[0] }}<template v-if="plannerBudgetText"> · {{ plannerBudgetText }}</template>
+              <p v-if="displayPlanner.status !== 'success' && displayPlanner.phaseNotes.length" class="run-progress-group__note" :class="{ 'is-failed': displayPlanner.status === 'failed' }">
+                {{ displayPlanner.phaseNotes[0] }}<template v-if="plannerBudgetText"> · {{ plannerBudgetText }}</template>
               </p>
+              <div v-if="livePlanning && livePlanning.status !== 'IDLE'" class="run-progress-live" aria-live="polite">
+                <div class="run-progress-live__line">
+                  <span class="run-progress-live__pulse" :class="{ 'is-done': livePlanning.status === 'COMPLETED', 'is-failed': livePlanning.status === 'FAILED' }" aria-hidden="true">●</span>
+                  <strong>{{ plannerStageLabel }}</strong>
+                  <span>{{ livePlannerModelLabel }}</span>
+                  <span v-if="livePlanning.elapsedMs != null" class="run-progress-live__metric">{{ livePlanning.elapsedMs }} ms</span>
+                </div>
+                <div class="run-progress-live__metrics">
+                  <span v-if="livePlanning.ttftMs != null">TTFT {{ livePlanning.ttftMs }} ms</span>
+                  <span v-if="livePlanning.idleMs != null">Idle {{ livePlanning.idleMs }} ms</span>
+                  <span v-if="livePlanning.callKey">Call {{ livePlanning.callKey }}</span>
+                </div>
+                <div v-if="livePlanning.profile" class="run-progress-live__facts">
+                  Profile: {{ livePlanning.profile.requiredCapabilityCount ?? 0 }} capabilities · {{ livePlanning.profile.expectedArtifactCount ?? 0 }} artifacts
+                </div>
+                <div v-if="livePlanning.plan" class="run-progress-live__facts">
+                  Plan: {{ livePlanning.plan.taskCount ?? 0 }} tasks · {{ livePlanning.plan.dependencyCount ?? 0 }} dependencies
+                </div>
+                <div v-if="livePlanning.graph" class="run-progress-live__facts">
+                  Graph: {{ livePlanning.graph.nodeCount ?? 0 }} nodes · {{ livePlanning.graph.edgeCount ?? 0 }} edges
+                </div>
+                <div v-if="livePlanning.errorCode" class="run-progress-live__facts is-failed">{{ livePlanning.errorCode }}</div>
+              </div>
               <div
-                v-for="result in timeline.planner.results"
+                v-for="result in displayPlanner.results"
                 :key="result.id"
                 class="run-progress-result"
               >
@@ -94,7 +117,7 @@
             </div>
           </template>
 
-          <p v-if="!timeline.planner && !timeline.tasks.length" class="run-progress__waiting">
+          <p v-if="!displayPlanner && !timeline.tasks.length" class="run-progress__waiting">
             {{ runState === 'running' ? '等待规划事件…' : '该运行没有可展示的事件。' }}
           </p>
         </div>
@@ -114,7 +137,8 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
-import { projectRunProgress, type RunProgressMetrics, type RunProgressTaskGroup } from '@/workbench/runtime/runProgress'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
+import { projectRunProgress, type RunProgressMetrics, type RunProgressPlannerGroup, type RunProgressTaskGroup } from '@/workbench/runtime/runProgress'
 
 const props = defineProps<{
   entry: WorkspaceEntry
@@ -123,6 +147,7 @@ const props = defineProps<{
   runId: string | null
   selectedSemanticTaskKey?: string | null
   runtimeObservation: RuntimeObservation | null
+  runtimeStore?: RuntimeEventStore | null
 }>()
 
 const emit = defineEmits<{
@@ -159,7 +184,12 @@ const STATE_LABELS: Record<string, string> = {
   failed: '运行失败',
   paused: '等待审核'
 }
-const stateLabel = computed(() => STATE_LABELS[runState.value] || 'RUNNING')
+const stateLabel = computed(() => {
+  const planningStatus = props.runtimeStore?.planning.status
+  return planningStatus && ['STARTING', 'RUNNING'].includes(planningStatus)
+    ? 'PLANNING'
+    : (STATE_LABELS[runState.value] || 'RUNNING')
+})
 
 const nowTick = ref(0)
 let durationTimer: ReturnType<typeof setInterval> | null = null
@@ -181,6 +211,9 @@ const formatDuration = (ms: number) => {
 }
 const durationText = computed(() => {
   void nowTick.value
+  const liveElapsed = props.runtimeStore?.planning.elapsedMs
+  const planningStatus = props.runtimeStore?.planning.status
+  if (planningStatus && ['STARTING', 'RUNNING'].includes(planningStatus) && liveElapsed != null) return formatDuration(liveElapsed)
   const start = observedRun.value?.createdAt
   if (!start) return null
   const startedAt = new Date(start).getTime()
@@ -195,6 +228,46 @@ const durationText = computed(() => {
 const goalText = computed(() => props.projection.mission.goal || props.projection.mission.description || '运行进度')
 
 const timeline = computed(() => projectRunProgress(props.runtimeObservation, props.graphNodes))
+const livePlanning = computed(() => props.runtimeStore?.planning || null)
+const livePlannerGroup = computed<RunProgressPlannerGroup | null>(() => {
+  const planning = livePlanning.value
+  if (!planning || planning.status === 'IDLE') return null
+  const status: RunProgressPlannerGroup['status'] = planning.status === 'FAILED'
+    ? 'failed'
+    : planning.status === 'COMPLETED' ? 'success' : 'running'
+  return {
+    category: 'planner',
+    status,
+    headline: status === 'failed' ? '规划失败' : '任务规划',
+    phaseNotes: [planning.stage || '正在准备规划'],
+    phaseBudgetSeconds: null,
+    results: [],
+  }
+})
+const displayPlanner = computed(() => timeline.value.planner || livePlannerGroup.value)
+const livePlanningActive = computed(() => Boolean(
+  livePlanning.value && ['STARTING', 'RUNNING'].includes(livePlanning.value.status)
+))
+const plannerStageLabel = computed(() => {
+  const stage = livePlanning.value?.stage || ''
+  const labels: Record<string, string> = {
+    intent_profile: '解析任务意图',
+    outline: '生成任务骨架',
+    detail: '补全任务细节',
+    relations: '整理依赖关系',
+    decompose: '拆解执行任务',
+    repair: '修复规划结构',
+    repair_coverage: '补全引用覆盖',
+  }
+  return labels[stage] || stage || '准备规划'
+})
+const livePlannerModelLabel = computed(() => {
+  const phase = livePlanning.value?.modelPhase
+  if (phase === 'WAITING_FIRST_TOKEN') return '等待模型首 token'
+  if (phase === 'ACTIVE') return '模型响应中'
+  if (phase === 'COMPLETED') return '模型响应完成'
+  return '启动模型调用'
+})
 
 // ---- Collapse：手动展开状态优先于运行状态，polling 不覆盖用户选择 ----
 const manualExpanded = ref(new Map<string, boolean>())
@@ -210,18 +283,18 @@ const toggleExpanded = (key: string, status: string) => {
   manualExpanded.value = next
 }
 const plannerOpen = computed(() => {
-  const planner = timeline.value.planner
+  const planner = displayPlanner.value
   if (!planner) return false
   return manualExpanded.value.get('planner') ?? AUTO_OPEN.has(planner.status)
 })
 const plannerBudgetText = computed(() => {
-  const planner = timeline.value.planner
+  const planner = displayPlanner.value
   if (!planner || planner.status !== 'running' || planner.phaseBudgetSeconds == null) return null
   const minutes = Math.max(1, Math.round(planner.phaseBudgetSeconds / 60))
   return `模型推理中，预算最长 ${minutes} 分钟`
 })
 const plannerDigest = computed(() => {
-  const planner = timeline.value.planner
+  const planner = displayPlanner.value
   if (!planner) return ''
   if (planner.status === 'failed') return planner.phaseNotes[0] || ''
   return planner.results.map(result => [result.title, metricsText(result.metrics)].filter(Boolean).join(' · ')).join(' / ')
@@ -327,6 +400,14 @@ watch(timeline, async () => {
 .run-progress-group__body { display: grid; gap: 6px; padding: 2px 0 8px 22px; }
 .run-progress-group__note { margin: 0; color: var(--wb-text-secondary); font-size: 11.5px; }
 .run-progress-group__note.is-failed { color: var(--wb-danger); }
+.run-progress-live { display: grid; gap: 5px; padding: 7px 9px; border-left: 2px solid var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 7%, transparent); }
+.run-progress-live__line, .run-progress-live__metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: var(--wb-text-secondary); font-size: 11px; }
+.run-progress-live__line strong { color: var(--wb-text); font-size: 11.5px; }
+.run-progress-live__metric, .run-progress-live__metrics, .run-progress-live__facts { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.run-progress-live__pulse { color: var(--wb-accent); }
+.run-progress-live__pulse.is-done { color: var(--wb-success); }
+.run-progress-live__pulse.is-failed, .run-progress-live__facts.is-failed { color: var(--wb-danger); }
+.run-progress-live__facts { line-height: 1.5; }
 .run-progress-result { display: flex; align-items: baseline; gap: 8px; }
 .run-progress-result__mark { color: var(--wb-success); font-size: 11px; }
 .run-progress-result__title { color: var(--wb-text); font-size: 12px; }

@@ -35,6 +35,7 @@
           :focus-node-id="focusNodeId"
           :registry="registry"
           :workbench-context="workbenchContext"
+          :runtime-store="runtimeStore"
           :inspector-visible="mainState.rightPaneVisible"
           :inspector-auto-hidden="mainState.rightAutoHidden"
           :toggle-inspector="mainState.toggleRightPane"
@@ -62,7 +63,7 @@
           :graph-node="inspectorGraphNode"
           :graph-nodes="projection?.graphNodes || []"
           :available="inspectorAvailable"
-          :run-id="projection?.activeRun?.runId || null"
+          :run-id="projection?.activeRun?.runId || selectedRunId || null"
           :mission-id="missionId"
           :graph="projection?.activeGraph || null"
           :run-status="projection?.activeRun?.status || null"
@@ -127,6 +128,7 @@ import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContr
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
+import { getRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 
 const route = useRoute()
 const router = useRouter()
@@ -146,6 +148,7 @@ const selectedSemanticTaskKey = ref<string | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
 const runtimeObservation = ref<RuntimeObservation | null>(null)
+const runtimeStore = ref<RunRuntimeStore | null>(null)
 const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})
 let controller: AbortController | null = null
@@ -214,7 +217,7 @@ const rerunDisabledReason = computed(() => {
 
 const workbenchContext = computed(() => createWorkbenchContext({
   missionId: missionId.value,
-  runId: projection.value?.activeRun?.runId || null,
+  runId: projection.value?.activeRun?.runId || selectedRunId.value || null,
   selectedSemanticTaskKey: selectedSemanticTaskKey.value,
   selectedArtifactId: inspectorEntry.value?.artifactId || null,
   selectedAcgNodeId: selectedGraphNodeId.value,
@@ -382,6 +385,7 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     openDefaultEditor(nextProjection)
     const nextRunId = nextProjection.activeRun?.runId || runId || null
+    runtimeStore.value = getRunRuntimeStore(nextRunId)
     if (nextRunId) {
       runtimeObservationAdapter.start(nextRunId, {
         historical: Boolean(currentRunId.value && currentRunId.value !== nextRunId),

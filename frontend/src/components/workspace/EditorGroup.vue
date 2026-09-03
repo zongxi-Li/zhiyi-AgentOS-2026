@@ -62,6 +62,7 @@
         :cancel-pending="cancelPending"
         :available="activeOpened.available"
         :runtime-observation="workbenchContext.runtimeObservation"
+        :runtime-store="props.runtimeStore"
         @select-semantic-task="emit('selectSemanticTask', $event)"
         @open-semantic-task="emit('openSemanticTask', $event)"
         @locate-graph="emit('locateGraph', $event || activeOpened.entry)"
@@ -79,6 +80,7 @@ import { Expand, View } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import type { WorkbenchContext } from '@/workbench/types'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 
 export interface OpenWorkspaceEntry {
@@ -99,6 +101,7 @@ const props = defineProps<{
   toggleInspector: () => void
   sidebarHidden?: boolean
   cancelPending?: boolean
+  runtimeStore?: RuntimeEventStore | null
 }>()
 
 const emit = defineEmits<{
