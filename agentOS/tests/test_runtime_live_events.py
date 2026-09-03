@@ -1,8 +1,10 @@
 import asyncio
 
+import pytest
+
 
 from contracts.runtime_events import RuntimeEvent
-from runtime.live_events import RuntimeEventBroker
+from runtime.live_events import RuntimeEventBroker, RuntimeEventOverflow
 
 
 def ev(seq: int, kind: str = "model.output.delta") -> RuntimeEvent:
@@ -83,5 +85,22 @@ def test_worker_thread_publish_reaches_async_sse_subscriber():
     assert event.event_type == "planner.model.activity"
     assert event.node_id is None and event.attempt_id is None
     await stream.aclose()
+
+  asyncio.run(run())
+
+
+def test_critical_overflow_is_explicit_instead_of_dropping_lifecycle_events():
+  async def run():
+    broker = RuntimeEventBroker(max_queue_size=2)
+    stream = broker.subscribe("critical-run")
+    first_pending = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0)
+    await broker.publish("critical-run", ev(1, "node.started"))
+    assert (await first_pending).event_type == "node.started"
+    await broker.publish("critical-run", ev(2, "node.completed"))
+    await broker.publish("critical-run", ev(3, "node.failed"))
+    await broker.publish("critical-run", ev(4, "model.completed"))
+    with pytest.raises(RuntimeEventOverflow):
+      await stream.__anext__()
 
   asyncio.run(run())

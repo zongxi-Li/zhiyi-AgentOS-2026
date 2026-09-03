@@ -102,6 +102,9 @@ class ACGNodeRunner:
         # 组装为此映射。节点不会从可变 Agent Profile 读取模型配置，恢复时也不会
         # 因全局 Agent 注册表被修改而换用另一家模型。
         self.model_runtimes = dict(model_runtimes or {})
+        # Filled by the scheduler decorator for each live step attempt. It is
+        # deliberately separate from commitId, which remains an idempotency key.
+        self.attempt_ids: dict[str, str] = {}
         self.capability_descriptors = dict(capability_descriptors or {})
         self.tool_runtime = tool_runtime
         self.communication_broker = communication_broker
@@ -178,9 +181,10 @@ class ACGNodeRunner:
             executionInstanceId=f"{state.run_id}:{step_id}:{step.attempt}:{'.'.join(map(str, loop_path)) or 'root'}",
             runId=state.run_id,
             stepId=step_id,
-            attemptId=(
+            attemptId=self.attempt_ids.get(
+                step_id,
                 f"{state.run_id}:{step_id}:{step.attempt}:"
-                f"{'.'.join(map(str, loop_path)) or 'root'}"
+                f"{'.'.join(map(str, loop_path)) or 'root'}",
             ),
             phase=NodeExecutionPhase.PREPARED,
             loopPath=loop_path,
@@ -360,17 +364,21 @@ class ACGNodeRunner:
             modelRuntime=self.model_runtimes.get(step_id, self.model_runtime),
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
             commitId=commit_id,
+            attemptId=self.attempt_ids.get(step_id),
         )
         await runtime_event_broker.publish(
             state.run_id,
             RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
-                         attemptId=commit_id or step_id, sequence=0),
+                         attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),
         )
         output = (
             await self.agent_invoker.invoke(context=agent_context, agent=agent)
             if self.agent_invoker is not None
             else await agent.run(agent_context)
         )
+        final_attempt_id = getattr(agent_context.model_runtime, "last_attempt_id", None)
+        if isinstance(final_attempt_id, str) and final_attempt_id:
+            self.attempt_ids[step_id] = final_attempt_id
         execution_record = self.value_store.transition_node_execution(
             execution_record.model_copy(update={"phase": NodeExecutionPhase.EXECUTED})
         )
@@ -609,7 +617,7 @@ class ACGNodeRunner:
         await runtime_event_broker.publish(
             state.run_id,
             RuntimeEvent(eventType="node.completed", runId=state.run_id, nodeId=step_id,
-                         attemptId=commit_id or step_id, sequence=0),
+                         attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),
         )
         self._publish_committed_memory(
             run_id=state.run_id,

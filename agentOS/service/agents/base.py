@@ -73,6 +73,9 @@ class AgentRunContext(BaseModel):
     # 由 ACG 节点提交边界生成的稳定幂等标识。Agent、模型和工具适配器可把它透传给
     # 具有外部副作用的供应商；它不包含用户正文、工具参数或模型响应。
     commit_id: Optional[str] = Field(default=None, alias="commitId")
+    # The scheduler attempt is distinct from the idempotent commit operation.
+    # Runtime streaming events must follow this identity across retries.
+    attempt_id: Optional[str] = Field(default=None, alias="attemptId")
 
 
 class BaseAgent(ABC):

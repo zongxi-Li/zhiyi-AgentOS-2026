@@ -9,9 +9,35 @@ from typing import AsyncIterator
 from contracts.runtime_events import RuntimeEvent
 
 
+COALESCIBLE_EVENT_TYPES = frozenset({
+    "model.output.delta",
+    "model.activity",
+    "planner.model.activity",
+})
+
+CRITICAL_EVENT_TYPES = frozenset({
+    "node.completed",
+    "node.failed",
+    "model.completed",
+    "planner.completed",
+    "planner.failed",
+})
+
+
+class RuntimeEventOverflow(RuntimeError):
+    """A subscriber was too slow to retain the critical RuntimeEvent contract."""
+
+
+class _SubscriberOverflow:
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+
+
 class RuntimeEventBroker:
     def __init__(self, max_queue_size: int = 256) -> None:
-        self._queues: dict[str, set[asyncio.Queue[RuntimeEvent]]] = defaultdict(set)
+        if max_queue_size < 1:
+            raise ValueError("max_queue_size must be positive")
+        self._queues: dict[str, set[asyncio.Queue[RuntimeEvent | _SubscriberOverflow]]] = defaultdict(set)
         self._max_queue_size = max_queue_size
         self._sequences: dict[str, int] = defaultdict(int)
         self._lock = Lock()
@@ -45,29 +71,64 @@ class RuntimeEventBroker:
             except RuntimeError:
                 current_loop = None
             if loop is not None and loop.is_running() and loop is not current_loop:
-                loop.call_soon_threadsafe(self._put_nowait, queue, event)
+                loop.call_soon_threadsafe(self._put_nowait, run_id, queue, event)
             else:
-                self._put_nowait(queue, event)
+                self._put_nowait(run_id, queue, event)
 
-    @staticmethod
-    def _put_nowait(queue: asyncio.Queue[RuntimeEvent], event: RuntimeEvent) -> None:
+    def _put_nowait(
+        self,
+        run_id: str,
+        queue: asyncio.Queue[RuntimeEvent | _SubscriberOverflow],
+        event: RuntimeEvent,
+    ) -> None:
         if queue.full():
-            # Transient deltas may be coalesced; lifecycle events are retained.
-            if not event.event_type.endswith(("completed", "failed")):
+            if event.event_type in COALESCIBLE_EVENT_TYPES:
                 return
-            try:
-                _ = queue.get_nowait()
-            except asyncio.QueueEmpty:
+            # A critical event may evict only the oldest coalescible item. Never
+            # overwrite a lifecycle event with another lifecycle event.
+            buffered: list[RuntimeEvent | _SubscriberOverflow] = []
+            removed = False
+            while True:
+                try:
+                    item = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if (
+                    not removed
+                    and isinstance(item, RuntimeEvent)
+                    and item.event_type in COALESCIBLE_EVENT_TYPES
+                ):
+                    removed = True
+                    continue
+                buffered.append(item)
+            for item in buffered:
+                queue.put_nowait(item)
+            if not removed:
+                # Explicitly terminate this slow subscriber. The sentinel is
+                # consumed by subscribe() and becomes a visible SSE failure;
+                # no critical lifecycle event is silently lost.
+                with self._lock:
+                    queues = self._queues.get(run_id)
+                    if queues is not None:
+                        queues.discard(queue)
+                while not queue.empty():
+                    queue.get_nowait()
+                queue.put_nowait(_SubscriberOverflow(run_id))
                 return
         queue.put_nowait(event)
 
     async def subscribe(self, run_id: str) -> AsyncIterator[RuntimeEvent]:
-        queue: asyncio.Queue[RuntimeEvent] = asyncio.Queue(self._max_queue_size)
+        queue: asyncio.Queue[RuntimeEvent | _SubscriberOverflow] = asyncio.Queue(self._max_queue_size)
         with self._lock:
             self._queues[run_id].add(queue)
         try:
             while True:
-                yield await queue.get()
+                item = await queue.get()
+                if isinstance(item, _SubscriberOverflow):
+                    raise RuntimeEventOverflow(
+                        f"runtime event subscriber overflow for run {item.run_id}"
+                    )
+                yield item
         finally:
             with self._lock:
                 queues = self._queues.get(run_id)
@@ -79,3 +140,12 @@ class RuntimeEventBroker:
 
 
 runtime_event_broker = RuntimeEventBroker()
+
+
+__all__ = [
+    "COALESCIBLE_EVENT_TYPES",
+    "CRITICAL_EVENT_TYPES",
+    "RuntimeEventBroker",
+    "RuntimeEventOverflow",
+    "runtime_event_broker",
+]

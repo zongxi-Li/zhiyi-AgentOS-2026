@@ -113,6 +113,21 @@ class ApplicationSetup:
         """暴露只读身份，供 composition root 断言与 Runtime 共用同一实例。"""
         return self._registry
 
+    @property
+    def default_model_binding(self) -> dict[str, str] | None:
+        """Return the stable production route used by Native nodes without a profile route."""
+        if not self._setups:
+            return None
+        setup = sorted(
+            self._setups,
+            key=lambda item: (-item.priority, item.provider, item.models[0], item.version),
+        )[0]
+        return {
+            "provider": setup.provider,
+            "model": setup.models[0],
+            "version": setup.version,
+        }
+
     async def start(self) -> None:
         """登记模型并启动健康刷新；重复启动不会更换已注册适配器。"""
         if self._started:

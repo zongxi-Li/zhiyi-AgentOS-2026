@@ -354,7 +354,12 @@ class RegisteredModelRuntime:
                 "receivedLength": sum(map(len, buffer)),
             }
 
-        yield emit("model.started", {"requestId": request_id})
+        yield emit("model.started", {
+            "requestId": request_id,
+            "provider": self.provider,
+            "model": self.model,
+            "streamingCapability": True,
+        })
         completed = False
         try:
             while True:

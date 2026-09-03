@@ -205,10 +205,12 @@ def build_model_setup(
                 "priority": 100,
                 "requestTimeoutSeconds": config.timeout_seconds,
             }])
-    return ApplicationSetup.from_environment(
+    setup = ApplicationSetup.from_environment(
         values,
         model_registry=runtime.model_registry,
     )
+    runtime.default_model_binding = setup.default_model_binding
+    return setup
 
 
 def build_default_runtime(

@@ -32,6 +32,8 @@ def _positive_int(name: str, default: int) -> int:
 class GatewayStructuredGenerationRuntime:
     """Run synchronous gateway calls outside the event loop with bounded concurrency."""
 
+    production_stream_required = True
+
     def __init__(self, *, max_concurrency: int | None = None) -> None:
         workers = max_concurrency or _positive_int("AGENTOS_ACG_MODEL_MAX_CONCURRENCY", 2)
         self._executor = ThreadPoolExecutor(

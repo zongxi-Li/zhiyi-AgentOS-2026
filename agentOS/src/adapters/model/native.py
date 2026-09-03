@@ -332,7 +332,8 @@ class NativeGeneralAgent(BaseAgent):
                 streamed_data = None
                 async for runtime_event in streamer(
                     prompt=prompt, schema=generation_schema, run_id=context.run.run_id,
-                    node_id=context.step.step_id, attempt_id=context.commit_id or context.step.step_id,
+                    node_id=context.step.step_id,
+                    attempt_id=context.attempt_id or context.commit_id or context.step.step_id,
                     ttft_timeout=min(30.0, timeout_seconds), idle_timeout=min(60.0, timeout_seconds),
                     total_timeout=timeout_seconds, thinking_mode=thinking_mode,
                     max_output_tokens=max_output_tokens, prompt_version=base_prompt_version,
@@ -354,6 +355,11 @@ class NativeGeneralAgent(BaseAgent):
                     promptVersion=base_prompt_version,
                 )
             else:
+                if getattr(runtime, "production_stream_required", False):
+                    raise StructuredGenerationError(
+                        "MODEL_STREAM_UNSUPPORTED",
+                        "Native ACG production execution requires a streaming model binding.",
+                    )
                 generated = await runtime.generate_json(
                 prompt=prompt,
                 schema=generation_schema,

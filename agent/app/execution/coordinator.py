@@ -45,6 +45,15 @@ class RunExecutionCoordinator:
         task = self._tasks.get(run_id)
         return task is not None and not task.done()
 
+    async def cancel(self, run_id: str) -> bool:
+        """Cancel only the managed workflow task for an explicit Run cancel."""
+        async with self._lock:
+            task = self._tasks.get(run_id)
+        if task is None or task.done() or task is asyncio.current_task():
+            return False
+        task.cancel()
+        return True
+
     async def startup(self, *, orphan_limit: int = 200) -> list[str]:
         self._accepting = True
         return await self.runtime.close_orphaned_runs(limit=orphan_limit)
@@ -63,6 +72,13 @@ class RunExecutionCoordinator:
         try:
             await self.runtime.execute_prepared_run(run_id)
         except asyncio.CancelledError:
+            # An operator cancel already persisted CANCELLED before this task
+            # is interrupted. Do not misclassify it as worker shutdown.
+            try:
+                if self.runtime.workflow_store.get_run(run_id).status.value == "cancelled":
+                    return
+            except Exception:
+                pass
             try:
                 await self.runtime.fail_run_safely(
                     run_id,

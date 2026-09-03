@@ -264,6 +264,9 @@ class ExecutionRuntime:
         self.evaluator = evaluator or WorkflowEvaluator()
         self.state_machine = StateMachine()
         self._model_runtime = None
+        # Application composition sets this after model setup parsing. It is
+        # read only while a run is prepared and copied into frozen bindings.
+        self.default_model_binding: dict[str, str] | None = None
         self.mission_manager = mission_manager or MissionManager(
             workflow_store=self.workflow_store,
             workflow_registry=self.workflow_registry,
@@ -861,6 +864,7 @@ class ExecutionRuntime:
             self.mission_manager.mark_completed(task)
             self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
             self.workflow_store.save_run(run)
+            self._publish_run_terminal_event(run, "run.completed")
             if self.identity_lifecycle is not None:
                 self._flush_identity_outbox()
             return run
@@ -1006,6 +1010,7 @@ class ExecutionRuntime:
                 allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
             )
             runner.agents[step_id] = selected_agent
+            runner.attempt_ids[step_id] = attempt_id
             step_execution_id = (
                 run.execution_state.setdefault("stepExecutionIds", {}).setdefault(
                     attempt_key,
@@ -1083,6 +1088,29 @@ class ExecutionRuntime:
                 self._flush_identity_outbox()
                 raise
             except Exception as exc:
+                from contracts.runtime_events import RuntimeEvent
+                from runtime.live_events import runtime_event_broker
+
+                error_code = str(
+                    getattr(exc, "code", None)
+                    or getattr(exc, "cause_code", None)
+                    or type(exc).__name__
+                )
+                await runtime_event_broker.publish(
+                    run.run_id,
+                    RuntimeEvent(
+                        eventType="node.failed",
+                        runId=run.run_id,
+                        nodeId=step_id,
+                        attemptId=attempt_id,
+                        sequence=0,
+                        payload={
+                            "errorCode": error_code,
+                            "retryable": bool(getattr(exc, "retryable", False)),
+                            "attempt": attempt_number,
+                        },
+                    ),
+                )
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.failed:{step_execution_id}", "step.failed", step_execution_id,
                     {"runId": run.run_id, "attemptId": attempt_id,
@@ -1866,7 +1894,7 @@ class ExecutionRuntime:
             self.resource_directory.register_agent(agent.profile)
         bindings: dict[str, str] = {}
         requirements: dict[str, dict[str, object]] = {}
-        model_bindings: dict[str, dict[str, str] | None] = {}
+        model_bindings: dict[str, dict[str, Any] | None] = {}
         for step in run.steps:
             rule = binding_manifest.for_step(step.step_id)
             required_capabilities = list(rule.required_capabilities)
@@ -1917,13 +1945,20 @@ class ExecutionRuntime:
         run.execution_state["bindingRequirements"] = requirements
         run.execution_state["modelBindings"] = model_bindings
 
-    def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, str] | None:
+    def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, Any] | None:
         """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""
         provider = (getattr(profile, "model_provider", None) or "").strip()
         model = (getattr(profile, "model_name", None) or "").strip()
         version = (getattr(profile, "model_version", None) or "").strip() or None
         if not provider and not model:
-            return None
+            default = self.default_model_binding
+            if not isinstance(default, dict):
+                return None
+            provider = str(default.get("provider") or "").strip()
+            model = str(default.get("model") or "").strip()
+            version = str(default.get("version") or "").strip() or None
+            if not provider or not model:
+                return None
         if not provider or not model:
             raise ValueError(
                 f"MODEL_PROFILE_INCOMPLETE: step {step_id} must set both modelProvider and modelName"
@@ -1934,7 +1969,14 @@ class ExecutionRuntime:
             raise ValueError(
                 f"MODEL_PROFILE_UNAVAILABLE: step {step_id} cannot resolve {provider}/{model}"
             ) from exc
-        binding = {"provider": provider, "model": model}
+        adapter = self.model_registry.resolve(provider, model, version=version)
+        binding: dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            # This is an explicit capability fact, not permission to fall back
+            # to the synchronous gateway. NativeGeneralAgent enforces it.
+            "streamingCapability": callable(getattr(adapter, "astream", None)),
+        }
         if version is not None:
             binding["version"] = version
         return binding
@@ -2411,6 +2453,31 @@ class ExecutionRuntime:
         with self._run_cancel_guard:
             self._run_cancel_events.pop(run_id, None)
 
+    @staticmethod
+    def _publish_run_terminal_event(
+        run: RuntimeRunRecord,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Publish only safe run lifecycle scalars to the existing live broker."""
+        from contracts.runtime_events import RuntimeEvent
+        from runtime.live_events import runtime_event_broker
+
+        runtime_event_broker.publish_from_thread(
+            run.run_id,
+            RuntimeEvent(
+                eventType=event_type,
+                runId=run.run_id,
+                nodeId=None,
+                attemptId=None,
+                sequence=0,
+                payload={
+                    key: value for key, value in (payload or {}).items()
+                    if isinstance(value, (str, int, float, bool))
+                },
+            ),
+        )
+
     async def _finalize_cancelled_run(
         self,
         run: RuntimeRunRecord,
@@ -2562,6 +2629,7 @@ class ExecutionRuntime:
         )
         run.updated_at = utc_now()
         self.workflow_store.save_run(run)
+        self._publish_run_terminal_event(run, "run.failed", {"errorCode": error_code})
         if (
             self.identity_lifecycle is not None
             and self._normalize_runtime_engine(run.runtime_engine) == "acg"
@@ -3464,6 +3532,7 @@ class ExecutionRuntime:
                 and self._normalize_runtime_engine(run.runtime_engine) == "acg"
             ):
                 self._flush_identity_outbox()
+            self._publish_run_terminal_event(run, "run.cancelled")
             return run
 
     def _resolve_workflow(

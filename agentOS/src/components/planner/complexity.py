@@ -314,6 +314,10 @@ def call_planning_model(
         except Exception as exc:
             code = transport_error_code(exc)
             if code is None or attempt >= max_attempts:
+                if code in {"MODEL_TIMEOUT", "MODEL_TTFT_TIMEOUT", "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT"} and deadline - monotonic() <= 0.05:
+                    error = TimeoutError("planning model total timeout budget exhausted")
+                    setattr(error, "code", "MODEL_TIMEOUT")
+                    raise error from exc
                 if code:
                     error_metadata = transport_error_metadata(exc)
                     error_metadata.update({
