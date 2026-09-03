@@ -127,6 +127,32 @@ class ResourceService:
             secret=secret,
         )
 
+    def rotate_credential(self, resource_id: str) -> IssuedResourceCredential:
+        """原子轮换远程资源凭据，并使旧凭据立即失效。"""
+        profile = self.registry.get(resource_id)
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            raise ValueError("resource credentials require a remote resource")
+        if not profile.owner_scope:
+            raise ValueError("remote resource owner_scope is required")
+        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
+            raise ValueError("remote resource execution endpoint is required")
+        secret = secrets.token_urlsafe(32)
+        record = ResourceCredentialRecord(
+            resource_id=resource_id,
+            credential_id=f"rc_{uuid.uuid4().hex}",
+            owner_scope=profile.owner_scope,
+            secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            encrypted_secret=self.secret_box.encrypt(secret),
+            created_at=datetime.now().astimezone(),
+        )
+        self.store.rotate_credential(record)
+        return IssuedResourceCredential(
+            resource_id=resource_id,
+            credential_id=record.credential_id,
+            owner_scope=record.owner_scope,
+            secret=secret,
+        )
+
     def verify_credential(
         self, resource_id: str, credential_id: str, secret: str
     ) -> ResourceCredentialRecord:

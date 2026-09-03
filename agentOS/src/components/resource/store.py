@@ -74,6 +74,10 @@ class ResourceStore(Protocol):
         """保存一个资源凭据；同一资源不可静默覆盖已有凭据。"""
         ...
 
+    def rotate_credential(self, record: ResourceCredentialRecord) -> None:
+        """原子替换已有资源凭据；资源画像和快照不得被修改。"""
+        ...
+
     def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
         """读取资源凭据元数据；未登记凭据应抛出 ``KeyError``。"""
         ...
@@ -202,6 +206,14 @@ class InMemoryResourceStore:
                 raise KeyError(f"unknown resource: {record.resource_id}")
             if record.resource_id in self._credentials:
                 raise ValueError(f"resource credential already exists: {record.resource_id}")
+            self._credentials[record.resource_id] = record
+
+    def rotate_credential(self, record: ResourceCredentialRecord) -> None:
+        with self._lock:
+            if record.resource_id not in self._profiles:
+                raise KeyError(f"unknown resource: {record.resource_id}")
+            if record.resource_id not in self._credentials:
+                raise KeyError(f"resource credential not found: {record.resource_id}")
             self._credentials[record.resource_id] = record
 
     def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
@@ -456,6 +468,36 @@ class SQLiteResourceStore:
                 raise ValueError(
                     f"resource credential already exists: {record.resource_id}"
                 ) from error
+
+    def rotate_credential(self, record: ResourceCredentialRecord) -> None:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                resource = self._connection.execute(
+                    "SELECT 1 FROM resources WHERE resource_id = ?",
+                    (record.resource_id,),
+                ).fetchone()
+                if resource is None:
+                    raise KeyError(f"unknown resource: {record.resource_id}")
+                cursor = self._connection.execute(
+                    "UPDATE resource_credentials SET credential_id = ?, owner_scope = ?, "
+                    "secret_digest = ?, encrypted_secret = ?, created_at = ? "
+                    "WHERE resource_id = ?",
+                    (
+                        record.credential_id,
+                        record.owner_scope,
+                        record.secret_digest,
+                        record.encrypted_secret,
+                        record.created_at.astimezone(timezone.utc).isoformat(),
+                        record.resource_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise KeyError(f"resource credential not found: {record.resource_id}")
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
         row = self._connection.execute(

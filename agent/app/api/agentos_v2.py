@@ -684,6 +684,31 @@ def create_router(
             "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
         }
 
+    @router.post("/resources/{resource_id}/credential/rotate")
+    async def rotate_remote_resource_credential(resource_id: str):
+        """Rotate a remote resource credential and return the new secret once."""
+        resource_service = getattr(runtime, "resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource credential source unavailable")
+        try:
+            profile = resource_service.profile(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        require_resource_operator(str(profile.owner_scope or ""))
+        try:
+            issued = resource_service.rotate_credential(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "resourceId": issued.resource_id,
+            "credentialId": issued.credential_id,
+            "ownerScope": issued.owner_scope,
+            "secret": issued.secret,
+            "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
+        }
+
     @router.post("/resources/{resource_id}/observation")
     async def post_remote_resource_observation(
         resource_id: str,

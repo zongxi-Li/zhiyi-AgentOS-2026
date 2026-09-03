@@ -123,6 +123,35 @@ def test_unknown_or_wrong_secret_is_rejected() -> None:
         resources.verify_credential("edge-auth", issued.credential_id, "wrong-secret")
 
 
+def test_rotate_credential_replaces_secret_and_invalidates_previous_credential() -> None:
+    resources = _service()
+    previous = resources.issue_credential("edge-auth")
+
+    rotated = resources.rotate_credential("edge-auth")
+
+    assert rotated.resource_id == previous.resource_id
+    assert rotated.owner_scope == previous.owner_scope
+    assert rotated.credential_id != previous.credential_id
+    assert rotated.secret != previous.secret
+    assert resources.verify_credential("edge-auth", rotated.credential_id, rotated.secret)
+    with pytest.raises(ValueError, match="credential"):
+        resources.verify_credential("edge-auth", previous.credential_id, previous.secret)
+
+
+def test_failed_credential_rotation_keeps_previous_credential_usable(monkeypatch) -> None:
+    resources = _service()
+    previous = resources.issue_credential("edge-auth")
+
+    def fail_rotation(record) -> None:
+        raise RuntimeError("credential persistence unavailable")
+
+    monkeypatch.setattr(resources.store, "rotate_credential", fail_rotation)
+    with pytest.raises(RuntimeError, match="persistence unavailable"):
+        resources.rotate_credential("edge-auth")
+
+    assert resources.verify_credential("edge-auth", previous.credential_id, previous.secret)
+
+
 def test_nonce_can_be_consumed_only_once_until_expiry() -> None:
     resources = _service()
     expires_at = NOW + timedelta(minutes=5)

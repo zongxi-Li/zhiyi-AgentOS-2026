@@ -714,6 +714,116 @@ async def test_v2_remote_resource_auth_distinguishes_unknown_resource_and_owner_
     assert forbidden.status_code == 403
 
 
+async def test_v2_remote_resource_credential_rotation_is_scoped_atomic_and_invalidates_old_secret(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.resource_service.register(
+        ResourceProfile(
+            resourceId="edge-rotation",
+            resourceType=ResourceType.WORKER,
+            deploymentTier="edge",
+            capabilities=["vision.infer"],
+            ownerScope="tenant-a",
+            executionEndpoint={"protocol": "https", "address": "https://edge-rotation.example.test/execute"},
+        ),
+        ResourceSnapshot(resourceId="edge-rotation", availableSlots=1, utilization=0.0),
+    )
+    previous = runtime.resource_service.issue_credential("edge-rotation")
+    before_profile = runtime.resource_service.profile("edge-rotation")
+    before_snapshot = runtime.resource_service.snapshot("edge-rotation")
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    path = "/agentos/v2/resources/edge-rotation/credential/rotate"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        denied = await client.post(path)
+        viewer_token = _trusted_user_context.set(
+            TrustedUserContext(user_id="viewer-1", subject="viewer-1", role="viewer", tenant_id="tenant-a")
+        )
+        try:
+            viewer = await client.post(path)
+        finally:
+            _trusted_user_context.reset(viewer_token)
+        wrong_tenant_token = _trusted_user_context.set(
+            TrustedUserContext(user_id="operator-2", subject="operator-2", role="operator", tenant_id="tenant-b")
+        )
+        try:
+            wrong_tenant = await client.post(path)
+        finally:
+            _trusted_user_context.reset(wrong_tenant_token)
+        operator_token = _operator_context()
+        try:
+            rotated_response = await client.post(path)
+            rotated_again_response = await client.post(path)
+            projection = await client.get("/agentos/v2/resources")
+        finally:
+            _trusted_user_context.reset(operator_token)
+
+        assert denied.status_code == 401
+        assert viewer.status_code == 403
+        assert wrong_tenant.status_code == 403
+
+        first_rotated = rotated_response.json()
+        second_rotated = rotated_again_response.json()
+        assert rotated_response.status_code == 200
+        assert rotated_again_response.status_code == 200
+        assert first_rotated["credentialId"] != previous.credential_id
+        assert first_rotated["secret"] != previous.secret
+        assert second_rotated["credentialId"] != first_rotated["credentialId"]
+        assert second_rotated["secret"] != first_rotated["secret"]
+
+        body = b'{"availableSlots":1,"observationSequence":1,"utilization":0.0}'
+        observation_path = "/agentos/v2/resources/edge-rotation/observation"
+        old_nonce = "rotation-old-secret"
+        old_timestamp = int(datetime.now(timezone.utc).timestamp())
+        old_observation = await client.post(
+            observation_path,
+            content=body,
+            headers={
+                "content-type": "application/json",
+                "X-Resource-Credential": previous.credential_id,
+                "X-Resource-Timestamp": str(old_timestamp),
+                "X-Resource-Nonce": old_nonce,
+                "X-Resource-Signature": build_resource_signature(
+                    previous.secret,
+                    method="POST",
+                    path=observation_path,
+                    timestamp=old_timestamp,
+                    nonce=old_nonce,
+                    body=body,
+                ),
+            },
+        )
+        new_nonce = "rotation-new-secret"
+        new_timestamp = int(datetime.now(timezone.utc).timestamp())
+        new_observation = await client.post(
+            observation_path,
+            content=body,
+            headers={
+                "content-type": "application/json",
+                "X-Resource-Credential": second_rotated["credentialId"],
+                "X-Resource-Timestamp": str(new_timestamp),
+                "X-Resource-Nonce": new_nonce,
+                "X-Resource-Signature": build_resource_signature(
+                    second_rotated["secret"],
+                    method="POST",
+                    path=observation_path,
+                    timestamp=new_timestamp,
+                    nonce=new_nonce,
+                    body=body,
+                ),
+            },
+        )
+
+    assert old_observation.status_code == 401
+    assert new_observation.status_code == 200
+    assert runtime.resource_service.profile("edge-rotation") == before_profile
+    after_snapshot = runtime.resource_service.snapshot("edge-rotation")
+    assert after_snapshot.version == before_snapshot.version + 1
+    assert after_snapshot.snapshot.observation_sequence == 1
+    item = next(item for item in projection.json()["items"] if item["profile"]["resourceId"] == "edge-rotation")
+    assert item["profile"] == before_profile.model_dump(by_alias=True, mode="json")
+
+
 async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     coordinator = RunExecutionCoordinator(runtime)
