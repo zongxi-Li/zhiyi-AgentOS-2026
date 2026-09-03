@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
-import { apiUrl } from '@/platform'
+import { apiUrl, isDesktop } from '@/platform'
 
 const USER_NOTIFIED_FLAG = '__kinlinUserNotified'
 
@@ -13,6 +13,25 @@ const markErrorAsUserNotified = <T extends Error>(error: T): T => {
 
 export const wasErrorUserNotified = (error: unknown): boolean =>
   error instanceof Error && Boolean((error as UserNotifiedError)[USER_NOTIFIED_FLAG])
+
+const redirectToLoginAfterUnauthorized = () => {
+  // Tauri uses hash history because a native WebView has no server-side
+  // fallback for deep links. Navigating to /login replaces the document URL
+  // and can leave the existing app shell without a matched route. Change only
+  // the hash so Vue Router performs the transition inside the current page.
+  if (isDesktop()) {
+    const currentRoute = window.location.hash.replace(/^#/, '') || '/'
+    if (!currentRoute.startsWith('/login')) {
+      window.location.hash = `/login?redirect=${encodeURIComponent(currentRoute)}`
+    }
+    return
+  }
+
+  if (window.location.pathname !== '/login') {
+    const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+    window.location.href = `/login?redirect=${redirect}`
+  }
+}
 
 // 创建axios实例
 const request = axios.create({
@@ -91,11 +110,7 @@ request.interceptors.response.use(
             localStorage.removeItem('token')
             localStorage.removeItem('userId')
 
-            // 避免循环重定向
-            if (window.location.pathname !== '/login') {
-              const redirect = encodeURIComponent(window.location.pathname + window.location.search)
-              window.location.href = `/login?redirect=${redirect}`
-            }
+            redirectToLoginAfterUnauthorized()
           }
           break
         case 403:
