@@ -249,6 +249,19 @@ class SQLiteResourceStore:
                 version INTEGER NOT NULL CHECK(version >= 1)
             )"""
         )
+        credential_table = self._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'resource_credentials'"
+        ).fetchone()
+        if credential_table is not None:
+            columns = {
+                str(row[1])
+                for row in self._connection.execute("PRAGMA table_info(resource_credentials)").fetchall()
+            }
+            if "secret_hash" in columns or not {"secret_digest", "encrypted_secret"} <= columns:
+                self._connection.close()
+                raise RuntimeError(
+                    "legacy resource credential schema requires explicit credential migration"
+                )
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS resource_credentials (
                 resource_id TEXT PRIMARY KEY,

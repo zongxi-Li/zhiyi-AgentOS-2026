@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import sqlite3
 
 import pytest
 from cryptography.fernet import Fernet
@@ -93,6 +94,23 @@ def test_resource_database_does_not_store_hmac_key_in_plain_or_derived_form(tmp_
     assert record.secret_digest.encode() in database_bytes
     assert record.encrypted_secret != issued.secret
     assert record.encrypted_secret != record.secret_digest
+
+
+def test_sqlite_store_rejects_legacy_credential_schema_instead_of_using_unsafe_keys(tmp_path) -> None:
+    db_path = tmp_path / "resources.sqlite3"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            "CREATE TABLE resource_credentials ("
+            "resource_id TEXT PRIMARY KEY, credential_id TEXT NOT NULL UNIQUE, "
+            "owner_scope TEXT NOT NULL, secret_hash TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(RuntimeError, match="legacy resource credential schema"):
+        SQLiteResourceStore(db_path)
 
 
 def test_unknown_or_wrong_secret_is_rejected() -> None:
