@@ -129,6 +129,23 @@ def test_application_resource_store_persists_remote_credentials(tmp_path: Path) 
         reopened.close()
 
 
+def test_production_runtime_requires_resource_credential_master_key(tmp_path: Path) -> None:
+    environment = _environment(tmp_path)
+    environment["ENVIRONMENT"] = "production"
+
+    try:
+        build_default_runtime(
+            environment=environment,
+            tool_runtime=_InjectedToolRuntime(),
+            model_runtime=_InjectedModelRuntime(),
+            intent_llm=_InjectedIntentLLM(),
+        )
+    except RuntimeError as error:
+        assert str(error) == "AGENTOS_RESOURCE_CREDENTIAL_KEY is required in production"
+    else:
+        raise AssertionError("production runtime accepted a missing resource credential key")
+
+
 def test_production_python_does_not_import_the_removed_agentos_package() -> None:
     root = Path(__file__).resolve().parents[1]
     offenders = []

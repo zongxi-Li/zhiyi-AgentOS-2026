@@ -118,13 +118,20 @@ def build_default_runtime(
 ) -> ExecutionRuntime:
     """Construct all registries, stores, and external adapters in the application."""
     env = environment or os.environ
+    environment_name = str(env.get("ENVIRONMENT") or "development").strip().lower()
+    resource_credential_key = _read_optional_secret(env, "AGENTOS_RESOURCE_CREDENTIAL_KEY")
+    if environment_name in {"prod", "production"} and not resource_credential_key:
+        raise RuntimeError(
+            "AGENTOS_RESOURCE_CREDENTIAL_KEY is required in production"
+        )
     workflow_path = _workflow_db_path(env)
     acquire_workflow_instance_lock(str(workflow_path))
 
     resource_service = ResourceService(
         store=SQLiteResourceStore(
             Path(str(env.get("AGENTOS_RESOURCE_DB") or workflow_path.with_name("resources.sqlite3")))
-        )
+        ),
+        credential_key=resource_credential_key,
     )
     coordination_url = str(env.get("AGENTOS_COORDINATION_REDIS_URL") or "").strip()
     scheduler_service = None

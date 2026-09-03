@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import pytest
+from cryptography.fernet import Fernet
 
 from components.resource.service import ResourceService
 from components.resource.auth import (
@@ -53,8 +55,9 @@ def test_issue_credential_returns_secret_once_and_verifies_without_storing_plain
 
 def test_sqlite_credential_survives_restart_without_persisting_plaintext(tmp_path) -> None:
     db_path = tmp_path / "resources.sqlite3"
+    encryption_key = Fernet.generate_key()
     first_store = SQLiteResourceStore(db_path)
-    first = ResourceService(store=first_store)
+    first = ResourceService(store=first_store, credential_key=encryption_key)
     profile_service = _service()
     first.register(profile_service.profile("edge-auth"), profile_service.snapshot("edge-auth").snapshot)
     issued = first.issue_credential("edge-auth")
@@ -63,12 +66,33 @@ def test_sqlite_credential_survives_restart_without_persisting_plaintext(tmp_pat
     assert issued.secret.encode() not in db_path.read_bytes()
 
     second_store = SQLiteResourceStore(db_path)
-    second = ResourceService(store=second_store)
+    second = ResourceService(store=second_store, credential_key=encryption_key)
     try:
         verified = second.verify_credential("edge-auth", issued.credential_id, issued.secret)
         assert verified.owner_scope == "tenant-a"
     finally:
         second_store.close()
+
+
+def test_resource_database_does_not_store_hmac_key_in_plain_or_derived_form(tmp_path) -> None:
+    db_path = tmp_path / "resources.sqlite3"
+    encryption_key = Fernet.generate_key()
+    store = SQLiteResourceStore(db_path)
+    resources = ResourceService(store=store, credential_key=encryption_key)
+    profile_service = _service()
+    resources.register(
+        profile_service.profile("edge-auth"),
+        profile_service.snapshot("edge-auth").snapshot,
+    )
+    issued = resources.issue_credential("edge-auth")
+    record = resources.credential("edge-auth")
+    store.close()
+
+    database_bytes = db_path.read_bytes()
+    assert issued.secret.encode() not in database_bytes
+    assert record.secret_digest.encode() in database_bytes
+    assert record.encrypted_secret != issued.secret
+    assert record.encrypted_secret != record.secret_digest
 
 
 def test_unknown_or_wrong_secret_is_rejected() -> None:

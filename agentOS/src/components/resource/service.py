@@ -19,6 +19,7 @@ from contracts.resource import (
 )
 
 from .algorithms import health_score, is_resource_available
+from .crypto import ResourceSecretBox
 from .health import ResourceHealthMonitor
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .registry import ResourceRegistry
@@ -44,12 +45,14 @@ class ResourceService:
         health_monitor: ResourceHealthMonitor | None = None,
         *,
         heartbeat_timeout: timedelta = timedelta(seconds=60),
+        credential_key: str | bytes | None = None,
     ) -> None:
         self.store = store or InMemoryResourceStore()
         self.registry = ResourceRegistry(self.store)
         self.health_monitor = health_monitor or ResourceHealthMonitor(
             heartbeat_timeout=heartbeat_timeout
         )
+        self.secret_box = ResourceSecretBox(credential_key)
 
     def register(self, profile: ResourceProfile, snapshot: ResourceSnapshot) -> VersionedResourceSnapshot:
         """登记一个可调度资源及其首个负载快照。"""
@@ -112,7 +115,8 @@ class ResourceService:
             resource_id=resource_id,
             credential_id=f"rc_{uuid.uuid4().hex}",
             owner_scope=profile.owner_scope,
-            secret_hash=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            encrypted_secret=self.secret_box.encrypt(secret),
             created_at=datetime.now().astimezone(),
         )
         self.store.save_credential(record)
@@ -132,11 +136,11 @@ class ResourceService:
             record = self.store.get_credential(resource_id)
         except KeyError as error:
             raise ValueError("resource credential not found") from error
-        expected_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+        expected_digest = hashlib.sha256(secret.encode("utf-8")).hexdigest()
         if (
             record.credential_id != credential_id
             or record.owner_scope != profile.owner_scope
-            or not hmac.compare_digest(record.secret_hash, expected_hash)
+            or not hmac.compare_digest(record.secret_digest, expected_digest)
         ):
             raise ValueError("resource credential is invalid")
         return record
@@ -145,6 +149,14 @@ class ResourceService:
         """Read resource credential metadata without exposing a secret."""
         self.registry.get(resource_id)
         return self.store.get_credential(resource_id)
+
+    def credential_hmac_key(self, resource_id: str, credential_id: str) -> bytes:
+        """Decrypt a valid credential only at the signing verification seam."""
+        record = self.credential(resource_id)
+        if record.credential_id != credential_id:
+            raise ValueError("resource credential is invalid")
+        secret = self.secret_box.decrypt(record.encrypted_secret)
+        return hashlib.sha256(secret.encode("utf-8")).digest()
 
     def consume_nonce(
         self,

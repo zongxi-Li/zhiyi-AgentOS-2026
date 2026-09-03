@@ -27,7 +27,7 @@
 
 ## Data and error rules
 
-- 资源密钥只返回一次，不写入 `ResourceProfile`、日志或 API 投影。
+- 资源密钥只返回一次，不写入 `ResourceProfile`、日志或 API 投影；服务端使用 `AGENTOS_RESOURCE_CREDENTIAL_KEY` 加密保存 secret，生产环境缺少该主密钥时启动失败。
 - 未登记资源、凭据不存在、凭据不属于路径中的资源、签名不匹配、时间戳过期、nonce 重复分别返回明确的 401/404/409 错误。
 - 重复注册同一资源 ID 不覆盖原资源；需要轮换凭据时使用显式的凭据轮换接口，当前阶段不自动替换。
 - 远程资源必须有非 local 的 deployment tier、非 local 的 execution endpoint、非空 owner scope；本地资源不能使用远程签名观测接口。

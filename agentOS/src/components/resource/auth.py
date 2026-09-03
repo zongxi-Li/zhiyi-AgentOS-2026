@@ -107,7 +107,7 @@ class ResourceRequestAuthenticator:
             raise ResourceRequestExpired("resource request timestamp is expired")
 
         expected = hmac.new(
-            bytes.fromhex(record.secret_hash),
+            self.resource_service.credential_hmac_key(resource_id, credential_id),
             _canonical_request(
                 method=method,
                 path=path,

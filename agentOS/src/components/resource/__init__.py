@@ -9,6 +9,7 @@ from .auth import (
     ResourceRequestReplay,
     build_resource_signature,
 )
+from .crypto import ResourceSecretBox
 from .directory import AgentResource, ResourceConflictError, ResourceDirectory, ResourceNotFoundError
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .service import IssuedResourceCredential, ResourceService
@@ -34,6 +35,7 @@ __all__ = [
     "ResourceRequestInvalid",
     "ResourceRequestNotFound",
     "ResourceRequestReplay",
+    "ResourceSecretBox",
     "ResourceNotFoundError",
     "ResourceService",
     "ResourceStore",

@@ -30,7 +30,8 @@ class ResourceCredentialRecord:
     resource_id: str
     credential_id: str
     owner_scope: str
-    secret_hash: str
+    secret_digest: str
+    encrypted_secret: str
     created_at: datetime
 
 
@@ -253,7 +254,8 @@ class SQLiteResourceStore:
                 resource_id TEXT PRIMARY KEY,
                 credential_id TEXT NOT NULL UNIQUE,
                 owner_scope TEXT NOT NULL,
-                secret_hash TEXT NOT NULL,
+                secret_digest TEXT NOT NULL,
+                encrypted_secret TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )"""
         )
@@ -424,13 +426,14 @@ class SQLiteResourceStore:
         with self._lock:
             try:
                 self._connection.execute(
-                    "INSERT INTO resource_credentials(resource_id, credential_id, owner_scope, secret_hash, created_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO resource_credentials(resource_id, credential_id, owner_scope, secret_digest, encrypted_secret, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         record.resource_id,
                         record.credential_id,
                         record.owner_scope,
-                        record.secret_hash,
+                        record.secret_digest,
+                        record.encrypted_secret,
                         record.created_at.astimezone(timezone.utc).isoformat(),
                     ),
                 )
@@ -443,7 +446,7 @@ class SQLiteResourceStore:
 
     def get_credential(self, resource_id: str) -> ResourceCredentialRecord:
         row = self._connection.execute(
-            "SELECT credential_id, owner_scope, secret_hash, created_at "
+            "SELECT credential_id, owner_scope, secret_digest, encrypted_secret, created_at "
             "FROM resource_credentials WHERE resource_id = ?",
             (resource_id,),
         ).fetchone()
@@ -453,8 +456,9 @@ class SQLiteResourceStore:
             resource_id=resource_id,
             credential_id=str(row[0]),
             owner_scope=str(row[1]),
-            secret_hash=str(row[2]),
-            created_at=datetime.fromisoformat(str(row[3])).astimezone(timezone.utc),
+            secret_digest=str(row[2]),
+            encrypted_secret=str(row[3]),
+            created_at=datetime.fromisoformat(str(row[4])).astimezone(timezone.utc),
         )
 
     def consume_nonce(
