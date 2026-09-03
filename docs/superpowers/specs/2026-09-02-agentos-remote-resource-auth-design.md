@@ -31,6 +31,7 @@
 - 未登记资源、凭据不存在、凭据不属于路径中的资源、签名不匹配、时间戳过期、nonce 重复分别返回明确的 401/404/409 错误。
 - 重复注册同一资源 ID 不覆盖原资源；需要轮换凭据时使用显式的凭据轮换接口，当前阶段不自动替换。
 - 远程资源必须有非 local 的 deployment tier、非 local 的 execution endpoint、非空 owner scope；本地资源不能使用远程签名观测接口。
+- 检测到旧版 `resource_credentials(secret_hash)` 表时拒绝启动；旧表不能恢复出原始 secret，必须由运维执行显式凭据迁移或重新登记，不能静默把旧摘要当作 HMAC 密钥。
 - 不以 IDW、默认资源或其他资源替代失败认证或不可用资源。
 
 ## Testing and acceptance

@@ -66,7 +66,7 @@
 **Files:**
 - No frontend files.
 
-- [ ] **Step 1: Run `agentOS\\.venv\\Scripts\\python.exe -m pytest -q` if available, otherwise use the confirmed `agent\\.venv\\Scripts\\python.exe` environment for AgentOS tests.
-- [ ] **Step 2: Run `agent\\.venv\\Scripts\\python.exe -m pytest -q` from the `agent` directory.
-- [ ] **Step 3: Run `git diff --check` and inspect `git diff --name-only master...HEAD` to confirm only backend and backend documentation changed.
-- [ ] **Step 4: Report exact test counts, warnings, commits, and any remaining deployment limitations without claiming real multi-device deployment has been validated.
+- [x] **Step 1: Run `agentOS\\.venv\\Scripts\\python.exe -m pytest -q` if available, otherwise use the confirmed `agent\\.venv\\Scripts\\python.exe` environment for AgentOS tests: `426 passed, 52 warnings`.
+- [x] **Step 2: Run `agent\\.venv\\Scripts\\python.exe -m pytest -q` from the `agent` directory: `165 passed, 11 warnings`.
+- [x] **Step 3: Run `git diff --check` and inspect `git diff --name-only master...HEAD`; no `frontend/` paths are included.
+- [x] **Step 4: Record exact test counts, warnings, commits, and remaining deployment limitations; real multi-device deployment remains unvalidated.
