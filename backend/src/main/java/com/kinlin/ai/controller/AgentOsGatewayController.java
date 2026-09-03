@@ -4,9 +4,9 @@ import com.kinlin.ai.dto.agentos.AgentOsReviewRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
+import com.kinlin.ai.gateway.AiSseGatewayService;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -23,15 +23,28 @@ import org.springframework.web.util.UriUtils;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.http.codec.ServerSentEvent;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 /** Authorized HTTP projection of the Python-owned AgentOS v2 runtime. */
 @RestController
 @RequestMapping("/api/agentos/v2")
-@RequiredArgsConstructor
 public class AgentOsGatewayController {
 
     private static final String UPSTREAM_ROOT = "/ai/agentos/v2";
     private final AgentOsGatewayService gateway;
+    private final AiSseGatewayService sseGateway;
+
+    public AgentOsGatewayController(AgentOsGatewayService gateway) {
+        this(gateway, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AgentOsGatewayController(AgentOsGatewayService gateway, AiSseGatewayService sseGateway) {
+        this.gateway = gateway;
+        this.sseGateway = sseGateway;
+    }
 
     @PostMapping("/missions")
     public ResponseEntity<Map<String, Object>> createMission(@Valid @RequestBody AgentOsMissionCreateRequest body) {
@@ -140,6 +153,14 @@ public class AgentOsGatewayController {
     @GetMapping("/runs/{runId}")
     public ResponseEntity<Map<String, Object>> getRun(@PathVariable String runId) {
         return response(gateway.get(runPath(runId)));
+    }
+
+    @GetMapping(value = "/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> streamRunEvents(@PathVariable String runId) {
+        if (sseGateway == null) {
+            return Mono.error(new IllegalStateException("RuntimeEvent SSE gateway is not configured"));
+        }
+        return sseGateway.openGet(runPath(runId) + "/events");
     }
 
     @GetMapping("/runs/{runId}/history-config")

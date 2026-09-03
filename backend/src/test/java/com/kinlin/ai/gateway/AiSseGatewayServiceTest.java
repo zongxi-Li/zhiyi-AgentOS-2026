@@ -45,6 +45,10 @@ class AiSseGatewayServiceTest {
                 "data: {\"delta\":\"hello\"}\n\n",
                 "data: [DONE]\n\n"
         ), 5));
+        server.createContext("/ai/runtime-events", exchange -> stream(exchange, List.of(
+                "event: model.output.delta\ndata: {\"delta\":\"A\"}\n\n",
+                "event: node.completed\ndata: {\"runId\":\"run-1\"}\n\n"
+        ), 300));
         server.createContext("/ai/idle", exchange -> stream(exchange, List.of(
                 "data: [DONE]\n\n"
         ), 180));
@@ -103,6 +107,18 @@ class AiSseGatewayServiceTest {
         assertEquals(422, rejected.getStatusCode().value());
         assertEquals(502, failure.getStatusCode().value());
         assertTrue(failure.getBody().blockFirst().data().contains("AI_STREAM_UPSTREAM_ERROR"));
+    }
+
+    @Test
+    void runtimeEventGetStreamsBeforeUpstreamCompletes() {
+        ResponseEntity<Flux<ServerSentEvent<String>>> response = service(1_000, 5_000)
+                .openGet("/ai/runtime-events").block(Duration.ofSeconds(1));
+
+        ServerSentEvent<String> first = response.getBody().blockFirst(Duration.ofSeconds(1));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("model.output.delta", first.event());
+        assertEquals("{\"delta\":\"A\"}", first.data());
     }
 
     private AiSseGatewayService service(long idleMs, long maximumMs) {

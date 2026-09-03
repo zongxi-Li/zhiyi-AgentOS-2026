@@ -28,7 +28,7 @@ from runtime.v2.workspace import (
     WorkspaceRunSummary,
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
-from runtime.live_events import runtime_event_broker
+from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
 
 
 logger = logging.getLogger(__name__)
@@ -1266,9 +1266,19 @@ def create_router(
         load_run(run_id)
 
         async def body():
-            async for event in runtime_event_broker.subscribe(run_id):
-                payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
-                yield f"event: {event.event_type}\ndata: {payload}\n\n"
+            try:
+                async for event in runtime_event_broker.subscribe(run_id):
+                    payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+                    yield f"event: {event.event_type}\ndata: {payload}\n\n"
+                    if event.event_type in {"run.completed", "run.failed", "run.cancelled"}:
+                        break
+            except RuntimeEventOverflow:
+                # A slow observer is disconnected explicitly; the workflow is
+                # never cancelled because an SSE consumer fell behind.
+                yield (
+                    "event: runtime.subscriber.overflow\n"
+                    "data: {\"errorCode\":\"RUNTIME_SSE_SLOW_SUBSCRIBER\"}\n\n"
+                )
         return StreamingResponse(
             body(),
             media_type="text/event-stream",
@@ -1459,6 +1469,7 @@ def create_router(
         load_run(run_id)
         try:
             run = runtime.cancel(run_id)
+            await coordinator.cancel(run_id)
         except InvalidStateTransition as exc:
             raise HTTPException(status_code=409, detail="run cannot be cancelled") from exc
         return project(run)
