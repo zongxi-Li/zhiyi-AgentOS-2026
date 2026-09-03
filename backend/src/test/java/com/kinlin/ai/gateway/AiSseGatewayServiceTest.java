@@ -47,8 +47,14 @@ class AiSseGatewayServiceTest {
         ), 5));
         server.createContext("/ai/runtime-events", exchange -> stream(exchange, List.of(
                 "event: model.output.delta\ndata: {\"delta\":\"A\"}\n\n",
+                "event: model.output.delta\ndata: {\"delta\":\"B\"}\n\n",
                 "event: node.completed\ndata: {\"runId\":\"run-1\"}\n\n"
         ), 300));
+        server.createContext("/ai/runtime-events-timeline", exchange -> streamWithDelays(exchange, List.of(
+                "event: model.output.delta\ndata: {\"delta\":\"A\"}\n\n",
+                "event: model.output.delta\ndata: {\"delta\":\"B\"}\n\n",
+                "event: node.completed\ndata: {\"runId\":\"run-1\"}\n\n"
+        ), List.of(0L, 300L, 800L)));
         server.createContext("/ai/idle", exchange -> stream(exchange, List.of(
                 "data: [DONE]\n\n"
         ), 180));
@@ -112,13 +118,21 @@ class AiSseGatewayServiceTest {
     @Test
     void runtimeEventGetStreamsBeforeUpstreamCompletes() {
         ResponseEntity<Flux<ServerSentEvent<String>>> response = service(1_000, 5_000)
-                .openGet("/ai/runtime-events").block(Duration.ofSeconds(1));
+                .openGet("/ai/runtime-events-timeline").block(Duration.ofSeconds(1));
 
-        ServerSentEvent<String> first = response.getBody().blockFirst(Duration.ofSeconds(1));
+        long started = System.nanoTime();
+        List<ServerSentEvent<String>> firstTwo = response.getBody()
+                .take(2)
+                .collectList()
+                .block(Duration.ofSeconds(2));
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("model.output.delta", first.event());
-        assertEquals("{\"delta\":\"A\"}", first.data());
+        assertEquals(2, firstTwo.size());
+        assertEquals("model.output.delta", firstTwo.get(0).event());
+        assertEquals("{\"delta\":\"A\"}", firstTwo.get(0).data());
+        assertEquals("{\"delta\":\"B\"}", firstTwo.get(1).data());
+        assertTrue(elapsedMs < 700, "gateway buffered A/B until upstream completion: " + elapsedMs + "ms");
     }
 
     private AiSseGatewayService service(long idleMs, long maximumMs) {
@@ -138,6 +152,26 @@ class AiSseGatewayServiceTest {
                     break;
                 }
                 exchange.getResponseBody().write(event.getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+            }
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void streamWithDelays(HttpExchange exchange, List<String> events, List<Long> delaysMs) throws IOException {
+        exchange.getRequestBody().readAllBytes();
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, 0);
+        try {
+            for (int index = 0; index < events.size(); index++) {
+                try {
+                    Thread.sleep(delaysMs.get(index));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                exchange.getResponseBody().write(events.get(index).getBytes(StandardCharsets.UTF_8));
                 exchange.getResponseBody().flush();
             }
         } finally {
