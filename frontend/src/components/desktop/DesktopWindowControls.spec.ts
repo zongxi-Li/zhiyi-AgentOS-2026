@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const windowMocks = vi.hoisted(() => ({
+  getCurrentWindow: vi.fn(),
   isMaximized: vi.fn(),
   onResized: vi.fn(),
   minimize: vi.fn(),
@@ -10,7 +11,7 @@ const windowMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => windowMocks
+  getCurrentWindow: windowMocks.getCurrentWindow
 }))
 
 import DesktopWindowControls from './DesktopWindowControls.vue'
@@ -18,6 +19,7 @@ import DesktopWindowControls from './DesktopWindowControls.vue'
 type ResizeListener = (payload: unknown) => void
 
 const mountControls = async (initialMaximized = false) => {
+  windowMocks.getCurrentWindow.mockReturnValue(windowMocks)
   windowMocks.isMaximized.mockResolvedValue(initialMaximized)
   let resizeListener: ResizeListener | null = null
   windowMocks.onResized.mockImplementation((listener: ResizeListener) => {
@@ -43,6 +45,18 @@ beforeEach(() => {
 })
 
 describe('DesktopWindowControls', () => {
+  it('does not break the page when the Tauri bridge is unavailable', async () => {
+    windowMocks.getCurrentWindow.mockImplementationOnce(() => {
+      throw new Error('Tauri bridge unavailable')
+    })
+
+    const wrapper = mount(DesktopWindowControls)
+    await flushPromises()
+
+    expect(wrapper.find('.desktop-window-controls').exists()).toBe(false)
+    expect(windowMocks.onResized).not.toHaveBeenCalled()
+  })
+
   it('renders the three window buttons with neutral icons', () => {
     return mountControls().then(({ wrapper }) => {
       expect(wrapper.findAll('.dwc-button')).toHaveLength(3)

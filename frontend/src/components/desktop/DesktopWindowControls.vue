@@ -1,5 +1,5 @@
 <template>
-  <div class="desktop-window-controls">
+  <div v-if="runtimeAvailable" class="desktop-window-controls">
     <button type="button" class="dwc-button" aria-label="最小化" title="最小化" @click="minimize">
       <svg class="dwc-icon" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true">
         <path d="M2 7h10" />
@@ -30,16 +30,19 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrentWindow, type Window as TauriWindow } from '@tauri-apps/api/window'
 
 // 只负责窗口本体：最小化 / 最大化 / 还原 / 关闭 / 真实窗口状态同步。
 // 不感知 Mission、Run、ACG、Chat、API、Auth 等任何业务概念。
 const maximized = ref(false)
-const appWindow = getCurrentWindow()
+const runtimeAvailable = ref(false)
+let appWindow: TauriWindow | null = null
 let unlistenResized: (() => void) | null = null
+let disposed = false
 
 // 图标跟随真实窗口状态（Win+↑、Snap、边缘拖动、系统还原都会触发 resize 事件）。
 const syncMaximizedState = async (): Promise<void> => {
+  if (!appWindow) return
   try {
     maximized.value = await appWindow.isMaximized()
   } catch {
@@ -48,28 +51,49 @@ const syncMaximizedState = async (): Promise<void> => {
 }
 
 onMounted(() => {
+  // The desktop adapter is selected at build time, but the Tauri bridge is a
+  // runtime capability. Resolve it after mount so a missing/unavailable bridge
+  // cannot abort the login route during setup.
+  try {
+    appWindow = getCurrentWindow()
+  } catch {
+    appWindow = null
+    runtimeAvailable.value = false
+    return
+  }
+
+  runtimeAvailable.value = true
   void syncMaximizedState()
   void appWindow.onResized(() => {
     void syncMaximizedState()
   }).then((unlisten) => {
+    if (disposed) {
+      unlisten()
+      return
+    }
     unlistenResized = unlisten
+  }).catch(() => {
+    // A closing/unavailable native window must not break the login surface.
   })
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   unlistenResized?.()
+  unlistenResized = null
+  appWindow = null
 })
 
 const minimize = (): void => {
-  void appWindow.minimize()
+  void appWindow?.minimize()
 }
 
 const toggleMaximize = (): void => {
-  void appWindow.toggleMaximize()
+  void appWindow?.toggleMaximize()
 }
 
 const closeWindow = (): void => {
-  void appWindow.close()
+  void appWindow?.close()
 }
 </script>
 
