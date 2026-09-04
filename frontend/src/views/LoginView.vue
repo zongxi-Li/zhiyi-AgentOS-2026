@@ -1,6 +1,6 @@
 <template>
-  <main class="auth-view" :class="{ 'is-desktop-shell': desktopShell, 'is-register': activeTab === 'register' }">
-    <header class="auth-topbar" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
+    <main class="auth-view" :class="{ 'is-desktop-shell': desktopShell, 'is-register': activeTab === 'register', 'is-embedded': props.embedded }">
+    <header v-if="!props.embedded" class="auth-topbar" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
       <a class="auth-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="handleBrandClick">
         <span class="auth-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
         <span class="auth-brand__wordmark">
@@ -13,7 +13,7 @@
     </header>
 
     <div class="auth-layout">
-      <section class="auth-intro" aria-labelledby="auth-title">
+      <section v-if="!props.embedded" class="auth-intro" aria-labelledby="auth-title">
         <p class="auth-eyebrow">DYNAMIC HETEROGENEOUS AGENT SWARM</p>
         <h1 id="auth-title">让复杂工作<br /><span>在协作中涌现答案</span></h1>
         <p class="auth-intro__lead">连接知识、模型与智能体，让每一个专业任务从规划到交付持续推进。</p>
@@ -26,21 +26,24 @@
       </section>
 
       <section class="auth-card" data-testid="auth-card" aria-labelledby="auth-card-title">
+        <button v-if="props.embedded" class="auth-card__close" data-testid="auth-dialog-close" type="button" aria-label="返回首页" @click="emit('back')">×</button>
         <div class="auth-card__mark" aria-hidden="true"><img src="/logo.png" alt="" /></div>
         <div class="auth-card__heading">
-          <h2 id="auth-card-title">欢迎回来</h2>
-          <p>{{ activeTab === 'login' ? '登录知弈 AgentOS，开启智能之旅' : '创建你的知弈 AgentOS 工作空间' }}</p>
+          <p class="auth-card__eyebrow"><span aria-hidden="true"></span>{{ activeTab === 'login' ? 'WORKSPACE ACCESS' : 'NEW WORKSPACE' }}</p>
+          <h2 id="auth-card-title">{{ activeTab === 'login' ? '登录知弈 AgentOS' : '创建知弈 AgentOS 账号' }}</h2>
+          <p>{{ activeTab === 'login' ? '继续进入你的智能协作工作空间' : '连接模型、知识与智能体，开始构建你的工作流' }}</p>
         </div>
 
-        <el-tabs v-model="activeTab" class="auth-tabs" stretch>
+        <el-tabs v-model="activeTab" class="auth-tabs" stretch @tab-change="authError = ''">
           <el-tab-pane label="登录" name="login">
             <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-position="top" class="auth-form">
-              <el-form-item label="用户名 / 邮箱 / 手机号" prop="username">
-                <el-input v-model="loginForm.username" :prefix-icon="User" placeholder="请输入用户名、邮箱或手机号" autocomplete="username" />
+              <el-form-item label="登录账号" prop="username">
+                <el-input v-model="loginForm.username" :prefix-icon="User" placeholder="用户名、邮箱或手机号" autocomplete="username" />
               </el-form-item>
-              <el-form-item label="密码" prop="password">
-                <el-input v-model="loginForm.password" type="password" :prefix-icon="Lock" placeholder="请输入密码" autocomplete="current-password" show-password @keyup.enter="handleLogin" />
+              <el-form-item label="登录密码" prop="password">
+                <el-input v-model="loginForm.password" type="password" :prefix-icon="Lock" placeholder="输入你的登录密码" autocomplete="current-password" show-password @keyup.enter="handleLogin" />
               </el-form-item>
+              <p v-if="authError" class="auth-form__error" role="alert">{{ authError }}</p>
               <div class="auth-form__options">
                 <el-checkbox v-model="loginForm.remember">记住我</el-checkbox>
                 <button class="text-action" type="button" @click="showUnavailable('忘记密码')">忘记密码？</button>
@@ -54,32 +57,33 @@
               <el-form-item label="用户名" prop="username">
                 <el-input v-model="registerForm.username" :prefix-icon="User" placeholder="设置用户名" autocomplete="username" />
               </el-form-item>
-              <el-form-item label="邮箱" prop="email">
-                <el-input v-model="registerForm.email" :prefix-icon="Message" placeholder="请输入邮箱" autocomplete="email" />
+              <el-form-item label="邮箱地址" prop="email">
+                <el-input v-model="registerForm.email" :prefix-icon="Message" placeholder="用于接收账号通知" autocomplete="email" />
               </el-form-item>
-              <el-form-item label="密码" prop="password">
-                <el-input v-model="registerForm.password" type="password" :prefix-icon="Lock" placeholder="设置登录密码" autocomplete="new-password" show-password />
+              <el-form-item label="设置密码" prop="password">
+                <el-input v-model="registerForm.password" type="password" :prefix-icon="Lock" placeholder="至少 6 位字符" autocomplete="new-password" show-password />
               </el-form-item>
               <el-form-item label="确认密码" prop="confirmPassword">
-                <el-input v-model="registerForm.confirmPassword" type="password" :prefix-icon="Lock" placeholder="再次输入密码" autocomplete="new-password" show-password @keyup.enter="handleRegister" />
+                <el-input v-model="registerForm.confirmPassword" type="password" :prefix-icon="Lock" placeholder="再次输入你的密码" autocomplete="new-password" show-password @keyup.enter="handleRegister" />
               </el-form-item>
+              <p v-if="authError" class="auth-form__error" role="alert">{{ authError }}</p>
               <el-button type="primary" class="auth-submit" data-testid="auth-submit" :loading="loading" @click="handleRegister">立即注册</el-button>
             </el-form>
           </el-tab-pane>
         </el-tabs>
 
-        <div class="auth-divider"><span>或使用以下方式登录</span></div>
-        <div class="auth-providers" aria-label="第三方登录">
+        <div v-if="!props.embedded" class="auth-divider"><span>或使用以下方式登录</span></div>
+        <div v-if="!props.embedded" class="auth-providers" aria-label="第三方登录">
           <button type="button" aria-label="微信登录" @click="showUnavailable('微信登录')"><el-icon><ChatDotRound /></el-icon></button>
           <button type="button" aria-label="GitHub 登录" @click="showUnavailable('GitHub 登录')"><el-icon><Connection /></el-icon></button>
           <button type="button" aria-label="企业账号登录" @click="showUnavailable('企业账号登录')"><el-icon><OfficeBuilding /></el-icon></button>
         </div>
-        <p class="auth-switch">还没有账户？ <button type="button" @click="activeTab = 'register'">立即注册</button></p>
-        <p class="auth-legal">登录即表示你同意遵守平台使用规范与隐私政策。</p>
+        <p v-if="!props.embedded" class="auth-switch">还没有账户？ <button type="button" @click="activeTab = 'register'">立即注册</button></p>
+        <p v-if="!props.embedded" class="auth-legal">登录即表示你同意遵守平台使用规范与隐私政策。</p>
       </section>
     </div>
 
-    <footer class="auth-footer"><span>© 2025 知弈 AgentOS</span><span>智能协作 · 共创未来</span></footer>
+    <footer v-if="!props.embedded" class="auth-footer"><span>© 2025 知弈 AgentOS</span><span>智能协作 · 共创未来</span></footer>
   </main>
 </template>
 
@@ -116,6 +120,7 @@ const activeTab = ref('login')
 const loading = ref(false)
 const loginFormRef = ref<FormInstance>()
 const registerFormRef = ref<FormInstance>()
+const authError = ref('')
 const loginForm = reactive({ username: '', password: '', remember: false })
 const registerForm = reactive({ username: '', email: '', password: '', confirmPassword: '' })
 
@@ -156,6 +161,7 @@ const showUnavailable = (feature: string) => ElMessage.info(`${feature}功能即
 
 const handleLogin = async () => {
   if (!loginFormRef.value) return
+  authError.value = ''
   await loginFormRef.value.validate(async (valid) => {
     if (!valid) return
     loading.value = true
@@ -175,7 +181,11 @@ const handleLogin = async () => {
         ElMessage.error(response.message || '登录失败')
       }
     } catch (error: any) {
-      ElMessage.error(error.response?.data?.message || error.message || '登录失败')
+      const message = error.response?.status === 401
+        ? '账号或密码不正确，请检查后重试'
+        : error.response?.data?.message || error.message || '登录失败'
+      authError.value = message
+      if (error.response?.status !== 401) ElMessage.error(message)
     } finally {
       loading.value = false
     }
@@ -184,6 +194,7 @@ const handleLogin = async () => {
 
 const handleRegister = async () => {
   if (!registerFormRef.value) return
+  authError.value = ''
   await registerFormRef.value.validate(async (valid) => {
     if (!valid) return
     loading.value = true
@@ -197,7 +208,9 @@ const handleRegister = async () => {
         ElMessage.error(response.message || '注册失败')
       }
     } catch (error: any) {
-      ElMessage.error(error.response?.data?.message || error.message || '注册失败')
+      const message = error.response?.data?.message || error.message || '注册失败'
+      authError.value = message
+      ElMessage.error(message)
     } finally {
       loading.value = false
     }
@@ -258,6 +271,7 @@ const handleRegister = async () => {
 .auth-form :deep(.el-input__inner::placeholder) { color: #7e98bb !important; }
 .auth-form :deep(.el-input__prefix), .auth-form :deep(.el-input__suffix) { color: #557cae !important; }
 .auth-form__options { min-height: 34px; display: flex; align-items: center; justify-content: space-between; }
+.auth-form__error { margin: -2px 0 8px; color: #ff9da9; font-size: 12px; line-height: 1.5; }
 .auth-form__options :deep(.el-checkbox__label) { color: #6884ac; font-size: 12px; }
 .auth-form__options :deep(.el-checkbox__inner) { border-color: rgba(105,145,194,.52); background: rgba(255,255,255,.7); }
 .auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) { border-color: var(--auth-blue); background: var(--auth-blue); }
@@ -450,5 +464,117 @@ const handleRegister = async () => {
   --app-topbar-hover: color-mix(in srgb, var(--auth-accent) 12%, transparent);
   --app-topbar-active: color-mix(in srgb, var(--auth-accent) 20%, transparent);
   --app-topbar-focus-ring: color-mix(in srgb, var(--auth-accent) 55%, transparent);
+}
+
+/* Embedded auth is a single replacement dialog for the landing agent slot.
+   The standalone page keeps its full introduction and window chrome. */
+.auth-view.is-embedded {
+  min-height: 100%;
+  overflow: visible;
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+.auth-view.is-embedded::before { display: none; }
+.auth-view.is-embedded .auth-layout {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  display: block;
+}
+.auth-view.is-embedded .auth-card {
+  position: relative;
+  left: 0;
+  transform: none;
+  width: min(100%, 478px);
+  margin: 0 0 0 auto;
+  padding: 31px 35px 32px;
+  overflow: hidden;
+  border-color: rgba(142, 139, 255, .34);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(124, 108, 255, .22), transparent 38%),
+    radial-gradient(circle at 0% 100%, rgba(44, 191, 238, .12), transparent 42%),
+    linear-gradient(142deg, rgba(18, 31, 67, .97), rgba(7, 15, 35, .98) 58%, rgba(21, 14, 50, .97));
+  box-shadow: 0 30px 76px rgba(3, 7, 23, .43), inset 0 1px 0 rgba(235, 242, 255, .2), inset 0 -1px 0 rgba(86, 111, 204, .15), 0 0 0 1px rgba(83, 185, 255, .07);
+}
+.auth-view.is-embedded .auth-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 12%;
+  left: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(196, 225, 255, .82), rgba(151, 137, 255, .72), transparent);
+  pointer-events: none;
+}
+.auth-view.is-embedded .auth-card::after {
+  content: '';
+  position: absolute;
+  right: -18%;
+  bottom: -44%;
+  width: 58%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(90, 74, 255, .13);
+  filter: blur(34px);
+  pointer-events: none;
+}
+.auth-view.is-embedded .auth-card > *:not(.auth-card__close) { position: relative; z-index: 1; }
+.auth-card__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: #8db9dd;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .18em;
+}
+.auth-card__eyebrow span {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #65d3f6;
+  box-shadow: 0 0 0 4px rgba(101, 211, 246, .1), 0 0 14px rgba(101, 211, 246, .75);
+}
+.auth-card__close {
+  position: absolute;
+  top: 15px;
+  right: 17px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(140, 205, 243, .22);
+  border-radius: 50%;
+  color: #a9c9e6;
+  background: rgba(5, 19, 36, .58);
+  font-size: 21px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+.auth-card__close:hover { border-color: var(--auth-accent); color: #f1f8ff; background: rgba(25, 81, 124, .66); transform: rotate(90deg); }
+.auth-view.is-embedded .auth-card__mark { width: 40px; height: 40px; margin-bottom: 17px; }
+.auth-view.is-embedded .auth-card__mark img { width: 27px; height: 27px; }
+.auth-view.is-embedded .auth-card__heading h2 { font-size: 29px; letter-spacing: -.045em; }
+.auth-view.is-embedded .auth-card__heading > p:not(.auth-card__eyebrow) { max-width: 330px; margin: 8px 0 22px; color: #9fb5d1; font-size: 12px; line-height: 1.65; }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__header) { margin-bottom: 18px; }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__item) { min-height: 38px; }
+.auth-view.is-embedded .auth-form :deep(.el-form-item) { margin-bottom: 14px; }
+.auth-view.is-embedded .auth-form :deep(.el-form-item__label) { color: #a9c1d9; }
+.auth-view.is-embedded .auth-form :deep(.el-input__wrapper) { min-height: 45px; border-radius: 13px; border-color: rgba(146, 176, 225, .3) !important; background: rgba(5, 13, 31, .68) !important; }
+.auth-view.is-embedded .auth-form :deep(.el-input__wrapper:hover) { background: rgba(10, 23, 49, .86) !important; }
+.auth-view.is-embedded .auth-form :deep(.el-input__wrapper.is-focus) { background: rgba(11, 25, 53, .94) !important; box-shadow: 0 0 0 3px rgba(111, 134, 255, .18), 0 0 24px rgba(69, 179, 241, .08) !important; }
+.auth-view.is-embedded .auth-form__options { min-height: 30px; }
+.auth-view.is-embedded .auth-submit { min-height: 47px; margin-top: 7px; background: linear-gradient(105deg, #4d9df2 0%, #716eff 58%, #9b6df6 100%); box-shadow: 0 14px 30px rgba(80, 101, 235, .3), inset 0 1px 0 rgba(255, 255, 255, .42); }
+.auth-view.is-embedded .auth-submit:hover { box-shadow: 0 18px 36px rgba(80, 101, 235, .42), inset 0 1px 0 rgba(255, 255, 255, .5); }
+.auth-view.is-embedded .auth-card__close:focus-visible { outline: 3px solid color-mix(in srgb, var(--auth-accent) 48%, transparent); outline-offset: 3px; }
+@media (max-width: 940px) {
+  .auth-view.is-embedded .auth-card { margin: 0 auto; }
 }
 </style>

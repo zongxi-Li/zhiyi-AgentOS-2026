@@ -1,7 +1,6 @@
 <template>
   <main ref="landingRoot" class="landing-view" :class="{ 'is-desktop-shell': desktopShell }" aria-label="知弈 AgentOS 公开首页" @wheel="handleWheel">
-    <Transition name="landing-surface">
-      <div v-if="!showAuth" key="landing" class="landing-surface">
+      <div class="landing-surface">
         <div class="landing-atmosphere" aria-hidden="true"></div>
 
     <header class="landing-header" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
@@ -38,7 +37,12 @@
               <el-icon aria-hidden="true"><ArrowRight /></el-icon>
             </button>
           </div>
-          <GlassConstellation />
+          <div class="landing-agent-slot" :class="{ 'is-auth': showAuth }" data-testid="landing-agent-slot">
+            <Transition name="agent-swap" mode="out-in">
+              <GlassConstellation v-if="!showAuth" key="agent" />
+              <LoginView v-else key="auth" embedded @back="closeAuth" />
+            </Transition>
+          </div>
         </div>
       </section>
 
@@ -111,10 +115,6 @@
           <span class="landing-footer__caption">SCROLL TO EXPLORE</span>
         </footer>
       </div>
-      <div v-else key="auth" class="landing-auth-surface">
-        <LoginView embedded @back="closeAuth" />
-      </div>
-    </Transition>
   </main>
 </template>
 
@@ -162,6 +162,7 @@ const setPage = (index: number) => {
 }
 
 const goToSection = (id: string) => {
+  if (showAuth.value) return
   const index = navigation.findIndex(item => item.id === id)
   if (index >= 0) setPage(index)
 }
@@ -182,6 +183,7 @@ const handleWheel = (event: WheelEvent) => {
 }
 
 const handleKeydown = (event: KeyboardEvent) => {
+  if (showAuth.value) return
   const direction = event.key === 'ArrowDown' || event.key === 'PageDown' ? 1 : event.key === 'ArrowUp' || event.key === 'PageUp' ? -1 : 0
   if (!direction) return
   event.preventDefault()
@@ -196,7 +198,10 @@ onUnmounted(() => {
 })
 
 const goHome = () => router.push('/')
-const goToLogin = () => { showAuth.value = true }
+const goToLogin = () => {
+  activeIndex.value = 0
+  showAuth.value = true
+}
 const closeAuth = () => { showAuth.value = false }
 </script>
 
@@ -218,12 +223,11 @@ const closeAuth = () => { showAuth.value = false }
   isolation: isolate;
 }
 
-.landing-surface, .landing-auth-surface { position: absolute; inset: 0; width: 100%; height: 100%; }
+.landing-surface { position: absolute; inset: 0; width: 100%; height: 100%; }
 .landing-surface { overflow: hidden; }
-.landing-auth-surface { z-index: 12; overflow: auto; background: #dcecff; }
-.landing-surface-enter-active, .landing-surface-leave-active { transition: opacity 460ms cubic-bezier(.22, .78, .24, 1), transform 460ms cubic-bezier(.22, .78, .24, 1), filter 460ms ease; }
-.landing-surface-enter-from { opacity: 0; transform: scale(1.018); filter: blur(7px); }
-.landing-surface-leave-to { opacity: 0; transform: scale(.982); filter: blur(5px); }
+.agent-swap-enter-active, .agent-swap-leave-active { transition: opacity 420ms cubic-bezier(.22, .78, .24, 1), transform 420ms cubic-bezier(.22, .78, .24, 1), filter 420ms ease; }
+.agent-swap-enter-from { opacity: 0; transform: translate3d(22px, 0, 0) scale(.94); filter: blur(8px); }
+.agent-swap-leave-to { opacity: 0; transform: translate3d(-22px, 0, 0) scale(1.04); filter: blur(8px); }
 
 .landing-view::before,
 .landing-view::after,
@@ -250,6 +254,11 @@ const closeAuth = () => { showAuth.value = false }
 .landing-page { position: relative; width: 100%; height: 25%; min-height: 100vh; min-height: 100dvh; box-sizing: border-box; overflow: hidden; }
 .landing-page__inner { width: min(1180px, calc(100% - 96px)); height: 100%; margin: 0 auto; display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; }
 .landing-page__inner--hero { flex-direction: row; align-items: center; justify-content: space-between; gap: 48px; padding-top: 50px; }
+.landing-agent-slot { position: relative; width: min(46vw, 680px); height: min(50vw, 720px); min-width: 420px; min-height: 470px; margin-left: auto; transform: translateX(clamp(0px, 1.8vw, 28px)); display: grid; place-items: center; }
+.landing-agent-slot.is-auth { place-items: center end; transform: translateX(clamp(0px, 2.5vw, 38px)); }
+.landing-agent-slot > .agent-swap-enter-active, .landing-agent-slot > .agent-swap-leave-active { width: 100%; height: 100%; }
+.landing-agent-slot :deep(.agent-constellation) { width: 100%; height: 100%; min-width: 0; min-height: 0; margin-left: 0; transform: none; }
+.landing-agent-slot :deep(.auth-view.is-embedded) { width: 100%; height: 100%; }
 .landing-page__content { animation: landing-content-in 900ms cubic-bezier(.2, .8, .2, 1) both; animation-play-state: paused; }
 .landing-page.is-active .landing-page__content { animation-play-state: running; }
 .landing-hero__copy { width: min(570px, 48vw); margin-top: -3vh; }

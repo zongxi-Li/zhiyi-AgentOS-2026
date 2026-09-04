@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LandingView from './LandingView.vue'
 
@@ -31,7 +32,7 @@ describe('LandingView', () => {
     await router.isReady()
     return { router, wrapper: mount(LandingView, {
       global: {
-        plugins: [router],
+        plugins: [router, createPinia()],
         stubs: {
           'el-icon': { template: '<span><slot /></span>' },
           LoginView: { template: '<div data-testid="embedded-auth">登录注册窗口</div>' }
@@ -40,18 +41,20 @@ describe('LandingView', () => {
     }) }
   }
 
-  it('replaces the landing surface with auth from the primary CTA without routing away', async () => {
+  it('replaces only the agent slot with auth from the primary CTA without routing away', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.get('[data-testid="landing-cta"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="landing-page-home"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="landing-agent-slot"]').classes()).toContain('is-auth')
+    expect(wrapper.find('[data-testid="landing-page-home"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(false)
     expect(router.currentRoute.value.path).toBe('/')
   })
 
-  it('replaces the landing surface with auth from the final enter CTA', async () => {
+  it('replaces only the agent slot with auth from the final enter CTA', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.get('.landing-nav a[href="#about"]').trigger('click')
@@ -59,6 +62,9 @@ describe('LandingView', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="landing-agent-slot"]').classes()).toContain('is-auth')
+    expect(wrapper.find('[data-testid="landing-page-home"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(false)
     expect(router.currentRoute.value.path).toBe('/')
   })
 
