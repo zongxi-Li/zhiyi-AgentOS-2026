@@ -36,7 +36,7 @@ target "_release" {
 
 target "frontend" {
   inherits   = ["_common"]
-  context    = "./frontend"
+  context    = "./apps/frontend"
   dockerfile = "Dockerfile"
   tags = [
     "${IMAGE_PREFIX}/frontend:${VERSION}",
@@ -46,7 +46,7 @@ target "frontend" {
 
 target "backend" {
   inherits   = ["_common"]
-  context    = "./backend"
+  context    = "./apps/backend"
   dockerfile = "Dockerfile"
   tags = [
     "${IMAGE_PREFIX}/backend:${VERSION}",
@@ -57,7 +57,7 @@ target "backend" {
 target "ai-service" {
   inherits   = ["_common"]
   context    = "."
-  dockerfile = "agent/Dockerfile"
+  dockerfile = "apps/agent/Dockerfile"
   tags = [
     "${IMAGE_PREFIX}/ai-service:${VERSION}",
     "${IMAGE_PREFIX}/ai-service:sha-${GIT_SHA}"
@@ -66,7 +66,7 @@ target "ai-service" {
 
 target "postgres" {
   inherits   = ["_common"]
-  context    = "./docker/postgres"
+  context    = "./ops/docker/postgres"
   dockerfile = "Dockerfile"
   tags = [
     "${IMAGE_PREFIX}/postgres:${VERSION}",
@@ -76,7 +76,7 @@ target "postgres" {
 
 target "redis" {
   inherits   = ["_common"]
-  context    = "./docker/redis"
+  context    = "./ops/docker/redis"
   dockerfile = "Dockerfile"
   tags = [
     "${IMAGE_PREFIX}/redis:${VERSION}",
@@ -86,7 +86,7 @@ target "redis" {
 
 target "flyway" {
   inherits   = ["_common"]
-  context    = "./docker/flyway"
+  context    = "./ops/docker/flyway"
   dockerfile = "Dockerfile"
   tags = [
     "${IMAGE_PREFIX}/flyway:${VERSION}",

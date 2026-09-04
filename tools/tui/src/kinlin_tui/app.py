@@ -147,7 +147,7 @@ def _repo_root() -> Path | None:
     """Locate the repository root that contains the Python AI service."""
     candidates = [Path.cwd(), *Path(__file__).resolve().parents]
     for candidate in candidates:
-        if (candidate / "agent" / "app" / "main.py").exists():
+        if (candidate / "apps" / "agent" / "app" / "main.py").exists():
             return candidate
     return None
 

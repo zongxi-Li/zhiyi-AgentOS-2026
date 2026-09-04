@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "agentOS" / "src"))
-sys.path.insert(0, str(ROOT / "agentOS"))
+sys.path.insert(0, str(ROOT / "apps" / "agentOS" / "src"))
+sys.path.insert(0, str(ROOT / "apps" / "agentOS"))
 
 from adapters.resource_execution import ResourceExecutionError, build_resource_execution_adapter
 from components.resource.auth import (

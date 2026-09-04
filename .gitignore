@@ -6,28 +6,25 @@
 *.swo
 
 # 后端
-backend/target/
-backend/.mvn/
-backend/mvnw
-backend/mvnw.cmd
+apps/backend/target/
+apps/backend/.mvn/
+apps/backend/mvnw
+apps/backend/mvnw.cmd
 
 # 前端
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-frontend/.cache/
+apps/frontend/node_modules/
+apps/frontend/dist/
+apps/frontend/.vite/
+apps/frontend/.cache/
 
 # AI服务
-ai-service/__pycache__/
-ai-service/*.pyc
-ai-service/.venv/
-ai-service/venv/
-ai-service/env/
-agent/.venv/
-agent/venv/
-agent/env/
-agent/.pytest_cache/
-agent/.mypy_cache/
+apps/agent/__pycache__/
+apps/agent/*.pyc
+apps/agent/.venv/
+apps/agent/venv/
+apps/agent/env/
+apps/agent/.pytest_cache/
+apps/agent/.mypy_cache/
 
 # 日志
 *.log
@@ -41,7 +38,7 @@ logs/
 .env.*.local
 .env.windows
 .env.windows.*
-!.env.windows.example
+!.config/env/*.example
 
 # Local-only bootstrap/deployment files
 !.env.example
@@ -62,9 +59,9 @@ __pycache__/
 .pytest_cache/
 **/__pycache__/
 **/.pytest_cache/
-agent/**/__pycache__/
-agent/**/*.pyc
-agent/data/rag/chroma_db/
+apps/agent/**/__pycache__/
+apps/agent/**/*.pyc
+apps/agent/data/rag/chroma_db/
 
 # Build/Dependency caches
 **/node_modules/
@@ -82,8 +79,8 @@ desktop/src-tauri/gen/
 output/settings-preview-dist/
 
 # Local generated vector index artifacts
-agent/app/data/legal_chroma/*/
-!agent/app/data/legal_chroma/chroma.sqlite3
+apps/agent/app/data/legal_chroma/*/
+!apps/agent/app/data/legal_chroma/chroma.sqlite3
 
 # Temporary images
 tmp_*.png
@@ -162,4 +159,4 @@ build_agentos_innovation_doc.py
 output/playwright/
 
 # 额外的资源
-agentOS/references
+apps/agentOS/references

@@ -188,22 +188,22 @@ Programmer、Education、Writer、General/Native 已按同一 WKN Pack 边界注
 Docker Desktop 使用 Linux containers。敏感配置必须保存在本地 `.secrets/`，不得提交到 Git。
 
 ```powershell
-Copy-Item .env.windows.example .env.windows
-py -3 -m scripts.infra.init_secrets .secrets/kinlin-win-dev-001
+Copy-Item .config/env/windows.example .env.windows
+py -3 -m ops.scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 
 # 至少在 Secret 目录配置一个真实模型 Key 后再发起模型调用
-.\scripts\infra\windows\up.ps1 -Build
+.\ops\scripts\infra\windows\up.ps1 -Build
 ```
 
 默认入口：<http://127.0.0.1:8080>
 
 ```powershell
-.\scripts\infra\windows\status.ps1
-.\scripts\infra\windows\logs.ps1
-.\scripts\infra\windows\up.ps1 -DebugPorts
-.\scripts\infra\windows\restart-service.ps1 -Service backend
-.\scripts\infra\windows\preflight.ps1 -Full
-.\scripts\infra\windows\down.ps1
+.\ops\scripts\infra\windows\status.ps1
+.\ops\scripts\infra\windows\logs.ps1
+.\ops\scripts\infra\windows\up.ps1 -DebugPorts
+.\ops\scripts\infra\windows\restart-service.ps1 -Service backend
+.\ops\scripts\infra\windows\preflight.ps1 -Full
+.\ops\scripts\infra\windows\down.ps1
 ```
 
 > `remove-data-volumes.ps1` 会删除持久化数据，不属于日常停止流程。除非已完成备份且明确需要重置环境，否则不要运行。
@@ -211,8 +211,8 @@ py -3 -m scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 ### 前端热更新
 
 ```powershell
-.\scripts\infra\windows\up.ps1 -DebugPorts
-Set-Location frontend
+.\ops\scripts\infra\windows\up.ps1 -DebugPorts
+Set-Location apps/frontend
 npm ci
 $env:DEV_BACKEND_PROXY_TARGET = "http://127.0.0.1:18080"
 npm run dev
@@ -224,7 +224,7 @@ npm run dev
 
 ```bash
 cp .env.example .env
-python3 -m scripts.infra.init_secrets .secrets/kinlin-dev-local
+python3 -m ops.scripts.infra.init_secrets .secrets/kinlin-dev-local
 export KINLIN_DEPLOYMENT_ID=kinlin-dev-local
 export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
 ./dev.sh up
@@ -251,14 +251,14 @@ export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
 运行 Python 回归：
 
 ```powershell
-Set-Location agentOS
+Set-Location apps/agentOS
 py -3.14 -m pytest tests -q
 
 Set-Location ..\agent
 py -3.14 -m pytest tests -q
 ```
 
-完整三线收束证据见 [正式集成报告](agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md)。
+完整三线收束证据见 [正式集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md)。
 
 ---
 
@@ -266,24 +266,20 @@ py -3.14 -m pytest tests -q
 
 ```text
 知弈 AgentOS
-├── frontend/                    # Milan Vue 3 产品外壳与 AgentOS 工作台
-├── backend/                     # Spring Security 与 AgentOS v2 公共网关
-├── agent/
-│   ├── app/api/                 # FastAPI AgentOS v2 边界
-│   ├── app/execution/           # 唯一 Application composition root
-│   └── packs/                   # 领域 Agent Packs
-├── agentOS/
-│   ├── src/runtime/             # 唯一 WKN WorkflowRuntime
-│   ├── src/components/planner/  # 规划与 ACG 构建
-│   ├── src/components/executor/ # ACG 节点执行、GraphPatch、值引用
-│   ├── src/components/communicator/ # Broker、ContextPack、Provenance
-│   ├── src/components/recovery/ # Checkpoint、Recipe、恢复计划
-│   ├── src/components/memory/   # Evidence Memory
-│   ├── src/components/resource/ # 资源目录与作用域解析
-│   ├── src/adapters/            # 模型、工具与外部运行时适配
-│   └── src/contracts/           # reference-first 合同
-├── docker/                      # 镜像、入口与备份/恢复实现
-├── scripts/infra/               # 部署、预检、诊断、发布脚本
+├── apps/
+│   ├── agent/                   # FastAPI 应用、领域 Agent Packs
+│   ├── agentOS/                 # WKN Runtime、执行内核与合同
+│   ├── backend/                 # Spring Security 与 AgentOS v2 公共网关
+│   ├── frontend/                # Milan Vue 3 产品外壳与 AgentOS 工作台
+│   └── desktop/                 # Tauri 桌面壳
+├── ops/
+│   ├── docker/                  # 镜像、入口与备份/恢复实现
+│   ├── deploy/                  # 离线部署包与部署说明
+│   └── scripts/                 # 部署、预检、诊断、发布脚本
+├── .config/compose/             # 开发、Windows、离线 Compose 覆盖
+├── .config/env/                 # 非生产环境模板
+├── compose.yaml                 # 唯一根目录生产 Compose
+├── .env.example                 # 唯一根目录生产环境模板
 └── docs/                        # 赛题、架构、演示与交付文档
 ```
 

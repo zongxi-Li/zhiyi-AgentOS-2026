@@ -9,7 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$windowsScripts = Join-Path $PSScriptRoot "scripts\infra\windows"
+$windowsScripts = Join-Path $PSScriptRoot "ops\scripts\infra\windows"
 
 function Invoke-WindowsUp {
     param([switch]$ForceBuild)

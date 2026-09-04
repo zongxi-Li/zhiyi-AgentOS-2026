@@ -4,11 +4,11 @@ set -euo pipefail
 ACTION="${1:-up}"
 : "${KINLIN_DEPLOYMENT_ID:?Set KINLIN_DEPLOYMENT_ID before using dev.sh}"
 : "${KINLIN_SECRETS_DIR:?Set KINLIN_SECRETS_DIR before using dev.sh}"
-COMPOSE=(docker compose -f compose.yaml -f compose.dev.yaml)
+COMPOSE=(docker compose -f compose.yaml -f .config/compose/dev.yaml)
 
 case "$ACTION" in
   up|build|restart)
-    python -m scripts.infra.preflight \
+    python -m ops.scripts.infra.preflight \
       --deployment-id "$KINLIN_DEPLOYMENT_ID" \
       --secrets-dir "$KINLIN_SECRETS_DIR" \
       --bind-address 127.0.0.1

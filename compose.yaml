@@ -12,11 +12,19 @@ x-service-defaults: &service-defaults
   labels:
     com.kinlin.deployment-id: ${KINLIN_DEPLOYMENT_ID}
 
+x-prod-security-base: &prod-security-base
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+x-prod-secret-tmpfs: &prod-secret-tmpfs
+  - /run/secrets:rw,nosuid,nodev,noexec,size=1m,mode=0755
+
 services:
   postgres:
-    <<: *service-defaults
+    <<: [*service-defaults, *prod-security-base]
     build:
-      context: ./docker/postgres
+      context: ./ops/docker/postgres
     image: ${KINLIN_POSTGRES_IMAGE:-kinlin-ai-postgres:dev}
     environment:
       POSTGRES_DB: postgres
@@ -29,9 +37,14 @@ services:
     secrets: [db_admin_password, db_password]
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/20-kinlin-app-role.sh:ro
+      - ./ops/docker/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/20-kinlin-app-role.sh:ro
+    cpus: ${KINLIN_POSTGRES_CPUS:-2.0}
+    mem_limit: ${KINLIN_POSTGRES_MEMORY:-2g}
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     tmpfs:
-      - /run/kinlin-secrets:mode=0700
+      - /run/secrets:rw,nosuid,nodev,noexec,size=1m,mode=0755
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+      - /var/run/postgresql:rw,nosuid,nodev,noexec,size=16m,mode=3775
     networks: [data-network]
     stop_grace_period: 60s
     healthcheck:
@@ -42,17 +55,21 @@ services:
       start_period: 10s
 
   redis:
-    <<: *service-defaults
+    <<: [*service-defaults, *prod-security-base]
     build:
-      context: ./docker/redis
+      context: ./ops/docker/redis
     image: ${KINLIN_REDIS_IMAGE:-kinlin-ai-redis:dev}
     secrets: [redis_password]
     environment:
       KINLIN_DEPLOYMENT_ID: ${KINLIN_DEPLOYMENT_ID}
     volumes:
       - redis-data:/data
+    cpus: ${KINLIN_REDIS_CPUS:-1.0}
+    mem_limit: ${KINLIN_REDIS_MEMORY:-512m}
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     tmpfs:
-      - /run/kinlin-secrets:mode=0700
+      - /run/secrets:rw,nosuid,nodev,noexec,size=1m,mode=0755
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
     networks: [data-network, provider-state-network]
     stop_grace_period: 30s
     healthcheck:
@@ -63,10 +80,10 @@ services:
       start_period: 5s
 
   ai-service:
-    <<: *service-defaults
+    <<: [*service-defaults, *prod-security-base]
     build:
       context: .
-      dockerfile: agent/Dockerfile
+      dockerfile: apps/agent/Dockerfile
     image: ${KINLIN_AI_IMAGE:-kinlin-ai-service:dev}
     environment:
       KINLIN_DEPLOYMENT_ID: ${KINLIN_DEPLOYMENT_ID}
@@ -128,7 +145,11 @@ services:
       - agentos-data:/app/data
       - ai-cache:/app/.cache
     tmpfs:
-      - /run/kinlin-secrets:mode=0700
+      - /run/secrets:rw,nosuid,nodev,noexec,size=1m,mode=0755
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    cpus: ${KINLIN_AI_CPUS:-4.0}
+    mem_limit: ${KINLIN_AI_MEMORY:-4g}
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     networks: [agent-network, provider-state-network]
     stop_grace_period: 60s
     healthcheck:
@@ -139,9 +160,9 @@ services:
       start_period: 20s
 
   backend:
-    <<: *service-defaults
+    <<: [*service-defaults, *prod-security-base]
     build:
-      context: ./backend
+      context: ./apps/backend
       dockerfile: Dockerfile
     image: ${KINLIN_BACKEND_IMAGE:-kinlin-ai-backend:dev}
     environment:
@@ -158,9 +179,10 @@ services:
     secrets: [db_password, redis_password, jwt_secret, ai_internal_token]
     volumes:
       - backend-uploads:/app/data/uploads
-    tmpfs:
-      - /run/kinlin-secrets:mode=0700
-      - /tmp:mode=1777
+    tmpfs: *prod-secret-tmpfs
+    cpus: ${KINLIN_BACKEND_CPUS:-2.0}
+    mem_limit: ${KINLIN_BACKEND_MEMORY:-2g}
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     networks: [web-network, agent-network, data-network]
     depends_on:
       postgres:
@@ -176,11 +198,17 @@ services:
       start_period: 30s
 
   frontend:
-    <<: *service-defaults
+    <<: [*service-defaults, *prod-security-base]
     build:
       context: .
-      dockerfile: frontend/Dockerfile
+      dockerfile: apps/frontend/Dockerfile
     image: ${KINLIN_FRONTEND_IMAGE:-kinlin-ai-frontend:dev}
+    ports:
+      - "${KINLIN_BIND_ADDRESS:-127.0.0.1}:${KINLIN_HTTP_PORT:-8080}:8080"
+    cpus: ${KINLIN_FRONTEND_CPUS:-0.5}
+    mem_limit: ${KINLIN_FRONTEND_MEMORY:-256m}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
     networks: [web-network]
     depends_on:
       backend:
@@ -193,19 +221,21 @@ services:
       retries: 5
 
   schema-tool:
-    <<: *service-defaults
+    <<: [*service-defaults, *prod-security-base]
     profiles: [migration]
     build:
-      context: ./docker/flyway
+      context: ./ops/docker/flyway
     image: ${KINLIN_FLYWAY_IMAGE:-kinlin-ai-flyway:dev}
     environment:
       FLYWAY_URL: jdbc:postgresql://postgres:5432/${KINLIN_DB_NAME:-kinlin_ai}
       FLYWAY_USER: ${KINLIN_DB_USER:-kinlin_ai}
     secrets: [db_password]
     volumes:
-      - ./backend/src/main/resources/db/migration:/flyway/sql:ro
+      - ./apps/backend/src/main/resources/db/migration:/flyway/sql:ro
     tmpfs:
-      - /run/kinlin-secrets:mode=0700
+      - /run/secrets:rw,nosuid,nodev,noexec,size=1m,mode=0755
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     networks: [data-network]
     depends_on:
       postgres:

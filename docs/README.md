@@ -18,9 +18,9 @@ Docker 重构文档较多，是因为 P0–P3 分阶段保留了设计、实施�
 | ---: | --- | --- | --- |
 | 1 | [Windows Docker 开发与部署收口记录](03-开发记录/09-Windows-Docker开发与部署收口记录.md) | **当前结论** | 当前已验收范围、启动方式、开发热更新、数据与备份边界 |
 | 2 | [Docker 基础设施重构 RFC v1.1](02-架构设计/07-Docker基础设施重构RFC-v1.1.md) | **架构基线** | 重构目标、网络与数据边界、迁移门禁和安全原则 |
-| 3 | [Windows 部署包说明](../deploy/windows/package/README.md) | **操作手册** | Windows 11 + Docker Desktop 离线部署包的启动、日志、备份与恢复 |
-| 4 | [通用离线部署说明](../deploy/DEPLOYMENT.md) | **操作手册** | 安装、升级、回滚和恢复流程；目标主机仍需独立验收 |
-| 5 | [Secret 初始化说明](../deploy/secrets/README.md) | **安全操作** | 外置 Secret 文件格式、初始化和轮换边界 |
+| 3 | [Windows 部署包说明](../ops/deploy/windows/package/README.md) | **操作手册** | Windows 11 + Docker Desktop 离线部署包的启动、日志、备份与恢复 |
+| 4 | [通用离线部署说明](../ops/deploy/DEPLOYMENT.md) | **操作手册** | 安装、升级、回滚和恢复流程；目标主机仍需独立验收 |
+| 5 | [Secret 初始化说明](../ops/deploy/secrets/README.md) | **安全操作** | 外置 Secret 文件格式、初始化和轮换边界 |
 
 ### 重构证据时间线
 
@@ -59,6 +59,7 @@ Docker 重构文档较多，是因为 P0–P3 分阶段保留了设计、实施�
 | [05-ACG动态群体智能引擎技术设计](02-架构设计/05-ACG动态群体智能引擎技术设计.md) | ACG 动态群体智能引擎技术设计 |
 | [06-知弈律师AgentOS技术设计文档](02-架构设计/06-知弈律师AgentOS技术设计文档.md) | 律师 AgentOS 技术设计文档 |
 | [07-Docker基础设施重构RFC-v1.1](02-架构设计/07-Docker基础设施重构RFC-v1.1.md) | Docker 单机部署底座的冻结设计基线 |
+| [当前 AgentOS 架构图](02-架构设计/kinlin-agentos-current-architecture.md) | 当前请求链、运行内核、持久化与查询投影 |
 | [figures/](02-架构设计/figures/) | 架构 drawio 源图 |
 
 ## 03-开发记录
@@ -85,6 +86,8 @@ Docker 重构文档较多，是因为 P0–P3 分阶段保留了设计、实施�
 | --- | --- |
 | [02-acg-test-samples](04-演示与交付/02-acg-test-samples.md) | ACG 可视化面板功能测试样例集 |
 | [03-acg-engine-final-report](04-演示与交付/03-acg-engine-final-report.md) | ACG 引擎最终技术报告 |
+| [design-qa.md](04-演示与交付/design-qa.md) | 前端设置页视觉与交互验收记录 |
+| [video_intro/](04-演示与交付/video_intro/) | AgentOS 演示视频页面与配套素材 |
 | [figures/](04-演示与交付/figures/) | 演示相关图示 |
 
 ## 05-设计资料归档
@@ -101,9 +104,9 @@ Docker 重构文档较多，是因为 P0–P3 分阶段保留了设计、实施�
 
 | 文档 | 适用范围 |
 | --- | --- |
-| [deploy/DEPLOYMENT.md](../deploy/DEPLOYMENT.md) | 通用离线安装、升级、回滚和恢复 |
-| [deploy/windows/package/README.md](../deploy/windows/package/README.md) | Windows amd64 部署包 |
-| [deploy/secrets/README.md](../deploy/secrets/README.md) | 外置 Secret 初始化与安全边界 |
+| [ops/deploy/DEPLOYMENT.md](../ops/deploy/DEPLOYMENT.md) | 通用离线安装、升级、回滚和恢复 |
+| [ops/deploy/windows/package/README.md](../ops/deploy/windows/package/README.md) | Windows amd64 部署包 |
+| [ops/deploy/secrets/README.md](../ops/deploy/secrets/README.md) | 外置 Secret 初始化与安全边界 |
 
 ## 维护约定
 
