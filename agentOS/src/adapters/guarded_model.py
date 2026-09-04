@@ -7,14 +7,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
+from uuid import uuid4
 
 from adapters.model_adapter import (
     StructuredGenerationError,
     StructuredGenerationResult,
     StructuredGenerationRuntime,
 )
+from contracts.runtime_events import RuntimeEvent
 
 
 _Result = TypeVar("_Result")
@@ -76,6 +78,7 @@ class GuardedModelRuntime:
             max_concurrency=max_concurrency,
             min_interval_seconds=min_interval_seconds,
         )
+        self.last_attempt_id: str | None = None
 
     def is_available(self) -> bool:
         """保留原运行时的可用性语义，不因包装器自行推断远端状态。"""
@@ -140,6 +143,31 @@ class GuardedModelRuntime:
             if self.retry_delay_seconds:
                 await asyncio.sleep(self.retry_delay_seconds)
         raise AssertionError("model retry loop must return or raise")
+
+    async def stream_generate_json(self, **kwargs) -> AsyncIterator[RuntimeEvent]:
+        """Stream through the delegate while retaining retry-from-scratch semantics."""
+        streamer = getattr(self.delegate, "stream_generate_json", None)
+        if not callable(streamer):
+            raise StructuredGenerationError("MODEL_STREAM_UNSUPPORTED", "model runtime does not support streaming")
+        for attempt in range(1, self.retries + 2):
+            delegate_kwargs = dict(kwargs)
+            base_attempt_id = kwargs.get("attempt_id")
+            attempt_id = str(base_attempt_id or f"attempt:{uuid4().hex}")
+            if attempt > 1:
+                attempt_id = f"{attempt_id}:retry:{uuid4().hex[:12]}"
+            delegate_kwargs["attempt_id"] = attempt_id
+            self.last_attempt_id = attempt_id
+            try:
+                async for event in streamer(**delegate_kwargs):
+                    yield event
+                return
+            except asyncio.CancelledError:
+                raise
+            except StructuredGenerationError as exc:
+                if exc.code not in {"MODEL_TTFT_TIMEOUT", "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT", "MODEL_TIMEOUT"} or attempt > self.retries:
+                    raise
+                if self.retry_delay_seconds:
+                    await asyncio.sleep(self.retry_delay_seconds)
 
     def describe_model(self):
         """透明转发模型能力，不在保护包装器中创造容量事实。"""

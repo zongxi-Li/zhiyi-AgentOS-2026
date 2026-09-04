@@ -2,6 +2,8 @@
 
 from app.execution.wiring import (
     GatewayIntentLLM,
+    RegisteredPlannerLLM,
+    bind_registered_planner_llm,
     build_default_runtime,
     build_model_setup,
     close_runtime,
@@ -10,6 +12,8 @@ from app.execution.wiring import (
 
 __all__ = [
     "GatewayIntentLLM",
+    "RegisteredPlannerLLM",
+    "bind_registered_planner_llm",
     "build_default_runtime",
     "build_model_setup",
     "close_runtime",

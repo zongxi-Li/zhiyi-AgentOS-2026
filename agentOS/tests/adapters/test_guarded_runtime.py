@@ -9,6 +9,7 @@ import pytest
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.guarded_tool import GuardedToolRuntime, ToolInvocationError
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
+from contracts.runtime_events import RuntimeEvent
 
 
 class _FlakyModel:
@@ -88,6 +89,59 @@ class _StreamingTool:
         yield {"delta": "first"}
         await asyncio.sleep(0.05)
         yield {"delta": "late"}
+
+
+class _FlakyStreamingModel:
+    def __init__(self) -> None:
+        self.attempt_ids: list[str] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **kwargs):
+        attempt_id = str(kwargs["attempt_id"])
+        self.attempt_ids.append(attempt_id)
+        yield RuntimeEvent(
+            eventType="model.output.delta",
+            runId="run-1",
+            nodeId="node-1",
+            attemptId=attempt_id,
+            sequence=1,
+            payload={"delta": "stale" if len(self.attempt_ids) == 1 else "fresh"},
+        )
+        if len(self.attempt_ids) == 1:
+            raise StructuredGenerationError("MODEL_IDLE_TIMEOUT", "provider stalled")
+        yield RuntimeEvent(
+            eventType="model.completed",
+            runId="run-1",
+            nodeId="node-1",
+            attemptId=attempt_id,
+            sequence=2,
+            payload={},
+        )
+
+
+def test_guarded_model_stream_retry_uses_a_new_attempt_id() -> None:
+    delegate = _FlakyStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, retries=1)
+
+    async def collect():
+        return [
+            event
+            async for event in runtime.stream_generate_json(
+                run_id="run-1",
+                node_id="node-1",
+                attempt_id="attempt-1",
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert delegate.attempt_ids[0] == "attempt-1"
+    assert len(delegate.attempt_ids) == 2
+    assert delegate.attempt_ids[1].startswith("attempt-1:retry:")
+    assert events[0].attempt_id == delegate.attempt_ids[0]
+    assert events[1].attempt_id == delegate.attempt_ids[1]
 
 
 def test_guarded_model_retries_temporary_error_with_same_commit_id() -> None:

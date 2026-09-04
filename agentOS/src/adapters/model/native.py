@@ -8,7 +8,7 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
 from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from contracts.communication import (
     ContextContractError,
@@ -23,6 +23,7 @@ from adapters.model.native_prompt import (
 )
 from support.acg.models import NATIVE_CAPABILITY_IDS
 from components.communicator.contracts import ContextPack, input_revision
+from runtime.live_events import runtime_event_broker
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"
@@ -322,8 +323,44 @@ class NativeGeneralAgent(BaseAgent):
         repair_used = False
         thinking_fallback_reason: str | None = None
         recovered_output: dict[str, Any] | None = None
+        runtime_events: list[dict[str, Any]] = []
         try:
-            generated = await runtime.generate_json(
+            streamer = getattr(runtime, "stream_generate_json", None)
+            if callable(streamer) and hasattr(runtime, "delegate"):
+                streamer = streamer if callable(getattr(runtime.delegate, "stream_generate_json", None)) else None
+            if callable(streamer):
+                streamed_data = None
+                async for runtime_event in streamer(
+                    prompt=prompt, schema=generation_schema, run_id=context.run.run_id,
+                    node_id=context.step.step_id,
+                    attempt_id=context.attempt_id or context.commit_id or context.step.step_id,
+                    ttft_timeout=min(30.0, timeout_seconds), idle_timeout=min(60.0, timeout_seconds),
+                    total_timeout=timeout_seconds, thinking_mode=thinking_mode,
+                    max_output_tokens=max_output_tokens, prompt_version=base_prompt_version,
+                    commit_id=context.commit_id,
+                ):
+                    event_record = runtime_event.model_dump(by_alias=True, mode="json")
+                    if runtime_event.event_type == "model.completed":
+                        event_record["payload"] = {k: v for k, v in runtime_event.payload.items() if k != "data"}
+                    runtime_events.append(event_record)
+                    await runtime_event_broker.publish(context.run.run_id, runtime_event)
+                    if runtime_event.event_type == "model.completed":
+                        streamed_data = runtime_event.payload.get("data")
+                if not isinstance(streamed_data, dict):
+                    raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "stream completed without JSON result")
+                generated = StructuredGenerationResult(
+                    data=streamed_data,
+                    provider=str(runtime_events[0].get("payload", {}).get("provider") or "stream"),
+                    model=str(runtime_events[0].get("payload", {}).get("model") or "stream"),
+                    promptVersion=base_prompt_version,
+                )
+            else:
+                if getattr(runtime, "production_stream_required", False):
+                    raise StructuredGenerationError(
+                        "MODEL_STREAM_UNSUPPORTED",
+                        "Native ACG production execution requires a streaming model binding.",
+                    )
+                generated = await runtime.generate_json(
                 prompt=prompt,
                 schema=generation_schema,
                 thinking_mode=thinking_mode,
@@ -332,7 +369,7 @@ class NativeGeneralAgent(BaseAgent):
                 max_output_tokens=max_output_tokens,
                 prompt_version=base_prompt_version,
                 commit_id=context.commit_id,
-            )
+                )
         except StructuredGenerationError as exc:
             thinking_enabled = thinking_mode.strip().lower() not in {
                 "",
@@ -487,6 +524,7 @@ class NativeGeneralAgent(BaseAgent):
             summary=f"Native capability completed: {capability}.",
             toolExecutions=deterministic_tool_executions,
             modelInvocations=invocations,
+            runtimeEvents=runtime_events,
         )
 
     async def _recover_capability_by_subtasks(

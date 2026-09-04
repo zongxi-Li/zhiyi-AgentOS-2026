@@ -35,10 +35,12 @@
           :focus-node-id="focusNodeId"
           :registry="registry"
           :workbench-context="workbenchContext"
+          :runtime-store="runtimeStore"
           :inspector-visible="mainState.rightPaneVisible"
           :inspector-auto-hidden="mainState.rightAutoHidden"
           :toggle-inspector="mainState.toggleRightPane"
           :sidebar-hidden="mainState.leftAutoHidden"
+          :cancel-pending="cancelPending"
           @restore-sidebar="mainState.restoreLeftPane()"
           @activate="activeEditorId = $event"
           @close="closeEditor"
@@ -46,6 +48,7 @@
           @open-semantic-task="openSemanticTask"
           @locate-graph="locateGraph"
           @open-artifact="openEntry"
+          @cancel-run="cancelActiveRun"
         />
         <section v-else class="workspace-main-state" role="status">
           <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
@@ -60,11 +63,12 @@
           :graph-node="inspectorGraphNode"
           :graph-nodes="projection?.graphNodes || []"
           :available="inspectorAvailable"
-          :run-id="projection?.activeRun?.runId || null"
+          :run-id="projection?.activeRun?.runId || selectedRunId || null"
           :mission-id="missionId"
           :graph="projection?.activeGraph || null"
           :run-status="projection?.activeRun?.status || null"
           :historical="isHistorical"
+          :runtime-store="runtimeStore"
           :registry="registry"
           :workbench-context="workbenchContext"
           @locate-graph="inspectorEntry && locateGraph(inspectorEntry)"
@@ -113,7 +117,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
@@ -124,6 +129,7 @@ import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContr
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
+import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 
 const route = useRoute()
 const router = useRouter()
@@ -134,6 +140,7 @@ const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const rerunPending = ref(false)
+const cancelPending = ref(false)
 const selectedRunId = ref<string | null>(typeof route.query.runId === 'string' ? route.query.runId : null)
 const currentRunId = ref<string | null>(null)
 const openEditors = ref<string[]>([])
@@ -142,6 +149,8 @@ const selectedSemanticTaskKey = ref<string | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
 const runtimeObservation = ref<RuntimeObservation | null>(null)
+const runtimeStore = shallowRef<RunRuntimeStore | null>(null)
+let runtimeStoreRunId: string | null = null
 const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})
 let controller: AbortController | null = null
@@ -193,8 +202,15 @@ const isHistorical = computed(() => Boolean(
   projection.value?.activeRun && currentRunId.value && projection.value.activeRun.runId !== currentRunId.value
 ))
 const terminalRunStatuses = new Set(['completed', 'succeeded', 'failed', 'cancelled', 'superseded'])
+const cancellableRunStatuses = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
 const canRerunSelectedRun = computed(() => Boolean(
   projection.value?.activeRun?.runId && terminalRunStatuses.has(projection.value.activeRun.status || '')
+))
+const canCancelActiveRun = computed(() => Boolean(
+  projection.value?.activeRun?.runId
+  && !isHistorical.value
+  && cancellableRunStatuses.has(projection.value.activeRun.status || '')
+  && !cancelPending.value
 ))
 const rerunDisabledReason = computed(() => {
   if (rerunPending.value) return '正在创建新的 Run'
@@ -203,7 +219,7 @@ const rerunDisabledReason = computed(() => {
 
 const workbenchContext = computed(() => createWorkbenchContext({
   missionId: missionId.value,
-  runId: projection.value?.activeRun?.runId || null,
+  runId: projection.value?.activeRun?.runId || selectedRunId.value || null,
   selectedSemanticTaskKey: selectedSemanticTaskKey.value,
   selectedArtifactId: inspectorEntry.value?.artifactId || null,
   selectedAcgNodeId: selectedGraphNodeId.value,
@@ -241,13 +257,15 @@ const defaultRunId = (items: MissionWorkspaceProjection['runs']) => {
 
 const openDefaultEditor = (nextProjection: MissionWorkspaceProjection) => {
   if (openEditors.value.length) return
+  const promptEntry = nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
   const first = nextProjection.entries.find(entry => entry.entryId === 'overview:graph.acg')
-    || nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
   const runActive = nextProjection.activeRun?.status === 'running' || nextProjection.activeRun?.status === 'pending'
   const openIds = [
     ...(runActive ? [PROGRESS_ENTRY_ID] : []),
+    ...(runActive && promptEntry ? [promptEntry.entryId] : []),
     ...(first ? [first.entryId] : [])
   ]
+  if (!openIds.length && promptEntry) openIds.push(promptEntry.entryId)
   if (!openIds.length) return
   openIds.forEach(entryId => {
     const entry = entryId === PROGRESS_ENTRY_ID
@@ -320,6 +338,34 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
   }
 }
 
+// 降级投影重拉：PLANNING_PROJECTION_PENDING 表示 identity graph 尚未注册，
+// Run 活跃期间周期性重拉投影，注册完成后 STEPS/OUTPUT/RUNS/Graph 即刻出现。
+const PROJECTION_REFRESH_MS = 8000
+const ACTIVE_PROJECTION_RUN_STATUSES = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
+let projectionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+const stopProjectionRefresh = () => {
+  if (projectionRefreshTimer !== null) {
+    clearTimeout(projectionRefreshTimer)
+    projectionRefreshTimer = null
+  }
+}
+
+const projectionPending = (projection: MissionWorkspaceProjection) => Boolean(
+  projection.diagnostics?.some(item => item.code === 'PLANNING_PROJECTION_PENDING')
+  && ACTIVE_PROJECTION_RUN_STATUSES.has(projection.activeRun?.status || '')
+)
+
+const scheduleProjectionRefresh = () => {
+  stopProjectionRefresh()
+  projectionRefreshTimer = setTimeout(async () => {
+    projectionRefreshTimer = null
+    if (loading.value) return
+    const projectionSnapshot = projection.value
+    if (projectionSnapshot && projectionPending(projectionSnapshot)) await loadWorkspace(selectedRunId.value)
+  }, PROJECTION_REFRESH_MS)
+}
+
 const loadWorkspace = async (runId = selectedRunId.value) => {
   if (!missionId.value) {
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
@@ -327,6 +373,7 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
   }
   controller?.abort()
   runtimeObservationAdapter.stop()
+  stopProjectionRefresh()
   controller = new AbortController()
   const requestController = controller
   runtimeObservation.value = null
@@ -340,6 +387,11 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     openDefaultEditor(nextProjection)
     const nextRunId = nextProjection.activeRun?.runId || runId || null
+    if (runtimeStoreRunId !== nextRunId) {
+      releaseRunRuntimeStore(runtimeStoreRunId, runtimeStore.value)
+      runtimeStore.value = acquireRunRuntimeStore(nextRunId)
+      runtimeStoreRunId = nextRunId
+    }
     if (nextRunId) {
       runtimeObservationAdapter.start(nextRunId, {
         historical: Boolean(currentRunId.value && currentRunId.value !== nextRunId),
@@ -351,6 +403,8 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
         }
       })
     }
+    // 降级投影等待 identity 注册：活跃 Run 期间周期重拉，直到 PLANNING_PROJECTION_PENDING 消失。
+    if (projectionPending(nextProjection)) scheduleProjectionRefresh()
   } catch (error: unknown) {
     if (isAbortError(error)) return
     loadError.value = '无法加载 Mission Workspace Projection，请稍后重试。'
@@ -382,6 +436,55 @@ const rerunErrorMessage = (error: unknown) => {
   if (response?.status === 404) return '当前 Mission 或源 Run 不存在'
   if (response?.status === 422) return '历史运行配置无法用于再次运行'
   return '创建新的 Run 失败，请稍后重试'
+}
+
+const cancelErrorMessage = (error: unknown) => {
+  const status = responseStatus(error)
+  if (status === 401 || status === 403) return '当前账户无权停止这个 Run'
+  if (status === 404) return '当前 Run 不存在，工作台需要重新加载'
+  return '停止运行失败，请稍后重试'
+}
+
+const cancelActiveRun = async () => {
+  const run = projection.value?.activeRun
+  if (!run?.runId || !canCancelActiveRun.value) return
+  try {
+    await ElMessageBox.confirm(
+      '确定要停止当前运行吗？已完成的步骤会保留，后续步骤不再执行。',
+      run.status === 'waiting_review' ? '放弃审核' : '停止运行',
+      { confirmButtonText: '停止运行', cancelButtonText: '继续运行', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  cancelPending.value = true
+  loadError.value = ''
+  try {
+    const cancelled = await agentosApi.cancelWorkflowRun(run.runId)
+    const status = cancelled.status
+    projection.value = projection.value
+      ? {
+          ...projection.value,
+          activeRun: projection.value.activeRun?.runId === run.runId
+            ? { ...projection.value.activeRun, status, isActive: false }
+            : projection.value.activeRun,
+          runs: projection.value.runs.map(item => item.runId === run.runId
+            ? { ...item, status, isActive: false }
+            : item)
+        }
+      : projection.value
+    ElMessage.success('运行已停止')
+  } catch (error: unknown) {
+    if (responseStatus(error) === 409) {
+      ElMessage.warning('该运行已结束，无需停止')
+      await loadWorkspace(run.runId)
+    } else {
+      ElMessage.error(cancelErrorMessage(error))
+    }
+  } finally {
+    cancelPending.value = false
+  }
 }
 
 const rerunSelectedRun = async () => {
@@ -470,7 +573,13 @@ const returnToProjectList = () => {
 }
 
 const locateGraph = (entry: WorkspaceEntry) => {
-  if (entry.identityQuality === 'legacy' || !entry.semanticTaskKey || !projection.value) return
+  if (!projection.value) return
+  // Run Progress 的 ACG Compile 直接携带 graph entry：打开既有 Graph Editor 即可。
+  if (entry.kind === 'graph') {
+    openEntry(entry)
+    return
+  }
+  if (entry.identityQuality === 'legacy' || !entry.semanticTaskKey) return
   const graphEntry = projection.value.entries.find(item => item.kind === 'graph')
   const graphNode = projection.value.graphNodes.find(item => item.semanticTaskKey === entry.semanticTaskKey)
   if (!graphEntry || !graphNode) return
@@ -484,6 +593,10 @@ void loadWorkspace()
 onBeforeUnmount(() => {
   controller?.abort()
   runtimeObservationAdapter.stop()
+  stopProjectionRefresh()
+  releaseRunRuntimeStore(runtimeStoreRunId, runtimeStore.value)
+  runtimeStore.value = null
+  runtimeStoreRunId = null
 })
 </script>
 

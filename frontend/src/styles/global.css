@@ -429,11 +429,30 @@ html[data-color-scheme='codex-dark'] .el-overlay {
 }
 
 /* Dialogs/Cards */
-.el-dialog, .el-card {
+.el-dialog {
+  background: var(--bg-card) !important;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, var(--border-light)) !important;
+  border-radius: 18px !important;
+  box-shadow: var(--shadow-lg) !important;
+  overflow: hidden;
+}
+
+.el-overlay {
+  background: color-mix(in srgb, var(--overlay-backdrop) 72%, transparent) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.el-card {
   background: var(--bg-card) !important;
   border: 1px solid var(--border-light) !important;
   border-radius: var(--radius-lg) !important;
   box-shadow: var(--shadow-md) !important;
+}
+
+.el-dialog__header {
+  margin-right: 0;
+  padding: 22px 54px 0 24px;
 }
 
 .el-dialog__title, .el-card__header {
@@ -441,8 +460,299 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   font-weight: 600;
 }
 
+.el-dialog__title { font-size: 17px; letter-spacing: -0.015em; }
+
+.el-dialog__body {
+  padding: 20px 24px;
+  color: var(--text-regular);
+}
+
+.el-dialog__footer { padding: 0 24px 20px; }
+
+.el-dialog__footer .el-button {
+  min-width: 76px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .el-dialog__headerbtn .el-dialog__close {
   color: var(--text-secondary);
+}
+
+.el-dialog__headerbtn {
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.el-dialog__headerbtn:hover,
+.el-dialog__headerbtn:focus-visible {
+  background: var(--surface-subtle);
+  outline: none;
+}
+
+/* Unified popup language: a quiet surface, a blurred stage and one clear action row. */
+.el-overlay-message-box {
+  background: color-mix(in srgb, var(--overlay-backdrop) 72%, transparent) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.el-message-box {
+  --el-messagebox-width: 448px;
+  --el-messagebox-border-radius: 18px;
+  --el-messagebox-padding-primary: 20px;
+  width: min(448px, calc(100vw - 32px));
+  max-width: min(448px, calc(100vw - 32px));
+  padding: 0 24px 20px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, var(--border-light)) !important;
+  border-radius: var(--el-messagebox-border-radius) !important;
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-app)) !important;
+  box-shadow: var(--shadow-lg), 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent) inset !important;
+  color: var(--text-regular);
+  font-family: var(--font-sans);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+.el-message-box__header {
+  padding: 21px 32px 0 0;
+}
+
+.el-message-box__header.show-close { padding-right: 32px; }
+
+.el-message-box__title {
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+}
+
+.el-message-box__headerbtn {
+  top: 14px;
+  right: 7px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.el-message-box__headerbtn:hover,
+.el-message-box__headerbtn:focus-visible {
+  background: var(--surface-subtle);
+  outline: none;
+}
+
+.el-message-box__headerbtn .el-message-box__close {
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.el-message-box__content { padding: 15px 0 0; }
+
+.el-message-box__container {
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.el-message-box__status {
+  display: inline-grid;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--info-fade);
+  color: var(--info);
+  font-size: 15px;
+}
+
+.el-message-box__status.el-message-box-icon--success { background: var(--success-fade); color: var(--success); }
+.el-message-box__status.el-message-box-icon--warning { background: var(--warning-fade); color: var(--warning); }
+.el-message-box__status.el-message-box-icon--error { background: var(--danger-fade); color: var(--danger); }
+.el-message-box__status.el-message-box-icon--primary { background: var(--primary-fade); color: var(--primary-color); }
+
+.el-message-box__message {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.el-message-box__message p { line-height: inherit; }
+
+.el-message-box__input {
+  padding-top: 14px;
+}
+
+.el-message-box__input .el-input__wrapper {
+  min-height: 38px;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 10px !important;
+  background: var(--bg-input) !important;
+  box-shadow: none !important;
+}
+
+.el-message-box__input .el-input__wrapper:focus-within {
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 16%, transparent) !important;
+}
+
+.el-message-box__errormsg {
+  padding-top: 6px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.el-message-box__btns {
+  gap: 8px;
+  padding-top: 20px;
+}
+
+.el-message-box__btns .el-button {
+  min-width: 76px;
+  height: 36px;
+  margin-left: 0;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+.el-message-box__btns .el-button:not(.el-button--primary) {
+  border-color: transparent !important;
+  color: var(--text-secondary) !important;
+  background: var(--surface-subtle) !important;
+}
+
+.el-message-box__btns .el-button:not(.el-button--primary):hover,
+.el-message-box__btns .el-button:not(.el-button--primary):focus-visible {
+  color: var(--text-primary) !important;
+  background: var(--surface-hover) !important;
+}
+
+.el-message-box__btns .el-button--primary {
+  border-color: var(--primary-color) !important;
+  color: var(--on-primary) !important;
+  background: var(--primary-color) !important;
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--primary-color) 22%, transparent);
+}
+
+.el-message-box__btns .el-button--primary:hover,
+.el-message-box__btns .el-button--primary:focus-visible {
+  border-color: var(--primary-hover) !important;
+  background: var(--primary-hover) !important;
+  box-shadow: 0 9px 22px color-mix(in srgb, var(--primary-color) 30%, transparent);
+}
+
+.destructive-confirm.el-message-box .el-message-box__btns .el-button--primary {
+  border-color: var(--danger) !important;
+  background: var(--danger) !important;
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--danger) 24%, transparent);
+}
+
+.destructive-confirm.el-message-box .el-message-box__btns .el-button--primary:hover,
+.destructive-confirm.el-message-box .el-message-box__btns .el-button--primary:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 88%, var(--text-primary)) !important;
+  background: color-mix(in srgb, var(--danger) 88%, var(--text-primary)) !important;
+  box-shadow: 0 9px 22px color-mix(in srgb, var(--danger) 34%, transparent);
+}
+
+/* Toasts use the same surface and semantic mark, without becoming a large banner. */
+.el-message {
+  --toast-color: var(--info);
+  min-width: 0 !important;
+  max-width: min(440px, calc(100vw - 32px));
+  min-height: 42px;
+  padding: 9px 16px 9px 12px !important;
+  border: 1px solid color-mix(in srgb, var(--toast-color) 24%, var(--border-light)) !important;
+  border-radius: 12px !important;
+  color: var(--text-primary) !important;
+  background: color-mix(in srgb, var(--bg-card) 92%, var(--toast-color) 8%) !important;
+  box-shadow: var(--shadow-md), 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent) inset !important;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.el-message.el-message--success { --toast-color: var(--success); }
+.el-message.el-message--warning { --toast-color: var(--warning); }
+.el-message.el-message--error { --toast-color: var(--danger); }
+.el-message.el-message--info { --toast-color: var(--info); }
+.el-message .el-message__icon { color: var(--toast-color) !important; font-size: 18px; }
+.el-message .el-message__content { color: var(--text-primary) !important; font-size: 13px; font-weight: 560; line-height: 20px; }
+.el-message .el-message__closeBtn { color: var(--text-muted); }
+.el-message .el-message__closeBtn:hover { color: var(--text-primary); }
+
+/* Menus, selects and drawers share the same elevation language as dialogs. */
+.el-drawer {
+  border-color: color-mix(in srgb, var(--text-primary) 11%, var(--border-light)) !important;
+  background: var(--bg-card) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-primary);
+}
+
+.el-drawer__body { padding: 20px 24px; color: var(--text-regular); }
+
+.el-popover.el-popper,
+.el-dropdown__popper.el-popper,
+.el-select__popper.el-popper,
+.el-autocomplete__popper.el-popper {
+  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, var(--border-light)) !important;
+  border-radius: 12px !important;
+  background: var(--bg-card) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.el-popover.el-popper .el-popper__arrow::before,
+.el-dropdown__popper.el-popper .el-popper__arrow::before,
+.el-select__popper.el-popper .el-popper__arrow::before,
+.el-autocomplete__popper.el-popper .el-popper__arrow::before {
+  border-color: var(--border-light) !important;
+  background: var(--bg-card) !important;
+}
+
+.el-select-dropdown__item,
+.el-dropdown-menu__item {
+  border-radius: 8px;
+}
+
+.el-select-dropdown__item { margin: 2px 6px; }
+
+.el-select-dropdown__item.is-hovering,
+.el-dropdown-menu__item:hover {
+  color: var(--text-primary) !important;
+  background: var(--surface-subtle) !important;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .el-message-box,
+  .el-message {
+    animation: popup-enter 180ms var(--ease-out);
+  }
+
+  @keyframes popup-enter {
+    from { opacity: 0; transform: translateY(-5px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+}
+
+@media (max-width: 520px) {
+  .el-dialog__header { padding-left: 18px; padding-right: 48px; }
+  .el-dialog__body { padding-right: 18px; padding-left: 18px; }
+  .el-dialog__footer { padding-right: 18px; padding-left: 18px; }
+  .el-message-box { padding-right: 18px; padding-left: 18px; }
 }
 
 /* Apple-style destructive confirmation: one quiet surface, title first. */

@@ -1,5 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
@@ -29,8 +30,9 @@ const artifactEditorStub = {
 const missionEditorStub = { template: '<div class="mission-editor-stub">mission.md</div>' }
 
 const progressEditorStub = {
-  props: ['entry', 'runId'],
-  template: '<div class="progress-editor-stub">运行进度 {{ runId }}</div>'
+  props: ['entry', 'runId', 'runStatus', 'cancelPending'],
+  emits: ['cancelRun'],
+  template: '<div class="progress-editor-stub">运行进度 {{ runId }}<button v-if="runStatus === \'running\' || runStatus === \'pending\'" class="progress-editor-stub__cancel" :disabled="cancelPending" @click="$emit(\'cancelRun\')">停止运行</button></div>'
 }
 
 const taskEntry = (): WorkspaceEntry => ({
@@ -124,7 +126,7 @@ const mountWorkspace = async (
         GraphEditor: graphEditorStub,
         ArtifactEditor: artifactEditorStub,
         MissionEditor: missionEditorStub,
-        ProgressEditor: progressEditorStub,
+        RunProgressEditor: progressEditorStub,
         'el-icon': true
       }
     }
@@ -136,6 +138,7 @@ const mountWorkspace = async (
 describe('MissionWorkspaceView', () => {
   afterEach(() => {
     layoutStubState = { ...defaultLayoutStubState }
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -164,10 +167,25 @@ describe('MissionWorkspaceView', () => {
     const { wrapper } = await mountWorkspace()
     const tabs = wrapper.findAll('.editor-tab')
     expect(tabs[0].text()).toContain('运行进度')
+    expect(tabs.map(tab => tab.text()).some(text => text.includes('mission.md'))).toBe(true)
     expect(tabs.map(tab => tab.text()).some(text => text.includes('graph.acg'))).toBe(true)
     expect(wrapper.find('.progress-editor-stub').exists()).toBe(true)
     expect(wrapper.find('.editor-group__toolbar').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('最终答案')
+  })
+
+  it('stops the active Run from the project workspace', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const cancel = vi.spyOn(agentosApi, 'cancelWorkflowRun').mockResolvedValue({
+      runId: 'run_2', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'cancelled', steps: []
+    } as any)
+    const { wrapper } = await mountWorkspace()
+
+    await wrapper.find('.progress-editor-stub__cancel').trigger('click')
+    await flushPromises()
+
+    expect(cancel).toHaveBeenCalledWith('run_2')
+    expect(wrapper.find('.progress-editor-stub__cancel').exists()).toBe(false)
   })
 
   it('opens mission.md and artifacts as separate tabs without duplicate identities', async () => {
@@ -193,6 +211,85 @@ describe('MissionWorkspaceView', () => {
     const tab = wrapper.findAll('.editor-tab').find(tab => tab.text().includes('graph.acg'))
     await tab?.find('.editor-tab__main').trigger('click')
   }
+
+  it('streams one shared runtime store into the formal Workbench inspector before completion', async () => {
+    class FakeEventSource {
+      static latest: FakeEventSource | null = null
+      readonly listeners = new Map<string, Set<EventListener>>()
+      closed = false
+
+      constructor(readonly url: string) {
+        FakeEventSource.latest = this
+      }
+
+      addEventListener(type: string, listener: EventListener) {
+        const listeners = this.listeners.get(type) || new Set<EventListener>()
+        listeners.add(listener)
+        this.listeners.set(type, listeners)
+      }
+
+      removeEventListener(type: string, listener: EventListener) {
+        this.listeners.get(type)?.delete(listener)
+      }
+
+      close() {
+        this.closed = true
+      }
+
+      dispatch(type: string, payload: Record<string, unknown>) {
+        const event = new MessageEvent('message', { data: JSON.stringify(payload) })
+        this.listeners.get(type)?.forEach(listener => listener(event))
+      }
+    }
+
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const formalRunId = 'run_formal_streaming'
+    const formal = projection({
+      activeRun: { runId: formalRunId, status: 'running', createdAt: '2026-08-28T00:02:00Z', isActive: true },
+      runs: [{ runId: formalRunId, status: 'running', createdAt: '2026-08-28T00:02:00Z', isActive: true }],
+      entries: projection().entries.map(entry => entry.kind === 'run' && entry.runId === 'run_2'
+        ? { ...entry, entryId: `run:${formalRunId}`, name: formalRunId, runId: formalRunId }
+        : entry)
+    })
+    const { wrapper } = await mountWorkspace(formal)
+    await activateGraphTab(wrapper)
+    await wrapper.find('.graph-select').trigger('click')
+
+    const source = FakeEventSource.latest
+    expect(source).not.toBeNull()
+    expect(source?.url).toContain(`/api/agentos/v2/runs/${formalRunId}/events`)
+    const event = (sequence: number, eventType: string, payload: Record<string, unknown> = {}) => ({
+      eventId: `runtime-${sequence}`,
+      eventType,
+      runId: formalRunId,
+      nodeId: 'node_capacity',
+      attemptId: 'attempt-stream-1',
+      sequence,
+      timestamp: new Date(Date.now() + sequence).toISOString(),
+      payload
+    })
+
+    source?.dispatch('node.started', event(1, 'node.started'))
+    source?.dispatch('model.started', event(2, 'model.started', {
+      provider: 'fake-provider', model: 'fake-streaming-model', streamingCapability: true
+    }))
+    source?.dispatch('model.first_token', event(3, 'model.first_token', { elapsedMs: 12 }))
+    source?.dispatch('model.output.delta', event(4, 'model.output.delta', { delta: 'A' }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('A')
+    expect(wrapper.text()).toContain('STREAMING')
+
+    source?.dispatch('model.output.delta', event(5, 'model.output.delta', { delta: 'B' }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('AB')
+    expect(wrapper.text()).not.toContain('COMPLETED')
+
+    wrapper.unmount()
+    await flushPromises()
+    expect(source?.closed).toBe(true)
+  })
 
   it('maps a graph double click to the matching TaskEditor', async () => {
     const { wrapper } = await mountWorkspace()
@@ -229,7 +326,7 @@ describe('MissionWorkspaceView', () => {
     await artifactRow?.trigger('click')
     await wrapper.find('.artifact-locate').trigger('click')
     expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
   })
 
   it('disables graph positioning for legacy artifacts', async () => {
@@ -293,7 +390,7 @@ describe('MissionWorkspaceView', () => {
     await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_1'))?.trigger('click')
     await flushPromises()
     expect(wrapper.find('.artifact-editor-stub').text()).toContain('Not available in this Run')
-    expect(wrapper.findAll('.editor-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
   })
 
   it('shows NO_ACTIVE_RUN diagnostics and falls back to mission.md', async () => {

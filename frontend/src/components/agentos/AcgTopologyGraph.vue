@@ -200,6 +200,7 @@ const props = defineProps<{
   collapsible?: boolean
   workbench?: boolean
   focusNodeId?: string | null
+  runtimePhases?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -447,7 +448,7 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
     const style = NODE_STYLE[node.nodeType] || NODE_STYLE.step
     const stepState = states.get(node.nodeId)
     const visual = mapNodeVisualState(stepState)
-    const status = stepState?.status || (completed.has(node.nodeId) ? 'completed' : '')
+    const status = (props.runtimePhases?.[node.nodeId] || stepState?.status || (completed.has(node.nodeId) ? 'completed' : '')).toLowerCase()
     const isDone = status === 'completed'
     const role = endpointRole(node)
     const isStart = role === 'start'

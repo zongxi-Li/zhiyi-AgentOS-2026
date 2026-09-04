@@ -35,7 +35,7 @@
     <div class="workflow-progress__footer">
       <div class="workflow-progress__metrics">
         <span>{{ stepSummary }}</span>
-        <span>当前活动 {{ progress?.activeStepIds.length ?? 0 }}</span>
+        <span>当前活动 {{ progress?.activeStepIds?.length ?? 0 }}</span>
       </div>
       <strong v-if="!isIndeterminate" class="workflow-progress__percent">
         {{ formattedPercent }}

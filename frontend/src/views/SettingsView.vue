@@ -31,7 +31,7 @@
         <p v-if="!visibleSections.length" class="settings-empty">没有匹配的设置</p>
       </nav>
 
-      <button class="rail-account" type="button" @click="router.push({ path: '/settings', query: { tab: 'profile' } })">
+      <button class="rail-account" type="button" @click="router.push('/user')">
         <UserAvatar :size="30" class="rail-avatar" :fallback="accountInitial" />
         <span class="rail-account-copy">
           <strong>{{ accountName }}</strong>
@@ -41,9 +41,7 @@
       </button>
     </aside>
 
-    <main class="settings-content" :class="{ 'account-mode': isAccountTab }">
-      <UserView v-if="isAccountTab" :section="activeTab === 'security' ? 'security' : 'profile'" />
-      <template v-else>
+    <main class="settings-content">
       <header class="settings-header">
         <div>
           <span class="settings-eyebrow">PERSONAL SETTINGS</span>
@@ -318,7 +316,6 @@
           <el-button type="primary" @click="saveSettings">保存设置</el-button>
         </div>
       </footer>
-      </template>
     </main>
   </div>
 </template>
@@ -329,8 +326,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import UserAvatar from '@/components/UserAvatar.vue'
-import UserView from '@/views/UserView.vue'
-import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting } from '@element-plus/icons-vue'
 import { applyFontSize, useTheme } from '@/composables/useTheme'
 import { colorSchemes, type ColorSchemeId } from '@/themes/presets'
 import {
@@ -342,7 +338,7 @@ import {
   type ModelProviderId
 } from '@/config/modelSettings'
 
-type TabId = 'general' | 'appearance' | 'privacy' | 'chat' | 'model' | 'voice' | 'profile' | 'security'
+type TabId = 'general' | 'appearance' | 'privacy' | 'chat' | 'model' | 'voice'
 type NavigationItem = {
   id: TabId
   label: string
@@ -389,11 +385,9 @@ const tabs = [
 
 const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
   {
-    label: '个人',
+    label: '偏好',
     items: [
       { id: 'general', label: '常规', icon: Setting, description: '管理工作区权限、默认目录与基础偏好。' },
-      { id: 'profile', label: '个人资料', icon: User },
-      { id: 'security', label: '账户安全', icon: Lock },
       { id: 'appearance', label: '外观', icon: Brush, description: '调整主题、密度与界面显示方式。' },
       { id: 'voice', label: '语音', icon: Microphone, description: '管理语音讲解的声音与播放参数。' },
       { id: 'privacy', label: '隐私', icon: Key, description: '控制数据存储、历史记录与敏感设置。' }
@@ -447,7 +441,7 @@ const defaultSettings = (): AppSettings => ({
 
 const settings = ref<AppSettings>(defaultSettings())
 const modelSettings = ref(getDefaultModelSettings())
-const tabIds: TabId[] = ['general', 'appearance', 'privacy', 'chat', 'model', 'voice', 'profile', 'security']
+const tabIds: TabId[] = ['general', 'appearance', 'privacy', 'chat', 'model', 'voice']
 const isTabId = (value: unknown): value is TabId => typeof value === 'string' && tabIds.includes(value as TabId)
 const activeTab = ref<TabId>(isTabId(route.query.tab) ? route.query.tab : 'general')
 const searchTerm = ref('')
@@ -455,7 +449,6 @@ const lastSaved = ref<Date | null>(null)
 const inlineHint = ref('修改后点击“保存设置”即可生效。')
 
 const currentTab = computed(() => tabs.find((tab) => tab.id === activeTab.value) || tabs[0])
-const isAccountTab = computed(() => activeTab.value === 'profile' || activeTab.value === 'security')
 const visibleSections = computed(() => {
   const query = searchTerm.value.trim().toLowerCase()
   if (!query) return settingsSections
@@ -494,9 +487,7 @@ function selectSettingsItem(item: NavigationItem): void {
     return
   }
   activeTab.value = item.id as TabId
-  if (item.id === 'profile' || item.id === 'security') {
-    void router.replace({ path: '/settings', query: { tab: item.id } })
-  } else if (route.query.tab) {
+  if (route.query.tab) {
     void router.replace({ path: '/settings', query: {} })
   }
 }

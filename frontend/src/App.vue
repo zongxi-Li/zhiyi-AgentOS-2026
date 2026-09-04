@@ -110,7 +110,13 @@
           <!-- User Profile / Bottom Section -->
           <div class="sidebar-footer">
             <div class="user-profile">
-              <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } })">
+              <button
+                class="user-identity"
+                type="button"
+                :aria-label="userIdentityActionLabel"
+                :title="userIdentityActionLabel"
+                @click="handleUserIdentityClick"
+              >
               <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
               <div v-if="!mainSidebarCompact" class="user-info">
                 <span class="user-name">{{ sidebarUserName }}</span>
@@ -363,7 +369,7 @@
 
             <div class="sidebar-footer drawer-footer">
               <div class="user-profile">
-                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } }); simpleNavOpen = false">
+                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push('/user'); simpleNavOpen = false">
                 <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
                 <div class="user-info">
                   <span class="user-name">{{ sidebarUserName }}</span>
@@ -394,11 +400,19 @@
             </transition>
 
             <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable, 'public-main': isPublicRoute }">
-              <router-view v-slot="{ Component }">
-                <transition :name="isPublicRoute ? 'public-fade' : 'fade'" mode="out-in">
-                  <component :is="Component" :key="route.path" />
-                </transition>
-              </router-view>
+              <Suspense>
+                <template #default>
+                  <router-view v-slot="{ Component }">
+                    <!-- Route transitions can remain in a pending leave state in
+                         the Tauri WebView, hiding every later route. Keep the
+                         shell deterministic and let views own their animation. -->
+                    <component :is="Component" :key="route.path" />
+                  </router-view>
+                </template>
+                <template #fallback>
+                  <div class="route-loading" role="status" aria-live="polite">页面加载中…</div>
+                </template>
+              </Suspense>
             </el-main>
           </el-container>
         </el-container>
@@ -724,7 +738,8 @@ const deleteSidebarConversation = async (conversation: Conversation) => {
       {
         confirmButtonText: '删除',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        customClass: 'destructive-confirm'
       }
     )
 
@@ -802,6 +817,40 @@ const isImmersive = computed(() => {
 const usesDrawerNavigation = computed(() => {
   return !isImmersive.value && isMobileViewport.value
 })
+
+const userIdentityActionLabel = computed(() => {
+  if (mainSidebarCompact.value) return '展开侧边栏'
+  return '打开用户中心'
+})
+
+const openUserProfile = () => {
+  void router.push('/user')
+}
+
+const expandPrimarySidebar = () => {
+  // If the chat sub-panel is occupying the extra sidebar width, close it first
+  // so the primary navigation can expand back to its normal width.
+  if (secondaryNavOpen.value) closeChatPanel()
+  if (!sidebarCollapsed.value) return
+
+  sidebarCollapsed.value = false
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, '0')
+}
+
+const handleUserIdentityClick = () => {
+  if (usesDrawerNavigation.value) {
+    simpleNavOpen.value = false
+    openUserProfile()
+    return
+  }
+
+  if (mainSidebarCompact.value) {
+    expandPrimarySidebar()
+    return
+  }
+
+  openUserProfile()
+}
 
 const toggleSidebar = () => {
   if (secondaryNavOpen.value) {
@@ -977,7 +1026,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/history')) return '/history'
   if (path.startsWith('/federated-models')) return '/federated-models'
   if (path.startsWith('/federated-learning')) return '/federated-learning'
-  if (path.startsWith('/user')) return '/settings'
+  if (path.startsWith('/user')) return '/user'
   return path
 })
 
@@ -1019,7 +1068,7 @@ const handleLogout = async () => {
     if (result.success) {
       userStore.setCurrentUser(null)
       ElMessage.success(result.message || '退出登录成功')
-      router.push('/login')
+      await router.replace('/login')
     } else {
       ElMessage.error(result.message || '退出登录失败')
     }
@@ -1383,6 +1432,7 @@ onUnmounted(() => {
 
 .chat-nav-trigger > .el-icon:first-child {
   flex: 0 0 auto;
+  margin-right: 17px;
   font-size: 18px;
 }
 
@@ -1393,6 +1443,8 @@ onUnmounted(() => {
   display: block;
   border-radius: 4px;
   object-fit: cover;
+  /* The raster artwork has built-in side padding; align its visible mark with the line icons. */
+  transform: translateX(-6px);
 }
 
 .chat-nav-label {
@@ -1434,6 +1486,14 @@ onUnmounted(() => {
 .app-sidebar.collapsed .chat-nav-trigger {
   justify-content: center;
   padding: 0;
+}
+
+.app-sidebar.collapsed .chat-nav-trigger > .el-icon:first-child {
+  margin-right: 0;
+}
+
+.app-sidebar.collapsed .acg-nav-logo {
+  transform: none;
 }
 
 .chat-submenu-action,
@@ -1852,7 +1912,7 @@ onUnmounted(() => {
 .sidebar-menu :deep(.el-menu-item .el-icon) {
   flex: 0 0 18px;
   width: 18px;
-  margin-right: 0;
+  margin-right: 17px;
   font-size: 18px;
 }
 
@@ -2142,6 +2202,14 @@ onUnmounted(() => {
   overflow-x: hidden;
 }
 
+.route-loading {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .global-error-banner {
   position: absolute;
   top: 24px;
@@ -2149,40 +2217,6 @@ onUnmounted(() => {
   transform: translateX(-50%);
   z-index: 2000;
   min-width: 300px;
-}
-
-/* Transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.18s var(--ease-out), transform 0.18s var(--ease-out);
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-  transform: translateY(4px);
-}
-
-.public-fade-enter-active,
-.public-fade-leave-active {
-  transition: opacity 280ms ease, transform 320ms cubic-bezier(.22, .8, .24, 1);
-}
-
-.public-fade-enter-from {
-  opacity: 0;
-  transform: translateY(14px) scale(.985);
-}
-
-.public-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-10px) scale(1.01);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .public-fade-enter-active,
-  .public-fade-leave-active {
-    transition: none;
-  }
 }
 
 /* Immersive Mode Overrides */

@@ -8,7 +8,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
@@ -36,6 +37,7 @@ from runtime.v2.workspace import (
     WorkspaceRunSummary,
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
+from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
 
 
 logger = logging.getLogger(__name__)
@@ -1430,6 +1432,36 @@ def create_router(
         exported["events"] = [_redact(item) for item in exported.get("events", [])]
         return exported
 
+    @router.get("/runs/{run_id}/events")
+    async def stream_runtime_events(run_id: str):
+        # Authorize before opening the long-lived broker subscription.  The
+        # broker is run-scoped, but it is not an access-control boundary.
+        load_run(run_id)
+
+        async def body():
+            try:
+                async for event in runtime_event_broker.subscribe(run_id):
+                    payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+                    yield f"event: {event.event_type}\ndata: {payload}\n\n"
+                    if event.event_type in {"run.completed", "run.failed", "run.cancelled"}:
+                        break
+            except RuntimeEventOverflow:
+                # A slow observer is disconnected explicitly; the workflow is
+                # never cancelled because an SSE consumer fell behind.
+                yield (
+                    "event: runtime.subscriber.overflow\n"
+                    "data: {\"errorCode\":\"RUNTIME_SSE_SLOW_SUBSCRIBER\"}\n\n"
+                )
+        return StreamingResponse(
+            body(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @router.get("/runs/{run_id}/provenance")
     async def get_provenance(run_id: str):
         run = load_run(run_id)
@@ -1610,6 +1642,7 @@ def create_router(
         load_run(run_id)
         try:
             run = runtime.cancel(run_id)
+            await coordinator.cancel(run_id)
         except InvalidStateTransition as exc:
             raise HTTPException(status_code=409, detail="run cannot be cancelled") from exc
         return project(run)

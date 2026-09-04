@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Callable
 
 from contracts.planning import (
     SemanticTaskRelationType,
@@ -21,9 +21,10 @@ class SemanticPlanningError(ValueError):
 
 
 class SemanticPlanner:
-    def __init__(self, capability_catalog: CapabilityCatalog, llm: IntentLLM | None = None) -> None:
+    def __init__(self, capability_catalog: CapabilityCatalog, llm: IntentLLM | None = None,
+                 progress_callback: Callable[[dict[str, Any]], None] | None = None) -> None:
         self.capability_catalog = capability_catalog
-        self.task_decomposer = TaskDecomposer(capability_catalog, llm)
+        self.task_decomposer = TaskDecomposer(capability_catalog, llm, progress_callback=progress_callback)
 
     def plan_profile(
         self,
@@ -35,6 +36,8 @@ class SemanticPlanner:
         reasoning_effort: str | None = None,
         use_llm: bool = True,
         existing_semantic_tasks: Sequence[Mapping[str, Any]] = (),
+        planning_deadline: float | None = None,
+        run_id: str | None = None,
     ) -> TaskPlan:
         return self.task_decomposer.decompose(
             mission_id=mission_id,
@@ -44,6 +47,8 @@ class SemanticPlanner:
             reasoning_effort=reasoning_effort,
             use_llm=use_llm,
             existing_semantic_tasks=tuple(existing_semantic_tasks),
+            planning_deadline=planning_deadline,
+            run_id=run_id,
         )
 
     def plan_capabilities(

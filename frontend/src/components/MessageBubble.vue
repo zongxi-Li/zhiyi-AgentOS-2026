@@ -250,7 +250,8 @@ const handleAction = (type: 'copy' | 'quote' | 'delete' | 'tts' | 'export') => {
     ElMessageBox.confirm('确定要删除这条消息吗？', '提示', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
-      type: 'warning'
+      type: 'warning',
+      customClass: 'destructive-confirm'
     }).then(() => {
       emit('delete', props.message.id)
     }).catch(() => {})

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import hashlib
 from collections.abc import Awaitable, Callable
 from time import monotonic
@@ -20,6 +21,7 @@ from contracts.capability import (
     ModelOutputPolicy,
     ModelInvocationRequest,
 )
+from contracts.runtime_events import RuntimeEvent
 
 
 class RegisteredModelRuntime:
@@ -83,13 +85,14 @@ class RegisteredModelRuntime:
         prompt: str,
         schema: dict[str, Any],
         thinking_mode: str = "disabled",
+        reasoning_effort: str | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """把原生 JSON 生成请求转换为统一模型调用，并返回安全审计投影。"""
-        del thinking_mode
+        del thinking_mode, reasoning_effort
         if timeout_seconds <= 0:
             raise StructuredGenerationError(
                 "MODEL_TIMEOUT_INVALID",
@@ -268,6 +271,172 @@ class RegisteredModelRuntime:
             effectiveReason=selected_reason,
             outputExhausted=False,
         )
+
+    async def stream_generate_json(
+        self,
+        *,
+        prompt: str,
+        schema: dict[str, Any],
+        run_id: str,
+        node_id: str | None = None,
+        attempt_id: str | None = None,
+        ttft_timeout: float = 30.0,
+        idle_timeout: float = 60.0,
+        total_timeout: float = 300.0,
+        thinking_mode: str = "disabled",
+        reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
+        prompt_version: str = "native-capability.v3",
+        commit_id: str | None = None,
+        emit_output_deltas: bool = True,
+    ):
+        """Consume a provider stream while keeping structured output private when requested."""
+        del thinking_mode, reasoning_effort, prompt_version
+        if min(ttft_timeout, idle_timeout, total_timeout) <= 0:
+            raise StructuredGenerationError("MODEL_TIMEOUT_INVALID", "stream timeouts must be positive")
+        try:
+            candidates = self._registry.resolve_candidates(self.provider, self.model, version=self.version)
+        except LookupError as exc:
+            raise StructuredGenerationError("MODEL_NOT_CONFIGURED", "requested model adapter is not registered") from exc
+        adapter = candidates[0]
+        streamer = getattr(adapter, "astream", None)
+        if not callable(streamer):
+            raise StructuredGenerationError("MODEL_STREAM_UNSUPPORTED", "model adapter does not support streaming")
+        try:
+            capability = adapter.describe_model(self.model)
+        except Exception:
+            capability = ModelCapabilityEnvelope.unknown(
+                provider=self.provider, model=self.model, version=self.version
+            )
+        options: dict[str, Any] = {}
+        if max_output_tokens is not None:
+            options[capability.max_tokens_field or "max_tokens"] = max_output_tokens
+        elif capability.max_tokens_required and capability.max_output_tokens is not None:
+            options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
+        elif capability.max_output_tokens is not None:
+            options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
+        request_id = commit_id or f"model:{uuid4().hex}"
+        request = ModelInvocationRequest(
+            requestId=request_id,
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            responseSchema=dict(schema),
+            options=options,
+            commitId=commit_id,
+        )
+        seq = 0
+        started = self._clock()
+        last_activity = started
+        last_activity_event = started
+        first = False
+        received_chunks = 0
+        buffer: list[str] = []
+        finish_reason: str | None = None
+        iterator = streamer(request)
+
+        def emit(kind: str, payload: dict[str, Any] | None = None) -> RuntimeEvent:
+            nonlocal seq
+            seq += 1
+            return RuntimeEvent(
+                eventType=kind,
+                runId=run_id,
+                nodeId=node_id,
+                attemptId=attempt_id,
+                sequence=seq,
+                payload=payload or {},
+            )
+
+        def activity_payload(idle_ms: float) -> dict[str, Any]:
+            return {
+                "elapsedMs": round((self._clock() - started) * 1000),
+                "idleMs": round(max(0.0, idle_ms) * 1000),
+                "receivedChunks": received_chunks,
+                "receivedLength": sum(map(len, buffer)),
+            }
+
+        yield emit("model.started", {
+            "requestId": request_id,
+            "provider": self.provider,
+            "model": self.model,
+            "streamingCapability": True,
+        })
+        completed = False
+        try:
+            while True:
+                total_left = total_timeout - (self._clock() - started)
+                if total_left <= 0:
+                    raise StructuredGenerationError("MODEL_TOTAL_TIMEOUT", "model stream total timeout exceeded")
+                window = ttft_timeout if not first else idle_timeout
+                activity_left = window - (self._clock() - (started if not first else last_activity))
+                if activity_left <= 0:
+                    code = "MODEL_TTFT_TIMEOUT" if not first else "MODEL_IDLE_TIMEOUT"
+                    raise StructuredGenerationError(code, "model stream activity deadline exceeded", retryable=True)
+                try:
+                    item = await self._wait_for(anext(iterator), min(total_left, activity_left))
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    code = "MODEL_TTFT_TIMEOUT" if not first else "MODEL_IDLE_TIMEOUT"
+                    raise StructuredGenerationError(code, "model stream activity deadline exceeded", retryable=True) from exc
+                except ModelInvocationError as exc:
+                    raise StructuredGenerationError(
+                        exc.code,
+                        "model provider stream failed",
+                        retryable=exc.code in self._FAILOVER_CODES,
+                        audit={"provider": self.provider, "model": self.model},
+                    ) from exc
+                now = self._clock()
+                if item.event_type == "delta" and item.delta:
+                    received_chunks += 1
+                    buffer.append(item.delta)
+                    idle_ms = now - last_activity
+                    last_activity = now
+                    if not first:
+                        first = True
+                        yield emit("model.first_token", activity_payload(idle_ms))
+                    if emit_output_deltas:
+                        yield emit("model.output.delta", {"delta": item.delta})
+                    if received_chunks == 1 or now - last_activity_event >= 0.35:
+                        last_activity_event = now
+                        yield emit("model.activity", activity_payload(idle_ms))
+                elif item.event_type == "completed":
+                    raw_finish_reason = item.metadata.get("finishReason")
+                    finish_reason = str(raw_finish_reason or "") or None
+                    completed = True
+                    break
+        except asyncio.CancelledError:
+            close = getattr(iterator, "aclose", None)
+            if callable(close):
+                await close()
+            raise
+        except Exception:
+            close = getattr(iterator, "aclose", None)
+            if callable(close):
+                await close()
+            raise
+        if not first:
+            raise StructuredGenerationError("MODEL_TTFT_TIMEOUT", "model stream completed without output")
+        if not completed:
+            # A provider adapter normally emits completed; treating a clean end
+            # as parseable keeps compatible fake streams useful without relaxing
+            # TTFT/idle/total ownership.
+            completed = True
+        if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_EXHAUSTED",
+                "model provider exhausted its output capacity before completing the response",
+                retryable=False,
+            )
+        if received_chunks and last_activity_event < last_activity:
+            yield emit("model.activity", activity_payload(0.0))
+        try:
+            data = json.loads("".join(buffer))
+        except (TypeError, ValueError) as exc:
+            raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "streamed model output is not valid JSON") from exc
+        if not isinstance(data, dict):
+            raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "streamed model output must be an object")
+        yield emit("model.completed", {"receivedLength": sum(map(len, buffer)), "data": data})
+
 
 async def _wait_for(awaitable: Awaitable[Any], timeout: float) -> Any:
     """Keep asyncio behind an injectable deadline boundary for deterministic tests."""

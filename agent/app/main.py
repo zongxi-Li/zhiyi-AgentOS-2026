@@ -20,6 +20,7 @@ from app.integrations.model_adapter import configure_model_adapter
 from app.integrations.tool_adapter import configure_tool_adapter
 from app.execution import (
     RunExecutionCoordinator,
+    bind_registered_planner_llm,
     build_default_runtime,
     build_model_setup,
     close_runtime,
@@ -57,6 +58,8 @@ async def lifespan(app: FastAPI):
         logger.warning("Read-only tool runtime warmup failed: %s", type(exc).__name__)
     try:
         await model_setup.start()
+        if bind_registered_planner_llm(runtime):
+            logger.info("Planner model streaming bound to the Runtime-owned model registry")
         await coordinator.startup()
     except Exception:
         await model_setup.close()

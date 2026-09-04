@@ -199,6 +199,7 @@ class ModelStreamEvent(BaseModel):
     tool_call_id: str | None = Field(default=None, alias="toolCallId")
     tool_name: str | None = Field(default=None, alias="toolName")
     tool_arguments: str = Field(default="", alias="toolArguments")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityInvocation(BaseModel):

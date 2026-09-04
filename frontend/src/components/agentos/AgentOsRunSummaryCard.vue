@@ -90,7 +90,7 @@ const summary = computed(() => {
     completedSteps: props.progress?.completedSteps ?? count('completed'),
     activeSteps: props.progress?.activeStepIds?.length ?? props.run?.activeStepIds?.length ?? count('running'),
     skippedSteps: props.run?.skippedStepIds?.length ?? count('skipped_by_condition'),
-    recoveryCount: props.view?.lowEntropyMetrics.recoveryCount ?? count('retrying'),
+    recoveryCount: props.view?.lowEntropyMetrics?.recoveryCount ?? count('retrying'),
     patchRefCount: patchRefs.size,
     auditEventCount: uniqueEventCount.value,
     provenanceCount: props.view?.interactions?.length ?? 0

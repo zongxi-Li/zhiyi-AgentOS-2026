@@ -12,6 +12,7 @@
       <AcgTopologyGraph
         :blueprint="graph"
         :focus-node-id="focusNodeId"
+        :runtime-phases="runtimePhases"
         :workbench="true"
         @node-selected="handleNodeSelected"
         @node-double-clicked="handleNodeDoubleClicked"
@@ -26,6 +27,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import type { AcgBlueprint, WorkspaceGraphNode } from '@/services/api/agentos'
 
@@ -34,7 +36,10 @@ const props = defineProps<{
   graphNodes: WorkspaceGraphNode[]
   selectedSemanticTaskKey: string | null
   focusNodeId: string | null
+  runId?: string | null
+  runtimeStore?: RuntimeEventStore | null
 }>()
+const runtimePhases = computed(() => Object.fromEntries(Object.entries(props.runtimeStore?.nodes || {}).map(([id, state]) => [id, state.phase])))
 
 const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]

@@ -46,7 +46,7 @@ describe('ACG capability panels', () => {
     expect(wrapper.text()).toContain('控制协同')
     expect(wrapper.text()).toContain('通信上下文')
     expect(wrapper.text()).toContain('恢复审计')
-    expect(wrapper.findAll('.el-tabs__item')).toHaveLength(4)
+    expect(wrapper.findAll('.el-tabs__item')).toHaveLength(5)
     expect(wrapper.findAll('.el-tabs__item').some(item => item.text().includes('资源'))).toBe(false)
   })
 

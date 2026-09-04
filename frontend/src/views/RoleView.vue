@@ -152,7 +152,8 @@ const handleDeleteRole = async (role: any) => {
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        customClass: 'destructive-confirm'
       }
     )
     

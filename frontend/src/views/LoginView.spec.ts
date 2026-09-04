@@ -1,10 +1,11 @@
 import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import LoginView from './LoginView.vue'
 
-const mountLogin = async () => {
+const mountLogin = async (props: { embedded?: boolean } = {}) => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/login', component: LoginView }, { path: '/', component: { template: '<div />' } }]
@@ -12,8 +13,9 @@ const mountLogin = async () => {
   await router.push('/login')
   await router.isReady()
   return mount(LoginView, {
+    props,
     global: {
-      plugins: [router, ElementPlus],
+      plugins: [router, ElementPlus, createPinia()],
       stubs: { LoginAcgDemo: true }
     }
   })
@@ -32,5 +34,13 @@ describe('LoginView', () => {
     const wrapper = await mountLogin()
 
     expect(wrapper.get('[data-testid="auth-submit"]').text()).toContain('登录')
+  })
+
+  it('emits back instead of routing when embedded in the landing surface', async () => {
+    const wrapper = await mountLogin({ embedded: true })
+
+    await wrapper.get('.auth-brand').trigger('click')
+
+    expect(wrapper.emitted('back')).toHaveLength(1)
   })
 })

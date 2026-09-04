@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
+from time import monotonic
 from typing import Any, Dict
 
 from app.llm.capabilities import (
@@ -39,6 +41,29 @@ def _looks_like_timeout(exc: Exception) -> bool:
     """
     text = f"{getattr(exc, 'code', '')} {exc}".lower()
     return "timeout" in text or "timed out" in text
+
+
+def _looks_like_connection_interruption(exc: Exception) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = f"{type(current).__name__} {getattr(current, 'code', '')} {current}".lower()
+        if any(term in text for term in (
+            "remoteprotocolerror", "apiconnectionerror", "connecterror",
+            "connection error", "server disconnected", "connection reset",
+            "connection aborted", "incomplete chunked read",
+        )):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _env_enabled(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _pop_timeout_budget(kwargs: Dict[str, Any]) -> float | None:
@@ -146,9 +171,17 @@ class OpenAICompatibleProvider:
             ),
             "field": budget_field,
         }
+        started = monotonic()
+        stream_used = (
+            _env_enabled("AGENTOS_LLM_STREAM_JSON", True)
+            and str(getattr(self, "provider_name", "")).lower() == "glm"
+        )
         try:
             adapted = self._adapt_parameters(kwargs)
             adapted["response_format"] = {"type": "json_object"}
+            if stream_used:
+                adapted["stream"] = True
+                adapted["stream_options"] = {"include_usage": True}
             completion = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -161,7 +194,7 @@ class OpenAICompatibleProvider:
                 **adapted,
                 **({"timeout": timeout_budget} if timeout_budget else {}),
             )
-            raw = self._extract_raw_result(completion)
+            raw = self._aggregate_stream(completion) if stream_used else self._extract_raw_result(completion)
             finish_reason = str(raw.raw_response_metadata.get("finish_reason") or "") or None
             if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
                 raise LLMProviderError(
@@ -169,7 +202,7 @@ class OpenAICompatibleProvider:
                     code="MODEL_OUTPUT_EXHAUSTED",
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
-                    metadata={"outputBudget": output_budget},
+                    metadata={"outputBudget": output_budget, "streamUsed": stream_used},
                 )
             content = raw.content
             if not content:
@@ -178,7 +211,7 @@ class OpenAICompatibleProvider:
                     code="MODEL_EMPTY_RESPONSE",
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
-                    metadata={"outputBudget": output_budget},
+                    metadata={"outputBudget": output_budget, "streamUsed": stream_used},
                 )
             try:
                 data = self._parse_json(content)
@@ -191,7 +224,7 @@ class OpenAICompatibleProvider:
                     code=exc.code,
                     usage=raw.raw_usage,
                     finish_reason=finish_reason,
-                    metadata={"outputBudget": output_budget, **exc.metadata},
+                    metadata={"outputBudget": output_budget, "streamUsed": stream_used, **exc.metadata},
                 ) from exc
             return {
                 "data": data,
@@ -199,20 +232,42 @@ class OpenAICompatibleProvider:
                 "finish_reason": finish_reason,
                 "response_id": raw.raw_response_metadata.get("response_id"),
                 "outputBudget": output_budget,
+                "streamUsed": stream_used,
+                "transport": {
+                    "attemptCount": 1, "retryCount": 0,
+                    "streamUsed": stream_used,
+                    "timeoutSeconds": timeout_budget,
+                    "elapsedMs": int((monotonic() - started) * 1000),
+                },
             }
         except LLMProviderError:
             raise
         except Exception as exc:
+            elapsed_ms = int((monotonic() - started) * 1000)
+            transport_class = type(exc).__name__
+            common_metadata = {
+                "outputBudget": output_budget,
+                "attemptCount": 1, "retryCount": 0,
+                "streamUsed": stream_used,
+                "elapsedMs": elapsed_ms,
+                "transportErrorClass": transport_class,
+                **({"timeoutSeconds": timeout_budget} if timeout_budget else {}),
+            }
             if _looks_like_timeout(exc):
                 raise LLMProviderError(
-                    f"OpenAI-compatible JSON generation failed: {exc}",
+                    "OpenAI-compatible JSON generation timed out",
                     code="MODEL_TIMEOUT",
-                    metadata={
-                        "outputBudget": output_budget,
-                        **({"timeoutSeconds": timeout_budget} if timeout_budget else {}),
-                    },
+                    metadata=common_metadata,
                 ) from exc
-            raise LLMProviderError(f"OpenAI-compatible JSON generation failed: {exc}") from exc
+            if _looks_like_connection_interruption(exc):
+                raise LLMProviderError(
+                    "OpenAI-compatible JSON stream connection was interrupted",
+                    code="MODEL_CONNECTION_INTERRUPTED", metadata=common_metadata,
+                ) from exc
+            raise LLMProviderError(
+                "OpenAI-compatible JSON generation failed",
+                metadata={"outputBudget": output_budget, "streamUsed": stream_used},
+            ) from exc
 
     def _adapt_parameters(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         thinking_mode = kwargs.get("thinking_mode", kwargs.get("reasoning_effort", self.default_thinking_mode))
@@ -280,6 +335,33 @@ class OpenAICompatibleProvider:
                 "finish_reason": getattr(choice, "finish_reason", None),
                 "response_id": getattr(completion, "id", None),
             },
+        )
+
+    @staticmethod
+    def _aggregate_stream(stream: Any) -> ProviderRawResult:
+        content_parts: list[str] = []
+        finish_reason: str | None = None
+        response_id: str | None = None
+        raw_usage: Dict[str, Any] = {}
+        for chunk in stream:
+            response_id = str(getattr(chunk, "id", None) or response_id or "") or None
+            usage = getattr(chunk, "usage", None)
+            if hasattr(usage, "model_dump"):
+                raw_usage = dict(usage.model_dump() or {})
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            part = getattr(delta, "content", None)
+            if part:
+                content_parts.append(str(part))
+            # reasoning_content is intentionally read by the SDK but never retained.
+            finish_reason = str(getattr(choice, "finish_reason", None) or finish_reason or "") or None
+        return ProviderRawResult(
+            content="".join(content_parts), reasoning_content=None, tool_calls=[],
+            raw_usage=raw_usage,
+            raw_response_metadata={"finish_reason": finish_reason, "response_id": response_id},
         )
 
     @staticmethod

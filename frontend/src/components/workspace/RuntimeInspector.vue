@@ -10,6 +10,9 @@
       @locate-graph="emit('locateGraph')"
     />
     <InspectorFrame v-else-if="inspectorContribution || inspectorSections.length" :title="inspectorTitle" :historical="historical">
+      <InspectorSection v-if="runId && graphNode" title="输出" :badge="liveNode?.phase || 'WAITING'">
+        <pre class="runtime-output">{{ liveNode?.outputBuffer || '等待模型输出...' }}</pre>
+      </InspectorSection>
       <component
         v-for="section in inspectorSections"
         :key="section.id"
@@ -29,12 +32,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
 import SecondarySidebar from '@/components/workbench/SecondarySidebar.vue'
 import type { WorkbenchContext, WorkbenchInspectorContext } from '@/workbench/types'
+import InspectorSection from '@/components/workbench/InspectorSection.vue'
+import {
+  RunRuntimeStore,
+  acquireRunRuntimeStore,
+  releaseRunRuntimeStore
+} from '@/workbench/runtime/runtimeEvents'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
 const props = defineProps<{
   registry: WorkbenchContributionRegistry
@@ -48,7 +58,31 @@ const props = defineProps<{
   graph: AcgBlueprint | null
   runStatus: string | null
   historical: boolean
+  runtimeStore?: RuntimeEventStore | null
 }>()
+const ownedRuntimeStore = shallowRef<RunRuntimeStore | null>(null)
+const ownedRunId = ref<string | null>(null)
+const runtimeStore = computed(() => props.runtimeStore || ownedRuntimeStore.value)
+const liveNode = computed(() => props.graphNode?.acgNodeId ? runtimeStore.value?.nodes[props.graphNode.acgNodeId] || null : null)
+const connectRuntime = (runId: string | null) => {
+  if (props.runtimeStore) {
+    releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
+    ownedRuntimeStore.value = null
+    ownedRunId.value = null
+    return
+  }
+  if (ownedRunId.value === runId) return
+  releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
+  ownedRuntimeStore.value = acquireRunRuntimeStore(runId)
+  ownedRunId.value = runId
+}
+watch([() => props.runId, () => props.runtimeStore], () => connectRuntime(props.runId))
+onMounted(() => connectRuntime(props.runId))
+onBeforeUnmount(() => {
+  releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
+  ownedRuntimeStore.value = null
+  ownedRunId.value = null
+})
 
 const emit = defineEmits<{ locateGraph: [] }>()
 
@@ -79,6 +113,7 @@ const baseProps = computed(() => ({
   graph: props.graph,
   runStatus: props.runStatus,
   historical: props.historical,
+  runtimeStore: runtimeStore.value,
   resourceObservation: props.workbenchContext.runtimeObservation?.resourceObservation || null,
   runtimeObservation: props.workbenchContext.runtimeObservation || null
 }))
@@ -91,4 +126,5 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 <style scoped>
 .runtime-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--wb-surface-pane); color: var(--wb-text); }
 .runtime-inspector__empty { padding: 22px 15px; color: var(--wb-text-muted); font-size: 12px; line-height: 1.6; }
+.runtime-output { max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
 </style>

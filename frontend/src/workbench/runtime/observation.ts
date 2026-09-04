@@ -317,6 +317,161 @@ const normalizeToolCalls = (traces: RuntimeTraceObservation[]): RuntimeToolCallO
     source: 'trace'
   }))
 
+export interface ModelOutputMetrics {
+  taskCount?: number
+  dependencyCount?: number
+  nodeCount?: number
+  edgeCount?: number
+  constraintCount?: number
+  timeoutSeconds?: number
+}
+
+export interface ModelOutputItem {
+  id: string
+  timestamp: string | null
+  category: 'planner' | 'runtime'
+  kind: string
+  stage: string | null
+  status: 'running' | 'success' | 'warning' | 'failed'
+  title: string
+  detail: string | null
+  attempt: number
+  retryCount: number
+  metrics: ModelOutputMetrics
+}
+
+const PLANNER_STAGE_LABELS: Record<string, string> = {
+  planning: '规划流程',
+  intent_profile: '意图解析',
+  outline: '结构规划',
+  detail: '任务细化',
+  relations: '依赖构建',
+  decompose: '任务分解',
+  repair: '结果修复',
+  'detail.repair': '细化修复',
+  'relations.repair': '关系修复',
+  repair_coverage: '覆盖修复'
+}
+
+const plannerStageLabel = (stage: string | null) => (
+  stage ? PLANNER_STAGE_LABELS[stage] || `阶段 ${stage}` : '规划'
+)
+
+const kindFromLegacyStatus = (status: string | null) => (
+  status === 'started' ? 'stage_started'
+    : status === 'completed' ? 'stage_completed'
+      : status === 'retrying' ? 'retry'
+        : 'stage_updated'
+)
+
+const scalarCount = (value: unknown): number | null => {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+const joinedCount = (parts: string[]) => parts.length ? ` · ${parts.join(' · ')}` : ''
+
+const modelOutputTitle = (kind: string, stage: string | null, payload: Record<string, any>) => {
+  switch (kind) {
+    case 'started':
+      return '开始规划任务'
+    case 'stage_started':
+      return `${plannerStageLabel(stage)}开始`
+    case 'stage_completed':
+      return `${plannerStageLabel(stage)}完成`
+    case 'profile_resolved': {
+      const constraints = scalarCount(payload.constraintCount)
+      return constraints != null
+        ? `已解析任务约束 · ${constraints} 条`
+        : '任务画像已解析'
+    }
+    case 'plan_parsed': {
+      const taskCount = scalarCount(payload.taskCount)
+      const dependencyCount = scalarCount(payload.dependencyCount)
+      return '任务规划完成' + joinedCount([
+        ...(taskCount != null ? [`${taskCount} 个任务`] : []),
+        ...(dependencyCount != null ? [`${dependencyCount} 条依赖`] : [])
+      ])
+    }
+    case 'graph_compiled': {
+      const nodeCount = scalarCount(payload.nodeCount)
+      const edgeCount = scalarCount(payload.edgeCount)
+      return 'ACG 编译完成' + joinedCount([
+        ...(nodeCount != null ? [`${nodeCount} 个节点`] : []),
+        ...(edgeCount != null ? [`${edgeCount} 条边`] : [])
+      ])
+    }
+    case 'completed':
+      return '规划完成'
+    case 'retry':
+      return '规划请求重试'
+    case 'failed':
+      return '规划失败'
+    default:
+      return `${plannerStageLabel(stage)}更新`
+  }
+}
+
+const modelOutputStatusState = (kind: string): ModelOutputItem['status'] => (
+  kind === 'failed' ? 'failed'
+    : kind === 'retry' ? 'warning'
+      : kind === 'started' || kind === 'stage_started' ? 'running'
+        : 'success'
+)
+
+/**
+ * Project planner Trace events into Model Output items.
+ *
+ * Every title must be traceable to one Runtime Event: kind-driven facts first
+ * (new category="planner" payloads), engineering-stage wording as the legacy
+ * fallback. A retried stage replaces its still-running start instead of
+ * stacking a duplicate row; no timer or stage guesswork ever runs here.
+ */
+export const projectModelOutput = (traces: RuntimeTraceObservation[]): ModelOutputItem[] => {
+  const items: ModelOutputItem[] = []
+  const openStartedIndex = new Map<string, number>()
+  for (const event of traces) {
+    const payload = asRecord(event.payload)
+    if (!payload.planningProgress) continue
+    const category: ModelOutputItem['category'] = payload.category === 'planner' ? 'planner' : 'runtime'
+    const stage = stringOrNull(payload.stage)
+    const legacyStatus = stringOrNull(payload.status)
+    const kind = stringOrNull(payload.kind) || kindFromLegacyStatus(legacyStatus)
+    const errorCode = stringOrNull(payload.errorCode)
+    const item: ModelOutputItem = {
+      id: event.eventId,
+      timestamp: event.timestamp,
+      category,
+      kind,
+      stage,
+      status: modelOutputStatusState(kind),
+      title: modelOutputTitle(kind, stage, payload),
+      detail: errorCode ? `错误码 ${errorCode}` : null,
+      attempt: scalarCount(payload.attempt) ?? 1,
+      retryCount: scalarCount(payload.retryCount) ?? 0,
+      metrics: {
+        taskCount: scalarCount(payload.taskCount) ?? undefined,
+        dependencyCount: scalarCount(payload.dependencyCount) ?? undefined,
+        nodeCount: scalarCount(payload.nodeCount) ?? undefined,
+        edgeCount: scalarCount(payload.edgeCount) ?? undefined,
+        constraintCount: scalarCount(payload.constraintCount) ?? undefined,
+        timeoutSeconds: scalarCount(payload.timeoutSeconds) ?? undefined
+      }
+    }
+    if (kind === 'stage_started' && legacyStatus === 'started' && stage) {
+      const openIndex = openStartedIndex.get(stage)
+      if (openIndex != null && items[openIndex]?.kind === 'stage_started') {
+        items[openIndex] = item
+        continue
+      }
+      openStartedIndex.set(stage, items.length)
+    }
+    if (kind === 'stage_completed' && stage) openStartedIndex.delete(stage)
+    items.push(item)
+  }
+  return items
+}
+
 const normalizeProblems = (
   traces: RuntimeTraceObservation[],
   diagnostics: readonly WorkspaceDiagnostic[]
@@ -326,7 +481,11 @@ const normalizeProblems = (
     .filter(event => event.eventType.includes('failed') || event.eventType.includes('violation') || event.eventType.includes('error'))
     .map(event => ({
       code: stringOrNull(event.payload.errorCode) || event.eventType.toUpperCase(),
-      message: eventSummary(event),
+      message: event.payload.errorCode === 'model_connection_interrupted'
+        ? '模型服务连接中断，系统已完成一次重试，请稍后重新运行。'
+        : event.payload.errorCode === 'model_timeout'
+          ? '模型服务响应超时，系统已完成一次重试，请稍后重新运行。'
+          : eventSummary(event),
       severity: 'warning' as const,
       details: event.payload,
       source: 'trace' as const,

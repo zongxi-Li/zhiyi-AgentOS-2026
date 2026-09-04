@@ -1,11 +1,15 @@
 <template>
-  <main class="auth-view">
-    <header class="auth-topbar">
-      <a class="auth-brand" href="/" aria-label="知弈 AgentOS 首页">
+  <main class="auth-view" :class="{ 'is-desktop-shell': desktopShell, 'is-register': activeTab === 'register' }">
+    <header class="auth-topbar" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
+      <a class="auth-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="handleBrandClick">
         <span class="auth-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
-        <span>知弈 <strong>AgentOS</strong></span>
+        <span class="auth-brand__wordmark">
+          <span class="auth-brand__name">知弈</span>
+          <strong>AgentOS</strong>
+        </span>
       </a>
       <span class="auth-topbar__note">More Agents <i aria-hidden="true">·</i> More Possibilities</span>
+      <DesktopWindowControls v-if="desktopShell" />
     </header>
 
     <div class="auth-layout">
@@ -86,9 +90,28 @@ import { ChatDotRound, Connection, Lock, Message, OfficeBuilding, User } from '@
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { authApi } from '@/services/api/auth'
+import { useUserStore } from '@/stores/user'
+import DesktopWindowControls from '@window-controls'
+import { isDesktop, platform } from '@/platform'
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const emit = defineEmits<{ back: [] }>()
+
+const desktopShell = isDesktop()
+const dragRegionProps = platform.dragRegionProps
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
+
+const handleBrandClick = () => {
+  if (props.embedded) {
+    emit('back')
+    return
+  }
+  router.push('/')
+}
+
 const activeTab = ref('login')
 const loading = ref(false)
 const loginFormRef = ref<FormInstance>()
@@ -141,6 +164,9 @@ const handleLogin = async () => {
       if (response.token) {
         localStorage.setItem('token', response.token)
         localStorage.setItem('userId', response.userId?.toString() || '')
+        // SPA 内跳转不会重跑 App.vue 的 onMounted，这里主动加载一次用户信息，
+        // 否则侧栏会整个会话停留在“当前用户”兜底头像上。
+        await userStore.loadCurrentUser()
         ElMessage.success(response.message || '登录成功')
         const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/chat'
         const safeRedirect = redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/chat'
@@ -188,15 +214,19 @@ const handleRegister = async () => {
   position: relative;
   min-height: 100vh;
   min-height: 100dvh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   color: var(--auth-ink);
-  background: #dcecff url('/bg.jpeg') center / cover fixed no-repeat;
+  background: #dcecff url('/bg.png') center / cover fixed no-repeat;
 }
 .auth-view::before { content: ''; position: fixed; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(246,251,255,.9) 0%, rgba(246,251,255,.6) 37%, rgba(236,246,255,.08) 77%), linear-gradient(180deg, rgba(255,255,255,.25), transparent 50%); }
 .auth-topbar, .auth-layout, .auth-footer { position: relative; z-index: 1; }
 .auth-topbar { width: min(100% - 96px, 1920px); min-height: 88px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
-.auth-brand { display: inline-flex; align-items: center; gap: 12px; color: var(--auth-ink); font-size: 21px; font-weight: 650; letter-spacing: -.02em; text-decoration: none; }
-.auth-brand strong { font-weight: 500; }
+.auth-brand { display: inline-flex; align-items: center; gap: 13px; color: var(--auth-ink); font-family: var(--font-sans); font-size: 22px; font-weight: 600; letter-spacing: -.035em; line-height: 1; text-decoration: none; }
+.auth-brand__wordmark { display: inline-flex; align-items: baseline; gap: 5px; }
+.auth-brand__name { font-family: var(--font-serif); font-weight: 700; letter-spacing: -.055em; }
+.auth-brand strong { color: #23477d; font-family: var(--font-sans); font-size: .93em; font-weight: 650; letter-spacing: -.045em; }
 .auth-brand__logo { width: 36px; height: 36px; display: block; }
 .auth-brand__logo img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .auth-topbar__note { color: #7b96bd; font-size: 11px; letter-spacing: .11em; }
@@ -221,14 +251,16 @@ const handleRegister = async () => {
 .auth-tabs :deep(.el-tabs__active-bar) { height: 3px; border-radius: 999px; background: linear-gradient(90deg, var(--auth-blue), var(--auth-purple)); }
 .auth-form :deep(.el-form-item) { margin-bottom: 17px; }
 .auth-form :deep(.el-form-item__label) { padding-bottom: 6px; color: #55739f; font-size: 12px; line-height: 1.2; }
-.auth-form :deep(.el-input__wrapper) { min-height: 48px; padding: 0 15px; border: 1px solid rgba(150,180,220,.32); border-radius: 12px; background: rgba(255,255,255,.5); box-shadow: none; transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease; }
-.auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(36,143,240,.5); }
-.auth-form :deep(.el-input__wrapper.is-focus) { border-color: var(--auth-blue); background: rgba(255,255,255,.82); box-shadow: 0 0 0 3px rgba(36,143,240,.12); }
-.auth-form :deep(.el-input__inner) { color: var(--auth-ink); font-size: 13px; }
-.auth-form :deep(.el-input__inner::placeholder) { color: #99acc6; }
-.auth-form :deep(.el-input__prefix) { color: #7695be; }
+.auth-form :deep(.el-input__wrapper) { min-height: 48px; padding: 0 15px; border: 1px solid rgba(150,180,220,.42) !important; border-radius: 12px; background: rgba(255,255,255,.62) !important; box-shadow: 0 1px 2px rgba(68,111,181,.06) inset !important; transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease; }
+.auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(36,143,240,.58) !important; background: rgba(255,255,255,.76) !important; }
+.auth-form :deep(.el-input__wrapper.is-focus) { border-color: var(--auth-blue) !important; background: rgba(255,255,255,.88) !important; box-shadow: 0 0 0 3px rgba(36,143,240,.12) !important; }
+.auth-form :deep(.el-input__inner) { color: var(--auth-ink) !important; font-size: 13px; }
+.auth-form :deep(.el-input__inner::placeholder) { color: #7e98bb !important; }
+.auth-form :deep(.el-input__prefix), .auth-form :deep(.el-input__suffix) { color: #557cae !important; }
 .auth-form__options { min-height: 34px; display: flex; align-items: center; justify-content: space-between; }
 .auth-form__options :deep(.el-checkbox__label) { color: #6884ac; font-size: 12px; }
+.auth-form__options :deep(.el-checkbox__inner) { border-color: rgba(105,145,194,.52); background: rgba(255,255,255,.7); }
+.auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) { border-color: var(--auth-blue); background: var(--auth-blue); }
 .text-action, .auth-switch button { border: 0; color: #256ef1; background: transparent; font: inherit; cursor: pointer; }
 .text-action { padding: 8px 0; font-size: 12px; }
 .auth-submit { width: 100%; min-height: 50px; margin-top: 10px; border: 0; border-radius: 999px; color: white; background: linear-gradient(105deg, var(--auth-blue), var(--auth-purple)); box-shadow: 0 12px 25px rgba(74,107,237,.28); font-size: 14px; font-weight: 700; letter-spacing: .08em; transition: transform 180ms ease, box-shadow 180ms ease; }
@@ -246,4 +278,177 @@ const handleRegister = async () => {
 @media (max-width: 940px) { .auth-layout { width: min(100% - 56px, 680px); display: block; padding-top: 7vh; } .auth-intro { display: none; } .auth-card { max-width: 520px; margin: 0 auto; } }
 @media (max-width: 560px) { .auth-view { overflow-y: auto; } .auth-topbar { width: calc(100% - 40px); min-height: 72px; } .auth-brand { font-size: 18px; } .auth-brand__logo { width: 32px; height: 32px; } .auth-topbar__note { display: none; } .auth-layout { width: calc(100% - 32px); min-height: auto; padding-top: 4vh; padding-bottom: 28px; } .auth-card { padding: 28px 22px 24px; border-radius: 20px; } .auth-card__heading h2 { font-size: 27px; } .auth-footer { width: calc(100% - 32px); padding-bottom: 16px; font-size: 9px; } }
 @media (prefers-reduced-motion: reduce) { .auth-form :deep(.el-input__wrapper), .auth-submit, .auth-providers button { transition: none; } }
+
+/* Tauri 隐藏了原生标题栏，桌面 shell 下由登录页顶栏兼任窗口拖拽区，
+   右上角承载窗口控制按钮（纯 Web 版不渲染桌面 shell）。 */
+.auth-view.is-desktop-shell { overflow-y: auto; scrollbar-gutter: stable; }
+.auth-view.is-desktop-shell .auth-topbar { width: 100%; min-height: 52px; padding-left: 18px; box-sizing: border-box; }
+.auth-view.is-desktop-shell .auth-topbar__note { margin-left: auto; margin-right: 24px; }
+.auth-view.is-desktop-shell :deep(.desktop-window-controls) { flex: 0 0 auto; height: 52px; align-self: center; }
+
+/* Desktop windows can be as small as 1100x700. Keep the registration form,
+   providers and legal copy available in one viewport while retaining scrolling
+   as a safe fallback for the minimum window size. */
+.auth-view.is-desktop-shell .auth-layout { min-height: calc(100dvh - 88px); padding-top: 16px; padding-bottom: 24px; }
+.auth-view.is-desktop-shell .auth-card { padding: 28px 36px 22px; }
+.auth-view.is-desktop-shell .auth-card__mark { width: 38px; height: 38px; margin-bottom: 15px; }
+.auth-view.is-desktop-shell .auth-card__mark img { width: 25px; height: 25px; }
+.auth-view.is-desktop-shell .auth-card__heading h2 { font-size: 27px; }
+.auth-view.is-desktop-shell .auth-card__heading p { margin-bottom: 17px; }
+.auth-view.is-desktop-shell .auth-tabs :deep(.el-tabs__header) { margin-bottom: 16px; }
+.auth-view.is-desktop-shell .auth-tabs :deep(.el-tabs__item) { min-height: 38px; }
+.auth-view.is-desktop-shell .auth-form :deep(.el-form-item) { margin-bottom: 11px; }
+.auth-view.is-desktop-shell .auth-form :deep(.el-input__wrapper) { min-height: 43px; }
+.auth-view.is-desktop-shell .auth-form__options { min-height: 28px; }
+.auth-view.is-desktop-shell .auth-submit { min-height: 45px; margin-top: 5px; }
+.auth-view.is-desktop-shell .auth-divider { margin: 17px 0 12px; }
+.auth-view.is-desktop-shell .auth-providers { gap: 16px; }
+.auth-view.is-desktop-shell .auth-providers button { width: 40px; height: 40px; }
+.auth-view.is-desktop-shell .auth-switch { margin-top: 14px; }
+.auth-view.is-desktop-shell .auth-legal { margin-top: 12px; }
+
+/* 注册态收紧两栏构图：两侧各向中心移动一点，卡片整体上提，
+   登录态保留原有的宽松节奏。 */
+@media (min-width: 941px) {
+  .auth-view.is-register .auth-layout {
+    transform: none;
+  }
+  .auth-view .auth-card {
+    position: relative;
+    left: clamp(-72px, -3.4vw, -36px);
+  }
+  .auth-view.is-register .auth-intro {
+    transform: translateY(-6px);
+  }
+  .auth-view.is-register .auth-card {
+    transform: translateY(-24px);
+  }
+}
+
+/* A browser can expose the same wide layout with a shorter viewport. Apply
+   the same compact rhythm there so registration does not hide its lower
+   actions behind the fold; overflow-y above remains the final fallback. */
+@media (min-width: 941px) and (max-height: 980px) {
+  .auth-layout { min-height: calc(100dvh - 88px); padding-top: 16px; padding-bottom: 24px; }
+  .auth-card { padding: 28px 36px 22px; }
+  .auth-card__mark { width: 38px; height: 38px; margin-bottom: 15px; }
+  .auth-card__mark img { width: 25px; height: 25px; }
+  .auth-card__heading h2 { font-size: 27px; }
+  .auth-card__heading p { margin-bottom: 17px; }
+  .auth-tabs :deep(.el-tabs__header) { margin-bottom: 16px; }
+  .auth-tabs :deep(.el-tabs__item) { min-height: 38px; }
+  .auth-form :deep(.el-form-item) { margin-bottom: 11px; }
+  .auth-form :deep(.el-input__wrapper) { min-height: 43px; }
+  .auth-form__options { min-height: 28px; }
+  .auth-submit { min-height: 45px; margin-top: 5px; }
+  .auth-divider { margin: 17px 0 12px; }
+  .auth-providers { gap: 16px; }
+  .auth-providers button { width: 40px; height: 40px; }
+  .auth-switch { margin-top: 14px; }
+  .auth-legal { margin-top: 12px; }
+}
+
+/* 窗口控件的取色变量指向登录页自己的 auth 色系——各页面的配色体系各自保留，
+   不借用工作台顶栏的灰。 */
+.auth-view.is-desktop-shell {
+  --app-topbar-muted: var(--auth-muted);
+  --app-topbar-hover: rgba(36, 158, 240, .08);
+  --app-topbar-active: rgba(36, 158, 240, .13);
+  --app-topbar-focus-ring: rgba(36, 158, 240, .45);
+}
+
+/* Shared dark login scene for web and desktop. The landing page and workbench
+   keep their own visual systems; only the auth surface follows darkbg.png. */
+.auth-view {
+  --auth-ink: #f1f6ff;
+  --auth-muted: #a6b8d0;
+  --auth-primary: var(--primary-color, #168bd4);
+  --auth-accent: var(--accent-color, #55bcff);
+  --auth-blue: var(--auth-accent);
+  --auth-purple: var(--auth-primary);
+  --auth-line: color-mix(in srgb, var(--auth-accent) 30%, transparent);
+  --auth-field: rgba(3, 10, 21, .76);
+  color-scheme: dark;
+  background: #050914 url('/darkbg.png') center / cover fixed no-repeat;
+}
+.auth-view::before {
+  background:
+    radial-gradient(circle at 70% 42%, color-mix(in srgb, var(--auth-accent) 16%, transparent), transparent 38%),
+    linear-gradient(90deg, rgba(3, 7, 15, .94) 0%, rgba(3, 10, 22, .76) 44%, rgba(3, 7, 15, .48) 100%),
+    linear-gradient(180deg, rgba(1, 4, 10, .16), rgba(1, 4, 10, .72));
+}
+.auth-topbar__note { color: rgba(204, 222, 247, .68); }
+.auth-topbar__note i { color: var(--auth-blue); }
+.auth-brand { color: #f1f6ff; }
+.auth-brand strong { color: color-mix(in srgb, var(--auth-accent) 42%, #f1f6ff); }
+.auth-intro h1 { color: #f1f6ff; }
+.auth-intro h1 span { color: color-mix(in srgb, var(--auth-accent) 64%, #f1f6ff); }
+.auth-eyebrow { color: color-mix(in srgb, var(--auth-accent) 78%, #f1f6ff); }
+.auth-intro__lead { color: #afc2dc; }
+.auth-intro__features { color: #a7bdd8; }
+.auth-intro__features b { color: var(--auth-blue); }
+.auth-card {
+  border-color: color-mix(in srgb, var(--auth-accent) 28%, transparent);
+  background: linear-gradient(145deg, rgba(13, 29, 53, .86), rgba(4, 12, 25, .80));
+  box-shadow: 0 26px 80px rgba(0, 0, 0, .46), inset 0 1px 0 rgba(220, 239, 255, .16);
+}
+.auth-card__mark {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--auth-accent) 40%, #17365d), color-mix(in srgb, var(--auth-primary) 48%, #101b3b));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--auth-accent) 25%, transparent), inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+.auth-card__heading h2 { color: #f1f6ff; }
+.auth-card__heading p { color: var(--auth-muted); }
+.auth-tabs :deep(.el-tabs__nav-wrap::after) { background: var(--auth-line); }
+.auth-tabs :deep(.el-tabs__item) { color: #8ea8c8; }
+.auth-tabs :deep(.el-tabs__item.is-active) { color: #f1f6ff; }
+.auth-form :deep(.el-form-item__label) { color: #a5beda; }
+.auth-form :deep(.el-input__wrapper) {
+  border-color: rgba(135, 188, 241, .28) !important;
+  background: var(--auth-field) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .42) inset !important;
+}
+.auth-form :deep(.el-input__wrapper:hover) {
+  border-color: color-mix(in srgb, var(--auth-accent) 72%, transparent) !important;
+  background: rgba(7, 20, 38, .88) !important;
+}
+.auth-form :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--auth-blue) !important;
+  background: rgba(7, 20, 38, .94) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--auth-accent) 20%, transparent) !important;
+}
+.auth-form :deep(.el-input__inner) { color: #eff6ff !important; }
+.auth-form :deep(.el-input__inner::placeholder) { color: #8ca6c5 !important; }
+.auth-form :deep(.el-input__prefix), .auth-form :deep(.el-input__suffix) { color: #7fcaff !important; }
+.auth-form__options :deep(.el-checkbox__label) { color: #a1b6d0; }
+.auth-form__options :deep(.el-checkbox__inner) {
+  border-color: rgba(137, 187, 237, .42);
+  background: rgba(5, 14, 28, .78);
+}
+.auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
+  border-color: var(--auth-blue);
+  background: var(--auth-blue);
+}
+.text-action, .auth-switch button { color: color-mix(in srgb, var(--auth-accent) 86%, #f1f6ff); }
+.auth-submit {
+  background: linear-gradient(105deg, color-mix(in srgb, var(--auth-primary) 78%, #ffffff), color-mix(in srgb, var(--auth-accent) 72%, var(--auth-primary)));
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--auth-primary) 42%, transparent);
+}
+.auth-submit:hover { box-shadow: 0 16px 34px color-mix(in srgb, var(--auth-primary) 54%, transparent); }
+.auth-divider { color: #8da7c5; }
+.auth-divider::before, .auth-divider::after { background: var(--auth-line); }
+.auth-providers button {
+  border-color: color-mix(in srgb, var(--auth-accent) 30%, transparent);
+  color: color-mix(in srgb, var(--auth-accent) 82%, #f1f6ff);
+  background: rgba(9, 24, 44, .62);
+}
+.auth-providers button:hover { background: color-mix(in srgb, var(--auth-primary) 30%, rgba(22, 52, 87, .86)); }
+.auth-switch { color: #9ab0ca; }
+.auth-legal { color: #8298b3; }
+.auth-footer { color: #8da7c4; }
+.auth-view.is-desktop-shell {
+  --app-topbar-muted: #9eb4d0;
+  --app-topbar-hover: color-mix(in srgb, var(--auth-accent) 12%, transparent);
+  --app-topbar-active: color-mix(in srgb, var(--auth-accent) 20%, transparent);
+  --app-topbar-focus-ring: color-mix(in srgb, var(--auth-accent) 55%, transparent);
+}
 </style>

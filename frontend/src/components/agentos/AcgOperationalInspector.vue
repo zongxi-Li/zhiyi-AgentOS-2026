@@ -19,6 +19,15 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane name="output">
+        <template #label><span class="tab-label">输出</span></template>
+        <div v-if="liveNode" class="section-block runtime-output">
+          <header><strong>{{ liveNodeId }}</strong><span>{{ liveNode.phase }}</span></header>
+          <small>Attempt {{ liveNode.currentAttemptId || '-' }} · {{ liveNode.chunkCount }} chunks</small>
+          <pre>{{ liveNode.outputBuffer || '等待模型输出...' }}</pre>
+        </div>
+        <p v-else class="empty">暂无实时输出</p>
+      </el-tab-pane>
       <el-tab-pane name="control">
         <template #label><span class="tab-label"><el-icon><Operation /></el-icon>控制协同</span></template>
         <OperationalSummary :items="controlSummary" />
@@ -56,14 +65,18 @@ import { Connection, DataAnalysis, Operation, RefreshRight } from '@element-plus
 import type { AcgView, NodeExecutionPhase, TraceEvent } from '@/services/api/workflow'
 import AcgLowEntropyMetrics from './AcgLowEntropyMetrics.vue'
 import RuntimeAuditTimeline from './RuntimeAuditTimeline.vue'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
 const props = defineProps<{
   view: AcgView
   auditEvents: TraceEvent[]
   patchRefs: string[]
+  runtimeStore?: RuntimeEventStore | null
 }>()
 const emit = defineEmits<{ 'export-audit': [format: 'json' | 'csv'] }>()
 const activeTab = ref('runtime')
+const liveNodeId = computed(() => props.view.operational?.nodeExecutions?.find(item => item.phase === 'executed')?.stepId || props.view.operational?.nodeExecutions?.[0]?.stepId || '')
+const liveNode = computed(() => liveNodeId.value ? props.runtimeStore?.nodes[liveNodeId.value] || null : null)
 const records = computed(() => props.view.operational?.nodeExecutions || [])
 const controlFrames = computed(() => props.view.operational?.controlFrames || [])
 const controlSummary = computed(() => [

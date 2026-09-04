@@ -14,7 +14,7 @@ import secrets
 import threading
 from time import monotonic
 from contracts.identity import new_attempt_id, new_step_execution_id
-from typing import Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from uuid import uuid4
 
 from service.agents import AgentRegistry
@@ -114,6 +114,7 @@ from components.planner.algorithms import (
     normalize_planning_diversity,
     normalize_planning_seed,
 )
+from components.planner.complexity import transport_error_code
 from components.planner.service import (
     apply_task_plan_patch,
     normalize_capability_profile,
@@ -150,6 +151,16 @@ _LIFECYCLE_MESSAGES = {
 
 _ERROR_UNSET = object()
 ExecutionAdapterFactory = Callable[..., object]
+
+# Planner Runtime Event 允许进入 Trace 的字段白名单（全部为标量安全事实）。
+# 计数字段必须由 Runtime 从真实对象计算得出，禁止携带任何模型文本。
+_PLANNER_PROGRESS_FIELDS = frozenset({
+    "stage", "status", "attempt", "retryCount", "timeoutSeconds", "errorCode",
+    "kind", "taskCount", "dependencyCount", "nodeCount", "edgeCount",
+    "constraintCount", "requiredCapabilityCount", "expectedArtifactCount",
+    "callKey", "retryIndex", "elapsedMs", "idleMs", "receivedChunks", "receivedLength",
+    "safeSummary",
+})
 
 
 class ReviewConflictError(ValueError):
@@ -263,6 +274,9 @@ class ExecutionRuntime:
         self.evaluator = evaluator or WorkflowEvaluator()
         self.state_machine = StateMachine()
         self._model_runtime = None
+        # Application composition sets this after model setup parsing. It is
+        # read only while a run is prepared and copied into frozen bindings.
+        self.default_model_binding: dict[str, str] | None = None
         self.mission_manager = mission_manager or MissionManager(
             workflow_store=self.workflow_store,
             workflow_registry=self.workflow_registry,
@@ -571,6 +585,10 @@ class ExecutionRuntime:
         scope: RunExecutionScope,
     ) -> None:
         """Run the existing L1-L3 plan/build/compile path for one persisted Run."""
+        # 显式 Blueprint 兼容入口（必须同时提供 taskPlan/bindings）没有 Planner
+        # 运行，绝不能伪造 planner started/parsed/compiled/completed 事件。
+        provided_explicit = run.input.get("acgBlueprint") or run.acg_blueprint or None
+        explicit_blueprint = isinstance(provided_explicit, dict) and bool(provided_explicit.get("nodes"))
         blueprint, task_plan, task_bindings = self._build_acg_blueprint(
             task,
             run,
@@ -589,6 +607,14 @@ class ExecutionRuntime:
         )
         self._sync_run_steps_to_acg(run, blueprint)
         compiled_package = ACGGraphCompiler().compile_package(blueprint, run_id=run.run_id)
+        if task_plan is not None and not explicit_blueprint:
+            # 计数取自编译产物 CompiledACGPackage（已过滤 retired 与资源节点），
+            # 而非编译输入 Blueprint；compiler 未来插入节点时这里自动跟随最终图。
+            self._append_planner_event(run, {
+                "kind": "graph_compiled",
+                "nodeCount": len(compiled_package.nodes),
+                "edgeCount": len(compiled_package.edges),
+            })
         self._register_and_freeze_resources(
             run=run,
             workflow=workflow,
@@ -626,18 +652,28 @@ class ExecutionRuntime:
         if self.identity_lifecycle is not None and task_plan is None:
             raise ValueError("identity-enabled ACG execution requires Planner output")
         run.execution_state.pop("planningDeferred", None)
+        if task_plan is not None and not explicit_blueprint:
+            self._append_planner_event(run, {"kind": "completed"})
 
     def _materialize_deferred_acg_run(self, run_id: str) -> RuntimeRunRecord:
         run = self.workflow_store.get_run(run_id)
         if not run.execution_state.get("planningDeferred"):
             return run
+        self._raise_if_run_cancelled(run_id)
         task = self.mission_manager.get_mission(run.mission_id)
         workflow = self._workflow_for_run(run)
         scope = run.execution_scope
         if scope is None:
             raise ValueError("deferred ACG planning requires a frozen execution scope")
         self._materialize_acg_run(task=task, run=run, workflow=workflow, scope=scope)
-        self.workflow_store.save_run(run)
+        # Planning runs in a worker thread. Re-check and commit under the same
+        # short run lock used by cancel(), otherwise a stale planner snapshot
+        # can overwrite CANCELLED and hand the run back to the executor.
+        with self.run_lock_manager.lock_for(run_id):
+            latest = self.workflow_store.get_run(run_id)
+            if latest.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run_id):
+                return latest
+            self.workflow_store.save_run(run)
         if self.identity_lifecycle is not None:
             self._flush_identity_outbox()
         return run
@@ -647,9 +683,12 @@ class ExecutionRuntime:
 
         run = self.workflow_store.get_run(run_id)
         if self._normalize_runtime_engine(run.runtime_engine) == "acg":
+            if run.status in _TERMINAL_RUN_STATUSES:
+                return run
             if run.status == WorkflowStatus.WAITING_REVIEW:
                 return run
             if run.execution_state.get("planningDeferred"):
+                self._cancellation_event(run.run_id)
                 run = self._set_run_lifecycle(
                     run,
                     status=WorkflowStatus.PLANNING,
@@ -658,10 +697,21 @@ class ExecutionRuntime:
                     set_started_at=True,
                 )
                 self.workflow_store.save_run(run)
-                run = await asyncio.to_thread(
-                    self._materialize_deferred_acg_run,
-                    run.run_id,
-                )
+                try:
+                    run = await asyncio.to_thread(
+                        self._materialize_deferred_acg_run,
+                        run.run_id,
+                    )
+                except ExecutionRunCancelled:
+                    self._discard_run_cancellation(run.run_id)
+                    return self.workflow_store.get_run(run.run_id)
+                except BaseException:
+                    self._discard_run_cancellation(run.run_id)
+                    raise
+                if run.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run.run_id):
+                    latest = self.workflow_store.get_run(run.run_id)
+                    self._discard_run_cancellation(run.run_id)
+                    return latest
             return await self._execute_acg(run)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
@@ -824,6 +874,7 @@ class ExecutionRuntime:
             self.mission_manager.mark_completed(task)
             self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
             self.workflow_store.save_run(run)
+            self._publish_run_terminal_event(run, "run.completed")
             if self.identity_lifecycle is not None:
                 self._flush_identity_outbox()
             return run
@@ -1127,30 +1178,12 @@ class ExecutionRuntime:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(1.0, retry_delay * 2)
             assert decision.binding is not None and decision.lease is not None
-            selected_resource_id = decision.binding.resource_id
-            remote_adapter = self._resource_execution_adapter(selected_resource_id)
-            if remote_adapter is not None:
-                resource_profile = self.resource_service.profile(selected_resource_id)
-                runner.resource_execution_adapters[step_id] = remote_adapter
-                runner.agents[step_id] = ResourceAgentProxy(
-                    profile=AgentProfile(
-                        agentId=selected_resource_id,
-                        agentName=step.agent_name or selected_resource_id,
-                        domain=run.domain,
-                        capabilities=list(resource_profile.capabilities),
-                        enabled=resource_profile.enabled,
-                    ),
-                    adapter=remote_adapter,
-                )
-                selected_profile = runner.agents[step_id].profile
-            else:
-                runner.resource_execution_adapters.pop(step_id, None)
-                selected_agent = self.agent_registry.resolve_by_id(
-                    selected_resource_id,
-                    allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
-                )
-                runner.agents[step_id] = selected_agent
-                selected_profile = selected_agent.profile
+            selected_agent = self.agent_registry.resolve_by_id(
+                decision.binding.resource_id,
+                allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
+            )
+            runner.agents[step_id] = selected_agent
+            runner.attempt_ids[step_id] = attempt_id
             step_execution_id = (
                 run.execution_state.setdefault("stepExecutionIds", {}).setdefault(
                     attempt_key,
@@ -1228,8 +1261,29 @@ class ExecutionRuntime:
                 self._flush_identity_outbox()
                 raise
             except Exception as exc:
-                if remote_adapter is not None and isinstance(exc, ResourceExecutionError):
-                    self.resource_service.set_health(selected_resource_id, healthy=False)
+                from contracts.runtime_events import RuntimeEvent
+                from runtime.live_events import runtime_event_broker
+
+                error_code = str(
+                    getattr(exc, "code", None)
+                    or getattr(exc, "cause_code", None)
+                    or type(exc).__name__
+                )
+                await runtime_event_broker.publish(
+                    run.run_id,
+                    RuntimeEvent(
+                        eventType="node.failed",
+                        runId=run.run_id,
+                        nodeId=step_id,
+                        attemptId=attempt_id,
+                        sequence=0,
+                        payload={
+                            "errorCode": error_code,
+                            "retryable": bool(getattr(exc, "retryable", False)),
+                            "attempt": attempt_number,
+                        },
+                    ),
+                )
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.failed:{step_execution_id}", "step.failed", step_execution_id,
                     {"runId": run.run_id, "attemptId": attempt_id,
@@ -1619,6 +1673,16 @@ class ExecutionRuntime:
                 item for item in state.active_step_ids
                 if item not in state.completed_step_ids
             ]
+            for runtime_event in event.get("runtimeEvents") or []:
+                if not isinstance(runtime_event, dict):
+                    continue
+                target = runtime_event.get("nodeId") or step_id
+                payload = {key: value for key, value in runtime_event.items() if key not in {"eventId", "eventType", "runId", "nodeId"}}
+                node_trace_batch.append(self.trace_store.build_event(
+                    run, event_type=TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                    step_id=str(target), observation=str(runtime_event.get("eventType") or "runtime event"),
+                    payload={"runtimeEvent": str(runtime_event.get("eventType") or ""), **payload},
+                ))
         elif event_type == "superstep_completed":
             self._project_completed_phase_capsules(run=run, state=state)
             checkpoint_id = self._save_acg_checkpoint(run, state)
@@ -2039,7 +2103,7 @@ class ExecutionRuntime:
             self.resource_directory.register_agent(agent.profile)
         bindings: dict[str, str] = {}
         requirements: dict[str, dict[str, object]] = {}
-        model_bindings: dict[str, dict[str, str] | None] = {}
+        model_bindings: dict[str, dict[str, Any] | None] = {}
         for step in run.steps:
             rule = binding_manifest.for_step(step.step_id)
             required_capabilities = list(rule.required_capabilities)
@@ -2110,13 +2174,20 @@ class ExecutionRuntime:
         run.execution_state["bindingRequirements"] = requirements
         run.execution_state["modelBindings"] = model_bindings
 
-    def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, str] | None:
+    def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, Any] | None:
         """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""
         provider = (getattr(profile, "model_provider", None) or "").strip()
         model = (getattr(profile, "model_name", None) or "").strip()
         version = (getattr(profile, "model_version", None) or "").strip() or None
         if not provider and not model:
-            return None
+            default = self.default_model_binding
+            if not isinstance(default, dict):
+                return None
+            provider = str(default.get("provider") or "").strip()
+            model = str(default.get("model") or "").strip()
+            version = str(default.get("version") or "").strip() or None
+            if not provider or not model:
+                return None
         if not provider or not model:
             raise ValueError(
                 f"MODEL_PROFILE_INCOMPLETE: step {step_id} must set both modelProvider and modelName"
@@ -2127,7 +2198,14 @@ class ExecutionRuntime:
             raise ValueError(
                 f"MODEL_PROFILE_UNAVAILABLE: step {step_id} cannot resolve {provider}/{model}"
             ) from exc
-        binding = {"provider": provider, "model": model}
+        adapter = self.model_registry.resolve(provider, model, version=version)
+        binding: dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            # This is an explicit capability fact, not permission to fall back
+            # to the synchronous gateway. NativeGeneralAgent enforces it.
+            "streamingCapability": callable(getattr(adapter, "astream", None)),
+        }
         if version is not None:
             binding["version"] = version
         return binding
@@ -2154,6 +2232,89 @@ class ExecutionRuntime:
             ),
             retries=1,
         )
+
+    def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any]) -> None:
+        """Append one planner Runtime Event as an auditable Trace entry.
+
+        The payload whitelist is the security boundary: only scalar planning
+        facts pass through, so prompt/model text can never ride along. Durable
+        planner lifecycle events carry ``planningProgress`` for legacy
+        projections; high-frequency model activity is transient-only.
+        """
+        payload = {
+            key: value for key, value in event.items()
+            if key in _PLANNER_PROGRESS_FIELDS and isinstance(value, (str, int, float, bool))
+        }
+        planner_event_type = str(event.get("eventType") or "")
+        if planner_event_type not in {
+            "planner.started", "planner.stage.started", "planner.stage.retry",
+            "planner.model.started", "planner.model.first_token",
+            "planner.model.activity", "planner.model.completed",
+            "planner.stage.completed", "planner.profile.resolved",
+            "planner.plan.parsed", "planner.graph.compiled", "planner.completed",
+            "planner.failed",
+        }:
+            planner_event_type = {
+                "started": "planner.started",
+                "stage_started": "planner.stage.started",
+                "stage_completed": "planner.stage.completed",
+                "retry": "planner.stage.retry",
+                "profile_resolved": "planner.profile.resolved",
+                "plan_parsed": "planner.plan.parsed",
+                "graph_compiled": "planner.graph.compiled",
+                "completed": "planner.completed",
+                "failed": "planner.failed",
+            }.get(str(payload.get("kind")), "")
+        persist_trace = bool(event.get("persistTrace", True))
+        if planner_event_type:
+            # Mirror planner lifecycle/activity onto the existing transient broker.
+            # The planning phase is run-scoped, so node/attempt identity remains null.
+            self._raise_if_run_cancelled(run.run_id)
+            from contracts.runtime_events import RuntimeEvent
+            from runtime.live_events import runtime_event_broker
+            runtime_event_broker.publish_from_thread(
+                run.run_id,
+                RuntimeEvent(
+                    eventType=planner_event_type,
+                    runId=run.run_id,
+                    nodeId=None,
+                    attemptId=None,
+                    sequence=0,
+                    payload=payload,
+                ),
+            )
+        if not persist_trace:
+            return
+        kind = str(payload.get("kind") or {
+            "planner.started": "started",
+            "planner.stage.started": "stage_started",
+            "planner.stage.retry": "retry",
+            "planner.stage.completed": "stage_completed",
+            "planner.profile.resolved": "profile_resolved",
+            "planner.plan.parsed": "plan_parsed",
+            "planner.graph.compiled": "graph_compiled",
+            "planner.completed": "completed",
+            "planner.failed": "failed",
+        }.get(planner_event_type, "progress"))
+        stage = payload.get("stage")
+        status = payload.get("status")
+        observation = "Planner " + kind
+        if stage:
+            observation += f" [{stage}]"
+        if status:
+            observation += f" {status}"
+        # Planning runs in a worker thread. Re-check under the same short run
+        # lock used by cancel(), so a cancelled run never gets planner events
+        # (or a stale snapshot save) committed over its terminal state.
+        with self.run_lock_manager.lock_for(run.run_id):
+            self._raise_if_run_cancelled(run.run_id)
+            self.trace_store.append(
+                run=run,
+                event_type=TraceEventType.TASK_STATUS_CHANGED,
+                observation=observation,
+                payload={"planningProgress": True, "category": "planner", **payload},
+            )
+            self.workflow_store.save_run(run)
 
     def _build_acg_blueprint(
         self,
@@ -2227,26 +2388,61 @@ class ExecutionRuntime:
                 or workflow.description
             )
             planning_engine = self._planning_engine_for_run(run)
+
+            def planning_progress(event: dict[str, Any]) -> None:
+                # Planner 阶段回调统一建模为带 kind 的 Runtime Event；stage/status
+                # 原样保留，旧 Run 的 legacy 投影继续可用。
+                kind_by_status = {
+                    "started": "stage_started",
+                    "completed": "stage_completed",
+                    "retrying": "retry",
+                    "profile_resolved": "profile_resolved",
+                    "plan_parsed": "plan_parsed",
+                }
+                payload = dict(event)
+                if not payload.get("eventType"):
+                    payload["kind"] = str(
+                        payload.get("kind")
+                        or kind_by_status.get(str(payload.get("status")), "stage_updated")
+                    )
+                self._append_planner_event(run, payload)
+
+            self._append_planner_event(run, {"kind": "started"})
             existing_semantic_tasks = self._existing_semantic_task_catalog(task.mission_id)
-            plan = planning_engine.plan(
-                mission_id=task.mission_id,
-                intent=intent_text,
-                domain=workflow.domain or task.domain,
-                task_type=task.intent or workflow.intent,
-                force_dynamic=force_dynamic,
-                thinking_mode=str(run.input.get("thinkingMode") or "").strip() or None,
-                reasoning_effort=str(run.input.get("reasoningEffort") or "").strip() or None,
-                # 仅显式 deterministicIntent 才禁用 v2 语义模型；强制动态规划
-                # 不能再隐式退回固定能力链。
-                deterministic_intent=bool(run.input.get("deterministicIntent")),
-                planning_diversity=run.planning_diversity,
-                planning_seed=run.planning_seed,
-                capability_catalog_revision=run.capability_catalog_revision,
-                required_capabilities=workflow.required_capabilities,
-                task_input=dict(run.input),
-                existing_semantic_tasks=existing_semantic_tasks,
-                capability_profile=str(run.input.get("capabilityProfile") or "auto"),
-            )
+            try:
+                plan = planning_engine.plan(
+                    mission_id=task.mission_id,
+                    intent=intent_text,
+                    domain=workflow.domain or task.domain,
+                    task_type=task.intent or workflow.intent,
+                    force_dynamic=force_dynamic,
+                    thinking_mode=str(run.input.get("thinkingMode") or "").strip() or None,
+                    reasoning_effort=str(run.input.get("reasoningEffort") or "").strip() or None,
+                    # 仅显式 deterministicIntent 才禁用 v2 语义模型；强制动态规划
+                    # 不能再隐式退回固定能力链。
+                    deterministic_intent=bool(run.input.get("deterministicIntent")),
+                    planning_diversity=run.planning_diversity,
+                    planning_seed=run.planning_seed,
+                    capability_catalog_revision=run.capability_catalog_revision,
+                    required_capabilities=workflow.required_capabilities,
+                    task_input=dict(run.input),
+                    existing_semantic_tasks=existing_semantic_tasks,
+                    capability_profile=str(run.input.get("capabilityProfile") or "auto"),
+                    run_id=run.run_id,
+                    progress_callback=planning_progress,
+                )
+            except Exception as exc:
+                # 只落稳定错误码与异常类型名；异常消息可能携带 prompt 或模型
+                # 输出片段，禁止进入 Trace。
+                self._append_planner_event(run, {
+                    "kind": "failed",
+                    "errorCode": transport_error_code(exc) or type(exc).__name__,
+                    "safeSummary": f"{type(exc).__name__} during planning",
+                })
+                raise
+            # 规划成功也不代表可以继续：取消发生在最后一次事件之后时，
+            # 在提交 run 状态更新前再复查一次（取自 mission-cancellation 的取消边界）。
+            self._raise_if_run_cancelled(run.run_id)
             run.planning_diversity = plan.planning_diversity
             run.planning_seed = plan.planning_seed
             run.planner_algorithm_version = plan.planner_algorithm_version
@@ -2471,9 +2667,45 @@ class ExecutionRuntime:
             event = self._run_cancel_events.get(run_id)
             return bool(event is not None and event.is_set())
 
+    def _raise_if_run_cancelled(self, run_id: str) -> None:
+        """在规划/物化边界读取持久化终态，阻止取消后的旧快照继续推进。"""
+        if self._run_cancellation_requested(run_id):
+            raise ExecutionRunCancelled(f"run {run_id} cancelled")
+        try:
+            run = self.workflow_store.get_run(run_id)
+        except KeyError:
+            return
+        if run.status is WorkflowStatus.CANCELLED:
+            raise ExecutionRunCancelled(f"run {run_id} cancelled")
+
     def _discard_run_cancellation(self, run_id: str) -> None:
         with self._run_cancel_guard:
             self._run_cancel_events.pop(run_id, None)
+
+    @staticmethod
+    def _publish_run_terminal_event(
+        run: RuntimeRunRecord,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Publish only safe run lifecycle scalars to the existing live broker."""
+        from contracts.runtime_events import RuntimeEvent
+        from runtime.live_events import runtime_event_broker
+
+        runtime_event_broker.publish_from_thread(
+            run.run_id,
+            RuntimeEvent(
+                eventType=event_type,
+                runId=run.run_id,
+                nodeId=None,
+                attemptId=None,
+                sequence=0,
+                payload={
+                    key: value for key, value in (payload or {}).items()
+                    if isinstance(value, (str, int, float, bool))
+                },
+            ),
+        )
 
     async def _finalize_cancelled_run(
         self,
@@ -2582,6 +2814,7 @@ class ExecutionRuntime:
         *,
         error_code: str,
         error_message: str,
+        error_metadata: Mapping[str, Any] | None = None,
     ) -> RuntimeRunRecord:
         """在受管执行边界尽力收敛为失败终态，并写入有界错误信息和追踪事件。"""
 
@@ -2592,6 +2825,16 @@ class ExecutionRuntime:
             "code": error_code,
             "message": error_message[:500],
         }
+        safe_metadata = {
+            key: value
+            for key, value in dict(error_metadata or {}).items()
+            if key in {
+                "provider", "model", "stage", "attemptCount", "retryCount",
+                "streamUsed", "timeoutSeconds", "elapsedMs", "transportErrorClass",
+            }
+            and isinstance(value, (str, int, float, bool))
+        }
+        error.update(safe_metadata)
         self._terminalize_active_execution(run, error["message"])
         run = self._set_run_lifecycle(
             run,
@@ -2611,10 +2854,11 @@ class ExecutionRuntime:
             run=run,
             event_type=TraceEventType.RUN_FAILED,
             observation=error["message"],
-            payload=error,
+            payload={"errorCode": error_code, **error},
         )
         run.updated_at = utc_now()
         self.workflow_store.save_run(run)
+        self._publish_run_terminal_event(run, "run.failed", {"errorCode": error_code})
         if (
             self.identity_lifecycle is not None
             and self._normalize_runtime_engine(run.runtime_engine) == "acg"
@@ -2744,6 +2988,20 @@ class ExecutionRuntime:
 
     @staticmethod
     def _safe_error_message(exc: BaseException) -> str:
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            code = str(
+                getattr(current, "cause_code", None)
+                or getattr(current, "code", None)
+                or ""
+            ).upper()
+            if code == "MODEL_CONNECTION_INTERRUPTED":
+                return "模型服务连接中断，系统已完成一次重试，请稍后重新运行。"
+            if code == "MODEL_TIMEOUT":
+                return "模型服务响应超时，系统已完成一次重试，请稍后重新运行。"
+            current = current.__cause__ or current.__context__
         message = str(exc).strip()
         return (message or type(exc).__name__)[:500]
 
@@ -3503,6 +3761,7 @@ class ExecutionRuntime:
                 and self._normalize_runtime_engine(run.runtime_engine) == "acg"
             ):
                 self._flush_identity_outbox()
+            self._publish_run_terminal_event(run, "run.cancelled")
             return run
 
     def _resolve_workflow(

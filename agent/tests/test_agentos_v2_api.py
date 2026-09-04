@@ -4,10 +4,13 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import threading
+import time
 
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+import app.api.agentos_v2 as agentos_v2
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context
@@ -20,6 +23,7 @@ from contracts.evolution import PolicyMutation, Trajectory
 from contracts.content import ContentKind
 from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
 from contracts.planning import PlannedTask
+from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import (
     MissionRecordState,
     StepStatus,
@@ -30,6 +34,7 @@ from contracts.workflow import (
     WorkflowStepDefinition,
 )
 from runtime import ExecutionRuntime
+from runtime.live_events import RuntimeEventBroker
 from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -152,6 +157,58 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert trace.status_code == 200
         assert "PRIVATE-PROMPT" not in trace.text
         assert any(event["payload"].get("prompt") == "[redacted]" for event in trace.json()["events"])
+
+
+def test_v2_runtime_events_endpoint_streams_http_before_publisher_finishes(tmp_path, monkeypatch) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("Runtime event HTTP stream", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    broker = RuntimeEventBroker()
+    monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    def publish_later() -> None:
+        time.sleep(0.5)
+        broker.publish_from_thread(run.run_id, RuntimeEvent(
+            eventType="model.output.delta",
+            runId=run.run_id,
+            nodeId="report",
+            attemptId="attempt-1",
+            sequence=0,
+            payload={"delta": "live"},
+        ))
+        time.sleep(0.3)
+        broker.publish_from_thread(run.run_id, RuntimeEvent(
+            eventType="node.completed",
+            runId=run.run_id,
+            nodeId="report",
+            attemptId="attempt-1",
+            sequence=0,
+            payload={},
+        ))
+        broker.publish_from_thread(run.run_id, RuntimeEvent(
+            eventType="run.completed",
+            runId=run.run_id,
+            sequence=0,
+            payload={},
+        ))
+
+    publisher = threading.Thread(target=publish_later)
+    publisher.start()
+    received = []
+    with TestClient(app) as client:
+        with client.stream("GET", f"/agentos/v2/runs/{run.run_id}/events") as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            for line in response.iter_lines():
+                if line.startswith("event:"):
+                    received.append(line.split(":", 1)[1].strip())
+            publisher.join(timeout=2)
+    publisher.join(timeout=2)
+    assert not publisher.is_alive()
+    assert received == ["model.output.delta", "node.completed", "run.completed"]
+    assert runtime.get_status(run.run_id).status == WorkflowStatus.PENDING
 
 
 async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(tmp_path) -> None:

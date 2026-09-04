@@ -60,40 +60,68 @@ public class AiSseGatewayService {
                 .headers(headers -> userContextForwarder.apply(headers, userContext))
                 .bodyValue(body == null ? Map.of() : body)
                 .retrieve()
-                .onStatus(HttpStatusCode::isError, upstream -> {
-                    int status = upstream.statusCode().value();
-                    return upstream.releaseBody().then(Mono.error(new SseUpstreamStatusException(status)));
-                })
+                .onStatus(HttpStatusCode::isError, upstream -> upstreamError(upstream.statusCode()))
                 .toEntityFlux(SSE_TYPE)
-                .map(upstream -> {
-                    Flux<ServerSentEvent<String>> stream = upstream.getBody()
-                            .timeout(idleTimeout, Flux.error(new SseIdleTimeoutException()))
-                            .takeUntilOther(Mono.delay(maximumDuration)
-                                    .flatMap(ignored -> Mono.<Void>error(new SseMaximumDurationException())))
-                            .onErrorResume(SseIdleTimeoutException.class,
-                                    ignored -> Flux.just(errorEvent("SSE_IDLE_TIMEOUT")))
-                            .onErrorResume(SseMaximumDurationException.class,
-                                    ignored -> Flux.just(errorEvent("SSE_MAX_DURATION")))
-                            .onErrorResume(error -> {
-                                log.warn("SSE upstream stream terminated. type={}", error.getClass().getSimpleName());
-                                return Flux.just(errorEvent("AI_STREAM_INTERRUPTED"));
-                            })
-                            .doOnCancel(() -> log.info("SSE downstream cancelled; upstream subscription cancelled"));
+                .transform(this::toDownstreamResponse)
+                .onErrorResume(this::mapConnectionError);
+    }
 
-                    return ResponseEntity.ok()
-                            .contentType(MediaType.TEXT_EVENT_STREAM)
-                            .header("Cache-Control", "no-cache, no-transform")
-                            .header("X-Accel-Buffering", "no")
-                            .body(stream);
-                })
-                .onErrorResume(SseUpstreamStatusException.class, error -> Mono.just(errorResponse(
-                        error.status < 500 ? HttpStatus.valueOf(error.status) : HttpStatus.BAD_GATEWAY,
-                        error.status < 500 ? "AI_STREAM_REJECTED" : "AI_STREAM_UPSTREAM_ERROR"
-                )))
-                .onErrorResume(error -> {
-                    log.warn("SSE upstream connection failed. type={}", error.getClass().getSimpleName());
-                    return Mono.just(errorResponse(HttpStatus.SERVICE_UNAVAILABLE, "AI_STREAM_UNAVAILABLE"));
-                });
+    /** Open the RuntimeEvent stream without introducing a second event source or buffering layer. */
+    public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> openGet(String path) {
+        var userContext = userContextForwarder.requireCurrent();
+        return webClient.get()
+                .uri(path)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .headers(headers -> userContextForwarder.apply(headers, userContext))
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, upstream -> upstreamError(upstream.statusCode()))
+                .toEntityFlux(SSE_TYPE)
+                .transform(this::toDownstreamResponse)
+                .onErrorResume(this::mapConnectionError);
+    }
+
+    private Mono<? extends Throwable> upstreamError(HttpStatusCode statusCode) {
+        return Mono.error(new SseUpstreamStatusException(statusCode.value()));
+    }
+
+    private Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> toDownstreamResponse(
+            Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> upstreamResponse
+    ) {
+        return upstreamResponse.map(upstream -> {
+            Flux<ServerSentEvent<String>> body = upstream.getBody() == null
+                    ? Flux.empty()
+                    : upstream.getBody();
+            Flux<ServerSentEvent<String>> stream = body
+                    .timeout(idleTimeout, Flux.error(new SseIdleTimeoutException()))
+                    .takeUntilOther(Mono.delay(maximumDuration)
+                            .flatMap(ignored -> Mono.<Void>error(new SseMaximumDurationException())))
+                    .onErrorResume(SseIdleTimeoutException.class,
+                            ignored -> Flux.just(errorEvent("SSE_IDLE_TIMEOUT")))
+                    .onErrorResume(SseMaximumDurationException.class,
+                            ignored -> Flux.just(errorEvent("SSE_MAX_DURATION")))
+                    .onErrorResume(error -> {
+                        log.warn("SSE upstream stream terminated. type={}", error.getClass().getSimpleName());
+                        return Flux.just(errorEvent("AI_STREAM_INTERRUPTED"));
+                    })
+                    .doOnCancel(() -> log.info("SSE downstream cancelled; upstream subscription cancelled"));
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_EVENT_STREAM)
+                    .header("Cache-Control", "no-cache, no-transform")
+                    .header("X-Accel-Buffering", "no")
+                    .body(stream);
+        });
+    }
+
+    private Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> mapConnectionError(Throwable error) {
+        if (error instanceof SseUpstreamStatusException statusError) {
+            return Mono.just(errorResponse(
+                    statusError.status < 500 ? HttpStatus.valueOf(statusError.status) : HttpStatus.BAD_GATEWAY,
+                    statusError.status < 500 ? "AI_STREAM_REJECTED" : "AI_STREAM_UPSTREAM_ERROR"
+            ));
+        }
+        log.warn("SSE upstream connection failed. type={}", error.getClass().getSimpleName());
+        return Mono.just(errorResponse(HttpStatus.SERVICE_UNAVAILABLE, "AI_STREAM_UNAVAILABLE"));
     }
 
     private ResponseEntity<Flux<ServerSentEvent<String>>> errorResponse(HttpStatus status, String code) {
