@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_bake_contract_has_all_release_groups_and_no_latest_tag():
-    bake = (ROOT / "docker-bake.hcl").read_text(encoding="utf-8")
+    bake = (ROOT / "ops" / "docker" / "docker-bake.hcl").read_text(encoding="utf-8")
 
     for name in (
         "frontend",
@@ -24,7 +24,7 @@ def test_bake_contract_has_all_release_groups_and_no_latest_tag():
 
 
 def test_every_release_architecture_uses_the_same_service_target():
-    bake = (ROOT / "docker-bake.hcl").read_text(encoding="utf-8")
+    bake = (ROOT / "ops" / "docker" / "docker-bake.hcl").read_text(encoding="utf-8")
 
     for service in ("frontend", "backend", "ai-service", "postgres", "redis", "flyway"):
         assert f'inherits = ["{service}", "_release"]' in bake

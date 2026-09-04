@@ -66,7 +66,7 @@ npm ci
 
 ```powershell
 Set-Location C:\Users\LZX\Desktop\kinlin_ai
-.\scripts\infra\windows\up.ps1 -DebugPorts
+.\ops\scripts\infra\windows\up.ps1 -DebugPorts
 ```
 
 确认 Gateway 已监听 `127.0.0.1:18088`。
@@ -203,7 +203,7 @@ npm run build
 
 ```powershell
 Set-Location C:\Users\LZX\Desktop\kinlin_ai
-.\scripts\infra\windows\status.ps1
+.\ops\scripts\infra\windows\status.ps1
 ```
 
 桌面默认请求地址是 `127.0.0.1:18088`，不是 Backend 容器内部地址 `8080`。

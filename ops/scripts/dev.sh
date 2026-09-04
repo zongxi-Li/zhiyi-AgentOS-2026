@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ACTION="${1:-up}"
+PROJECT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$PROJECT_DIR"
 : "${KINLIN_DEPLOYMENT_ID:?Set KINLIN_DEPLOYMENT_ID before using dev.sh}"
 : "${KINLIN_SECRETS_DIR:?Set KINLIN_SECRETS_DIR before using dev.sh}"
 COMPOSE=(docker compose -f compose.yaml -f .config/compose/dev.yaml)

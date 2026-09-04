@@ -141,10 +141,10 @@ def test_windows_development_uses_locked_dependencies_and_complete_frontend_moun
         assert f"./apps/frontend/{filename}:/app/{filename}:ro" in compose
 
 
-def test_root_windows_entrypoint_delegates_to_canonical_scripts():
-    script = (ROOT / "dev.ps1").read_text(encoding="utf-8")
+def test_windows_entrypoint_delegates_to_canonical_scripts():
+    script = (ROOT / "ops" / "scripts" / "dev.ps1").read_text(encoding="utf-8")
 
-    assert r"ops\scripts\infra\windows" in script
+    assert r"infra\windows" in script
     assert 'Join-Path $windowsScripts "up.ps1"' in script
     assert "compose.yaml" not in script
 

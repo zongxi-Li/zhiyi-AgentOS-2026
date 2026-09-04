@@ -2,7 +2,7 @@
 REM 开发环境快速配置脚本 (Windows)
 REM 自动创建.env文件并配置开发环境
 
-cd /d %~dp0\..
+cd /d %~dp0\..\..
 set PROJECT_DIR=%CD%
 
 echo ==========================================
@@ -45,9 +45,9 @@ echo   - Python服务: %PROJECT_DIR%\apps\agent\.env
 echo.
 echo 下一步:
 echo   1. 如需使用真实API，请编辑 .env 文件设置 KYLIN_AI_API_KEY
-echo   2. 构建并启动全部服务: powershell -ExecutionPolicy Bypass -File dev.ps1 up
-echo   3. 查看日志: powershell -ExecutionPolicy Bypass -File dev.ps1 logs
-echo   4. 停止服务: powershell -ExecutionPolicy Bypass -File dev.ps1 down
+echo   2. 构建并启动全部服务: powershell -ExecutionPolicy Bypass -File ops\scripts\dev.ps1 up
+echo   3. 查看日志: powershell -ExecutionPolicy Bypass -File ops\scripts\dev.ps1 logs
+echo   4. 停止服务: powershell -ExecutionPolicy Bypass -File ops\scripts\dev.ps1 down
 echo.
 
 pause

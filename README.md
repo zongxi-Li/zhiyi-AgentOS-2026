@@ -227,7 +227,7 @@ cp .env.example .env
 python3 -m ops.scripts.infra.init_secrets .secrets/kinlin-dev-local
 export KINLIN_DEPLOYMENT_ID=kinlin-dev-local
 export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
-./dev.sh up
+./ops/scripts/dev.sh up
 ```
 
 ---

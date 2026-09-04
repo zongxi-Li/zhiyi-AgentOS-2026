@@ -31,7 +31,7 @@ function Test-KinlinImage {
 if (-not $SkipBuild) {
     Push-Location $projectRoot
     try {
-        & docker buildx bake -f docker-bake.hcl frontend backend ai-service postgres redis `
+        & docker buildx bake -f ops\docker\docker-bake.hcl frontend backend ai-service postgres redis `
             --set frontend.platform=linux/amd64 `
             --set backend.platform=linux/amd64 `
             --set ai-service.platform=linux/amd64 `

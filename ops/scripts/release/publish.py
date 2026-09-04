@@ -53,9 +53,9 @@ def main() -> int:
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
 
-    run(["python", "-m", "scripts.release.check_builder", "--require", "linux/amd64", "--require", "linux/arm64"], capture=False)
+    run(["python", "-m", "ops.scripts.release.check_builder", "--require", "linux/amd64", "--require", "linux/arm64"], capture=False)
     sha_tag = f"sha-{commit[:12]}"
-    bake = ["docker", "buildx", "bake", "-f", "docker-bake.hcl", "release-multiarch", "--push"]
+    bake = ["docker", "buildx", "bake", "-f", "ops/docker/docker-bake.hcl", "release-multiarch", "--push"]
     for service in SERVICES:
         bake.extend(["--set", f"{service}-multiarch.tags={image_reference(prefix, service, sha_tag)}"])
     created = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
