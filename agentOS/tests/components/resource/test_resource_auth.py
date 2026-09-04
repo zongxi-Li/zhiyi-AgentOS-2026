@@ -152,6 +152,31 @@ def test_failed_credential_rotation_keeps_previous_credential_usable(monkeypatch
     assert resources.verify_credential("edge-auth", previous.credential_id, previous.secret)
 
 
+def test_remote_registration_rolls_back_profile_when_initial_credential_persistence_fails(monkeypatch) -> None:
+    resources = ResourceService()
+    profile = ResourceProfile(
+        resourceId="edge-atomic",
+        resourceType=ResourceType.WORKER,
+        deploymentTier=DeploymentTier.EDGE,
+        capabilities=["analysis"],
+        ownerScope="tenant-a",
+        executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-atomic:9000"),
+    )
+
+    def fail_registration(profile, snapshot, credential) -> None:
+        raise RuntimeError("credential persistence unavailable")
+
+    monkeypatch.setattr(resources.store, "register_remote", fail_registration)
+    with pytest.raises(RuntimeError, match="persistence unavailable"):
+        resources.register_remote(
+            profile,
+            ResourceSnapshot(resourceId="edge-atomic", availableSlots=1, utilization=0.0),
+        )
+
+    with pytest.raises(KeyError, match="unknown resource"):
+        resources.profile("edge-atomic")
+
+
 def test_nonce_can_be_consumed_only_once_until_expiry() -> None:
     resources = _service()
     expires_at = NOW + timedelta(minutes=5)

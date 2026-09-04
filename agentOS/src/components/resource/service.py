@@ -70,8 +70,22 @@ class ResourceService:
             raise ValueError("remote resource owner_scope is required")
         if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
             raise ValueError("remote resource execution endpoint is required")
-        self.register(profile, snapshot)
-        return self.issue_credential(profile.resource_id)
+        secret = secrets.token_urlsafe(32)
+        record = ResourceCredentialRecord(
+            resource_id=profile.resource_id,
+            credential_id=f"rc_{uuid.uuid4().hex}",
+            owner_scope=profile.owner_scope,
+            secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            encrypted_secret=self.secret_box.encrypt(secret),
+            created_at=datetime.now().astimezone(),
+        )
+        self.store.register_remote(profile, snapshot, record)
+        return IssuedResourceCredential(
+            resource_id=profile.resource_id,
+            credential_id=record.credential_id,
+            owner_scope=record.owner_scope,
+            secret=secret,
+        )
 
     def update_snapshot(
         self, snapshot: ResourceSnapshot, *, expected_version: int | None = None

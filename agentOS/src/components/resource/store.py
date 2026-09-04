@@ -70,6 +70,15 @@ class ResourceStore(Protocol):
         """CAS 更新同一资源的静态容量并同步可用槽位。"""
         ...
 
+    def register_remote(
+        self,
+        profile: ResourceProfile,
+        snapshot: ResourceSnapshot,
+        credential: ResourceCredentialRecord,
+    ) -> VersionedResourceSnapshot:
+        """Atomically write a remote resource and its initial credential."""
+        ...
+
     def save_credential(self, record: ResourceCredentialRecord) -> None:
         """保存一个资源凭据；同一资源不可静默覆盖已有凭据。"""
         ...
@@ -132,6 +141,27 @@ class InMemoryResourceStore:
             return self._profiles[resource_id].model_copy(deep=True)
         except KeyError as error:
             raise KeyError(f"unknown resource: {resource_id}") from error
+
+    def register_remote(
+        self,
+        profile: ResourceProfile,
+        snapshot: ResourceSnapshot,
+        credential: ResourceCredentialRecord,
+    ) -> VersionedResourceSnapshot:
+        if profile.resource_id != snapshot.resource_id or profile.resource_id != credential.resource_id:
+            raise ValueError("remote registration resource_id values must match")
+        with self._lock:
+            if profile.resource_id in self._profiles:
+                raise ValueError(f"resource already registered: {profile.resource_id}")
+            if any(item.credential_id == credential.credential_id for item in self._credentials.values()):
+                raise ValueError(f"resource credential already exists: {credential.credential_id}")
+            versioned = VersionedResourceSnapshot(
+                snapshot=snapshot.model_copy(deep=True), version=1
+            )
+            self._profiles[profile.resource_id] = profile.model_copy(deep=True)
+            self._snapshots[profile.resource_id] = versioned
+            self._credentials[profile.resource_id] = credential
+            return self._copy_versioned(versioned)
 
     def get_snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
         """读取当前最新版快照及其版本号。"""
@@ -347,6 +377,56 @@ class SQLiteResourceStore:
         if row is None:
             raise KeyError(f"unknown resource: {resource_id}")
         return ResourceProfile.model_validate(json.loads(str(row[0])))
+
+    def register_remote(
+        self,
+        profile: ResourceProfile,
+        snapshot: ResourceSnapshot,
+        credential: ResourceCredentialRecord,
+    ) -> VersionedResourceSnapshot:
+        if profile.resource_id != snapshot.resource_id or profile.resource_id != credential.resource_id:
+            raise ValueError("remote registration resource_id values must match")
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                resource = self._connection.execute(
+                    "SELECT profile_json, snapshot_json, version FROM resources WHERE resource_id = ?",
+                    (profile.resource_id,),
+                ).fetchone()
+                if resource is not None:
+                    raise ValueError(f"resource already registered: {profile.resource_id}")
+                duplicate = self._connection.execute(
+                    "SELECT 1 FROM resource_credentials WHERE credential_id = ?",
+                    (credential.credential_id,),
+                ).fetchone()
+                if duplicate is not None:
+                    raise ValueError(f"resource credential already exists: {credential.credential_id}")
+                self._connection.execute(
+                    "INSERT INTO resources(resource_id, profile_json, snapshot_json, version) VALUES (?, ?, ?, 1)",
+                    (profile.resource_id, self._json(profile), self._json(snapshot)),
+                )
+                self._connection.execute(
+                    "INSERT INTO resource_credentials(resource_id, credential_id, owner_scope, secret_digest, encrypted_secret, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        credential.resource_id,
+                        credential.credential_id,
+                        credential.owner_scope,
+                        credential.secret_digest,
+                        credential.encrypted_secret,
+                        credential.created_at.astimezone(timezone.utc).isoformat(),
+                    ),
+                )
+                self._connection.commit()
+                return VersionedResourceSnapshot(
+                    snapshot=snapshot.model_copy(deep=True), version=1
+                )
+            except sqlite3.IntegrityError as error:
+                self._connection.rollback()
+                raise ValueError("remote registration violates a storage constraint") from error
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def get_snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
         row = self._connection.execute(

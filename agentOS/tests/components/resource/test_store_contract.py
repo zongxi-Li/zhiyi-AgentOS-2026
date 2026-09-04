@@ -137,3 +137,50 @@ def test_resource_store_rotation_requires_an_existing_credential(store) -> None:
 
     assert store.get_profile("credential-without-current") == profile
     assert store.get_snapshot("credential-without-current").snapshot == snapshot
+
+
+def test_resource_store_register_remote_writes_profile_snapshot_and_credential_as_one_unit(store) -> None:
+    profile = _profile("remote-atomic")
+    snapshot = _snapshot("remote-atomic")
+    credential = ResourceCredentialRecord(
+        resource_id="remote-atomic",
+        credential_id="rc-atomic",
+        owner_scope="tenant-a",
+        secret_digest="digest",
+        encrypted_secret="encrypted",
+        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    )
+
+    registered = store.register_remote(profile, snapshot, credential)
+
+    assert registered.version == 1
+    assert store.get_profile("remote-atomic") == profile
+    assert store.get_snapshot("remote-atomic").snapshot == snapshot
+    assert store.get_credential("remote-atomic") == credential
+
+
+def test_resource_store_register_remote_rolls_back_when_credential_write_fails(store) -> None:
+    store.register(_profile("existing"), _snapshot("existing"))
+    store.save_credential(ResourceCredentialRecord(
+        resource_id="existing",
+        credential_id="rc-duplicate",
+        owner_scope="tenant-a",
+        secret_digest="digest",
+        encrypted_secret="encrypted",
+        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    ))
+    candidate = ResourceCredentialRecord(
+        resource_id="remote-rollback",
+        credential_id="rc-duplicate",
+        owner_scope="tenant-a",
+        secret_digest="digest-2",
+        encrypted_secret="encrypted-2",
+        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises((ValueError, KeyError)):
+        store.register_remote(_profile("remote-rollback"), _snapshot("remote-rollback"), candidate)
+
+    with pytest.raises(KeyError, match="unknown resource"):
+        store.get_profile("remote-rollback")
+    assert store.get_credential("existing").credential_id == "rc-duplicate"
