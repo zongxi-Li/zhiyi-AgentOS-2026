@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/logo.png" alt="知弈 AgentOS Logo" width="120" />
+  <img src="apps/frontend/public/logo.png" alt="知弈 AgentOS Logo" width="120" />
 </p>
 
 <h1 align="center">知弈 AgentOS</h1>
@@ -194,6 +194,14 @@ py -3 -m ops.scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 # 至少在 Secret 目录配置一个真实模型 Key 后再发起模型调用
 .\ops\scripts\infra\windows\up.ps1 -Build
 ```
+
+Windows 启动脚本会自动使用 `.env.windows`。如果手动执行 Compose，必须显式传入环境文件，例如：
+
+```powershell
+docker compose --env-file .env.windows -f compose.yaml -f .config/compose/windows.yaml up -d --build --wait
+```
+
+不要直接执行不带 `--env-file` 的 `docker compose up`，否则会缺少 `KINLIN_DEPLOYMENT_ID` 和 `KINLIN_SECRETS_DIR`。
 
 默认入口：<http://127.0.0.1:8080>
 

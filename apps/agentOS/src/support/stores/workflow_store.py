@@ -157,6 +157,18 @@ def lifecycle_run_event_type(run: RuntimeRunRecord) -> str | None:
     execution_state = run.execution_state or {}
     if execution_state.get("planningDeferred"):
         return None
+    if (
+        str(run.runtime_engine).strip().lower() == "acg"
+        and (
+            not isinstance(run.acg_blueprint, dict)
+            or not isinstance(execution_state.get("taskPlan"), dict)
+            or not isinstance(execution_state.get("taskBindings"), list)
+        )
+    ):
+        # Planner progress is persisted in the Execution Runtime and Trace,
+        # but cannot be consumed as an identity Run snapshot until the full
+        # Blueprint/TaskPlan/binding contract is materialized.
+        return None
     if run.status is WorkflowStatus.SUPERSEDED:
         return "run.superseded"
     if run.status in {

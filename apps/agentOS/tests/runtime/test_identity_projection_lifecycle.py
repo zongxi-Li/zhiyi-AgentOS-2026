@@ -294,6 +294,30 @@ def test_projection_replay_repairs_partial_blueprint_registration(monkeypatch) -
         identity_runtime.close()
 
 
+def test_planner_progress_does_not_publish_partial_run_identity_event(monkeypatch) -> None:
+    runtime, identity_runtime, _bridge, task = _runtime()
+    try:
+        # Keep the Execution Runtime outbox observable so this test isolates
+        # event admission from identity-side consumption.
+        monkeypatch.setattr(runtime, "_flush_identity_outbox", lambda: None)
+
+        _, run = runtime.prepare_run(task.mission_id)
+        events = [
+            item
+            for item in runtime.workflow_store.list_outbox(limit=100)
+            if item["aggregate_id"] == run.run_id
+        ]
+
+        assert len(events) == 1
+        assert events[0]["event_type"] == "run.prepared"
+        payload = json.loads(events[0]["payload"])
+        assert isinstance(payload["acgBlueprint"], dict)
+        assert isinstance(payload["executionState"].get("taskPlan"), dict)
+        assert isinstance(payload["executionState"].get("taskBindings"), list)
+    finally:
+        identity_runtime.close()
+
+
 def test_reconciler_restores_a_missing_run_projection_from_runtime_snapshot() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
