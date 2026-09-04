@@ -17,7 +17,10 @@ def test_windows_overlay_keeps_ingress_and_debug_ports_scoped():
     production = (ROOT / "compose.yaml").read_text(encoding="utf-8")
 
     assert "windows-ingress-network" in overlay
-    assert '"127.0.0.1:${KINLIN_HTTP_PORT:-8080}:8080"' in overlay
+    assert '"127.0.0.1:${KINLIN_HTTP_PORT:-8080}:3000"' in overlay
+    assert 'command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]' in overlay
+    assert 'http://127.0.0.1:3000/' in overlay
+    assert "read_only: false" in overlay
     assert "profiles: [debug-ports]" in overlay
     assert '"127.0.0.1:${KINLIN_BACKEND_DEBUG_PORT:-18080}:18080"' in overlay
     assert '"127.0.0.1:${KINLIN_AI_DEBUG_PORT:-18000}:18000"' in overlay

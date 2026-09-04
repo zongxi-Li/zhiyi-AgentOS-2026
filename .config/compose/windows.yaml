@@ -15,17 +15,18 @@ x-windows-debug-service: &windows-debug-service
 services:
   frontend:
     <<: *windows-service-defaults
+    read_only: false
     networks: [web-network, windows-ingress-network]
     ports: !override
-      - "127.0.0.1:${KINLIN_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${KINLIN_HTTP_PORT:-8080}:3000"
     environment:
       CHOKIDAR_USEPOLLING: ${KINLIN_WINDOWS_CHOKIDAR_USEPOLLING:-false}
       CHOKIDAR_INTERVAL: ${KINLIN_WINDOWS_POLL_INTERVAL_MS:-1000}
-    command: ["nginx", "-g", "daemon off;"]
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     volumes:
       - frontend-node-modules:/app/node_modules
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -54,6 +55,8 @@ services:
         read_only: true
       - maven-cache:/home/kinlin/.m2
       - backend-build-cache:/app/target
+    tmpfs:
+      - /home/kinlin:rw,nosuid,nodev,size=256m,mode=0750
     healthcheck:
       interval: 5s
       timeout: 5s
