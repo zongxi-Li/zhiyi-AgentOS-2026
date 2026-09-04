@@ -13,8 +13,8 @@ $TUI_SRC = Join-Path $PSScriptRoot "src"
 $REPO_ROOT = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $COMPOSE_FILES = @(
     (Join-Path $REPO_ROOT "compose.yaml"),
-    (Join-Path $REPO_ROOT "compose.dev.yaml"),
-    (Join-Path $REPO_ROOT "compose.windows.yaml")
+    (Join-Path $REPO_ROOT ".config\compose\dev.yaml"),
+    (Join-Path $REPO_ROOT ".config\compose\windows.yaml")
 )
 $COMPOSE_ENV_FILE = Join-Path $REPO_ROOT ".env.windows"
 $env:PYTHONUTF8 = "1"
@@ -92,7 +92,7 @@ for ($i = 0; $i -lt 90; $i++) {
 }
 if (-not $ok) {
     Write-Host " TIMEOUT" -ForegroundColor Red
-    Write-Host "       Check the canonical Compose stack with .\scripts\infra\windows\status.ps1" -ForegroundColor Red
+    Write-Host "       Check the canonical Compose stack with .\ops\scripts\infra\windows\status.ps1" -ForegroundColor Red
     exit 1
 }
 

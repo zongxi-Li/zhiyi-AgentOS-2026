@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/logo.png" alt="知弈 AgentOS Logo" width="120" />
+  <img src="apps/frontend/public/logo.png" alt="知弈 AgentOS Logo" width="120" />
 </p>
 
 <h1 align="center">知弈 AgentOS</h1>
@@ -67,7 +67,7 @@
 | 动态异构拓扑与低熵通信 | ACG、conditional routing、parallel superstep、Communication Broker、字段级投递、Provenance | ✅ 已实现并有测试 |
 | 动态异常与需求变更 | GraphPatch、review barrier、contract repair、Recovery Recipe、orphan reference ownership | ✅ 已实现并有测试 |
 | 多模型兼容与角色扩展 | AgentProfile binding、模型 failover、版本协商、健康刷新、Pack 注册 | ✅ 已实现并有测试 |
-| 端-边-云资源自适应调度 | ResourceDirectory、PluginScopeResolver、资源与隐私约束基础 | 🚧 调度基础已具备，真实端边云部署与模型切分待验收 |
+| 端-边-云资源自适应调度 | ResourceProfile 分层画像、资源注册、资源级 HMAC 签名观测、顺序校验、约束过滤、租约、快照竞态保护、执行 Adapter、边缘故障后云端切换 | 🚧 模型位置选择与受保护的资源接口已实现；真实多设备部署、生产密钥轮换、端到端故障演示和模型层切分待验收 |
 | 典型产业场景验证 | Legal 黄金纵切；Programmer、Education、Writer、General/Native Packs | 🚧 法律链路完整，第二个高完成度跨领域长任务仍需比赛级演示 |
 | 决策过程与推理轨迹展示 | Milan Workbench、Graph、Trace、Provenance、Checkpoint、Review、Output | ✅ 已完成 |
 
@@ -188,22 +188,30 @@ Programmer、Education、Writer、General/Native 已按同一 WKN Pack 边界注
 Docker Desktop 使用 Linux containers。敏感配置必须保存在本地 `.secrets/`，不得提交到 Git。
 
 ```powershell
-Copy-Item .env.windows.example .env.windows
-py -3 -m scripts.infra.init_secrets .secrets/kinlin-win-dev-001
+Copy-Item .config/env/windows.example .env.windows
+py -3 -m ops.scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 
 # 至少在 Secret 目录配置一个真实模型 Key 后再发起模型调用
-.\scripts\infra\windows\up.ps1 -Build
+.\ops\scripts\infra\windows\up.ps1 -Build
 ```
+
+Windows 启动脚本会自动使用 `.env.windows`。如果手动执行 Compose，必须显式传入环境文件，例如：
+
+```powershell
+docker compose --env-file .env.windows -f compose.yaml -f .config/compose/windows.yaml up -d --build --wait
+```
+
+不要直接执行不带 `--env-file` 的 `docker compose up`，否则会缺少 `KINLIN_DEPLOYMENT_ID` 和 `KINLIN_SECRETS_DIR`。
 
 默认入口：<http://127.0.0.1:8080>
 
 ```powershell
-.\scripts\infra\windows\status.ps1
-.\scripts\infra\windows\logs.ps1
-.\scripts\infra\windows\up.ps1 -DebugPorts
-.\scripts\infra\windows\restart-service.ps1 -Service backend
-.\scripts\infra\windows\preflight.ps1 -Full
-.\scripts\infra\windows\down.ps1
+.\ops\scripts\infra\windows\status.ps1
+.\ops\scripts\infra\windows\logs.ps1
+.\ops\scripts\infra\windows\up.ps1 -DebugPorts
+.\ops\scripts\infra\windows\restart-service.ps1 -Service backend
+.\ops\scripts\infra\windows\preflight.ps1 -Full
+.\ops\scripts\infra\windows\down.ps1
 ```
 
 > `remove-data-volumes.ps1` 会删除持久化数据，不属于日常停止流程。除非已完成备份且明确需要重置环境，否则不要运行。
@@ -211,8 +219,8 @@ py -3 -m scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 ### 前端热更新
 
 ```powershell
-.\scripts\infra\windows\up.ps1 -DebugPorts
-Set-Location frontend
+.\ops\scripts\infra\windows\up.ps1 -DebugPorts
+Set-Location apps/frontend
 npm ci
 $env:DEV_BACKEND_PROXY_TARGET = "http://127.0.0.1:18080"
 npm run dev
@@ -224,10 +232,10 @@ npm run dev
 
 ```bash
 cp .env.example .env
-python3 -m scripts.infra.init_secrets .secrets/kinlin-dev-local
+python3 -m ops.scripts.infra.init_secrets .secrets/kinlin-dev-local
 export KINLIN_DEPLOYMENT_ID=kinlin-dev-local
 export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
-./dev.sh up
+./ops/scripts/dev.sh up
 ```
 
 ---
@@ -251,14 +259,14 @@ export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
 运行 Python 回归：
 
 ```powershell
-Set-Location agentOS
+Set-Location apps/agentOS
 py -3.14 -m pytest tests -q
 
 Set-Location ..\agent
 py -3.14 -m pytest tests -q
 ```
 
-完整三线收束证据见 [正式集成报告](agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md)。
+完整三线收束证据见 [正式集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md)。
 
 ---
 
@@ -266,24 +274,20 @@ py -3.14 -m pytest tests -q
 
 ```text
 知弈 AgentOS
-├── frontend/                    # Milan Vue 3 产品外壳与 AgentOS 工作台
-├── backend/                     # Spring Security 与 AgentOS v2 公共网关
-├── agent/
-│   ├── app/api/                 # FastAPI AgentOS v2 边界
-│   ├── app/execution/           # 唯一 Application composition root
-│   └── packs/                   # 领域 Agent Packs
-├── agentOS/
-│   ├── src/runtime/             # 唯一 WKN WorkflowRuntime
-│   ├── src/components/planner/  # 规划与 ACG 构建
-│   ├── src/components/executor/ # ACG 节点执行、GraphPatch、值引用
-│   ├── src/components/communicator/ # Broker、ContextPack、Provenance
-│   ├── src/components/recovery/ # Checkpoint、Recipe、恢复计划
-│   ├── src/components/memory/   # Evidence Memory
-│   ├── src/components/resource/ # 资源目录与作用域解析
-│   ├── src/adapters/            # 模型、工具与外部运行时适配
-│   └── src/contracts/           # reference-first 合同
-├── docker/                      # 镜像、入口与备份/恢复实现
-├── scripts/infra/               # 部署、预检、诊断、发布脚本
+├── apps/
+│   ├── agent/                   # FastAPI 应用、领域 Agent Packs
+│   ├── agentOS/                 # WKN Runtime、执行内核与合同
+│   ├── backend/                 # Spring Security 与 AgentOS v2 公共网关
+│   ├── frontend/                # Milan Vue 3 产品外壳与 AgentOS 工作台
+│   └── desktop/                 # Tauri 桌面壳
+├── ops/
+│   ├── docker/                  # 镜像、入口与备份/恢复实现
+│   ├── deploy/                  # 离线部署包与部署说明
+│   └── scripts/                 # 部署、预检、诊断、发布脚本
+├── .config/compose/             # 开发、Windows、离线 Compose 覆盖
+├── .config/env/                 # 非生产环境模板
+├── compose.yaml                 # 唯一根目录生产 Compose
+├── .env.example                 # 唯一根目录生产环境模板
 └── docs/                        # 赛题、架构、演示与交付文档
 ```
 
@@ -299,7 +303,8 @@ py -3.14 -m pytest tests -q
 - [x] Legal 黄金纵切；
 - [ ] 第二个高完成度跨领域长任务黄金纵切；
 - [ ] 数千步长程稳定性、Token/耗时、异常恢复成功率基准；
-- [ ] 隔离环境的真实端-边-云调度和模型切分演示；
+- [ ] 隔离环境的真实端-边-云多设备调度演示；
+- [ ] 模型层切分演示（当前只支持把完整模型/Agent 放在端、边或云的一处执行）；
 - [ ] 浏览器级 `WAITING_REVIEW -> approve -> resume` 与真实模型/工具验收；
 - [ ] 核心算法伪代码、复杂性分析、对照实验和演示视频统一归档；
 - [ ] 最终报名表、学校盖章与比赛提交包校验。
@@ -311,7 +316,9 @@ py -3.14 -m pytest tests -q
 - 当前项目是比赛稳定候选和工程原型，不等同于生产级商业系统。
 - 法律场景输出是辅助材料，不构成正式法律意见。
 - 六类运行 Store 当前使用独立 SQLite 文件；这是单实例部署选择，不代表已经完成生产级横向扩展。
-- 端-边-云真实设备部署、模型切分和第二条跨领域黄金纵切仍是比赛前交付项。
+- 当前已完成端、边、云资源的“位置选择”基础链路：资源画像、远程资源注册、资源级 HMAC 签名观测、带观测序号校验的远程观测、约束调度、租约后快照版本确认、远程执行 Adapter，以及边缘失败后的云端重绑定。仍需在隔离环境中接入真实多设备、生产级密钥轮换和故障演示。
+- 远程资源观测仍需同时通过服务级内部 Token 和资源级签名；注册响应中的资源 secret 只显示一次，服务端使用 `AGENTOS_RESOURCE_CREDENTIAL_KEY` 加密保存，并另存摘要用于校验。签名请求必须包含资源凭据 ID、时间戳、nonce 和请求体摘要，过期或重复 nonce 会被拒绝；生产环境缺少主密钥时拒绝启动。
+- 当前没有实现神经网络层级切分：一次模型调用仍由一个完整执行节点在单个资源上完成，不能把模型的不同层拆到端、边、云之间协同执行。
 - README 中的测试数字来自 2026-08-19 集成回归；代码变化后必须重新执行测试，不应把历史数字当作当前证明。
 
 ---

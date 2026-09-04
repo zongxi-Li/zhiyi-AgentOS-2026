@@ -16,20 +16,20 @@
 release/
 artifacts/infra-rfc-v1.1/runtime/
 
-backend/target/
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-frontend/.cache/
+apps/backend/target/
+apps/frontend/node_modules/
+apps/frontend/dist/
+apps/frontend/.vite/
+apps/frontend/.cache/
 
-agent/.venv/
+apps/agent/.venv/
 **/.venv/
-agent/venv/
-agent/env/
-agent/data/
-agent/app/data/
-agent/app/static/digital-human/data/
-agent/logs/
+apps/agent/venv/
+apps/agent/env/
+apps/agent/data/
+apps/agent/app/data/
+apps/agent/app/static/digital-human/data/
+apps/agent/logs/
 logs/
 data/
 release/

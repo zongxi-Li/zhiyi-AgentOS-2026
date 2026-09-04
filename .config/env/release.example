@@ -1,0 +1,18 @@
+# Non-sensitive settings for an offline image-based release.
+KINLIN_DEPLOYMENT_ID=replace-with-release-id
+KINLIN_SECRETS_DIR=/etc/kinlin-ai/secrets
+KINLIN_ENVIRONMENT=production
+KINLIN_SPRING_PROFILE=prod
+KINLIN_BIND_ADDRESS=127.0.0.1
+KINLIN_HTTP_PORT=8080
+KINLIN_PUBLIC_ORIGIN=http://127.0.0.1:8080
+KINLIN_DB_NAME=kinlin_ai
+KINLIN_DB_USER=kinlin_ai
+KINLIN_DB_ADMIN_USER=postgres
+
+KINLIN_FRONTEND_IMAGE=kinlin-ai/frontend:replace-version
+KINLIN_BACKEND_IMAGE=kinlin-ai/backend:replace-version
+KINLIN_AI_IMAGE=kinlin-ai/ai-service:replace-version
+KINLIN_POSTGRES_IMAGE=kinlin-ai/postgres:replace-version
+KINLIN_REDIS_IMAGE=kinlin-ai/redis:replace-version
+KINLIN_FLYWAY_IMAGE=kinlin-ai/flyway:replace-version
