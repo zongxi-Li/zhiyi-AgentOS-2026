@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Sequence
 import hashlib
 import json
 
@@ -18,6 +18,7 @@ from support.stores._policy import (
 )
 from support.stores.workflow_store import (
     RuntimeRunRecordDeleteResult,
+    RuntimeMissionRunSummary,
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
     WorkflowStorePage,
@@ -246,6 +247,79 @@ class MemoryWorkflowStore(WorkflowStore):
         ]
         tasks.sort(key=lambda task: (task.created_at, task.mission_id), reverse=True)
         return paginate_items(tasks, page=page, page_size=page_size)
+
+    def list_mission_ids(
+        self,
+        *,
+        mission_record_state: MissionRecordState | str | None = None,
+    ) -> set[str]:
+        expected_record_state = (
+            mission_record_state.value
+            if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
+        return {
+            mission_id
+            for mission_id, task in self._tasks.items()
+            if expected_record_state is None
+            or task.record_state.value == expected_record_state
+        }
+
+    def list_mission_run_summaries(
+        self,
+        mission_ids: Sequence[str],
+        *,
+        mission_record_state: MissionRecordState | str | None = None,
+        owner_user_id: str | None = None,
+        owner_tenant_id: str | None = None,
+    ) -> dict[str, RuntimeMissionRunSummary]:
+        expected_record_state = (
+            mission_record_state.value
+            if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
+        requested_ids = tuple(dict.fromkeys(str(mission_id) for mission_id in mission_ids))
+        summaries = {
+            mission_id: RuntimeMissionRunSummary(
+                mission_id=mission_id,
+                latest_run=None,
+                run_count=0,
+            )
+            for mission_id in requested_ids
+            if mission_id in self._tasks
+            and (
+                expected_record_state is None
+                or self._tasks[mission_id].record_state.value == expected_record_state
+            )
+        }
+        for run in self._runs.values():
+            if run.mission_id not in summaries or not matches_run(
+                run,
+                status=None,
+                statuses=None,
+                domain=None,
+                workflow_id=None,
+                mission_id=None,
+                lifecycle_phase=None,
+                source=None,
+                sources=None,
+                owner_user_id=owner_user_id,
+                owner_tenant_id=owner_tenant_id,
+            ):
+                continue
+            current = summaries[run.mission_id]
+            latest = current.latest_run
+            if latest is None or (
+                run.updated_at,
+                run.run_id,
+            ) > (latest.updated_at, latest.run_id):
+                latest = run.model_copy(deep=True)
+            summaries[run.mission_id] = RuntimeMissionRunSummary(
+                mission_id=run.mission_id,
+                latest_run=latest,
+                run_count=current.run_count + 1,
+            )
+        return summaries
 
     def list_runs(
         self,

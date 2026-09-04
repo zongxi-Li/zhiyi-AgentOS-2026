@@ -96,6 +96,8 @@ const loadResources = async () => {
   }
 }
 
+defineExpose({ loadResources })
+
 onMounted(() => { void loadResources() })
 onBeforeUnmount(() => controller?.abort())
 </script>

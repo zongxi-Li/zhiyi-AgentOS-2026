@@ -814,12 +814,9 @@ def create_router(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="invalid mission status") from exc
 
-        def is_visible_project_mission(mission_id: str) -> bool:
-            try:
-                task = runtime.workflow_store.get_mission(mission_id)
-            except KeyError:
-                return False
-            return task.record_state is MissionRecordState.ACTIVE
+        visible_mission_ids = runtime.workflow_store.list_mission_ids(
+            mission_record_state=MissionRecordState.ACTIVE,
+        )
 
         items, total = query.list_mission_items(
             user_id=(actor.user_id if actor else None),
@@ -827,24 +824,24 @@ def create_router(
             status=mission_status,
             page=page,
             page_size=page_size,
-            mission_visibility=is_visible_project_mission,
+            visible_mission_ids=visible_mission_ids,
+            include_run_summaries=False,
+        )
+        runtime_summaries = runtime.workflow_store.list_mission_run_summaries(
+            [item.mission_id for item in items],
+            mission_record_state=MissionRecordState.ACTIVE,
+            owner_user_id=(actor.user_id if actor else None),
+            owner_tenant_id=(actor.tenant_id if actor else None),
         )
         projected_items: list[dict[str, Any]] = []
         for item in items:
             projected = item.model_dump(by_alias=True, mode="json")
-            runtime_runs = runtime.workflow_store.list_runs(
-                mission_id=item.mission_id,
-                mission_record_state=MissionRecordState.ACTIVE,
-                owner_user_id=(actor.user_id if actor else None),
-                owner_tenant_id=(actor.tenant_id if actor else None),
-                page=1,
-                page_size=1,
-            )
-            if runtime_runs.items:
-                latest = runtime_runs.items[0]
+            runtime_summary = runtime_summaries.get(item.mission_id)
+            if runtime_summary is not None and runtime_summary.latest_run is not None:
+                latest = runtime_summary.latest_run
                 projected["latestRunId"] = latest.run_id
                 projected["latestRunStatus"] = latest.status.value
-                projected["runCount"] = runtime_runs.total
+                projected["runCount"] = runtime_summary.run_count
                 projected["updatedAt"] = latest.updated_at.isoformat()
             projected_items.append(projected)
         return {

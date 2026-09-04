@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from .query_models import (
     AttemptDetail,
@@ -64,6 +64,8 @@ class IdentityQueryService:
         page: int = 1,
         page_size: int = 20,
         mission_visibility: Callable[[str], bool] | None = None,
+        visible_mission_ids: Collection[str] | None = None,
+        include_run_summaries: bool = True,
     ) -> tuple[list[MissionListItem], int]:
         """Return a Mission-level Project list without treating Runs as projects.
 
@@ -79,13 +81,15 @@ class IdentityQueryService:
             "tenant_id": tenant_id,
             "status": status,
         }
-        if mission_visibility is None:
+        if mission_visibility is None and visible_mission_ids is None:
             missions, total = self.repositories.missions.list(
                 **filters,
                 offset=(safe_page - 1) * safe_page_size,
                 limit=safe_page_size,
             )
         else:
+            visible_ids = set(visible_mission_ids or ())
+            visibility = mission_visibility or (lambda mission_id: mission_id in visible_ids)
             all_missions: list[Mission] = []
             offset = 0
             scan_limit = max(100, safe_page_size)
@@ -99,7 +103,7 @@ class IdentityQueryService:
                 all_missions.extend(
                     mission
                     for mission in batch
-                    if mission_visibility(mission.mission_id)
+                    if visibility(mission.mission_id)
                 )
                 offset += len(batch)
                 if not batch or offset >= source_total:
@@ -107,9 +111,21 @@ class IdentityQueryService:
             total = len(all_missions)
             start = (safe_page - 1) * safe_page_size
             missions = all_missions[start:start + safe_page_size]
+        mission_ids = [mission.mission_id for mission in missions]
+        if not include_run_summaries:
+            runs_by_mission = {mission_id: [] for mission_id in mission_ids}
+        else:
+            list_for_missions = getattr(self.repositories.runs, "list_for_missions", None)
+            if callable(list_for_missions):
+                runs_by_mission = list_for_missions(mission_ids)
+            else:
+                runs_by_mission = {
+                    mission_id: self.repositories.runs.list_for_mission(mission_id)
+                    for mission_id in mission_ids
+                }
         items: list[MissionListItem] = []
         for mission in missions:
-            runs = self.repositories.runs.list_for_mission(mission.mission_id)
+            runs = runs_by_mission.get(mission.mission_id, [])
             latest = max(runs, key=lambda item: (item.updated_at, item.run_id), default=None)
             items.append(MissionListItem(
                 missionId=mission.mission_id,

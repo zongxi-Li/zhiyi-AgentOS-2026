@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, Sequence
 
 from contracts.identity import (
     ArtifactId,
@@ -69,6 +69,9 @@ class RunRepository(Protocol):
     def add(self, run: WorkflowRun) -> None: ...
     def get(self, run_id: RunId) -> WorkflowRun | None: ...
     def list_for_mission(self, mission_id: MissionId) -> list[WorkflowRun]: ...
+    def list_for_missions(
+        self, mission_ids: Sequence[MissionId]
+    ) -> dict[MissionId, list[WorkflowRun]]: ...
     def update_blueprint(
         self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int
     ) -> WorkflowRun: ...

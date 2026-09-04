@@ -7,11 +7,15 @@ import json
 import hashlib
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
+from typing import Sequence
 
 from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import matches_run, matches_mission, reject_terminal_overwrite, run_priority, validate_run_state
 from support.stores.workflow_store import (
+    RuntimeMissionRunSummary,
+    RuntimeRunListSummary,
     RuntimeRunRecordDeleteResult,
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
@@ -172,18 +176,28 @@ class SQLiteWorkflowStore(WorkflowStore):
             if reject_terminal_overwrite(existing, run):
                 return False
         validate_run_state(run)
+        owner_user_id = str(run.input.get("authenticatedUserId") or "").strip() or None
+        owner_tenant_id = str(run.input.get("authenticatedTenantId") or "").strip() or None
         conn.execute(
-            """INSERT INTO runs(run_id, mission_id, payload, updated_at)
-               VALUES(?, ?, ?, ?)
+            """INSERT INTO runs(
+                   run_id, mission_id, payload, updated_at,
+                   status, owner_user_id, owner_tenant_id
+               ) VALUES(?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(run_id) DO UPDATE SET
                    mission_id=excluded.mission_id,
                    payload=excluded.payload,
-                   updated_at=excluded.updated_at""",
+                   updated_at=excluded.updated_at,
+                   status=excluded.status,
+                   owner_user_id=excluded.owner_user_id,
+                   owner_tenant_id=excluded.owner_tenant_id""",
             (
                 run.run_id,
                 run.mission_id,
                 json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
                 run.updated_at.isoformat(),
+                run.status.value,
+                owner_user_id,
+                owner_tenant_id,
             ),
         )
         return True
@@ -248,6 +262,109 @@ class SQLiteWorkflowStore(WorkflowStore):
         ]
         tasks.sort(key=lambda task: (task.created_at, task.mission_id), reverse=True)
         return paginate_items(tasks, page=page, page_size=page_size)
+
+    def list_mission_ids(
+        self,
+        *,
+        mission_record_state: MissionRecordState | str | None = None,
+    ) -> set[str]:
+        expected_record_state = (
+            mission_record_state.value
+            if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
+        rows = self._fetch_all("SELECT mission_id, payload FROM tasks")
+        return {
+            str(row["mission_id"])
+            for row in rows
+            if expected_record_state is None
+            or RuntimeMissionRecord.model_validate(json.loads(row["payload"])).record_state.value
+            == expected_record_state
+        }
+
+    def list_mission_run_summaries(
+        self,
+        mission_ids: Sequence[str],
+        *,
+        mission_record_state: MissionRecordState | str | None = None,
+        owner_user_id: str | None = None,
+        owner_tenant_id: str | None = None,
+    ) -> dict[str, RuntimeMissionRunSummary]:
+        expected_record_state = (
+            mission_record_state.value
+            if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
+        requested_ids = tuple(dict.fromkeys(str(mission_id) for mission_id in mission_ids))
+        if not requested_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in requested_ids)
+        task_rows = self._fetch_all(
+            f"SELECT mission_id, payload FROM tasks WHERE mission_id IN ({placeholders})",
+            requested_ids,
+        )
+        active_ids = {
+            str(row["mission_id"])
+            for row in task_rows
+            if expected_record_state is None
+            or RuntimeMissionRecord.model_validate(json.loads(row["payload"])).record_state.value
+            == expected_record_state
+        }
+        summaries = {
+            mission_id: RuntimeMissionRunSummary(
+                mission_id=mission_id,
+                latest_run=None,
+                run_count=0,
+            )
+            for mission_id in requested_ids
+            if mission_id in active_ids
+        }
+        if not summaries:
+            return summaries
+
+        summary_ids = tuple(mission_id for mission_id in requested_ids if mission_id in summaries)
+        run_placeholders = ", ".join("?" for _ in summary_ids)
+        run_rows = self._fetch_all(
+            f"""WITH visible_runs AS (
+                    SELECT
+                        run_id,
+                        mission_id,
+                        status,
+                        updated_at,
+                        COUNT(*) OVER (PARTITION BY mission_id) AS run_count,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY mission_id
+                            ORDER BY updated_at DESC, run_id DESC
+                        ) AS position
+                    FROM runs
+                    WHERE mission_id IN ({run_placeholders})
+                      AND (owner_user_id IS NULL OR owner_user_id = '' OR owner_user_id = ?)
+                      AND (
+                          owner_user_id IS NULL OR owner_user_id = ''
+                          OR owner_tenant_id IS NULL OR owner_tenant_id = ''
+                          OR owner_tenant_id = ?
+                      )
+                )
+                SELECT run_id, mission_id, status, updated_at, run_count
+                FROM visible_runs
+                WHERE position = 1""",
+            (*summary_ids, owner_user_id, owner_tenant_id),
+        )
+        for row in run_rows:
+            mission_id = str(row["mission_id"])
+            if mission_id not in summaries:
+                continue
+            summaries[mission_id] = RuntimeMissionRunSummary(
+                mission_id=mission_id,
+                latest_run=RuntimeRunListSummary(
+                    run_id=str(row["run_id"]),
+                    mission_id=mission_id,
+                    status=WorkflowStatus(str(row["status"])),
+                    updated_at=datetime.fromisoformat(str(row["updated_at"])),
+                ),
+                run_count=int(row["run_count"]),
+            )
+        return summaries
 
     def list_runs(
         self,
@@ -418,9 +535,35 @@ class SQLiteWorkflowStore(WorkflowStore):
                     run_id TEXT PRIMARY KEY,
                     mission_id TEXT NOT NULL,
                     payload TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    status TEXT,
+                    owner_user_id TEXT,
+                    owner_tenant_id TEXT
                 )
                 """
+            )
+            run_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            for column in ("status", "owner_user_id", "owner_tenant_id"):
+                if column not in run_columns:
+                    conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
+            conn.execute(
+                """UPDATE runs
+                   SET status = COALESCE(status, json_extract(payload, '$.status')),
+                       owner_user_id = COALESCE(
+                           owner_user_id,
+                           NULLIF(json_extract(payload, '$.input.authenticatedUserId'), '')
+                       ),
+                       owner_tenant_id = COALESCE(
+                           owner_tenant_id,
+                           NULLIF(json_extract(payload, '$.input.authenticatedTenantId'), '')
+                       )
+                   WHERE status IS NULL"""
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_runs_mission_updated_at
+                   ON runs(mission_id, updated_at DESC, run_id DESC)"""
             )
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS lifecycle_outbox (

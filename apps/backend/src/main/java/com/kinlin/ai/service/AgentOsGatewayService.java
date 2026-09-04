@@ -45,7 +45,7 @@ public class AgentOsGatewayService {
         try {
             return webClient.get().uri(path)
                     .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
-                    .timeout(Duration.ofMillis(properties.getProgressTimeoutMs()))
+                    .timeout(Duration.ofMillis(getTimeoutMs(path)))
                     .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
                     .block();
         } catch (Exception failure) {
@@ -144,6 +144,13 @@ public class AgentOsGatewayService {
         return path.endsWith("/missions")
                 ? properties.getAsyncStartTimeoutMs()
                 : properties.getTimeoutMs();
+    }
+
+    private int getTimeoutMs(String path) {
+        String pathWithoutQuery = path == null ? "" : path.split("\\?", 2)[0];
+        return "/ai/agentos/v2/missions".equals(pathWithoutQuery)
+                ? properties.getTimeoutMs()
+                : properties.getProgressTimeoutMs();
     }
 
     private Mono<Map<String, Object>> mapResponse(int upstreamStatus, Mono<String> responseBody) {

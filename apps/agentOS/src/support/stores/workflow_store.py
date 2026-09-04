@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Generic, Sequence, TypeVar
 
 from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
@@ -27,6 +28,25 @@ class WorkflowStorePage(Generic[T]):
 
     def __len__(self):
         return len(self.items)
+
+
+@dataclass(frozen=True)
+class RuntimeRunListSummary:
+    """Small Run projection used by Mission lists without loading execution bodies."""
+
+    run_id: str
+    mission_id: str
+    status: WorkflowStatus
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class RuntimeMissionRunSummary:
+    """Batch summary of the runtime runs belonging to visible missions."""
+
+    mission_id: str
+    latest_run: RuntimeRunRecord | RuntimeRunListSummary | None
+    run_count: int
 
 
 @dataclass(frozen=True)
@@ -228,6 +248,27 @@ class WorkflowStore(ABC):
         page_size: int = 20,
     ) -> WorkflowStorePage[RuntimeMissionRecord]:
         """按条件分页列出任务；返回排序、复制与并发快照策略由实现定义。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_mission_ids(
+        self,
+        *,
+        mission_record_state: MissionRecordState | str | None = None,
+    ) -> set[str]:
+        """Return mission IDs matching the runtime record-state filter."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_mission_run_summaries(
+        self,
+        mission_ids: Sequence[str],
+        *,
+        mission_record_state: MissionRecordState | str | None = None,
+        owner_user_id: str | None = None,
+        owner_tenant_id: str | None = None,
+    ) -> dict[str, RuntimeMissionRunSummary]:
+        """Return latest-run and count data for many missions in one read."""
         raise NotImplementedError
 
     @abstractmethod

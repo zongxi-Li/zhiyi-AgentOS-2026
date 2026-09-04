@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -29,6 +29,7 @@ describe('HistoryView tabs', () => {
     expect(wrapper.text()).toContain('文件历史')
     expect(wrapper.text()).toContain('ACG 历史')
     await wrapper.get('[data-testid="history-tab-acg"]').trigger('click')
+    await flushPromises()
 
     expect(testRouter.currentRoute.value.path).toBe('/history')
     expect(testRouter.currentRoute.value.query.tab).toBe('acg')

@@ -9,13 +9,14 @@ import hashlib
 from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
+from app.paths import RAG_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 
 def _default_data_dir() -> Path:
     """Resolve the canonical RAG data directory regardless of process cwd."""
-    return Path(__file__).resolve().parents[2] / "data" / "rag"
+    return RAG_DATA_DIR
 
 class RAGService:
     """RAG服务类"""

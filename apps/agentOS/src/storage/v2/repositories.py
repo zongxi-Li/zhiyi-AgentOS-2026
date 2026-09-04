@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import sqlite3
-from typing import Any
+from typing import Any, Sequence
 
 from contracts.identity import (
     AttemptId,
@@ -362,6 +362,25 @@ class SQLiteRunRepository(_SQLiteRepository):
                 (mission_id,),
             ).fetchall()
         return [self._from_row(row) for row in rows]
+
+    def list_for_missions(
+        self, mission_ids: Sequence[MissionId]
+    ) -> dict[MissionId, list[WorkflowRun]]:
+        requested_ids = tuple(dict.fromkeys(mission_ids))
+        if not requested_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in requested_ids)
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM workflow_runs_v2
+                    WHERE mission_id IN ({placeholders})
+                    ORDER BY mission_id, rowid""",
+                requested_ids,
+            ).fetchall()
+        result: dict[MissionId, list[WorkflowRun]] = {mission_id: [] for mission_id in requested_ids}
+        for row in rows:
+            result[row["mission_id"]].append(self._from_row(row))
+        return result
 
     def update_blueprint(
         self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int

@@ -1,10 +1,12 @@
 """Contract tests shared by in-memory and SQLite workflow stores."""
 
+from datetime import timedelta
 from pathlib import Path
+import sqlite3
 
 import pytest
 
-from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
+from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -105,6 +107,102 @@ def test_mission_record_state_rejects_active_runs(store_factory, tmp_path: Path)
     with pytest.raises(RuntimeRunRecordNotTerminalError):
         store.set_mission_record_state(mission.mission_id, MissionRecordState.ARCHIVED)
     assert store.get_mission(mission.mission_id).record_state is MissionRecordState.ACTIVE
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
+)
+def test_batch_mission_summary_preserves_latest_count_and_visibility(
+    store_factory,
+    tmp_path: Path,
+) -> None:
+    store = store_factory(tmp_path)
+    active = RuntimeMissionRecord(missionId="mission_batch_active", title="Active")
+    archived = RuntimeMissionRecord(missionId="mission_batch_archived", title="Archived")
+    store.save_mission(active)
+    store.save_mission(archived)
+    store.set_mission_record_state(archived.mission_id, MissionRecordState.ARCHIVED)
+
+    now = utc_now()
+    older = RuntimeRunRecord(
+        runId="run_batch_older",
+        missionId=active.mission_id,
+        workflowId="workflow-1",
+        domain="general",
+        runtimeEngine="acg",
+        input={
+            "authenticatedUserId": "user-a",
+            "authenticatedTenantId": "tenant-a",
+        },
+        updatedAt=now,
+    )
+    newer = older.model_copy(
+        update={
+            "run_id": "run_batch_newer",
+            "updated_at": now + timedelta(seconds=1),
+        }
+    )
+    other_owner = older.model_copy(
+        update={
+            "run_id": "run_batch_other_owner",
+            "input": {
+                "authenticatedUserId": "user-b",
+                "authenticatedTenantId": "tenant-a",
+            },
+        }
+    )
+    store.save_run(older)
+    store.save_run(newer)
+    store.save_run(other_owner)
+
+    assert store.list_mission_ids(mission_record_state=MissionRecordState.ACTIVE) == {
+        active.mission_id
+    }
+    summaries = store.list_mission_run_summaries(
+        [active.mission_id, archived.mission_id],
+        mission_record_state=MissionRecordState.ACTIVE,
+        owner_user_id="user-a",
+        owner_tenant_id="tenant-a",
+    )
+
+    assert summaries[active.mission_id].run_count == 2
+    assert summaries[active.mission_id].latest_run is not None
+    assert summaries[active.mission_id].latest_run.run_id == newer.run_id
+    assert archived.mission_id not in summaries
+
+
+def test_sqlite_mission_summary_does_not_deserialize_run_payload(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    store = SQLiteWorkflowStore(db_path)
+    mission = RuntimeMissionRecord(missionId="mission_summary_projection", title="Mission")
+    store.save_mission(mission)
+    run = RuntimeRunRecord(
+        runId="run_summary_projection",
+        missionId=mission.mission_id,
+        workflowId="workflow-1",
+        domain="general",
+        runtimeEngine="acg",
+        status=WorkflowStatus.COMPLETED,
+        input={"authenticatedUserId": "user-a"},
+    )
+    store.save_run(run)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE runs SET payload = 'not-list-readable' WHERE run_id = ?", (run.run_id,))
+        conn.commit()
+
+    summaries = store.list_mission_run_summaries(
+        [mission.mission_id],
+        mission_record_state=MissionRecordState.ACTIVE,
+        owner_user_id="user-a",
+    )
+
+    summary = summaries[mission.mission_id]
+    assert summary.run_count == 1
+    assert summary.latest_run is not None
+    assert summary.latest_run.run_id == run.run_id
+    assert summary.latest_run.status is WorkflowStatus.COMPLETED
 
 
 @pytest.mark.parametrize(

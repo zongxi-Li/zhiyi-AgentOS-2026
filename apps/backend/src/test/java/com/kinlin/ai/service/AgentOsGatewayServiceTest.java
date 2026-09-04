@@ -9,6 +9,7 @@ import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +66,25 @@ class AgentOsGatewayServiceTest {
 
         assertEquals(503, result.get(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY));
         assertEquals("AGENTOS_UPSTREAM_UNAVAILABLE", result.get("error"));
+    }
+
+    @Test
+    void givesMissionListTheRegularAgentTimeout() {
+        AgentProperties properties = new AgentProperties();
+        properties.setEnabled(true);
+        properties.setTimeoutMs(500);
+        properties.setProgressTimeoutMs(10);
+        WebClient.Builder builder = WebClient.builder().exchangeFunction(request ->
+                Mono.delay(Duration.ofMillis(50)).map(ignore -> ClientResponse.create(HttpStatus.OK)
+                        .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                        .body("{\"items\":[]}")
+                        .build())
+        );
+        AgentOsGatewayService service = new AgentOsGatewayService(builder, properties, "http://agentos");
+
+        Map<String, Object> result = service.get("/ai/agentos/v2/missions?page=1&pageSize=100");
+
+        assertEquals(200, result.get(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY));
     }
 
     private AgentOsGatewayService service(HttpStatus status, String body) {
