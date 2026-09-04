@@ -148,6 +148,18 @@ def test_openai_runtime_classifies_length_finish_as_capacity_exhaustion() -> Non
     assert captured.value.metadata["finishReason"] == "length"
 
 
+def test_openai_runtime_accepts_json_wrapped_in_a_markdown_fence() -> None:
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.fenced", kind=CapabilityKind.MODEL,
+            displayName="Fenced model", provider="openai_compatible", capabilities=["local-chat"],
+        ),
+        transport=_JsonTransport(),
+    )
+
+    assert runtime._content_object("```json\n{\"answer\":\"ok\"}\n```") == {"answer": "ok"}
+
+
 def test_openai_compatible_runtime_projects_stream_deltas() -> None:
     """流式响应只向调用会话输出 delta 与完成事件，不写入持久化状态。"""
     class _StreamTransport:
@@ -176,6 +188,42 @@ def test_openai_compatible_runtime_projects_stream_deltas() -> None:
         ("delta", "lo"),
         ("completed", ""),
     ]
+
+
+def test_glm_runtime_uses_supported_json_mode_and_keeps_reasoning_private() -> None:
+    class _GlmStreamTransport:
+        def __init__(self) -> None:
+            self.payload = None
+
+        async def stream_json(self, **kwargs):
+            self.payload = kwargs["payload"]
+            yield {"choices": [{"delta": {"reasoning_content": "private chain"}}]}
+            yield {"choices": [{"delta": {"content": '{"answer":"ok"}'}, "finish_reason": "stop"}]}
+
+    transport = _GlmStreamTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.glm", kind=CapabilityKind.MODEL,
+            displayName="GLM", provider="glm", capabilities=["glm-test"],
+        ),
+        transport=transport,
+    )
+
+    async def collect():
+        request = ModelInvocationRequest(
+            requestId="glm-stream", model="glm-test",
+            responseSchema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )
+        return [event async for event in runtime.astream(request)]
+
+    events = asyncio.run(collect())
+    assert transport.payload["response_format"] == {"type": "json_object"}
+    assert transport.payload["thinking"] == {"type": "disabled"}
+    assert transport.payload["messages"][0]["role"] == "system"
+    assert '"answer":{"type":"string"}' in transport.payload["messages"][0]["content"]
+    assert transport.payload["messages"][1:] == []
+    assert [event.event_type for event in events] == ["activity", "delta", "completed"]
+    assert "private chain" not in repr(events)
 
 
 def test_openai_compatible_runtime_projects_stream_tool_calls() -> None:

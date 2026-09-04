@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any, AsyncIterator, Protocol
 
@@ -66,6 +67,33 @@ class ModelInvocationError(RuntimeError):
         self.code = code
         self.usage = dict(usage or {})
         self.metadata = dict(metadata or {})
+
+
+def decode_json_object(content: object) -> dict[str, Any]:
+    """Decode a provider JSON object while tolerating harmless text wrappers."""
+    if isinstance(content, Mapping):
+        return dict(content)
+    if not isinstance(content, str):
+        raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content is not a JSON object")
+
+    stripped = content.strip().lstrip("\ufeff")
+    candidates = [stripped]
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    first_object = stripped.find("{")
+    last_object = stripped.rfind("}")
+    if first_object >= 0 and last_object > first_object:
+        candidates.append(stripped[first_object:last_object + 1])
+
+    for candidate in dict.fromkeys(candidates):
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content is not valid JSON")
 
 
 class OpenAICompatibleRuntime:
@@ -184,6 +212,11 @@ class OpenAICompatibleRuntime:
                 choice = choices[0]
                 delta_data = choice.get("delta")
                 delta = delta_data.get("content") if isinstance(delta_data, Mapping) else None
+                reasoning = delta_data.get("reasoning_content") if isinstance(delta_data, Mapping) else None
+                if isinstance(reasoning, str) and reasoning:
+                    # Never expose private reasoning, but preserve provider
+                    # liveness so long thinking is not misclassified as TTFT.
+                    yield ModelStreamEvent(requestId=request.request_id, eventType="activity", provider=self._manifest.provider, model=model)
                 if isinstance(delta, str) and delta:
                     yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta=delta, provider=self._manifest.provider, model=model)
                 if isinstance(delta_data, Mapping):
@@ -244,14 +277,34 @@ class OpenAICompatibleRuntime:
         payload["model"] = model
         payload["messages"] = [dict(message) for message in request.messages]
         if request.response_schema is not None:
-            payload["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "agentos_response",
-                    "strict": True,
-                    "schema": dict(request.response_schema),
-                },
-            }
+            if self._manifest.provider.strip().lower() in {"glm", "zhipu"}:
+                # GLM 5-family models enable long-form thinking by default. For
+                # schema-constrained calls that private reasoning competes with
+                # the JSON answer for the same output budget and can exhaust the
+                # response before the object closes. Keep these calls direct;
+                # the planner already performs explicit validation and repair.
+                payload["thinking"] = {"type": "disabled"}
+                payload["response_format"] = {"type": "json_object"}
+                payload["messages"] = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return exactly one JSON object that strictly validates against this JSON Schema. "
+                            "Do not omit required fields, add undeclared fields, or change required array sizes.\n"
+                            + json.dumps(request.response_schema, ensure_ascii=False, separators=(",", ":"))
+                        ),
+                    },
+                    *payload["messages"],
+                ]
+            else:
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "agentos_response",
+                        "strict": True,
+                        "schema": dict(request.response_schema),
+                    },
+                }
         return payload
 
     def _parse_response(
@@ -295,20 +348,7 @@ class OpenAICompatibleRuntime:
     @staticmethod
     def _content_object(content: object) -> dict[str, Any]:
         """把供应商内容规范为 JSON 对象，不把原始响应嵌入错误信息。"""
-        if isinstance(content, Mapping):
-            return dict(content)
-        if not isinstance(content, str):
-            raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content is not a JSON object")
-        try:
-            parsed = json.loads(content)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise ModelInvocationError(
-                "MODEL_RESPONSE_INVALID",
-                "provider content is not valid JSON",
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content must be a JSON object")
-        return parsed
+        return decode_json_object(content)
 
 
 __all__ = ["JsonTransport", "ModelInvocationError", "OpenAICompatibleRuntime"]

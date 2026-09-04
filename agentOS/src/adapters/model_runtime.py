@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import hashlib
 from collections.abc import Awaitable, Callable
 from time import monotonic
@@ -15,7 +14,7 @@ from adapters.model_adapter import (
     StructuredGenerationResult,
 )
 from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.openai_runtime import ModelInvocationError
+from adapters.openai_runtime import ModelInvocationError, decode_json_object
 from contracts.capability import (
     ModelCapabilityEnvelope,
     ModelOutputPolicy,
@@ -329,7 +328,9 @@ class RegisteredModelRuntime:
         last_activity = started
         last_activity_event = started
         first = False
+        provider_active = False
         received_chunks = 0
+        public_activity_pending = False
         buffer: list[str] = []
         finish_reason: str | None = None
         iterator = streamer(request)
@@ -366,8 +367,8 @@ class RegisteredModelRuntime:
                 total_left = total_timeout - (self._clock() - started)
                 if total_left <= 0:
                     raise StructuredGenerationError("MODEL_TOTAL_TIMEOUT", "model stream total timeout exceeded")
-                window = ttft_timeout if not first else idle_timeout
-                activity_left = window - (self._clock() - (started if not first else last_activity))
+                window = ttft_timeout if not provider_active else idle_timeout
+                activity_left = window - (self._clock() - (started if not provider_active else last_activity))
                 if activity_left <= 0:
                     code = "MODEL_TTFT_TIMEOUT" if not first else "MODEL_IDLE_TIMEOUT"
                     raise StructuredGenerationError(code, "model stream activity deadline exceeded", retryable=True)
@@ -386,9 +387,18 @@ class RegisteredModelRuntime:
                         audit={"provider": self.provider, "model": self.model},
                     ) from exc
                 now = self._clock()
-                if item.event_type == "delta" and item.delta:
+                if item.event_type == "activity":
+                    provider_active = True
+                    idle_ms = now - last_activity
+                    last_activity = now
+                    if now - last_activity_event >= 0.35:
+                        last_activity_event = now
+                        yield emit("model.activity", activity_payload(idle_ms))
+                elif item.event_type == "delta" and item.delta:
+                    provider_active = True
                     received_chunks += 1
                     buffer.append(item.delta)
+                    public_activity_pending = True
                     idle_ms = now - last_activity
                     last_activity = now
                     if not first:
@@ -398,6 +408,7 @@ class RegisteredModelRuntime:
                         yield emit("model.output.delta", {"delta": item.delta})
                     if received_chunks == 1 or now - last_activity_event >= 0.35:
                         last_activity_event = now
+                        public_activity_pending = False
                         yield emit("model.activity", activity_payload(idle_ms))
                 elif item.event_type == "completed":
                     raw_finish_reason = item.metadata.get("finishReason")
@@ -427,14 +438,12 @@ class RegisteredModelRuntime:
                 "model provider exhausted its output capacity before completing the response",
                 retryable=False,
             )
-        if received_chunks and last_activity_event < last_activity:
+        if public_activity_pending:
             yield emit("model.activity", activity_payload(0.0))
         try:
-            data = json.loads("".join(buffer))
-        except (TypeError, ValueError) as exc:
+            data = decode_json_object("".join(buffer))
+        except ModelInvocationError as exc:
             raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "streamed model output is not valid JSON") from exc
-        if not isinstance(data, dict):
-            raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "streamed model output must be an object")
         yield emit("model.completed", {"receivedLength": sum(map(len, buffer)), "data": data})
 
 

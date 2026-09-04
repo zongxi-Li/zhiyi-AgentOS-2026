@@ -1394,10 +1394,17 @@ class ExecutionRuntime:
         model_bindings = run.execution_state.get("modelBindings")
         if not isinstance(model_bindings, dict):
             raise ValueError("ACG run has no frozen model bindings")
-        step_model_runtimes = {
-            step_id: self._model_runtime_from_binding(model_bindings.get(step_id))
-            for step_id in steps
-        }
+        # Steps frozen to the same provider/model must share one guard. Creating
+        # one guard per step makes every semaphore independent and allows a
+        # parallel superstep to burst past the provider quota.
+        shared_model_runtimes: dict[str, object | None] = {}
+        step_model_runtimes: dict[str, object | None] = {}
+        for step_id in steps:
+            binding = model_bindings.get(step_id)
+            cache_key = json.dumps(binding, sort_keys=True) if isinstance(binding, dict) else "null"
+            if cache_key not in shared_model_runtimes:
+                shared_model_runtimes[cache_key] = self._model_runtime_from_binding(binding)
+            step_model_runtimes[step_id] = shared_model_runtimes[cache_key]
         return ACGNodeRunner(
             task=task,
             run=run,
@@ -2001,7 +2008,10 @@ class ExecutionRuntime:
                 model=model,
                 version=version,
             ),
-            retries=1,
+            retries=2,
+            max_concurrency=1,
+            min_interval_seconds=0.25,
+            retry_delay_seconds=1.0,
         )
 
     def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any]) -> None:

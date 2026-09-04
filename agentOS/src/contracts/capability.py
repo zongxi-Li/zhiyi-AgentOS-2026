@@ -190,7 +190,7 @@ class ModelStreamEvent(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
     request_id: str = Field(alias="requestId", min_length=1)
-    event_type: Literal["delta", "tool_call", "completed"] = Field(alias="eventType")
+    event_type: Literal["activity", "delta", "tool_call", "completed"] = Field(alias="eventType")
     delta: str = ""
     provider: str
     model: str

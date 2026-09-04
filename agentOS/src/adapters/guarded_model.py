@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import TypeVar
 from uuid import uuid4
 
@@ -53,6 +54,22 @@ class _CallGate:
                         await asyncio.sleep(remaining)
                 self._last_started = asyncio.get_running_loop().time()
             return await operation()
+
+    @asynccontextmanager
+    async def stream_slot(self):
+        """Hold one concurrency slot for the complete provider stream."""
+        await self._semaphore.acquire()
+        try:
+            async with self._spacing_lock:
+                now = asyncio.get_running_loop().time()
+                if self._last_started is not None:
+                    remaining = self._min_interval_seconds - (now - self._last_started)
+                    if remaining > 0:
+                        await asyncio.sleep(remaining)
+                self._last_started = asyncio.get_running_loop().time()
+            yield
+        finally:
+            self._semaphore.release()
 
 
 class GuardedModelRuntime:
@@ -158,16 +175,22 @@ class GuardedModelRuntime:
             delegate_kwargs["attempt_id"] = attempt_id
             self.last_attempt_id = attempt_id
             try:
-                async for event in streamer(**delegate_kwargs):
-                    yield event
+                async with self._gate.stream_slot():
+                    async for event in streamer(**delegate_kwargs):
+                        yield event
                 return
             except asyncio.CancelledError:
                 raise
             except StructuredGenerationError as exc:
-                if exc.code not in {"MODEL_TTFT_TIMEOUT", "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT", "MODEL_TIMEOUT"} or attempt > self.retries:
+                retryable_codes = _RETRYABLE_CODES | {
+                    "MODEL_TTFT_TIMEOUT",
+                    "MODEL_IDLE_TIMEOUT",
+                    "MODEL_TOTAL_TIMEOUT",
+                }
+                if exc.code not in retryable_codes or attempt > self.retries:
                     raise
                 if self.retry_delay_seconds:
-                    await asyncio.sleep(self.retry_delay_seconds)
+                    await asyncio.sleep(self.retry_delay_seconds * attempt)
 
     def describe_model(self):
         """透明转发模型能力，不在保护包装器中创造容量事实。"""

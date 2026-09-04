@@ -12,6 +12,7 @@ AgentOS 通信、记忆、Adapter 与审计边界，不暴露 LangGraph 对象�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -371,11 +372,24 @@ class ACGNodeRunner:
             RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
                          attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),
         )
-        output = (
-            await self.agent_invoker.invoke(context=agent_context, agent=agent)
-            if self.agent_invoker is not None
-            else await agent.run(agent_context)
-        )
+        # Provider connection failures are transient and can happen after the
+        # scheduler has already allocated the node. Retry the model invocation
+        # a small, bounded number of times without rerunning any post-processing
+        # or side-effecting tool work.
+        invocation_attempt = 0
+        while True:
+            try:
+                output = (
+                    await self.agent_invoker.invoke(context=agent_context, agent=agent)
+                    if self.agent_invoker is not None
+                    else await agent.run(agent_context)
+                )
+                break
+            except Exception as exc:
+                if not bool(getattr(exc, "retryable", False)) or invocation_attempt >= 2:
+                    raise
+                invocation_attempt += 1
+                await asyncio.sleep(min(2.0, 0.5 * (2 ** (invocation_attempt - 1))))
         final_attempt_id = getattr(agent_context.model_runtime, "last_attempt_id", None)
         if isinstance(final_attempt_id, str) and final_attempt_id:
             self.attempt_ids[step_id] = final_attempt_id
