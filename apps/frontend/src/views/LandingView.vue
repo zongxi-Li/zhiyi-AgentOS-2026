@@ -97,11 +97,11 @@
             </div>
             <div class="about-contact-card__item">
               <span class="about-contact-card__label">PHONE / 电话</span>
-              <span class="about-contact-card__value">待补充</span>
+              <span class="about-contact-card__value">18703442157</span>
             </div>
             <div class="about-contact-card__item">
               <span class="about-contact-card__label">EMAIL / 邮箱</span>
-              <span class="about-contact-card__value">待补充</span>
+              <span class="about-contact-card__value">2293581974@qq.com</span>
             </div>
             <p class="about-contact-card__hint">欢迎交流项目、合作与新的想法。</p>
             <button class="landing-cta landing-cta--small about-team__cta" type="button" @click="goToLogin">进入 AgentOS</button>

@@ -1199,7 +1199,7 @@ function ensureSelectedModel(models: string[]): void {
 .settings-header,
 .settings-section,
 .settings-footer {
-  width: min(100%, 920px);
+  width: min(100%, 1400px);
   margin: 0 auto;
 }
 
