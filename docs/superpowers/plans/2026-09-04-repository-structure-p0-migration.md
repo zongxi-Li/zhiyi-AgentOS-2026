@@ -279,4 +279,3 @@ git diff --stat
 ```
 
 Expected: no stale active references; any remaining old paths are explicitly historical or generated package contract text and are reviewed individually.
-

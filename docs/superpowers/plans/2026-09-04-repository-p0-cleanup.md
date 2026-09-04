@@ -213,4 +213,3 @@ git diff --check
 ```
 
 Expected: only the planned P0 deletions, moves, prompt-reference changes, and the plan file appear as new work; existing staged/unstaged user changes remain intact.
-
