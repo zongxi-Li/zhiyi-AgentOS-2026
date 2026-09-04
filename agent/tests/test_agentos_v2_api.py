@@ -425,6 +425,8 @@ async def test_v2_resources_projects_authoritative_profile_and_unknown_health(tm
     assert item["profile"]["resourceId"] == "resource-api"
     assert item["profile"]["resourceType"] == "agent"
     assert item["snapshot"]["healthStatus"] == "unknown"
+    assert item["health"]["healthy"] is False
+    assert item["health"]["status"] == "unknown"
     assert item["snapshot"]["availableSlots"] == 2
     assert "cpu" not in item["snapshot"]["metrics"]
     assert "gpu" not in item["snapshot"]["metrics"]

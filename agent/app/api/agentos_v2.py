@@ -656,13 +656,18 @@ def create_router(
         for profile in resource_service.profiles():
             versioned = resource_service.snapshot(profile.resource_id)
             health = resource_service.health_monitor.health(profile.resource_id)
+            health_status = (
+                "online"
+                if health.healthy
+                else ("unknown" if health.last_heartbeat is None else "offline")
+            )
             items.append({
                 "profile": profile.model_dump(by_alias=True, mode="json"),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
                 "snapshotVersion": versioned.version,
                 "health": {
                     "healthy": health.healthy,
-                    "status": "online" if health.healthy else "offline",
+                    "status": health_status,
                     "reliability": health.reliability,
                     "latencyMs": health.latency_ms,
                     "lastHeartbeat": (
