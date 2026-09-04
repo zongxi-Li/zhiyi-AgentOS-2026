@@ -369,7 +369,7 @@
 
             <div class="sidebar-footer drawer-footer">
               <div class="user-profile">
-                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push({ path: '/settings', query: { tab: 'profile' } }); simpleNavOpen = false">
+                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push('/user'); simpleNavOpen = false">
                 <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
                 <div class="user-info">
                   <span class="user-name">{{ sidebarUserName }}</span>
@@ -824,7 +824,7 @@ const userIdentityActionLabel = computed(() => {
 })
 
 const openUserProfile = () => {
-  void router.push({ path: '/settings', query: { tab: 'profile' } })
+  void router.push('/user')
 }
 
 const expandPrimarySidebar = () => {
@@ -1026,7 +1026,7 @@ const activeMenu = computed(() => {
   if (path.startsWith('/history')) return '/history'
   if (path.startsWith('/federated-models')) return '/federated-models'
   if (path.startsWith('/federated-learning')) return '/federated-learning'
-  if (path.startsWith('/user')) return '/settings'
+  if (path.startsWith('/user')) return '/user'
   return path
 })
 

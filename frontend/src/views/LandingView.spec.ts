@@ -7,7 +7,7 @@ const platformState = vi.hoisted(() => ({ desktop: false }))
 
 vi.mock('@/platform', () => ({
   isDesktop: () => platformState.desktop,
-  // getter：mock 工厂只在首次导入时执行一次，普通字面量会把 web 形态固化进对象。
+  apiUrl: (path: string) => path,
   platform: {
     get platform() { return platformState.desktop ? 'desktop' : 'web' },
     get dragRegionProps() { return platformState.desktop ? { 'data-tauri-drag-region': '' } : {} }
@@ -19,7 +19,7 @@ describe('LandingView', () => {
     platformState.desktop = false
   })
 
-  const mountLanding = async ({ attach = false }: { attach?: boolean } = {}) => {
+  const mountLanding = async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -32,32 +32,61 @@ describe('LandingView', () => {
     return { router, wrapper: mount(LandingView, {
       global: {
         plugins: [router],
-        stubs: { 'el-icon': { template: '<span><slot /></span>' } }
-      },
-      // scrollToSection 走 document.getElementById，必须真挂进 document 才找得到锚点。
-      attachTo: attach ? document.body : undefined
+        stubs: {
+          'el-icon': { template: '<span><slot /></span>' },
+          LoginView: { template: '<div data-testid="embedded-auth">登录注册窗口</div>' }
+        }
+      }
     }) }
   }
 
-  it('sends visitors to login from the primary CTA', async () => {
+  it('replaces the landing surface with auth from the primary CTA without routing away', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.get('[data-testid="landing-cta"]').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.path).toBe('/login')
+    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="landing-page-home"]').exists()).toBe(false)
+    expect(router.currentRoute.value.path).toBe('/')
   })
 
-  it('presents the refined product message and capability cards', async () => {
+  it('replaces the landing surface with auth from the final enter CTA', async () => {
+    const { router, wrapper } = await mountLanding()
+
+    await wrapper.get('.landing-nav a[href="#about"]').trigger('click')
+    await wrapper.get('.landing-cta--small').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
+    expect(router.currentRoute.value.path).toBe('/')
+  })
+
+  it('presents a focused light landing sequence without legacy floating chrome', async () => {
     const { wrapper } = await mountLanding()
 
     expect(wrapper.text()).toContain('让智能体成为协作者')
-    expect(wrapper.findAll('.capability-card')).toHaveLength(4)
+    expect(wrapper.findAll('.capability-card')).toHaveLength(0)
+    expect(wrapper.findAll('.landing-orbit-label')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="landing-scroll-hint"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-testid^="landing-page-"]')).toHaveLength(4)
     expect(wrapper.findAll('.landing-info-card')).toHaveLength(5)
-    expect(wrapper.find('[data-testid="landing-scroll-hint"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('从目标，到结果')
-    expect(wrapper.text()).toContain('模型、知识、工具')
-    expect(wrapper.text()).not.toContain('从理解任务、动态规划到结果复核')
+    expect(wrapper.text()).toContain('统一管理模型与工具')
+  })
+
+  it('moves exactly one content page for each meaningful wheel gesture', async () => {
+    const { wrapper } = await mountLanding()
+
+    expect(wrapper.find('a[href="#home"]').classes()).toContain('is-active')
+
+    await wrapper.trigger('wheel', { deltaY: 120 })
+    expect(wrapper.find('a[href="#features"]').classes()).toContain('is-active')
+    expect(wrapper.find('.landing-track').attributes('style')).toContain('translate3d(0px, -25%, 0px)')
+
+    await wrapper.trigger('wheel', { deltaY: 120 })
+    expect(wrapper.find('a[href="#features"]').classes()).toContain('is-active')
   })
 
   it('keeps the page web-only in the browser shell: no desktop chrome class or drag region', async () => {
@@ -75,21 +104,15 @@ describe('LandingView', () => {
     expect(wrapper.find('.landing-header').attributes('data-tauri-drag-region')).toBe('')
   })
 
-  it('scrolls to the section in place instead of letting the anchor hijack the hash router', async () => {
-    // jsdom 没实现 scrollIntoView，直接挂 mock。
-    const scrollMock = vi.fn()
-    HTMLElement.prototype.scrollIntoView = scrollMock
-    const { router, wrapper } = await mountLanding({ attach: true })
-    try {
-      await wrapper.findAll('.landing-nav a')[1].trigger('click')
-      await flushPromises()
+  it('changes pages from navigation without hijacking the router hash', async () => {
+    const { router, wrapper } = await mountLanding()
 
-      expect(scrollMock).toHaveBeenCalled()
-      expect(router.currentRoute.value.path).toBe('/')
-    } finally {
-      wrapper.unmount()
-      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
-    }
+    await wrapper.findAll('.landing-nav a')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('a[href="#features"]').classes()).toContain('is-active')
+    expect(wrapper.find('.landing-track').attributes('style')).toContain('translate3d(0px, -25%, 0px)')
+    expect(router.currentRoute.value.path).toBe('/')
   })
 
   it('keeps the brand link a SPA navigation to the landing route', async () => {

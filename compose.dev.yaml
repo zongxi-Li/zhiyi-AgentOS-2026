@@ -39,6 +39,7 @@ services:
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
+      - ./ACG 提示词.md:/ACG 提示词.md:ro
       - ./frontend/package.json:/app/package.json:ro
       - ./frontend/package-lock.json:/app/package-lock.json:ro
       - ./frontend/index.html:/app/index.html:ro

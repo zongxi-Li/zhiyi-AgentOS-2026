@@ -1,7 +1,7 @@
 <template>
   <main class="auth-view" :class="{ 'is-desktop-shell': desktopShell, 'is-register': activeTab === 'register' }">
     <header class="auth-topbar" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
-      <a class="auth-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="router.push('/')">
+      <a class="auth-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="handleBrandClick">
         <span class="auth-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
         <span class="auth-brand__wordmark">
           <span class="auth-brand__name">知弈</span>
@@ -94,12 +94,23 @@ import { useUserStore } from '@/stores/user'
 import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const emit = defineEmits<{ back: [] }>()
+
 const desktopShell = isDesktop()
 const dragRegionProps = platform.dragRegionProps
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+
+const handleBrandClick = () => {
+  if (props.embedded) {
+    emit('back')
+    return
+  }
+  router.push('/')
+}
 
 const activeTab = ref('login')
 const loading = ref(false)
@@ -207,7 +218,7 @@ const handleRegister = async () => {
   overflow-y: auto;
   scrollbar-gutter: stable;
   color: var(--auth-ink);
-  background: #dcecff url('/bg.jpeg') center / cover fixed no-repeat;
+  background: #dcecff url('/bg.png') center / cover fixed no-repeat;
 }
 .auth-view::before { content: ''; position: fixed; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(246,251,255,.9) 0%, rgba(246,251,255,.6) 37%, rgba(236,246,255,.08) 77%), linear-gradient(180deg, rgba(255,255,255,.25), transparent 50%); }
 .auth-topbar, .auth-layout, .auth-footer { position: relative; z-index: 1; }
