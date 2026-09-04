@@ -42,8 +42,6 @@ logs/
 
 # Local-only bootstrap/deployment files
 !.env.example
-!dev.ps1
-!dev.sh
 
 # 数据库
 *.db
@@ -55,6 +53,7 @@ logs/
 Thumbs.db
 
 # Python caches and local runtime data (safe to ignore)
+data/
 __pycache__/
 .pytest_cache/
 **/__pycache__/
@@ -73,7 +72,7 @@ apps/agent/data/rag/chroma_db/
 .gradle/
 
 # Tauri / Rust generated artifacts
-desktop/src-tauri/gen/
+apps/desktop/src-tauri/gen/
 
 # Local preview export
 output/settings-preview-dist/
