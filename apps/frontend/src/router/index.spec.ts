@@ -12,3 +12,13 @@ describe('public route contract', () => {
     expect(router.currentRoute.value.name).toBe('Landing')
   })
 })
+
+describe('user center route contract', () => {
+  it('renders the user center instead of redirecting to settings', () => {
+    const userRoute = router.getRoutes().find(route => route.name === 'User')
+
+    expect(userRoute?.path).toBe('/user')
+    expect(userRoute?.redirect).toBeUndefined()
+    expect(userRoute?.components?.default).toBeDefined()
+  })
+})

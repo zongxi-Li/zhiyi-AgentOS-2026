@@ -369,16 +369,6 @@
 
             <div class="sidebar-footer drawer-footer">
               <div class="user-profile">
-                <button class="user-identity" type="button" aria-label="打开用户中心" @click="router.push('/user'); simpleNavOpen = false">
-                <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
-                <div class="user-info">
-                  <span class="user-name">{{ sidebarUserName }}</span>
-                  <span class="user-status">{{ sidebarUserMeta }}</span>
-                </div>
-                </button>
-                <button class="user-logout" type="button" aria-label="退出登录" title="退出登录" @click="simpleNavOpen = false; handleLogout()">
-                  <el-icon><SwitchButton /></el-icon>
-                </button>
               </div>
             </div>
           </div>

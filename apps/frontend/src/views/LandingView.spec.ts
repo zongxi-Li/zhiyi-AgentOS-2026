@@ -80,6 +80,10 @@ describe('LandingView', () => {
     expect(wrapper.findAll('.landing-info-card')).toHaveLength(5)
     expect(wrapper.text()).toContain('从目标，到结果')
     expect(wrapper.text()).toContain('统一管理模型与工具')
+    expect(wrapper.text()).toContain('二龙山')
+    expect(wrapper.text()).toContain('游击队')
+    expect(wrapper.text()).toContain('PHONE / 电话')
+    expect(wrapper.text()).toContain('EMAIL / 邮箱')
   })
 
   it('moves exactly one content page for each meaningful wheel gesture', async () => {

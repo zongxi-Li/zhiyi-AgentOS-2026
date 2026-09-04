@@ -2,11 +2,6 @@
 <template>
   <div class="settings-view">
     <aside class="settings-rail" aria-label="设置导航">
-      <button class="back-to-app" type="button" @click="router.push('/chat')">
-        <el-icon><ArrowLeft /></el-icon>
-        <span>返回应用</span>
-      </button>
-
       <div class="settings-search">
         <el-icon aria-hidden="true"><Search /></el-icon>
         <input v-model="searchTerm" type="search" placeholder="搜索设置..." aria-label="搜索设置" />
@@ -30,15 +25,6 @@
         </section>
         <p v-if="!visibleSections.length" class="settings-empty">没有匹配的设置</p>
       </nav>
-
-      <button class="rail-account" type="button" @click="router.push('/user')">
-        <UserAvatar :size="30" class="rail-avatar" :fallback="accountInitial" />
-        <span class="rail-account-copy">
-          <strong>{{ accountName }}</strong>
-          <small>打开个人中心</small>
-        </span>
-        <el-icon><ArrowLeft /></el-icon>
-      </button>
     </aside>
 
     <main class="settings-content">

@@ -4,6 +4,7 @@ import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
 import LoginView from '@/views/LoginView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import UserView from '@/views/UserView.vue'
 // Sidebar destinations are part of the desktop shell's primary workflow.
 // Keep them in the entry graph so a Tauri WebView never blanks the outgoing
 // view while waiting for a route chunk that may be stale or unavailable.
@@ -36,7 +37,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/user',
     name: 'User',
-    redirect: { path: '/settings', query: { tab: 'profile' } },
+    component: UserView,
     meta: {
       title: '用户中心',
       requiresAuth: true

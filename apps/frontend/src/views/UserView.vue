@@ -345,7 +345,7 @@ onBeforeUnmount(releaseAvatarObjectUrl)
 
 <style scoped lang="scss">
 .user-view { width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--bg-app); color: var(--text-primary); }
-.user-content { width: min(100%, 1160px); height: 100%; min-width: 0; min-height: 0; margin: 0 auto; padding: 30px clamp(20px, 4vw, 58px) 52px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overflow-x: hidden; }
+.user-content { width: min(100%, 1400px); height: 100%; min-width: 0; min-height: 0; margin: 0 auto; padding: 30px clamp(20px, 4vw, 58px) 52px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overflow-x: hidden; }
 .content-header { padding-bottom: 21px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--border-light); }
 .content-eyebrow, .card-kicker { display: block; color: var(--primary-color); font: 600 10px/1 var(--font-mono, monospace); letter-spacing: .12em; }
 .content-eyebrow { margin-bottom: 6px; } .content-header h1 { margin: 0; color: var(--text-primary); font: 650 clamp(24px, 2.4vw, 32px)/1.15 var(--font-serif); letter-spacing: -.025em; } .content-header p { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; }

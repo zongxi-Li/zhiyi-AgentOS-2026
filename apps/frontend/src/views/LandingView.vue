@@ -83,18 +83,29 @@
       </section>
 
       <section id="about" data-testid="landing-page-about" class="landing-page landing-page--section landing-page--last" :class="{ 'is-active': activeSection === 'about' }" aria-labelledby="about-title">
-        <div class="landing-page__inner">
-          <div class="landing-page__content landing-section__heading">
-            <p class="landing-eyebrow">ABOUT ZHIYI</p>
-            <h2 id="about-title">让智能真正参与工作</h2>
-            <p class="landing-section__intro">清晰、协作、可交付。</p>
+        <div class="landing-page__inner landing-page__inner--about">
+          <div class="about-team__copy landing-page__content">
+            <p class="landing-eyebrow">ABOUT THE TEAM</p>
+            <h2 id="about-title">二龙山<br /><span>游击队</span></h2>
+            <p class="about-team__lead">保持好奇，保持行动。</p>
+            <p class="about-team__note">我们在想法、技术与作品之间穿行，寻找值得被看见的答案。</p>
           </div>
-          <div class="about-ribbon" aria-label="知弈 AgentOS 产品原则">
-            <span><b>可理解</b><small>每一步都有上下文</small></span>
-            <span><b>可协作</b><small>每个角色都有边界</small></span>
-            <span><b>可交付</b><small>每个结果都可追踪</small></span>
-          </div>
-          <button class="landing-cta landing-cta--small" type="button" @click="goToLogin">立即进入</button>
+          <aside class="about-contact-card" aria-label="二龙山游击队联系方式">
+            <div class="about-contact-card__top">
+              <span>CONTACT</span>
+              <span>01 / 01</span>
+            </div>
+            <div class="about-contact-card__item">
+              <span class="about-contact-card__label">PHONE / 电话</span>
+              <span class="about-contact-card__value">待补充</span>
+            </div>
+            <div class="about-contact-card__item">
+              <span class="about-contact-card__label">EMAIL / 邮箱</span>
+              <span class="about-contact-card__value">待补充</span>
+            </div>
+            <p class="about-contact-card__hint">欢迎交流项目、合作与新的想法。</p>
+            <button class="landing-cta landing-cta--small about-team__cta" type="button" @click="goToLogin">进入 AgentOS</button>
+          </aside>
         </div>
       </section>
     </div>
@@ -277,6 +288,26 @@ const closeAuth = () => { showAuth.value = false }
 .landing-section__heading .landing-eyebrow { margin-bottom: 16px; }
 .landing-section__heading h2 { margin: 0; color: var(--ink); font-size: clamp(34px, 4vw, 58px); font-weight: 520; letter-spacing: -.055em; text-shadow: 0 0 25px rgba(66, 166, 236, .1); }
 .landing-section__intro { margin: 16px auto 0; color: #6884ad; font-size: 15px; line-height: 1.7; }
+.landing-page__inner--about { flex-direction: row; align-items: center; justify-content: space-between; gap: clamp(52px, 10vw, 170px); padding-top: 48px; text-align: left; }
+.about-team__copy { flex: 1 1 auto; max-width: 650px; }
+.about-team__copy .landing-eyebrow { margin-bottom: 23px; }
+.about-team__copy h2 { margin: 0; color: #173963; font-size: clamp(58px, 7.2vw, 112px); font-weight: 520; line-height: .91; letter-spacing: -.08em; text-shadow: 0 0 30px rgba(72, 166, 236, .13); }
+.about-team__copy h2 span { color: #6383ad; font-weight: 430; }
+.about-team__lead { margin: 28px 0 0; color: #315b88; font-size: clamp(18px, 1.5vw, 24px); font-weight: 560; letter-spacing: -.03em; }
+.about-team__note { max-width: 390px; margin: 14px 0 0; color: #6a87ad; font-size: 14px; line-height: 1.85; }
+.about-contact-card { position: relative; width: min(500px, 100%); min-height: 360px; flex: 0 0 auto; overflow: hidden; isolation: isolate; padding: 35px 38px 33px; box-sizing: border-box; border: 1px solid rgba(255, 255, 255, .76); border-radius: 30px; background: radial-gradient(circle at 12% 0%, rgba(255, 255, 255, .72), transparent 32%), radial-gradient(circle at 93% 88%, rgba(151, 211, 255, .22), transparent 42%), linear-gradient(145deg, rgba(255, 255, 255, .66), rgba(225, 241, 255, .34)); box-shadow: 0 32px 70px rgba(69, 122, 193, .17), 0 10px 26px rgba(122, 176, 225, .11), inset 0 1px 0 rgba(255, 255, 255, .96), inset 0 -1px 0 rgba(255, 255, 255, .28); backdrop-filter: blur(26px) saturate(142%); transition: transform 280ms cubic-bezier(.22, .78, .24, 1), box-shadow 280ms ease, border-color 280ms ease; }
+.about-contact-card::before { content: ''; position: absolute; z-index: -1; top: -34%; left: -18%; width: 76%; height: 58%; border-radius: 50%; background: rgba(255, 255, 255, .42); filter: blur(24px); transform: rotate(-13deg); pointer-events: none; }
+.about-contact-card::after { content: ''; position: absolute; z-index: -1; top: 0; right: 11%; left: 11%; height: 1px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .98), transparent); pointer-events: none; }
+.about-contact-card:hover { border-color: rgba(255, 255, 255, .94); box-shadow: 0 38px 82px rgba(69, 122, 193, .21), 0 14px 30px rgba(122, 176, 225, .14), inset 0 1px 0 rgba(255, 255, 255, .98), inset 0 -1px 0 rgba(255, 255, 255, .3); transform: translateY(-5px); }
+.about-contact-card__top { display: flex; align-items: center; justify-content: space-between; color: #6386b3; font-size: 11px; font-weight: 760; letter-spacing: .2em; }
+.about-contact-card__top span:last-child { color: #91abc8; font-size: 10px; letter-spacing: .13em; }
+.about-contact-card__item { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 82px; border-bottom: 1px solid rgba(107, 148, 194, .2); }
+.about-contact-card__item:first-of-type { margin-top: 17px; border-top: 1px solid rgba(107, 148, 194, .2); }
+.about-contact-card__label { color: #718eaf; font-size: 11px; font-weight: 720; letter-spacing: .1em; }
+.about-contact-card__value { color: #1d4875; font-size: 18px; font-weight: 640; letter-spacing: -.02em; }
+.about-contact-card__hint { margin: 21px 0 0; color: #718caf; font-size: 13px; line-height: 1.75; }
+.about-team__cta { width: 100%; min-height: 50px; margin-top: 23px; padding: 0 24px; justify-content: center; gap: 13px; font-size: 13px; box-shadow: 0 13px 25px rgba(70, 116, 239, .2), inset 0 1px 0 rgba(255, 255, 255, .7); }
+.about-team__cta:hover { box-shadow: 0 17px 32px rgba(70, 116, 239, .29), inset 0 1px 0 rgba(255, 255, 255, .78); }
 .landing-info-grid { display: grid; width: 100%; gap: 14px; margin-top: 42px; text-align: left; animation: landing-grid-in 1000ms cubic-bezier(.2, .8, .2, 1) both; animation-play-state: paused; }
 .landing-page.is-active .landing-info-grid { animation-play-state: running; }
 .landing-info-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -310,6 +341,19 @@ const closeAuth = () => { showAuth.value = false }
 .landing-view.is-desktop-shell .landing-header { padding-right: 24px; padding-left: 24px; background: linear-gradient(180deg, rgba(246, 251, 255, .72), rgba(246, 251, 255, .34)); backdrop-filter: blur(14px); }
 .landing-view.is-desktop-shell .landing-header :deep(.desktop-window-controls) { height: 52px; align-self: center; }
 .landing-brand:focus-visible, .landing-nav a:focus-visible, .landing-cta:focus-visible, .landing-footer button:focus-visible { outline: 2px solid rgba(36, 143, 240, .56); outline-offset: 5px; }
+
+@media (max-width: 860px) {
+  .landing-page__inner--about { flex-direction: column; align-items: flex-start; justify-content: center; gap: 32px; padding-top: 86px; }
+  .about-team__copy { max-width: 100%; }
+  .about-team__copy h2 { font-size: clamp(54px, 14vw, 88px); }
+  .about-contact-card { width: min(100%, 500px); min-height: 0; align-self: center; }
+}
+
+@media (max-width: 520px) {
+  .about-contact-card { padding: 29px 25px 27px; border-radius: 25px; }
+  .about-contact-card__item { min-height: 72px; gap: 16px; }
+  .about-contact-card__value { font-size: 16px; }
+}
 
 @keyframes landing-content-in { from { opacity: 0; transform: translate3d(0, 26px, 0) scale(.985); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); } }
 @keyframes landing-grid-in { from { opacity: 0; transform: translate3d(0, 20px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
