@@ -655,10 +655,23 @@ def create_router(
         items: list[dict[str, Any]] = []
         for profile in resource_service.profiles():
             versioned = resource_service.snapshot(profile.resource_id)
+            health = resource_service.health_monitor.health(profile.resource_id)
             items.append({
                 "profile": profile.model_dump(by_alias=True, mode="json"),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
                 "snapshotVersion": versioned.version,
+                "health": {
+                    "healthy": health.healthy,
+                    "status": "online" if health.healthy else "offline",
+                    "reliability": health.reliability,
+                    "latencyMs": health.latency_ms,
+                    "lastHeartbeat": (
+                        health.last_heartbeat.isoformat()
+                        if health.last_heartbeat is not None
+                        else None
+                    ),
+                    "healthSource": type(resource_service.health_monitor.store).__name__,
+                },
             })
         return {"items": items, "total": len(items)}
 
