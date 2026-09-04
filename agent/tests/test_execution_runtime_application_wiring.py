@@ -9,6 +9,7 @@ from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
 from components.content import SQLiteContentManifestStore
 from components.resource.store import SQLiteResourceStore
+from components.resource.health_store import SQLiteResourceHealthStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from adapters.guarded_model import GuardedModelRuntime
@@ -50,6 +51,7 @@ def _environment(root: Path) -> dict[str, str]:
         "AGENTOS_PROVENANCE_DB": str(root / "provenance.sqlite3"),
         "AGENTOS_AUDIT_DB": str(root / "audit_decisions.sqlite3"),
         "AGENTOS_RESOURCE_DB": str(root / "resources.sqlite3"),
+        "AGENTOS_RESOURCE_HEALTH_DB": str(root / "resource_health.sqlite3"),
         "AGENTOS_EVOLUTION_DB": str(root / "evolution.sqlite3"),
     }
 
@@ -74,6 +76,7 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         assert isinstance(runtime.provenance_store, SQLiteProvenanceStore)
         assert isinstance(runtime.decision_store, SQLiteDecisionStore)
         assert isinstance(runtime.resource_service.store, SQLiteResourceStore)
+        assert isinstance(runtime.resource_service.health_monitor.store, SQLiteResourceHealthStore)
         assert isinstance(runtime.evolution_service.store, SQLiteEvolutionStore)
         assert runtime.tool_runtime is tools
         assert isinstance(runtime._model_runtime, GuardedModelRuntime)

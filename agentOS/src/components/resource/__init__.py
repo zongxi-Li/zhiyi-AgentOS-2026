@@ -1,6 +1,12 @@
 """资源部件的公开入口。"""
 
 from .health import ResourceHealthMonitor
+from .health_store import (
+    InMemoryResourceHealthStore,
+    ResourceHealthState,
+    ResourceHealthStore,
+    SQLiteResourceHealthStore,
+)
 from .auth import (
     ResourceRequestAuthenticator,
     ResourceRequestExpired,
@@ -30,6 +36,10 @@ __all__ = [
     "ResourceDirectory",
     "ResourceHealth",
     "ResourceHealthMonitor",
+    "InMemoryResourceHealthStore",
+    "ResourceHealthState",
+    "ResourceHealthStore",
+    "SQLiteResourceHealthStore",
     "ResourceRequestAuthenticator",
     "ResourceRequestExpired",
     "ResourceRequestInvalid",
