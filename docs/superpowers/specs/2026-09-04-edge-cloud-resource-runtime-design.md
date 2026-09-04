@@ -16,6 +16,12 @@
 
 神经网络模型层切分不复用 `ResourceProfile` 的 deployment tier，也不把一个完整步骤的资源绑定描述成层切分。本阶段只定义独立的切分合同和拒绝未实现切分请求的边界；真正的层切分在后续独立阶段实现。
 
+当前已落地的模型层边界位于 `contracts.model_partition` 和
+`components.model_partition`：它能校验连续层区间、每层唯一放置、跨层
+Tensor 边界和形状合同；执行器目前明确返回
+`MODEL_PARTITION_UNAVAILABLE`。这表示合同和失败语义已经固定，但不表示
+神经网络已经完成跨进程层间传输或实际推理。
+
 ## Architecture
 
 `ResourceService` 继续是资源画像、快照和凭据的权威入口。运行时增加一个按资源 ID 延迟构造的 Adapter 工厂：本地资源继续走进程内 Agent；HTTP/HTTPS 远程资源由 `HttpResourceExecutionAdapter` 根据当前凭据动态签名；不支持的协议或缺失凭据直接报出明确配置错误，不回退到本地执行。
