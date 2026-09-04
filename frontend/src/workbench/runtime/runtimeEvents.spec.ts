@@ -56,30 +56,30 @@ describe('RunRuntimeStore streaming projection', () => {
     expect(store.planning.status).toBe('COMPLETED')
     expect(store.planning.elapsedMs).toBe(120)
   })
-  it('isolates planner events by run id and consumes SSE custom event names', () => {
-    class FakeEventSource {
-      static latest: FakeEventSource | null = null
-      onmessage: ((event: MessageEvent) => void) | null = null
-      closed = false
-      listeners = new Map<string, EventListener>()
-      constructor(public readonly url: string) { FakeEventSource.latest = this }
-      addEventListener(type: string, listener: EventListener) { this.listeners.set(type, listener) }
-      removeEventListener(type: string) { this.listeners.delete(type) }
-      close() { this.closed = true }
-      dispatch(type: string, payload: Record<string, unknown>) {
-        this.listeners.get(type)?.(new MessageEvent(type, { data: JSON.stringify(payload) }))
-      }
+  it('carries bearer authentication and consumes SSE custom event names', async () => {
+    localStorage.setItem('token', 'runtime-token')
+    const encoder = new TextEncoder()
+    const reader = {
+      read: vi.fn().mockResolvedValueOnce({
+        done: false,
+        value: encoder.encode('event: planner.started\ndata: {"runId":"run","eventType":"planner.started","sequence":2,"payload":{}}\n\n')
+      }).mockResolvedValueOnce({
+        done: false,
+        value: encoder.encode('event: run.failed\ndata: {"runId":"run","eventType":"run.failed","sequence":3,"payload":{}}\n\n')
+      })
     }
-    vi.stubGlobal('EventSource', FakeEventSource)
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => reader } })
+    vi.stubGlobal('fetch', fetchMock)
     const store = new RunRuntimeStore('run')
     const client = new RuntimeEventClient(store)
     client.connect()
-    const source = FakeEventSource.latest!
-    source.dispatch('planner.started', { runId: 'other', eventType: 'planner.started', sequence: 1, payload: {} })
-    source.dispatch('planner.started', { runId: 'run', eventType: 'planner.started', sequence: 2, payload: {} })
+    await vi.waitFor(() => expect(store.terminal).toBe(true))
     expect(store.planning.status).toBe('STARTING')
-    client.disconnect()
-    expect(source.closed).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/agentos/v2/runs/run/events'), expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer runtime-token', Accept: 'text/event-stream' }),
+      signal: expect.any(AbortSignal)
+    }))
+    localStorage.removeItem('token')
     vi.unstubAllGlobals()
   })
 })

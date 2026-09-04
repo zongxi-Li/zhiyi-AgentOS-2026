@@ -118,7 +118,7 @@
           </template>
 
           <p v-if="!displayPlanner && !timeline.tasks.length" class="run-progress__waiting">
-            {{ runState === 'running' ? '等待规划事件…' : '该运行没有可展示的事件。' }}
+            {{ runState === 'running' ? '等待规划事件…' : runState === 'unknown' ? '暂未观测到该运行状态。' : '该运行没有可展示的事件。' }}
           </p>
         </div>
 
@@ -170,25 +170,30 @@ const runStatus = computed(() => (
 
 const TERMINAL_OK = new Set(['completed', 'succeeded'])
 const TERMINAL_BAD = new Set(['failed', 'cancelled'])
-const runState = computed<'running' | 'completed' | 'failed' | 'paused'>(() => {
+const runState = computed<'idle' | 'unknown' | 'running' | 'completed' | 'failed' | 'paused'>(() => {
+  if (!resolvedRunId.value) return 'idle'
   const status = runStatus.value
+  if (!status) return 'unknown'
   if (status && TERMINAL_OK.has(status)) return 'completed'
   if (status && TERMINAL_BAD.has(status)) return 'failed'
   if (status === 'waiting_review') return 'paused'
-  return 'running'
+  if (['queued', 'starting', 'running', 'executing', 'planning'].includes(status)) return 'running'
+  return 'unknown'
 })
 
 const STATE_LABELS: Record<string, string> = {
+  idle: '尚未运行',
   running: 'RUNNING',
   completed: '运行完成',
   failed: '运行失败',
-  paused: '等待审核'
+  paused: '等待审核',
+  unknown: '状态未知'
 }
 const stateLabel = computed(() => {
   const planningStatus = props.runtimeStore?.planning.status
   return planningStatus && ['STARTING', 'RUNNING'].includes(planningStatus)
     ? 'PLANNING'
-    : (STATE_LABELS[runState.value] || 'RUNNING')
+    : (STATE_LABELS[runState.value] || '状态未知')
 })
 
 const nowTick = ref(0)

@@ -213,36 +213,27 @@ describe('MissionWorkspaceView', () => {
   }
 
   it('streams one shared runtime store into the formal Workbench inspector before completion', async () => {
-    class FakeEventSource {
-      static latest: FakeEventSource | null = null
-      readonly listeners = new Map<string, Set<EventListener>>()
-      closed = false
-
-      constructor(readonly url: string) {
-        FakeEventSource.latest = this
-      }
-
-      addEventListener(type: string, listener: EventListener) {
-        const listeners = this.listeners.get(type) || new Set<EventListener>()
-        listeners.add(listener)
-        this.listeners.set(type, listeners)
-      }
-
-      removeEventListener(type: string, listener: EventListener) {
-        this.listeners.get(type)?.delete(listener)
-      }
-
-      close() {
-        this.closed = true
-      }
-
-      dispatch(type: string, payload: Record<string, unknown>) {
-        const event = new MessageEvent('message', { data: JSON.stringify(payload) })
-        this.listeners.get(type)?.forEach(listener => listener(event))
-      }
+    const encoder = new TextEncoder()
+    let pendingRead: ((value: { done: boolean; value?: Uint8Array }) => void) | null = null
+    const queued: Uint8Array[] = []
+    const reader = {
+      read: vi.fn(() => {
+        const value = queued.shift()
+        if (value) return Promise.resolve({ done: false, value })
+        return new Promise<{ done: boolean; value?: Uint8Array }>(resolve => { pendingRead = resolve })
+      })
     }
-
-    vi.stubGlobal('EventSource', FakeEventSource)
+    const push = (type: string, payload: Record<string, unknown>) => {
+      const value = encoder.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`)
+      if (pendingRead) {
+        const resolve = pendingRead
+        pendingRead = null
+        resolve({ done: false, value })
+      } else queued.push(value)
+    }
+    localStorage.setItem('token', 'workspace-runtime-token')
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => reader } })
+    vi.stubGlobal('fetch', fetchMock)
     const formalRunId = 'run_formal_streaming'
     const formal = projection({
       activeRun: { runId: formalRunId, status: 'running', createdAt: '2026-08-28T00:02:00Z', isActive: true },
@@ -255,9 +246,10 @@ describe('MissionWorkspaceView', () => {
     await activateGraphTab(wrapper)
     await wrapper.find('.graph-select').trigger('click')
 
-    const source = FakeEventSource.latest
-    expect(source).not.toBeNull()
-    expect(source?.url).toContain(`/api/agentos/v2/runs/${formalRunId}/events`)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const [streamUrl, streamOptions] = fetchMock.mock.calls[0]
+    expect(streamUrl).toContain(`/api/agentos/v2/runs/${formalRunId}/events`)
+    expect(streamOptions.headers.Authorization).toBe('Bearer workspace-runtime-token')
     const event = (sequence: number, eventType: string, payload: Record<string, unknown> = {}) => ({
       eventId: `runtime-${sequence}`,
       eventType,
@@ -269,26 +261,23 @@ describe('MissionWorkspaceView', () => {
       payload
     })
 
-    source?.dispatch('node.started', event(1, 'node.started'))
-    source?.dispatch('model.started', event(2, 'model.started', {
+    push('node.started', event(1, 'node.started'))
+    push('model.started', event(2, 'model.started', {
       provider: 'fake-provider', model: 'fake-streaming-model', streamingCapability: true
     }))
-    source?.dispatch('model.first_token', event(3, 'model.first_token', { elapsedMs: 12 }))
-    source?.dispatch('model.output.delta', event(4, 'model.output.delta', { delta: 'A' }))
-    await new Promise(resolve => setTimeout(resolve, 25))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('A')
+    push('model.first_token', event(3, 'model.first_token', { elapsedMs: 12 }))
+    push('model.output.delta', event(4, 'model.output.delta', { delta: 'A' }))
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('A'))
     expect(wrapper.text()).toContain('STREAMING')
 
-    source?.dispatch('model.output.delta', event(5, 'model.output.delta', { delta: 'B' }))
-    await new Promise(resolve => setTimeout(resolve, 25))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('AB')
+    push('model.output.delta', event(5, 'model.output.delta', { delta: 'B' }))
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="formal-live-output"]').text()).toBe('AB'))
     expect(wrapper.text()).not.toContain('COMPLETED')
 
     wrapper.unmount()
     await flushPromises()
-    expect(source?.closed).toBe(true)
+    expect(streamOptions.signal.aborted).toBe(true)
+    localStorage.removeItem('token')
   })
 
   it('maps a graph double click to the matching TaskEditor', async () => {
@@ -381,6 +370,55 @@ describe('MissionWorkspaceView', () => {
     }))
     expect(router.currentRoute.value.query.runId).toBe('run_3')
     expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith('mission_1', expect.objectContaining({ runId: 'run_3' }))
+    expect(wrapper.text()).not.toContain('Historical / Read-only')
+  })
+
+  it('keeps mission and Run navigation available before identity projection exists', async () => {
+    const runtimeOnly = projection({
+      activeRun: { runId: 'run_3', status: 'pending', createdAt: '2026-08-28T00:03:00Z', isActive: true },
+      runs: [{ runId: 'run_3', status: 'pending', createdAt: '2026-08-28T00:03:00Z', isActive: true }],
+      entries: [],
+      graphNodes: [],
+      activeGraph: null,
+      diagnostics: [{ code: 'PLANNING_PROJECTION_PENDING', message: 'pending', severity: 'warning' }]
+    })
+    const { wrapper } = await mountWorkspace(runtimeOnly, '/agentos/missions/mission_1/workspace?runId=run_3')
+
+    expect(wrapper.text()).toContain('mission.md')
+    expect(wrapper.text()).toContain('run_3')
+    expect(wrapper.text()).not.toContain('Mission 尚无历史 Run')
+  })
+
+  it('refreshes identity task status and artifacts while an active Run executes', async () => {
+    vi.useFakeTimers()
+    try {
+      const first = projection({
+        entries: projection().entries.map(item => item.entryId === 'task:capacity'
+          ? { ...item, status: 'running', artifactCount: 0 }
+          : item)
+      })
+      const second = projection({
+        entries: projection().entries.map(item => item.entryId === 'task:capacity'
+          ? { ...item, status: 'completed', artifactCount: 1 }
+          : item)
+      })
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace')
+        .mockResolvedValueOnce(first)
+        .mockResolvedValue(second)
+      const { wrapper } = await mountWorkspace()
+      await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('Capacity'))?.trigger('click')
+      expect(wrapper.find('.task-editor__status').text()).toBe('running')
+
+      await vi.advanceTimersByTimeAsync(8000)
+      await flushPromises()
+
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      expect(wrapper.find('.task-editor__status').text()).toBe('completed')
+      expect(wrapper.find('.task-editor__stats').text()).toContain('Artifacts1')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps the stable artifact tab identity and shows missing content in a historical Run', async () => {

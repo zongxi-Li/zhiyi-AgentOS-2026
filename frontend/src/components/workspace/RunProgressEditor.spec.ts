@@ -275,8 +275,31 @@ describe('RunProgressEditor', () => {
   it('shows the empty state without a run instead of pretending progress', () => {
     const wrapper = mountEditor({ runId: null })
 
+    expect(wrapper.find('.run-progress__status').text()).toBe('尚未运行')
+    expect(wrapper.find('.run-progress__status').classes()).toContain('is-idle')
     expect(wrapper.text()).toContain('运行开始后，这里会显示任务规划和执行过程。')
     expect(wrapper.text()).not.toContain('等待模型思考')
+  })
+
+  it('does not pretend an unobserved run is still running', () => {
+    const wrapper = mountEditor({
+      runtimeObservation: observation([], null),
+      projection: projection({ runs: [] } as Partial<MissionWorkspaceProjection>)
+    })
+
+    expect(wrapper.find('.run-progress__status').text()).toBe('状态未知')
+    expect(wrapper.find('.run-progress__status').classes()).toContain('is-unknown')
+    expect(wrapper.text()).not.toContain('RUNNING')
+  })
+
+  it('does not treat an unsupported persisted status as active', () => {
+    const wrapper = mountEditor({
+      runtimeObservation: observation([], 'mystery_status'),
+      projection: projection({ runs: [{ runId: 'run_1', status: 'mystery_status', createdAt: '', completedAt: null, isActive: false }] } as Partial<MissionWorkspaceProjection>)
+    })
+
+    expect(wrapper.find('.run-progress__status').text()).toBe('状态未知')
+    expect(wrapper.text()).not.toContain('RUNNING')
   })
 
   it('resolves the run id from a historical run entry itself', () => {

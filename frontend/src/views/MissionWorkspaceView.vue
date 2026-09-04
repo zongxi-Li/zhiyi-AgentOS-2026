@@ -172,9 +172,40 @@ const progressEntry: WorkspaceEntry = {
   group: 'overview',
   displayOrder: -1
 }
-const entriesWithProgress = computed<WorkspaceEntry[]>(() => (
-  projection.value ? [progressEntry, ...projection.value.entries] : []
-))
+const entriesWithProgress = computed<WorkspaceEntry[]>(() => {
+  if (!projection.value) return []
+  const projectedEntries = projection.value.entries
+  const projectedRunIds = new Set(projectedEntries
+    .filter(entry => entry.kind === 'run' && entry.runId)
+    .map(entry => entry.runId))
+  const runtimeRunEntries: WorkspaceEntry[] = projection.value.runs
+    .filter(run => !projectedRunIds.has(run.runId))
+    .map((run, index) => ({
+      entryId: `run:${run.runId}`,
+      kind: 'run',
+      name: run.runId,
+      group: 'runs',
+      displayOrder: index,
+      runId: run.runId,
+      status: run.status,
+      parentRunId: run.parentRunId,
+      sourceRunId: run.sourceRunId,
+      createdAt: run.createdAt,
+      completedAt: run.completedAt,
+      isActive: run.isActive
+    }))
+  const missionEntry: WorkspaceEntry[] = projectedEntries.some(entry => entry.entryId === 'overview:mission.md')
+    ? []
+    : [{
+        entryId: 'overview:mission.md',
+        kind: 'virtual_document',
+        name: 'mission.md',
+        group: 'overview',
+        displayOrder: 1,
+        content: projection.value.mission.goal
+      }]
+  return [progressEntry, ...missionEntry, ...projectedEntries, ...runtimeRunEntries]
+})
 const augmentedProjection = computed<MissionWorkspaceProjection | null>(() => (
   projection.value ? { ...projection.value, entries: entriesWithProgress.value } : null
 ))
@@ -355,6 +386,9 @@ const projectionPending = (projection: MissionWorkspaceProjection) => Boolean(
   projection.diagnostics?.some(item => item.code === 'PLANNING_PROJECTION_PENDING')
   && ACTIVE_PROJECTION_RUN_STATUSES.has(projection.activeRun?.status || '')
 )
+const projectionActive = (projection: MissionWorkspaceProjection) => (
+  ACTIVE_PROJECTION_RUN_STATUSES.has(projection.activeRun?.status || '')
+)
 
 const scheduleProjectionRefresh = () => {
   stopProjectionRefresh()
@@ -362,7 +396,7 @@ const scheduleProjectionRefresh = () => {
     projectionRefreshTimer = null
     if (loading.value) return
     const projectionSnapshot = projection.value
-    if (projectionSnapshot && projectionPending(projectionSnapshot)) await loadWorkspace(selectedRunId.value)
+    if (projectionSnapshot && projectionActive(projectionSnapshot)) await loadWorkspace(selectedRunId.value)
   }, PROJECTION_REFRESH_MS)
 }
 
@@ -387,10 +421,11 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     openDefaultEditor(nextProjection)
     const nextRunId = nextProjection.activeRun?.runId || runId || null
-    if (runtimeStoreRunId !== nextRunId) {
+    const streamRunId = projectionActive(nextProjection) ? nextRunId : null
+    if (runtimeStoreRunId !== streamRunId) {
       releaseRunRuntimeStore(runtimeStoreRunId, runtimeStore.value)
-      runtimeStore.value = acquireRunRuntimeStore(nextRunId)
-      runtimeStoreRunId = nextRunId
+      runtimeStore.value = acquireRunRuntimeStore(streamRunId)
+      runtimeStoreRunId = streamRunId
     }
     if (nextRunId) {
       runtimeObservationAdapter.start(nextRunId, {
@@ -404,7 +439,7 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
       })
     }
     // 降级投影等待 identity 注册：活跃 Run 期间周期重拉，直到 PLANNING_PROJECTION_PENDING 消失。
-    if (projectionPending(nextProjection)) scheduleProjectionRefresh()
+    if (projectionActive(nextProjection)) scheduleProjectionRefresh()
   } catch (error: unknown) {
     if (isAbortError(error)) return
     loadError.value = '无法加载 Mission Workspace Projection，请稍后重试。'
@@ -503,6 +538,7 @@ const rerunSelectedRun = async () => {
       sourceRunId,
       rerunReason: 'manual_rerun'
     })
+    currentRunId.value = nextRun.runId
     selectedRunId.value = nextRun.runId
     await persistRunInUrl(nextRun.runId)
     await loadWorkspace(nextRun.runId)

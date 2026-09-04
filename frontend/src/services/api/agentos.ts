@@ -649,6 +649,12 @@ export interface ArtifactContentResponse extends ArtifactDetail {
   content: string
 }
 
+export interface RunOutputResponse {
+  runId: string
+  outputRef: string
+  content: unknown
+}
+
 export interface ReviewRecord {
   reviewId: string
   runId: string
@@ -1209,6 +1215,18 @@ export const agentosApi = {
     const response = await agentosRequest.get<WorkflowRun>(runPath(runId), {
       signal: options.signal
     })
+    return response.data
+  },
+
+  async getRunOutput(
+    runId: string,
+    outputRef: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<RunOutputResponse> {
+    const response = await agentosRequest.get<RunOutputResponse>(
+      `${runPath(runId)}/outputs/${encodeURIComponent(outputRef)}`,
+      { signal: options.signal }
+    )
     return response.data
   },
 

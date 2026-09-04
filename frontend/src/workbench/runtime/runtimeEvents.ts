@@ -92,18 +92,6 @@ const PLANNER_EVENTS = new Set([
   'planner.failed',
 ])
 
-const EVENT_TYPES = [
-  ...PLANNER_EVENTS,
-  'node.started',
-  'node.completed',
-  'node.failed',
-  'model.started',
-  'model.first_token',
-  'model.activity',
-  'model.output.delta',
-  'model.completed',
-]
-
 const timestampOrNow = (event: RuntimeEvent) => event.timestamp || new Date().toISOString()
 const numberOrNull = (value: unknown) => {
   const parsed = Number(value)
@@ -273,46 +261,74 @@ export class RunRuntimeStore {
 }
 
 export class RuntimeEventClient {
-  private source: EventSource | null = null
-  private listeners: Array<[string, EventListener]> = []
+  private controller: AbortController | null = null
+  private generation = 0
 
   constructor(private readonly store: RunRuntimeStore) {}
 
   connect() {
     this.disconnect()
-    if (typeof EventSource === 'undefined') return
-    const source = new EventSource(apiUrl(`/api/agentos/v2/runs/${this.store.runId}/events`))
-    const consume: EventListener = event => {
-      try {
-        const message = event as MessageEvent<string>
-        this.store.apply(JSON.parse(message.data))
-      } catch {
-        // Transient malformed events must not break the shared stream.
-      }
-    }
-    source.onmessage = consume
-    for (const eventType of EVENT_TYPES) {
-      source.addEventListener(eventType, consume)
-      this.listeners.push([eventType, consume])
-    }
-    for (const eventType of ['run.completed', 'run.failed', 'run.cancelled']) {
-      const terminalListener: EventListener = event => {
-        consume(event)
-        this.disconnect()
-      }
-      source.addEventListener(eventType, terminalListener)
-      this.listeners.push([eventType, terminalListener])
-    }
-    this.source = source
+    if (typeof fetch === 'undefined' || typeof AbortController === 'undefined') return
+    const controller = new AbortController()
+    const generation = ++this.generation
+    this.controller = controller
+    void this.consume(controller, generation)
   }
 
   disconnect() {
-    if (this.source) {
-      for (const [eventType, listener] of this.listeners) this.source.removeEventListener(eventType, listener)
-      this.listeners = []
-      this.source.close()
+    this.generation += 1
+    this.controller?.abort()
+    this.controller = null
+  }
+
+  private async consume(controller: AbortController, generation: number) {
+    const token = localStorage.getItem('token')
+    const headers: Record<string, string> = { Accept: 'text/event-stream' }
+    if (token) headers.Authorization = `Bearer ${token}`
+    try {
+      const response = await fetch(apiUrl(`/api/agentos/v2/runs/${this.store.runId}/events`), {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+        signal: controller.signal
+      })
+      if (!response.ok) throw new Error(`Runtime event stream failed with HTTP ${response.status}`)
+      if (!response.body) throw new Error('Runtime event stream has no response body')
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        const frames = buffer.replace(/\r\n/g, '\n').split('\n\n')
+        buffer = done ? '' : frames.pop() || ''
+        for (const frame of frames) this.consumeFrame(frame)
+        if (done || this.store.terminal) break
+      }
+    } catch (error) {
+      if ((error as { name?: string })?.name === 'AbortError') return
+      if (generation === this.generation && !this.store.terminal) {
+        window.setTimeout(() => {
+          if (generation === this.generation && !this.store.terminal) this.connect()
+        }, 1000)
+      }
     }
-    this.source = null
+  }
+
+  private consumeFrame(frame: string) {
+    const data = frame.split('\n')
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart())
+      .join('\n')
+    if (!data || data === '[DONE]') return
+    try {
+      const event = JSON.parse(data) as RuntimeEvent
+      this.store.apply(event)
+      if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.eventType)) this.disconnect()
+    } catch {
+      // A malformed frame must not terminate the authenticated stream.
+    }
   }
 }
 
