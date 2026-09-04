@@ -168,6 +168,14 @@ class AgentOsGatewayControllerTest {
 
     @Test
     void resourcesAreStraightProxiesWithoutLegacyRuntimeGraphEndpoints() throws Exception {
+        gateway.getResponses.put("/ai/agentos/v2/resources", response(200, Map.of(
+                "items", java.util.List.of(), "total", 0
+        )));
+        mockMvc.perform(get("/api/agentos/v2/resources"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+        assertEquals("/ai/agentos/v2/resources", gateway.lastGetPath);
+
         gateway.getResponses.put("/ai/agentos/v2/runs/run_001/graph", response(200, Map.of(
                 "runId", "run_001", "nodes", java.util.List.of()
         )));
