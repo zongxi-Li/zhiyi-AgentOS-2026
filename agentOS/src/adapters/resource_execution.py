@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from time import time
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
+import secrets
 
 import httpx
 
+from components.resource.auth import build_resource_signature
+from contracts.resource import ResourceProfile
 from service.agents.base import AgentOutput, AgentRunContext, BaseAgent
 
 
@@ -16,6 +22,13 @@ class ResourceExecutionError(RuntimeError):
 class ResourceExecutionAdapter(Protocol):
     async def run(self, context: AgentRunContext) -> AgentOutput:
         """Execute one already-bound step using the target resource."""
+
+
+class ResourceCredentialProvider(Protocol):
+    """Read the current resource credential at the moment of an execution."""
+
+    def current_signing_credential(self, resource_id: str) -> tuple[str, str]:
+        """Return ``(credential_id, secret)`` without caching a previous rotation."""
 
 
 class LocalResourceExecutionAdapter:
@@ -45,30 +58,62 @@ class HttpResourceExecutionAdapter:
     def __init__(
         self,
         *,
+        resource_id: str,
         address: str,
+        credential_provider: ResourceCredentialProvider,
         client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 120.0,
     ) -> None:
+        if not resource_id.strip():
+            raise ValueError("remote execution resource_id is required")
         if not address.strip():
             raise ValueError("remote execution address is required")
         if timeout_seconds <= 0:
             raise ValueError("remote execution timeout must be positive")
-        self.address = address.rstrip("/")
+        if credential_provider is None:
+            raise ValueError("remote execution credential provider is required")
+        self.resource_id = resource_id
+        self.address = normalize_execution_endpoint(address)
+        self.credential_provider = credential_provider
         self.timeout_seconds = timeout_seconds
         self._client = client or httpx.AsyncClient()
         self._owns_client = client is None
 
     async def run(self, context: AgentRunContext) -> AgentOutput:
         payload = build_remote_execution_payload(context)
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        credential_id, secret = self.credential_provider.current_signing_credential(
+            self.resource_id
+        )
+        timestamp = int(time())
+        nonce = secrets.token_urlsafe(24)
+        path = urlsplit(self.address).path or "/"
         headers = {
             "Idempotency-Key": str(context.commit_id or payload["attemptId"]),
             "X-AgentOS-Run-Id": str(payload["runId"]),
             "X-AgentOS-Step-Id": str(payload["stepId"]),
+            "Content-Type": "application/json",
+            "X-Resource-Credential": credential_id,
+            "X-Resource-Timestamp": str(timestamp),
+            "X-Resource-Nonce": nonce,
+            "X-Resource-Signature": build_resource_signature(
+                secret,
+                method="POST",
+                path=path,
+                timestamp=timestamp,
+                nonce=nonce,
+                body=body,
+            ),
         }
         try:
             response = await self._client.post(
-                f"{self.address}/execute",
-                json=payload,
+                self.address,
+                content=body,
                 headers=headers,
                 timeout=self.timeout_seconds,
             )
@@ -94,6 +139,49 @@ class HttpResourceExecutionAdapter:
             await self._client.aclose()
 
 
+def normalize_execution_endpoint(address: str) -> str:
+    """Normalize a resource endpoint to exactly one ``/execute`` suffix."""
+    value = address.strip()
+    parsed = urlsplit(value)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("remote execution address must be an absolute URL")
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/execute"):
+        path = f"{path}/execute" if path else "/execute"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def build_resource_execution_adapter(
+    profile: ResourceProfile,
+    *,
+    credential_provider: ResourceCredentialProvider,
+    client: httpx.AsyncClient | None = None,
+    timeout_seconds: float = 120.0,
+) -> ResourceExecutionAdapter:
+    """Construct the only supported remote execution adapter from a profile."""
+    endpoint = profile.execution_endpoint
+    if endpoint is None:
+        raise ResourceExecutionError(
+            f"REMOTE_EXECUTION_CONFIG_INVALID: {profile.resource_id} has no endpoint"
+        )
+    if endpoint.protocol not in {"http", "https"}:
+        raise ResourceExecutionError(
+            f"REMOTE_EXECUTION_CONFIG_INVALID: unsupported protocol {endpoint.protocol}"
+        )
+    parsed = urlsplit(endpoint.address)
+    if parsed.scheme != endpoint.protocol:
+        raise ResourceExecutionError(
+            f"REMOTE_EXECUTION_CONFIG_INVALID: endpoint scheme does not match protocol for {profile.resource_id}"
+        )
+    return HttpResourceExecutionAdapter(
+        resource_id=profile.resource_id,
+        address=endpoint.address,
+        credential_provider=credential_provider,
+        client=client,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def build_remote_execution_payload(context: AgentRunContext) -> dict[str, Any]:
     """Serialize only the step contract, never the full Runtime or Agent context."""
     pack = context.context_pack
@@ -117,5 +205,8 @@ __all__ = [
     "ResourceAgentProxy",
     "ResourceExecutionAdapter",
     "ResourceExecutionError",
+    "ResourceCredentialProvider",
+    "build_resource_execution_adapter",
     "build_remote_execution_payload",
+    "normalize_execution_endpoint",
 ]

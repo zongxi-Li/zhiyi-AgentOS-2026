@@ -75,6 +75,7 @@ from adapters.resource_execution import (
     ResourceAgentProxy,
     ResourceExecutionAdapter,
     ResourceExecutionError,
+    build_resource_execution_adapter,
 )
 from service.agents.base import AgentProfile
 from adapters.audited_tool_runtime import AuditedToolRuntime
@@ -916,6 +917,37 @@ class ExecutionRuntime:
             current = chained if isinstance(chained, BaseException) else None
         return None
 
+    def _known_remote_resource_ids(self) -> set[str]:
+        """Return registered remote resources plus explicitly injected adapters."""
+        resource_ids = set(self.resource_execution_adapters)
+        for profile in self.resource_service.profiles():
+            if profile.deployment_tier is not DeploymentTier.LOCAL:
+                resource_ids.add(profile.resource_id)
+        return resource_ids
+
+    def _resource_execution_adapter(self, resource_id: str) -> ResourceExecutionAdapter | None:
+        """Lazily construct the adapter for a bound remote resource."""
+        existing = self.resource_execution_adapters.get(resource_id)
+        if existing is not None:
+            return existing
+        try:
+            profile = self.resource_service.profile(resource_id)
+        except KeyError:
+            return None
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            return None
+        try:
+            adapter = build_resource_execution_adapter(
+                profile,
+                credential_provider=self.resource_service,
+            )
+        except KeyError as exc:
+            raise ResourceExecutionError(
+                f"REMOTE_EXECUTION_CONFIG_INVALID: credential missing for {resource_id}"
+            ) from exc
+        self.resource_execution_adapters[resource_id] = adapter
+        return adapter
+
     def _recover_remote_acg_failure(
         self,
         *,
@@ -952,7 +984,11 @@ class ExecutionRuntime:
                 continue
             resource_id = str(binding.get("resourceId") or "")
             if resource_id not in self.resource_execution_adapters:
-                continue
+                try:
+                    if self.resource_service.profile(resource_id).deployment_tier is DeploymentTier.LOCAL:
+                        continue
+                except KeyError:
+                    continue
             already_attempted = any(
                 isinstance(item, dict)
                 and item.get("stepId") == step_id
@@ -1092,7 +1128,7 @@ class ExecutionRuntime:
                 retry_delay = min(1.0, retry_delay * 2)
             assert decision.binding is not None and decision.lease is not None
             selected_resource_id = decision.binding.resource_id
-            remote_adapter = self.resource_execution_adapters.get(selected_resource_id)
+            remote_adapter = self._resource_execution_adapter(selected_resource_id)
             if remote_adapter is not None:
                 resource_profile = self.resource_service.profile(selected_resource_id)
                 runner.resource_execution_adapters[step_id] = remote_adapter
@@ -1419,7 +1455,7 @@ class ExecutionRuntime:
         resource_adapters = {}
         for step_id, step in steps.items():
             resource_id = str(bindings[step_id])
-            adapter = self.resource_execution_adapters.get(resource_id)
+            adapter = self._resource_execution_adapter(resource_id)
             if adapter is None:
                 agents[step_id] = self.agent_registry.resolve_by_id(
                     resource_id,
@@ -1969,7 +2005,7 @@ class ExecutionRuntime:
             except KeyError:
                 remote_match = any(
                     self._remote_resource_matches_step(resource_id, step, domain=domain)
-                    for resource_id in self.resource_execution_adapters
+                    for resource_id in self._known_remote_resource_ids()
                 )
                 if not remote_match:
                     missing.append(step.agent_name or step.node_id)
@@ -2028,7 +2064,7 @@ class ExecutionRuntime:
                     allowed_agent_ids=allowed_resource_ids,
                 )
             except ResourceNotFoundError as exc:
-                remote_ids = set(self.resource_execution_adapters).intersection(allowed_resource_ids)
+                remote_ids = self._known_remote_resource_ids().intersection(allowed_resource_ids)
                 remote_requirement = BindingRequirement(
                     requiredCapabilities=required_capabilities,
                     domain=rule.domain or workflow.domain,

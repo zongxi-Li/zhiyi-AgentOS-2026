@@ -184,6 +184,17 @@ class ResourceService:
         secret = self.secret_box.decrypt(record.encrypted_secret)
         return hashlib.sha256(secret.encode("utf-8")).digest()
 
+    def current_signing_credential(self, resource_id: str) -> tuple[str, str]:
+        """Return the current credential for an outbound resource request.
+
+        This is deliberately read on every execution rather than copied into an
+        Adapter at construction time, so credential rotation takes effect on
+        the next request.  The plaintext exists only across this internal
+        signing seam and is never included in a profile or response model.
+        """
+        record = self.credential(resource_id)
+        return record.credential_id, self.secret_box.decrypt(record.encrypted_secret)
+
     def consume_nonce(
         self,
         resource_id: str,

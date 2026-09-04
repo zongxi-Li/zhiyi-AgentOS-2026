@@ -16,6 +16,7 @@ from components.scheduler.models import (
     SchedulerNoEligibleResource,
 )
 from adapters.resource_execution import ResourceExecutionError
+from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime.workflow_runtime import ExecutionRuntime
@@ -145,6 +146,46 @@ def test_prepare_run_can_freeze_a_registered_remote_execution_resource() -> None
     _, run = runtime.prepare_run(task.mission_id)
 
     assert run.execution_state["resourceBindings"] == {"infer": "edge-01"}
+
+
+def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatch) -> None:
+    agents = AgentRegistry()
+    resources = ResourceService()
+    profile = ResourceProfile(
+        resourceId="edge-01",
+        resourceType=ResourceType.WORKER,
+        deploymentTier=DeploymentTier.EDGE,
+        capabilities=["analysis"],
+        ownerScope="team-a",
+        executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-01:9000"),
+    )
+    resources.register_remote(
+        profile,
+        ResourceSnapshot(resourceId="edge-01", availableSlots=1, utilization=0.0),
+    )
+    built: list[tuple[str, object]] = []
+
+    class _Adapter:
+        async def run(self, context):
+            return AgentOutput(output={"result": "edge"})
+
+    def factory(profile, *, credential_provider, **kwargs):
+        built.append((profile.resource_id, credential_provider))
+        return _Adapter()
+
+    monkeypatch.setattr("runtime.workflow_runtime.build_resource_execution_adapter", factory)
+    runtime = ExecutionRuntime(
+        agent_registry=agents,
+        workflow_registry=WorkflowRegistry(),
+        workflow_store=MemoryWorkflowStore(),
+        resource_service=resources,
+    )
+
+    adapter = runtime._resource_execution_adapter("edge-01")
+
+    assert adapter is not None
+    assert built == [("edge-01", resources)]
+    assert runtime.resource_execution_adapters["edge-01"] is adapter
 
 
 def test_acg_execution_uses_remote_adapter_after_remote_binding() -> None:
