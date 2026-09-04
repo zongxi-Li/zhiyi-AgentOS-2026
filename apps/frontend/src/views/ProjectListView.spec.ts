@@ -92,6 +92,7 @@ describe('ProjectListView', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('MissionWorkspace')
     expect(router.currentRoute.value.params.missionId).toBe('mission_1')
+    expect(router.currentRoute.value.query.runId).toBe('run_1')
   })
 
   it('restores Mission actions from the row context menu and uses missionId', async () => {

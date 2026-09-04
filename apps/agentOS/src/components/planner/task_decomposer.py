@@ -323,9 +323,10 @@ class TaskDecomposer:
         }
         self.last_audit.update({"mode": "model_staged", "stages": []})
         try:
+            outline_prompt = prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives."
             outline_result = self._call_llm(
                 stage="outline",
-                prompt=prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
+                prompt=outline_prompt,
                 schema=outline_schema,
                 max_tokens=16_384,
                 reasoning_effort=reasoning_effort,
@@ -334,13 +335,27 @@ class TaskDecomposer:
                 planning_deadline=planning_deadline,
                 run_id=run_id,
             )
-            outline_payload = outline_result.get("data", outline_result)
-            outline = outline_payload.get("tasks") if isinstance(outline_payload, dict) else None
-            if not isinstance(outline, list) or not outline:
-                raise TaskDecompositionError("staged outline returned no tasks")
-            keys = [str(item.get("key") or "").strip() for item in outline if isinstance(item, dict)]
-            if len(keys) != len(outline) or not all(keys) or len(keys) != len(set(keys)):
-                raise TaskDecompositionError("staged outline contains empty or duplicate task keys")
+            try:
+                outline, keys = self._validated_outline_tasks(outline_result)
+            except TaskDecompositionError as outline_error:
+                outline_result = self._call_llm(
+                    stage="outline.repair",
+                    prompt=(
+                        outline_prompt
+                        + "\nRepair the outline once. It must contain at least one task and every task "
+                        + "must have a unique non-empty key. Return the complete outline JSON again. "
+                        + f"Validation detail: {outline_error}\n"
+                        + f"Previous invalid outline JSON: {json.dumps(outline_result, ensure_ascii=False, default=str)}"
+                    ),
+                    schema=outline_schema,
+                    max_tokens=16_384,
+                    reasoning_effort=reasoning_effort,
+                    prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline.repair1",
+                    call_key="outline.repair",
+                    planning_deadline=planning_deadline,
+                    run_id=run_id,
+                )
+                outline, keys = self._validated_outline_tasks(outline_result)
             self.last_audit["stages"].append({"stage": "outline", "taskCount": len(keys)})
 
             detailed_tasks: list[dict[str, Any]] = []
@@ -367,6 +382,7 @@ class TaskDecomposer:
                     f"Mission planning context: {prompt}\n"
                     f"Frozen outline batch: {json.dumps(batch, ensure_ascii=False)}"
                 )
+                detail_repaired = False
                 try:
                     detail_result = self._call_llm(
                         stage="detail",
@@ -382,22 +398,42 @@ class TaskDecomposer:
                 except Exception as exc:
                     if transport_error_code(exc):
                         raise
+                    detail_repaired = True
                     detail_result = self._call_llm(
                         stage="detail.repair",
                         prompt=detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
                         schema=detail_schema,
+                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
                         call_key=f"detail:{detail_index}.repair",
                         planning_deadline=planning_deadline,
                         run_id=run_id,
                     )
-                detail_payload = detail_result.get("data", detail_result)
-                rows = detail_payload.get("tasks") if isinstance(detail_payload, dict) else None
-                returned_keys = [str(item.get("key") or "") for item in rows or [] if isinstance(item, dict)]
-                if set(returned_keys) != set(batch_keys) or len(returned_keys) != len(batch_keys):
-                    raise TaskDecompositionError("staged detail batch changed frozen task identities")
-                detailed_tasks.extend(rows)
+                try:
+                    normalized_rows = self._validated_detail_tasks(detail_result, batch)
+                except TaskDecompositionError as detail_error:
+                    if detail_repaired:
+                        raise
+                    detail_result = self._call_llm(
+                        stage="detail.repair",
+                        prompt=(
+                            detail_prompt
+                            + "\nRepair this batch once. Every task must preserve its frozen identity and "
+                            + "include a non-empty business objective and acceptance criteria. "
+                            + f"Validation detail: {detail_error}\n"
+                            + f"Previous invalid detail JSON: {json.dumps(detail_result, ensure_ascii=False, default=str)}"
+                        ),
+                        schema=detail_schema,
+                        max_tokens=16_384,
+                        reasoning_effort=reasoning_effort,
+                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
+                        call_key=f"detail:{detail_index}.repair",
+                        planning_deadline=planning_deadline,
+                        run_id=run_id,
+                    )
+                    normalized_rows = self._validated_detail_tasks(detail_result, batch)
+                detailed_tasks.extend(normalized_rows)
                 self.last_audit["stages"].append({"stage": "detail", "keys": batch_keys})
 
             relation_schema = {
@@ -808,7 +844,7 @@ class TaskDecomposer:
                 sourceRefs=tuple(str(value) for value in item.get("sourceRefs", []) if str(value)),
                 decompositionRationale=str(item.get("decompositionRationale") or ""),
                 logicalRole=str(item.get("logicalRole") or "task"),
-                workset=(WorksetSpec.model_validate(item["workset"]) if item.get("workset") else None),
+                workset=self._normalize_workset_spec(item.get("workset")),
                 metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))
         nodes = [
@@ -884,6 +920,74 @@ class TaskDecomposer:
         )
         self._validate_coverage(plan, profile)
         return plan
+
+    @staticmethod
+    def _normalize_workset_spec(raw: Any) -> WorksetSpec | None:
+        if not isinstance(raw, Mapping):
+            return None
+        source_refs = raw.get("sourceManifestRefs")
+        if not isinstance(source_refs, (list, tuple)):
+            legacy_manifest_id = str(raw.get("manifestId") or "").strip()
+            source_refs = [legacy_manifest_id] if legacy_manifest_id else []
+        canonical: dict[str, Any] = {
+            "sourceManifestRefs": [str(value) for value in source_refs if str(value).strip()],
+        }
+        for key in (
+            "unitKind", "cursorStrategy", "packingPolicy",
+            "parallelismPolicy", "estimatedUnitCount",
+        ):
+            if key in raw:
+                canonical[key] = raw[key]
+        if "cursorStrategy" not in canonical and str(raw.get("consumeMode") or "").strip() == "cursor":
+            canonical["cursorStrategy"] = "sequence"
+        return WorksetSpec.model_validate(canonical)
+
+    @staticmethod
+    def _validated_outline_tasks(raw: Any) -> tuple[list[dict[str, Any]], list[str]]:
+        payload = raw.get("data", raw) if isinstance(raw, dict) else None
+        outline = payload.get("tasks") if isinstance(payload, dict) else None
+        if not isinstance(outline, list) or not outline:
+            raise TaskDecompositionError("staged outline returned no tasks")
+        keys = [str(item.get("key") or "").strip() for item in outline if isinstance(item, dict)]
+        if len(keys) != len(outline) or not all(keys) or len(keys) != len(set(keys)):
+            raise TaskDecompositionError("staged outline contains empty or duplicate task keys")
+        return outline, keys
+
+    @staticmethod
+    def _validated_detail_tasks(raw: Any, frozen_batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        payload = raw.get("data", raw) if isinstance(raw, dict) else None
+        rows = payload.get("tasks") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or len(rows) != len(frozen_batch):
+            raise TaskDecompositionError("staged detail batch changed frozen task count")
+        rows_by_key = {
+            str(item.get("key") or ""): item
+            for item in rows
+            if isinstance(item, dict) and str(item.get("key") or "")
+        }
+        normalized_rows: list[dict[str, Any]] = []
+        for index, frozen in enumerate(frozen_batch):
+            frozen_key = str(frozen.get("key") or "")
+            row = rows_by_key.get(frozen_key, rows[index])
+            if not isinstance(row, dict):
+                raise TaskDecompositionError("staged detail batch contains a non-object task")
+            normalized = dict(row)
+            # Identity fields belong exclusively to the frozen outline. Detail
+            # units contribute content and may not rename or rebind tasks.
+            normalized["key"] = frozen_key
+            normalized["capabilityId"] = frozen.get("capabilityId")
+            normalized["logicalRole"] = frozen.get("logicalRole") or "task"
+            if not isinstance(normalized.get("sourceRefs"), list):
+                normalized["sourceRefs"] = list(frozen.get("sourceRefs") or [])
+            if not str(normalized.get("capabilityId") or "").strip():
+                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has no capabilityId")
+            objective = str(normalized.get("objective") or "").strip()
+            if not objective or re.match(r"^(complete|瀹屾垚)\s*\S*$", objective, re.IGNORECASE):
+                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has no business objective")
+            criteria = [str(value).strip() for value in normalized.get("acceptanceCriteria", []) if str(value).strip()]
+            if not criteria:
+                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has empty acceptance criteria")
+            normalized_rows.append(normalized)
+        return normalized_rows
 
     @staticmethod
     def _resolve_semantic_task_key(

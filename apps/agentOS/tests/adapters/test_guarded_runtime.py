@@ -121,6 +121,50 @@ class _FlakyStreamingModel:
         )
 
 
+class _RateLimitedStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise StructuredGenerationError("MODEL_RATE_LIMITED", "provider throttled", retryable=True)
+        yield RuntimeEvent(
+            eventType="model.completed",
+            runId="run-1",
+            nodeId="node-1",
+            attemptId=kwargs["attempt_id"],
+            sequence=1,
+            payload={},
+        )
+
+
+class _ConcurrentStreamingModel:
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **kwargs):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.01)
+        yield RuntimeEvent(
+            eventType="model.completed",
+            runId="run-1",
+            nodeId=kwargs["node_id"],
+            attemptId=kwargs["attempt_id"],
+            sequence=1,
+            payload={},
+        )
+        self.active -= 1
+
+
 def test_guarded_model_stream_retry_uses_a_new_attempt_id() -> None:
     delegate = _FlakyStreamingModel()
     runtime = GuardedModelRuntime(delegate=delegate, retries=1)
@@ -142,6 +186,39 @@ def test_guarded_model_stream_retry_uses_a_new_attempt_id() -> None:
     assert delegate.attempt_ids[1].startswith("attempt-1:retry:")
     assert events[0].attempt_id == delegate.attempt_ids[0]
     assert events[1].attempt_id == delegate.attempt_ids[1]
+
+
+def test_guarded_model_stream_retries_provider_rate_limit() -> None:
+    delegate = _RateLimitedStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, retries=1)
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            run_id="run-1", node_id="node-1", attempt_id="attempt-1"
+        )]
+
+    events = asyncio.run(collect())
+
+    assert delegate.calls == 2
+    assert events[-1].event_type == "model.completed"
+    assert events[-1].attempt_id.startswith("attempt-1:retry:")
+
+
+def test_guarded_model_stream_holds_concurrency_slot_until_stream_finishes() -> None:
+    delegate = _ConcurrentStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, max_concurrency=1)
+
+    async def consume(node_id: str):
+        return [event async for event in runtime.stream_generate_json(
+            run_id="run-1", node_id=node_id, attempt_id=f"attempt-{node_id}"
+        )]
+
+    async def collect():
+        await asyncio.gather(consume("node-1"), consume("node-2"))
+
+    asyncio.run(collect())
+
+    assert delegate.max_active == 1
 
 
 def test_guarded_model_retries_temporary_error_with_same_commit_id() -> None:

@@ -1309,6 +1309,9 @@ async def test_v2_failed_mission_can_be_deleted_and_stale_deleted_rows_are_hidde
 
         assert listed.status_code == 200
         assert listed.json()["items"][0]["missionId"] == task.mission_id
+        assert listed.json()["items"][0]["latestRunId"] == run.run_id
+        assert listed.json()["items"][0]["latestRunStatus"] == "failed"
+        assert listed.json()["items"][0]["runCount"] == 1
         assert deleted.status_code == 200
         assert deleted.json()["recordState"] == MissionRecordState.DELETED.value
         assert listed_after_delete.status_code == 200

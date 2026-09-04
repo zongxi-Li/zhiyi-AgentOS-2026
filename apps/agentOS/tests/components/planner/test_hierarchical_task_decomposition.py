@@ -4,7 +4,7 @@ import pytest
 
 from components.planner.acg_builder import ACGBuilder
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
-from components.planner.task_decomposer import TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer
+from components.planner.task_decomposer import TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer, TaskDecompositionError
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
 
@@ -176,6 +176,146 @@ def test_full_profile_uses_outline_detail_and_relation_units() -> None:
         f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
     ]
     assert all(call["max_tokens"] == 16_384 for call in llm.calls)
+
+
+def test_staged_detail_inherits_frozen_identity_when_provider_omits_repeated_fields() -> None:
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Resolve goals", "acceptanceCriteria": ["scope is explicit"], "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "objective": "Analyze assumptions", "acceptanceCriteria": ["analysis is traceable"], "sourceRefs": []},
+    ]}
+    relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
+
+    plan = TaskDecomposer(build_default_capability_catalog(), _SequencePlanLLM(outline, details, relations)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=_profile(),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    capabilities = [node.capability_requirements[0] for node in plan.nodes]
+    assert capabilities[:2] == ["task_understanding", "analysis"]
+
+
+def test_staged_detail_normalizes_legacy_model_workset_shape() -> None:
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Read source material", "capabilityId": "task_understanding", "acceptanceCriteria": ["source is covered"], "sourceRefs": ["manifest_source"], "decompositionRationale": "entry", "logicalRole": "task", "workset": {"manifestId": "manifest_source", "consumeMode": "cursor"}},
+        {"key": "analyze", "title": "Analyze", "objective": "Analyze assumptions", "capabilityId": "analysis", "acceptanceCriteria": ["analysis is traceable"], "sourceRefs": [], "decompositionRationale": "analysis", "logicalRole": "task"},
+    ]}
+    relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
+
+    plan = TaskDecomposer(build_default_capability_catalog(), _SequencePlanLLM(outline, details, relations)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=_profile(),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    assert plan.nodes[0].workset is not None
+    assert plan.nodes[0].workset.source_manifest_refs == ("manifest_source",)
+    assert plan.nodes[0].workset.cursor_strategy == "sequence"
+
+
+def test_empty_staged_outline_is_repaired_once() -> None:
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Resolve goals", "capabilityId": "task_understanding", "acceptanceCriteria": ["scope is explicit"], "sourceRefs": [], "decompositionRationale": "entry", "logicalRole": "task"},
+        {"key": "analyze", "title": "Analyze", "objective": "Analyze assumptions", "capabilityId": "analysis", "acceptanceCriteria": ["analysis is traceable"], "sourceRefs": [], "decompositionRationale": "analysis", "logicalRole": "task"},
+    ]}
+    relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
+    llm = _SequencePlanLLM({"tasks": []}, outline, details, relations)
+
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=_profile(),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    assert plan.nodes
+    assert llm.calls[1]["prompt_version"] == f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline.repair1"
+    assert "Previous invalid outline JSON" in llm.calls[1]["prompt"]
+
+
+def test_empty_staged_outline_fails_after_one_repair() -> None:
+    llm = _SequencePlanLLM({"tasks": []}, {"tasks": []})
+
+    with pytest.raises(TaskDecompositionError, match="TASK_PLAN_STAGED_FAILED: staged outline returned no tasks"):
+        TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+            mission_id="mission_0123456789ab",
+            profile=_profile(),
+            strategy="dynamic_generation",
+            task_input={"_effectiveCapabilityProfile": "full"},
+            use_llm=True,
+        )
+
+    assert len(llm.calls) == 2
+
+
+def test_incomplete_staged_detail_is_repaired_before_relations() -> None:
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    incomplete = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Resolve goals", "capabilityId": "task_understanding", "acceptanceCriteria": ["scope is explicit"], "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "objective": "", "capabilityId": "analysis", "acceptanceCriteria": ["analysis is traceable"], "sourceRefs": []},
+    ]}
+    repaired = {"tasks": [
+        {"key": "understand", "title": "Understand", "objective": "Resolve goals", "capabilityId": "task_understanding", "acceptanceCriteria": ["scope is explicit"], "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "objective": "Analyze assumptions", "capabilityId": "analysis", "acceptanceCriteria": ["analysis is traceable"], "sourceRefs": []},
+    ]}
+    relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
+    llm = _SequencePlanLLM(outline, incomplete, repaired, relations)
+
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=_profile(),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    assert plan.nodes
+    assert llm.calls[2]["prompt_version"] == f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1"
+    assert "Previous invalid detail JSON" in llm.calls[2]["prompt"]
+
+
+def test_staged_detail_cannot_rewrite_frozen_identity() -> None:
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "entry", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "renamed-one", "title": "Understand", "objective": "Resolve goals", "capabilityId": "verification", "acceptanceCriteria": ["scope is explicit"], "sourceRefs": []},
+        {"key": "renamed-two", "title": "Analyze", "objective": "Analyze assumptions", "capabilityId": "solution_design", "acceptanceCriteria": ["analysis is traceable"], "sourceRefs": []},
+    ]}
+    relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
+
+    plan = TaskDecomposer(build_default_capability_catalog(), _SequencePlanLLM(outline, details, relations)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=_profile(),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    assert [node.key for node in plan.nodes[:2]] == ["understand", "analyze"]
+    assert [node.capability_requirements[0] for node in plan.nodes[:2]] == ["task_understanding", "analysis"]
+    assert plan.nodes[0].logical_role == "entry"
 
 
 def test_ordinal_model_key_reuses_existing_logical_identity_without_content_hashing() -> None:

@@ -230,7 +230,11 @@ const loadMissions = async () => {
 
 const openMission = (mission: MissionListItem) => {
   closeActionMenu()
-  void router.push({ name: 'MissionWorkspace', params: { missionId: mission.missionId } })
+  void router.push({
+    name: 'MissionWorkspace',
+    params: { missionId: mission.missionId },
+    query: mission.latestRunId ? { runId: mission.latestRunId } : undefined
+  })
 }
 
 const handleProjectRowKeydown = (event: KeyboardEvent, mission: MissionListItem) => {

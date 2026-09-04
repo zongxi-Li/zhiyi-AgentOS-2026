@@ -39,7 +39,9 @@ public class WebClientConfig {
                 .baseUrl(aiServiceUrl)
                 .codecs(configurer -> configurer
                         .defaultCodecs()
-                        .maxInMemorySize(10 * 1024 * 1024)) // 10MB
+                        // Trace payloads grow with long-running missions; keep
+                        // the gateway from converting a valid run into a 503.
+                        .maxInMemorySize(50 * 1024 * 1024)) // 50MB
                 .defaultHeader("Content-Type", "application/json")
                 .filter((request, next) -> {
                     ClientRequest authenticated = ClientRequest.from(request)

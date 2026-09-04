@@ -12,6 +12,7 @@ AgentOS 通信、记忆、Adapter 与审计边界，不暴露 LangGraph 对象�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -391,12 +392,24 @@ class ACGNodeRunner:
                          attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),
         )
         resource_adapter = self.resource_execution_adapters.get(step_id)
-        if resource_adapter is not None:
-            output = await resource_adapter.run(agent_context)
-        elif self.agent_invoker is not None:
-            output = await self.agent_invoker.invoke(context=agent_context, agent=agent)
-        else:
-            output = await agent.run(agent_context)
+        # Provider connection failures are transient and can happen after the
+        # scheduler has already allocated the node. Retry the execution call a
+        # small, bounded number of times before surfacing the node failure.
+        invocation_attempt = 0
+        while True:
+            try:
+                if resource_adapter is not None:
+                    output = await resource_adapter.run(agent_context)
+                elif self.agent_invoker is not None:
+                    output = await self.agent_invoker.invoke(context=agent_context, agent=agent)
+                else:
+                    output = await agent.run(agent_context)
+                break
+            except Exception as exc:
+                if not bool(getattr(exc, "retryable", False)) or invocation_attempt >= 2:
+                    raise
+                invocation_attempt += 1
+                await asyncio.sleep(min(2.0, 0.5 * (2 ** (invocation_attempt - 1))))
         final_attempt_id = getattr(agent_context.model_runtime, "last_attempt_id", None)
         if isinstance(final_attempt_id, str) and final_attempt_id:
             self.attempt_ids[step_id] = final_attempt_id

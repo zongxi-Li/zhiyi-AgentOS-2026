@@ -31,6 +31,16 @@
         </div>
       </section>
 
+      <section v-if="stageOutputAvailable" class="task-editor__section task-editor__section--stage-output">
+        <div class="task-editor__section-heading">
+          <span>STAGE OUTPUT / 阶段结果</span>
+          <strong>{{ stageOutputPhase }}</strong>
+        </div>
+        <pre v-if="stageOutputContent" data-testid="task-stage-output">{{ stageOutputContent }}</pre>
+        <p v-else-if="stageOutputLoading" class="task-editor__muted">正在读取已持久化的阶段结果…</p>
+        <p v-else class="task-editor__muted">{{ stageOutputError || '等待模型输出…' }}</p>
+      </section>
+
       <section class="task-editor__section">
         <div class="task-editor__section-heading">ARTIFACTS <span>{{ artifacts.length }}</span></div>
         <div v-if="artifacts.length" class="task-editor__artifacts">
@@ -85,7 +95,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { agentosApi } from '@/services/api/agentos'
 import type {
   MissionWorkspaceProjection,
   ResourceBindingObservation,
@@ -94,12 +105,14 @@ import type {
   WorkspaceGraphNode
 } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
+import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 
 const props = defineProps<{
   entry: WorkspaceEntry
   projection: MissionWorkspaceProjection
   graphNodes: WorkspaceGraphNode[]
   runtimeObservation: RuntimeObservation | null
+  runtimeStore?: RuntimeEventStore | null
 }>()
 
 const emit = defineEmits<{
@@ -115,6 +128,45 @@ const graphNode = computed(() => props.graphNodes.find(node => (
 const artifacts = computed(() => props.projection.entries
   .filter(item => item.kind === 'artifact' && item.semanticTaskKey === props.entry.semanticTaskKey)
   .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId)))
+
+const liveNode = computed(() => {
+  const nodeId = graphNode.value?.acgNodeId || props.entry.acgNodeId
+  return nodeId ? props.runtimeStore?.nodes[nodeId] || null : null
+})
+const outputRef = computed(() => {
+  const value = props.entry.metadata?.outputRef
+  return typeof value === 'string' && value ? value : null
+})
+const outputRunId = computed(() => props.entry.runId || props.projection.activeRun?.runId || null)
+const persistedStageOutput = ref('')
+const stageOutputLoading = ref(false)
+const stageOutputError = ref('')
+const formatStageOutput = (value: unknown) => {
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value, null, 2) } catch { return String(value ?? '') }
+}
+watch([outputRunId, outputRef], async ([runId, refValue], _previous, onCleanup) => {
+  persistedStageOutput.value = ''
+  stageOutputError.value = ''
+  stageOutputLoading.value = false
+  if (!runId || !refValue) return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  stageOutputLoading.value = true
+  try {
+    const result = await agentosApi.getRunOutput(runId, refValue, { signal: controller.signal })
+    persistedStageOutput.value = formatStageOutput(result.content)
+  } catch (error) {
+    if (!controller.signal.aborted) stageOutputError.value = '阶段结果暂时无法读取。'
+  } finally {
+    if (!controller.signal.aborted) stageOutputLoading.value = false
+  }
+}, { immediate: true })
+const stageOutputContent = computed(() => liveNode.value?.outputBuffer || persistedStageOutput.value)
+const stageOutputAvailable = computed(() => Boolean(
+  outputRef.value || liveNode.value || stageOutputLoading.value || stageOutputError.value
+))
+const stageOutputPhase = computed(() => liveNode.value?.phase || (persistedStageOutput.value ? 'PERSISTED' : 'WAITING'))
 
 const resourceObservation = computed<ResourceObservation | null>(() => props.runtimeObservation?.resourceObservation || null)
 const binding = computed<ResourceBindingObservation | null>(() => {
@@ -181,6 +233,8 @@ const statusLabel = (status?: string | null) => ({
 .task-editor__section--objective,
 .task-editor__section--overview,
 .task-editor__section--execution { padding: 13px 14px 14px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-pane); box-shadow: var(--wb-shadow-section); }
+.task-editor__section--stage-output { padding: 13px 14px 14px; border: 1px solid color-mix(in srgb, var(--wb-accent) 26%, var(--wb-border-soft)); border-radius: var(--wb-radius-section); background: var(--wb-surface-pane); }
+.task-editor__section--stage-output pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-md); background: var(--wb-surface-inset); color: var(--wb-text); font: 11px/1.6 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-editor__section--objective { padding-bottom: 16px; }
 .task-editor__section--objective .task-editor__section-heading { color: var(--wb-accent); }
 .task-editor__objective { max-width: 760px; margin: 0; color: var(--wb-text); font-size: 14px; line-height: 1.72; white-space: pre-wrap; }

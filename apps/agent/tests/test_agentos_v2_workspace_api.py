@@ -108,6 +108,10 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
                 run_id=run_id,
                 mission_id=mission.mission_id,
                 input={},
+                execution_state={
+                    "outputRefs": {"api-step-node": "output:api-step"},
+                    "outputSummaries": {"api-step-node": "API step completed"},
+                },
             ),
         )
         app = FastAPI()
@@ -132,6 +136,9 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
         graph = next(item for item in payload["entries"] if item["kind"] == "graph")
         assert graph["graphId"] == blueprint.graph_id
         assert payload["graphNodes"][0]["semanticTaskKey"] == "api_step"
+        task_entry = next(item for item in payload["entries"] if item["kind"] == "task")
+        assert task_entry["metadata"]["outputRef"] == "output:api-step"
+        assert task_entry["metadata"]["outputSummary"] == "API step completed"
     finally:
         content.close()
         service.close()
@@ -160,6 +167,9 @@ async def test_workspace_api_projects_runtime_shell_while_identity_run_is_pendin
         runtime = SimpleNamespace(
             identity_lifecycle=bridge,
             content_manifest_store=content,
+            workflow_store=SimpleNamespace(
+                list_runs=lambda **_kwargs: SimpleNamespace(items=[runtime_run], total=1),
+            ),
             get_status=lambda run_id: runtime_run if run_id == runtime_run.run_id else (_ for _ in ()).throw(KeyError(run_id)),
         )
         app = FastAPI()
@@ -170,7 +180,6 @@ async def test_workspace_api_projects_runtime_shell_while_identity_run_is_pendin
         ) as client:
             response = await client.get(
                 f"/agentos/v2/missions/{mission.mission_id}/workspace",
-                params={"runId": runtime_run.run_id},
             )
 
         assert response.status_code == 200
