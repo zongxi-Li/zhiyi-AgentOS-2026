@@ -25,6 +25,7 @@ from runtime.v2 import IdentityQueryService
 from runtime.v2.workspace import (
     MissionWorkspaceProjection,
     WorkspaceDiagnostic,
+    WorkspaceEntryKind,
     WorkspaceRunSummary,
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
@@ -655,10 +656,26 @@ def create_router(
             page_size=page_size,
             mission_visibility=is_visible_project_mission,
         )
+        projected_items: list[dict[str, Any]] = []
+        for item in items:
+            projected = item.model_dump(by_alias=True, mode="json")
+            runtime_runs = runtime.workflow_store.list_runs(
+                mission_id=item.mission_id,
+                mission_record_state=MissionRecordState.ACTIVE,
+                owner_user_id=(actor.user_id if actor else None),
+                owner_tenant_id=(actor.tenant_id if actor else None),
+                page=1,
+                page_size=1,
+            )
+            if runtime_runs.items:
+                latest = runtime_runs.items[0]
+                projected["latestRunId"] = latest.run_id
+                projected["latestRunStatus"] = latest.status.value
+                projected["runCount"] = runtime_runs.total
+                projected["updatedAt"] = latest.updated_at.isoformat()
+            projected_items.append(projected)
         return {
-            "items": [
-                item.model_dump(by_alias=True, mode="json") for item in items
-            ],
+            "items": projected_items,
             "total": total,
             "page": page,
             "pageSize": page_size,
@@ -681,6 +698,18 @@ def create_router(
         run_id: str | None = Query(default=None, alias="runId"),
     ):
         mission_detail = require_mission_access(mission_id)
+        actor = current_trusted_user()
+        if not run_id:
+            runtime_runs = runtime.workflow_store.list_runs(
+                mission_id=mission_id,
+                mission_record_state=MissionRecordState.ACTIVE,
+                owner_user_id=(actor.user_id if actor else None),
+                owner_tenant_id=(actor.tenant_id if actor else None),
+                page=1,
+                page_size=1,
+            )
+            if runtime_runs.items:
+                run_id = runtime_runs.items[0].run_id
         try:
             projection = require_identity_queries().mission_workspace(
                 mission_id,
@@ -765,6 +794,35 @@ def create_router(
                     },
                 )],
             )
+        # Identity owns stable task semantics; the execution runtime owns
+        # transient/persisted node results. Join only their references here so
+        # the workspace can expose a stage result without promoting it to a
+        # formal Artifact or embedding the potentially large output body.
+        if run_id:
+            try:
+                runtime_run = runtime.get_status(run_id)
+            except KeyError:
+                runtime_run = None
+            if runtime_run is not None and runtime_run.mission_id == mission_id:
+                runtime_state = getattr(runtime_run, "execution_state", None)
+                runtime_state = runtime_state if isinstance(runtime_state, dict) else {}
+                output_refs = runtime_state.get("outputRefs") or {}
+                output_summaries = runtime_state.get("outputSummaries") or {}
+                if isinstance(output_refs, dict):
+                    projection = projection.model_copy(update={
+                        "entries": [
+                            entry.model_copy(update={
+                                "metadata": {
+                                    **entry.metadata,
+                                    "outputRef": output_refs.get(entry.acg_node_id),
+                                    "outputSummary": output_summaries.get(entry.acg_node_id),
+                                },
+                            })
+                            if entry.kind is WorkspaceEntryKind.TASK and entry.acg_node_id in output_refs
+                            else entry
+                            for entry in projection.entries
+                        ],
+                    })
         return projection.model_dump(
             by_alias=True,
             mode="json",
