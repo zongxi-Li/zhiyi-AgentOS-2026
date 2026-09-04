@@ -1,5 +1,5 @@
 <template>
-  <main ref="landingRoot" class="landing-view" :class="{ 'is-desktop-shell': desktopShell }" aria-label="知弈 AgentOS 公开首页" @wheel="handleWheel">
+  <main ref="landingRoot" class="landing-view" :class="{ 'is-desktop-shell': desktopShell, 'is-theme-dark': isDarkTheme }" aria-label="知弈 AgentOS 公开首页" @wheel="handleWheel">
       <div class="landing-surface">
         <div class="landing-atmosphere" aria-hidden="true"></div>
 
@@ -20,12 +20,26 @@
         >{{ item.label }}</a>
       </nav>
 
-      <span class="landing-header__note">More Agents <i aria-hidden="true">·</i> More Possibilities</span>
+      <div class="landing-header__actions">
+        <span class="landing-header__note">More Agents <i aria-hidden="true">·</i> More Possibilities</span>
+        <button
+          class="landing-theme-toggle"
+          data-testid="landing-theme-toggle"
+          type="button"
+          :aria-label="themeToggleLabel"
+          :title="themeToggleLabel"
+          @click="toggleTheme"
+        >
+          <el-icon aria-hidden="true"><Sunny v-if="isDarkTheme" /><Moon v-else /></el-icon>
+          <span>{{ isDarkTheme ? '黑暗' : '明亮' }}</span>
+        </button>
+        <button class="landing-header__login" type="button" @click="goToLogin">登录</button>
+      </div>
       <DesktopWindowControls v-if="desktopShell" />
     </header>
 
     <div class="landing-track" :style="trackStyle">
-      <section id="home" data-testid="landing-page-home" class="landing-page landing-page--hero" :class="{ 'is-active': activeSection === 'home' }" aria-labelledby="landing-title">
+      <section id="home" data-testid="landing-page-home" class="landing-page landing-page--hero" :class="{ 'is-active': activeSection === 'home' }" :aria-hidden="activeSection !== 'home'" aria-labelledby="landing-title">
         <div class="landing-page__inner landing-page__inner--hero">
           <div class="landing-hero__copy landing-page__content">
             <p class="landing-eyebrow">COLLECTIVE INTELLIGENCE</p>
@@ -37,16 +51,13 @@
               <el-icon aria-hidden="true"><ArrowRight /></el-icon>
             </button>
           </div>
-          <div class="landing-agent-slot" :class="{ 'is-auth': showAuth }" data-testid="landing-agent-slot">
-            <Transition name="agent-swap" mode="out-in">
-              <GlassConstellation v-if="!showAuth" key="agent" />
-              <LoginView v-else key="auth" embedded @back="closeAuth" />
-            </Transition>
+          <div class="landing-agent-slot" data-testid="landing-agent-slot">
+            <GlassConstellation />
           </div>
         </div>
       </section>
 
-      <section id="features" data-testid="landing-page-features" class="landing-page landing-page--section" :class="{ 'is-active': activeSection === 'features' }" aria-labelledby="features-title">
+      <section id="features" data-testid="landing-page-features" class="landing-page landing-page--section" :class="{ 'is-active': activeSection === 'features' }" :aria-hidden="activeSection !== 'features'" aria-labelledby="features-title">
         <div class="landing-page__inner">
           <div class="landing-page__content landing-section__heading">
             <p class="landing-eyebrow">WORKFLOW</p>
@@ -64,7 +75,7 @@
         </div>
       </section>
 
-      <section id="ecosystem" data-testid="landing-page-ecosystem" class="landing-page landing-page--section" :class="{ 'is-active': activeSection === 'ecosystem' }" aria-labelledby="ecosystem-title">
+      <section id="ecosystem" data-testid="landing-page-ecosystem" class="landing-page landing-page--section" :class="{ 'is-active': activeSection === 'ecosystem' }" :aria-hidden="activeSection !== 'ecosystem'" aria-labelledby="ecosystem-title">
         <div class="landing-page__inner">
           <div class="landing-page__content landing-section__heading">
             <p class="landing-eyebrow">ECOSYSTEM</p>
@@ -82,7 +93,7 @@
         </div>
       </section>
 
-      <section id="about" data-testid="landing-page-about" class="landing-page landing-page--section landing-page--last" :class="{ 'is-active': activeSection === 'about' }" aria-labelledby="about-title">
+      <section id="about" data-testid="landing-page-about" class="landing-page landing-page--section landing-page--last" :class="{ 'is-active': activeSection === 'about' }" :aria-hidden="activeSection !== 'about'" aria-labelledby="about-title">
         <div class="landing-page__inner landing-page__inner--about">
           <div class="about-team__copy landing-page__content">
             <p class="landing-eyebrow">ABOUT THE TEAM</p>
@@ -130,26 +141,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ArrowRight } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { ArrowRight, Moon, Sunny } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
+import { useTheme } from '@/composables/useTheme'
 import GlassConstellation from '@/components/landing/GlassConstellation.vue'
-import LoginView from './LoginView.vue'
 
 const router = useRouter()
+const route = useRoute()
+const { currentScheme, toggleColorScheme } = useTheme()
+const isDarkTheme = computed(() => currentScheme.value === 'codex-dark')
+const themeToggleLabel = computed(() => `切换到${isDarkTheme.value ? '明亮' : '黑暗'}模式`)
 const desktopShell = isDesktop()
 const dragRegionProps = platform.dragRegionProps
 const landingRoot = ref<HTMLElement | null>(null)
-const activeIndex = ref(0)
-const showAuth = ref(false)
 const navigation = [
   { id: 'home', label: '首页' },
   { id: 'features', label: '功能' },
   { id: 'ecosystem', label: '生态' },
   { id: 'about', label: '关于' }
 ] as const
+const sectionIndex = (hash: string | undefined) => {
+  const id = (hash || '').replace(/^#/, '')
+  const index = navigation.findIndex(item => item.id === id)
+  return index >= 0 ? index : 0
+}
+const activeIndex = ref(sectionIndex(route.hash))
 const activeSection = computed(() => navigation[activeIndex.value].id)
 const trackStyle = computed(() => ({ transform: `translate3d(0px, -${activeIndex.value * 25}%, 0px)` }))
 
@@ -170,16 +189,16 @@ let wheelUnlockTimer: number | undefined
 const setPage = (index: number) => {
   if (index < 0 || index >= navigation.length || index === activeIndex.value) return
   activeIndex.value = index
+  const hash = `#${navigation[index].id}`
+  if (route.hash !== hash) void router.replace({ path: '/', hash })
 }
 
 const goToSection = (id: string) => {
-  if (showAuth.value) return
   const index = navigation.findIndex(item => item.id === id)
   if (index >= 0) setPage(index)
 }
 
 const handleWheel = (event: WheelEvent) => {
-  if (showAuth.value) return
   if (Math.abs(event.deltaY) < 8) return
   event.preventDefault()
   if (wheelLocked) return
@@ -194,7 +213,6 @@ const handleWheel = (event: WheelEvent) => {
 }
 
 const handleKeydown = (event: KeyboardEvent) => {
-  if (showAuth.value) return
   const direction = event.key === 'ArrowDown' || event.key === 'PageDown' ? 1 : event.key === 'ArrowUp' || event.key === 'PageUp' ? -1 : 0
   if (!direction) return
   event.preventDefault()
@@ -208,12 +226,14 @@ onUnmounted(() => {
   window.clearTimeout(wheelUnlockTimer)
 })
 
-const goHome = () => router.push('/')
-const goToLogin = () => {
-  activeIndex.value = 0
-  showAuth.value = true
-}
-const closeAuth = () => { showAuth.value = false }
+watch(() => route.hash, (hash) => {
+  const nextIndex = sectionIndex(hash)
+  if (nextIndex !== activeIndex.value) activeIndex.value = nextIndex
+})
+
+const goHome = () => router.replace({ path: '/', hash: '' })
+const toggleTheme = () => toggleColorScheme()
+const goToLogin = () => router.push({ path: '/login', query: { redirect: '/chat', from: route.fullPath } })
 </script>
 
 <style scoped lang="scss">
@@ -234,11 +254,7 @@ const closeAuth = () => { showAuth.value = false }
   isolation: isolate;
 }
 
-.landing-surface { position: absolute; inset: 0; width: 100%; height: 100%; }
-.landing-surface { overflow: hidden; }
-.agent-swap-enter-active, .agent-swap-leave-active { transition: opacity 420ms cubic-bezier(.22, .78, .24, 1), transform 420ms cubic-bezier(.22, .78, .24, 1), filter 420ms ease; }
-.agent-swap-enter-from { opacity: 0; transform: translate3d(22px, 0, 0) scale(.94); filter: blur(8px); }
-.agent-swap-leave-to { opacity: 0; transform: translate3d(-22px, 0, 0) scale(1.04); filter: blur(8px); }
+.landing-surface { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 
 .landing-view::before,
 .landing-view::after,
@@ -258,18 +274,20 @@ const closeAuth = () => { showAuth.value = false }
 .landing-nav a:hover, .landing-nav a.is-active { color: var(--ink); }
 .landing-nav a.is-active { border-color: transparent; background: transparent; box-shadow: none; }
 .landing-nav a:hover::after, .landing-nav a.is-active::after { opacity: 1; transform: scaleX(1); }
-.landing-header__note { margin-left: auto; color: #7b96bd; font-size: 11px; letter-spacing: .11em; white-space: nowrap; }
+.landing-header__actions { display: flex; align-items: center; gap: 20px; margin-left: auto; }
+.landing-header__note { color: #7b96bd; font-size: 11px; letter-spacing: .11em; white-space: nowrap; }
 .landing-header__note i { padding: 0 10px; font-style: normal; color: var(--blue); }
+.landing-theme-toggle { min-height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(36, 143, 240, .2); border-radius: 999px; color: var(--muted-ink); background: rgba(255, 255, 255, .28); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease; }
+.landing-theme-toggle:hover { border-color: rgba(36, 143, 240, .5); color: var(--ink); background: rgba(255, 255, 255, .62); transform: translateY(-1px); }
+.landing-header__login { min-height: 34px; padding: 0 15px; border: 1px solid rgba(36, 143, 240, .26); border-radius: 999px; color: var(--ink); background: rgba(255, 255, 255, .42); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease; }
+.landing-header__login:hover { border-color: rgba(36, 143, 240, .52); background: rgba(255, 255, 255, .72); transform: translateY(-1px); }
 
 .landing-track { position: absolute; inset: 0; z-index: 2; height: 400%; transition: transform 960ms cubic-bezier(.16, 1, .3, 1); will-change: transform; }
 .landing-page { position: relative; width: 100%; height: 25%; min-height: 100vh; min-height: 100dvh; box-sizing: border-box; overflow: hidden; }
 .landing-page__inner { width: min(1180px, calc(100% - 96px)); height: 100%; margin: 0 auto; display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; }
 .landing-page__inner--hero { flex-direction: row; align-items: center; justify-content: space-between; gap: 48px; padding-top: 50px; }
 .landing-agent-slot { position: relative; width: min(46vw, 680px); height: min(50vw, 720px); min-width: 420px; min-height: 470px; margin-left: auto; transform: translateX(clamp(0px, 1.8vw, 28px)); display: grid; place-items: center; }
-.landing-agent-slot.is-auth { place-items: center end; transform: translate3d(clamp(0px, 2.5vw, 38px), clamp(14px, 3.5vh, 38px), 0); }
-.landing-agent-slot > .agent-swap-enter-active, .landing-agent-slot > .agent-swap-leave-active { width: 100%; height: 100%; }
 .landing-agent-slot :deep(.agent-constellation) { width: 100%; height: 100%; min-width: 0; min-height: 0; margin-left: 0; transform: none; }
-.landing-agent-slot :deep(.auth-view.is-embedded) { width: 100%; height: 100%; }
 .landing-page__content { animation: landing-content-in 900ms cubic-bezier(.2, .8, .2, 1) both; animation-play-state: paused; }
 .landing-page.is-active .landing-page__content { animation-play-state: running; }
 .landing-hero__copy { width: min(570px, 48vw); margin-top: -3vh; }
@@ -337,12 +355,98 @@ const closeAuth = () => { showAuth.value = false }
 .landing-footer__dots button.is-active { width: 38px; background: linear-gradient(90deg, var(--cyan), var(--purple)); box-shadow: 0 0 12px rgba(54, 185, 239, .42); }
 .landing-footer__caption { margin-left: auto; }
 
+/* The public surface follows the same saved scheme as the workbench. The
+   light scene remains the default presentation for non-dark schemes, while
+   the dark scheme uses the matching space scene asset and contrast tokens. */
+.landing-view.is-theme-dark {
+  --ink: #f1f6ff;
+  --soft-ink: #b2c5df;
+  --muted-ink: #9aafd0;
+  --blue: #52b8ff;
+  --cyan: #39c4f1;
+  --purple: #9b78ff;
+  color-scheme: dark;
+  background: #050914 url('/darkbg.png') center / cover no-repeat;
+
+  &::before {
+    background: linear-gradient(112deg, rgba(3, 7, 15, .94) 0%, rgba(3, 10, 22, .78) 40%, rgba(3, 7, 15, .42) 100%);
+  }
+  &::after {
+    background: radial-gradient(circle at 72% 30%, rgba(79, 183, 255, .17), transparent 30%), radial-gradient(circle at 78% 78%, rgba(141, 112, 255, .18), transparent 32%), repeating-linear-gradient(90deg, transparent 0, transparent 119px, rgba(113, 166, 237, .05) 120px), repeating-linear-gradient(0deg, transparent 0, transparent 119px, rgba(113, 166, 237, .035) 120px);
+  }
+  .landing-atmosphere { opacity: .11; mix-blend-mode: screen; }
+  .landing-brand strong { color: #b9a3ff; }
+  .landing-header__note { color: #9aacc7; }
+  .landing-theme-toggle { border-color: rgba(109, 189, 255, .3); color: #b7cbe4; background: rgba(9, 24, 46, .48); }
+  .landing-theme-toggle:hover { border-color: rgba(109, 189, 255, .68); color: #f1f6ff; background: rgba(18, 44, 77, .76); }
+  .landing-header__login { border-color: rgba(109, 189, 255, .34); color: #eef5ff; background: rgba(9, 24, 46, .54); }
+  .landing-header__login:hover { border-color: rgba(109, 189, 255, .72); background: rgba(18, 44, 77, .78); }
+  .landing-eyebrow { color: #9f7dff; }
+  .landing-page--hero h1 span { color: #b6a1ff; }
+  .landing-page--hero h2 { color: #f1f6ff; }
+  .landing-lead { color: #abc0dd; }
+  .landing-section__heading h2 { color: #f1f6ff; }
+  .landing-section__intro { color: #9fb4d1; }
+  .landing-info-card {
+    border-color: rgba(130, 184, 237, .26);
+    background: linear-gradient(140deg, rgba(17, 38, 70, .68), rgba(5, 15, 30, .58));
+    box-shadow: 0 18px 38px rgba(0, 0, 0, .22), inset 0 1px 0 rgba(220, 239, 255, .14);
+  }
+  .landing-info-card::after { background: linear-gradient(90deg, transparent, rgba(132, 197, 255, .42), transparent); }
+  .landing-info-card:hover { border-color: rgba(100, 192, 255, .66); background: linear-gradient(140deg, rgba(22, 52, 91, .8), rgba(7, 20, 40, .7)); box-shadow: 0 22px 44px rgba(0, 0, 0, .3), inset 0 1px 0 rgba(220, 239, 255, .18); }
+  .landing-info-card__index, .landing-info-card__meta { color: #8fc8ff; }
+  .landing-info-card h3 { color: #edf5ff; }
+  .landing-info-card p { color: #a8bdd8; }
+  .landing-info-card__meta { color: #8ea9c8; }
+  .about-team__copy h2 { color: #f1f6ff; }
+  .about-team__copy h2 span { color: #b7a1ff; }
+  .about-team__lead { color: #b8d0ed; }
+  .about-team__note { color: #9db5d4; }
+  .about-contact-card {
+    border-color: rgba(130, 184, 237, .3);
+    background: radial-gradient(circle at 12% 0%, rgba(71, 164, 235, .22), transparent 32%), radial-gradient(circle at 93% 88%, rgba(139, 108, 255, .2), transparent 42%), linear-gradient(145deg, rgba(18, 42, 76, .78), rgba(5, 15, 30, .66));
+    box-shadow: 0 32px 70px rgba(0, 0, 0, .3), inset 0 1px 0 rgba(220, 239, 255, .16);
+  }
+  .about-contact-card::before { background: rgba(102, 190, 255, .14); }
+  .about-contact-card::after { background: linear-gradient(90deg, transparent, rgba(164, 211, 255, .54), transparent); }
+  .about-contact-card:hover { border-color: rgba(130, 201, 255, .68); box-shadow: 0 38px 82px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(220, 239, 255, .2); }
+  .about-contact-card__top { color: #9bc7ef; }
+  .about-contact-card__top span:last-child { color: #789bc3; }
+  .about-contact-card__item { border-color: rgba(107, 171, 230, .22); }
+  .about-contact-card__label { color: #8faed0; }
+  .about-contact-card__value { color: #e8f3ff; }
+  .about-contact-card__hint { color: #9db8d7; }
+  .landing-footer { color: #91a9c9; }
+  .landing-footer__status { color: #9cc9f2; }
+  .landing-footer__dots button { background: rgba(125, 177, 232, .3); }
+  & :deep(.agent-stage__status) { border-color: rgba(133, 193, 244, .36); color: #b3c8e3; background: rgba(7, 20, 39, .6); box-shadow: 0 8px 20px rgba(0, 0, 0, .2), inset 0 1px 0 rgba(220, 239, 255, .12); }
+  & :deep(.agent-stage__prompt) { border-color: rgba(133, 193, 244, .34); color: #b7cbe4; background: rgba(7, 20, 39, .56); }
+  & :deep(.agent-controls) { border-color: rgba(133, 193, 244, .3); background: linear-gradient(145deg, rgba(16, 39, 72, .78), rgba(5, 15, 30, .68)); box-shadow: 0 24px 48px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(220, 239, 255, .14); }
+  & :deep(.agent-controls::before) { border-color: rgba(133, 193, 244, .3); background: rgba(14, 34, 62, .8); }
+  & :deep(.agent-control) { border-color: rgba(133, 193, 244, .22); color: #a6bfdd; background: rgba(13, 32, 58, .62); }
+  & :deep(.agent-control:hover), & :deep(.agent-control[aria-pressed='true']) { color: #eef6ff; background: rgba(34, 76, 121, .76); }
+  & :deep(.agent-controls__label), & :deep(.agent-controls__hint) { color: #8eacce; }
+  & :deep(.agent-conversation) { border-color: rgba(133, 193, 244, .34); color: #c5d9ef; background: linear-gradient(145deg, rgba(17, 43, 78, .82), rgba(5, 15, 30, .7)); box-shadow: 0 18px 34px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(220, 239, 255, .14); }
+  & :deep(.agent-conversation::before) { background: rgba(14, 34, 62, .82); }
+  & :deep(.agent-conversation p) { color: #a9c0dc; }
+}
+
 .landing-view.is-desktop-shell { --app-topbar-muted: var(--muted-ink); --app-topbar-hover: rgba(36, 143, 240, .08); --app-topbar-active: rgba(36, 143, 240, .13); --app-topbar-focus-ring: rgba(36, 143, 240, .45); }
 .landing-view.is-desktop-shell .landing-header { padding-right: 24px; padding-left: 24px; background: linear-gradient(180deg, rgba(246, 251, 255, .72), rgba(246, 251, 255, .34)); backdrop-filter: blur(14px); }
 .landing-view.is-desktop-shell .landing-header :deep(.desktop-window-controls) { height: 52px; align-self: center; }
-.landing-brand:focus-visible, .landing-nav a:focus-visible, .landing-cta:focus-visible, .landing-footer button:focus-visible { outline: 2px solid rgba(36, 143, 240, .56); outline-offset: 5px; }
+.landing-brand:focus-visible, .landing-nav a:focus-visible, .landing-theme-toggle:focus-visible, .landing-header__login:focus-visible, .landing-cta:focus-visible, .landing-footer button:focus-visible { outline: 2px solid rgba(36, 143, 240, .56); outline-offset: 5px; }
 
 @media (max-width: 860px) {
+  .landing-header { width: calc(100% - 32px); gap: 12px; }
+  .landing-header__actions { gap: 8px; }
+  .landing-theme-toggle span { display: none; }
+  .landing-header__note { display: none; }
+  .landing-nav { gap: 4px; }
+  .landing-nav a { min-width: 46px; padding: 0 8px; }
+  .landing-page__inner { width: calc(100% - 40px); }
+  .landing-page__inner--hero { flex-direction: column; justify-content: center; gap: 8px; padding-top: 78px; }
+  .landing-hero__copy { width: 100%; margin-top: 0; }
+  .landing-agent-slot { width: min(78vw, 500px); height: min(47vh, 430px); min-width: 0; min-height: 0; margin: 0 auto; transform: none; }
   .landing-page__inner--about { flex-direction: column; align-items: flex-start; justify-content: center; gap: 32px; padding-top: 86px; }
   .about-team__copy { max-width: 100%; }
   .about-team__copy h2 { font-size: clamp(54px, 14vw, 88px); }

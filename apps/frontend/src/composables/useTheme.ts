@@ -3,6 +3,11 @@ import { getColorScheme, type ColorSchemeId } from '@/themes/presets'
 
 const currentScheme = ref<ColorSchemeId>('codex-dark')
 const CODEX_DARK_MIGRATION_KEY = 'theme.codex_dark_v1'
+const PUBLIC_LIGHT_SCHEME_KEY = 'theme.public_light_scheme'
+
+function isColorSchemeId(value: unknown): value is ColorSchemeId {
+  return value === 'codex-dark' || value === 'claude-warm' || value === 'tea-green' || value === 'blue-purple'
+}
 
 export function applyFontSize(fontSize: number): void {
   const normalizedSize = Math.min(20, Math.max(12, Number.isFinite(fontSize) ? fontSize : 14))
@@ -100,6 +105,7 @@ function applySchemeVariables(schemeId: ColorSchemeId): void {
   root.style.colorScheme = scheme.id === 'codex-dark' ? 'dark' : 'light'
   document.body.style.backgroundImage = scheme.bodyBackground
   document.body.style.backgroundColor = scheme.variables['--bg-app']
+  if (!isDark) localStorage.setItem(PUBLIC_LIGHT_SCHEME_KEY, scheme.id)
   currentScheme.value = scheme.id
 }
 
@@ -108,7 +114,36 @@ export function useTheme() {
     applySchemeVariables(schemeId)
   }
 
-  return { currentScheme, applyColorScheme }
+  function setPersistedColorScheme(schemeId: ColorSchemeId): void {
+    applySchemeVariables(schemeId)
+
+    let settings: Record<string, unknown> = {}
+    const saved = localStorage.getItem('appSettings')
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>
+      } catch {
+        settings = {}
+      }
+    }
+    settings.colorScheme = schemeId
+    localStorage.setItem('appSettings', JSON.stringify(settings))
+  }
+
+  function toggleColorScheme(): void {
+    if (currentScheme.value === 'codex-dark') {
+      const savedLightScheme = localStorage.getItem(PUBLIC_LIGHT_SCHEME_KEY)
+      const nextLightScheme = isColorSchemeId(savedLightScheme) && savedLightScheme !== 'codex-dark'
+        ? savedLightScheme
+        : 'blue-purple'
+      setPersistedColorScheme(nextLightScheme)
+      return
+    }
+    setPersistedColorScheme('codex-dark')
+  }
+
+  return { currentScheme, applyColorScheme, setPersistedColorScheme, toggleColorScheme }
 }
 
 export function initTheme(): void {

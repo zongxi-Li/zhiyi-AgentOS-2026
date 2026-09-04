@@ -20,7 +20,7 @@ describe('LandingView', () => {
     platformState.desktop = false
   })
 
-  const mountLanding = async () => {
+  const mountLanding = async (initialPath = '/') => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -28,7 +28,7 @@ describe('LandingView', () => {
         { path: '/login', component: { template: '<div />' } }
       ]
     })
-    await router.push('/')
+    await router.push(initialPath)
     await router.isReady()
     return { router, wrapper: mount(LandingView, {
       global: {
@@ -41,31 +41,35 @@ describe('LandingView', () => {
     }) }
   }
 
-  it('replaces only the agent slot with auth from the primary CTA without routing away', async () => {
+  it('routes the primary CTA to standalone login and preserves the landing return target', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.get('[data-testid="landing-cta"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
-    expect(wrapper.get('[data-testid="landing-agent-slot"]').classes()).toContain('is-auth')
-    expect(wrapper.find('[data-testid="landing-page-home"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(false)
-    expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.path).toBe('/login')
+    expect(router.currentRoute.value.query.redirect).toBe('/chat')
+    expect(router.currentRoute.value.query.from).toBe('/')
   })
 
-  it('replaces only the agent slot with auth from the final enter CTA', async () => {
+  it('exposes an accessible public theme toggle', async () => {
+    const { wrapper } = await mountLanding()
+
+    const toggle = wrapper.get('[data-testid="landing-theme-toggle"]')
+    expect(toggle.attributes('aria-label')).toBe('切换到明亮模式')
+    expect(toggle.attributes('title')).toBe('切换到明亮模式')
+  })
+
+  it('preserves the active landing section when entering login from the final CTA', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.get('.landing-nav a[href="#about"]').trigger('click')
+    await flushPromises()
     await wrapper.get('.landing-cta--small').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
-    expect(wrapper.get('[data-testid="landing-agent-slot"]').classes()).toContain('is-auth')
-    expect(wrapper.find('[data-testid="landing-page-home"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(false)
-    expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.path).toBe('/login')
+    expect(router.currentRoute.value.query.from).toBe('/#about')
   })
 
   it('presents a focused light landing sequence without legacy floating chrome', async () => {
@@ -114,7 +118,7 @@ describe('LandingView', () => {
     expect(wrapper.find('.landing-header').attributes('data-tauri-drag-region')).toBe('')
   })
 
-  it('changes pages from navigation without hijacking the router hash', async () => {
+  it('keeps the active section in the router hash for direct return navigation', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.findAll('.landing-nav a')[1].trigger('click')
@@ -123,6 +127,15 @@ describe('LandingView', () => {
     expect(wrapper.find('a[href="#features"]').classes()).toContain('is-active')
     expect(wrapper.find('.landing-track').attributes('style')).toContain('translate3d(0px, -25%, 0px)')
     expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.hash).toBe('#features')
+  })
+
+  it('opens directly on the section encoded in the landing hash', async () => {
+    const { router, wrapper } = await mountLanding('/#ecosystem')
+
+    expect(router.currentRoute.value.hash).toBe('#ecosystem')
+    expect(wrapper.find('a[href="#ecosystem"]').classes()).toContain('is-active')
+    expect(wrapper.find('.landing-track').attributes('style')).toContain('translate3d(0px, -50%, 0px)')
   })
 
   it('keeps the brand link a SPA navigation to the landing route', async () => {
