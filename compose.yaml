@@ -107,6 +107,7 @@ services:
       AGENTOS_SQLITE_BUSY_TIMEOUT_MS: ${AGENTOS_SQLITE_BUSY_TIMEOUT_MS:-5000}
       UVICORN_WORKERS: "1"
       AI_INTERNAL_TOKEN_FILE: /run/kinlin-secrets/ai_internal_token
+      AGENTOS_RESOURCE_CREDENTIAL_KEY_FILE: /run/kinlin-secrets/agentos_resource_credential_key
       DEEPSEEK_API_KEY_FILE: /run/kinlin-secrets/deepseek_api_key
       GLM_API_KEY_FILE: /run/kinlin-secrets/glm_api_key
       DASHSCOPE_API_KEY_FILE: /run/kinlin-secrets/dashscope_api_key
@@ -120,6 +121,8 @@ services:
       AGENTOS_LLM_PLANNING_TIMEOUT_SECONDS: ${AGENTOS_LLM_PLANNING_TIMEOUT_SECONDS:-480}
       AGENTOS_LLM_PLANNING_TOTAL_TIMEOUT_SECONDS: ${AGENTOS_LLM_PLANNING_TOTAL_TIMEOUT_SECONDS:-660}
       AGENTOS_LLM_PLANNING_MAX_RETRIES: ${AGENTOS_LLM_PLANNING_MAX_RETRIES:-1}
+      AGENTOS_MODEL_MAX_CONCURRENCY: ${AGENTOS_MODEL_MAX_CONCURRENCY:-4}
+      AGENTOS_MODEL_MIN_INTERVAL_SECONDS: ${AGENTOS_MODEL_MIN_INTERVAL_SECONDS:-0}
       GLM_ENABLED: ${GLM_ENABLED:-true}
       GLM_NATIVE_SEARCH_ENABLED: ${GLM_NATIVE_SEARCH_ENABLED:-true}
       GLM_WEB_SEARCH_URL: ${GLM_WEB_SEARCH_URL:-https://open.bigmodel.cn/api/paas/v4/web_search}
@@ -144,7 +147,7 @@ services:
       AGENTOS_COORDINATION_REDIS_URL: redis://redis:6379/1
       PROVIDER_STATE_TTL_SECONDS: ${PROVIDER_STATE_TTL_SECONDS:-3600}
       REDIS_PASSWORD_FILE: /run/kinlin-secrets/redis_password
-    secrets: [ai_internal_token, deepseek_api_key, glm_api_key, dashscope_api_key, tavily_api_key, redis_password]
+    secrets: [ai_internal_token, agentos_resource_credential_key, deepseek_api_key, glm_api_key, dashscope_api_key, tavily_api_key, redis_password]
     volumes:
       - agentos-data:/app/data
       - ai-cache:/app/.cache
@@ -257,6 +260,8 @@ secrets:
     file: ${KINLIN_SECRETS_DIR:?KINLIN_SECRETS_DIR is required}/jwt_secret
   ai_internal_token:
     file: ${KINLIN_SECRETS_DIR:?KINLIN_SECRETS_DIR is required}/ai_internal_token
+  agentos_resource_credential_key:
+    file: ${KINLIN_SECRETS_DIR:?KINLIN_SECRETS_DIR is required}/agentos_resource_credential_key
   deepseek_api_key:
     file: ${KINLIN_SECRETS_DIR:?KINLIN_SECRETS_DIR is required}/deepseek_api_key
   glm_api_key:

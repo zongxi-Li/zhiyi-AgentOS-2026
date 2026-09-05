@@ -15,6 +15,7 @@ copy_secret() {
   install -m 0400 -o 10002 -g 10002 "$source_path" "$target/$target_name"
 }
 copy_secret /run/secrets/ai_internal_token ai_internal_token
+copy_secret /run/secrets/agentos_resource_credential_key agentos_resource_credential_key
 copy_secret /run/secrets/deepseek_api_key deepseek_api_key false
 copy_secret /run/secrets/glm_api_key glm_api_key false
 copy_secret /run/secrets/dashscope_api_key dashscope_api_key false
@@ -23,6 +24,7 @@ copy_secret /run/secrets/redis_password redis_password false
 chmod 0700 /run/secrets
 
 su-exec 10002:10002 test -r "$target/ai_internal_token"
+su-exec 10002:10002 test -r "$target/agentos_resource_credential_key"
 if su-exec 10002:10002 test -r /run/secrets/ai_internal_token 2>/dev/null; then
   echo "AI runtime user can still read the bind-mounted secret source" >&2
   exit 78
