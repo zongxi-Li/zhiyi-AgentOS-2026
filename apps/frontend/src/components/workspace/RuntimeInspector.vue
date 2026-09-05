@@ -1,17 +1,8 @@
 <template>
-  <aside class="runtime-inspector" aria-label="Workspace Secondary Sidebar">
-    <SecondarySidebar
-      v-if="secondarySidebarViews.length"
-      :registry="registry"
-      :context="inspectorContext"
-      :title="inspectorTitle"
-      :historical="historical"
-      :component-props="baseProps"
-      @locate-graph="emit('locateGraph')"
-    />
-    <InspectorFrame v-else-if="inspectorContribution || inspectorSections.length" :title="inspectorTitle" :historical="historical">
-      <InspectorSection v-if="runId && graphNode" title="输出" :badge="liveNode?.phase || 'WAITING'">
-        <pre class="runtime-output">{{ liveNode?.outputBuffer || '等待模型输出...' }}</pre>
+  <aside class="runtime-inspector" aria-label="Selection Inspector">
+    <InspectorFrame v-if="inspectorContribution || inspectorSections.length" :title="inspectorTitle" :historical="historical">
+      <InspectorSection v-if="graphNode && safeLiveOutput" title="Structured Output" :badge="liveNode?.phase || 'safe projection'">
+        <pre class="runtime-output" data-testid="formal-live-output">{{ safeLiveOutput }}</pre>
       </InspectorSection>
       <component
         v-for="section in inspectorSections"
@@ -27,7 +18,7 @@
         @locate-graph="emit('locateGraph')"
       />
     </InspectorFrame>
-    <div v-else class="runtime-inspector__empty">选择一个 Workspace entry 或图节点查看属性。</div>
+    <div v-else class="runtime-inspector__empty">选择一个 Workspace Symbol 查看属性。</div>
   </aside>
 </template>
 
@@ -36,8 +27,9 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
-import SecondarySidebar from '@/components/workbench/SecondarySidebar.vue'
 import type { WorkbenchContext, WorkbenchInspectorContext } from '@/workbench/types'
+import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
+import { safeStructuredOutput } from '@/workbench/runtime/runDocument'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import {
   RunRuntimeStore,
@@ -51,6 +43,7 @@ const props = defineProps<{
   workbenchContext: WorkbenchContext
   entry: WorkspaceEntry | null
   graphNode: WorkspaceGraphNode | null
+  selectedSymbol?: RunDocumentSymbol | null
   graphNodes: WorkspaceGraphNode[]
   available: boolean
   runId: string | null
@@ -64,6 +57,11 @@ const ownedRuntimeStore = shallowRef<RunRuntimeStore | null>(null)
 const ownedRunId = ref<string | null>(null)
 const runtimeStore = computed(() => props.runtimeStore || ownedRuntimeStore.value)
 const liveNode = computed(() => props.graphNode?.acgNodeId ? runtimeStore.value?.nodes[props.graphNode.acgNodeId] || null : null)
+const safeLiveOutput = computed(() => {
+  const type = props.selectedSymbol?.type
+  if (type && ['agent', 'artifact', 'result', 'tool'].includes(type)) return null
+  return safeStructuredOutput(liveNode.value?.outputBuffer)
+})
 const connectRuntime = (runId: string | null) => {
   if (props.runtimeStore) {
     releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
@@ -97,15 +95,16 @@ const inspectorContext = computed(() => ({
 
 const inspectorContribution = computed(() => props.registry.resolveInspector(inspectorContext.value))
 const inspectorSections = computed(() => props.registry.resolveInspectorSections(inspectorContext.value))
-const secondarySidebarViews = computed(() => props.registry.resolveSecondarySidebarViews(inspectorContext.value))
 const inspectorTitle = computed(() => (
-  props.graphNode?.name
+  props.selectedSymbol?.title
+  || props.graphNode?.name
   || props.entry?.name
   || (props.entry?.kind === 'graph' ? 'graph.acg' : 'Mission')
 ))
 const baseProps = computed(() => ({
   entry: props.entry,
   graphNode: props.graphNode,
+  selectedSymbol: props.selectedSymbol || null,
   graphNodes: props.graphNodes,
   available: props.available,
   runId: props.runId,
@@ -126,5 +125,5 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 <style scoped>
 .runtime-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--wb-surface-pane); color: var(--wb-text); }
 .runtime-inspector__empty { padding: 22px 15px; color: var(--wb-text-muted); font-size: 12px; line-height: 1.6; }
-.runtime-output { max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.runtime-output { max-height: 220px; margin: 0; overflow: auto; color: var(--wb-text-secondary); font: 10px/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

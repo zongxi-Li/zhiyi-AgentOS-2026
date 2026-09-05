@@ -111,14 +111,16 @@ describe('RunProgressEditor', () => {
   it('renders the planner as one aggregated group with deterministic result metrics', () => {
     const wrapper = mountEditor()
 
-    const groups = wrapper.findAll('.run-progress-group')
-    expect(groups).toHaveLength(1)
-    expect(groups[0].text()).toContain('任务规划')
+    const planners = wrapper.findAll('[data-symbol-type="planner"]')
+    expect(planners).toHaveLength(1)
+    expect(planners[0].text()).toContain('任务规划')
     // 内部阶段不得一级平铺为用户可读的"正在理解…"文案
     expect(wrapper.text()).not.toContain('正在理解')
     // 完成后组收起，digest 汇总真实计数
     expect(wrapper.text()).toContain('Task Plan · 6 Tasks · 8 Dependencies')
-    expect(wrapper.text()).toContain('ACG Compile · 5 Nodes · 11 Edges')
+    expect(wrapper.text()).toContain('ACG')
+    expect(wrapper.text()).toContain('5 Nodes')
+    expect(wrapper.text()).toContain('11 Edges')
   })
 
   it('shows the latest planner phase note while planning is still running', () => {
@@ -237,7 +239,7 @@ describe('RunProgressEditor', () => {
     expect(wrapper.text()).not.toContain('正在理解')
   })
 
-  it('renders live planner stream facts before Trace projection catches up', () => {
+  it('renders live planner stream facts before Trace projection catches up', async () => {
     const runtimeStore = new RunRuntimeStore('run_1')
     runtimeStore.apply(runtimeEvent(1, 'planner.started'))
     runtimeStore.apply({ ...runtimeEvent(2, 'planner.stage.started'), payload: { stage: 'outline', callKey: 'outline' } })
@@ -264,10 +266,11 @@ describe('RunProgressEditor', () => {
     expect(wrapper.text()).toContain('Call outline')
     expect(wrapper.get('[data-testid="planner-live-output"]').text()).toContain('draft')
     expect(wrapper.text()).toContain('1 chunks')
-    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('ACG 规划草图 · 2 nodes')
-    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('1 edges')
-    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('决策依据')
-    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('先建立约束基线')
+    const acg = wrapper.get('[data-symbol-type="acg"]')
+    expect(acg.text()).toContain('ACG')
+    await acg.find('.run-symbol__main').trigger('click')
+    expect(wrapper.get('[data-symbol-type="acg-node"]').text()).toContain('理解任务')
+    expect(wrapper.find('[data-testid="planner-growing-graph"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Profile: 2 capabilities · 1 artifacts')
   })
 

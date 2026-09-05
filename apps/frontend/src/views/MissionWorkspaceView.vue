@@ -32,6 +32,7 @@
           :open-entries="openEntries"
           :active-editor-id="activeEditorId"
           :selected-semantic-task-key="selectedSemanticTaskKey"
+          :selected-symbol-id="selectedSymbolId"
           :focus-node-id="focusNodeId"
           :registry="registry"
           :workbench-context="workbenchContext"
@@ -45,9 +46,11 @@
           @activate="activeEditorId = $event"
           @close="closeEditor"
           @select-semantic-task="selectSemanticTask"
+          @select-symbol="selectRunSymbol"
           @open-semantic-task="openSemanticTask"
           @locate-graph="locateGraph"
           @open-artifact="openEntry"
+          @open-entry="openEntry"
           @cancel-run="cancelActiveRun"
         />
         <section v-else class="workspace-main-state" role="status">
@@ -61,6 +64,7 @@
         <RuntimeInspector
           :entry="inspectorEntry"
           :graph-node="inspectorGraphNode"
+          :selected-symbol="selectedSymbol"
           :graph-nodes="projection?.graphNodes || []"
           :available="inspectorAvailable"
           :run-id="projection?.activeRun?.runId || selectedRunId || null"
@@ -130,6 +134,7 @@ import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 
 const route = useRoute()
 const router = useRouter()
@@ -146,6 +151,9 @@ const currentRunId = ref<string | null>(null)
 const openEditors = ref<string[]>([])
 const activeEditorId = ref<string | null>(null)
 const selectedSemanticTaskKey = ref<string | null>(null)
+const selectedSymbolId = ref<string | null>(null)
+const selectedSymbolType = ref<RunDocumentSymbol['type'] | null>(null)
+const selectedSymbol = ref<RunDocumentSymbol | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
 const runtimeObservation = ref<RuntimeObservation | null>(null)
@@ -161,19 +169,22 @@ const workspaceProjectionRetryDelays = [
   ...Array.from({ length: 23 }, () => 5000)
 ]
 
-// 运行进度是工作台注入的前端合成 entry：与后端投影 entries 共用同一套标签页系统，
-// 挂在 OVERVIEW 分组首位，活跃 Run 存在时默认打开并激活。
-const PROGRESS_ENTRY_ID = 'overview:progress'
-const progressEntry: WorkspaceEntry = {
-  entryId: PROGRESS_ENTRY_ID,
+// Run Progress is a first-class editor entry. Its identity is scoped to the Run
+// so reopening/history switching cannot silently reuse another Run's document.
+const progressEntryFor = (runId: string | null): WorkspaceEntry => ({
+  entryId: runId ? `run:${runId}:progress` : 'overview:progress',
   kind: 'progress',
   name: '运行进度',
   title: '运行进度',
   group: 'overview',
-  displayOrder: -1
-}
+  displayOrder: -1,
+  runId,
+  status: runId ? projection.value?.activeRun?.status || null : null,
+  isActive: Boolean(runId)
+})
 const entriesWithProgress = computed<WorkspaceEntry[]>(() => {
   if (!projection.value) return []
+  const progressEntry = progressEntryFor(projection.value.activeRun?.runId || selectedRunId.value)
   const projectedEntries = projection.value.entries
   const projectedRunIds = new Set(projectedEntries
     .filter(entry => entry.kind === 'run' && entry.runId)
@@ -252,8 +263,10 @@ const workbenchContext = computed(() => createWorkbenchContext({
   missionId: missionId.value,
   runId: projection.value?.activeRun?.runId || selectedRunId.value || null,
   selectedSemanticTaskKey: selectedSemanticTaskKey.value,
-  selectedArtifactId: inspectorEntry.value?.artifactId || null,
+  selectedArtifactId: selectedSymbol.value?.artifactId || inspectorEntry.value?.artifactId || null,
   selectedAcgNodeId: selectedGraphNodeId.value,
+  selectedSymbolId: selectedSymbolId.value,
+  selectedSymbolType: selectedSymbolType.value,
   activeEditorId: activeEditorId.value,
   activeEntryKind: activeOpened.value?.entry.kind || null,
   historicalMode: isHistorical.value,
@@ -265,6 +278,7 @@ const sidebarContribution = computed(() => registry.getSidebarViews(workbenchCon
 const sidebarProps = computed(() => ({
   projection: augmentedProjection.value,
   activeEditorId: activeEditorId.value,
+  selectedSemanticTaskKey: selectedSemanticTaskKey.value,
   selectedRunId: selectedRunId.value,
   canRerun: canRerunSelectedRun.value,
   rerunPending: rerunPending.value,
@@ -291,21 +305,52 @@ const openDefaultEditor = (nextProjection: MissionWorkspaceProjection) => {
   const promptEntry = nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
   const first = nextProjection.entries.find(entry => entry.entryId === 'overview:graph.acg')
   const runActive = nextProjection.activeRun?.status === 'running' || nextProjection.activeRun?.status === 'pending'
+  const progressEntry = progressEntryFor(nextProjection.activeRun?.runId || selectedRunId.value)
   const openIds = [
-    ...(runActive ? [PROGRESS_ENTRY_ID] : []),
+    ...(runActive ? [progressEntry.entryId] : []),
     ...(runActive && promptEntry ? [promptEntry.entryId] : []),
     ...(first ? [first.entryId] : [])
   ]
   if (!openIds.length && promptEntry) openIds.push(promptEntry.entryId)
   if (!openIds.length) return
   openIds.forEach(entryId => {
-    const entry = entryId === PROGRESS_ENTRY_ID
+    const entry = entryId === progressEntry.entryId
       ? progressEntry
       : nextProjection.entries.find(item => item.entryId === entryId)
     if (entry) entryCache.value[entry.entryId] = entry
   })
   openEditors.value = openIds
-  activeEditorId.value = runActive ? PROGRESS_ENTRY_ID : openIds[0]
+  activeEditorId.value = runActive ? progressEntry.entryId : openIds[0]
+}
+
+const syncProgressEditorIdentity = (nextProjection: MissionWorkspaceProjection, requestedRunId: string | null) => {
+  const nextEntry = progressEntryFor(nextProjection.activeRun?.runId || requestedRunId)
+  const currentId = openEditors.value.find(entryId => entryCache.value[entryId]?.kind === 'progress')
+  if (!currentId || currentId === nextEntry.entryId) {
+    entryCache.value[nextEntry.entryId] = nextEntry
+    return
+  }
+  const index = openEditors.value.indexOf(currentId)
+  openEditors.value.splice(index, 1, nextEntry.entryId)
+  entryCache.value[nextEntry.entryId] = nextEntry
+  if (activeEditorId.value === currentId) activeEditorId.value = nextEntry.entryId
+}
+
+const focusProgressEditor = (nextProjection: MissionWorkspaceProjection, requestedRunId: string | null) => {
+  const runId = nextProjection.activeRun?.runId || requestedRunId
+  if (!runId) return
+  const nextEntry = progressEntryFor(runId)
+  const currentId = openEditors.value.find(entryId => (
+    entryId === 'overview:progress' || entryCache.value[entryId]?.kind === 'progress'
+  ))
+  if (currentId && currentId !== nextEntry.entryId) {
+    const index = openEditors.value.indexOf(currentId)
+    if (index >= 0) openEditors.value.splice(index, 1, nextEntry.entryId)
+  } else if (!openEditors.value.includes(nextEntry.entryId)) {
+    openEditors.value.unshift(nextEntry.entryId)
+  }
+  entryCache.value[nextEntry.entryId] = nextEntry
+  activeEditorId.value = nextEntry.entryId
 }
 
 const responseStatus = (error: unknown) => {
@@ -400,7 +445,7 @@ const scheduleProjectionRefresh = () => {
   }, PROJECTION_REFRESH_MS)
 }
 
-const loadWorkspace = async (runId = selectedRunId.value) => {
+const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgress?: boolean } = {}) => {
   if (!missionId.value) {
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
     return
@@ -428,7 +473,9 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     currentRunId.value ||= defaultRunId(nextProjection.runs)
     selectedRunId.value = nextProjection.activeRun?.runId || runId || null
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
+    syncProgressEditorIdentity(nextProjection, runId)
     openDefaultEditor(nextProjection)
+    if (options.focusProgress) focusProgressEditor(nextProjection, runId)
     const nextRunId = nextProjection.activeRun?.runId || runId || null
     const streamRunId = projectionActive(nextProjection) ? nextRunId : null
     if (runtimeStoreRunId !== streamRunId) {
@@ -463,10 +510,20 @@ const persistRunInUrl = async (runId: string) => {
 }
 
 const selectRun = async (runId: string) => {
-  if (runId === projection.value?.activeRun?.runId && projection.value) return
+  if (runId === projection.value?.activeRun?.runId && projection.value) {
+    const progress = entriesWithProgress.value.find(entry => entry.kind === 'progress')
+    if (progress) openEntry(progress)
+    return
+  }
   selectedRunId.value = runId
+  selectedSymbolId.value = null
+  selectedSymbolType.value = null
+  selectedSymbol.value = null
+  selectedSemanticTaskKey.value = null
+  selectedGraphNodeId.value = null
+  focusNodeId.value = null
   await persistRunInUrl(runId)
-  await loadWorkspace(runId)
+  await loadWorkspace(runId, { focusProgress: true })
 }
 
 const createClientRequestId = () => globalThis.crypto?.randomUUID?.()
@@ -551,7 +608,7 @@ const rerunSelectedRun = async () => {
     currentRunId.value = nextRun.runId
     selectedRunId.value = nextRun.runId
     await persistRunInUrl(nextRun.runId)
-    await loadWorkspace(nextRun.runId)
+    await loadWorkspace(nextRun.runId, { focusProgress: true })
   } catch (error: unknown) {
     if (!isAbortError(error)) loadError.value = rerunErrorMessage(error)
   } finally {
@@ -564,6 +621,29 @@ const openEntry = (entry: WorkspaceEntry) => {
   if (!openEditors.value.includes(entry.entryId)) openEditors.value.push(entry.entryId)
   activeEditorId.value = entry.entryId
   artifactChoices.value = []
+  if (entry.kind === 'task' || entry.kind === 'artifact') {
+    const type = entry.kind
+    selectedSymbolType.value = type
+    selectedSymbolId.value = `${type}:${entry.kind === 'artifact' ? (entry.artifactKey || entry.artifactId || entry.entryId) : (entry.semanticTaskKey || entry.acgNodeId || entry.entryId)}`
+    selectedSymbol.value = {
+      id: selectedSymbolId.value,
+      type,
+      status: ['completed', 'succeeded'].includes(entry.status || '') ? 'completed' : ['failed', 'cancelled'].includes(entry.status || '') ? 'failed' : ['running', 'pending', 'planning'].includes(entry.status || '') ? 'running' : 'pending',
+      title: entry.name,
+      subtitle: entry.semanticTaskKey || entry.artifactKey || undefined,
+      runId: entry.runId || projection.value?.activeRun?.runId || '',
+      semanticTaskKey: entry.semanticTaskKey,
+      graphNodeId: entry.acgNodeId,
+      artifactKey: entry.artifactKey,
+      artifactId: entry.artifactId,
+      children: []
+    }
+    if (entry.semanticTaskKey) selectSemanticTask(entry.semanticTaskKey)
+  } else if (entry.kind !== 'progress' && entry.kind !== 'run') {
+    selectedSymbolId.value = null
+    selectedSymbolType.value = null
+    selectedSymbol.value = null
+  }
 }
 
 const closeEditor = (entryId: string) => {
@@ -578,6 +658,17 @@ const selectSemanticTask = (semanticTaskKey: string | null) => {
   selectedSemanticTaskKey.value = semanticTaskKey
   selectedGraphNodeId.value = projection.value?.graphNodes.find(node => node.semanticTaskKey === semanticTaskKey)?.acgNodeId || null
   if (selectedGraphNodeId.value) focusNodeId.value = selectedGraphNodeId.value
+}
+
+const selectRunSymbol = (item: RunDocumentSymbol) => {
+  selectedSymbolId.value = item.id
+  selectedSymbolType.value = item.type
+  selectedSymbol.value = item
+  if (item.graphNodeId) {
+    selectedGraphNodeId.value = item.graphNodeId
+    focusNodeId.value = item.graphNodeId
+  }
+  if (item.semanticTaskKey) selectSemanticTask(item.semanticTaskKey)
 }
 
 const selectRuntimeTarget = (selection: RuntimeSelection) => {

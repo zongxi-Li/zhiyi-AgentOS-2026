@@ -1,162 +1,53 @@
 <template>
-  <section class="run-progress" aria-label="运行进度">
-    <header class="run-progress__header">
-      <h1 class="run-progress__goal">{{ goalText }}</h1>
-      <div class="run-progress__meta">
-        <span class="run-progress__status" :class="'is-' + runState">
-          {{ stateLabel }}<template v-if="durationText"> · {{ durationText }}</template>
-        </span>
-        <span v-if="resolvedRunId" class="run-progress__runid">{{ resolvedRunId }}</span>
-      </div>
-    </header>
+  <section class="run-progress" aria-label="运行进度文档">
+    <div class="run-progress__document-head">
+      <RunBreadcrumb :mission-title="missionTitle" :items="breadcrumbItems" @locate="locateBreadcrumb" />
+      <header class="run-progress__header">
+        <div class="run-progress__eyebrow">RUN DOCUMENT</div>
+        <div class="run-progress__heading-row">
+          <div class="run-progress__heading-copy">
+            <h1 class="run-progress__goal">{{ goalTitle }}</h1>
+            <p class="run-progress__summary">{{ goalSummary }}</p>
+          </div>
+          <button type="button" class="run-progress__mission-link" @click="openMission">查看 mission.md</button>
+        </div>
+        <div class="run-progress__meta">
+          <span class="run-progress__status" :class="'is-' + runState">{{ stateLabel }}</span>
+          <span v-if="durationText" class="run-progress__duration">{{ durationText }}</span>
+          <span v-if="resolvedRunId" class="run-progress__runid">{{ resolvedRunId }}</span>
+        </div>
+      </header>
+    </div>
 
     <div v-if="!resolvedRunId" class="run-progress__empty">运行开始后，这里会显示任务规划和执行过程。</div>
 
     <template v-else>
-      <nav class="run-progress__filters" aria-label="进度过滤">
-        <button
-          v-for="option in FILTERS"
-          :key="option"
-          type="button"
-          class="run-progress__filter"
-          :class="{ 'is-active': filter === option }"
-          @click="filter = option"
-        >{{ option }}</button>
-      </nav>
+      <div class="run-progress__toolbar">
+        <span class="run-progress__toolbar-label">OUTLINE</span>
+        <label class="run-progress__filter">
+          <span>Filter</span>
+          <input v-model="filterText" type="search" placeholder="symbols" aria-label="过滤 Run symbols" />
+        </label>
+      </div>
 
       <div ref="scrollBody" class="run-progress__body" @scroll="onScroll">
         <div class="run-progress__stream">
-          <section
-            v-if="showPlanner && displayPlanner"
-            class="run-progress-group"
-            :class="{ 'is-open': plannerOpen }"
-          >
-            <button type="button" class="run-progress-group__head" @click="toggleExpanded('planner', displayPlanner.status)">
-              <span class="run-progress-group__mark" :class="'is-' + displayPlanner.status" aria-hidden="true">{{ statusMark(displayPlanner.status) }}</span>
-              <span class="run-progress-group__title">{{ displayPlanner.headline }}</span>
-              <span v-if="!plannerOpen" class="run-progress-group__digest">{{ plannerDigest }}</span>
-            </button>
-            <div v-if="plannerOpen" class="run-progress-group__body">
-              <p v-if="displayPlanner.status !== 'success' && displayPlanner.phaseNotes.length" class="run-progress-group__note" :class="{ 'is-failed': displayPlanner.status === 'failed' }">
-                {{ displayPlanner.phaseNotes[0] }}<template v-if="plannerBudgetText"> · {{ plannerBudgetText }}</template>
-              </p>
-              <div v-if="livePlanning && livePlanning.status !== 'IDLE'" class="run-progress-live" aria-live="polite">
-                <div class="run-progress-live__line">
-                  <span class="run-progress-live__pulse" :class="{ 'is-done': livePlanning.status === 'COMPLETED', 'is-failed': livePlanning.status === 'FAILED' }" aria-hidden="true">●</span>
-                  <strong>{{ plannerStageLabel }}</strong>
-                  <span>{{ livePlannerModelLabel }}</span>
-                  <span v-if="livePlanning.elapsedMs != null" class="run-progress-live__metric">{{ livePlanning.elapsedMs }} ms</span>
-                </div>
-                <div class="run-progress-live__metrics">
-                  <span v-if="livePlanning.ttftMs != null">TTFT {{ livePlanning.ttftMs }} ms</span>
-                  <span v-if="livePlanning.idleMs != null">Idle {{ livePlanning.idleMs }} ms</span>
-                  <span v-if="livePlanning.callKey">Call {{ livePlanning.callKey }}</span>
-                </div>
-                <div v-if="livePlanning.profile" class="run-progress-live__facts">
-                  Profile: {{ livePlanning.profile.requiredCapabilityCount ?? 0 }} capabilities · {{ livePlanning.profile.expectedArtifactCount ?? 0 }} artifacts
-                </div>
-                <div v-if="livePlanning.plan" class="run-progress-live__facts">
-                  Plan: {{ livePlanning.plan.taskCount ?? 0 }} tasks · {{ livePlanning.plan.dependencyCount ?? 0 }} dependencies
-                </div>
-                <div v-if="livePlanning.graph" class="run-progress-live__facts">
-                  Graph: {{ livePlanning.graph.nodeCount ?? 0 }} nodes · {{ livePlanning.graph.edgeCount ?? 0 }} edges
-                </div>
-                <div v-if="livePlanning.errorCode" class="run-progress-live__facts is-failed">{{ livePlanning.errorCode }}</div>
-                <div v-if="livePlanning.outputBuffer" class="run-progress-live__output-wrap">
-                  <div class="run-progress-live__output-label">
-                    <span>模型规划草稿</span>
-                    <span>{{ livePlanning.chunkCount }} chunks</span>
-                  </div>
-                  <pre data-testid="planner-live-output" class="run-progress-live__output">{{ livePlanning.outputBuffer }}</pre>
-                </div>
-                <div v-if="livePlanning.draft.nodes.length" class="planner-draft" data-testid="planner-growing-graph">
-                  <div class="planner-draft__head">
-                    <span>ACG 规划草图 · {{ livePlanning.draft.nodes.length }} nodes</span>
-                    <span>{{ livePlanning.draft.edges.length }} edges</span>
-                  </div>
-                  <div class="planner-draft__nodes">
-                    <article
-                      v-for="node in livePlanning.draft.nodes"
-                      :key="node.key"
-                      class="planner-draft__node"
-                      :class="`is-${node.status}`"
-                      :title="node.rationale || node.title"
-                    >
-                      <span>{{ node.status === 'detailed' ? '✓' : '○' }}</span>
-                      <div><strong>{{ node.title }}</strong><small>{{ node.capabilityId }}</small></div>
-                    </article>
-                  </div>
-                  <div v-if="plannerRationales.length" class="planner-draft__rationale">
-                    <strong>决策依据</strong>
-                    <p v-for="item in plannerRationales" :key="item.key"><b>{{ item.title }}：</b>{{ item.rationale }}</p>
-                  </div>
-                </div>
-              </div>
-              <div
-                v-for="result in displayPlanner.results"
-                :key="result.id"
-                class="run-progress-result"
-              >
-                <span class="run-progress-result__mark" aria-hidden="true">✓</span>
-                <span class="run-progress-result__title">{{ result.title }}</span>
-                <span class="run-progress-result__metrics">{{ metricsText(result.metrics) }}</span>
-                <button
-                  v-if="result.kind === 'graph_compiled'"
-                  type="button"
-                  class="run-progress-result__action"
-                  @click="openGraph"
-                >查看 Graph</button>
-              </div>
-            </div>
-          </section>
-
-          <template v-if="showTasks">
-            <section
-              v-for="group in visibleTasks"
-              :key="group.graphNodeId || group.title"
-              class="run-progress-group"
-              :class="{ 'is-open': isExpanded(groupKey(group), group.status) }"
-            >
-              <button type="button" class="run-progress-group__head" @click="toggleExpanded(groupKey(group), group.status)">
-                <span class="run-progress-group__mark" :class="'is-' + group.status" aria-hidden="true">{{ statusMark(group.status) }}</span>
-                <span class="run-progress-group__title">{{ group.title }}</span>
-                <span v-if="!isExpanded(groupKey(group), group.status)" class="run-progress-group__digest">{{ taskDigest(group) }}</span>
-              </button>
-              <div v-if="isExpanded(groupKey(group), group.status)" class="run-progress-group__body">
-                <p v-if="group.status === 'running'" class="run-progress-group__note">正在执行</p>
-                <p v-if="group.errorCode" class="run-progress-group__note is-failed">执行失败 · {{ group.errorCode }}</p>
-                <div v-for="tool in group.tools" :key="tool.id" class="run-progress-tool">
-                  <span class="run-progress-tool__mark" :class="'is-' + tool.status" aria-hidden="true">{{ tool.status === 'failed' ? '×' : '↳' }}</span>
-                  <span class="run-progress-tool__name">{{ tool.title }}</span>
-                  <span v-if="tool.metrics.latencyMs != null" class="run-progress-tool__meta">{{ tool.metrics.latencyMs }} ms</span>
-                </div>
-                <div v-for="artifact in taskArtifacts(group)" :key="artifact.entryId" class="run-progress-artifact">
-                  <span class="run-progress-artifact__mark" aria-hidden="true">▣</span>
-                  <button type="button" class="run-progress-artifact__open" @click="emit('openArtifact', artifact)">{{ artifact.name }}</button>
-                </div>
-              </div>
-            </section>
-          </template>
-
-          <template v-if="filter === 'Tools'">
-            <div v-for="tool in flatTools" :key="tool.id" class="run-progress-tool">
-              <span class="run-progress-tool__mark" :class="'is-' + tool.status" aria-hidden="true">{{ tool.status === 'failed' ? '×' : '↳' }}</span>
-              <span class="run-progress-tool__name">{{ tool.title }}</span>
-              <span v-if="tool.metrics.latencyMs != null" class="run-progress-tool__meta">{{ tool.metrics.latencyMs }} ms</span>
-            </div>
-          </template>
-
-          <p v-if="!displayPlanner && !timeline.tasks.length" class="run-progress__waiting">
-            {{ runState === 'running' ? '等待规划事件…' : runState === 'unknown' ? '暂未观测到该运行状态。' : '该运行没有可展示的事件。' }}
+          <RunSymbolRow
+            v-for="item in visibleSymbols"
+            :key="item.id"
+            :symbol="item"
+            :selected-symbol-id="selectedSymbolId"
+            :is-expanded="isExpanded"
+            @toggle="toggleExpanded"
+            @select="selectSymbol"
+            @open="openSymbol"
+          />
+          <p v-if="!visibleSymbols.length" class="run-progress__waiting">
+            {{ filterText ? '没有匹配的 Symbol。' : runState === 'running' ? '等待 Runtime Projection…' : '该 Run 暂无可展示的 Runtime facts。' }}
           </p>
         </div>
 
-        <button
-          v-if="!followLatest"
-          type="button"
-          class="run-progress__follow"
-          @click="scrollToLatest"
-        >↓ 跟随最新运行</button>
+        <button v-if="!followLatest" type="button" class="run-progress__follow" @click="scrollToLatest">↘ 跟随最新运行</button>
       </div>
     </template>
   </section>
@@ -167,7 +58,9 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
-import { projectRunProgress, type RunProgressMetrics, type RunProgressPlannerGroup, type RunProgressTaskGroup } from '@/workbench/runtime/runProgress'
+import RunBreadcrumb from './RunBreadcrumb.vue'
+import RunSymbolRow from './RunSymbolRow.vue'
+import { findRunDocumentSymbol, projectRunDocument, type RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 
 const props = defineProps<{
   entry: WorkspaceEntry
@@ -175,19 +68,19 @@ const props = defineProps<{
   graphNodes: WorkspaceGraphNode[]
   runId: string | null
   selectedSemanticTaskKey?: string | null
+  selectedSymbolId?: string | null
   runtimeObservation: RuntimeObservation | null
   runtimeStore?: RuntimeEventStore | null
 }>()
 
 const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]
+  selectSymbol: [symbol: RunDocumentSymbol]
   locateGraph: [entry: WorkspaceEntry]
   openArtifact: [entry: WorkspaceEntry]
+  openEntry: [entry: WorkspaceEntry]
+  openSemanticTask: [semanticTaskKey: string | null]
 }>()
-
-const FILTERS = ['All', 'Tasks', 'Tools'] as const
-type ProgressFilter = typeof FILTERS[number]
-const filter = ref<ProgressFilter>('All')
 
 const resolvedRunId = computed(() => props.runId || (props.entry.kind === 'run' ? props.entry.runId || null : null))
 const observedRun = computed(() => props.projection.runs.find(item => item.runId === resolvedRunId.value) || null)
@@ -203,10 +96,10 @@ const runState = computed<'idle' | 'unknown' | 'running' | 'completed' | 'failed
   if (!resolvedRunId.value) return 'idle'
   const status = runStatus.value
   if (!status) return 'unknown'
-  if (status && TERMINAL_OK.has(status)) return 'completed'
-  if (status && TERMINAL_BAD.has(status)) return 'failed'
+  if (TERMINAL_OK.has(status)) return 'completed'
+  if (TERMINAL_BAD.has(status)) return 'failed'
   if (status === 'waiting_review') return 'paused'
-  if (['queued', 'starting', 'running', 'executing', 'planning'].includes(status)) return 'running'
+  if (['queued', 'starting', 'running', 'executing', 'planning', 'pending', 'retrying'].includes(status)) return 'running'
   return 'unknown'
 })
 
@@ -225,12 +118,24 @@ const stateLabel = computed(() => {
     : (STATE_LABELS[runState.value] || '状态未知')
 })
 
+const shorten = (value: string, length: number) => value.length > length ? `${value.slice(0, length)}…` : value
+const goalSource = computed(() => props.projection.mission.goal || props.projection.mission.description || '运行进度')
+const goalTitle = computed(() => {
+  const firstLine = goalSource.value.split(/[\n。！？!?]/)[0].trim()
+  return shorten(firstLine || '运行进度', 58)
+})
+const goalSummary = computed(() => {
+  const description = props.projection.mission.description?.trim()
+  if (description && description !== goalSource.value) return shorten(description, 180)
+  return shorten(goalSource.value, 180)
+})
+const missionTitle = computed(() => shorten(goalTitle.value, 32))
+
 const nowTick = ref(0)
 let durationTimer: ReturnType<typeof setInterval> | null = null
 watch(runState, state => {
-  if (state === 'running' && durationTimer === null) {
-    durationTimer = setInterval(() => { nowTick.value += 1 }, 1000)
-  } else if (state !== 'running' && durationTimer !== null) {
+  if (state === 'running' && durationTimer === null) durationTimer = setInterval(() => { nowTick.value += 1 }, 1000)
+  else if (state !== 'running' && durationTimer !== null) {
     clearInterval(durationTimer)
     durationTimer = null
   }
@@ -241,7 +146,9 @@ const formatDuration = (ms: number) => {
   const total = Math.max(0, Math.floor(ms / 1000))
   const minutes = Math.floor(total / 60)
   const seconds = total % 60
-  return minutes ? `${minutes}m ${String(seconds).padStart(2, '0')}s` : `${seconds}s`
+  if (minutes) return `${minutes}m ${String(seconds).padStart(2, '0')}s`
+  const precise = ms / 1000
+  return `${Number(precise.toFixed(1))}s`
 }
 const durationText = computed(() => {
   void nowTick.value
@@ -253,146 +160,136 @@ const durationText = computed(() => {
   const startedAt = new Date(start).getTime()
   if (Number.isNaN(startedAt)) return null
   const finishedAt = observedRun.value?.completedAt
-  const end = finishedAt && !Number.isNaN(new Date(finishedAt).getTime())
-    ? new Date(finishedAt).getTime()
-    : Date.now()
+  const end = finishedAt && !Number.isNaN(new Date(finishedAt).getTime()) ? new Date(finishedAt).getTime() : Date.now()
   return formatDuration(end - startedAt)
 })
 
-const goalText = computed(() => props.projection.mission.goal || props.projection.mission.description || '运行进度')
+const documentModel = computed(() => projectRunDocument({
+  runId: resolvedRunId.value,
+  mission: props.projection.mission,
+  graph: props.projection.activeGraph,
+  graphNodes: props.graphNodes,
+  entries: props.projection.entries,
+  runtimeObservation: props.runtimeObservation,
+  runtimeStore: props.runtimeStore
+}))
 
-const timeline = computed(() => projectRunProgress(props.runtimeObservation, props.graphNodes))
-const livePlanning = computed(() => props.runtimeStore?.planning || null)
-const plannerRationales = computed(() => (
-  livePlanning.value?.draft.nodes.filter(node => node.rationale).slice(-3) || []
-))
-const livePlannerGroup = computed<RunProgressPlannerGroup | null>(() => {
-  const planning = livePlanning.value
-  if (!planning || planning.status === 'IDLE') return null
-  const status: RunProgressPlannerGroup['status'] = planning.status === 'FAILED'
-    ? 'failed'
-    : planning.status === 'COMPLETED' ? 'success' : 'running'
-  return {
-    category: 'planner',
-    status,
-    headline: status === 'failed' ? '规划失败' : '任务规划',
-    phaseNotes: [planning.stage || '正在准备规划'],
-    phaseBudgetSeconds: null,
-    results: [],
+const expandedSymbols = ref(new Map<string, boolean>())
+const defaultExpanded = (symbol: RunDocumentSymbol) => symbol.defaultExpanded ?? ['running', 'warning', 'failed'].includes(symbol.status)
+const isExpanded = (symbol: RunDocumentSymbol) => expandedSymbols.value.get(symbol.id) ?? defaultExpanded(symbol)
+const toggleExpanded = (symbol: RunDocumentSymbol) => {
+  const next = new Map(expandedSymbols.value)
+  next.set(symbol.id, !isExpanded(symbol))
+  expandedSymbols.value = next
+}
+
+const filterText = ref('')
+const symbolMatches = (symbol: RunDocumentSymbol, needle: string) => [symbol.title, symbol.subtitle, symbol.type, symbol.semanticTaskKey, symbol.graphNodeId, symbol.artifactKey]
+  .filter(Boolean)
+  .some(value => String(value).toLowerCase().includes(needle))
+const filterTree = (symbols: RunDocumentSymbol[], needle: string): RunDocumentSymbol[] => {
+  if (!needle) return symbols
+  return symbols.reduce<RunDocumentSymbol[]>((result, item) => {
+    const children = filterTree(item.children, needle)
+    if (symbolMatches(item, needle) || children.length) result.push({ ...item, children })
+    return result
+  }, [])
+}
+const visibleSymbols = computed(() => filterTree(documentModel.value.symbols, filterText.value.trim().toLowerCase()))
+
+const firstRunningTask = (symbols: RunDocumentSymbol[]): RunDocumentSymbol | null => {
+  for (const item of symbols) {
+    if (item.type === 'task' && item.status === 'running') return item
+    const nested = firstRunningTask(item.children)
+    if (nested) return nested
   }
-})
-const displayPlanner = computed(() => timeline.value.planner || livePlannerGroup.value)
-const livePlanningActive = computed(() => Boolean(
-  livePlanning.value && ['STARTING', 'RUNNING'].includes(livePlanning.value.status)
-))
-const plannerStageLabel = computed(() => {
-  const stage = livePlanning.value?.stage || ''
-  const labels: Record<string, string> = {
-    intent_profile: '解析任务意图',
-    outline: '生成任务骨架',
-    detail: '补全任务细节',
-    relations: '整理依赖关系',
-    decompose: '拆解执行任务',
-    repair: '修复规划结构',
-    repair_coverage: '补全引用覆盖',
+  return null
+}
+watch(documentModel, model => {
+  // The runtime may expose the current task before the user has selected a
+  // symbol. Following that real active node keeps the Inspector useful while
+  // leaving completed/pending Runs unselected.
+  if (props.selectedSymbolId || props.selectedSemanticTaskKey) return
+  const current = firstRunningTask(model.symbols)
+  if (current) {
+    emit('selectSymbol', current)
+    emit('selectSemanticTask', current.semanticTaskKey || null)
   }
-  return labels[stage] || stage || '准备规划'
-})
-const livePlannerModelLabel = computed(() => {
-  const phase = livePlanning.value?.modelPhase
-  if (phase === 'WAITING_FIRST_TOKEN') return '等待模型首 token'
-  if (phase === 'ACTIVE') return '模型响应中'
-  if (phase === 'COMPLETED') return '模型响应完成'
-  return '启动模型调用'
-})
-
-// ---- Collapse：手动展开状态优先于运行状态，polling 不覆盖用户选择 ----
-const manualExpanded = ref(new Map<string, boolean>())
-const groupKey = (group: RunProgressTaskGroup) => group.graphNodeId || group.title
-const AUTO_OPEN = new Set(['running', 'warning', 'failed'])
-const isExpanded = (key: string, status: string) => (
-  manualExpanded.value.get(key) ?? AUTO_OPEN.has(status)
-)
-const toggleExpanded = (key: string, status: string) => {
-  const effective = manualExpanded.value.get(key) ?? AUTO_OPEN.has(status)
-  const next = new Map(manualExpanded.value)
-  next.set(key, !effective)
-  manualExpanded.value = next
-}
-const plannerOpen = computed(() => {
-  const planner = displayPlanner.value
-  if (!planner) return false
-  return manualExpanded.value.get('planner') ?? AUTO_OPEN.has(planner.status)
-})
-const plannerBudgetText = computed(() => {
-  const planner = displayPlanner.value
-  if (!planner || planner.status !== 'running' || planner.phaseBudgetSeconds == null) return null
-  const minutes = Math.max(1, Math.round(planner.phaseBudgetSeconds / 60))
-  return `模型推理中，预算最长 ${minutes} 分钟`
-})
-const plannerDigest = computed(() => {
-  const planner = displayPlanner.value
-  if (!planner) return ''
-  if (planner.status === 'failed') return planner.phaseNotes[0] || ''
-  return planner.results.map(result => [result.title, metricsText(result.metrics)].filter(Boolean).join(' · ')).join(' / ')
-})
-const taskDigest = (group: RunProgressTaskGroup) => {
-  if (group.status === 'failed') return group.errorCode || '执行失败'
-  if (group.durationMs != null) return formatDuration(group.durationMs)
-  return '正在执行'
-}
-
-const statusMark = (status: string) => (
-  status === 'running' ? '●' : status === 'success' ? '✓' : status === 'failed' ? '×' : '!'
-)
-
-const metricsText = (metrics: RunProgressMetrics) => {
-  const parts: string[] = []
-  if (metrics.taskCount != null) parts.push(`${metrics.taskCount} Tasks`)
-  if (metrics.dependencyCount != null) parts.push(`${metrics.dependencyCount} Dependencies`)
-  if (metrics.nodeCount != null) parts.push(`${metrics.nodeCount} Nodes`)
-  if (metrics.edgeCount != null) parts.push(`${metrics.edgeCount} Edges`)
-  if (metrics.constraintCount != null) parts.push(`${metrics.constraintCount} Constraints`)
-  return parts.join(' · ')
-}
-
-const showPlanner = computed(() => filter.value !== 'Tools')
-const showTasks = computed(() => filter.value !== 'Tools')
-const visibleTasks = computed(() => {
-  if (filter.value === 'Tools') return []
-  const tasks = timeline.value.tasks
-  return [...tasks].sort((left, right) => {
-    const rank = (status: string) => (status === 'running' ? 0 : status === 'failed' ? 1 : 2)
-    return rank(left.status) - rank(right.status)
-  })
-})
-const flatTools = computed(() => timeline.value.tasks.flatMap(group => group.tools))
-const taskArtifacts = (group: RunProgressTaskGroup) => (
-  group.semanticTaskKey
-    ? props.projection.entries.filter(entry => entry.kind === 'artifact' && entry.semanticTaskKey === group.semanticTaskKey)
-    : []
-)
-
-// ---- Task / Graph 联动：更新 selection 不切换当前 editor ----
-watch(() => timeline.value.tasks, tasks => {
-  const running = tasks.find(group => group.status === 'running' && group.semanticTaskKey)
-  const first = tasks.find(group => group.semanticTaskKey)
-  const key = running?.semanticTaskKey || first?.semanticTaskKey || null
-  if (key && key !== props.selectedSemanticTaskKey) emit('selectSemanticTask', key)
 }, { immediate: true })
 
-const openGraph = () => {
-  const graphEntry = props.projection.entries.find(entry => entry.kind === 'graph')
-  if (graphEntry) emit('locateGraph', graphEntry)
+const breadcrumbItems = computed(() => {
+  const selected = findRunDocumentSymbol(documentModel.value.symbols, props.selectedSymbolId || null)
+  if (!selected) return []
+  const path: RunDocumentSymbol[] = []
+  const visit = (items: RunDocumentSymbol[]): boolean => {
+    for (const item of items) {
+      if (item.id === selected.id) { path.push(item); return true }
+      if (visit(item.children)) { path.unshift(item); return true }
+    }
+    return false
+  }
+  visit(documentModel.value.symbols)
+  return path
+})
+
+const symbolEntry = (item: RunDocumentSymbol) => props.projection.entries.find(entry => (
+  (item.artifactId && entry.artifactId === item.artifactId)
+  || (item.artifactKey && entry.artifactKey === item.artifactKey)
+  || (item.semanticTaskKey && entry.kind === 'task' && entry.semanticTaskKey === item.semanticTaskKey)
+)) || null
+
+const selectSymbol = (item: RunDocumentSymbol) => {
+  emit('selectSymbol', item)
+  if (item.semanticTaskKey) emit('selectSemanticTask', item.semanticTaskKey)
+  if (item.type === 'artifact') {
+    const entry = symbolEntry(item)
+    if (entry) emit('openArtifact', entry)
+  } else if (item.type === 'acg') {
+    const entry = props.projection.entries.find(candidate => candidate.kind === 'graph')
+    if (entry) emit('locateGraph', entry)
+  }
 }
 
-// ---- Follow Latest：用户上滚即停止跟随，按钮恢复 ----
+const openSymbol = (item: RunDocumentSymbol) => {
+  if (item.type === 'task' || item.type === 'acg-node') {
+    emit('openSemanticTask', item.semanticTaskKey || null)
+    return
+  }
+  if (item.type === 'artifact') {
+    const entry = symbolEntry(item)
+    if (entry) emit('openArtifact', entry)
+    return
+  }
+  if (item.type === 'acg') {
+    const entry = props.projection.entries.find(candidate => candidate.kind === 'graph')
+    if (entry) emit('locateGraph', entry)
+  }
+}
+
+const openMission = () => {
+  const mission = props.projection.entries.find(entry => entry.kind === 'virtual_document' && entry.name === 'mission.md')
+    || {
+      entryId: 'overview:mission.md', kind: 'virtual_document' as const, name: 'mission.md', title: 'mission.md', group: 'overview', displayOrder: 0,
+      content: props.projection.mission.goal
+    }
+  emit('openEntry', mission)
+}
+
+const locateBreadcrumb = (id: string) => {
+  if (id === 'mission') {
+    openMission()
+    return
+  }
+  if (id === 'run') return
+  const item = findRunDocumentSymbol(documentModel.value.symbols, id)
+  if (item) selectSymbol(item)
+}
+
 const scrollBody = ref<HTMLElement | null>(null)
 const followLatest = ref(true)
 const onScroll = () => {
   const el = scrollBody.value
-  if (!el) return
-  followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  if (el) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
 }
 const scrollToLatest = async () => {
   followLatest.value = true
@@ -400,7 +297,7 @@ const scrollToLatest = async () => {
   const el = scrollBody.value
   if (el) el.scrollTop = el.scrollHeight
 }
-watch(timeline, async () => {
+watch(documentModel, async () => {
   if (!followLatest.value) return
   await nextTick()
   const el = scrollBody.value
@@ -409,72 +306,37 @@ watch(timeline, async () => {
 </script>
 
 <style scoped>
-.run-progress { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--wb-text); }
-.run-progress__header { display: grid; gap: 5px; max-width: 920px; padding-bottom: 12px; border-bottom: 1px solid var(--wb-border-soft); }
-.run-progress__goal { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.45; }
-.run-progress__meta { display: flex; align-items: baseline; gap: 12px; }
-.run-progress__status { font: 10px var(--font-mono, monospace); letter-spacing: .08em; color: var(--wb-accent); }
+.run-progress { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); }
+.run-progress__document-head { width: 100%; padding-bottom: 2px; }
+.run-progress__header { display: grid; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--wb-border-soft); }
+.run-progress__eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .12em; }
+.run-progress__heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.run-progress__heading-copy { min-width: 0; }
+.run-progress__goal { margin: 0; color: var(--wb-text); font-size: 18px; font-weight: 650; line-height: 1.35; text-wrap: pretty; }
+.run-progress__summary { max-width: 760px; margin: 3px 0 0; overflow: hidden; color: var(--wb-text-secondary); font-size: 12px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
+.run-progress__mission-link { flex: 0 0 auto; padding: 3px 0; border: 0; color: var(--wb-accent); background: transparent; cursor: pointer; font: 10px var(--font-mono, monospace); }
+.run-progress__mission-link:hover { text-decoration: underline; }
+.run-progress__meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+.run-progress__status { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
 .run-progress__status.is-completed { color: var(--wb-success); }
 .run-progress__status.is-failed { color: var(--wb-danger); }
 .run-progress__status.is-paused { color: var(--wb-warning); }
-.run-progress__runid { overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.run-progress__duration, .run-progress__runid { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.run-progress__runid { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-progress__empty { display: grid; flex: 1; place-items: center; color: var(--wb-text-muted); font-size: 12px; }
-.run-progress__filters { display: flex; gap: 2px; padding: 8px 0; }
-.run-progress__filter { padding: 3px 10px; border: 0; border-radius: 999px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 11px; transition: color 140ms var(--ease-out), background-color 140ms var(--ease-out); }
-.run-progress__filter.is-active { color: var(--wb-text); background: var(--wb-hover); }
-.run-progress__body { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
-.run-progress__stream { max-width: 880px; padding-bottom: 42px; }
-.run-progress__waiting { padding: 16px 2px; color: var(--wb-text-muted); font-size: 12px; }
-.run-progress-group { padding: 4px 0; }
-.run-progress-group__head { display: flex; align-items: baseline; gap: 9px; width: 100%; padding: 6px 2px; border: 0; background: transparent; cursor: pointer; text-align: left; }
-.run-progress-group__mark { flex: 0 0 auto; font-size: 11px; }
-.run-progress-group__mark.is-running { color: var(--wb-accent); }
-.run-progress-group__mark.is-success { color: var(--wb-success); }
-.run-progress-group__mark.is-warning { color: var(--wb-warning); }
-.run-progress-group__mark.is-failed { color: var(--wb-danger); }
-.run-progress-group__title { color: var(--wb-text); font-size: 12.5px; font-weight: 600; }
-.run-progress-group__digest { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.run-progress-group__body { display: grid; gap: 6px; padding: 2px 0 8px 22px; }
-.run-progress-group__note { margin: 0; color: var(--wb-text-secondary); font-size: 11.5px; }
-.run-progress-group__note.is-failed { color: var(--wb-danger); }
-.run-progress-live { display: grid; gap: 5px; padding: 7px 9px; border-left: 2px solid var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 7%, transparent); }
-.run-progress-live__line, .run-progress-live__metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: var(--wb-text-secondary); font-size: 11px; }
-.run-progress-live__line strong { color: var(--wb-text); font-size: 11.5px; }
-.run-progress-live__metric, .run-progress-live__metrics, .run-progress-live__facts { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
-.run-progress-live__pulse { color: var(--wb-accent); }
-.run-progress-live__pulse.is-done { color: var(--wb-success); }
-.run-progress-live__pulse.is-failed, .run-progress-live__facts.is-failed { color: var(--wb-danger); }
-.run-progress-live__facts { line-height: 1.5; }
-.run-progress-live__output-wrap { display: grid; gap: 4px; min-width: 0; }
-.run-progress-live__output-label { display: flex; justify-content: space-between; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
-.run-progress-live__output { max-height: 220px; margin: 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); color: var(--wb-text-secondary); font: 10.5px/1.55 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
-.planner-draft { display: grid; gap: 7px; margin-top: 2px; padding-top: 7px; border-top: 1px solid var(--wb-border-soft); }
-.planner-draft__head { display: flex; justify-content: space-between; color: var(--wb-accent); font: 10px var(--font-mono, monospace); }
-.planner-draft__nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 5px; max-height: 250px; overflow: auto; }
-.planner-draft__node { display: flex; gap: 7px; min-width: 0; padding: 7px 8px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); color: var(--wb-text-muted); }
-.planner-draft__node.is-detailed { border-color: color-mix(in srgb, var(--wb-success) 32%, var(--wb-border-soft)); color: var(--wb-success); }
-.planner-draft__node div { min-width: 0; }
-.planner-draft__node strong, .planner-draft__node small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.planner-draft__node strong { color: var(--wb-text-secondary); font-size: 10.5px; font-weight: 500; }
-.planner-draft__node small { margin-top: 2px; color: var(--wb-text-muted); font: 9px var(--font-mono, monospace); }
-.planner-draft__rationale { display: grid; gap: 4px; padding: 7px 8px; border-left: 2px solid var(--wb-warning); background: color-mix(in srgb, var(--wb-warning) 5%, transparent); }
-.planner-draft__rationale > strong { color: var(--wb-warning); font-size: 10px; }
-.planner-draft__rationale p { margin: 0; color: var(--wb-text-muted); font-size: 10.5px; line-height: 1.5; }
-.planner-draft__rationale b { color: var(--wb-text-secondary); font-weight: 500; }
-.run-progress-result { display: flex; align-items: baseline; gap: 8px; }
-.run-progress-result__mark { color: var(--wb-success); font-size: 11px; }
-.run-progress-result__title { color: var(--wb-text); font-size: 12px; }
-.run-progress-result__metrics { color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); }
-.run-progress-result__action { padding: 1px 8px; border: 1px solid color-mix(in srgb, var(--wb-accent) 32%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 10px; }
-.run-progress-result__action:hover { border-color: color-mix(in srgb, var(--wb-accent) 58%, var(--wb-border)); background: var(--wb-hover); }
-.run-progress-tool { display: flex; align-items: baseline; gap: 8px; }
-.run-progress-tool__mark { flex: 0 0 auto; color: var(--wb-text-muted); font-size: 11px; }
-.run-progress-tool__mark.is-failed { color: var(--wb-danger); }
-.run-progress-tool__name { color: var(--wb-text-secondary); font-size: 11.5px; }
-.run-progress-tool__meta { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
-.run-progress-artifact { display: flex; align-items: baseline; gap: 8px; }
-.run-progress-artifact__mark { color: var(--wb-accent); font-size: 11px; }
-.run-progress-artifact__open { padding: 0; border: 0; color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 11.5px; }
-.run-progress-artifact__open:hover { text-decoration: underline; }
-.run-progress__follow { position: sticky; bottom: 10px; display: block; margin: 0 auto; padding: 5px 14px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: var(--wb-surface-2); cursor: pointer; font-size: 11px; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+.run-progress__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0 7px; }
+.run-progress__toolbar-label { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
+.run-progress__filter { display: flex; align-items: center; gap: 7px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.run-progress__filter input { width: 130px; padding: 4px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); outline: 0; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
+.run-progress__filter input:focus { border-color: var(--wb-accent); }
+.run-progress__body { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: var(--wb-border-strong) transparent; scrollbar-width: thin; }
+.run-progress__stream { width: 100%; padding: 2px 0 42px; }
+.run-progress__waiting { padding: 16px 0; color: var(--wb-text-muted); font-size: 12px; }
+.run-progress__follow { position: sticky; bottom: 10px; display: block; margin: 0 auto; padding: 5px 14px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: var(--wb-surface-2); cursor: pointer; font-size: 11px; box-shadow: 0 2px 8px rgb(0 0 0 / 18%); }
+
+@media (max-width: 680px) {
+  .run-progress__heading-row { display: grid; gap: 8px; }
+  .run-progress__summary { white-space: normal; }
+  .run-progress__mission-link { justify-self: start; }
+}
 </style>

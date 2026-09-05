@@ -15,6 +15,7 @@ import ProjectTaskArtifactsInspector from './ProjectTaskArtifactsInspector.vue'
 import ProjectTaskExecutionInspector from './ProjectTaskExecutionInspector.vue'
 import ProjectTaskIdentityInspector from './ProjectTaskIdentityInspector.vue'
 import ProjectRunSidebarView from './ProjectRunSidebarView.vue'
+import RunSelectionInspector from './RunSelectionInspector.vue'
 import type { WorkbenchContribution } from '@/workbench/types'
 
 export const projectContribution: WorkbenchContribution = {
@@ -47,11 +48,18 @@ export const projectContribution: WorkbenchContribution = {
   ],
   inspectorSections: [
     {
+      id: 'project.run-selection-section',
+      title: 'Selection',
+      order: 50,
+      component: RunSelectionInspector,
+      when: context => context.entry?.kind === 'progress' || (context.entry?.kind === 'run' && Boolean(context.selectedSymbolId))
+    },
+    {
       id: 'project.node-section',
       title: 'Identity',
       order: 100,
       component: ProjectNodeInspector,
-      when: context => Boolean(context.graphNode) && context.entry?.kind !== 'task'
+      when: context => Boolean(context.graphNode) && context.entry?.kind !== 'task' && context.entry?.kind !== 'progress'
     },
     {
       id: 'project.graph-section',
@@ -93,7 +101,7 @@ export const projectContribution: WorkbenchContribution = {
       title: 'Run',
       order: 100,
       component: ProjectRunInspector,
-      when: context => context.entry?.kind === 'run'
+      when: context => context.entry?.kind === 'run' && !context.selectedSymbolId
     },
     {
       id: 'project.mission-section',

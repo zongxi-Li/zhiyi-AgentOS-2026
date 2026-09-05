@@ -1,49 +1,52 @@
 <template>
   <main class="editor-group" aria-label="Workspace editor">
     <nav class="editor-tabs" aria-label="Open editors" role="tablist">
-      <button
-        v-if="sidebarHidden"
-        class="editor-navigator-trigger"
-        type="button"
-        aria-label="唤醒项目导航"
-        title="唤醒项目导航（窗口放不下时会让出右侧详情的空间）"
-        @click="emit('restoreSidebar')"
-      >
-        <span class="editor-navigator-trigger__mark" aria-hidden="true">
-          <el-icon><Expand /></el-icon>
-        </span>
-      </button>
-      <div v-for="opened in openEntries" :key="opened.entry.entryId" class="editor-tab" :class="{ 'is-active': opened.entry.entryId === activeEditorId }">
-        <button class="editor-tab__main" type="button" role="tab" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
-          <span v-if="tabStatusMark(opened.entry)" class="editor-tab__status" :class="'is-' + tabStatus(opened.entry)" aria-hidden="true">{{ tabStatusMark(opened.entry) }}</span>
-          <span class="editor-tab__kind" aria-hidden="true">
-            <el-icon><component :is="workspaceEntryIcon(opened.entry.kind)" /></el-icon>
+      <div class="editor-tabs__scroll">
+        <button
+          v-if="sidebarHidden"
+          class="editor-navigator-trigger"
+          type="button"
+          aria-label="唤醒项目导航"
+          title="唤醒项目导航（窗口放不下时会让出右侧详情的空间）"
+          @click="emit('restoreSidebar')"
+        >
+          <span class="editor-navigator-trigger__mark" aria-hidden="true">
+            <el-icon><Expand /></el-icon>
           </span>
-          <span class="editor-tab__name">{{ editorTitle(opened.entry) }}</span>
-          <span v-if="!opened.available" class="editor-tab__missing">missing</span>
         </button>
-        <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="emit('close', opened.entry.entryId)">×</button>
+        <div v-for="opened in openEntries" :key="opened.entry.entryId" class="editor-tab" :class="{ 'is-active': opened.entry.entryId === activeEditorId }">
+          <button class="editor-tab__main" type="button" role="tab" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
+            <span v-if="tabStatusMark(opened.entry)" class="editor-tab__status" :class="'is-' + tabStatus(opened.entry)" aria-hidden="true">{{ tabStatusMark(opened.entry) }}</span>
+            <span class="editor-tab__kind" aria-hidden="true">
+              <el-icon><component :is="workspaceEntryIcon(opened.entry.kind)" /></el-icon>
+            </span>
+            <span class="editor-tab__name">{{ editorTitle(opened.entry) }}</span>
+            <span v-if="!opened.available" class="editor-tab__missing">missing</span>
+          </button>
+          <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="emit('close', opened.entry.entryId)">×</button>
+        </div>
+        <span v-if="!openEntries.length" class="editor-tabs__empty">从 Explorer 打开一个文件</span>
       </div>
-      <span v-if="!openEntries.length" class="editor-tabs__empty">从 Explorer 打开一个文件</span>
-      <span class="editor-tabs__spacer" aria-hidden="true"></span>
-      <button
-        class="editor-inspector-trigger"
-        type="button"
-        :class="{
-          'is-active': inspectorVisible,
-          'is-unavailable': inspectorAutoHidden
-        }"
-        :aria-pressed="inspectorVisible"
-        :aria-label="inspectorVisible ? '收起 Inspector' : '唤醒 Inspector'"
-        :title="inspectorVisible
-          ? '收起 Inspector'
-          : (inspectorAutoHidden ? '唤醒 Inspector（当前窗口空间不足时会自动隐藏）' : '唤醒 Inspector')"
-        @click="toggleInspector"
-      >
-        <span class="editor-inspector-trigger__mark" aria-hidden="true">
-          <el-icon><View /></el-icon>
-        </span>
-      </button>
+      <div class="editor-tabs__actions">
+        <button
+          class="editor-inspector-trigger"
+          type="button"
+          :class="{
+            'is-active': inspectorVisible,
+            'is-unavailable': inspectorAutoHidden
+          }"
+          :aria-pressed="inspectorVisible"
+          :aria-label="inspectorVisible ? '收起 Inspector' : '唤醒 Inspector'"
+          :title="inspectorVisible
+            ? '收起 Inspector'
+            : (inspectorAutoHidden ? '唤醒 Inspector（当前窗口空间不足时会自动隐藏）' : '唤醒 Inspector')"
+          @click="toggleInspector"
+        >
+          <span class="editor-inspector-trigger__mark" aria-hidden="true">
+            <el-icon><View /></el-icon>
+          </span>
+        </button>
+      </div>
     </nav>
 
     <section class="editor-group__surface">
@@ -56,6 +59,7 @@
         :graph="projection.activeGraph || null"
         :graph-nodes="projection.graphNodes"
         :selected-semantic-task-key="selectedSemanticTaskKey"
+        :selected-symbol-id="selectedSymbolId"
         :focus-node-id="focusNodeId"
         :run-id="projection.activeRun?.runId || null"
         :run-status="projection.activeRun?.status || null"
@@ -64,9 +68,11 @@
         :runtime-observation="workbenchContext.runtimeObservation"
         :runtime-store="props.runtimeStore"
         @select-semantic-task="emit('selectSemanticTask', $event)"
+        @select-symbol="emit('selectSymbol', $event)"
         @open-semantic-task="emit('openSemanticTask', $event)"
         @locate-graph="emit('locateGraph', $event || activeOpened.entry)"
         @open-artifact="emit('openArtifact', $event)"
+        @open-entry="emit('openEntry', $event)"
         @cancel-run="emit('cancelRun')"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
@@ -81,6 +87,7 @@ import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/
 import type { WorkbenchContext } from '@/workbench/types'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
+import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 
 export interface OpenWorkspaceEntry {
@@ -93,6 +100,7 @@ const props = defineProps<{
   openEntries: OpenWorkspaceEntry[]
   activeEditorId: string | null
   selectedSemanticTaskKey: string | null
+  selectedSymbolId?: string | null
   focusNodeId: string | null
   registry: WorkbenchContributionRegistry
   workbenchContext: WorkbenchContext
@@ -108,9 +116,11 @@ const emit = defineEmits<{
   activate: [entryId: string]
   close: [entryId: string]
   selectSemanticTask: [semanticTaskKey: string | null]
+  selectSymbol: [symbol: RunDocumentSymbol]
   openSemanticTask: [semanticTaskKey: string | null]
   locateGraph: [entry: WorkspaceEntry]
   openArtifact: [entry: WorkspaceEntry]
+  openEntry: [entry: WorkspaceEntry]
   restoreSidebar: []
   cancelRun: []
 }>()
@@ -151,7 +161,9 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
-.editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow-x: auto; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
+.editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
+.editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
+.editor-tabs__actions { display: flex; flex: 0 0 38px; align-items: stretch; min-width: 38px; border-left: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
 .editor-tab { display: flex; align-items: stretch; width: 220px; min-width: 180px; flex: 0 1 220px; box-sizing: border-box; border-top: 2px solid transparent; border-radius: 7px 7px 0 0; transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out); }
 .editor-tab.is-active { border-top-color: var(--wb-accent); background: color-mix(in srgb, var(--wb-surface-2) 82%, var(--wb-accent)); }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
@@ -169,7 +181,8 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-tab:hover .editor-tab__close, .editor-tab.is-active .editor-tab__close, .editor-tab__close:focus-visible { opacity: 1; }
 .editor-tab__close:hover { color: var(--wb-danger); background: var(--wb-hover); }
 .editor-tabs__empty { align-self: center; padding: 0 14px; color: var(--wb-text-muted); font-size: 11px; }
-.editor-tabs__spacer { flex: 1 1 auto; min-width: 8px; }
+.editor-tabs__scroll::-webkit-scrollbar { height: 4px; }
+.editor-tabs__scroll::-webkit-scrollbar-thumb { background: var(--wb-border-strong); }
 .editor-navigator-trigger {
   position: sticky;
   left: 0;
@@ -205,18 +218,14 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 }
 .editor-navigator-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-inspector-trigger {
-  position: sticky;
-  right: 0;
   z-index: 1;
   display: grid;
-  flex: 0 0 38px;
+  flex: 1 1 auto;
   place-items: center;
   width: 38px;
   min-height: var(--wb-tab-height);
-  margin-left: auto;
   padding: 0 6px;
   border: 0;
-  border-left: 1px solid var(--wb-border-soft);
   color: var(--wb-text-muted);
   background: var(--wb-surface-inset);
   cursor: pointer;

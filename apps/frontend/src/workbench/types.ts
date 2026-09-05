@@ -7,6 +7,7 @@ import type {
   WorkspaceGraphNode
 } from '@/services/api/agentos'
 import type { RuntimeObservation } from './runtime/observation'
+import type { RunDocumentSymbolType } from './runtime/runDocument'
 
 export type WorkbenchSlot = 'activityBar' | 'sidebarViews' | 'editors' | 'inspectors' | 'inspectorSections' | 'secondarySidebarViews' | 'panels' | 'commands'
 
@@ -16,6 +17,9 @@ export interface WorkbenchContext {
   selectedSemanticTaskKey: string | null
   selectedArtifactId: string | null
   selectedAcgNodeId: string | null
+  /** Selection identity only; runtime entities remain in their projections. */
+  selectedSymbolId?: string | null
+  selectedSymbolType?: RunDocumentSymbolType | null
   activeEditorId: string | null
   activeEntryKind: WorkspaceEntryKind | null
   historicalMode: boolean

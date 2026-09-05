@@ -30,6 +30,7 @@
               :class="{
                 'is-active': entry.entryId === activeEditorId,
                 'is-current-run': entry.kind === 'run' && entry.runId === selectedRunId,
+                'is-selected-symbol': entry.kind === 'task' && entry.semanticTaskKey === selectedSemanticTaskKey,
                 'is-legacy': entry.identityQuality === 'legacy',
                 'is-task': entry.kind === 'task'
               }"
@@ -115,6 +116,7 @@ import { workspaceEntryIcon } from './workspaceEntryIcon'
 const props = withDefaults(defineProps<{
   projection: MissionWorkspaceProjection
   activeEditorId: string | null
+  selectedSemanticTaskKey?: string | null
   selectedRunId: string | null
   canRerun?: boolean
   rerunPending?: boolean
@@ -122,7 +124,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   canRerun: false,
   rerunPending: false,
-  rerunDisabledReason: '当前运行尚未结束'
+  rerunDisabledReason: '当前运行尚未结束',
+  selectedSemanticTaskKey: null
 })
 
 const emit = defineEmits<{
@@ -344,6 +347,7 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 
 .workspace-tree__entry:hover { border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-hover); }
 .workspace-tree__entry.is-active { border-left-color: var(--wb-accent); border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-selected); }
+.workspace-tree__entry.is-selected-symbol { color: var(--wb-text); background: color-mix(in srgb, var(--wb-selected) 58%, transparent); }
 .workspace-tree__entry.is-current-run { color: var(--wb-accent); }
 .workspace-tree__entry.is-legacy { color: var(--wb-warning); }
 .workspace-tree__entry.is-task { min-height: 32px; padding-left: 6px; }

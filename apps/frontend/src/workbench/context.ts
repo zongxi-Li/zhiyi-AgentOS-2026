@@ -1,5 +1,6 @@
 import type { WorkspaceEntryKind, WorkspaceDiagnostic } from '@/services/api/agentos'
 import type { RuntimeObservation } from './runtime/observation'
+import type { RunDocumentSymbolType } from './runtime/runDocument'
 import type { WorkbenchContext } from './types'
 
 export interface WorkbenchContextInput {
@@ -8,6 +9,8 @@ export interface WorkbenchContextInput {
   selectedSemanticTaskKey?: string | null
   selectedArtifactId?: string | null
   selectedAcgNodeId?: string | null
+  selectedSymbolId?: string | null
+  selectedSymbolType?: RunDocumentSymbolType | null
   activeEditorId?: string | null
   activeEntryKind?: WorkspaceEntryKind | null
   historicalMode?: boolean
@@ -21,6 +24,8 @@ export const createWorkbenchContext = (input: WorkbenchContextInput): WorkbenchC
   selectedSemanticTaskKey: input.selectedSemanticTaskKey || null,
   selectedArtifactId: input.selectedArtifactId || null,
   selectedAcgNodeId: input.selectedAcgNodeId || null,
+  selectedSymbolId: input.selectedSymbolId || null,
+  selectedSymbolType: input.selectedSymbolType || null,
   activeEditorId: input.activeEditorId || null,
   activeEntryKind: input.activeEntryKind || null,
   historicalMode: Boolean(input.historicalMode),

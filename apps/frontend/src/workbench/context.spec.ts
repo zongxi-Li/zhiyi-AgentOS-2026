@@ -12,6 +12,8 @@ describe('createWorkbenchContext', () => {
       selectedSemanticTaskKey: null,
       selectedArtifactId: null,
       selectedAcgNodeId: null,
+      selectedSymbolId: null,
+      selectedSymbolType: null,
       activeEditorId: null,
       activeEntryKind: null,
       historicalMode: false,
