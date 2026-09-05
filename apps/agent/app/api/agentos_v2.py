@@ -974,6 +974,59 @@ def create_router(
             except KeyError:
                 runtime_run = None
             if runtime_run is not None and runtime_run.mission_id == mission_id:
+                # The Execution Runtime is the authoritative source for Run
+                # lifecycle state. Identity projection can lag after a
+                # restart, so do not expose an old ``running`` snapshot to
+                # Workspace while the reconciler catches up.
+                raw_runtime_status = getattr(runtime_run, "status", None)
+                runtime_status_value = getattr(
+                    raw_runtime_status,
+                    "value",
+                    raw_runtime_status,
+                )
+                runtime_status_map = {
+                    "pending": RunStatus.PENDING,
+                    "planning": RunStatus.PENDING,
+                    "running": RunStatus.RUNNING,
+                    "retrying": RunStatus.RUNNING,
+                    "waiting_review": RunStatus.RUNNING,
+                    "completed": RunStatus.SUCCEEDED,
+                    "failed": RunStatus.FAILED,
+                    "cancelled": RunStatus.CANCELLED,
+                    "superseded": RunStatus.SUPERSEDED,
+                }
+                projected_runtime_status = runtime_status_map.get(runtime_status_value)
+                if projected_runtime_status is not None:
+                    runtime_finished_at = (
+                        getattr(runtime_run, "updated_at", None)
+                        if projected_runtime_status in {
+                            RunStatus.SUCCEEDED,
+                            RunStatus.FAILED,
+                            RunStatus.CANCELLED,
+                            RunStatus.SUPERSEDED,
+                        }
+                        else None
+                    )
+                    projection = projection.model_copy(update={
+                        "active_run": (
+                            projection.active_run.model_copy(update={
+                                "status": projected_runtime_status,
+                                "completed_at": runtime_finished_at or projection.active_run.completed_at,
+                            })
+                            if projection.active_run is not None
+                            and projection.active_run.run_id == runtime_run.run_id
+                            else projection.active_run
+                        ),
+                        "runs": [
+                            item.model_copy(update={
+                                "status": projected_runtime_status,
+                                "completed_at": runtime_finished_at or item.completed_at,
+                            })
+                            if item.run_id == runtime_run.run_id
+                            else item
+                            for item in projection.runs
+                        ],
+                    })
                 runtime_state = getattr(runtime_run, "execution_state", None)
                 runtime_state = runtime_state if isinstance(runtime_state, dict) else {}
                 output_refs = runtime_state.get("outputRefs") or {}

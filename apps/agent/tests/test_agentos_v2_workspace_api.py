@@ -191,3 +191,61 @@ async def test_workspace_api_projects_runtime_shell_while_identity_run_is_pendin
     finally:
         content.close()
         service.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_api_prefers_terminal_runtime_status_over_stale_identity_run(tmp_path):
+    storage = SQLiteV2Storage(tmp_path / "identity-terminal-runtime.sqlite3")
+    repositories = SQLiteV2Repositories(storage)
+    service = AcgIdentityLifecycleService(repositories)
+    content = SQLiteContentManifestStore(tmp_path / "content-terminal-runtime.sqlite3")
+    bridge = IdentityProjectionBridge(service, repositories, content)
+    try:
+        mission = service.create_mission(user_id="user-1", goal="Terminal runtime status")
+        task = service.create_task(
+            mission_id=mission.mission_id,
+            title="Runtime task",
+            objective="Observe terminal status",
+        )
+        blueprint = service.create_blueprint(
+            mission_id=mission.mission_id,
+            version=1,
+            graph_id="acg_terminal_runtime",
+            graph={"nodes": [], "edges": []},
+        )
+        run = service.create_run(
+            mission_id=mission.mission_id,
+            blueprint_id=blueprint.blueprint_id,
+        )
+        repositories.runs.update_status(run.run_id, RunStatus.RUNNING)
+        now = datetime.now(timezone.utc)
+        runtime_run = SimpleNamespace(
+            run_id=run.run_id,
+            mission_id=mission.mission_id,
+            status=WorkflowStatus.FAILED,
+            updated_at=now,
+            execution_state={},
+        )
+        runtime = SimpleNamespace(
+            identity_lifecycle=bridge,
+            content_manifest_store=content,
+            get_status=lambda run_id: runtime_run if run_id == run.run_id else (_ for _ in ()).throw(KeyError(run_id)),
+        )
+        app = FastAPI()
+        app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/agentos/v2/missions/{mission.mission_id}/workspace",
+                params={"runId": run.run_id},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["activeRun"]["status"] == "failed"
+        assert next(item for item in payload["runs"] if item["runId"] == run.run_id)["status"] == "failed"
+    finally:
+        content.close()
+        service.close()
