@@ -2,18 +2,17 @@
   <div
     ref="root"
     class="agent-constellation"
-    :class="{ 'is-controls-open': controlsExpanded, 'is-hovered': isHovered, 'is-pressed': isPressed }"
+    :class="{ 'is-controls-open': controlsExpanded, 'is-hovered': isHovered }"
+    :style="agentThemeStyle"
     data-testid="glass-constellation"
     :data-voice-state="voiceState"
-    :style="avatarStyle"
     role="group"
     aria-label="知弈 Agent 角色控制"
-    @pointerenter="handlePointerEnter"
-    @pointermove="handlePointerMove"
+    @pointerenter="isHovered = true"
     @pointerleave="handlePointerLeave"
     @keydown.esc="controlsExpanded = false"
   >
-    <div class="agent-stage" :class="[`agent-stage--${action}`, `agent-stage--${shape.id}`, { 'agent-stage--listening': isListening, 'agent-stage--awake': isAwake }]">
+    <div class="agent-stage" :class="{ 'agent-stage--listening': isListening, 'agent-stage--awake': isAwake }">
       <div class="agent-stage__halo" aria-hidden="true"></div>
       <div class="agent-stage__orbit-light" aria-hidden="true"></div>
 
@@ -25,90 +24,20 @@
         aria-controls="agent-control-dock"
         :aria-label="controlsExpanded ? '收起 Agent 控制台' : '打开 Agent 控制台'"
         @click="toggleControls"
-        @pointerdown="isPressed = true"
-        @pointerup="isPressed = false"
-        @pointercancel="isPressed = false"
       >
         <svg
+          ref="avatarSvg"
           class="agent-avatar"
           data-testid="agent-avatar"
-          viewBox="-15 -15 259 259"
           role="img"
-          :aria-label="`知弈 Agent，${color.label}${shape.label}，当前${actionLabel}`"
-        >
-          <defs>
-            <linearGradient :id="gradientIds.body" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="var(--agent-light)" />
-            <stop offset="0.38" stop-color="var(--agent-main)" />
-            <stop offset="0.7" stop-color="color-mix(in srgb, var(--agent-main) 72%, var(--agent-deep))" />
-            <stop offset="1" stop-color="var(--agent-deep)" />
-            </linearGradient>
-            <radialGradient :id="gradientIds.gloss" cx="28%" cy="18%" r="82%">
-              <stop offset="0" stop-color="#ffffff" stop-opacity="0.94" />
-              <stop offset="0.18" stop-color="#ffffff" stop-opacity="0.3" />
-              <stop offset="0.48" stop-color="var(--agent-glow)" stop-opacity="0.08" />
-              <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
-            </radialGradient>
-            <radialGradient :id="gradientIds.surface" cx="76%" cy="74%" r="74%">
-              <stop offset="0" stop-color="var(--agent-main)" stop-opacity="0" />
-              <stop offset="0.62" stop-color="var(--agent-deep)" stop-opacity="0.04" />
-              <stop offset="1" stop-color="#062b46" stop-opacity="0.24" />
-            </radialGradient>
-            <linearGradient :id="gradientIds.rim" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#ffffff" stop-opacity="0.96" />
-              <stop offset="0.36" stop-color="var(--agent-glow)" stop-opacity="0.72" />
-              <stop offset="1" stop-color="var(--agent-deep)" stop-opacity="0.28" />
-            </linearGradient>
-            <filter :id="gradientIds.volume" x="-30%" y="-30%" width="160%" height="180%" color-interpolation-filters="sRGB">
-              <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur" />
-              <feOffset dy="5" result="offsetBlur" />
-              <feFlood flood-color="#122868" flood-opacity="0.3" result="shade" />
-              <feComposite in="shade" in2="offsetBlur" operator="in" result="shadow" />
-              <feComposite in="SourceGraphic" in2="shadow" operator="over" />
-            </filter>
-          </defs>
-
-          <g v-if="shapeBeforePath" class="agent-avatar__shape-layer agent-avatar__shape-layer--leaving" :transform="shapeBeforeTransform">
-            <path class="agent-avatar__body agent-avatar__body--leaving" :d="shapeBeforePath" :fill="`url(#${gradientIds.body})`" />
-          </g>
-          <g class="agent-avatar__shape-layer" :transform="shape.transform">
-            <path class="agent-avatar__body" :class="{ 'is-changing': shapePulse }" :d="shape.path" :fill="`url(#${gradientIds.body})`" :filter="`url(#${gradientIds.volume})`" />
-            <path class="agent-avatar__gloss" :d="shape.path" :fill="`url(#${gradientIds.gloss})`" />
-            <path class="agent-avatar__surface" :d="shape.path" :fill="`url(#${gradientIds.surface})`" />
-            <g :transform="shape.id === 'blob' ? customTransform : undefined">
-              <ellipse class="agent-avatar__specular" cx="-42" cy="-55" rx="20" ry="9" transform="rotate(-28 -42 -55)" />
-            </g>
-          </g>
-
-          <g class="agent-avatar__face-shell">
-            <g class="agent-avatar__face" :style="gazeStyle">
-              <template v-if="shape.id === 'blob'">
-                  <g :transform="referenceTransform">
-                    <path class="agent-avatar__eye agent-avatar__reference-eye" :d="referenceEyePaths.left" />
-                    <path class="agent-avatar__eye agent-avatar__reference-eye" :d="referenceEyePaths.right" />
-                  </g>
-              </template>
-              <template v-else>
-                <g :transform="customTransform">
-                  <ellipse class="agent-avatar__eye" cx="-38" cy="0" rx="15" ry="24" />
-                  <ellipse class="agent-avatar__eye" cx="38" cy="0" rx="15" ry="24" />
-                </g>
-              </template>
-            </g>
-          </g>
-          <g :transform="customTransform">
-            <circle class="agent-avatar__spark" cx="-76" cy="-70" r="4" />
-            <g transform="translate(75 -58) scale(7)">
-              <path class="agent-avatar__spark agent-avatar__star" :d="referenceStarPath" />
-            </g>
-          </g>
-        </svg>
+          :aria-label="`知弈 Agent，${colorLabel}${shapeLabel}，当前${statusLabel}`"
+        ></svg>
       </button>
 
       <div class="agent-stage__prompt" aria-hidden="true">{{ controlsExpanded ? '控制台已展开' : '点击唤醒控制台' }}</div>
       <div class="agent-stage__status" aria-live="polite">
         <span class="agent-stage__status-dot"></span>
-        <span>{{ actionLabel }}</span>
+        <span>{{ shownLabel }}</span>
       </div>
 
       <div
@@ -123,147 +52,287 @@
     </div>
 
     <div id="agent-control-dock" data-testid="agent-controls" class="agent-controls" :class="{ 'is-open': controlsExpanded }" :aria-hidden="!controlsExpanded" aria-label="Agent 动效控制" @click.stop>
-      <div class="agent-controls__line">
-        <span class="agent-controls__label">SHAPE</span>
+      <div class="agent-controls__head">
+        <div>
+          <span class="agent-controls__eyebrow">AGENT CONSOLE</span>
+          <strong>调节协作者</strong>
+        </div>
+        <div class="agent-controls__summary">
+          <span class="agent-controls__summary-dot"></span>
+          <span>{{ shownLabel }}</span>
+          <span class="agent-controls__summary-divider">·</span>
+          <span>{{ shapeLabel }}</span>
+        </div>
+        <button class="agent-controls__close" type="button" aria-label="关闭 Agent 控制台" @click="controlsExpanded = false">×</button>
+      </div>
+
+      <div class="agent-controls__tabs" role="tablist" aria-label="Agent 控制类别">
         <button
-          v-for="item in shapes"
-          :key="item.id"
-          class="agent-control agent-control--shape"
-          data-testid="agent-shape-option"
+          v-for="panel in controlPanels"
+          :key="panel.id"
+          class="agent-controls__tab"
+          :class="{ 'is-active': activePanel === panel.id }"
+          :data-testid="`agent-control-tab-${panel.id}`"
           type="button"
-          :aria-label="`切换为${item.label}`"
-          :aria-pressed="shape.id === item.id"
-          @click="setShape(item.id)"
+          role="tab"
+          :aria-selected="activePanel === panel.id"
+          :aria-controls="`agent-control-panel-${panel.id}`"
+          @click="activePanel = panel.id"
         >
-          <span class="agent-control__shape-mark" :class="`agent-control__shape-mark--${item.id}`"></span>
-          <span>{{ item.label }}</span>
+          <span>{{ panel.label }}</span>
+          <small>{{ panel.meta }}</small>
         </button>
       </div>
 
-      <div class="agent-controls__line agent-controls__line--actions">
-        <span class="agent-controls__label">MOOD</span>
-        <button
-          v-for="item in actions"
-          :key="item.id"
-          class="agent-control"
-          data-testid="agent-action-option"
-          type="button"
-          :aria-pressed="action === item.id"
-          @click="triggerAction(item.id)"
-        >{{ item.label }}</button>
-        <button
-          class="agent-control agent-control--voice"
-          data-testid="agent-voice-toggle"
-          type="button"
-          :class="{ 'is-listening': isListening }"
-          :aria-pressed="isListening"
-          :aria-label="isListening ? '停止语音交互' : '开始语音交互'"
-          @click="toggleVoice"
-        >
-          <Microphone aria-hidden="true" />
-          <span>{{ isListening ? (isAwake ? '已唤醒' : '守候中') : '语音' }}</span>
-        </button>
-      </div>
+      <section id="agent-control-panel-shape" class="agent-controls__panel" :class="{ 'is-current': activePanel === 'shape' }" role="tabpanel" aria-labelledby="agent-control-tab-shape" :aria-hidden="activePanel !== 'shape'">
+        <div class="agent-controls__panel-intro">
+          <span>角色轮廓</span>
+          <strong>{{ shapeLabel }}</strong>
+        </div>
+        <div class="agent-controls__choice-grid agent-controls__choice-grid--shapes">
+          <button
+            v-for="item in shapeOptions"
+            :key="item.id"
+            class="agent-control"
+            data-testid="agent-shape-option"
+            type="button"
+            :aria-label="`切换为${item.label}`"
+            :aria-pressed="shapeLabel === item.label"
+            @click="applyShape(item.id)"
+          >{{ item.label }}</button>
+        </div>
+      </section>
 
-      <div class="agent-controls__line agent-controls__line--colors">
-        <span class="agent-controls__label">COLOR</span>
-        <button
-          v-for="item in palettes"
-          :key="item.id"
-          class="agent-color"
-          data-testid="agent-color-option"
-          type="button"
-          :style="{ '--swatch': item.main }"
-          :aria-label="`切换为${item.label}`"
-          :aria-pressed="color.id === item.id"
-          @click="setColor(item.id)"
-        ></button>
-        <span class="agent-controls__hint">{{ voiceStatus }}</span>
-      </div>
+      <section id="agent-control-panel-state" class="agent-controls__panel" :class="{ 'is-current': activePanel === 'state' }" role="tabpanel" aria-labelledby="agent-control-tab-state" :aria-hidden="activePanel !== 'state'">
+        <div class="agent-controls__panel-intro">
+          <span>当前心境</span>
+          <strong>{{ shownLabel }}</strong>
+        </div>
+        <div class="agent-controls__states">
+          <div v-for="group in stateGroups" :key="group.label" class="agent-controls__line agent-controls__line--states">
+            <span class="agent-controls__label">{{ group.label }}</span>
+            <button
+              v-for="item in group.options"
+              :key="item.id"
+              class="agent-control"
+              data-testid="agent-action-option"
+              type="button"
+              :aria-label="`切换到${item.label}`"
+              :aria-pressed="currentState === item.id"
+              @click="applyState(item.id)"
+            >{{ item.label }}</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="agent-control-panel-actions" class="agent-controls__panel" :class="{ 'is-current': activePanel === 'actions' }" role="tabpanel" aria-labelledby="agent-control-tab-actions" :aria-hidden="activePanel !== 'actions'">
+        <div class="agent-controls__panel-intro">
+          <span>即时动作</span>
+          <strong>让它动起来</strong>
+        </div>
+        <div class="agent-controls__line agent-controls__line--actions">
+          <button class="agent-control agent-control--featured" data-testid="agent-action-option" type="button" aria-label="转一圈" @click="applyOneShot('spin')">转一圈</button>
+          <button class="agent-control agent-control--featured" data-testid="agent-action-option" type="button" aria-label="跳一下" @click="applyOneShot('bounce')">跳一下</button>
+          <button class="agent-control agent-control--featured" data-testid="agent-action-option" type="button" aria-label="撒粒子" @click="applyOneShot('burst')">粒子</button>
+          <button class="agent-control" type="button" aria-label="登录轮换" :aria-pressed="mode === 'onboarding'" @click="resumeOnboarding">登录轮换</button>
+          <button class="agent-control" type="button" aria-label="跟随指针" :aria-pressed="followOn" @click="toggleFollow">跟随指针</button>
+          <button
+            class="agent-control agent-control--voice"
+            data-testid="agent-voice-toggle"
+            type="button"
+            :class="{ 'is-listening': isListening }"
+            :aria-pressed="isListening"
+            :aria-label="isListening ? '停止语音交互' : '开始语音交互'"
+            @click="toggleVoice"
+          >
+            <Microphone aria-hidden="true" />
+            <span>{{ isListening ? (isAwake ? '已唤醒' : '守候中') : '语音' }}</span>
+          </button>
+        </div>
+        <p class="agent-controls__hint agent-controls__hint--block">{{ voiceStatus }}</p>
+      </section>
+
+      <section id="agent-control-panel-color" class="agent-controls__panel" :class="{ 'is-current': activePanel === 'color' }" role="tabpanel" aria-labelledby="agent-control-tab-color" :aria-hidden="activePanel !== 'color'">
+        <div class="agent-controls__panel-intro">
+          <span>视觉色彩</span>
+          <strong>{{ colorLabel }}</strong>
+        </div>
+        <div class="agent-controls__color-grid">
+          <button
+            v-for="item in colorOptions"
+            :key="item.id"
+            class="agent-color"
+            data-testid="agent-color-option"
+            type="button"
+            :style="{ '--swatch': item.main, '--swatch-deep': item.deep }"
+            :aria-label="`切换为${item.label}`"
+            :aria-pressed="colorLabel === item.label"
+            :title="item.label"
+            @click="applyColor(item.id)"
+          ><span>{{ item.label }}</span></button>
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, getCurrentInstance, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Microphone } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
+import { GROK_GEO, GROK_META, GrokCharacter, type GrokCharacterInstance } from '@/lib/grok-character'
 
-type ShapeId = 'blob' | 'orb' | 'capsule' | 'prism'
-type ActionId = 'idle' | 'curious' | 'thinking' | 'happy' | 'celebrate' | 'spin' | 'bounce' | 'sway' | 'surprise' | 'playful'
-type Shape = { id: ShapeId; label: string; path: string; transform?: string }
-type Palette = { id: string; label: string; main: string; deep: string; light: string; glow: string; keys: string[] }
+type OneShotId = 'spin' | 'bounce' | 'burst'
 
-const referenceTransform = undefined
-const customTransform = 'translate(114.2705 114.228)'
-const referenceBlobPath = 'M228.541 114.228C228.541 130.133 225.184 145.994 218.738 160.534C212.674 174.217 203.904 186.669 193.065 196.988C155.933 232.34 99.497 238.596 55.5255 212.24C45.097 205.99 35.6851 198.072 27.7451 188.866C19.1926 178.953 12.3686 167.569 7.65781 155.351C2.60712 142.264 0 128.257 0 114.228C0 98.3219 3.35751 82.4611 9.80315 67.9215C15.8672 54.2382 24.6377 41.7862 35.4767 31.4668C72.6081 -3.88483 129.044 -10.1413 173.016 16.2153C183.444 22.4653 192.856 30.3829 200.796 39.5896C209.349 49.5018 216.173 60.8859 220.883 73.1037C225.934 86.1906 228.541 100.198 228.541 114.228Z'
-const referenceEyePaths = {
-  left: 'M130.36 45.98L132.71 46.19L134.98 46.81L137.11 47.83L138.97 49.28L140.47 51.09L141.68 53.12L142.73 55.23L143.76 57.36L144.78 59.49L145.79 61.62L146.79 63.76L147.76 65.91L148.71 68.07L149.63 70.25L150.52 72.43L151.37 74.63L151.99 76.91L152.1 79.26L151.64 81.57L150.59 83.68L149.04 85.45L147.1 86.78L144.9 87.62L142.56 87.93L140.22 87.71L137.98 86.99L135.93 85.82L134.17 84.24L132.78 82.34L131.69 80.25L130.77 78.08L129.87 75.89L128.94 73.72L128 71.56L127.03 69.4L126.05 67.26L125.05 65.12L124.03 62.99L122.93 60.9L121.87 58.79L121.03 56.59L120.72 54.26L121.1 51.93L122.15 49.83L123.75 48.1L125.76 46.89L128.01 46.19Z',
-  right: 'M176.61 37.08L178.72 37.59L180.7 38.48L182.52 39.65L184.2 41.03L185.71 42.59L187.03 44.31L188.2 46.14L189.26 48.03L190.27 49.96L191.26 51.89L192.23 53.84L193.16 55.8L194.05 57.78L194.92 59.77L195.74 61.78L196.53 63.8L197.27 65.84L197.97 67.9L198.47 70.01L198.63 72.18L198.4 74.33L197.58 76.33L195.95 77.72L193.83 78.08L191.71 77.65L189.76 76.69L188.03 75.38L186.53 73.82L185.28 72.05L184.25 70.13L183.4 68.14L182.63 66.11L181.87 64.07L181.07 62.05L180.25 60.04L179.39 58.05L178.49 56.07L177.57 54.1L176.61 52.15L175.62 50.22L174.59 48.31L173.53 46.41L172.54 44.48L171.86 42.42L171.76 40.26L172.62 38.3L174.45 37.19Z'
+// 引擎符号是源码混淆名，这里统一挂中文标签；语音关键词同时收中英文。
+const SHAPE_ZH: Record<string, string> = {
+  blob: '流体', pebble: '卵石', bean: '豆形', egg: '蛋形', squircle: '方圆', tablet: '平板',
+  capsule: '胶囊', cylinder: '圆柱', hex: '六边', gem: '宝石', crystal: '晶体', wedge: '楔形',
+  shield: '盾形', dome: '穹顶', arch: '拱形', cloud: '云朵', teardrop: '水滴', leaf: '叶形'
 }
-const referenceStarPath = 'M0.000 -1.000L0.247 -0.340L0.951 -0.309L0.399 0.130L0.588 0.809L0.000 0.420L-0.588 0.809L-0.399 0.130L-0.951 -0.309L-0.247 -0.340Z'
+const STATE_ZH: Record<string, string> = {
+  sleeping: '睡着了', waking: '苏醒', idle: '待机', listening: '聆听', thinking: '思考中', searching: '搜索中', working: '工作中',
+  excited: '兴奋', surprised: '惊讶', suspicious: '狐疑', angry: '生气', drowsy: '困倦', happy: '开心', curious: '好奇',
+  confused: '困惑', bored: '无聊', proud: '自豪', shy: '害羞', sad: '难过', laughing: '大笑', scared: '害怕', playful: '俏皮', celebrate: '庆祝',
+  orbit: '环绕', radar: '雷达', progress: '进度',
+  spawning: '生成', humming: '哼歌', loading: '加载中', dictating: '听写', writing: '书写', sending: '发送',
+  receiving: '接收', uploading: '上传', notifying: '通知', alerting: '警报', dragging: '拖拽', bouncing: '弹跳', 'powering-down': '关机'
+}
+const COLOR_ZH: Record<string, string> = {
+  black: '黑曜', brown: '棕褐', red: '赤焰', orange: '炽橙', yellow: '金橙', green: '薄荷',
+  cyan: '澄蓝', blue: '蓝曜', violet: '紫晶', magenta: '品红', gray: '岩灰'
+}
 
-const shapes: readonly Shape[] = [
-  { id: 'blob', label: '流体', path: referenceBlobPath, transform: referenceTransform },
-  { id: 'orb', label: '圆团', path: 'M 0 -94 C 53 -94 94 -53 94 0 C 94 53 53 94 0 94 C -53 94 -94 53 -94 0 C -94 -53 -53 -94 0 -94 Z', transform: customTransform },
-  { id: 'capsule', label: '胶囊', path: 'M 0 -102 C 49 -102 75 -65 75 0 C 75 65 49 102 0 102 C -49 102 -75 65 -75 0 C -75 -65 -49 -102 0 -102 Z', transform: customTransform },
-  { id: 'prism', label: '棱面', path: 'M 0 -106 L 76 -45 L 83 34 L 0 103 L -83 34 L -76 -45 Z', transform: customTransform }
-]
+const shapeOptions = Object.keys(GROK_GEO.shapes).map(id => ({ id, label: SHAPE_ZH[id] ?? GROK_GEO.shapes[id].label }))
+const colorOptions = Object.keys(GROK_GEO.palette).map(id => ({
+  id,
+  label: COLOR_ZH[id] ?? id,
+  main: GROK_GEO.palette[id].light,
+  deep: GROK_GEO.palette[id].dark
+}))
+const stateGroups = GROK_META.groups.map(group => ({
+  label: group.label,
+  options: group.states.map(id => ({ id, label: STATE_ZH[id] ?? id }))
+}))
 
-const actions: readonly { id: Exclude<ActionId, 'idle'>; label: string }[] = [
-  { id: 'curious', label: '好奇' },
-  { id: 'thinking', label: '思考' },
-  { id: 'celebrate', label: '庆祝' },
-  { id: 'spin', label: '旋转' },
-  { id: 'bounce', label: '弹跳' },
-  { id: 'sway', label: '摇摆' },
-  { id: 'surprise', label: '惊讶' },
-  { id: 'playful', label: '俏皮' }
-]
-
-const palettes: readonly Palette[] = [
-  { id: 'cyan', label: '澄蓝', main: '#1CC3B0', deep: '#007769', light: '#D5FFFA', glow: '#54F8E5', keys: ['蓝', '青', 'cyan', 'blue'] },
-  { id: 'blue', label: '蓝曜', main: '#2A92FE', deep: '#0E5FAF', light: '#E4F2FF', glow: '#9DCBFF', keys: ['蓝曜', '天蓝', 'blue'] },
-  { id: 'violet', label: '紫晶', main: '#A97EFE', deep: '#5C39A1', light: '#F1E8FF', glow: '#CDB6FF', keys: ['紫', '紫色', 'violet', 'purple'] },
-  { id: 'mint', label: '薄荷', main: '#00C972', deep: '#008048', light: '#D9FFED', glow: '#7BFFC7', keys: ['绿', '薄荷', 'mint', 'green'] },
-  { id: 'coral', label: '珊瑚', main: '#FF5EB1', deep: '#A21E62', light: '#FFF0F8', glow: '#FF9BCF', keys: ['红', '粉', '珊瑚', 'coral', 'pink'] },
-  { id: 'amber', label: '金橙', main: '#FFAF38', deep: '#B86B00', light: '#FFF2D5', glow: '#FFD77A', keys: ['金', '金色', '黄', '黄色', 'amber', 'yellow'] },
-  { id: 'orange', label: '炽橙', main: '#FF781C', deep: '#B83C00', light: '#FFF0E2', glow: '#FFAD7A', keys: ['橙', '橙色', 'orange'] },
-  { id: 'red', label: '赤焰', main: '#FF3E51', deep: '#A8192C', light: '#FFE8EB', glow: '#FF9CA6', keys: ['赤', '红色', 'red'] }
-]
+const controlPanels = [
+  { id: 'shape', label: '形态', meta: `${shapeOptions.length}` },
+  { id: 'state', label: '状态', meta: `${stateGroups.reduce((total, group) => total + group.options.length, 0)}` },
+  { id: 'actions', label: '动作', meta: '3+' },
+  { id: 'color', label: '颜色', meta: `${colorOptions.length}` }
+] as const
+type ControlPanelId = typeof controlPanels[number]['id']
 
 const root = ref<HTMLElement | null>(null)
+const avatarSvg = ref<SVGSVGElement | null>(null)
 const emit = defineEmits<{
   (event: 'voice-message', text: string): void
 }>()
 const chatStore = useChatStore()
-const currentShape = ref<ShapeId>('orb')
+
+const currentShape = ref('blob')
 const currentColor = ref('violet')
-const action = ref<ActionId>('idle')
-const shapePulse = ref(false)
-const shapeBeforePath = ref<string | null>(null)
-const shapeBeforeTransform = ref<string | undefined>(undefined)
+const currentState = ref('idle')
+const mode = ref<'onboarding' | 'hold'>('onboarding')
+const followOn = ref(true)
+const statusLabel = ref('好奇')
+const labelOverride = ref('')
 const controlsExpanded = ref(false)
+const activePanel = ref<ControlPanelId>('state')
 const isHovered = ref(false)
-const isPressed = ref(false)
 const isListening = ref(false)
 const isAwake = ref(false)
 const transcript = ref('')
 const conversationReply = ref('')
 const conversationError = ref('')
 const conversationPending = ref(false)
-const gaze = reactive({ x: 0, y: 0, tiltX: 0, tiltY: 0 })
-let actionTimer: number | undefined
-let shapeTimer: number | undefined
+let bot: GrokCharacterInstance | null = null
+let labelTimer: number | undefined
+let resumeTimer: number | undefined
 let voiceRestartTimer: number | undefined
 
-const componentUid = getCurrentInstance()?.uid ?? 'main'
-const gradientIds = {
-  body: `agent-body-gradient-${componentUid}`,
-  gloss: `agent-gloss-gradient-${componentUid}`,
-  surface: `agent-surface-gradient-${componentUid}`,
-  rim: `agent-rim-gradient-${componentUid}`,
-  volume: `agent-volume-filter-${componentUid}`
+const shapeLabel = computed(() => SHAPE_ZH[currentShape.value] ?? currentShape.value)
+const colorLabel = computed(() => COLOR_ZH[currentColor.value] ?? currentColor.value)
+const shownLabel = computed(() => labelOverride.value || statusLabel.value)
+const agentThemeStyle = computed(() => {
+  const palette = GROK_GEO.palette[currentColor.value] ?? GROK_GEO.palette.violet
+  return {
+    '--agent-main': palette.light,
+    '--agent-deep': palette.dark,
+    '--agent-light': `color-mix(in srgb, ${palette.light} 18%, white)`,
+    '--agent-glow': `color-mix(in srgb, ${palette.light} 44%, white)`
+  }
+})
+const voiceStatus = computed(() => {
+  if (isListening.value && !isAwake.value) return '语音守候中 · 说 “Justin” 唤醒对话'
+  if (isListening.value && isAwake.value) return 'Justin 已唤醒 · 请说出颜色、形状或动作'
+  if (transcript.value) return `识别：${transcript.value}`
+  return '点击语音，或说 “Justin” 开始对话'
+})
+const voiceState = computed(() => isAwake.value ? 'awake' : isListening.value ? 'waiting' : 'idle')
+
+const flashLabel = (text: string, duration = 1500) => {
+  labelOverride.value = text
+  window.clearTimeout(labelTimer)
+  labelTimer = window.setTimeout(() => { labelOverride.value = '' }, duration)
+}
+
+const applyShape = (id: string) => {
+  if (!bot || !GROK_GEO.shapes[id] || currentShape.value === id) return
+  mode.value = 'hold'
+  bot.setMode('hold')
+  currentShape.value = id
+  bot.setShape(id)
+}
+
+const applyColor = (id: string) => {
+  if (!GROK_GEO.palette[id]) return
+  currentColor.value = id
+  bot?.setColor(id, 'light')
+}
+
+const applyState = (id: string) => {
+  if (!bot) return
+  mode.value = 'hold'
+  bot.setMode('hold')
+  bot.setState(id)
+}
+
+const applyOneShot = (id: OneShotId) => {
+  if (!bot) return
+  if (id === 'spin') { bot.spinOnce(1); flashLabel('旋转中') }
+  else if (id === 'bounce') { bot.bounceOnce(); flashLabel('弹跳中') }
+  else { bot.burstOnce(); flashLabel('粒子') }
+}
+
+const resumeOnboarding = () => {
+  if (!bot) return
+  mode.value = 'onboarding'
+  bot.setMode('onboarding')
+}
+
+const toggleFollow = () => {
+  followOn.value = !followOn.value
+  bot?.setFollowPointer(followOn.value)
+}
+
+const resumeOnboardingLater = (delay = 4200) => {
+  window.clearTimeout(resumeTimer)
+  resumeTimer = window.setTimeout(() => {
+    if (!isListening.value) resumeOnboarding()
+  }, delay)
+}
+
+const handlePointerLeave = () => {
+  isHovered.value = false
+}
+
+const toggleControls = () => {
+  controlsExpanded.value = !controlsExpanded.value
+  if (controlsExpanded.value) {
+    activePanel.value = 'state'
+    applyState('curious')
+  }
 }
 
 interface SpeechResultEvent { resultIndex?: number; results: ArrayLike<ArrayLike<{ transcript: string; isFinal?: boolean }>> }
@@ -278,39 +347,6 @@ interface SpeechRecognitionLike {
   stop: () => void
 }
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike
-
-const shape = computed(() => shapes.find(item => item.id === currentShape.value) || shapes[0])
-const color = computed(() => palettes.find(item => item.id === currentColor.value) || palettes[0])
-const actionLabel = computed(() => ({
-  idle: '待机', curious: '好奇探索', thinking: '思考中', happy: '回应完成', celebrate: '庆祝', spin: '旋转中',
-  bounce: '弹跳中', sway: '摇摆中', surprise: '惊讶', playful: '俏皮'
-})[action.value])
-const voiceStatus = computed(() => {
-  if (isListening.value && !isAwake.value) return '语音守候中 · 说 “Justin” 唤醒对话'
-  if (isListening.value && isAwake.value) return 'Justin 已唤醒 · 请说出颜色、形状或动作'
-  if (transcript.value) return `识别：${transcript.value}`
-  return '点击语音，或说 “Justin” 开始对话'
-})
-const voiceState = computed(() => isAwake.value ? 'awake' : isListening.value ? 'waiting' : 'idle')
-const avatarStyle = computed(() => ({
-  '--agent-main': color.value.main,
-  '--agent-deep': color.value.deep,
-  '--agent-light': color.value.light,
-  '--agent-glow': color.value.glow,
-  '--agent-tilt-x': `${gaze.tiltX}deg`,
-  '--agent-tilt-y': `${gaze.tiltY}deg`
-}) as Record<string, string>)
-const gazeStyle = computed(() => {
-  const roll = gaze.x * 0.12 - gaze.y * 0.08
-  return {
-    transform: `translate(${gaze.x.toFixed(2)}px, ${gaze.y.toFixed(2)}px) rotateX(${(-gaze.tiltY).toFixed(2)}deg) rotateY(${(-gaze.tiltX).toFixed(2)}deg) rotate(${roll.toFixed(2)}deg)`
-  }
-})
-
-const toggleControls = () => {
-  controlsExpanded.value = !controlsExpanded.value
-  if (controlsExpanded.value) triggerAction('curious')
-}
 
 const submitConversation = async (text: string) => {
   const message = text.trim()
@@ -335,117 +371,72 @@ const submitConversation = async (text: string) => {
     { deep: true }
   )
 
-  triggerAction('thinking')
+  applyState('thinking')
   try {
     await chatStore.sendMessageStream(message, 'default', undefined, 'agent')
     const latest = chatStore.messages.slice(streamStart).reverse().find(item => item.role === 'assistant')
     if (latest?.content) {
       conversationReply.value = latest.content
-      triggerAction('happy')
+      applyState('happy')
     } else if (!conversationReply.value) {
       conversationError.value = '没有收到有效回复，请稍后再试'
-      triggerAction('surprise')
+      applyState('surprised')
     }
   } catch (error) {
     conversationError.value = error instanceof Error ? error.message : '对话请求失败，请稍后再试'
-    triggerAction('surprise')
+    applyState('surprised')
   } finally {
     stopWatching()
     conversationPending.value = false
+    resumeOnboardingLater()
   }
 }
 
-const triggerAction = (nextAction: ActionId) => {
-  window.clearTimeout(actionTimer)
-  action.value = nextAction
-  if (nextAction !== 'idle' && nextAction !== 'thinking') {
-    const duration = nextAction === 'spin' ? 1250 : nextAction === 'celebrate' ? 1750 : nextAction === 'bounce' ? 1300 : nextAction === 'sway' ? 1450 : nextAction === 'surprise' ? 1050 : 1650
-    actionTimer = window.setTimeout(() => { action.value = 'idle' }, duration)
-  }
-}
-
-const setShape = (nextShape: ShapeId) => {
-  if (nextShape === currentShape.value) return
-  shapeBeforePath.value = shape.value.path
-  shapeBeforeTransform.value = shape.value.transform
-  currentShape.value = nextShape
-  shapePulse.value = true
-  window.clearTimeout(shapeTimer)
-  shapeTimer = window.setTimeout(() => {
-    shapePulse.value = false
-    shapeBeforePath.value = null
-    shapeBeforeTransform.value = undefined
-  }, 420)
-  triggerAction('curious')
-}
-
-const setColor = (nextColor: string) => {
-  if (palettes.some(item => item.id === nextColor)) currentColor.value = nextColor
-}
-
-const handlePointerMove = (event: PointerEvent) => {
-  if (!root.value) return
-  const rect = root.value.getBoundingClientRect()
-  const pointerX = Math.max(-0.6, Math.min(0.6, (event.clientX - rect.left) / rect.width - 0.5))
-  const pointerY = Math.max(-0.6, Math.min(0.6, (event.clientY - rect.top) / rect.height - 0.5))
-  gaze.x = pointerX * 22
-  gaze.y = pointerY * 14
-  gaze.tiltX = Math.max(-3.2, Math.min(3.2, gaze.x * 0.24))
-  gaze.tiltY = Math.max(-2.4, Math.min(2.4, gaze.y * -0.22))
-}
-
-const handlePointerEnter = () => { isHovered.value = true }
-const handlePointerLeave = () => {
-  isHovered.value = false
-  gaze.x = 0
-  gaze.y = 0
-  gaze.tiltX = 0
-  gaze.tiltY = 0
-  isPressed.value = false
-}
-
-const recognitionConstructor = () => {
-  const speechWindow = window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }
-  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
+// “思考中”这类标签要能被“思考”唤醒：剥掉状态后缀再参与匹配。
+const matchKey = (label: string) => label.replace(/(中|了)$/, '')
+const COLOR_KEYS: Record<string, string[]> = {
+  black: ['黑'], brown: ['棕'], red: ['红', '赤'], orange: ['橙'], yellow: ['黄', '金'],
+  green: ['绿', '薄荷'], cyan: ['青', '澄'], blue: ['蓝'], violet: ['紫'],
+  magenta: ['品红', '粉', '洋红'], gray: ['灰', '岩']
 }
 
 const applyVoiceCommand = (rawCommand: string) => {
   const command = rawCommand.toLowerCase()
-  let handled = false
-  const nextPalette = palettes.find(item => item.keys.some(key => command.includes(key)))
-  if (nextPalette) {
-    setColor(nextPalette.id)
-    handled = true
+  let restyled = false
+  let motion = false
+
+  const nextColor = colorOptions.find(item => (COLOR_KEYS[item.id] ?? []).some(key => command.includes(key)))
+  if (nextColor) {
+    applyColor(nextColor.id)
+    restyled = true
   }
 
-  const nextShape = shapes.find(item =>
-    (item.id === 'blob' && /流体|团|blob/.test(command)) ||
-    (item.id === 'orb' && /圆|球|orb/.test(command)) ||
-    (item.id === 'capsule' && /胶囊|长条|capsule/.test(command)) ||
-    (item.id === 'prism' && /棱|方|prism/.test(command))
-  )
+  const nextShape = shapeOptions.find(item => command.includes(matchKey(item.label)) || command.includes(item.id))
   if (nextShape) {
-    setShape(nextShape.id)
-    handled = true
+    applyShape(nextShape.id)
+    restyled = true
   }
 
-  const nextAction = /思考|thinking/.test(command) ? 'thinking'
-    : /庆祝|开心|celebrate/.test(command) ? 'celebrate'
-      : /旋转|转一圈|spin/.test(command) ? 'spin'
-        : /弹跳|跳起来|蹦|bounce|jump/.test(command) ? 'bounce'
-          : /摇摆|摇一摇|晃|sway|wiggle/.test(command) ? 'sway'
-            : /惊讶|惊喜|瞪大|surprise|wow/.test(command) ? 'surprise'
-              : /俏皮|调皮|可爱|playful|wink/.test(command) ? 'playful'
-                : /好奇|探索|curious/.test(command) ? 'curious'
-                  : /待机|停止|idle/.test(command) ? 'idle'
-                    : null
-  if (nextAction) {
-    triggerAction(nextAction)
-    handled = true
-  } else if (nextPalette || nextShape) {
-    triggerAction('curious')
+  if (/旋转|转一圈|spin/.test(command)) { applyOneShot('spin'); motion = true }
+  else if (/弹跳|跳起来|蹦|bounce|jump/.test(command)) { applyOneShot('bounce'); motion = true }
+  else if (/粒子|撒花|burst/.test(command)) { applyOneShot('burst'); motion = true }
+
+  if (!motion) {
+    const nextState = stateGroups
+      .flatMap(group => group.options)
+      .find(item => command.includes(matchKey(item.label)) || command.includes(item.id))
+    if (nextState) {
+      applyState(nextState.id)
+      motion = true
+    } else if (/待机|停止|idle/.test(command)) {
+      resumeOnboarding()
+      motion = true
+    }
   }
-  return handled
+
+  // 换色/换形本身不是表情，补一记好奇让反馈更明显；不得覆盖刚点名的状态。
+  if (restyled && !motion) applyState('curious')
+  return restyled || motion
 }
 
 const wakeWordPattern = /justin|贾斯汀/i
@@ -461,7 +452,7 @@ const handleVoiceTranscript = (rawTranscript: string) => {
     }
 
     isAwake.value = true
-    triggerAction('curious')
+    applyState('curious')
     const afterWakeWord = command.slice((wakeMatch.index ?? 0) + wakeMatch[0].length).replace(/^[\s,，。.!！?？]+/, '')
     transcript.value = afterWakeWord ? `Justin · ${afterWakeWord}` : 'Justin 已唤醒'
     if (afterWakeWord && !applyVoiceCommand(afterWakeWord)) void submitConversation(afterWakeWord)
@@ -478,7 +469,7 @@ const stopVoice = () => {
   recognition = null
   isListening.value = false
   isAwake.value = false
-  if (action.value === 'curious') action.value = 'idle'
+  resumeOnboarding()
 }
 
 let recognition: SpeechRecognitionLike | null = null
@@ -511,7 +502,7 @@ const startVoice = () => {
     recognition.start()
     isListening.value = true
     isAwake.value = false
-    triggerAction('curious')
+    applyState('listening')
   } catch {
     transcript.value = '语音权限尚未开启'
     stopVoice()
@@ -520,132 +511,166 @@ const startVoice = () => {
 
 const toggleVoice = () => { if (isListening.value) stopVoice(); else startVoice() }
 
+const recognitionConstructor = () => {
+  const speechWindow = window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }
+  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
+}
+
+onMounted(() => {
+  if (!avatarSvg.value) return
+  bot = new GrokCharacter(avatarSvg.value, {
+    shape: 'blob',
+    color: 'violet',
+    scheme: 'light',
+    mode: 'onboarding',
+    state: 'idle',
+    loginWrap: true,
+    followPointer: true,
+    badgeColor: GROK_GEO.palette.violet.light,
+    onChange(snapshot) {
+      currentState.value = snapshot.state
+      statusLabel.value = STATE_ZH[snapshot.state] ?? snapshot.state
+    }
+  })
+  // 与登录页一致：首拍从 curious 起播，让角色一上来就有表情。
+  bot.moodN = 1
+  bot.setState('curious', { resetEyes: true })
+})
+
 onBeforeUnmount(() => {
-  window.clearTimeout(actionTimer)
-  window.clearTimeout(shapeTimer)
+  window.clearTimeout(labelTimer)
+  window.clearTimeout(resumeTimer)
   window.clearTimeout(voiceRestartTimer)
   stopVoice()
+  bot?.destroy()
+  bot = null
   if (conversationPending.value) chatStore.cancelMessageStream()
 })
+</script>
+
+<script lang="ts">
+export default { name: 'GlassConstellation' }
 </script>
 
 <style scoped lang="scss">
 .agent-constellation { position: relative; width: min(46vw, 680px); height: min(50vw, 720px); min-width: 420px; min-height: 470px; margin-left: auto; transform: translateX(clamp(0px, 1.8vw, 28px)); isolation: isolate; color: #426286; }
 .agent-stage { position: absolute; inset: 0; display: grid; place-items: center; }
-.agent-stage::before { content: ''; position: absolute; width: 58%; height: 15%; bottom: 13%; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--agent-deep) 22%, transparent), transparent 72%); filter: blur(20px); opacity: .72; }
-.agent-stage__halo { position: absolute; inset: 11%; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--agent-glow) 42%, transparent), color-mix(in srgb, var(--agent-main) 14%, transparent) 38%, transparent 72%); filter: blur(32px); animation: agent-halo 5s ease-in-out infinite; }
-.agent-stage__orbit-light { position: absolute; top: 14%; right: 17%; width: 9px; height: 9px; border: 1px solid rgba(255,255,255,.8); border-radius: 50%; background: var(--agent-glow); box-shadow: 0 0 16px 3px color-mix(in srgb, var(--agent-glow) 66%, transparent); animation: orbit-light 4.8s ease-in-out infinite; }
-.agent-avatar-trigger { position: relative; z-index: 2; width: 74%; height: 74%; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; transition: transform 360ms cubic-bezier(.2, .8, .2, 1), filter 360ms ease; }
-.agent-avatar-trigger:hover { transform: translateY(-4px) scale(1.018); filter: drop-shadow(0 30px 26px color-mix(in srgb, var(--agent-deep) 30%, transparent)); }
-.agent-avatar-trigger:active, .agent-constellation.is-pressed .agent-avatar-trigger { transform: translateY(1px) scale(.975); }
-.agent-avatar-trigger:focus-visible { outline: 3px solid color-mix(in srgb, var(--agent-main) 62%, white); outline-offset: 8px; }
-.agent-avatar { width: 100%; height: 100%; overflow: visible; transform: perspective(720px) rotateX(var(--agent-tilt-y)) rotateY(var(--agent-tilt-x)); transition: transform 500ms cubic-bezier(.2, .8, .2, 1); filter: drop-shadow(0 28px 28px color-mix(in srgb, var(--agent-deep) 22%, transparent)) drop-shadow(0 0 24px color-mix(in srgb, var(--agent-glow) 16%, transparent)); }
-.agent-avatar__body, .agent-avatar__gloss, .agent-avatar__surface { transform-box: fill-box; transform-origin: center; animation: agent-breathe 5.4s cubic-bezier(.45, .05, .55, .95) infinite; }
-.agent-avatar__body { stroke: none; }
-.agent-avatar__body--leaving { animation: agent-shape-leave 420ms cubic-bezier(.2, .8, .2, 1) forwards; }
-.agent-avatar__body.is-changing { animation: agent-shape-change 420ms cubic-bezier(.2, .8, .2, 1); }
-.agent-avatar__gloss { opacity: .48; mix-blend-mode: screen; pointer-events: none; }
-.agent-avatar__surface { opacity: .56; mix-blend-mode: multiply; pointer-events: none; }
-.agent-avatar__specular { fill: rgba(255,255,255,.48); filter: blur(4px); opacity: .62; pointer-events: none; }
-.agent-avatar__face-shell { transform-box: fill-box; transform-origin: center; animation: face-idle-drift 5.4s cubic-bezier(.45, .05, .55, .95) infinite; }
-.agent-avatar__face { transform-box: fill-box; transform-origin: center; transition: transform 180ms ease-out; }
-.agent-avatar__eye { fill: #f8fdff; stroke: color-mix(in srgb, var(--agent-deep) 45%, #172956); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: eye-idle 5.8s ease-in-out infinite; }
-.agent-avatar__eye:nth-child(2) { animation-delay: -2.9s; }
-.agent-avatar__spark { fill: var(--agent-glow); filter: drop-shadow(0 0 8px var(--agent-glow)); animation: spark-pulse 2.6s ease-in-out infinite; }
-.agent-avatar__spark--secondary { animation-delay: -1.1s; }
-.agent-stage__prompt { position: absolute; top: 12%; z-index: 3; padding: 6px 10px; border: 1px solid rgba(255,255,255,.5); border-radius: 999px; color: color-mix(in srgb, var(--agent-deep) 66%, #587698); background: rgba(255,255,255,.26); opacity: 0; transform: translateY(5px); transition: opacity 240ms ease, transform 240ms ease; backdrop-filter: blur(10px); font-size: 10px; letter-spacing: .06em; pointer-events: none; }
+.agent-stage::before { content: ''; position: absolute; width: 58%; height: 15%; bottom: 13%; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--agent-deep, #5c39a1) 22%, transparent), transparent 72%); filter: blur(20px); opacity: .72; }
+.agent-stage__halo { position: absolute; inset: 11%; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--agent-glow, #cdb6ff) 36%, transparent), color-mix(in srgb, var(--agent-main, #a97efe) 12%, transparent) 38%, transparent 72%); filter: blur(32px); animation: agent-halo 5s ease-in-out infinite; }
+.agent-stage__orbit-light { position: absolute; top: 14%; right: 17%; width: 9px; height: 9px; border: 1px solid rgba(255,255,255,.8); border-radius: 50%; background: var(--agent-glow, #cdb6ff); box-shadow: 0 0 16px 3px color-mix(in srgb, var(--agent-glow, #cdb6ff) 66%, transparent); animation: orbit-light 4.8s ease-in-out infinite; }
+.agent-avatar-trigger { position: relative; z-index: 2; width: 74%; height: 74%; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; transition: width 360ms cubic-bezier(.2, .8, .2, 1), height 360ms cubic-bezier(.2, .8, .2, 1), transform 360ms cubic-bezier(.2, .8, .2, 1), filter 360ms ease; }
+.agent-constellation.is-controls-open .agent-stage { box-sizing: border-box; padding-bottom: clamp(250px, 31vh, 320px); }
+.agent-constellation.is-controls-open .agent-avatar-trigger { width: 56%; height: 56%; transform: translateY(-8px); }
+.agent-constellation.is-controls-open .agent-stage__halo { inset: 3% 16% 38%; }
+.agent-avatar-trigger:hover { transform: translateY(-4px) scale(1.018); filter: drop-shadow(0 30px 26px color-mix(in srgb, var(--agent-deep, #5c39a1) 30%, transparent)); }
+.agent-avatar-trigger:focus-visible { outline: 3px solid color-mix(in srgb, var(--agent-main, #a97efe) 62%, white); outline-offset: 8px; }
+.agent-avatar { display: block; width: 100%; height: 100%; overflow: visible; color-scheme: light; }
+/* 引擎把 fill 写成 presentation attribute（fill="var(--fg, #000)"）；
+   部分内核对 attribute 里的 var() 不做替换，这里用 CSS 规则兜底（规则优先级恒高于 presentation attribute）。 */
+.agent-avatar :deep([fill='var(--fg, #000)']) { fill: var(--fg, #000); }
+.agent-avatar :deep([fill='var(--bg, #f3efe6)']) { fill: var(--bg, #f3efe6); }
+.agent-stage__prompt { position: absolute; top: 12%; z-index: 3; padding: 6px 10px; border: 1px solid rgba(255,255,255,.5); border-radius: 999px; color: color-mix(in srgb, var(--agent-deep, #5c39a1) 66%, #587698); background: rgba(255,255,255,.26); opacity: 0; transform: translateY(5px); transition: opacity 240ms ease, transform 240ms ease; backdrop-filter: blur(10px); font-size: 10px; letter-spacing: .06em; pointer-events: none; }
 .agent-constellation.is-hovered .agent-stage__prompt, .agent-constellation.is-controls-open .agent-stage__prompt { opacity: 1; transform: translateY(0); }
-.agent-stage__status { position: absolute; bottom: 19%; z-index: 3; display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--agent-main) 22%, white); border-radius: 999px; color: #5d7ba1; background: rgba(255, 255, 255, .42); box-shadow: 0 8px 20px rgba(75, 129, 181, .08), inset 0 1px 0 rgba(255,255,255,.7); backdrop-filter: blur(12px); font-size: 10px; letter-spacing: .08em; }
-.agent-stage__status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--agent-main); box-shadow: 0 0 10px var(--agent-glow); }
-.agent-stage--thinking .agent-avatar__body { animation: agent-thinking 2.4s ease-in-out infinite; }
-.agent-stage--happy .agent-avatar__body { animation: agent-happy 1.15s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--thinking .agent-avatar__face-shell { animation: face-thinking 2.4s ease-in-out infinite; }
-.agent-stage--thinking .agent-avatar__eye { animation: eye-thinking 2.4s ease-in-out infinite; }
-.agent-stage--celebrate .agent-avatar__body { animation: agent-celebrate 1.75s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--celebrate .agent-avatar__face-shell { animation: face-celebrate 1.75s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--celebrate .agent-avatar__eye { animation: eye-happy 1.75s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--spin .agent-avatar__body, .agent-stage--spin .agent-avatar__gloss { animation: agent-spin 1.25s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--bounce .agent-avatar__body { animation: agent-bounce 1.3s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--bounce .agent-avatar__face-shell { animation: face-bounce 1.3s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--sway .agent-avatar__body { animation: agent-sway 1.45s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--sway .agent-avatar__face-shell { animation: face-sway 1.45s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--surprise .agent-avatar__body { animation: agent-surprise 1.05s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--surprise .agent-avatar__face-shell { animation: face-surprise 1.05s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--surprise .agent-avatar__eye { animation: eye-surprise 1.05s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--playful .agent-avatar__body { animation: agent-playful 1.65s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--playful .agent-avatar__face-shell { animation: face-playful 1.65s cubic-bezier(.2, .8, .2, 1); }
-.agent-stage--playful .agent-avatar__eye:first-child { animation: playful-wink 1.65s ease-in-out; }
-.agent-stage--awake .agent-stage__status { border-color: color-mix(in srgb, var(--agent-main) 58%, white); color: color-mix(in srgb, var(--agent-deep) 86%, #173963); box-shadow: 0 0 0 5px color-mix(in srgb, var(--agent-glow) 12%, transparent), 0 10px 24px rgba(75, 129, 181, .14), inset 0 1px 0 rgba(255,255,255,.8); }
+.agent-stage__status { position: absolute; bottom: 19%; z-index: 3; display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 22%, white); border-radius: 999px; color: #5d7ba1; background: rgba(255, 255, 255, .42); box-shadow: 0 8px 20px rgba(75, 129, 181, .08), inset 0 1px 0 rgba(255,255,255,.7); backdrop-filter: blur(12px); font-size: 10px; letter-spacing: .08em; }
+.agent-stage__status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--agent-main, #a97efe); box-shadow: 0 0 10px var(--agent-glow, #cdb6ff); }
+.agent-stage--awake .agent-stage__status { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 58%, white); color: color-mix(in srgb, var(--agent-deep, #5c39a1) 86%, #173963); box-shadow: 0 0 0 5px color-mix(in srgb, var(--agent-glow, #cdb6ff) 12%, transparent), 0 10px 24px rgba(75, 129, 181, .14), inset 0 1px 0 rgba(255,255,255,.8); }
 .agent-stage--awake .agent-stage__status-dot { animation: awake-pulse 1s ease-in-out infinite; }
-.agent-stage--listening .agent-avatar__eye { animation: eye-listening 1.15s ease-in-out infinite; }
-.agent-stage--listening .agent-stage__rings span:nth-child(2) { animation-delay: 180ms; }
-.agent-stage--listening .agent-stage__rings span:nth-child(3) { animation-delay: 360ms; }
-.agent-controls { position: absolute; top: 84%; left: 50%; z-index: 4; width: min(100%, 540px); box-sizing: border-box; display: grid; gap: 8px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.72); border-radius: 18px; background: linear-gradient(145deg, rgba(255,255,255,.58), rgba(223,240,255,.34)); box-shadow: 0 24px 48px rgba(73,125,207,.16), inset 0 1px 0 rgba(255,255,255,.94), inset 0 -1px 0 rgba(125,177,220,.12); opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 14px) scale(.94); transition: opacity 300ms ease, transform 360ms cubic-bezier(.2, .8, .2, 1), visibility 300ms ease; backdrop-filter: blur(18px) saturate(125%); }
+.agent-controls { position: absolute; bottom: 4%; left: 50%; z-index: 4; width: min(100%, 520px); max-height: min(44vh, 390px); box-sizing: border-box; display: grid; gap: 12px; padding: 15px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 18%, white); border-radius: 22px; background: linear-gradient(145deg, rgba(255,255,255,.76), color-mix(in srgb, var(--agent-light, #f1e8ff) 34%, rgba(225,242,255,.62))); box-shadow: 0 26px 60px color-mix(in srgb, var(--agent-deep, #5c39a1) 18%, rgba(73,125,207,.16)), inset 0 1px 0 rgba(255,255,255,.96), inset 0 -1px 0 rgba(125,177,220,.14); opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 14px) scale(.94); transition: opacity 300ms ease, transform 360ms cubic-bezier(.2, .8, .2, 1), visibility 300ms ease; backdrop-filter: blur(22px) saturate(135%); }
 .agent-controls::before { content: ''; position: absolute; top: -7px; left: 50%; width: 13px; height: 13px; border-top: 1px solid rgba(255,255,255,.72); border-left: 1px solid rgba(255,255,255,.72); background: rgba(244,250,255,.7); transform: translateX(-50%) rotate(45deg); backdrop-filter: blur(12px); }
 .agent-controls.is-open { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(-50%, 0) scale(1); }
-.agent-controls__line { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; }
-.agent-controls__line--actions { justify-content: flex-start; flex-wrap: wrap; }
-.agent-controls__line--colors { justify-content: flex-start; }
-.agent-controls__label { min-width: 45px; color: #82a0c1; font: 9px var(--font-mono, monospace); letter-spacing: .16em; }
-.agent-control { min-height: 30px; padding: 0 10px; border: 1px solid rgba(115,165,205,.2); border-radius: 999px; color: #5f7da1; background: rgba(255,255,255,.38); cursor: pointer; font: inherit; font-size: 10px; transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease, transform 180ms ease; }
-.agent-control:hover, .agent-control[aria-pressed='true'] { border-color: color-mix(in srgb, var(--agent-main) 55%, white); color: color-mix(in srgb, var(--agent-deep) 80%, #173963); background: color-mix(in srgb, var(--agent-light) 60%, white); transform: translateY(-1px); }
+.agent-controls__head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-controls__head > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.agent-controls__eyebrow { color: color-mix(in srgb, var(--agent-deep, #5c39a1) 56%, #7290b4); font: 9px var(--font-mono, monospace); letter-spacing: .16em; }
+.agent-controls__head strong { overflow: hidden; color: #294c76; font: 600 15px/1.25 var(--font-sans, sans-serif); text-overflow: ellipsis; white-space: nowrap; }
+.agent-controls__summary { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 15%, white); border-radius: 999px; color: color-mix(in srgb, var(--agent-deep, #5c39a1) 72%, #55769c); background: rgba(255,255,255,.42); font-size: 10px; white-space: nowrap; }
+.agent-controls__summary-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--agent-main, #a97efe); box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-glow, #cdb6ff) 24%, transparent), 0 0 10px var(--agent-glow, #cdb6ff); }
+.agent-controls__summary-divider { color: color-mix(in srgb, var(--agent-main, #a97efe) 35%, #8ea6c2); }
+.agent-controls__close { width: 26px; height: 26px; flex: 0 0 auto; padding: 0; border: 1px solid rgba(111,151,190,.18); border-radius: 50%; color: #6d89aa; background: rgba(255,255,255,.42); cursor: pointer; font-size: 18px; line-height: 1; transition: color 180ms ease, background-color 180ms ease, transform 180ms ease; }
+.agent-controls__close:hover { color: color-mix(in srgb, var(--agent-deep, #5c39a1) 82%, #173963); background: rgba(255,255,255,.8); transform: rotate(90deg); }
+.agent-controls__tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; padding: 4px; border: 1px solid rgba(111,151,190,.12); border-radius: 13px; background: rgba(255,255,255,.3); }
+.agent-controls__tab { min-width: 0; padding: 7px 6px 6px; border: 1px solid transparent; border-radius: 10px; color: #7893b2; background: transparent; cursor: pointer; font: 600 11px/1.1 var(--font-sans, sans-serif); transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease, transform 180ms ease; }
+.agent-controls__tab small { display: block; margin-top: 3px; color: #9aafc7; font: 9px var(--font-mono, monospace); }
+.agent-controls__tab:hover { color: color-mix(in srgb, var(--agent-deep, #5c39a1) 72%, #294c76); background: rgba(255,255,255,.48); }
+.agent-controls__tab.is-active { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); color: color-mix(in srgb, var(--agent-deep, #5c39a1) 84%, #173963); background: color-mix(in srgb, var(--agent-light, #f1e8ff) 66%, white); box-shadow: 0 4px 10px color-mix(in srgb, var(--agent-deep, #5c39a1) 8%, transparent), inset 0 1px 0 rgba(255,255,255,.86); transform: translateY(-1px); }
+.agent-controls__tab.is-active small { color: color-mix(in srgb, var(--agent-main, #a97efe) 72%, #7390b1); }
+.agent-controls__panel { display: none; min-height: 0; }
+.agent-controls__panel.is-current { display: block; animation: agent-panel-in 240ms cubic-bezier(.2, .8, .2, 1) both; }
+.agent-controls__panel-intro { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 9px; color: #89a1bd; font-size: 10px; }
+.agent-controls__panel-intro strong { color: color-mix(in srgb, var(--agent-deep, #5c39a1) 76%, #294c76); font-size: 12px; }
+.agent-controls__choice-grid { display: flex; flex-wrap: wrap; gap: 6px; max-height: 146px; overflow-y: auto; padding: 2px 3px 3px 0; }
+.agent-controls__choice-grid--shapes .agent-control { min-width: 52px; }
+.agent-controls__states { display: grid; max-height: 174px; gap: 7px; overflow-y: auto; padding-right: 3px; }
+.agent-controls__line { display: flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 28px; }
+.agent-controls__line--states { flex-wrap: wrap; }
+.agent-controls__line--actions { flex-wrap: wrap; }
+.agent-controls__label { min-width: 61px; color: #82a0c1; font: 9px var(--font-mono, monospace); letter-spacing: .08em; }
+.agent-control { min-height: 30px; padding: 0 10px; border: 1px solid rgba(115,165,205,.2); border-radius: 999px; color: #5f7da1; background: rgba(255,255,255,.38); cursor: pointer; font: inherit; font-size: 10px; transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease; }
+.agent-control:hover, .agent-control[aria-pressed='true'] { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 55%, white); color: color-mix(in srgb, var(--agent-deep, #5c39a1) 80%, #173963); background: color-mix(in srgb, var(--agent-light, #f1e8ff) 60%, white); transform: translateY(-1px); }
 .agent-control:active { transform: translateY(0); }
-.agent-control--shape { display: inline-flex; align-items: center; gap: 6px; }
-.agent-control__shape-mark { width: 10px; height: 10px; display: block; border: 1px solid currentColor; border-radius: 50%; }
-.agent-control__shape-mark--blob { border-radius: 45% 55% 52% 48%; }
-.agent-control__shape-mark--capsule { height: 13px; border-radius: 999px; }
-.agent-control__shape-mark--prism { border-radius: 2px; transform: rotate(45deg) scale(.72); }
+.agent-control--featured { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); background: color-mix(in srgb, var(--agent-light, #f1e8ff) 38%, white); }
 .agent-control--voice { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
 .agent-control--voice svg { width: 13px; height: 13px; }
-.agent-control--voice.is-listening { border-color: var(--agent-main); color: var(--agent-deep); background: color-mix(in srgb, var(--agent-light) 70%, white); box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-glow) 18%, transparent); }
-.agent-color { width: 17px; height: 17px; padding: 0; border: 2px solid rgba(255,255,255,.82); border-radius: 50%; background: var(--swatch); box-shadow: 0 2px 6px rgba(60, 111, 166, .18); cursor: pointer; transition: transform 180ms ease, outline-color 180ms ease; }
-.agent-color:hover, .agent-color[aria-pressed='true'] { outline: 2px solid color-mix(in srgb, var(--swatch) 55%, white); outline-offset: 2px; transform: scale(1.12); }
-.agent-controls__hint { min-width: 0; margin-left: auto; overflow: hidden; color: #88a1bd; font-size: 9px; line-height: 1.3; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
-.agent-control:focus-visible, .agent-color:focus-visible { outline: 3px solid color-mix(in srgb, var(--agent-main) 48%, white); outline-offset: 3px; }
-.agent-conversation { position: absolute; right: 6%; bottom: 7%; z-index: 5; width: min(90%, 360px); padding: 13px 16px 14px; border: 1px solid color-mix(in srgb, var(--agent-main) 24%, white); border-radius: 16px; color: #36577f; background: linear-gradient(145deg, rgba(255,255,255,.7), rgba(224,241,255,.42)); box-shadow: 0 18px 34px rgba(55,108,174,.14), inset 0 1px 0 rgba(255,255,255,.9); backdrop-filter: blur(18px) saturate(135%); animation: conversation-in 420ms cubic-bezier(.2, .8, .2, 1) both; }
-.agent-conversation::before { content: ''; position: absolute; top: -5px; right: 28px; width: 10px; height: 10px; border-top: 1px solid color-mix(in srgb, var(--agent-main) 24%, white); border-left: 1px solid color-mix(in srgb, var(--agent-main) 24%, white); background: rgba(246,252,255,.72); transform: rotate(45deg); }
-.agent-conversation__label { display: block; color: color-mix(in srgb, var(--agent-deep) 76%, #6d8ab1); font: 9px var(--font-mono, monospace); letter-spacing: .16em; }
+.agent-control--voice.is-listening { border-color: var(--agent-main, #a97efe); color: var(--agent-deep, #5c39a1); background: color-mix(in srgb, var(--agent-light, #f1e8ff) 70%, white); box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-glow, #cdb6ff) 18%, transparent); }
+.agent-controls__hint { min-width: 0; margin: 9px 0 0; overflow: hidden; color: #88a1bd; font-size: 9px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.agent-controls__hint--block { padding-top: 8px; border-top: 1px solid rgba(111,151,190,.12); }
+.agent-controls__color-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.agent-color { min-width: 0; height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 8px; border: 1px solid rgba(115,165,205,.16); border-radius: 12px; color: #6381a4; background: color-mix(in srgb, var(--swatch) 7%, white); box-shadow: 0 3px 8px rgba(60, 111, 166, .08), inset 0 1px 0 rgba(255,255,255,.82); cursor: pointer; font: inherit; font-size: 10px; transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease; }
+.agent-color::before { content: ''; width: 15px; height: 15px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.84); border-radius: 50%; background: linear-gradient(145deg, var(--swatch), var(--swatch-deep)); box-shadow: 0 2px 6px color-mix(in srgb, var(--swatch-deep) 22%, transparent); }
+.agent-color span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-color:hover, .agent-color[aria-pressed='true'] { border-color: color-mix(in srgb, var(--swatch) 58%, white); color: color-mix(in srgb, var(--swatch-deep) 78%, #294c76); background: color-mix(in srgb, var(--swatch) 14%, white); box-shadow: 0 5px 12px color-mix(in srgb, var(--swatch-deep) 13%, transparent), inset 0 1px 0 rgba(255,255,255,.92); transform: translateY(-1px); }
+.agent-color[aria-pressed='true']::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--swatch) 18%, transparent), 0 2px 8px color-mix(in srgb, var(--swatch-deep) 28%, transparent); }
+.agent-control:focus-visible, .agent-color:focus-visible { outline: 3px solid color-mix(in srgb, var(--agent-main, #a97efe) 48%, white); outline-offset: 3px; }
+.agent-controls__close:focus-visible, .agent-controls__tab:focus-visible { outline: 3px solid color-mix(in srgb, var(--agent-main, #a97efe) 48%, white); outline-offset: 2px; }
+.agent-constellation.is-controls-open .agent-stage__status { opacity: 0; transform: translateY(-4px); }
+:global(.landing-view.is-theme-dark) .agent-controls { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 42%, #294768); background: linear-gradient(145deg, rgba(15, 30, 57, .94), color-mix(in srgb, var(--agent-deep, #5c39a1) 22%, rgba(7, 18, 36, .94))); box-shadow: 0 28px 62px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 0 rgba(109,189,255,.1); }
+:global(.landing-view.is-theme-dark) .agent-controls::before { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 35%, #294768); background: rgba(17, 38, 67, .94); }
+:global(.landing-view.is-theme-dark) .agent-controls__eyebrow { color: color-mix(in srgb, var(--agent-glow, #cdb6ff) 76%, #a9c5e8); }
+:global(.landing-view.is-theme-dark) .agent-controls__head strong { color: #eef5ff; }
+:global(.landing-view.is-theme-dark) .agent-controls__summary { border-color: rgba(144,190,236,.22); color: #d2e2f6; background: rgba(6, 18, 37, .48); }
+:global(.landing-view.is-theme-dark) .agent-controls__close { border-color: rgba(144,190,236,.24); color: #b9cde6; background: rgba(8, 25, 48, .58); }
+:global(.landing-view.is-theme-dark) .agent-controls__close:hover { color: #fff; background: rgba(30, 67, 107, .8); }
+:global(.landing-view.is-theme-dark) .agent-controls__tabs { border-color: rgba(144,190,236,.16); background: rgba(2, 11, 24, .3); }
+:global(.landing-view.is-theme-dark) .agent-controls__tab { color: #9db5d2; }
+:global(.landing-view.is-theme-dark) .agent-controls__tab small { color: #718cab; }
+:global(.landing-view.is-theme-dark) .agent-controls__tab:hover { color: #eef5ff; background: rgba(34, 76, 119, .42); }
+:global(.landing-view.is-theme-dark) .agent-controls__tab.is-active { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 52%, #547ca6); color: #fff; background: color-mix(in srgb, var(--agent-deep, #5c39a1) 54%, #193758); box-shadow: 0 5px 14px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.14); }
+:global(.landing-view.is-theme-dark) .agent-controls__tab.is-active small { color: color-mix(in srgb, var(--agent-glow, #cdb6ff) 82%, #a9c5e8); }
+:global(.landing-view.is-theme-dark) .agent-controls__panel-intro { color: #88a7c9; }
+:global(.landing-view.is-theme-dark) .agent-controls__panel-intro strong { color: #f0f6ff; }
+:global(.landing-view.is-theme-dark) .agent-controls__label { color: #87a6c8; }
+:global(.landing-view.is-theme-dark) .agent-control { border-color: rgba(144,190,236,.18); color: #afc6df; background: rgba(13, 35, 63, .64); }
+:global(.landing-view.is-theme-dark) .agent-control:hover, :global(.landing-view.is-theme-dark) .agent-control[aria-pressed='true'] { color: #fff; background: color-mix(in srgb, var(--agent-deep, #5c39a1) 44%, #163452); }
+:global(.landing-view.is-theme-dark) .agent-control--featured { border-color: color-mix(in srgb, var(--agent-main, #a97efe) 45%, #3d628b); background: color-mix(in srgb, var(--agent-deep, #5c39a1) 22%, #102b4b); }
+:global(.landing-view.is-theme-dark) .agent-controls__hint { color: #87a6c8; }
+:global(.landing-view.is-theme-dark) .agent-controls__hint--block { border-color: rgba(144,190,236,.16); }
+:global(.landing-view.is-theme-dark) .agent-color { border-color: rgba(144,190,236,.2); color: #b6cbe2; background: color-mix(in srgb, var(--swatch) 12%, #0b1d35); box-shadow: 0 4px 10px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.12); }
+:global(.landing-view.is-theme-dark) .agent-color:hover, :global(.landing-view.is-theme-dark) .agent-color[aria-pressed='true'] { color: #fff; background: color-mix(in srgb, var(--swatch) 23%, #0c2440); }
+:global(html[data-color-scheme='codex-dark'] .agent-controls__head strong) { color: #eef5ff !important; }
+:global(html[data-color-scheme='codex-dark'] .agent-controls__eyebrow) { color: #b9cdef; }
+:global(html[data-color-scheme='codex-dark'] .agent-controls__panel-intro strong) { color: #f0f6ff; }
+.agent-conversation { position: absolute; right: 6%; bottom: 7%; z-index: 5; width: min(90%, 360px); padding: 13px 16px 14px; border: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); border-radius: 16px; color: #36577f; background: linear-gradient(145deg, rgba(255,255,255,.7), rgba(224,241,255,.42)); box-shadow: 0 18px 34px rgba(55,108,174,.14), inset 0 1px 0 rgba(255,255,255,.9); backdrop-filter: blur(18px) saturate(135%); animation: conversation-in 420ms cubic-bezier(.2, .8, .2, 1) both; }
+.agent-conversation::before { content: ''; position: absolute; top: -5px; right: 28px; width: 10px; height: 10px; border-top: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); border-left: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); background: rgba(246,252,255,.72); transform: rotate(45deg); }
+.agent-conversation__label { display: block; color: color-mix(in srgb, var(--agent-deep, #5c39a1) 76%, #6d8ab1); font: 9px var(--font-mono, monospace); letter-spacing: .16em; }
 .agent-conversation p { margin: 7px 0 0; color: #55749b; font-size: 12px; line-height: 1.6; }
-@keyframes agent-breathe { 0%, 100% { transform: translate3d(0, 0, 0) rotate(-1deg) scale(1, 1); } 20% { transform: translate3d(8px, -10px, 0) rotate(1.8deg) scale(1.025, .975); } 46% { transform: translate3d(-5px, -20px, 0) rotate(-2.2deg) scale(1.055, .95); } 70% { transform: translate3d(-9px, -7px, 0) rotate(1.2deg) scale(1.026, .98); } }
-@keyframes face-idle-drift { 0%, 100% { transform: translate3d(0, 0, 0) rotate(0); } 24% { transform: translate3d(4px, -5px, 0) rotate(1.8deg); } 50% { transform: translate3d(-5px, -10px, 0) rotate(-2.2deg); } 76% { transform: translate3d(-3px, -3px, 0) rotate(1.1deg); } }
-@keyframes eye-idle { 0%, 40%, 100% { transform: scaleY(1); } 46% { transform: scaleY(.94); } 49% { transform: scaleY(.1); } 52% { transform: scaleY(1); } 76% { transform: scaleY(1); } 79% { transform: scaleY(.12); } 82% { transform: scaleY(1); } }
-@keyframes eye-thinking { 0%, 100% { transform: scaleY(.9); } 50% { transform: scaleY(.68); } }
-@keyframes eye-happy { 0%, 100% { transform: scaleY(1); } 28% { transform: scaleY(.72); } 58% { transform: scaleY(.82); } }
-@keyframes eye-surprise { 0% { transform: scale(1); } 24% { transform: scale(1.24, 1.18); } 56% { transform: scale(1.1); } 100% { transform: scale(1); } }
-@keyframes eye-listening { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.82); } }
-@keyframes agent-thinking { 0%, 100% { transform: translate(-8px, 2px) rotate(-3deg); } 50% { transform: translate(16px, -12px) rotate(5deg); } }
-@keyframes face-thinking { 0%, 100% { transform: translate(-4px, 3px) rotate(-4deg); } 50% { transform: translate(8px, -7px) rotate(6deg); } }
-@keyframes agent-celebrate { 0% { transform: translateY(0) scale(1); } 24% { transform: translateY(-42px) scale(1.18, .84); } 54% { transform: translateY(4px) scale(.91, 1.12); } 76% { transform: translateY(-15px) scale(1.06, .96); } 100% { transform: translateY(0) scale(1); } }
-@keyframes face-celebrate { 0%, 100% { transform: translateY(0) scale(1); } 24% { transform: translateY(-9px) scale(1.1); } 54% { transform: translateY(4px) scale(.94, 1.08); } 76% { transform: translateY(-3px) scale(1.04); } }
-@keyframes agent-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
-@keyframes agent-bounce { 0% { transform: translateY(0) scale(1); } 20% { transform: translateY(-54px) scale(1.14, .82); } 44% { transform: translateY(5px) scale(.9, 1.14); } 65% { transform: translateY(-25px) scale(1.07, .94); } 84% { transform: translateY(2px) scale(.96, 1.06); } 100% { transform: translateY(0) scale(1); } }
-@keyframes face-bounce { 0%, 100% { transform: translateY(0); } 20% { transform: translateY(-13px) scale(1.09); } 44% { transform: translateY(4px) scale(.94, 1.08); } 65% { transform: translateY(-5px) scale(1.04); } }
-@keyframes agent-sway { 0%, 100% { transform: rotate(0) translateX(0); } 22% { transform: rotate(-12deg) translateX(-12px); } 52% { transform: rotate(11deg) translateX(14px); } 78% { transform: rotate(-6deg) translateX(-7px); } }
-@keyframes face-sway { 0%, 100% { transform: rotate(0); } 22% { transform: rotate(-8deg) translateX(-4px); } 52% { transform: rotate(8deg) translateX(5px); } 78% { transform: rotate(-4deg); } }
-@keyframes agent-surprise { 0% { transform: scale(.82) translateY(8px); } 24% { transform: scale(1.2, .88) translateY(-12px); } 48% { transform: scale(.94, 1.08) translateY(3px); } 72% { transform: scale(1.05, .97); } 100% { transform: scale(1); } }
-@keyframes face-surprise { 0% { transform: scale(.86); } 24% { transform: scale(1.2); } 48% { transform: scale(.96); } 72% { transform: scale(1.06); } 100% { transform: scale(1); } }
-@keyframes agent-playful { 0%, 100% { transform: rotate(0) translateY(0); } 22% { transform: rotate(8deg) translateY(-12px); } 50% { transform: rotate(-8deg) translateY(2px); } 76% { transform: rotate(4deg) translateY(-5px); } }
-@keyframes face-playful { 0%, 100% { transform: rotate(0); } 22% { transform: rotate(10deg) translate(6px, -5px); } 50% { transform: rotate(-9deg) translate(-5px, 2px); } 76% { transform: rotate(5deg) translate(3px, -2px); } }
-@keyframes playful-wink { 0%, 25%, 100% { transform: scaleY(1); } 37% { transform: scaleY(.08); } 50% { transform: scaleY(1); } }
-@keyframes agent-shape-change { 0% { opacity: .35; transform: scale(.88) rotate(-5deg); } 65% { opacity: 1; transform: scale(1.035) rotate(2deg); } 100% { transform: scale(1) rotate(0); } }
-@keyframes agent-shape-leave { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.12) rotate(5deg); } }
 @keyframes agent-halo { 0%, 100% { opacity: .62; transform: scale(.96); } 50% { opacity: .9; transform: scale(1.04); } }
-@keyframes agent-happy { 0% { transform: translateY(0) scale(1); } 38% { transform: translateY(-18px) scale(1.08, .94); } 72% { transform: translateY(2px) scale(.97, 1.04); } 100% { transform: translateY(0) scale(1); } }
 @keyframes conversation-in { from { opacity: 0; transform: translate3d(0, 10px, 0) scale(.96); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); } }
-@keyframes spark-pulse { 0%, 100% { opacity: .45; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.3); } }
+@keyframes agent-panel-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes orbit-light { 0%, 100% { transform: translate(0, 0) scale(.85); opacity: .55; } 50% { transform: translate(-12px, 9px) scale(1.18); opacity: 1; } }
-@keyframes awake-pulse { 0%, 100% { transform: scale(.8); box-shadow: 0 0 8px var(--agent-glow); } 50% { transform: scale(1.35); box-shadow: 0 0 16px var(--agent-glow); } }
+@keyframes awake-pulse { 0%, 100% { transform: scale(.8); box-shadow: 0 0 8px var(--agent-glow, #cdb6ff); } 50% { transform: scale(1.35); box-shadow: 0 0 16px var(--agent-glow, #cdb6ff); } }
 @media (max-width: 760px) {
   .agent-constellation { width: min(100%, 560px); min-width: 0; height: min(118vw, 650px); min-height: 430px; margin-left: 0; transform: none; }
   .agent-avatar-trigger { width: 68%; height: 68%; }
-  .agent-controls { top: 76%; width: min(100%, 520px); }
-  .agent-controls { padding: 10px; }
+  .agent-constellation.is-controls-open .agent-stage { padding-bottom: clamp(220px, 28vh, 280px); }
+  .agent-constellation.is-controls-open .agent-avatar-trigger { width: 32%; height: 32%; transform: translate(50%, -45px); }
+  .agent-controls { bottom: 1%; width: min(100%, 520px); padding: 12px; }
+  .agent-controls__summary { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }
+  .agent-controls__color-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .agent-controls__line { flex-wrap: wrap; }
   .agent-controls__label { min-width: 42px; }
-  .agent-controls__hint { flex-basis: 100%; margin: 2px 0 0 42px; text-align: left; }
+  .agent-controls__hint { text-align: left; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .agent-stage__halo, .agent-avatar__body, .agent-avatar__gloss, .agent-avatar__surface, .agent-avatar__face-shell, .agent-avatar__eye, .agent-avatar__spark, .agent-stage__orbit-light { animation: none; }
-  .agent-avatar__face-shell, .agent-avatar__face, .agent-avatar, .agent-avatar-trigger, .agent-controls, .agent-stage__prompt { transition: none; }
+  .agent-stage__halo, .agent-stage__orbit-light, .agent-stage--awake .agent-stage__status-dot { animation: none; }
+  .agent-avatar-trigger, .agent-controls, .agent-controls__panel.is-current, .agent-stage__prompt { transition: none; animation: none; }
 }
 </style>

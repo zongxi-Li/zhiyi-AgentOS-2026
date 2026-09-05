@@ -2,6 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import GlassConstellation from './GlassConstellation.vue'
+import { GROK_META } from '@/lib/grok-character'
+
+// 控制台暴露 39 个引擎状态 + 3 个一次性动作（转一圈/跳一下/粒子）。
+const ENGINE_STATE_COUNT = GROK_META.groups.reduce((total, group) => total + group.states.length, 0)
+const ONE_SHOT_COUNT = 3
 
 describe('GlassConstellation', () => {
   const mountAgent = () => mount(GlassConstellation, {
@@ -13,114 +18,82 @@ describe('GlassConstellation', () => {
 
     expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="agent-avatar"]').exists()).toBe(true)
-    expect(wrapper.findAll('[data-testid="agent-shape-option"]')).toHaveLength(4)
-    expect(wrapper.findAll('[data-testid="agent-action-option"]')).toHaveLength(8)
-    expect(wrapper.findAll('[data-testid="agent-color-option"]')).toHaveLength(8)
-    expect(wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为圆团"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('[data-testid="agent-shape-option"]')).toHaveLength(18)
+    expect(wrapper.findAll('[data-testid="agent-action-option"]')).toHaveLength(ENGINE_STATE_COUNT + ONE_SHOT_COUNT)
+    expect(wrapper.findAll('[data-testid="agent-color-option"]')).toHaveLength(11)
+    expect(wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为流体"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.get('[data-testid="agent-color-option"][aria-label="切换为紫晶"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.find('[data-testid="agent-voice-toggle"]').exists()).toBe(true)
+    wrapper.unmount()
   })
 
-  it('changes shape, color, and action from the visible controls', async () => {
+  it('builds the engine character inside the avatar svg', () => {
     const wrapper = mountAgent()
 
-    await wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为棱面"]').trigger('click')
-    await wrapper.get('[data-testid="agent-color-option"][aria-label="切换为珊瑚"]').trigger('click')
-    await wrapper.findAll('[data-testid="agent-action-option"]').find(button => button.text() === '思考')?.trigger('click')
-
-    expect(wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为棱面"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.get('[data-testid="agent-color-option"][aria-label="切换为珊瑚"]').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-testid="agent-avatar"]').attributes('aria-label')).toContain('珊瑚棱面')
-    expect(wrapper.find('.agent-stage').classes()).toContain('agent-stage--thinking')
+    const avatar = wrapper.get('[data-testid="agent-avatar"]')
+    // 引擎绘制循环每帧以 toFixed(2) 重写 viewBox，数值恒定、格式带小数。
+    expect(avatar.attributes('viewBox')).toBe('-15.00 -15.00 259.00 259.00')
+    expect(avatar.attributes('aria-label')).toContain('紫晶流体')
+    expect(avatar.findAll('path').length).toBeGreaterThan(2)
+    wrapper.unmount()
   })
 
-  it('offers larger expressive reactions beyond the original four moods', async () => {
+  it('keeps pointer gaze enabled by default and exposes a working toggle', async () => {
     const wrapper = mountAgent()
 
-    await wrapper.findAll('[data-testid="agent-action-option"]').find(button => button.text() === '弹跳')?.trigger('click')
-    expect(wrapper.find('.agent-stage').classes()).toContain('agent-stage--bounce')
+    await wrapper.get('[data-testid="agent-avatar-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="agent-control-tab-actions"]').trigger('click')
 
-    await wrapper.findAll('[data-testid="agent-action-option"]').find(button => button.text() === '惊讶')?.trigger('click')
-    expect(wrapper.find('.agent-stage').classes()).toContain('agent-stage--surprise')
+    const followButton = wrapper.get('[aria-label="跟随指针"]')
+    expect(followButton.attributes('aria-pressed')).toBe('true')
+
+    await followButton.trigger('click')
+    expect(followButton.attributes('aria-pressed')).toBe('false')
+
+    await followButton.trigger('click')
+    expect(followButton.attributes('aria-pressed')).toBe('true')
+    wrapper.unmount()
   })
 
-  it('uses the reference blob coordinate system and geometry directly', async () => {
+  it('changes shape, color, and state from the visible controls', async () => {
     const wrapper = mountAgent()
 
-    await wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为流体"]').trigger('click')
+    await wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为水滴"]').trigger('click')
+    await wrapper.get('[data-testid="agent-color-option"][aria-label="切换为赤焰"]').trigger('click')
+    await wrapper.findAll('[data-testid="agent-action-option"]')
+      .find(button => button.text() === '思考中')?.trigger('click')
 
-    expect(wrapper.get('[data-testid="agent-avatar"]').attributes('viewBox')).toBe('-15 -15 259 259')
-    const activeBody = wrapper.findAll('[data-testid="agent-avatar"] .agent-avatar__body')
-      .find(node => !node.classes().includes('agent-avatar__body--leaving'))
-    expect(activeBody?.attributes('d')).toContain('228.541')
-    expect(wrapper.find('[data-testid="agent-avatar"] .agent-avatar__reference-eye').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="agent-avatar"] .agent-avatar__star').exists()).toBe(true)
-    expect(activeBody?.element.parentElement?.getAttribute('transform')).toBeNull()
-    expect(wrapper.get('[data-testid="agent-avatar"] .agent-avatar__reference-eye').attributes('transform')).toBeUndefined()
-    expect(wrapper.get('[data-testid="agent-avatar"] .agent-avatar__reference-eye').element.parentElement?.getAttribute('transform')).toBeNull()
-    expect(wrapper.find('[data-testid="agent-avatar"] .agent-avatar__shadow').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为水滴"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="agent-color-option"][aria-label="切换为赤焰"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="agent-avatar"]').attributes('aria-label')).toContain('赤焰水滴')
+    expect(wrapper.get('[data-testid="agent-avatar"]').attributes('aria-label')).toContain('思考中')
+    expect(wrapper.find('.agent-stage__status').text()).toContain('思考中')
+    wrapper.unmount()
   })
 
-  it('keeps the original reference face geometry without custom facial elements', async () => {
+  it('plays one-shot tricks on top of the current state', async () => {
     const wrapper = mountAgent()
 
-    await wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为流体"]').trigger('click')
+    await wrapper.findAll('[data-testid="agent-action-option"]')
+      .find(button => button.text() === '跳一下')?.trigger('click')
+    expect(wrapper.find('.agent-stage__status').text()).toContain('弹跳中')
 
-    expect(wrapper.get('[data-testid="agent-avatar"] .agent-avatar__reference-eye').attributes('d')).toContain('M130.36 45.98')
-    expect(wrapper.get('[data-testid="agent-avatar"] .agent-avatar__reference-eye:nth-of-type(2)').attributes('d')).toContain('M176.61 37.08')
-    expect(wrapper.findAll('[data-testid="agent-avatar"] .agent-avatar__pupil')).toHaveLength(0)
-    expect(wrapper.findAll('[data-testid="agent-avatar"] .agent-avatar__eye-glint')).toHaveLength(0)
-    expect(wrapper.find('[data-testid="agent-avatar"] .agent-avatar__mouth').exists()).toBe(false)
+    await wrapper.findAll('[data-testid="agent-action-option"]')
+      .find(button => button.text() === '转一圈')?.trigger('click')
+    expect(wrapper.find('.agent-stage__status').text()).toContain('旋转中')
+    wrapper.unmount()
   })
 
-  it('keeps the eyes front-facing while following the pointer angle', async () => {
-    const wrapper = mountAgent()
-    const root = wrapper.get('[data-testid="glass-constellation"]')
-    vi.spyOn(root.element, 'getBoundingClientRect').mockReturnValue({
-      left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100,
-      x: 0, y: 0, toJSON: () => ({})
-    })
-
-    await root.trigger('pointermove', { clientX: 100, clientY: 20 })
-    const rightLook = wrapper.get('.agent-avatar__face').attributes('style') || ''
-    expect(rightLook).toContain('rotateX(-0.92deg)')
-    expect(rightLook).toContain('rotateY(-2.64deg)')
-    expect(rightLook).toContain('rotate(1.66deg)')
-
-    await root.trigger('pointermove', { clientX: 0, clientY: 80 })
-    const leftLook = wrapper.get('.agent-avatar__face').attributes('style') || ''
-    expect(leftLook).toContain('rotateX(0.92deg)')
-    expect(leftLook).toContain('rotateY(2.64deg)')
-    expect(leftLook).toContain('rotate(-1.66deg)')
-    expect(leftLook).not.toBe(rightLook)
-  })
-
-  it('keeps non-blob eyes anchored to the active shape center', async () => {
+  it('returns to the login rotation loop on demand', async () => {
     const wrapper = mountAgent()
 
-    await wrapper.get('[data-testid="agent-shape-option"][aria-label="切换为圆团"]').trigger('click')
+    await wrapper.findAll('[data-testid="agent-action-option"]')
+      .find(button => button.text() === '睡着了')?.trigger('click')
+    expect(wrapper.get('[data-testid="agent-avatar"]').attributes('aria-label')).toContain('睡着了')
 
-    const eyes = wrapper.findAll('.agent-avatar__eye')
-    expect(eyes).toHaveLength(2)
-    expect(eyes[0].attributes('transform')).toBeUndefined()
-    expect(eyes[1].attributes('transform')).toBeUndefined()
-    expect(eyes[0].element.parentElement?.getAttribute('transform')).toBe('translate(114.2705 114.228)')
-  })
-
-  it('keeps the hero focused on the agent without a decorative outer contour', () => {
-    const wrapper = mountAgent()
-
-    expect(wrapper.find('.agent-stage__rings').exists()).toBe(false)
-    expect(wrapper.find('.agent-avatar__rim').exists()).toBe(false)
-    expect(wrapper.find('.agent-avatar__edge').exists()).toBe(false)
-  })
-
-  it('reports unsupported speech recognition without breaking the visual control', async () => {
-    const wrapper = mountAgent()
-
-    await wrapper.get('[data-testid="agent-voice-toggle"]').trigger('click')
-
-    expect(wrapper.text()).toContain('当前浏览器不支持语音识别')
+    await wrapper.get('[aria-label="登录轮换"]').trigger('click')
+    expect(wrapper.get('[aria-label="登录轮换"]').attributes('aria-pressed')).toBe('true')
+    wrapper.unmount()
   })
 
   it('keeps the control dock collapsed until the agent is clicked', async () => {
@@ -136,6 +109,16 @@ describe('GlassConstellation', () => {
 
     await wrapper.get('[data-testid="agent-avatar-trigger"]').trigger('click')
     expect(wrapper.get('[data-testid="agent-controls"]').classes()).not.toContain('is-open')
+    wrapper.unmount()
+  })
+
+  it('reports unsupported speech recognition without breaking the visual control', async () => {
+    const wrapper = mountAgent()
+
+    await wrapper.get('[data-testid="agent-voice-toggle"]').trigger('click')
+
+    expect(wrapper.text()).toContain('当前浏览器不支持语音识别')
+    wrapper.unmount()
   })
 
   it('uses Justin as the voice wake word before applying a command', async () => {
@@ -149,8 +132,7 @@ describe('GlassConstellation', () => {
       start: vi.fn(),
       stop: vi.fn()
     }
-    const Recognition = vi.fn(() => recognition)
-    Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: Recognition })
+    Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: vi.fn(() => recognition) })
     const wrapper = mountAgent()
 
     await wrapper.get('[data-testid="agent-voice-toggle"]').trigger('click')
@@ -168,7 +150,7 @@ describe('GlassConstellation', () => {
 
     recognition.onresult?.({ results: [[{ transcript: '弹跳起来' }]], resultIndex: 0 })
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.agent-stage').classes()).toContain('agent-stage--bounce')
+    expect(wrapper.find('.agent-stage__status').text()).toContain('弹跳中')
 
     wrapper.unmount()
     Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: undefined })
