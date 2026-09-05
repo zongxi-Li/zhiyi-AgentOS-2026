@@ -62,6 +62,35 @@
                   Graph: {{ livePlanning.graph.nodeCount ?? 0 }} nodes · {{ livePlanning.graph.edgeCount ?? 0 }} edges
                 </div>
                 <div v-if="livePlanning.errorCode" class="run-progress-live__facts is-failed">{{ livePlanning.errorCode }}</div>
+                <div v-if="livePlanning.outputBuffer" class="run-progress-live__output-wrap">
+                  <div class="run-progress-live__output-label">
+                    <span>模型规划草稿</span>
+                    <span>{{ livePlanning.chunkCount }} chunks</span>
+                  </div>
+                  <pre data-testid="planner-live-output" class="run-progress-live__output">{{ livePlanning.outputBuffer }}</pre>
+                </div>
+                <div v-if="livePlanning.draft.nodes.length" class="planner-draft" data-testid="planner-growing-graph">
+                  <div class="planner-draft__head">
+                    <span>ACG 规划草图 · {{ livePlanning.draft.nodes.length }} nodes</span>
+                    <span>{{ livePlanning.draft.edges.length }} edges</span>
+                  </div>
+                  <div class="planner-draft__nodes">
+                    <article
+                      v-for="node in livePlanning.draft.nodes"
+                      :key="node.key"
+                      class="planner-draft__node"
+                      :class="`is-${node.status}`"
+                      :title="node.rationale || node.title"
+                    >
+                      <span>{{ node.status === 'detailed' ? '✓' : '○' }}</span>
+                      <div><strong>{{ node.title }}</strong><small>{{ node.capabilityId }}</small></div>
+                    </article>
+                  </div>
+                  <div v-if="plannerRationales.length" class="planner-draft__rationale">
+                    <strong>决策依据</strong>
+                    <p v-for="item in plannerRationales" :key="item.key"><b>{{ item.title }}：</b>{{ item.rationale }}</p>
+                  </div>
+                </div>
               </div>
               <div
                 v-for="result in displayPlanner.results"
@@ -234,6 +263,9 @@ const goalText = computed(() => props.projection.mission.goal || props.projectio
 
 const timeline = computed(() => projectRunProgress(props.runtimeObservation, props.graphNodes))
 const livePlanning = computed(() => props.runtimeStore?.planning || null)
+const plannerRationales = computed(() => (
+  livePlanning.value?.draft.nodes.filter(node => node.rationale).slice(-3) || []
+))
 const livePlannerGroup = computed<RunProgressPlannerGroup | null>(() => {
   const planning = livePlanning.value
   if (!planning || planning.status === 'IDLE') return null
@@ -413,6 +445,22 @@ watch(timeline, async () => {
 .run-progress-live__pulse.is-done { color: var(--wb-success); }
 .run-progress-live__pulse.is-failed, .run-progress-live__facts.is-failed { color: var(--wb-danger); }
 .run-progress-live__facts { line-height: 1.5; }
+.run-progress-live__output-wrap { display: grid; gap: 4px; min-width: 0; }
+.run-progress-live__output-label { display: flex; justify-content: space-between; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.run-progress-live__output { max-height: 220px; margin: 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); color: var(--wb-text-secondary); font: 10.5px/1.55 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.planner-draft { display: grid; gap: 7px; margin-top: 2px; padding-top: 7px; border-top: 1px solid var(--wb-border-soft); }
+.planner-draft__head { display: flex; justify-content: space-between; color: var(--wb-accent); font: 10px var(--font-mono, monospace); }
+.planner-draft__nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 5px; max-height: 250px; overflow: auto; }
+.planner-draft__node { display: flex; gap: 7px; min-width: 0; padding: 7px 8px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); color: var(--wb-text-muted); }
+.planner-draft__node.is-detailed { border-color: color-mix(in srgb, var(--wb-success) 32%, var(--wb-border-soft)); color: var(--wb-success); }
+.planner-draft__node div { min-width: 0; }
+.planner-draft__node strong, .planner-draft__node small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.planner-draft__node strong { color: var(--wb-text-secondary); font-size: 10.5px; font-weight: 500; }
+.planner-draft__node small { margin-top: 2px; color: var(--wb-text-muted); font: 9px var(--font-mono, monospace); }
+.planner-draft__rationale { display: grid; gap: 4px; padding: 7px 8px; border-left: 2px solid var(--wb-warning); background: color-mix(in srgb, var(--wb-warning) 5%, transparent); }
+.planner-draft__rationale > strong { color: var(--wb-warning); font-size: 10px; }
+.planner-draft__rationale p { margin: 0; color: var(--wb-text-muted); font-size: 10.5px; line-height: 1.5; }
+.planner-draft__rationale b { color: var(--wb-text-secondary); font-weight: 500; }
 .run-progress-result { display: flex; align-items: baseline; gap: 8px; }
 .run-progress-result__mark { color: var(--wb-success); font-size: 11px; }
 .run-progress-result__title { color: var(--wb-text); font-size: 12px; }

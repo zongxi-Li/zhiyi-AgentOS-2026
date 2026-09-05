@@ -39,6 +39,13 @@ export interface PlanningRuntimeState {
   elapsedMs: number | null
   receivedChunks: number
   receivedLength: number
+  outputBuffer: string
+  chunkCount: number
+  draft: {
+    stage: string | null
+    nodes: Array<{ key: string; title: string; capabilityId: string; status: string; rationale: string }>
+    edges: Array<{ sourceKey: string; targetKey: string; relationType: string }>
+  }
   retryIndex: number
   profile: Record<string, any> | null
   plan: Record<string, any> | null
@@ -69,6 +76,9 @@ const createPlanningState = (): PlanningRuntimeState => ({
   elapsedMs: null,
   receivedChunks: 0,
   receivedLength: 0,
+  outputBuffer: '',
+  chunkCount: 0,
+  draft: { stage: null, nodes: [], edges: [] },
   retryIndex: 0,
   profile: null,
   plan: null,
@@ -83,6 +93,8 @@ const PLANNER_EVENTS = new Set([
   'planner.model.started',
   'planner.model.first_token',
   'planner.model.activity',
+  'planner.model.output.delta',
+  'planner.draft.updated',
   'planner.model.completed',
   'planner.stage.completed',
   'planner.profile.resolved',
@@ -193,7 +205,12 @@ export class RunRuntimeStore {
       state.status = 'RUNNING'
       state.modelPhase = 'STARTING'
       state.stage = String(p.stage || '') || state.stage
-      state.callKey = String(p.callKey || '') || state.callKey
+      const nextCallKey = String(p.callKey || '') || state.callKey
+      if (nextCallKey !== state.callKey) {
+        state.outputBuffer = ''
+        state.chunkCount = 0
+      }
+      state.callKey = nextCallKey
       state.retryIndex = numberOrNull(p.retryIndex) ?? state.retryIndex
     } else if (event.eventType === 'planner.stage.retry') {
       state.status = 'RUNNING'
@@ -201,6 +218,8 @@ export class RunRuntimeStore {
       state.stage = String(p.stage || '') || state.stage
       state.callKey = String(p.callKey || '') || state.callKey
       state.retryIndex = numberOrNull(p.retryIndex) ?? state.retryIndex + 1
+      state.outputBuffer = ''
+      state.chunkCount = 0
     } else if (event.eventType === 'planner.model.started') {
       state.status = 'RUNNING'
       state.modelPhase = 'WAITING_FIRST_TOKEN'
@@ -219,6 +238,33 @@ export class RunRuntimeStore {
       state.idleMs = numberOrNull(p.idleMs) ?? state.idleMs
       state.receivedChunks = numberOrNull(p.receivedChunks) ?? state.receivedChunks
       state.receivedLength = numberOrNull(p.receivedLength) ?? state.receivedLength
+    } else if (event.eventType === 'planner.model.output.delta') {
+      state.status = 'RUNNING'
+      state.modelPhase = 'ACTIVE'
+      state.lastActivityAt = at
+      state.stage = String(p.stage || '') || state.stage
+      state.callKey = String(p.callKey || '') || state.callKey
+      state.chunkCount += 1
+      const next = state.outputBuffer + String(p.delta || '')
+      state.outputBuffer = next.length > 65536 ? next.slice(-65536) : next
+    } else if (event.eventType === 'planner.draft.updated') {
+      const nodes = Array.isArray(p.nodes) ? p.nodes : []
+      const edges = Array.isArray(p.edges) ? p.edges : []
+      state.draft = {
+        stage: String(p.stage || '') || state.stage,
+        nodes: nodes.slice(0, 100).map(item => ({
+          key: String(item?.key || ''),
+          title: String(item?.title || item?.key || ''),
+          capabilityId: String(item?.capabilityId || ''),
+          status: String(item?.status || 'outlined'),
+          rationale: String(item?.rationale || ''),
+        })).filter(item => item.key),
+        edges: edges.slice(0, 300).map(item => ({
+          sourceKey: String(item?.sourceKey || ''),
+          targetKey: String(item?.targetKey || ''),
+          relationType: String(item?.relationType || 'depends_on'),
+        })).filter(item => item.sourceKey && item.targetKey),
+      }
     } else if (event.eventType === 'planner.model.completed') {
       state.modelPhase = 'COMPLETED'
       state.elapsedMs = elapsed ?? state.elapsedMs

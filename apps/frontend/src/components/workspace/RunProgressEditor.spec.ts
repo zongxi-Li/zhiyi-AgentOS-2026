@@ -243,7 +243,16 @@ describe('RunProgressEditor', () => {
     runtimeStore.apply({ ...runtimeEvent(2, 'planner.stage.started'), payload: { stage: 'outline', callKey: 'outline' } })
     runtimeStore.apply({ ...runtimeEvent(3, 'planner.model.first_token'), payload: { elapsedMs: 83 } })
     runtimeStore.apply({ ...runtimeEvent(4, 'planner.model.activity'), payload: { elapsedMs: 102, idleMs: 5, receivedChunks: 4, receivedLength: 28 } })
-    runtimeStore.apply({ ...runtimeEvent(5, 'planner.profile.resolved'), payload: { requiredCapabilityCount: 2, expectedArtifactCount: 1 } })
+    runtimeStore.apply({ ...runtimeEvent(5, 'planner.model.output.delta'), payload: { stage: 'outline', callKey: 'outline', delta: '{"tasks":["draft"]}' } })
+    runtimeStore.apply({ ...runtimeEvent(6, 'planner.profile.resolved'), payload: { requiredCapabilityCount: 2, expectedArtifactCount: 1 } })
+    runtimeStore.apply({ ...runtimeEvent(7, 'planner.draft.updated'), payload: {
+      stage: 'detail',
+      nodes: [
+        { key: 'understand', title: '理解任务', capabilityId: 'task_understanding', status: 'detailed', rationale: '先建立约束基线' },
+        { key: 'analyze', title: '分析方案', capabilityId: 'analysis', status: 'outlined', rationale: '' },
+      ],
+      edges: [{ sourceKey: 'understand', targetKey: 'analyze', relationType: 'depends_on' }],
+    } })
 
     const wrapper = mountEditor({ runtimeObservation: observation([]), runtimeStore })
 
@@ -253,6 +262,12 @@ describe('RunProgressEditor', () => {
     expect(wrapper.text()).toContain('TTFT 83 ms')
     expect(wrapper.text()).toContain('Idle 5 ms')
     expect(wrapper.text()).toContain('Call outline')
+    expect(wrapper.get('[data-testid="planner-live-output"]').text()).toContain('draft')
+    expect(wrapper.text()).toContain('1 chunks')
+    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('ACG 规划草图 · 2 nodes')
+    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('1 edges')
+    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('决策依据')
+    expect(wrapper.get('[data-testid="planner-growing-graph"]').text()).toContain('先建立约束基线')
     expect(wrapper.text()).toContain('Profile: 2 capabilities · 1 artifacts')
   })
 

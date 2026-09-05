@@ -39,20 +39,31 @@ describe('RunRuntimeStore streaming projection', () => {
     store.apply({ ...event(2, 'planner.stage.started', '', '', ''), payload: { stage: 'outline', callKey: 'outline' } })
     store.apply({ ...event(3, 'planner.model.first_token', '', '', ''), payload: { elapsedMs: 73 } })
     store.apply({ ...event(4, 'planner.model.activity', '', '', ''), payload: { elapsedMs: 91, idleMs: 4, receivedChunks: 2, receivedLength: 18 } })
-    store.apply({ ...event(5, 'planner.profile.resolved', '', '', ''), payload: { requiredCapabilityCount: 3, expectedArtifactCount: 2 } })
-    store.apply({ ...event(6, 'planner.plan.parsed', '', '', ''), payload: { taskCount: 5, dependencyCount: 4 } })
-    store.apply({ ...event(7, 'planner.graph.compiled', '', '', ''), payload: { nodeCount: 6, edgeCount: 7 } })
+    store.apply({ ...event(5, 'planner.model.output.delta', '', '', ''), payload: { stage: 'outline', callKey: 'outline', delta: '{"tasks":' } })
+    store.apply({ ...event(6, 'planner.model.output.delta', '', '', ''), payload: { stage: 'outline', callKey: 'outline', delta: '[]}' } })
+    store.apply({ ...event(7, 'planner.profile.resolved', '', '', ''), payload: { requiredCapabilityCount: 3, expectedArtifactCount: 2 } })
+    store.apply({ ...event(8, 'planner.plan.parsed', '', '', ''), payload: { taskCount: 5, dependencyCount: 4 } })
+    store.apply({ ...event(9, 'planner.graph.compiled', '', '', ''), payload: { nodeCount: 6, edgeCount: 7 } })
+    store.apply({ ...event(10, 'planner.draft.updated', '', '', ''), payload: {
+      stage: 'detail',
+      nodes: [{ key: 'understand', title: 'Understand', capabilityId: 'task_understanding', status: 'detailed', rationale: 'Establish scope' }],
+      edges: [{ sourceKey: 'understand', targetKey: 'analyze', relationType: 'depends_on' }]
+    } })
 
     expect(store.nodes).toEqual({})
     expect(store.planning.status).toBe('RUNNING')
     expect(store.planning.callKey).toBe('outline')
     expect(store.planning.ttftMs).toBe(73)
     expect(store.planning.idleMs).toBe(4)
+    expect(store.planning.outputBuffer).toBe('{"tasks":[]}')
+    expect(store.planning.chunkCount).toBe(2)
     expect(store.planning.profile?.requiredCapabilityCount).toBe(3)
     expect(store.planning.plan?.taskCount).toBe(5)
     expect(store.planning.graph?.edgeCount).toBe(7)
+    expect(store.planning.draft.nodes[0]?.rationale).toBe('Establish scope')
+    expect(store.planning.draft.edges).toHaveLength(1)
 
-    store.apply({ ...event(8, 'planner.completed', '', '', ''), payload: { elapsedMs: 120 } })
+    store.apply({ ...event(11, 'planner.completed', '', '', ''), payload: { elapsedMs: 120 } })
     expect(store.planning.status).toBe('COMPLETED')
     expect(store.planning.elapsedMs).toBe(120)
   })
