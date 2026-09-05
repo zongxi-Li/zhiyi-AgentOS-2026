@@ -126,6 +126,39 @@ def test_failed_contract_raises_after_exactly_one_repair() -> None:
     assert 'Previous invalid TaskPlan JSON: {"tasks": [], "relations": []}' in llm.calls[1]["prompt"]
 
 
+def test_standard_topology_cycle_uses_structured_patch_only_once() -> None:
+    cyclic = {
+        "tasks": [
+            {"key": "a", "title": "A", "objective": "Analyze A",
+             "capabilityId": "analysis", "acceptanceCriteria": ["done"]},
+            {"key": "b", "title": "B", "objective": "Analyze B",
+             "capabilityId": "analysis", "acceptanceCriteria": ["done"]},
+        ],
+        "relations": [
+            {"sourceKey": "a", "targetKey": "b", "relationType": "depends_on"},
+            {"sourceKey": "b", "targetKey": "a", "relationType": "depends_on"},
+        ],
+    }
+    llm = _SequencePlanLLM(cyclic, {"operations": [
+        {"op": "remove_relation", "relationIndex": 1}
+    ]})
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=TaskSemanticProfile(
+            primaryGoal="Analyze A and B", requiredCapabilities=["analysis"],
+            estimatedComplexity=ComplexityLevel.MEDIUM,
+        ),
+        strategy="dynamic_generation", task_input={}, use_llm=True,
+    )
+    assert len(llm.calls) == 2
+    assert llm.calls[1]["schema"] == __import__(
+        "components.planner.topology", fromlist=["REPAIR_PATCH_SCHEMA"]
+    ).REPAIR_PATCH_SCHEMA
+    assert llm.calls[1]["prompt_version"].endswith("relations.cycle-repair1")
+    assert {(item.source_key, item.target_key) for item in plan.relations} >= {("a", "b")}
+    assert ("b", "a") not in {(item.source_key, item.target_key) for item in plan.relations}
+
+
 def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wording() -> None:
     llm = _PlanLLM({"tasks": [], "relations": []})
     prompt = TaskDecomposer(build_default_capability_catalog(), llm).build_prompt(
@@ -210,6 +243,47 @@ def test_staged_detail_inherits_frozen_identity_when_provider_omits_repeated_fie
 
     capabilities = [node.capability_requirements[0] for node in plan.nodes]
     assert capabilities[:2] == ["task_understanding", "analysis"]
+
+
+def test_staged_dependency_cycle_is_repaired_once_without_regenerating_tasks() -> None:
+    outline = {"tasks": [
+        {"key": "verify", "title": "Verify", "capabilityId": "analysis", "logicalRole": "verification", "sourceRefs": []},
+        {"key": "rebalance", "title": "Rebalance", "capabilityId": "analysis", "logicalRole": "refinement", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "verify", "title": "Verify", "objective": "Verify quantified constraints", "acceptanceCriteria": ["constraints are verified"]},
+        {"key": "rebalance", "title": "Rebalance", "objective": "Rebalance infeasible constraints", "acceptanceCriteria": ["infeasibility is resolved"]},
+    ]}
+    cyclic = {"relations": [
+        {"sourceKey": "verify", "targetKey": "rebalance", "relationType": "depends_on"},
+        {"sourceKey": "rebalance", "targetKey": "verify", "relationType": "depends_on"},
+    ], "controlPolicies": []}
+    repaired = {"operations": [
+        {"op": "remove_relation", "relationIndex": 1},
+    ]}
+    llm = _SequencePlanLLM(outline, details, cyclic, repaired)
+
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=TaskSemanticProfile(
+            primaryGoal="Verify and rebalance constraints",
+            requiredCapabilities=["analysis"],
+            estimatedComplexity=ComplexityLevel.COMPLEX,
+        ),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    assert [node.key for node in plan.nodes[:2]] == ["verify", "rebalance"]
+    pairs = {(item.source_key, item.target_key) for item in plan.relations}
+    assert ("verify", "rebalance") in pairs
+    assert ("rebalance", "verify") not in pairs
+    assert llm.calls[-1]["prompt_version"] == (
+        f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1"
+    )
+    assert "Frozen Tasks" in llm.calls[-1]["prompt"]
+    assert "capabilityRequirements" in llm.calls[-1]["prompt"]
 
 
 def test_staged_detail_normalizes_legacy_model_workset_shape() -> None:

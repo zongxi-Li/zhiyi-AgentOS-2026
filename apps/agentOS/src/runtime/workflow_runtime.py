@@ -163,6 +163,74 @@ _PLANNER_PROGRESS_FIELDS = frozenset({
 })
 
 
+def _safe_topology_audit(value: object) -> dict[str, Any]:
+    """Project the closed, text-free topology audit schema into Runtime Trace."""
+    if not isinstance(value, Mapping):
+        return {}
+    scalar_keys = {
+        "compilerVersion", "producerKind", "catalogSource", "catalogFingerprint",
+        "capabilityCoverageMode", "taskCount", "semanticEdgeCount",
+        "topologyFingerprint", "status",
+    }
+    safe = {
+        key: value[key] for key in scalar_keys
+        if isinstance(value.get(key), (str, int, bool))
+    }
+    safe["capabilityRequirements"] = [
+        {key: item[key] for key in (
+            "requirementId", "producerCapability", "consumerCapability", "consumerTaskKey"
+        ) if isinstance(item.get(key), str)}
+        for item in list(value.get("capabilityRequirements") or [])[:100]
+        if isinstance(item, Mapping)
+    ]
+    safe["selectedBindings"] = [
+        {key: item[key] for key in ("requirementId", "producerTaskKey", "consumerTaskKey")
+         if isinstance(item.get(key), str)}
+        for item in list(value.get("selectedBindings") or [])[:100]
+        if isinstance(item, Mapping)
+    ]
+    search = value.get("bindingSearch")
+    safe["bindingSearch"] = {
+        key: search[key] for key in ("statesExplored", "backtracks")
+        if isinstance(search, Mapping) and isinstance(search.get(key), int)
+    }
+    repair = value.get("repair")
+    safe["repair"] = {
+        "attempts": repair.get("attempts", 0)
+        if isinstance(repair, Mapping) and isinstance(repair.get("attempts", 0), int) else 0,
+        "operationTypes": [
+            item for item in list(repair.get("operationTypes") or [])[:20] if isinstance(item, str)
+        ] if isinstance(repair, Mapping) else [],
+    }
+    conflict = value.get("conflict")
+    if isinstance(conflict, Mapping):
+        safe["conflict"] = {
+            "code": conflict.get("code") if isinstance(conflict.get("code"), str) else "",
+            "phase": conflict.get("phase") if isinstance(conflict.get("phase"), str) else "",
+            "cycleNodes": [item for item in list(conflict.get("cycleNodes") or [])[:100] if isinstance(item, str)],
+            "cycleEdges": [
+                {key: item[key] for key in ("sourceKey", "targetKey", "origin", "mutationPolicy")
+                 if isinstance(item.get(key), str)}
+                for item in list(conflict.get("cycleEdges") or [])[:100] if isinstance(item, Mapping)
+            ],
+            "requirementIds": [
+                item for item in list(conflict.get("requirementIds") or [])[:100] if isinstance(item, str)
+            ],
+            "bindingRejections": [
+                {
+                    **{key: item[key] for key in ("requirementId", "producerTaskKey", "reason")
+                       if isinstance(item.get(key), str)},
+                    "path": [part for part in list(item.get("path") or [])[:100] if isinstance(part, str)],
+                }
+                for item in list(conflict.get("bindingRejections") or [])[:100]
+                if isinstance(item, Mapping)
+            ],
+        }
+    else:
+        safe["conflict"] = None
+    return safe
+
+
 class ReviewConflictError(ValueError):
     """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
 
@@ -208,10 +276,16 @@ class ExecutionRuntime:
         identity_lifecycle: AcgIdentityLifecyclePort | None = None,
         require_planner_identity: bool = False,
         scheduler_wait_timeout: float = 300.0,
+        model_max_concurrency: int = 4,
+        model_min_interval_seconds: float = 0.0,
         resource_execution_adapters: Optional[Mapping[str, ResourceExecutionAdapter]] = None,
     ):
         if scheduler_wait_timeout <= 0:
             raise ValueError("scheduler_wait_timeout must be positive")
+        if model_max_concurrency < 1:
+            raise ValueError("model_max_concurrency must be at least 1")
+        if model_min_interval_seconds < 0:
+            raise ValueError("model_min_interval_seconds must not be negative")
         self.agent_registry = agent_registry or AgentRegistry()
         self.workflow_registry = workflow_registry or WorkflowRegistry()
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
@@ -228,6 +302,8 @@ class ExecutionRuntime:
             resource_service=self.resource_service
         )
         self.scheduler_wait_timeout = float(scheduler_wait_timeout)
+        self.model_max_concurrency = int(model_max_concurrency)
+        self.model_min_interval_seconds = float(model_min_interval_seconds)
         self.resource_execution_adapters = dict(resource_execution_adapters or {})
         self.evolution_service = evolution_service or EvolutionService()
         # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
@@ -1114,6 +1190,9 @@ class ExecutionRuntime:
             self.resource_directory.register_agent(agent.profile)
 
         async def execute(step_id: str, state: ACGExecutionState):
+            scheduling_started = monotonic()
+            execution_started: float | None = None
+            execution_outcome = "failed"
             if self._run_cancellation_requested(run.run_id):
                 raise ExecutionRunCancelled(
                     f"run {run.run_id} cancelled before scheduling step {step_id}"
@@ -1252,7 +1331,9 @@ class ExecutionRuntime:
             self.workflow_store.save_run_with_events(run, base_events)
             self._flush_identity_outbox()
             try:
+                execution_started = monotonic()
                 result = await runner(step_id, state)
+                execution_outcome = "completed"
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.succeeded:{step_execution_id}", "step.succeeded", step_execution_id,
                     {"runId": run.run_id, "attemptId": attempt_id,
@@ -1262,6 +1343,7 @@ class ExecutionRuntime:
                 self._flush_identity_outbox()
                 return result
             except ExecutionRunCancelled:
+                execution_outcome = "cancelled"
                 reason = "step scheduling stopped by operator cancellation"
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
@@ -1271,6 +1353,7 @@ class ExecutionRuntime:
                 self._flush_identity_outbox()
                 raise
             except asyncio.CancelledError:
+                execution_outcome = "cancelled"
                 reason = "ACG superstep cancelled after sibling failure"
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
@@ -1313,6 +1396,15 @@ class ExecutionRuntime:
                 self._flush_identity_outbox()
                 raise
             finally:
+                finished = monotonic()
+                started = execution_started or finished
+                run.execution_state.setdefault("stepPerformance", {})[step_id] = {
+                    "schedulingWaitMs": round((started - scheduling_started) * 1000),
+                    "executionMs": round((finished - started) * 1000),
+                    "totalMs": round((finished - scheduling_started) * 1000),
+                    "outcome": execution_outcome,
+                    "resourceId": selected_resource_id,
+                }
                 released = self.scheduler_service.release(decision.lease.lease_id)
                 if released:
                     for scheduling_item in reversed(
@@ -2259,8 +2351,8 @@ class ExecutionRuntime:
                 version=version,
             ),
             retries=2,
-            max_concurrency=1,
-            min_interval_seconds=0.25,
+            max_concurrency=self.model_max_concurrency,
+            min_interval_seconds=self.model_min_interval_seconds,
             retry_delay_seconds=1.0,
         )
 
@@ -2277,6 +2369,9 @@ class ExecutionRuntime:
             key: value for key, value in event.items()
             if key in _PLANNER_PROGRESS_FIELDS and isinstance(value, (str, int, float, bool))
         }
+        topology_audit = event.get("topologyAudit")
+        if isinstance(topology_audit, Mapping):
+            payload["topologyAudit"] = _safe_topology_audit(topology_audit)
         if planner_event_type == "planner.draft.updated":
             payload["nodes"] = [
                 {
@@ -2368,6 +2463,21 @@ class ExecutionRuntime:
                 payload={"planningProgress": True, "category": "planner", **payload},
             )
             self.workflow_store.save_run(run)
+
+    @staticmethod
+    def _topology_failure_audit(exc: BaseException) -> dict[str, Any]:
+        current: BaseException | None = exc
+        while current is not None:
+            audit = getattr(current, "audit", None)
+            if isinstance(audit, dict):
+                return dict(audit)
+            metadata = getattr(current, "metadata", None)
+            if isinstance(metadata, Mapping):
+                audit = metadata.get("topologyCompilation")
+                if isinstance(audit, dict):
+                    return dict(audit)
+            current = current.__cause__
+        return {}
 
     def _build_acg_blueprint(
         self,
@@ -2487,10 +2597,12 @@ class ExecutionRuntime:
             except Exception as exc:
                 # 只落稳定错误码与异常类型名；异常消息可能携带 prompt 或模型
                 # 输出片段，禁止进入 Trace。
+                failure_audit = self._topology_failure_audit(exc)
                 self._append_planner_event(run, {
                     "kind": "failed",
                     "errorCode": transport_error_code(exc) or type(exc).__name__,
                     "safeSummary": f"{type(exc).__name__} during planning",
+                    **({"topologyAudit": failure_audit} if failure_audit else {}),
                 })
                 raise
             # 规划成功也不代表可以继续：取消发生在最后一次事件之后时，
@@ -2514,6 +2626,7 @@ class ExecutionRuntime:
                     "requestedCapabilityProfile": plan.requested_capability_profile,
                     "effectiveCapabilityProfile": plan.effective_capability_profile,
                     "capabilityProfileReason": plan.capability_profile_reason,
+                    "topologyAudit": dict(plan.topology_audit),
                 }
             )
             self.trace_store.append(
@@ -3333,9 +3446,14 @@ class ExecutionRuntime:
                     "pure control Graph Patch cannot change TaskPlan or SemanticTask bindings"
                 )
             if patch.task_plan_patch is not None:
-                next_plan = apply_task_plan_patch(current_plan, patch.task_plan_patch)
+                topology_audits: list[dict[str, Any]] = []
+                next_plan = apply_task_plan_patch(
+                    current_plan, patch.task_plan_patch, self.capability_catalog,
+                    audit_sink=topology_audits.append,
+                )
             else:
                 next_plan = current_plan
+                topology_audits = []
             binding_patch = patch.task_binding_patch
             added_step_ids = active_new_step_ids - active_old_step_ids
             if added_step_ids and binding_patch is None:
@@ -3452,6 +3570,7 @@ class ExecutionRuntime:
                 "parentRunId": run.run_id,
                 "supersedesRunId": run.run_id,
                 "sourcePatchId": patch.patch_id,
+                **({"topologyAudit": topology_audits[-1]} if topology_audits else {}),
                 "graphPatchRefs": [patch_uri],
             })
             compiled_package = ACGGraphCompiler().compile_package(
@@ -3975,6 +4094,10 @@ def build_default_runtime() -> ExecutionRuntime:
         agent_registry=agent_registry,
         workflow_registry=workflow_registry,
         workflow_store=workflow_store,
+        model_max_concurrency=int(os.getenv("AGENTOS_MODEL_MAX_CONCURRENCY", "4")),
+        model_min_interval_seconds=float(
+            os.getenv("AGENTOS_MODEL_MIN_INTERVAL_SECONDS", "0")
+        ),
     )
     register_native_runtime(
         agent_registry=runtime.agent_registry,

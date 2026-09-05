@@ -91,6 +91,8 @@ class GuardedModelRuntime:
         self.delegate = delegate
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
+        self.max_concurrency = max_concurrency
+        self.min_interval_seconds = min_interval_seconds
         self._gate = _CallGate(
             max_concurrency=max_concurrency,
             min_interval_seconds=min_interval_seconds,

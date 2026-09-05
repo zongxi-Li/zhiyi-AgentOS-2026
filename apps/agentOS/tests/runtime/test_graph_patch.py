@@ -21,7 +21,11 @@ from runtime import ExecutionRuntime
 from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import (
+    ACGBlueprint, ACGEdge, CapabilityCatalog, EdgeType, PlanningCapabilityDescriptor, StepNode,
+    build_default_capability_catalog,
+)
+from components.planner.topology import catalog_fingerprint
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 
@@ -54,7 +58,9 @@ class _BoundAgent(BaseAgent):
         return AgentOutput(output={"value": self.profile.agent_id})
 
 
-def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[ExecutionRuntime, _PatchAgent]:
+def _runtime(
+    tmp_path, *, with_identity: bool = False, capability_catalog: CapabilityCatalog | None = None,
+) -> tuple[ExecutionRuntime, _PatchAgent]:
     agents = AgentRegistry()
     agent = _PatchAgent()
     agents.register(agent)
@@ -102,6 +108,7 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[ExecutionRuntime
         identity_lifecycle = IdentityProjectionBridge(
             identity_service,
             identity_service.repositories,
+            capability_catalog=capability_catalog,
         )
     return (
         ExecutionRuntime(
@@ -111,6 +118,7 @@ def _runtime(tmp_path, *, with_identity: bool = False) -> tuple[ExecutionRuntime
             checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "checkpoints.sqlite3"),
             execution_value_store=InMemoryExecutionValueStore(),
             identity_lifecycle=identity_lifecycle,
+            capability_catalog=capability_catalog,
         ),
         agent,
     )
@@ -203,6 +211,49 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
             attempt.attempt_id
             for attempt in identity.repositories.attempts.list_for_run(paused.run_id)
         } == original_attempt_ids
+    finally:
+        identity.close()
+
+
+def test_runtime_patch_audit_uses_injected_custom_catalog(tmp_path):
+    catalog = build_default_capability_catalog()
+    catalog.register(PlanningCapabilityDescriptor(
+        capabilityId="custom_topology", displayName="Custom topology",
+        optionalDependencies=["analysis"],
+    ))
+    runtime, _agent = _runtime(tmp_path, with_identity=True, capability_catalog=catalog)
+    identity = runtime.identity_lifecycle.lifecycle_service
+    try:
+        task = runtime.create_mission("custom catalog patch", workflow_id="patchable")
+        paused = asyncio.run(runtime.start(task.mission_id, workflow_id="patchable"))
+        blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
+        edge = next(
+            item for item in blueprint.edges
+            if item.edge_type is EdgeType.DEPENDENCY
+            and item.source_id == "review" and item.target_id == "deliver"
+        )
+        patch = GraphPatch(
+            patchId="patch-custom-catalog", idempotencyKey="patch-custom-catalog:v1",
+            runId=paused.run_id, graphId=blueprint.graph_id, baseGraphVersion=blueprint.version,
+            removeEdgeIds=[edge.edge_id],
+            addNodes=[StepNode(nodeId="enrich", name="enrich", goal="enrich",
+                               agentName="runner").model_dump(by_alias=True, mode="json")],
+            addEdges=[
+                ACGEdge(sourceId="review", targetId="enrich").model_dump(by_alias=True, mode="json"),
+                ACGEdge(sourceId="enrich", targetId="deliver").model_dump(by_alias=True, mode="json"),
+            ],
+            taskPlanPatch=TaskPlanPatch(
+                missionId=task.mission_id, basePlanVersion=1, planVersion=2,
+                addNodes=(PlannedTask(key="step:enrich", title="enrich", objective="enrich"),),
+            ),
+            taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
+                planNodeKey="step:enrich", acgNodeId="enrich"
+            ),)),
+        )
+        applied = asyncio.run(runtime.apply_graph_patch(patch))
+        audit = runtime.workflow_store.get_run(applied.run_id).execution_state["topologyAudit"]
+        assert audit["catalogSource"] == "injected"
+        assert audit["catalogFingerprint"] == catalog_fingerprint(catalog)
     finally:
         identity.close()
 

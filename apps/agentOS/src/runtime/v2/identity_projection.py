@@ -45,7 +45,8 @@ from domain.models import (
 )
 from domain.lifecycle_projection import LifecycleProjectionEvent
 from domain.repository import EntityNotFoundError, IdentityConflictError, RepositorySet
-from support.acg.models import EdgeType, RuntimeBlueprintSpec, validate_blueprint
+from support.acg.models import (CapabilityCatalog, EdgeType, RuntimeBlueprintSpec,
+                                build_default_capability_catalog, validate_blueprint)
 from components.planner.service import apply_task_plan_patch
 
 from .context import ExecutionContext
@@ -69,10 +70,13 @@ class IdentityProjectionBridge:
         lifecycle_service: AcgIdentityLifecycleService,
         repositories: RepositorySet,
         content_manifest_store: Any | None = None,
+        capability_catalog: CapabilityCatalog | None = None,
     ) -> None:
         self.lifecycle_service = lifecycle_service
         self.repositories = repositories
         self.content_manifest_store = content_manifest_store
+        self.capability_catalog = capability_catalog or build_default_capability_catalog()
+        self.catalog_source = "injected" if capability_catalog is not None else "default_compatibility"
 
     @property
     def runtime(self) -> AcgIdentityLifecycleService:
@@ -239,7 +243,9 @@ class IdentityProjectionBridge:
             )
 
         # 先完成纯校验，再写入 SemanticTask，避免非法绑定留下部分身份数据。
-        planned_nodes = PlannerIdentityBridge(self.lifecycle_service).record_task_plan(
+        planned_nodes = PlannerIdentityBridge(
+            self.lifecycle_service, self.capability_catalog
+        ).record_task_plan(
             task_plan
         )
         explicit_bindings = {
@@ -448,7 +454,10 @@ class IdentityProjectionBridge:
         if revised_step_ids - prior_step_ids:
             if task_plan_patch is None or task_binding_patch is None:
                 raise IdentityConflictError("new executable nodes require TaskPlanPatch and TaskBindingPatch")
-            next_plan = apply_task_plan_patch(current_plan, task_plan_patch)
+            next_plan = apply_task_plan_patch(
+                current_plan, task_plan_patch, self.capability_catalog,
+                catalog_source=self.catalog_source,
+            )
             binding_patch = task_binding_patch.bindings
         else:
             if task_plan_patch is not None or task_binding_patch is not None:
@@ -539,7 +548,7 @@ class IdentityProjectionBridge:
                     "TaskPlanPatch bindings must cover exactly the added executable nodes"
                 )
             planned_nodes = PlannerIdentityBridge(
-                self.lifecycle_service
+                self.lifecycle_service, self.capability_catalog
             ).record_task_plan_patch(task_plan_patch)
             for binding in task_binding_patch.bindings:
                 prior_bindings[

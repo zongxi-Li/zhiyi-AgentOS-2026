@@ -87,6 +87,18 @@ def test_planner_path_emits_fact_event_chain_with_true_counts() -> None:
     assert compiled["nodeCount"] == len(compiled_package["nodes"])
     assert compiled["edgeCount"] == len(compiled_package["edges"])
 
+    decision_event = next(
+        event for event in saved.trace
+        if event.observation.startswith("Planner produced ACG via")
+    )
+    topology_audit = decision_event.payload["topologyAudit"]
+    assert topology_audit["compilerVersion"]
+    assert topology_audit["catalogFingerprint"]
+    assert topology_audit["topologyFingerprint"]
+    assert topology_audit["status"] == "validated"
+    assert saved.execution_state["topologyAudit"] == topology_audit
+    assert saved.acg_blueprint["metadata"]["topologyAudit"] == topology_audit
+
     for event in events:
         assert event["category"] == "planner"
         assert event.get("planningProgress") is True
@@ -180,3 +192,34 @@ def test_planner_event_payload_whitelist_drops_unsafe_fields() -> None:
     assert "reasoning" not in payload
     assert "modelOutput" not in payload
     assert "SECRET" not in repr(payload)
+
+
+def test_planner_failed_trace_accepts_only_structured_topology_audit() -> None:
+    runtime = _runtime()
+    task = runtime.create_mission("topology failure audit", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
+    safe_audit = {
+        "compilerVersion": "task-plan-topology-v5b",
+        "catalogFingerprint": "a" * 64,
+        "topologyFingerprint": "b" * 64,
+        "status": "rejected",
+        "conflict": {
+            "code": "dependency_cycle", "phase": "final_validation",
+            "cycleNodes": ["A", "B", "A"],
+            "cycleEdges": [{"origin": "plan_patch", "mutationPolicy": "fixed"}],
+        },
+    }
+    runtime._append_planner_event(run, {
+        "kind": "failed", "errorCode": "dependency_cycle",
+        "safeSummary": "TopologyCompileError during planning",
+        "topologyAudit": {**safe_audit, "prompt": "NESTED SECRET", "rawResponse": "SECRET"},
+        "prompt": "SECRET",
+    })
+    failure = _planner_events(runtime, run.run_id)[-1]
+    assert failure["topologyAudit"]["compilerVersion"] == safe_audit["compilerVersion"]
+    assert failure["topologyAudit"]["topologyFingerprint"] == safe_audit["topologyFingerprint"]
+    assert failure["topologyAudit"]["conflict"]["code"] == "dependency_cycle"
+    assert "prompt" not in failure
+    assert "prompt" not in failure["topologyAudit"]
+    assert "rawResponse" not in failure["topologyAudit"]
+    assert "SECRET" not in repr(failure)

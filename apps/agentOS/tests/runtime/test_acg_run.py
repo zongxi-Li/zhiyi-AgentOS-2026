@@ -107,6 +107,12 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
     assert latest_id == result.execution_state["checkpointId"]
     assert latest_state["checkpointId"] == latest_id
     assert latest_state["completedStepIds"] == ["extract", "summarize"]
+    assert set(result.execution_state["stepPerformance"]) == {"extract", "summarize"}
+    for metrics in result.execution_state["stepPerformance"].values():
+        assert metrics["outcome"] == "completed"
+        assert metrics["schedulingWaitMs"] >= 0
+        assert metrics["executionMs"] >= 0
+        assert metrics["totalMs"] >= metrics["executionMs"]
 
 
 def test_deferred_acg_planning_materializes_inside_single_runtime() -> None:

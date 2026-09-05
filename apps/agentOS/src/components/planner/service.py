@@ -39,6 +39,7 @@ from .algorithms import (
     PlanningVariantGenerator,
     normalize_planning_diversity,
 )
+from .topology import EdgeOrigin, validate_task_plan_for_execution
 from components.mission_manager.store import WorkflowRegistry
 
 
@@ -87,6 +88,7 @@ class PlanResult:
     stochastic_fallback: bool = False
     notes: list[str] = field(default_factory=list)
     prompt_audit: list[Dict[str, Any]] = field(default_factory=list)
+    topology_audit: Dict[str, Any] = field(default_factory=dict)
 
     def to_decision(self) -> Dict[str, Any]:
         """将规划结果转换为审计/前端消费的别名键字典，不修改蓝图或画像。"""
@@ -117,6 +119,7 @@ class PlanResult:
             "edgeCount": self.blueprint.edge_count,
             "notes": self.notes,
             "promptAudit": self.prompt_audit,
+            "topologyAudit": self.topology_audit,
         }
 
 
@@ -245,6 +248,9 @@ class PlanningEngine:
                     workflow=match.workflow,
                     task_plan=task_plan,
                 )
+                built.blueprint.metadata["topologyAudit"] = dict(
+                    self.semantic_planner.last_topology_audit
+                )
                 if progress_callback:
                     progress_callback({
                         "stage": "planning",
@@ -272,6 +278,7 @@ class PlanningEngine:
                     capability_catalog_revision=capability_catalog_revision,
                     selected_capabilities=list(profile.required_capabilities),
                     prompt_audit=[dict(self.intent_parser.last_audit)],
+                    topology_audit=dict(self.semantic_planner.last_topology_audit),
                     notes=[f"matched template by {match.matched_by}"],
                 )
 
@@ -395,6 +402,9 @@ class PlanningEngine:
                     dict(self.intent_parser.last_audit),
                     dict(self.semantic_planner.task_decomposer.last_audit),
                 ],
+                "topologyAudit": dict(
+                    self.semantic_planner.task_decomposer.last_audit.get("topologyCompilation") or {}
+                ),
             }
         )
         notes = [
@@ -453,6 +463,9 @@ class PlanningEngine:
                 dict(self.intent_parser.last_audit),
                 dict(self.semantic_planner.task_decomposer.last_audit),
             ],
+            topology_audit=dict(
+                self.semantic_planner.task_decomposer.last_audit.get("topologyCompilation") or {}
+            ),
         )
 
     @staticmethod
@@ -521,7 +534,13 @@ class PlanningEngine:
 PlannerService = PlanningEngine
 
 
-def apply_task_plan_patch(current: TaskPlan, patch: TaskPlanPatch) -> TaskPlan:
+def apply_task_plan_patch(
+    current: TaskPlan,
+    patch: TaskPlanPatch,
+    capability_catalog: CapabilityCatalog | None = None,
+    audit_sink: Callable[[dict[str, Any]], None] | None = None,
+    catalog_source: str | None = None,
+) -> TaskPlan:
     """Planner-owned immutable semantic plan revision."""
     if current.mission_id != patch.mission_id:
         raise ACGPlanningError("TaskPlanPatch belongs to another Mission")
@@ -539,11 +558,20 @@ def apply_task_plan_patch(current: TaskPlan, patch: TaskPlanPatch) -> TaskPlan:
         if relation.source_key in nodes and relation.target_key in nodes
     ]
     relations.extend(patch.relations)
-    return TaskPlan(
-        missionId=current.mission_id,
-        planVersion=patch.plan_version,
+    catalog = capability_catalog or build_default_capability_catalog()
+    return validate_task_plan_for_execution(
+        capability_catalog=catalog,
+        mission_id=current.mission_id,
+        plan_version=patch.plan_version,
         nodes=tuple(nodes.values()),
-        relations=tuple(relations),
+        relations=relations,
+        control_policies=current.control_policies,
+        relation_origin=EdgeOrigin.PLAN_PATCH,
+        producer_kind="patch",
+        catalog_source=(catalog_source or (
+            "injected" if capability_catalog is not None else "default_compatibility"
+        )),
+        audit_sink=audit_sink,
         metadata={**current.metadata, **patch.metadata},
     )
 

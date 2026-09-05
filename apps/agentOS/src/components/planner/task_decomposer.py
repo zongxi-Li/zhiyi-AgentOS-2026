@@ -17,6 +17,12 @@ from contracts.planning import (
     VerificationLoopPolicy,
     WorksetSpec,
 )
+from components.planner.topology import (
+    REPAIR_PATCH_SCHEMA, EdgeOrigin, TaskPlanTopologyCompiler, TopologyCompileError,
+    apply_repair_patch, conflict_context, is_model_repair_eligible,
+    validate_task_plan_for_execution,
+    failed_topology_audit, successful_topology_audit,
+)
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
 
 from .complexity import (
@@ -275,7 +281,43 @@ class TaskDecomposer:
                     ) from first_error
                 try:
                     missing_refs = self._coverage_gap_refs(first_error)
-                    if missing_refs and first is not None:
+                    if isinstance(first_error, TopologyCompileError):
+                        if not is_model_repair_eligible(first_error.conflict) or first is None:
+                            raise
+                        raw = deepcopy(first.get("data", first))
+                        structured_conflict = conflict_context(first_error.conflict)
+                        repair_patch = self._call_llm(
+                            stage="relations.repair",
+                            prompt=(
+                                "Patch only the model relation/control proposal using this compiler conflict.\n"
+                                + f"Frozen Tasks: {json.dumps(raw.get('tasks', []), ensure_ascii=False)}\n"
+                                + f"Current model relations: {json.dumps(raw.get('relations', []), ensure_ascii=False)}\n"
+                                + f"Current control policies: {json.dumps(raw.get('controlPolicies', []), ensure_ascii=False)}\n"
+                                + f"Structured conflict: {json.dumps(structured_conflict, ensure_ascii=False)}\n"
+                                + "Return patch operations only. Never change frozen tasks, capability requirements, "
+                                + "source identities, or catalog edges. Use originalRelationIndex."
+                            ),
+                            schema=REPAIR_PATCH_SCHEMA, reasoning_effort=reasoning_effort,
+                            prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1",
+                            call_key="relations.cycle-repair", planning_deadline=planning_deadline,
+                            run_id=run_id,
+                        )
+                        patch_payload = repair_patch.get("data", repair_patch)
+                        relations, policies = apply_repair_patch(
+                            relations=list(raw.get("relations", [])),
+                            control_policies=list(raw.get("controlPolicies", [])),
+                            patch=patch_payload,
+                            task_keys={str(item.get("key")) for item in raw.get("tasks", [])},
+                        )
+                        raw["relations"] = relations
+                        raw["controlPolicies"] = policies
+                        self.last_audit["topology"] = {
+                            "compile1Conflict": structured_conflict, "repairPatch": patch_payload,
+                            "repairAttempts": 1,
+                        }
+                        repaired = raw
+                        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1"
+                    elif missing_refs and first is not None:
                         repaired = self._repair_source_ref_coverage(
                             raw=first,
                             profile=profile,
@@ -290,9 +332,8 @@ class TaskDecomposer:
                         repaired = self._call_llm(
                             stage="repair",
                             prompt=prompt
-                            + "\nThe previous result failed TaskPlan schema or topology validation. "
-                            + "Repair it once. Preserve valid task semantics, remove every reported "
-                            + "dependency cycle or reverse prerequisite path, and return the complete JSON again. "
+                            + "\nThe previous result failed TaskPlan schema validation. "
+                            + "Repair it once and return the complete JSON again. "
                             + f"Validation detail: {first_error}\n"
                             + f"Previous invalid TaskPlan JSON: {invalid_plan}",
                             schema=_SCHEMA,
@@ -318,8 +359,13 @@ class TaskDecomposer:
                     self.last_audit["error"] = type(repair_error).__name__
                     raise TaskDecompositionError(
                         "TASK_PLAN_VALIDATION_FAILED after one repair: "
-                        f"{repair_error}"
-                    ) from first_error
+                        f"{repair_error}",
+                        metadata={
+                            **({"topologyCompilation": self.last_audit["topologyCompilation"]}
+                               if "topologyCompilation" in self.last_audit else {}),
+                            "repairAttempts": 1,
+                        },
+                    ) from repair_error
         return self._fallback(
             mission_id=mission_id,
             profile=profile,
@@ -550,21 +596,68 @@ class TaskDecomposer:
                 )
             except Exception as exc:
                 missing_refs = self._coverage_gap_refs(exc)
-                if not missing_refs:
+                if missing_refs:
+                    combined = self._repair_source_ref_coverage(
+                        raw=combined,
+                        profile=profile,
+                        missing_refs=missing_refs,
+                        reasoning_effort=reasoning_effort,
+                        planning_deadline=planning_deadline,
+                        run_id=run_id,
+                    )
+                elif isinstance(exc, TopologyCompileError) and is_model_repair_eligible(exc.conflict):
+                    structured_conflict = conflict_context(exc.conflict)
+                    repair_patch = self._call_llm(
+                        stage="relations.repair",
+                        prompt=(
+                            "Patch the model relation/control proposal using the complete compiler conflict.\n"
+                            + f"Frozen Tasks: {json.dumps(compact, ensure_ascii=False)}\n"
+                            + f"Current model relations: {json.dumps(combined['relations'], ensure_ascii=False)}\n"
+                            + f"Current control policies: {json.dumps(combined['controlPolicies'], ensure_ascii=False)}\n"
+                            + f"Structured conflict: {json.dumps(structured_conflict, ensure_ascii=False)}\n"
+                            + "Return patch operations only. You may change model relations and controlPolicies. "
+                            + "Never remove a capability requirement/catalog edge, change frozen task keys or "
+                            + "capabilities, or change source/material identities. Use originalRelationIndex to "
+                            + "remove or replace model relations. Express feedback with add_verification_loop."
+                        ),
+                        schema=REPAIR_PATCH_SCHEMA,
+                        max_tokens=16_384,
+                        reasoning_effort=reasoning_effort,
+                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1",
+                        call_key="relations.cycle-repair",
+                        planning_deadline=planning_deadline,
+                        run_id=run_id,
+                    )
+                    patch_payload = repair_patch.get("data", repair_patch)
+                    patched_relations, patched_policies = apply_repair_patch(
+                        relations=list(combined["relations"]),
+                        control_policies=list(combined["controlPolicies"]),
+                        patch=patch_payload,
+                        task_keys={str(item["key"]) for item in detailed_tasks},
+                    )
+                    combined = {
+                        "tasks": detailed_tasks,
+                        "relations": patched_relations,
+                        "controlPolicies": patched_policies,
+                    }
+                    relation_payload = combined
+                    self.last_audit["topology"] = {
+                        "compile1Conflict": structured_conflict,
+                        "repairPatch": patch_payload,
+                        "repairAttempts": 1,
+                    }
+                    self.last_audit["stages"].append(
+                        {"stage": "relations.cycle-repair"}
+                    )
+                else:
                     raise
-                combined = self._repair_source_ref_coverage(
-                    raw=combined,
-                    profile=profile,
-                    missing_refs=missing_refs,
-                    reasoning_effort=reasoning_effort,
-                    planning_deadline=planning_deadline,
-                    run_id=run_id,
-                )
                 plan = self._to_plan(
                     mission_id, profile, strategy, combined,
                     task_input=task_input,
                     existing_semantic_tasks=existing_semantic_tasks,
                 )
+                if "topology" in self.last_audit:
+                    self.last_audit["topology"]["compile2Result"] = "valid"
             self._publish_draft(
                 stage="relations",
                 outline=outline,
@@ -576,11 +669,24 @@ class TaskDecomposer:
         except Exception as exc:
             self.last_audit["mode"] = "failed"
             self.last_audit["error"] = type(exc).__name__
+            if isinstance(exc, TopologyCompileError):
+                self.last_audit["topology"] = {
+                    **dict(self.last_audit.get("topology") or {}),
+                    "finalConflict": conflict_context(exc.conflict),
+                    "repairAttempts": int(
+                        (self.last_audit.get("topology") or {}).get("repairAttempts", 0)
+                    ),
+                }
             cause_code = transport_error_code(exc)
             raise TaskDecompositionError(
                 f"TASK_PLAN_STAGED_FAILED: {exc}",
                 cause_code=cause_code,
-                metadata=dict(self.last_audit.get("lastTransportError") or {}),
+                metadata={
+                    **dict(self.last_audit.get("lastTransportError") or {}),
+                    **({"topology": self.last_audit["topology"]} if "topology" in self.last_audit else {}),
+                    **({"topologyCompilation": self.last_audit["topologyCompilation"]}
+                       if "topologyCompilation" in self.last_audit else {}),
+                },
             ) from exc
 
     @staticmethod
@@ -931,19 +1037,14 @@ class TaskDecomposer:
                 }
             )
         self._complete_missing_capability_tasks(nodes, profile, strategy)
-        relations = self._normalize_direct_reversed_required_dependencies(
-            nodes,
-            [
+        raw_relations = [
                 TaskPlanRelation(
                     sourceKey=key_map.get(str(item.get("sourceKey") or "").strip(), str(item.get("sourceKey") or "").strip()),
                     targetKey=key_map.get(str(item.get("targetKey") or "").strip(), str(item.get("targetKey") or "").strip()),
                     relationType=item.get("relationType"),
                 )
                 for item in payload.get("relations", [])
-            ],
-        )
-        relations = self._complete_capability_dependencies(nodes, relations)
-        relations = self._connect_terminal_results(nodes, relations)
+            ]
         control_policies = tuple(
             VerificationLoopPolicy.model_validate({
                 **item,
@@ -963,11 +1064,37 @@ class TaskDecomposer:
             for item in payload.get("controlPolicies", [])
             if isinstance(item, dict)
         )
+        try:
+            compile_result = TaskPlanTopologyCompiler(self.capability_catalog).compile(
+                nodes=nodes, raw_relations=raw_relations, control_policies=control_policies
+            )
+        except TopologyCompileError as exc:
+            audit = failed_topology_audit(
+                error=exc, nodes=nodes, relations=raw_relations,
+                control_policies=control_policies, catalog=self.capability_catalog,
+                producer_kind="dynamic", catalog_source="injected",
+                capability_coverage_mode="complete",
+                repair_attempts=int((self.last_audit.get("topology") or {}).get("repairAttempts", 0)),
+            )
+            exc.audit = audit
+            self.last_audit["topologyCompilation"] = audit
+            raise
+        self.last_audit["topologyCompilation"] = successful_topology_audit(
+            result=compile_result, nodes=nodes, catalog=self.capability_catalog,
+            producer_kind="dynamic", catalog_source="injected",
+            capability_coverage_mode="complete",
+            repair_attempts=int((self.last_audit.get("topology") or {}).get("repairAttempts", 0)),
+            repair_operation_types=[
+                str(item.get("op"))
+                for item in ((self.last_audit.get("topology") or {}).get("repairPatch", {}).get("operations", []))
+                if isinstance(item, Mapping) and item.get("op")
+            ],
+        )
         plan = TaskPlan(
             missionId=mission_id,
             nodes=tuple(nodes),
-            relations=tuple(relations),
-            controlPolicies=control_policies,
+            relations=compile_result.task_plan_relations,
+            controlPolicies=compile_result.control_policies,
             metadata={
                 "strategy": strategy,
                 "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -1155,249 +1282,6 @@ class TaskDecomposer:
             present.add(capability)
             used_keys.add(key)
 
-    def _complete_capability_dependencies(
-        self,
-        nodes: list[PlannedTask],
-        relations: list[TaskPlanRelation],
-    ) -> list[TaskPlanRelation]:
-        """Add only missing required catalog inputs; TaskPlan remains topology truth."""
-        by_capability: dict[str, list[PlannedTask]] = {}
-        node_positions = {node.key: index for index, node in enumerate(nodes)}
-        existing = {
-            (item.source_key, item.target_key, item.relation_type)
-            for item in relations
-        }
-        for node in nodes:
-            by_capability.setdefault(node.capability_requirements[0], []).append(node)
-        existing_cycle = self._find_dependency_cycle(relations)
-        if existing_cycle is not None:
-            raise TaskDecompositionError(
-                "TaskPlan dependency cycle: " + " -> ".join(existing_cycle)
-            )
-        for node in nodes:
-            capability = node.capability_requirements[0]
-            for required in self.capability_catalog.get(capability).depends_on:
-                candidates = by_capability.get(required, [])
-                if not candidates:
-                    raise TaskDecompositionError(
-                        f"task {node.key} requires missing predecessor capability {required}"
-                    )
-                preceding = [
-                    candidate
-                    for candidate in candidates
-                    if node_positions[candidate.key] < node_positions[node.key]
-                ]
-                preferred = [*reversed(preceding), *(
-                    candidate for candidate in candidates if candidate not in preceding
-                )]
-                source: PlannedTask | None = None
-                blocked_cycles: list[tuple[str, ...]] = []
-                for candidate in preferred:
-                    identity = (
-                        candidate.key,
-                        node.key,
-                        SemanticTaskRelationType.DEPENDS_ON,
-                    )
-                    if identity in existing:
-                        source = candidate
-                        break
-                    reverse_path = self._find_dependency_path(
-                        relations,
-                        start=node.key,
-                        target=candidate.key,
-                    )
-                    if reverse_path is None:
-                        source = candidate
-                        break
-                    blocked_cycles.append((candidate.key, *reverse_path))
-                if source is None:
-                    cycle = blocked_cycles[0] if blocked_cycles else (node.key,)
-                    raise TaskDecompositionError(
-                        "required capability dependency "
-                        f"{required} -> {capability} cannot be bound for task {node.key}; "
-                        "the generated reverse path would create dependency cycle: "
-                        + " -> ".join(cycle)
-                    )
-                identity = (source.key, node.key, SemanticTaskRelationType.DEPENDS_ON)
-                if identity in existing:
-                    continue
-                relations.append(TaskPlanRelation(
-                    sourceKey=source.key,
-                    targetKey=node.key,
-                    relationType=SemanticTaskRelationType.DEPENDS_ON,
-                ))
-                existing.add(identity)
-        return relations
-
-    def _normalize_direct_reversed_required_dependencies(
-        self,
-        nodes: list[PlannedTask],
-        relations: list[TaskPlanRelation],
-    ) -> list[TaskPlanRelation]:
-        """Remove only catalog-provable reversed hard-dependency edges.
-
-        The normal dependency completion pass then installs the authoritative
-        prerequisite -> dependent edge and performs the usual cycle checks.
-        """
-        capability_by_key = {
-            node.key: node.capability_requirements[0]
-            for node in nodes
-        }
-        normalized: list[TaskPlanRelation] = []
-        for relation in relations:
-            if relation.relation_type != SemanticTaskRelationType.DEPENDS_ON:
-                normalized.append(relation)
-                continue
-            source_capability = capability_by_key.get(relation.source_key)
-            target_capability = capability_by_key.get(relation.target_key)
-            is_proven_reverse = bool(
-                source_capability
-                and target_capability
-                and target_capability in self.capability_catalog.get(source_capability).depends_on
-            )
-            if not is_proven_reverse:
-                normalized.append(relation)
-        return normalized
-
-    def _connect_terminal_results(
-        self,
-        nodes: list[PlannedTask],
-        relations: list[TaskPlanRelation],
-    ) -> list[TaskPlanRelation]:
-        """Ensure every semantic leaf reaches a verification or artifact sink.
-
-        This is a domain-neutral topology invariant, not a replacement planner.  The model
-        remains responsible for task meaning and ordering; Core only connects otherwise
-        orphaned terminal results to an existing declared sink so final assembly cannot
-        silently omit a completed branch.
-        """
-        sink_capabilities = {"verification", "artifact_generation"}
-        sinks = [
-            node for node in nodes
-            if node.capability_requirements[0] in sink_capabilities
-        ]
-        if not sinks:
-            return relations
-        existing = {
-            (item.source_key, item.target_key, item.relation_type)
-            for item in relations
-        }
-        outgoing = {
-            item.source_key
-            for item in relations
-            if item.relation_type == SemanticTaskRelationType.DEPENDS_ON
-        }
-        positions = {node.key: index for index, node in enumerate(nodes)}
-        for leaf in nodes:
-            if leaf.key in outgoing or leaf in sinks:
-                continue
-            # Prefer a later artifact sink, then a later verification sink.  If the model
-            # ordered the sink earlier, use any cycle-safe declared sink instead of inventing
-            # a new task or dropping the leaf.
-            candidates = sorted(
-                sinks,
-                key=lambda node: (
-                    positions[node.key] <= positions[leaf.key],
-                    node.capability_requirements[0] != "artifact_generation",
-                    positions[node.key],
-                ),
-            )
-            for sink in candidates:
-                identity = (leaf.key, sink.key, SemanticTaskRelationType.DEPENDS_ON)
-                if identity in existing:
-                    break
-                if self._find_dependency_path(
-                    relations, start=sink.key, target=leaf.key
-                ) is not None:
-                    continue
-                relation = TaskPlanRelation(
-                    sourceKey=leaf.key,
-                    targetKey=sink.key,
-                    relationType=SemanticTaskRelationType.DEPENDS_ON,
-                )
-                relations.append(relation)
-                existing.add(identity)
-                outgoing.add(leaf.key)
-                break
-            else:
-                raise TaskDecompositionError(
-                    f"terminal task {leaf.key} cannot reach a verification or artifact sink"
-                )
-        return relations
-
-    @staticmethod
-    def _dependency_adjacency(
-        relations: list[TaskPlanRelation],
-    ) -> dict[str, list[str]]:
-        adjacency: dict[str, list[str]] = {}
-        for relation in relations:
-            if relation.relation_type != SemanticTaskRelationType.DEPENDS_ON:
-                continue
-            targets = adjacency.setdefault(relation.source_key, [])
-            if relation.target_key not in targets:
-                targets.append(relation.target_key)
-            adjacency.setdefault(relation.target_key, [])
-        return adjacency
-
-    @classmethod
-    def _find_dependency_path(
-        cls,
-        relations: list[TaskPlanRelation],
-        *,
-        start: str,
-        target: str,
-    ) -> tuple[str, ...] | None:
-        """Return one deterministic dependency path, including both endpoints."""
-        adjacency = cls._dependency_adjacency(relations)
-        pending: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
-        visited: set[str] = set()
-        while pending:
-            current, path = pending.pop()
-            if current == target:
-                return path
-            if current in visited:
-                continue
-            visited.add(current)
-            for successor in reversed(adjacency.get(current, [])):
-                if successor not in visited:
-                    pending.append((successor, (*path, successor)))
-        return None
-
-    @classmethod
-    def _find_dependency_cycle(
-        cls,
-        relations: list[TaskPlanRelation],
-    ) -> tuple[str, ...] | None:
-        """Return one deterministic cycle with its first node repeated at the end."""
-        adjacency = cls._dependency_adjacency(relations)
-        state: dict[str, int] = {}
-        stack: list[str] = []
-        stack_positions: dict[str, int] = {}
-
-        def visit(node: str) -> tuple[str, ...] | None:
-            state[node] = 1
-            stack_positions[node] = len(stack)
-            stack.append(node)
-            for successor in adjacency.get(node, []):
-                if state.get(successor, 0) == 0:
-                    cycle = visit(successor)
-                    if cycle is not None:
-                        return cycle
-                elif state.get(successor) == 1:
-                    start = stack_positions[successor]
-                    return (*stack[start:], successor)
-            stack.pop()
-            stack_positions.pop(node, None)
-            state[node] = 2
-            return None
-
-        for node in adjacency:
-            if state.get(node, 0) == 0:
-                cycle = visit(node)
-                if cycle is not None:
-                    return cycle
-        return None
-
     @staticmethod
     def _validate_coverage(plan: TaskPlan, profile: TaskSemanticProfile) -> None:
         searchable = json.dumps(plan.model_dump(by_alias=True), ensure_ascii=False).lower()
@@ -1476,10 +1360,14 @@ class TaskDecomposer:
             )
             if dependency in selected
         )
-        return TaskPlan(
-            missionId=mission_id,
-            nodes=tuple(nodes),
+        return validate_task_plan_for_execution(
+            capability_catalog=self.capability_catalog,
+            mission_id=mission_id,
+            nodes=nodes,
             relations=relations,
+            relation_origin=EdgeOrigin.FALLBACK_GENERATED,
+            producer_kind="fallback",
+            audit_sink=lambda audit: self.last_audit.__setitem__("topologyCompilation", audit),
             metadata={
                 "strategy": strategy,
                 "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,

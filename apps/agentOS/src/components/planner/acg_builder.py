@@ -27,6 +27,7 @@ from support.acg.models import (
 )
 from support.acg.models import CapabilityCatalog
 from .cognitive_router import CollaborationNetwork
+from .acg_semantic_validator import validate_acg_semantic_preservation
 from support.acg.models import build_default_capability_catalog
 from support.acg.models import TaskSemanticProfile
 
@@ -134,6 +135,7 @@ class ACGBuilder:
         self._wire_control_policies(blueprint, task_plan, step_by_capability)
         blueprint.touch()
         validate_blueprint(blueprint)
+        validate_acg_semantic_preservation(task_plan, blueprint)
         return blueprint
 
     def build_template(self, *, workflow, task_plan: TaskPlan) -> ACGBuildResult:
@@ -168,6 +170,7 @@ class ACGBuilder:
             raise ValueError(
                 "Blueprint implementation bindings must cover the complete TaskPlan"
             )
+        validate_acg_semantic_preservation(task_plan, blueprint)
         return ACGBuildResult(blueprint=blueprint, bindings=bindings)
 
     def _build_steps(

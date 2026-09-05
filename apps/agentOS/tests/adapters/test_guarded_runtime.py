@@ -221,6 +221,17 @@ def test_guarded_model_stream_holds_concurrency_slot_until_stream_finishes() -> 
     assert delegate.max_active == 1
 
 
+def test_guarded_model_exposes_effective_gate_configuration() -> None:
+    runtime = GuardedModelRuntime(
+        delegate=_ConcurrentStreamingModel(),
+        max_concurrency=3,
+        min_interval_seconds=0.125,
+    )
+
+    assert runtime.max_concurrency == 3
+    assert runtime.min_interval_seconds == 0.125
+
+
 def test_guarded_model_retries_temporary_error_with_same_commit_id() -> None:
     """可重试模型错误必须复用同一个提交标识，不能生成第二个外部副作用边界。"""
     delegate = _FlakyModel()

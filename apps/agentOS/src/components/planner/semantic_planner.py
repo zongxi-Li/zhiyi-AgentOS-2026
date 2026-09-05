@@ -14,6 +14,7 @@ from contracts.planning import (
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
 from .intent_analyzer import IntentLLM
 from .task_decomposer import TaskDecomposer
+from .topology import EdgeOrigin, validate_task_plan_for_execution
 
 
 class SemanticPlanningError(ValueError):
@@ -25,6 +26,7 @@ class SemanticPlanner:
                  progress_callback: Callable[[dict[str, Any]], None] | None = None) -> None:
         self.capability_catalog = capability_catalog
         self.task_decomposer = TaskDecomposer(capability_catalog, llm, progress_callback=progress_callback)
+        self.last_topology_audit: dict[str, Any] = {}
 
     def plan_profile(
         self,
@@ -94,11 +96,15 @@ class SemanticPlanner:
             for dependency in self.capability_catalog.get(capability).depends_on
             if dependency in selected
         )
-        return TaskPlan(
-            missionId=mission_id,
-            planVersion=plan_version,
-            nodes=tuple(nodes),
+        return validate_task_plan_for_execution(
+            capability_catalog=self.capability_catalog,
+            mission_id=mission_id,
+            plan_version=plan_version,
+            nodes=nodes,
             relations=relations,
+            relation_origin=EdgeOrigin.FALLBACK_GENERATED,
+            producer_kind="compatibility",
+            audit_sink=self._capture_topology_audit,
             metadata={"strategy": strategy},
         )
 
@@ -121,13 +127,20 @@ class SemanticPlanner:
             })
             for node in declared_nodes
         )
-        return TaskPlan(
-            missionId=mission_id,
-            planVersion=plan_version,
+        return validate_task_plan_for_execution(
+            capability_catalog=self.capability_catalog,
+            mission_id=mission_id,
+            plan_version=plan_version,
             nodes=nodes,
             relations=tuple(getattr(workflow, "planning_relations", ()) or ()),
+            relation_origin=EdgeOrigin.TEMPLATE_DECLARED,
+            producer_kind="template",
+            audit_sink=self._capture_topology_audit,
             metadata={"strategy": strategy},
         )
+
+    def _capture_topology_audit(self, audit: dict[str, Any]) -> None:
+        self.last_topology_audit = dict(audit)
 
 
 __all__ = ["SemanticPlanner", "SemanticPlanningError"]
