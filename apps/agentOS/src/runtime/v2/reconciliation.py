@@ -10,7 +10,7 @@ from typing import Any
 from contracts.planning import TaskImplementationBinding, TaskPlan
 from contracts.workflow import RuntimeMissionRecord
 from domain.lifecycle_projection import LifecycleProjectionEvent, ProjectionEventStatus
-from domain.models import RunStatus
+from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
 from support.acg.models import RuntimeBlueprintSpec
 from types import SimpleNamespace
 
@@ -281,16 +281,112 @@ class IdentityProjectionReconciler:
             raise ValueError("identity Run Blueprint is missing")
         if int(blueprint.version) != int(run.graph_version):
             raise ValueError("identity Run graphVersion is inconsistent")
-        runtime_terminal = str(getattr(runtime_run.status, "value", runtime_run.status)) in {
+        runtime_status = str(getattr(runtime_run.status, "value", runtime_run.status))
+        runtime_terminal = runtime_status in {
             "completed", "failed", "cancelled", "superseded"
         }
-        if not runtime_terminal and run.status in {
+        if runtime_status in {"failed", "cancelled", "superseded"}:
+            self._finish_open_nodes(
+                runtime_run,
+                cancelled=runtime_status in {"cancelled", "superseded"},
+            )
+        identity_terminal = run.status in {
             RunStatus.FAILED,
             RunStatus.SUCCEEDED,
             RunStatus.CANCELLED,
             RunStatus.SUPERSEDED,
-        }:
+        }
+        if runtime_terminal and run.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+            if runtime_status == "superseded":
+                replacement = str(
+                    (getattr(runtime_run, "execution_state", None) or {}).get(
+                        "supersededByRunId"
+                    )
+                    or ""
+                )
+                if not replacement:
+                    raise ValueError("superseded execution Run has no replacement Run")
+                self._finish_open_nodes(runtime_run, cancelled=True)
+                self.adapter.on_run_superseded(
+                    runtime_run.run_id,
+                    replacement,
+                    str(
+                        (getattr(runtime_run, "execution_state", None) or {}).get(
+                            "sourcePatchId"
+                        )
+                        or "reconciliation"
+                    ),
+                )
+            else:
+                self._finish_open_nodes(
+                    runtime_run,
+                    cancelled=runtime_status == "cancelled",
+                )
+                self.adapter.on_run_finished(
+                    runtime_run.run_id,
+                    {
+                        "completed": "succeeded",
+                        "failed": "failed",
+                        "cancelled": "cancelled",
+                    }[runtime_status],
+                )
+            return
+        if not runtime_terminal and identity_terminal:
             raise ValueError("non-terminal execution Run points to terminal identity Run")
+
+    def _finish_open_nodes(self, runtime_run: Any, *, cancelled: bool) -> None:
+        """Close identity Attempts/StepExecutions left open by a restart.
+
+        A terminal Runtime Run is allowed to be ahead of its identity
+        projection. Reconciliation must close the node records as well as the
+        Run record, otherwise execution-tree keeps showing stale ``running``
+        nodes even after the Run has failed.
+        """
+        reason = self._terminal_reason(runtime_run)
+        for attempt in self.adapter.repositories.attempts.list_for_run(
+            runtime_run.run_id
+        ):
+            executions = self.adapter.repositories.step_executions.list_for_attempt(
+                attempt.attempt_id
+            )
+            for execution in executions:
+                if execution.status is not StepExecutionStatus.RUNNING:
+                    continue
+                if cancelled:
+                    self.adapter.on_step_cancelled(
+                        run_id=runtime_run.run_id,
+                        attempt_id=attempt.attempt_id,
+                        step_execution_id=execution.step_execution_id,
+                        reason=reason,
+                    )
+                else:
+                    self.adapter.on_step_failed(
+                        run_id=runtime_run.run_id,
+                        attempt_id=attempt.attempt_id,
+                        step_execution_id=execution.step_execution_id,
+                        reason=reason,
+                    )
+            refreshed_attempt = self.adapter.repositories.attempts.get(
+                attempt.attempt_id
+            )
+            if refreshed_attempt is not None and refreshed_attempt.status in {
+                AttemptStatus.PENDING,
+                AttemptStatus.RUNNING,
+            }:
+                self.adapter.repositories.attempts.update_status(
+                    attempt.attempt_id,
+                    AttemptStatus.CANCELLED if cancelled else AttemptStatus.FAILED,
+                    failure_reason=reason,
+                )
+
+    @staticmethod
+    def _terminal_reason(runtime_run: Any) -> str:
+        error = getattr(runtime_run, "error", None)
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        if isinstance(error, str) and error.strip():
+            return error
+        return "Execution Runtime terminated before the identity projection completed."
 
 
 __all__ = ["IdentityProjectionReconciler", "IdentityReconciliationReport"]

@@ -16,6 +16,7 @@ from contracts.planning import (
     PlannedTask,
     TaskPlanPatch,
 )
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
 from contracts.workflow import WorkflowDefinition, RuntimeRunRecord, WorkflowStepDefinition, WorkflowStatus
 from domain.identity_graph import IdentityResolver
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
@@ -335,6 +336,59 @@ def test_reconciler_restores_a_missing_run_projection_from_runtime_snapshot() ->
         assert report.failures == []
         assert report.repaired_runs == 1
         assert identity_runtime.repositories.runs.get(run.run_id) is not None
+    finally:
+        identity_runtime.close()
+
+
+def test_reconciler_converges_terminal_runtime_and_closes_open_identity_nodes() -> None:
+    runtime, identity_runtime, bridge, task = _runtime()
+    try:
+        _, run = runtime.prepare_run(task.mission_id)
+        identity_run = identity_runtime.repositories.runs.get(run.run_id)
+        assert identity_run is not None
+        identity_runtime.repositories.runs.update_status(run.run_id, RunStatus.RUNNING)
+
+        identity_task = identity_runtime.repositories.semantic_tasks.list_for_mission(
+            task.mission_id
+        )[0]
+        attempt = identity_runtime.create_attempt(
+            run_id=run.run_id,
+            task_id=identity_task.task_id,
+        )
+        bridge.record_scheduling_binding(
+            attempt_id=attempt.attempt_id,
+            runtime_binding=RuntimeExecutionBinding(
+                bindingId="binding:reconciliation",
+                runId=run.run_id,
+                stepId="analyse",
+                attemptId=attempt.attempt_id,
+                resourceId="agent-identity",
+                resourceType=ResourceType.AGENT,
+                snapshotVersion=1,
+            ),
+            agent_id="agent-identity",
+            model_id="test-model",
+        )
+        execution = bridge.start_execution(
+            identity_runtime.create_context(run.run_id),
+            input={"nodeId": "analyse"},
+        )
+
+        run.status = WorkflowStatus.FAILED
+        run.error = {
+            "code": "interrupted_after_restart",
+            "message": "Task interrupted by service restart.",
+        }
+        runtime.workflow_store.save_run(run)
+
+        report = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
+            runtime.workflow_store
+        )
+
+        assert report.failures == []
+        assert identity_runtime.repositories.runs.get(run.run_id).status is RunStatus.FAILED
+        assert identity_runtime.repositories.attempts.get(attempt.attempt_id).status is AttemptStatus.FAILED
+        assert identity_runtime.repositories.step_executions.get(execution.step_execution_id).status is StepExecutionStatus.FAILED
     finally:
         identity_runtime.close()
 
