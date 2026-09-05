@@ -214,7 +214,7 @@ services:
     mem_limit: ${KINLIN_FRONTEND_MEMORY:-256m}
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
-    networks: [web-network]
+    networks: [web-network, web-public]
     depends_on:
       backend:
         condition: service_healthy
@@ -287,6 +287,9 @@ networks:
   web-network:
     name: ${KINLIN_DEPLOYMENT_ID}_web_network_v11
     internal: true
+    labels: {com.kinlin.deployment-id: "${KINLIN_DEPLOYMENT_ID}"}
+  web-public:
+    name: ${KINLIN_DEPLOYMENT_ID}_web_public_network_v11
     labels: {com.kinlin.deployment-id: "${KINLIN_DEPLOYMENT_ID}"}
   agent-network:
     name: ${KINLIN_DEPLOYMENT_ID}_agent_network_v11
