@@ -159,8 +159,11 @@ def test_full_profile_uses_outline_detail_and_relation_units() -> None:
         {"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"},
     ], "controlPolicies": []}
     llm = _SequencePlanLLM(outline, details, relations)
+    progress: list[dict] = []
 
-    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+    plan = TaskDecomposer(
+        build_default_capability_catalog(), llm, progress_callback=progress.append
+    ).decompose(
         mission_id="mission_0123456789ab",
         profile=_profile(),
         strategy="dynamic_generation",
@@ -176,6 +179,14 @@ def test_full_profile_uses_outline_detail_and_relation_units() -> None:
         f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
     ]
     assert all(call["max_tokens"] == 16_384 for call in llm.calls)
+    drafts = [item for item in progress if item.get("eventType") == "planner.draft.updated"]
+    assert [item["stage"] for item in drafts] == ["outline", "detail", "relations"]
+    assert drafts[0]["nodes"][0]["status"] == "outlined"
+    assert drafts[1]["nodes"][0]["status"] == "detailed"
+    assert drafts[1]["nodes"][0]["rationale"] == "entry"
+    assert drafts[-1]["edges"] == [{
+        "sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"
+    }]
 
 
 def test_staged_detail_inherits_frozen_identity_when_provider_omits_repeated_fields() -> None:

@@ -134,6 +134,52 @@ class TaskDecomposer:
         self.last_audit: dict[str, Any] = {}
         self.progress_callback = progress_callback
 
+    def _publish_draft(
+        self,
+        *,
+        stage: str,
+        outline: list[dict[str, Any]],
+        detailed_tasks: list[dict[str, Any]] | None = None,
+        relations: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Publish a bounded, validated semantic graph preview, never hidden reasoning."""
+        if not self.progress_callback:
+            return
+        detailed_by_key = {
+            str(item.get("key") or ""): item
+            for item in (detailed_tasks or [])
+            if isinstance(item, dict)
+        }
+        nodes = []
+        for item in outline[:100]:
+            key = str(item.get("key") or "")
+            detail = detailed_by_key.get(key)
+            nodes.append({
+                "key": key,
+                "title": str(item.get("title") or key)[:200],
+                "capabilityId": str(item.get("capabilityId") or "")[:120],
+                "status": "detailed" if detail is not None else "outlined",
+                # decompositionRationale is an explicit answer field, not the
+                # provider's private chain-of-thought.
+                "rationale": str((detail or {}).get("decompositionRationale") or "")[:500],
+            })
+        safe_edges = [
+            {
+                "sourceKey": str(item.get("sourceKey") or "")[:160],
+                "targetKey": str(item.get("targetKey") or "")[:160],
+                "relationType": str(item.get("relationType") or "depends_on")[:40],
+            }
+            for item in (relations or [])[:300]
+            if isinstance(item, dict)
+        ]
+        self.progress_callback({
+            "eventType": "planner.draft.updated",
+            "stage": stage,
+            "nodes": nodes,
+            "edges": safe_edges,
+            "persistTrace": False,
+        })
+
     def _call_llm(
         self,
         *,
@@ -357,6 +403,7 @@ class TaskDecomposer:
                 )
                 outline, keys = self._validated_outline_tasks(outline_result)
             self.last_audit["stages"].append({"stage": "outline", "taskCount": len(keys)})
+            self._publish_draft(stage="outline", outline=outline)
 
             detailed_tasks: list[dict[str, Any]] = []
             for offset in range(0, len(outline), 5):
@@ -435,6 +482,11 @@ class TaskDecomposer:
                     normalized_rows = self._validated_detail_tasks(detail_result, batch)
                 detailed_tasks.extend(normalized_rows)
                 self.last_audit["stages"].append({"stage": "detail", "keys": batch_keys})
+                self._publish_draft(
+                    stage="detail",
+                    outline=outline,
+                    detailed_tasks=detailed_tasks,
+                )
 
             relation_schema = {
                 "type": "object",
@@ -513,6 +565,12 @@ class TaskDecomposer:
                     task_input=task_input,
                     existing_semantic_tasks=existing_semantic_tasks,
                 )
+            self._publish_draft(
+                stage="relations",
+                outline=outline,
+                detailed_tasks=detailed_tasks,
+                relations=list(relation_payload.get("relations", [])),
+            )
             self._capture_model_audit(outline_result)
             return plan
         except Exception as exc:

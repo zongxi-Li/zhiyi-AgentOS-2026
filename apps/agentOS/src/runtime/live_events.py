@@ -13,6 +13,8 @@ COALESCIBLE_EVENT_TYPES = frozenset({
     "model.output.delta",
     "model.activity",
     "planner.model.activity",
+    "planner.model.output.delta",
+    "planner.draft.updated",
 })
 
 CRITICAL_EVENT_TYPES = frozenset({

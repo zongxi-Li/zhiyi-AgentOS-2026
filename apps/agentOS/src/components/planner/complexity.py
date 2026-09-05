@@ -167,7 +167,7 @@ def _stream_planning_call(
     progress_callback: Callable[[dict[str, Any]], None] | None,
     extra_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
-    """Consume a true model stream and expose only safe planner activity facts."""
+    """Consume a true model stream and expose a transient structured-output preview."""
     streamer = getattr(llm, "stream_generate_json", None)
     if not callable(streamer):
         raise AttributeError("stream_generate_json is not available")
@@ -192,7 +192,7 @@ def _stream_planning_call(
             "ttft_timeout": min(30.0, timeout),
             "idle_timeout": min(60.0, timeout),
             "total_timeout": timeout,
-            "emit_output_deltas": False,
+            "emit_output_deltas": True,
         })
         async for event in streamer(**stream_kwargs):
             event_type = str(
@@ -205,7 +205,18 @@ def _stream_planning_call(
                 payload = event.get("payload")
             payload = dict(payload) if isinstance(payload, Mapping) else {}
             if event_type in {"model.output.delta", "planner.model.output.delta"}:
-                # The structured JSON buffer remains inside the model runtime.
+                # Planner output is transient UI evidence. It is never persisted
+                # to Trace, and reasoning remains mapped to activity upstream.
+                delta = payload.get("delta")
+                if isinstance(delta, str) and delta and progress_callback:
+                    progress_callback({
+                        "eventType": "planner.model.output.delta",
+                        "stage": stage,
+                        "callKey": call_key,
+                        "retryIndex": retry_index,
+                        "delta": delta,
+                        "persistTrace": False,
+                    })
                 continue
             if event_type in {"model.completed", "planner.model.completed"}:
                 candidate = payload.get("data")

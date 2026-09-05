@@ -21,7 +21,7 @@ class _PlannerStream:
         assert kwargs["run_id"] == "run-stream"
         assert kwargs["node_id"] is None
         assert kwargs["attempt_id"] is None
-        assert kwargs["emit_output_deltas"] is False
+        assert kwargs["emit_output_deltas"] is True
         yield RuntimeEvent(eventType="model.started", runId="run-stream", sequence=1, payload={})
         yield RuntimeEvent(eventType="model.first_token", runId="run-stream", sequence=2, payload={"elapsedMs": 12})
         yield RuntimeEvent(eventType="model.output.delta", runId="run-stream", sequence=3, payload={"delta": '{"ok": true}'})
@@ -29,7 +29,7 @@ class _PlannerStream:
         yield RuntimeEvent(eventType="model.completed", runId="run-stream", sequence=5, payload={"data": {"ok": True}})
 
 
-def test_planner_stream_buffers_json_and_publishes_only_safe_activity() -> None:
+def test_planner_stream_publishes_transient_structured_output_deltas() -> None:
     progress: list[dict] = []
     result = call_planning_model(
         _PlannerStream(),
@@ -49,12 +49,15 @@ def test_planner_stream_buffers_json_and_publishes_only_safe_activity() -> None:
         "planner.stage.started",
         "planner.model.started",
         "planner.model.first_token",
+        "planner.model.output.delta",
         "planner.model.activity",
         "planner.model.completed",
         "planner.stage.completed",
     ]
     assert all("SECRET_PROMPT" not in str(item) for item in progress)
-    assert all("delta" not in item for item in progress)
+    delta = next(item for item in progress if item["eventType"] == "planner.model.output.delta")
+    assert delta["delta"] == '{"ok": true}'
+    assert delta["persistTrace"] is False
     assert all(item.get("callKey") == "outline" for item in progress)
 
 

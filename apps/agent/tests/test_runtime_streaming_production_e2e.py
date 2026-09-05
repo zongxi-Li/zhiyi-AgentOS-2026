@@ -390,7 +390,7 @@ async def _test_planner_http_provider_to_fastapi_sse_precedes_planner_completion
     assert "planner.completed" in event_types
     assert event_types.index("planner.model.first_token") < event_types.index("planner.completed")
     assert event_types.index("planner.completed") < event_types.index("node.started")
-    assert "planner.model.output.delta" not in event_types
+    assert "planner.model.output.delta" in event_types
     assert all(
         not any(key in json.dumps(payload, ensure_ascii=False) for key in ("prompt", "reasoning", '"data"'))
         for payload in payloads

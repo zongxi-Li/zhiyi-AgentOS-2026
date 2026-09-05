@@ -159,7 +159,7 @@ _PLANNER_PROGRESS_FIELDS = frozenset({
     "kind", "taskCount", "dependencyCount", "nodeCount", "edgeCount",
     "constraintCount", "requiredCapabilityCount", "expectedArtifactCount",
     "callKey", "retryIndex", "elapsedMs", "idleMs", "receivedChunks", "receivedLength",
-    "safeSummary",
+    "safeSummary", "delta",
 })
 
 
@@ -2272,15 +2272,37 @@ class ExecutionRuntime:
         planner lifecycle events carry ``planningProgress`` for legacy
         projections; high-frequency model activity is transient-only.
         """
+        planner_event_type = str(event.get("eventType") or "")
         payload = {
             key: value for key, value in event.items()
             if key in _PLANNER_PROGRESS_FIELDS and isinstance(value, (str, int, float, bool))
         }
-        planner_event_type = str(event.get("eventType") or "")
+        if planner_event_type == "planner.draft.updated":
+            payload["nodes"] = [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key in {"key", "title", "capabilityId", "status", "rationale"}
+                    and isinstance(value, str)
+                }
+                for item in list(event.get("nodes") or [])[:100]
+                if isinstance(item, Mapping)
+            ]
+            payload["edges"] = [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key in {"sourceKey", "targetKey", "relationType"}
+                    and isinstance(value, str)
+                }
+                for item in list(event.get("edges") or [])[:300]
+                if isinstance(item, Mapping)
+            ]
         if planner_event_type not in {
             "planner.started", "planner.stage.started", "planner.stage.retry",
             "planner.model.started", "planner.model.first_token",
-            "planner.model.activity", "planner.model.completed",
+            "planner.model.activity", "planner.model.output.delta", "planner.model.completed",
+            "planner.draft.updated",
             "planner.stage.completed", "planner.profile.resolved",
             "planner.plan.parsed", "planner.graph.compiled", "planner.completed",
             "planner.failed",
