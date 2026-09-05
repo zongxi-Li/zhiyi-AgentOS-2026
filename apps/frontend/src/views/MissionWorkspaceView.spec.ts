@@ -421,6 +421,36 @@ describe('MissionWorkspaceView', () => {
     }
   })
 
+  it('keeps runtime observation visible while a projection refresh is pending', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveRefresh: (value: MissionWorkspaceProjection) => void = () => undefined
+      const refresh = new Promise<MissionWorkspaceProjection>(resolve => {
+        resolveRefresh = resolve
+      })
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace')
+        .mockResolvedValueOnce(projection())
+        .mockReturnValueOnce(refresh)
+      vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue({
+        runId: 'run_2', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'succeeded', steps: []
+      } as any)
+      const { wrapper } = await mountWorkspace()
+      await vi.waitFor(() => expect((wrapper.vm as any).runtimeObservation).not.toBeNull())
+
+      await vi.advanceTimersByTimeAsync(8000)
+      await flushPromises()
+
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      expect((wrapper.vm as any).runtimeObservation).not.toBeNull()
+
+      resolveRefresh(projection())
+      await flushPromises()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the stable artifact tab identity and shows missing content in a historical Run', async () => {
     const historical = projection({ activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }, entries: projection().entries.filter(item => item.entryId !== 'task:capacity:primary') })
     const { wrapper } = await mountWorkspace((_runId) => _runId === 'run_1' ? historical : projection())

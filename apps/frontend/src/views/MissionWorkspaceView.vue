@@ -405,12 +405,21 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
     return
   }
+  // Keep the rendered projection and runtime observation visible while the
+  // periodic projection refresh is in flight. Clearing them here made the
+  // inspector and bottom panels flash on every refresh cycle.
+  const runSelectionChanged = Boolean(
+    runId
+    && projection.value?.activeRun?.runId
+    && projection.value.activeRun.runId !== runId
+  )
+  const preserveRenderedWorkspace = Boolean(projection.value && !runSelectionChanged)
   controller?.abort()
-  runtimeObservationAdapter.stop()
+  if (!preserveRenderedWorkspace) runtimeObservationAdapter.stop()
   stopProjectionRefresh()
   controller = new AbortController()
   const requestController = controller
-  runtimeObservation.value = null
+  if (!preserveRenderedWorkspace) runtimeObservation.value = null
   loading.value = true
   loadError.value = ''
   try {
@@ -428,6 +437,7 @@ const loadWorkspace = async (runId = selectedRunId.value) => {
       runtimeStoreRunId = streamRunId
     }
     if (nextRunId) {
+      if (runtimeObservation.value?.runId !== nextRunId) runtimeObservation.value = null
       runtimeObservationAdapter.start(nextRunId, {
         historical: Boolean(currentRunId.value && currentRunId.value !== nextRunId),
         diagnostics: nextProjection.diagnostics,
