@@ -308,6 +308,15 @@ class PlanningEngine:
             planning_deadline=planning_deadline,
             run_id=run_id,
         )
+        # The decomposer may materialize catalog capabilities that were not
+        # present in the initial intent profile (for example, a required
+        # dependency or a task-specific capability). Bind against the final
+        # TaskPlan facts before generating variants and building the ACG.
+        profile, _ = self._rebind_profile_to_task_plan(
+            profile=profile,
+            task_plan=task_plan,
+            domain=domain,
+        )
         task_plan = task_plan.model_copy(update={
             "metadata": {
                 **task_plan.metadata,
@@ -467,6 +476,59 @@ class PlanningEngine:
                 self.semantic_planner.task_decomposer.last_audit.get("topologyCompilation") or {}
             ),
         )
+
+    def _rebind_profile_to_task_plan(
+        self,
+        *,
+        profile: TaskSemanticProfile,
+        task_plan: TaskPlan,
+        domain: str,
+    ) -> tuple[TaskSemanticProfile, object]:
+        """Make capability binding authoritative to the final TaskPlan.
+
+        Intent analysis is deliberately broad and the decomposer can add
+        catalog-required tasks. Binding the pre-decomposition profile leaves
+        those valid tasks without an Agent, so the ACG builder rejects an
+        otherwise valid plan. Recompute the dependency closure and route it
+        after decomposition instead.
+        """
+        planned = list(dict.fromkeys(
+            str(node.capability_requirements[0]).strip().lower()
+            for node in task_plan.nodes
+            if node.capability_requirements
+        ))
+        if not planned:
+            raise ACGPlanningError("TaskPlan contains no executable capabilities")
+        try:
+            required = self.capability_catalog.expand_dependencies(planned)
+        except KeyError as exc:
+            raise ACGPlanningError(
+                f"TaskPlan references an unknown capability: {exc.args[0]}"
+            ) from exc
+        existing = {
+            item.capability_id: item for item in profile.capability_candidates
+        }
+        rebound = profile.model_copy(update={
+            "required_capabilities": list(required),
+            "capability_candidates": [
+                existing.get(capability)
+                or CapabilityCandidate(
+                    capabilityId=capability,
+                    score=1.0,
+                    matchedTerms=[],
+                    source="dependency" if capability not in planned else "fallback",
+                )
+                for capability in required
+            ],
+        })
+        network = self.cognitive_router.route(rebound, domain=domain)
+        if network.unresolved_capabilities:
+            missing = ",".join(network.unresolved_capabilities)
+            raise ACGPlanningError(
+                "TaskPlan capabilities lack an Agent binding: "
+                f"missing={missing}; planned={','.join(planned)}"
+            )
+        return rebound, network
 
     @staticmethod
     def _planning_total_timeout_seconds() -> float:

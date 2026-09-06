@@ -3,9 +3,13 @@ from __future__ import annotations
 import pytest
 
 from components.planner.acg_builder import ACGBuilder
+from components.planner.service import PlanningEngine
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from components.planner.task_decomposer import TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer, TaskDecompositionError
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
+from components.mission_manager.store import WorkflowRegistry
+from service.agents import AgentRegistry
+from adapters.model.native import register_native_runtime
 from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
 
 
@@ -93,6 +97,43 @@ def test_repeated_capability_instances_survive_taskplan_and_acg_build() -> None:
     assert {item.plan_node_key for item in built.bindings} == {node.key for node in plan.nodes}
     assert llm.calls[0]["prompt_version"] == TASK_DECOMPOSITION_PROMPT_VERSION
     assert llm.calls[0]["reasoning_effort"] == "high"
+
+
+def test_planner_rebinds_capabilities_materialized_by_task_plan() -> None:
+    agents = AgentRegistry()
+    workflows = WorkflowRegistry()
+    register_native_runtime(agent_registry=agents, workflow_registry=workflows)
+    engine = PlanningEngine(
+        workflow_registry=workflows,
+        agent_registry=agents,
+    )
+    profile = TaskSemanticProfile(
+        primaryGoal="Generate a final report",
+        requiredCapabilities=["task_understanding"],
+    )
+    plan = TaskPlan(
+        missionId="mission_0123456789ab",
+        nodes=(
+            PlannedTask(
+                key="report",
+                title="Report",
+                objective="Generate the final report",
+                capabilityRequirements=("artifact_generation",),
+                acceptanceCriteria=("Report is complete",),
+            ),
+        ),
+        relations=(),
+    )
+
+    rebound, network = engine._rebind_profile_to_task_plan(
+        profile=profile,
+        task_plan=plan,
+        domain="general",
+    )
+
+    assert "artifact_generation" in rebound.required_capabilities
+    assert "task_understanding" in rebound.required_capabilities
+    assert not network.unresolved_capabilities
 
 
 def test_dependency_cycle_is_rejected() -> None:

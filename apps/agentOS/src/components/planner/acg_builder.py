@@ -73,8 +73,12 @@ class ACGBuilder:
             str(node.capability_requirements[0]) for node in task_plan.nodes
         }
         if not planned_capabilities <= selected_capabilities:
+            missing = sorted(planned_capabilities - selected_capabilities)
             raise ValueError(
-                "TaskPlan contains capabilities without an Agent binding"
+                "TaskPlan capabilities lack an Agent binding: "
+                f"missing={','.join(missing)}; "
+                f"planned={','.join(sorted(planned_capabilities))}; "
+                f"bound={','.join(sorted(selected_capabilities))}"
             )
 
         blueprint = ACGBlueprint(
