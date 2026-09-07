@@ -383,6 +383,10 @@ const waitForWorkspaceRetry = (delayMs: number, signal: AbortSignal) => new Prom
   signal.addEventListener('abort', onAbort, { once: true })
 })
 
+// Java 网关对 AgentOS GET 的预算只有几秒；活跃 Run 执行高峰时投影查询可能暂时
+// 超时变成 502/503/504。这类瞬时抖动与 404（投影未注册）一样按退避梯子重试。
+const TRANSIENT_PROJECTION_STATUSES = new Set([502, 503, 504])
+
 const requestWorkspaceProjection = async (runId: string | null, signal: AbortSignal) => {
   let projectionPending = false
   let attempt = 0
@@ -393,11 +397,14 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
         signal
       })
     } catch (error: unknown) {
-      if (!runId || responseStatus(error) !== 404 || attempt >= workspaceProjectionRetryDelays.length) {
+      const status = responseStatus(error)
+      const transientFailure = status !== null && TRANSIENT_PROJECTION_STATUSES.has(status)
+      const pendingProjection404 = !transientFailure && Boolean(runId) && status === 404
+      if ((!transientFailure && !pendingProjection404) || attempt >= workspaceProjectionRetryDelays.length) {
         throw error
       }
 
-      if (!projectionPending) {
+      if (pendingProjection404 && !projectionPending && runId) {
         try {
           const runtimeRun = await agentosApi.getWorkflowRun(runId, { signal })
           projectionPending = runtimeRun.missionId === missionId.value
@@ -499,7 +506,12 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
     if (projectionActive(nextProjection)) scheduleProjectionRefresh()
   } catch (error: unknown) {
     if (isAbortError(error)) return
-    loadError.value = '无法加载 Mission Workspace Projection，请稍后重试。'
+    // 重试梯子耗尽才到这里：活跃 Run 期间继续周期重拉，抖动恢复后错误条自动
+    // 消失；一次网关抖动不应把报错钉在右上角并让工作台停止自愈。
+    loadError.value = projection.value
+      ? 'Mission Workspace Projection 暂时刷新失败，正在自动重试…'
+      : '无法加载 Mission Workspace Projection，请稍后重试。'
+    scheduleProjectionRefresh()
   } finally {
     if (controller === requestController && !requestController.signal.aborted) loading.value = false
   }

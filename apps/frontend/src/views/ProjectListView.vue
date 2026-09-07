@@ -21,6 +21,19 @@
           </label>
           <div class="project-list__toolbar-actions">
             <span class="project-list__count">{{ filteredMissions.length }} 个项目</span>
+            <button
+              class="project-list__export"
+              type="button"
+              ref="exportButtonElement"
+              aria-haspopup="menu"
+              aria-controls="project-export-menu"
+              :aria-expanded="exportMenu.open"
+              :disabled="!filteredMissions.length"
+              title="导出项目列表"
+              @click="toggleExportMenu"
+            >
+              <el-icon aria-hidden="true"><Download /></el-icon><span>导出</span>
+            </button>
             <div class="project-view-toggle" role="group" aria-label="项目显示方式">
               <button
                 type="button"
@@ -121,6 +134,9 @@
       <button type="button" role="menuitem" data-action="copy" @click="copyActionMissionId">
         <el-icon><CopyDocument /></el-icon><span>复制 Mission ID</span>
       </button>
+      <button type="button" role="menuitem" data-action="export" @click="exportActionMission">
+        <el-icon><Download /></el-icon><span>导出任务数据</span>
+      </button>
       <div class="project-action-menu__separator"></div>
       <button
         type="button"
@@ -144,16 +160,43 @@
         <el-icon><DeleteIcon /></el-icon><span>删除任务</span>
       </button>
     </div>
+
+    <div
+      v-if="exportMenu.open"
+      id="project-export-menu"
+      ref="exportMenuElement"
+      class="project-action-menu project-export-menu"
+      role="menu"
+      :aria-label="exportMenu.mission ? `导出任务：${missionDisplayTitle(exportMenu.mission)}` : '选择导出格式'"
+      :style="{ left: `${exportMenu.x}px`, top: `${exportMenu.y}px` }"
+    >
+      <div v-if="exportMenu.mission" class="project-export-menu__context" :title="missionDisplayTitle(exportMenu.mission)">
+        {{ missionDisplayTitle(exportMenu.mission) }}
+      </div>
+      <button type="button" role="menuitem" data-format="md" @click="exportProjects('md')">
+        <el-icon><Memo /></el-icon><span>Markdown（可直接阅读）</span>
+      </button>
+      <button type="button" role="menuitem" data-format="csv" @click="exportProjects('csv')">
+        <el-icon><Grid /></el-icon><span>CSV（表格）</span>
+      </button>
+      <button type="button" role="menuitem" data-format="json" @click="exportProjects('json')">
+        <el-icon><Document /></el-icon><span>JSON（完整数据）</span>
+      </button>
+      <button type="button" role="menuitem" data-format="txt" @click="exportProjects('txt')">
+        <el-icon><Tickets /></el-icon><span>TXT（纯文本）</span>
+      </button>
+    </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CopyDocument, Delete as DeleteIcon, FolderAdd, FolderOpened, Grid, List, MoreFilled, Plus, Search, View } from '@element-plus/icons-vue'
+import { CopyDocument, Delete as DeleteIcon, Document, Download, FolderAdd, FolderOpened, Grid, List, Memo, MoreFilled, Plus, Search, Tickets, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
-import { agentosApi, type MissionListItem } from '@/services/api/agentos'
+import { agentosApi, type MissionListItem, type WorkflowRunSummary } from '@/services/api/agentos'
+import { downloadFile, exportMissionDetailToCsv, exportMissionDetailToJson, exportMissionDetailToMarkdown, exportMissionDetailToTxt, exportMissionsToCsv, exportMissionsToJson, exportMissionsToMarkdown, exportMissionsToTxt, type MissionDetailExport } from '@/utils/export'
 
 const router = useRouter()
 const missions = ref<MissionListItem[]>([])
@@ -184,14 +227,23 @@ const statusTone = (mission: MissionListItem) => {
   return 'muted'
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  completed: '已完成', succeeded: '已完成', running: '运行中', planning: '规划中',
+  pending: '待启动', waiting_review: '待审核', retrying: '重试中', failed: '失败',
+  cancelled: '已取消', archived: '已归档', created: '已创建'
+}
+
 const statusLabel = (mission: MissionListItem) => {
   const status = mission.latestRunStatus || mission.status
-  return ({
-    completed: '已完成', succeeded: '已完成', running: '运行中', planning: '规划中',
-    pending: '待启动', waiting_review: '待审核', retrying: '重试中', failed: '失败',
-    cancelled: '已取消', archived: '已归档', created: '已创建'
-  } as Record<string, string>)[status] || status || '未知'
+  return STATUS_LABELS[status] || status || '未知'
 }
+
+const RUN_PHASE_LABELS: Record<string, string> = {
+  understanding: '理解', planning: '规划', graph_building: '构图', executing: '执行',
+  recovery: '恢复', review: '审核', completed: '完成', failed: '失败', cancelled: '取消'
+}
+
+const runStatusLabel = (status: string | null | undefined) => (status ? STATUS_LABELS[status] || status : '无')
 
 const formatDate = (value: string) => {
   if (!value) return '—'
@@ -254,6 +306,133 @@ const setViewMode = (mode: ProjectViewMode) => {
 
 const closeActionMenu = () => { actionMenu.mission = null }
 
+type ProjectExportFormat = 'md' | 'csv' | 'json' | 'txt'
+const PROJECT_EXPORT_FORMAT_LABEL: Record<ProjectExportFormat, string> = { md: 'Markdown', csv: 'CSV', json: 'JSON', txt: 'TXT' }
+const exportMenu = reactive<{ open: boolean; mission: MissionListItem | null; x: number; y: number }>({ open: false, mission: null, x: 0, y: 0 })
+const exportMenuElement = ref<HTMLElement | null>(null)
+const exportButtonElement = ref<HTMLElement | null>(null)
+
+const closeExportMenu = () => {
+  exportMenu.open = false
+  exportMenu.mission = null
+}
+
+const openExportMenuAt = async (anchorX: number, anchorY: number, mission: MissionListItem | null) => {
+  exportMenu.mission = mission
+  exportMenu.open = true
+  await nextTick()
+  const width = exportMenuElement.value?.offsetWidth ?? 216
+  exportMenu.x = Math.max(8, Math.min(anchorX - width, window.innerWidth - width - 8))
+  exportMenu.y = Math.max(8, Math.min(anchorY, window.innerHeight - (exportMenuElement.value?.offsetHeight ?? 160) - 8))
+}
+
+const toggleExportMenu = async () => {
+  if (exportMenu.open) {
+    closeExportMenu()
+    return
+  }
+  const rect = exportButtonElement.value?.getBoundingClientRect()
+  await openExportMenuAt(rect ? rect.right : 8, (rect ? rect.bottom : 8) + 6, null)
+}
+
+const formatFullDate = (value: string) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+const missionExportRecord = (mission: MissionListItem) => ({
+  name: missionDisplayTitle(mission),
+  missionId: mission.missionId,
+  status: statusLabel(mission),
+  latestRunStatus: mission.latestRunStatus || '',
+  runCount: mission.runCount,
+  latestRunId: mission.latestRunId || '',
+  description: mission.description || '',
+  createdAt: formatFullDate(mission.createdAt),
+  updatedAt: formatFullDate(mission.updatedAt)
+})
+
+const exportProjects = (format: ProjectExportFormat) => {
+  const mission = exportMenu.mission
+  closeExportMenu()
+  if (mission) void exportSingleMission(mission, format)
+  else exportProjectList(format)
+}
+
+const exportProjectList = (format: ProjectExportFormat) => {
+  const items = filteredMissions.value
+  if (!items.length) {
+    ElMessage.warning('当前没有可导出的项目')
+    return
+  }
+  const exportedAt = new Date().toISOString()
+  const filename = `工程项目导出_${exportedAt.replace(/[:.]/g, '-').slice(0, 19)}.${format}`
+  if (format === 'json') {
+    downloadFile(exportMissionsToJson({ exportedAt, total: items.length, missions: items }), filename, 'application/json;charset=utf-8')
+  } else {
+    const table = { exportedAt, total: items.length, missions: items.map(missionExportRecord) }
+    if (format === 'csv') downloadFile(exportMissionsToCsv(table), filename, 'text/csv;charset=utf-8')
+    else if (format === 'md') downloadFile(exportMissionsToMarkdown(table), filename, 'text/markdown;charset=utf-8')
+    else downloadFile(exportMissionsToTxt(table), filename, 'text/plain;charset=utf-8')
+  }
+  showMissionSuccess(`已导出 ${items.length} 个项目（${PROJECT_EXPORT_FORMAT_LABEL[format]}），文件已开始下载`)
+}
+
+const sanitizeFilename = (title: string) => (
+  title.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || '未命名工程'
+)
+
+const missionRunRecord = (run: WorkflowRunSummary) => ({
+  runId: run.runId,
+  status: run.status,
+  statusLabel: runStatusLabel(run.status),
+  phase: run.phase,
+  phaseLabel: RUN_PHASE_LABELS[run.phase] || run.phase,
+  message: run.message || '',
+  totalSteps: run.totalSteps ?? 0,
+  completedSteps: run.completedSteps ?? 0,
+  failedSteps: run.failedSteps ?? 0,
+  startedAt: formatFullDate(run.startedAt || ''),
+  updatedAt: formatFullDate(run.updatedAt || '')
+})
+
+const exportSingleMission = async (mission: MissionListItem, format: ProjectExportFormat) => {
+  try {
+    const page = await agentosApi.listWorkflowRuns({ missionId: missionIdentity(mission), page: 1, pageSize: 100 })
+    const exportedAt = new Date().toISOString()
+    const payload: MissionDetailExport = {
+      exportedAt,
+      mission: {
+        missionId: mission.missionId,
+        title: missionDisplayTitle(mission),
+        description: mission.description || '',
+        status: mission.status,
+        statusLabel: statusLabel(mission),
+        runCount: mission.runCount,
+        createdAt: formatFullDate(mission.createdAt),
+        updatedAt: formatFullDate(mission.updatedAt)
+      },
+      totalRuns: page.items.length,
+      runs: page.items.map(missionRunRecord)
+    }
+    const filename = `任务导出_${sanitizeFilename(missionDisplayTitle(mission))}_${exportedAt.replace(/[:.]/g, '-').slice(0, 19)}.${format}`
+    if (format === 'json') {
+      downloadFile(exportMissionDetailToJson(payload), filename, 'application/json;charset=utf-8')
+    } else if (format === 'csv') {
+      downloadFile(exportMissionDetailToCsv(payload), filename, 'text/csv;charset=utf-8')
+    } else if (format === 'md') {
+      downloadFile(exportMissionDetailToMarkdown(payload), filename, 'text/markdown;charset=utf-8')
+    } else {
+      downloadFile(exportMissionDetailToTxt(payload), filename, 'text/plain;charset=utf-8')
+    }
+    showMissionSuccess(`已导出「${payload.mission.title}」（${payload.totalRuns} 条运行记录，${PROJECT_EXPORT_FORMAT_LABEL[format]}）`)
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || '读取运行记录失败，请稍后重试。')
+  }
+}
+
 const openActionMenu = async (event: MouseEvent, mission: MissionListItem) => {
   actionMenu.mission = mission
   const target = event.currentTarget as HTMLElement | null
@@ -289,6 +468,14 @@ const copyActionMissionId = () => {
   if (!mission) return
   closeActionMenu()
   void copyMissionId(missionIdentity(mission))
+}
+
+const exportActionMission = async () => {
+  const mission = actionMenu.mission
+  if (!mission) return
+  const { x, y } = actionMenu
+  closeActionMenu()
+  await openExportMenuAt(x, y, mission)
 }
 
 const missionMutationError = (error: unknown, action: string) => {
@@ -378,10 +565,15 @@ const deleteActionMission = async () => {
 }
 
 const handleActionDismiss = (event: PointerEvent) => {
-  if (!actionMenuElement.value?.contains(event.target as Node)) closeActionMenu()
+  const target = event.target as Node
+  if (!actionMenuElement.value?.contains(target)) closeActionMenu()
+  if (!exportMenuElement.value?.contains(target) && !exportButtonElement.value?.contains(target)) closeExportMenu()
 }
 const handleActionKeydown = (event: KeyboardEvent) => {
-  if (event.key === 'Escape') closeActionMenu()
+  if (event.key === 'Escape') {
+    closeActionMenu()
+    closeExportMenu()
+  }
 }
 
 onMounted(() => {
@@ -397,7 +589,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.project-list { display: flex; flex-direction: column; width: 100%; min-height: 100%; padding: 34px clamp(24px, 5vw, 76px) 56px; color: var(--text-primary); background: var(--bg-app); }
+.project-list { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; padding: 34px clamp(24px, 5vw, 76px) 56px; color: var(--text-primary); background: var(--bg-app); }
 .project-list__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; max-width: 1040px; width: 100%; margin: 0 auto; padding-bottom: 28px; }
 .project-list__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .project-list h1 { margin: 8px 0 5px; font-size: 25px; line-height: 1.2; }
@@ -410,6 +602,9 @@ onBeforeUnmount(() => {
 .project-list__search input { width: 100%; border: 0; outline: 0; color: var(--text-primary); background: transparent; font-size: 12px; }
 .project-list__toolbar-actions { display: flex; align-items: center; gap: 16px; }
 .project-list__count { color: var(--text-muted); font: 10px var(--font-mono, monospace); }
+.project-list__export { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 30px; padding: 0 11px; border: 1px solid var(--border-light); border-radius: 7px; color: var(--text-muted); background: var(--surface-subtle); cursor: pointer; font-size: 10px; }
+.project-list__export:hover:not(:disabled), .project-list__export:focus-visible { color: var(--text-primary); outline: none; }
+.project-list__export:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .project-view-toggle { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--border-light); border-radius: 7px; background: var(--surface-subtle); }
 .project-view-toggle button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 58px; height: 26px; padding: 0 8px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 10px; }
 .project-view-toggle button:hover, .project-view-toggle button:focus-visible { color: var(--text-primary); outline: none; }
@@ -456,6 +651,8 @@ onBeforeUnmount(() => {
 .project-action-menu button.is-danger { color: var(--danger); }
 .project-action-menu button:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .project-action-menu__separator { height: 1px; margin: 4px 6px; background: var(--border-light); }
+.project-export-menu { width: 216px; }
+.project-export-menu__context { padding: 4px 9px 5px; border-bottom: 1px solid var(--border-light); margin-bottom: 4px; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes project-action-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .project-action-menu { animation: none; } }
 </style>
