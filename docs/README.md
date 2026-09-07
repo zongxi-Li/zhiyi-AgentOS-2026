@@ -86,6 +86,7 @@ Docker 重构文档较多，是因为 P0–P3 分阶段保留了设计、实施�
 | --- | --- |
 | [02-acg-test-samples](04-演示与交付/02-acg-test-samples.md) | ACG 可视化面板功能测试样例集 |
 | [03-acg-engine-final-report](04-演示与交付/03-acg-engine-final-report.md) | ACG 引擎最终技术报告 |
+| [04-六大核心能力一页PPT文稿](04-演示与交付/04-六大核心能力一页PPT文稿.md) | 六大核心能力答辩一页 PPT 文稿（标题 / 定位 / 要点 / 讲稿） |
 | [design-qa.md](04-演示与交付/design-qa.md) | 前端设置页视觉与交互验收记录 |
 | [video_intro/](04-演示与交付/video_intro/) | AgentOS 演示视频页面与配套素材 |
 | [figures/](04-演示与交付/figures/) | 演示相关图示 |

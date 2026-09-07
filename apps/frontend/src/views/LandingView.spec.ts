@@ -15,6 +15,20 @@ vi.mock('@/platform', () => ({
   }
 }))
 
+vi.mock('@/views/LoginView.vue', () => ({
+  default: {
+    name: 'LoginView',
+    template: '<div data-testid="embedded-auth">登录注册窗口</div>'
+  }
+}))
+
+vi.mock('@/components/landing/GlassConstellation.vue', () => ({
+  default: {
+    name: 'GlassConstellation',
+    template: '<div data-testid="glass-constellation">动画组件</div>'
+  }
+}))
+
 describe('LandingView', () => {
   beforeEach(() => {
     platformState.desktop = false
@@ -24,8 +38,7 @@ describe('LandingView', () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
-        { path: '/', component: LandingView },
-        { path: '/login', component: { template: '<div />' } }
+        { path: '/', component: LandingView }
       ]
     })
     await router.push(initialPath)
@@ -34,22 +47,24 @@ describe('LandingView', () => {
       global: {
         plugins: [router, createPinia()],
         stubs: {
-          'el-icon': { template: '<span><slot /></span>' },
-          LoginView: { template: '<div data-testid="embedded-auth">登录注册窗口</div>' }
+          'el-icon': { template: '<span><slot /></span>' }
         }
       }
     }) }
   }
 
-  it('routes the primary CTA to standalone login and preserves the landing return target', async () => {
+  it('switches the hero visual slot to embedded auth from the primary CTA', async () => {
     const { router, wrapper } = await mountLanding()
+
+    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(false)
 
     await wrapper.get('[data-testid="landing-cta"]').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.path).toBe('/login')
-    expect(router.currentRoute.value.query.redirect).toBe('/chat')
-    expect(router.currentRoute.value.query.from).toBe('/')
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(false)
   })
 
   it('exposes an accessible public theme toggle', async () => {
@@ -60,7 +75,7 @@ describe('LandingView', () => {
     expect(toggle.attributes('title')).toBe('切换到明亮模式')
   })
 
-  it('preserves the active landing section when entering login from the final CTA', async () => {
+  it('returns to the hero and opens embedded auth from the final CTA', async () => {
     const { router, wrapper } = await mountLanding()
 
     await wrapper.get('.landing-nav a[href="#about"]').trigger('click')
@@ -68,14 +83,24 @@ describe('LandingView', () => {
     await wrapper.get('.landing-cta--small').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.path).toBe('/login')
-    expect(router.currentRoute.value.query.from).toBe('/#about')
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.query.auth).toBe('1')
+    expect(wrapper.find('a[href="#home"]').classes()).toContain('is-active')
+    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
+  })
+
+  it('opens embedded auth when requested by the landing query', async () => {
+    const { wrapper } = await mountLanding('/?auth=1&redirect=/chat')
+
+    expect(wrapper.find('[data-testid="embedded-auth"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(false)
   })
 
   it('presents a focused light landing sequence without legacy floating chrome', async () => {
     const { wrapper } = await mountLanding()
 
     expect(wrapper.text()).toContain('让智能体成为协作者')
+    expect(wrapper.find('.landing-header__login').exists()).toBe(false)
     expect(wrapper.findAll('.capability-card')).toHaveLength(0)
     expect(wrapper.findAll('.landing-orbit-label')).toHaveLength(0)
     expect(wrapper.find('[data-testid="landing-scroll-hint"]').exists()).toBe(false)

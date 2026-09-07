@@ -33,13 +33,12 @@
           <el-icon aria-hidden="true"><Sunny v-if="isDarkTheme" /><Moon v-else /></el-icon>
           <span>{{ isDarkTheme ? '黑暗' : '明亮' }}</span>
         </button>
-        <button class="landing-header__login" type="button" @click="goToLogin">登录</button>
       </div>
       <DesktopWindowControls v-if="desktopShell" />
     </header>
 
     <div class="landing-track" :style="trackStyle">
-      <section id="home" data-testid="landing-page-home" class="landing-page landing-page--hero" :class="{ 'is-active': activeSection === 'home' }" :aria-hidden="activeSection !== 'home'" aria-labelledby="landing-title">
+      <section id="home" data-testid="landing-page-home" class="landing-page landing-page--hero" :class="{ 'is-active': activeSection === 'home', 'is-auth-open': authOpen }" :aria-hidden="activeSection !== 'home'" aria-labelledby="landing-title">
         <div class="landing-page__inner landing-page__inner--hero">
           <div class="landing-hero__copy landing-page__content">
             <p class="landing-eyebrow">COLLECTIVE INTELLIGENCE</p>
@@ -52,7 +51,8 @@
             </button>
           </div>
           <div class="landing-agent-slot" data-testid="landing-agent-slot">
-            <GlassConstellation />
+            <LoginView v-if="authOpen" embedded @back="closeAuth" />
+            <GlassConstellation v-else />
           </div>
         </div>
       </section>
@@ -148,6 +148,7 @@ import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 import { useTheme } from '@/composables/useTheme'
 import GlassConstellation from '@/components/landing/GlassConstellation.vue'
+import LoginView from '@/views/LoginView.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -171,6 +172,7 @@ const sectionIndex = (hash: string | undefined) => {
 const activeIndex = ref(sectionIndex(route.hash))
 const activeSection = computed(() => navigation[activeIndex.value].id)
 const trackStyle = computed(() => ({ transform: `translate3d(0px, -${activeIndex.value * 25}%, 0px)` }))
+const authOpen = ref(route.query.auth === '1')
 
 const workflowFeatures = [
   { index: '01 / UNDERSTAND', title: '理解与规划', description: '拆解目标，建立路径。', meta: 'Context → Plan' },
@@ -231,9 +233,24 @@ watch(() => route.hash, (hash) => {
   if (nextIndex !== activeIndex.value) activeIndex.value = nextIndex
 })
 
+watch(() => route.query.auth, (value) => {
+  authOpen.value = value === '1'
+  if (authOpen.value && activeIndex.value !== 0) activeIndex.value = 0
+})
+
 const goHome = () => router.replace({ path: '/', hash: '' })
 const toggleTheme = () => toggleColorScheme()
-const goToLogin = () => router.push({ path: '/login', query: { redirect: '/chat', from: route.fullPath } })
+const openAuth = (redirect = '/chat') => {
+  authOpen.value = true
+  setPage(0)
+  void router.replace({ path: '/', query: { ...route.query, auth: '1', redirect }, hash: '' })
+}
+const closeAuth = () => {
+  authOpen.value = false
+  const { auth: _auth, redirect: _redirect, from: _from, ...query } = route.query
+  void router.replace({ path: '/', query, hash: route.hash })
+}
+const goToLogin = () => openAuth()
 </script>
 
 <style scoped lang="scss">

@@ -504,6 +504,8 @@ const handleRegister = async () => {
 /* Embedded auth is a single replacement dialog for the landing agent slot.
    The standalone page keeps its full introduction and window chrome. */
 .auth-view.is-embedded {
+  width: 100%;
+  min-width: 0;
   min-height: 100%;
   overflow: visible;
   display: grid;
@@ -522,9 +524,10 @@ const handleRegister = async () => {
 .auth-view.is-embedded .auth-card {
   position: relative;
   left: 0;
-  transform: none;
-  width: min(100%, 478px);
-  margin: 0 0 0 auto;
+  transform: translateY(clamp(-24px, -2vh, -12px));
+  width: min(100%, 320px);
+  max-width: 100%;
+  margin: 0 auto;
   padding: 31px 35px 32px;
   overflow: hidden;
   border-color: rgba(255, 255, 255, .72);
@@ -625,6 +628,6 @@ const handleRegister = async () => {
 .auth-view.is-embedded .auth-submit:hover { box-shadow: 0 18px 36px rgba(70, 119, 208, .36), inset 0 1px 0 rgba(255, 255, 255, .72); }
 .auth-view.is-embedded .auth-card__close:focus-visible { outline: 3px solid rgba(67, 158, 215, .38); outline-offset: 3px; }
 @media (max-width: 940px) {
-  .auth-view.is-embedded .auth-card { margin: 0 auto; }
+  .auth-view.is-embedded .auth-card { transform: none; }
 }
 </style>

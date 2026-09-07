@@ -16,20 +16,19 @@ export const wasErrorUserNotified = (error: unknown): boolean =>
 
 const redirectToLoginAfterUnauthorized = () => {
   // Tauri uses hash history because a native WebView has no server-side
-  // fallback for deep links. Navigating to /login replaces the document URL
-  // and can leave the existing app shell without a matched route. Change only
-  // the hash so Vue Router performs the transition inside the current page.
+  // fallback for deep links. Change only the hash so Vue Router performs the
+  // transition inside the current page and opens auth on the landing surface.
   if (isDesktop()) {
     const currentRoute = window.location.hash.replace(/^#/, '') || '/'
-    if (!currentRoute.startsWith('/login')) {
-      window.location.hash = `/login?redirect=${encodeURIComponent(currentRoute)}`
+    if (!currentRoute.startsWith('/?auth=1')) {
+      window.location.hash = `/?auth=1&redirect=${encodeURIComponent(currentRoute)}`
     }
     return
   }
 
-  if (window.location.pathname !== '/login') {
+  if (!(window.location.pathname === '/' && window.location.search.includes('auth=1'))) {
     const redirect = encodeURIComponent(window.location.pathname + window.location.search)
-    window.location.href = `/login?redirect=${redirect}`
+    window.location.href = `/?auth=1&redirect=${redirect}`
   }
 }
 

@@ -190,7 +190,7 @@ const toggleSection = (key: string) => {
 }
 
 const recordEntries = (value: JsonRecord) => Object.entries(value)
-const labelForKey = (key: string) => keyLabels[key] || key.replaceAll('_', ' ')
+const labelForKey = (key: string) => keyLabels[key] || key.split('_').join(' ')
 const padIndex = (index: number) => String(index + 1).padStart(2, '0')
 const sectionCount = (value: unknown) => {
   if (Array.isArray(value)) return value.length
@@ -219,7 +219,7 @@ const displayValue = (value: unknown) => {
 }
 const displayMetadata = (key: string, value: unknown) => {
   if (['mandatory', 'required'].includes(key)) return value === true ? 'hard' : 'advisory'
-  if (['validation', 'validationStatus', 'validation_status'].includes(key)) return displayValue(value).replaceAll('_', ' ')
+  if (['validation', 'validationStatus', 'validation_status'].includes(key)) return displayValue(value).split('_').join(' ')
   return displayValue(value)
 }
 const metadataClass = (key: string, value: unknown) => ({
