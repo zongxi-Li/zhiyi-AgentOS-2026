@@ -170,17 +170,17 @@
                 </button>
 
                 <div class="chat-submenu-section-head">
-                    <span class="chat-submenu-section-title">{{ workspaceMode === 'agent' ? '运行记录' : '对话记录' }}</span>
+                    <span class="chat-submenu-section-title">{{ workspaceMode === 'agent' ? '工程项目' : '对话记录' }}</span>
                   <div class="chat-submenu-section-tools">
                     <label v-if="workspaceMode === 'agent'" class="acg-role-filter acg-role-filter--sidebar">
-                        <select v-model="agentHistoryRole" aria-label="按角色筛选运行记录" @change="handleAgentHistoryRoleChange">
+                        <select v-model="agentHistoryRole" aria-label="按角色筛选工程项目" @change="handleAgentHistoryRoleChange">
                         <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
                           {{ option.label }}
                         </option>
                       </select>
                       <el-icon class="acg-role-filter__chevron" aria-hidden="true"><ArrowDown /></el-icon>
                     </label>
-                    <span v-if="workspaceHistoryCount" class="chat-project-count" :aria-label="`${workspaceHistoryCount} 条记录`">
+                    <span v-if="workspaceHistoryCount" class="chat-project-count" :aria-label="`${workspaceHistoryCount} 个项目`">
                       {{ workspaceHistoryCount }}
                     </span>
                   </div>
@@ -188,30 +188,40 @@
                 </div>
 
                 <div v-if="conversationListLoading && !workspaceHistoryCount" class="chat-submenu-loading">正在加载…</div>
-                <div v-else-if="workspaceMode === 'agent' && recentAgentRuns.length" class="chat-project-list" role="list" aria-label="Agent 记录">
+                <div v-else-if="workspaceMode === 'agent' && recentAgentProjects.length" class="chat-project-list" role="list" aria-label="Agent 工程项目">
                   <div
-                    v-for="run in recentAgentRuns"
-                    :key="run.runId"
+                    v-for="mission in recentAgentProjects"
+                    :key="mission.missionId"
                     class="chat-project-row"
-                    :class="{ active: route.query.runId === run.runId }"
+                    :class="{ active: String(route.params.missionId || '') === mission.missionId }"
                     role="listitem"
+                    @contextmenu.prevent.stop="openSidebarActionMenu($event, { kind: 'agent', project: mission })"
                   >
                     <button
                       class="chat-project-item"
                       type="button"
-                      :title="agentRunTitle(run)"
-                      @click="openAgentRun(run)"
+                      :title="mission.title || '未命名工程'"
+                      @click="openAgentProject(mission)"
                     >
                       <span class="chat-project-icon" aria-hidden="true">
                         <el-icon><Cpu /></el-icon>
                       </span>
                       <span class="chat-project-copy">
-                        <span class="chat-project-title">{{ agentRunTitle(run) }}</span>
+                        <span class="chat-project-title">{{ mission.title || '未命名工程' }}</span>
                         <span class="chat-project-time">
-                          {{ agentRunState(run) }} · {{ formatConversationTime(run.updatedAt || run.startedAt || run.createdAt || undefined) }}
+                          {{ agentProjectState(mission) }} · {{ formatConversationTime(mission.updatedAt || mission.createdAt) }}
                         </span>
                       </span>
                       <el-icon class="chat-project-arrow" aria-hidden="true"><ArrowRight /></el-icon>
+                    </button>
+                    <button
+                      class="chat-project-action-trigger"
+                      type="button"
+                      :aria-label="`打开项目操作：${mission.title || '未命名工程'}`"
+                      title="更多操作"
+                      @click.stop="openSidebarActionMenu($event, { kind: 'agent', project: mission })"
+                    >
+                      <el-icon><MoreFilled /></el-icon>
                     </button>
                   </div>
                 </div>
@@ -222,6 +232,7 @@
                     class="chat-project-row"
                     :class="{ active: route.query.contextId === (conversation.contextId || conversation.id) }"
                     role="listitem"
+                    @contextmenu.prevent.stop="openSidebarActionMenu($event, { kind: 'chat', conversation })"
                   >
                     <button
                       class="chat-project-item"
@@ -239,18 +250,18 @@
                       <el-icon class="chat-project-arrow" aria-hidden="true"><ArrowRight /></el-icon>
                     </button>
                     <button
-                      class="chat-project-delete"
+                      class="chat-project-action-trigger"
                       type="button"
-                      :aria-label="`删除对话：${conversation.title || '未命名对话'}`"
-                      title="删除对话"
-                      @click="deleteSidebarConversation(conversation)"
+                      :aria-label="`打开对话操作：${conversation.title || '未命名对话'}`"
+                      title="更多操作"
+                      @click.stop="openSidebarActionMenu($event, { kind: 'chat', conversation })"
                     >
-                      <el-icon><Delete /></el-icon>
+                      <el-icon><MoreFilled /></el-icon>
                     </button>
                   </div>
                 </div>
                 <div v-else class="chat-submenu-empty">
-                  {{ workspaceMode === 'agent' ? '暂无 Agent 任务记录' : '暂无历史对话' }}
+                  {{ workspaceMode === 'agent' ? '暂无 Agent 工程项目' : '暂无历史对话' }}
                 </div>
 
                 <button class="chat-submenu-action history-action" type="button" @click="openWorkspaceHistory">
@@ -408,14 +419,58 @@
         </el-container>
       </el-container>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="sidebarActionMenu.target"
+        ref="sidebarActionMenuElement"
+        class="sidebar-action-menu"
+        role="menu"
+        aria-label="对话项目操作"
+        :style="{ left: `${sidebarActionMenu.x}px`, top: `${sidebarActionMenu.y}px` }"
+        @keydown.esc="closeSidebarActionMenu"
+      >
+        <template v-if="sidebarActionMenu.target.kind === 'agent'">
+          <button type="button" role="menuitem" @click="openSidebarActionTarget">
+            <el-icon><ArrowRight /></el-icon><span>打开项目</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="!canMutateSidebarProject"
+            :title="canMutateSidebarProject ? '' : '运行中的任务不能归档或删除'"
+            @click="archiveSidebarProject"
+          >
+            <el-icon><FolderAdd /></el-icon><span>归档项目</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="is-danger"
+            :disabled="!canMutateSidebarProject"
+            :title="canMutateSidebarProject ? '' : '运行中的任务不能归档或删除'"
+            @click="deleteSidebarProject"
+          >
+            <el-icon><Delete /></el-icon><span>删除项目</span>
+          </button>
+        </template>
+        <template v-else>
+          <button type="button" role="menuitem" @click="editSidebarConversation">
+            <el-icon><Edit /></el-icon><span>编辑标题</span>
+          </button>
+          <button type="button" role="menuitem" class="is-danger" @click="deleteSidebarActionConversation">
+            <el-icon><Delete /></el-icon><span>删除对话</span>
+          </button>
+        </template>
+      </div>
+    </Teleport>
   </ErrorBoundary>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, EditPen, User, Search,
+  ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, User, Search,
   Clock, Setting, SwitchButton, Connection,
   Monitor, Cpu, Box,
   Fold
@@ -425,7 +480,8 @@ import AppTopBar from '@/components/app/AppTopBar.vue'
 import DesktopRuntimeStatus from '@/components/platform/DesktopRuntimeStatus.vue'
 import { authApi } from '@/services/api/auth'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
-import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
+import { agentosApi, type MissionListItem } from '@/services/api/agentos'
+import { workflowApi } from '@/services/api/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { useUserStore } from '@/stores/user'
@@ -435,7 +491,6 @@ import {
   getConversationWorkspace,
   removeConversationWorkspace
 } from '@/utils/conversationWorkspace'
-import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
 import {
   ACG_HISTORY_ROLE_OPTIONS,
   ACG_HISTORY_ROLE_CHANGE_EVENT,
@@ -475,13 +530,18 @@ const chatPanelWidth = ref(
 )
 const chatPanelResizing = ref(false)
 const recentConversations = ref<Conversation[]>([])
-const recentAgentRuns = ref<WorkflowRunSummary[]>([])
+const recentAgentProjects = ref<MissionListItem[]>([])
+type SidebarActionTarget =
+  | { kind: 'agent'; project: MissionListItem }
+  | { kind: 'chat'; conversation: Conversation }
+const sidebarActionMenu = reactive<{ target: SidebarActionTarget | null; x: number; y: number }>({ target: null, x: 0, y: 0 })
+const sidebarActionMenuElement = ref<HTMLElement | null>(null)
 const agentHistoryRole = ref<AcgHistoryRole>(loadAcgHistoryRole())
 let conversationLoadGeneration = 0
 let conversationLoadController: AbortController | null = null
 let conversationLoadPromise: Promise<void> | null = null
 let conversationLoadWorkspace: WorkspaceMode | null = null
-const SIDEBAR_HISTORY_PAGE_SIZE = 20
+const SIDEBAR_PROJECT_PAGE_SIZE = 100
 const conversationWorkspaceVersion = ref(0)
 const agentConversationIds = computed(() => new Set(
   Object.entries(chatStore.workflowBindings)
@@ -499,7 +559,7 @@ const visibleRecentConversations = computed(() => {
   })
 })
 const workspaceHistoryCount = computed(() => workspaceMode.value === 'agent'
-  ? recentAgentRuns.value.length
+  ? recentAgentProjects.value.length
   : visibleRecentConversations.value.length
 )
 const conversationListLoading = ref(false)
@@ -574,18 +634,28 @@ const loadRecentConversations = (): Promise<void> => {
   const pending = (async () => {
     try {
       if (requestedWorkspace === 'agent') {
-        const page = await workflowApi.listRuns(
-          {
-            sources: ACG_HISTORY_SOURCES,
-            domain: acgHistoryRoleDomain(agentHistoryRole.value),
-            summary: true,
-            page: 1,
-            pageSize: SIDEBAR_HISTORY_PAGE_SIZE
-          },
+        const missionPage = await agentosApi.listMissions(
+          { page: 1, pageSize: SIDEBAR_PROJECT_PAGE_SIZE },
           { signal: controller.signal }
         )
         if (requestGeneration !== conversationLoadGeneration || requestedWorkspace !== workspaceMode.value) return
-        recentAgentRuns.value = page.items || []
+        let projects = missionPage.items || []
+        if (agentHistoryRole.value !== 'all') {
+          const roleRuns = await workflowApi.listRuns(
+            {
+              sources: ACG_HISTORY_SOURCES,
+              domain: acgHistoryRoleDomain(agentHistoryRole.value),
+              summary: true,
+              page: 1,
+              pageSize: SIDEBAR_PROJECT_PAGE_SIZE
+            },
+            { signal: controller.signal }
+          )
+          const roleMissionIds = new Set((roleRuns.items || []).map(run => run.missionId))
+          projects = projects.filter(project => roleMissionIds.has(project.missionId))
+        }
+        if (requestGeneration !== conversationLoadGeneration || requestedWorkspace !== workspaceMode.value) return
+        recentAgentProjects.value = projects
         return
       }
 
@@ -677,21 +747,20 @@ const openWorkspaceHistory = () => {
   void router.push({ path: '/history', query: { workspace: 'chat' } })
 }
 
-const agentRunTitle = (run: WorkflowRunSummary) => resolveAcgTaskTitle(run)
-
-const agentRunState = (run: WorkflowRunSummary) => {
-  if (run.status === 'completed' || run.phase === 'completed') return '已完成'
-  if (run.status === 'failed' || run.phase === 'failed') return '执行失败'
-  if (run.status === 'cancelled' || run.phase === 'cancelled') return '已取消'
-  if (run.status === 'waiting_review' || run.phase === 'review') return '等待审核'
+const agentProjectState = (project: MissionListItem) => {
+  const status = project.latestRunStatus || project.status
+  if (status === 'completed' || status === 'succeeded') return '已完成'
+  if (status === 'failed') return '执行失败'
+  if (status === 'cancelled') return '已取消'
+  if (status === 'waiting_review') return '等待审核'
   return '运行中'
 }
 
-const openAgentRun = async (run: WorkflowRunSummary) => {
+const openAgentProject = async (project: MissionListItem) => {
   chatStore.clearMessages()
   await router.push({
-    path: `/agentos/missions/${encodeURIComponent(run.missionId)}/workspace`,
-    query: { runId: run.runId }
+    path: `/agentos/missions/${encodeURIComponent(project.missionId)}/workspace`,
+    query: project.latestRunId ? { runId: project.latestRunId } : undefined
   })
 }
 
@@ -720,7 +789,141 @@ const formatConversationTime = (value?: string) => {
   return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })
 }
 
+const isTerminalSidebarProject = (project: MissionListItem) => {
+  if (project.runCount === 0) return true
+  const status = project.latestRunStatus || project.status
+  return ['completed', 'succeeded', 'failed', 'cancelled', 'superseded'].includes(status)
+}
+
+const canMutateSidebarProject = computed(() => {
+  const target = sidebarActionMenu.target
+  return target?.kind === 'agent' && isTerminalSidebarProject(target.project)
+})
+
+const closeSidebarActionMenu = () => {
+  sidebarActionMenu.target = null
+}
+
+const openSidebarActionMenu = async (event: MouseEvent, target: SidebarActionTarget) => {
+  sidebarActionMenu.target = target
+  const trigger = event.currentTarget as HTMLElement | null
+  const rect = trigger?.getBoundingClientRect()
+  sidebarActionMenu.x = event.clientX || (rect ? rect.right - 176 : 8)
+  sidebarActionMenu.y = event.clientY || (rect ? rect.bottom + 6 : 8)
+  await nextTick()
+  const menu = sidebarActionMenuElement.value
+  if (!menu) return
+  sidebarActionMenu.x = Math.max(8, Math.min(sidebarActionMenu.x, window.innerWidth - menu.offsetWidth - 8))
+  sidebarActionMenu.y = Math.max(8, Math.min(sidebarActionMenu.y, window.innerHeight - menu.offsetHeight - 8))
+}
+
+const openSidebarActionTarget = () => {
+  const target = sidebarActionMenu.target
+  if (!target) return
+  closeSidebarActionMenu()
+  if (target.kind === 'agent') void openAgentProject(target.project)
+  else void openConversation(target.conversation)
+}
+
+const sidebarMissionMutationError = (error: unknown, action: string) => {
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown; message?: unknown } } })?.response
+  const detail = [response?.data?.message, response?.data?.detail]
+    .find(value => typeof value === 'string' && value.trim())
+  if (response?.status === 409 && detail === 'mission has active runs') return `项目仍在运行，暂时不能${action}`
+  if (response?.status === 404) return '项目不存在或当前账户无权操作'
+  return typeof detail === 'string' ? `${action}失败：${detail.slice(0, 160)}` : `项目${action}失败，请稍后重试`
+}
+
+const archiveSidebarProject = async () => {
+  const target = sidebarActionMenu.target
+  if (!target || target.kind !== 'agent' || !isTerminalSidebarProject(target.project)) return
+  const project = target.project
+  try {
+    await agentosApi.archiveMission(project.missionId)
+    recentAgentProjects.value = recentAgentProjects.value.filter(item => item.missionId !== project.missionId)
+    closeSidebarActionMenu()
+    ElMessage.success('项目已归档')
+    window.dispatchEvent(new Event('history-refresh'))
+    if (String(route.params.missionId || '') === project.missionId) {
+      await router.replace({ path: '/chat', query: { workspace: 'agent' } })
+    }
+  } catch (error: unknown) {
+    ElMessage.error(sidebarMissionMutationError(error, '归档'))
+  }
+}
+
+const deleteSidebarProject = async () => {
+  const target = sidebarActionMenu.target
+  if (!target || target.kind !== 'agent' || !isTerminalSidebarProject(target.project)) return
+  const project = target.project
+  try {
+    await ElMessageBox.confirm(
+      `确定删除项目“${project.title || '未命名工程'}”吗？此操作不可恢复。`,
+      '删除项目',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        customClass: 'destructive-confirm'
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await agentosApi.deleteMission(project.missionId)
+    recentAgentProjects.value = recentAgentProjects.value.filter(item => item.missionId !== project.missionId)
+    closeSidebarActionMenu()
+    ElMessage.success('项目已删除')
+    window.dispatchEvent(new Event('history-refresh'))
+    if (String(route.params.missionId || '') === project.missionId) {
+      await router.replace({ path: '/chat', query: { workspace: 'agent' } })
+    }
+  } catch (error: unknown) {
+    ElMessage.error(sidebarMissionMutationError(error, '删除'))
+  }
+}
+
+const editSidebarConversation = async () => {
+  const target = sidebarActionMenu.target
+  if (!target || target.kind !== 'chat') return
+  const conversation = target.conversation
+  closeSidebarActionMenu()
+  try {
+    const { value: newTitle } = await ElMessageBox.prompt(
+      '请输入新的对话标题',
+      '编辑标题',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        inputValue: conversation.title || '',
+        inputValidator: (value) => {
+          if (!value || value.trim().length === 0) return '标题不能为空'
+          if (value.length > 50) return '标题不能超过50个字符'
+          return true
+        }
+      }
+    )
+    if (!newTitle?.trim()) return
+    const title = newTitle.trim()
+    await conversationApi.updateTitle(conversation.id, title)
+    recentConversations.value = recentConversations.value.map(item => item.id === conversation.id ? { ...item, title } : item)
+    ElMessage.success('标题更新成功')
+    window.dispatchEvent(new Event('history-refresh'))
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '更新标题失败')
+  }
+}
+
+const deleteSidebarActionConversation = () => {
+  const target = sidebarActionMenu.target
+  if (!target || target.kind !== 'chat') return
+  closeSidebarActionMenu()
+  void deleteSidebarConversation(target.conversation)
+}
+
 const deleteSidebarConversation = async (conversation: Conversation) => {
+  closeSidebarActionMenu()
   try {
     await ElMessageBox.confirm(
       `确定删除对话“${conversation.title || '未命名对话'}”吗？此操作不可恢复。`,
@@ -756,6 +959,13 @@ const handleHistoryRefresh = () => {
   if (chatNavOpen.value) void loadRecentConversations()
 }
 
+const handleSidebarActionMenuOutside = (event: MouseEvent) => {
+  const target = event.target as Node | null
+  if (sidebarActionMenu.target && target && !sidebarActionMenuElement.value?.contains(target)) {
+    closeSidebarActionMenu()
+  }
+}
+
 const handleConversationWorkspaceChange = () => {
   conversationWorkspaceVersion.value += 1
   if (chatNavOpen.value) void loadRecentConversations()
@@ -764,6 +974,7 @@ const handleConversationWorkspaceChange = () => {
 watch(
   () => route.path,
   path => {
+    closeSidebarActionMenu()
     if (!path.startsWith('/chat') && chatNavOpen.value) closeChatPanel()
     if (isAcgPath(path)) {
       if (localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0') acgNavOpen.value = true
@@ -787,6 +998,7 @@ watch(
 
 const selectWorkspaceMode = (mode: WorkspaceMode) => {
   if (workspaceMode.value === mode) return
+  closeSidebarActionMenu()
   workspaceMode.value = mode
   localStorage.setItem(WORKSPACE_MODE_KEY, mode)
   chatStore.clearMessages()
@@ -1075,6 +1287,7 @@ onMounted(() => {
   window.addEventListener('acg-runs-refresh', handleHistoryRefresh)
   window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleAgentHistoryRoleSync)
   window.addEventListener('conversation-workspace-change', handleConversationWorkspaceChange)
+  document.addEventListener('mousedown', handleSidebarActionMenuOutside)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
   if (chatNavOpen.value) void loadRecentConversations()
   if (localStorage.getItem('userId')) void userStore.loadCurrentUser()
@@ -1090,6 +1303,7 @@ onUnmounted(() => {
   window.removeEventListener('acg-runs-refresh', handleHistoryRefresh)
   window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleAgentHistoryRoleSync)
   window.removeEventListener('conversation-workspace-change', handleConversationWorkspaceChange)
+  document.removeEventListener('mousedown', handleSidebarActionMenuOutside)
   mobileMediaQuery.removeEventListener('change', handleViewportChange)
 })
 </script>
@@ -1759,7 +1973,7 @@ onUnmounted(() => {
   color: var(--primary-color);
 }
 
-.chat-project-delete {
+.chat-project-action-trigger {
   width: 30px;
   min-height: 32px;
   display: inline-grid;
@@ -1774,21 +1988,75 @@ onUnmounted(() => {
   transition: opacity 0.16s ease, color 0.16s ease, background-color 0.16s ease;
 }
 
-.chat-project-delete .el-icon {
+.chat-project-action-trigger .el-icon {
   font-size: 14px;
 }
 
-.chat-project-row:hover .chat-project-delete,
-.chat-project-delete:focus-visible {
+.chat-project-row:hover .chat-project-action-trigger,
+.chat-project-action-trigger:focus-visible {
   border-left-color: transparent;
   opacity: 0.7;
 }
 
-.chat-project-delete:hover,
-.chat-project-delete:focus-visible {
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
-  color: var(--danger);
+.chat-project-action-trigger:hover,
+.chat-project-action-trigger:focus-visible {
+  background: color-mix(in srgb, var(--primary-color) 9%, transparent);
+  color: var(--primary-color);
   outline: none;
+}
+
+.sidebar-action-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 148px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, .18));
+}
+
+.sidebar-action-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-action-menu button:hover,
+.sidebar-action-menu button:focus-visible {
+  outline: none;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.sidebar-action-menu button.is-danger:hover,
+.sidebar-action-menu button.is-danger:focus-visible {
+  background: var(--danger-fade);
+  color: var(--danger);
+}
+
+.sidebar-action-menu button:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.sidebar-action-menu button .el-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
 }
 
 .chat-submenu-loading,
