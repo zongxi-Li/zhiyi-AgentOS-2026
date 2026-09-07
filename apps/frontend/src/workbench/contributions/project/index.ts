@@ -14,6 +14,7 @@ import ProjectRunInspector from './ProjectRunInspector.vue'
 import ProjectTaskArtifactsInspector from './ProjectTaskArtifactsInspector.vue'
 import ProjectTaskExecutionInspector from './ProjectTaskExecutionInspector.vue'
 import ProjectTaskIdentityInspector from './ProjectTaskIdentityInspector.vue'
+import ProjectTaskResultInspector from './ProjectTaskResultInspector.vue'
 import ProjectRunSidebarView from './ProjectRunSidebarView.vue'
 import RunSelectionInspector from './RunSelectionInspector.vue'
 import type { WorkbenchContribution } from '@/workbench/types'
@@ -76,25 +77,32 @@ export const projectContribution: WorkbenchContribution = {
       when: context => context.entry?.kind === 'artifact'
     },
     {
+      id: 'project.task-result-section',
+      title: 'Result',
+      order: 90,
+      component: ProjectTaskResultInspector,
+      when: context => context.entry?.kind === 'task' && context.selectedSymbolType === 'result'
+    },
+    {
       id: 'project.task-identity-section',
       title: 'Identity',
       order: 100,
       component: ProjectTaskIdentityInspector,
-      when: context => context.entry?.kind === 'task'
+      when: context => context.entry?.kind === 'task' && context.selectedSymbolType !== 'result'
     },
     {
       id: 'project.task-execution-section',
       title: 'Execution',
       order: 110,
       component: ProjectTaskExecutionInspector,
-      when: context => context.entry?.kind === 'task'
+      when: context => context.entry?.kind === 'task' && context.selectedSymbolType !== 'result'
     },
     {
       id: 'project.task-artifacts-section',
       title: 'Artifacts',
       order: 120,
       component: ProjectTaskArtifactsInspector,
-      when: context => context.entry?.kind === 'task'
+      when: context => context.entry?.kind === 'task' && context.selectedSymbolType !== 'result'
     },
     {
       id: 'project.run-section',

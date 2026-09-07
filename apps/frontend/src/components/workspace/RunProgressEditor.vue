@@ -306,14 +306,15 @@ watch(documentModel, async () => {
 </script>
 
 <style scoped>
-.run-progress { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); }
-.run-progress__document-head { width: 100%; padding-bottom: 2px; }
+.run-progress { --run-content-max: 1440px; --run-content-inset: clamp(18px, 2.4vw, 34px); display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); }
+.run-progress__document-head, .run-progress__toolbar, .run-progress__stream { box-sizing: border-box; width: min(100%, var(--run-content-max)); margin-inline: auto; padding-inline: var(--run-content-inset); }
+.run-progress__document-head { padding-bottom: 2px; }
 .run-progress__header { display: grid; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--wb-border-soft); }
 .run-progress__eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .12em; }
 .run-progress__heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .run-progress__heading-copy { min-width: 0; }
 .run-progress__goal { margin: 0; color: var(--wb-text); font-size: 18px; font-weight: 650; line-height: 1.35; text-wrap: pretty; }
-.run-progress__summary { max-width: 760px; margin: 3px 0 0; overflow: hidden; color: var(--wb-text-secondary); font-size: 12px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
+.run-progress__summary { max-width: min(900px, 100%); margin: 3px 0 0; overflow: hidden; color: var(--wb-text-secondary); font-size: 12px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 .run-progress__mission-link { flex: 0 0 auto; padding: 3px 0; border: 0; color: var(--wb-accent); background: transparent; cursor: pointer; font: 10px var(--font-mono, monospace); }
 .run-progress__mission-link:hover { text-decoration: underline; }
 .run-progress__meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
@@ -330,11 +331,12 @@ watch(documentModel, async () => {
 .run-progress__filter input { width: 130px; padding: 4px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); outline: 0; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
 .run-progress__filter input:focus { border-color: var(--wb-accent); }
 .run-progress__body { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: var(--wb-border-strong) transparent; scrollbar-width: thin; }
-.run-progress__stream { width: 100%; padding: 2px 0 42px; }
+.run-progress__stream { padding-top: 2px; padding-bottom: 42px; }
 .run-progress__waiting { padding: 16px 0; color: var(--wb-text-muted); font-size: 12px; }
 .run-progress__follow { position: sticky; bottom: 10px; display: block; margin: 0 auto; padding: 5px 14px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: var(--wb-surface-2); cursor: pointer; font-size: 11px; box-shadow: 0 2px 8px rgb(0 0 0 / 18%); }
 
 @media (max-width: 680px) {
+  .run-progress { --run-content-inset: 16px; }
   .run-progress__heading-row { display: grid; gap: 8px; }
   .run-progress__summary { white-space: normal; }
   .run-progress__mission-link { justify-self: start; }

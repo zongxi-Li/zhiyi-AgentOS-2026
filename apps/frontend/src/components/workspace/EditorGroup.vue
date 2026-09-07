@@ -49,7 +49,7 @@
       </div>
     </nav>
 
-    <section class="editor-group__surface">
+    <section class="editor-group__surface" :class="{ 'editor-group__surface--task': activeOpened?.entry.kind === 'task' }">
       <component
         v-if="activeOpened && editorContribution"
         :is="editorContribution.component"
@@ -255,6 +255,7 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-inspector-trigger.is-unavailable .editor-inspector-trigger__mark { opacity: .72; }
 .editor-inspector-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-group__surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 10px 12px 12px; background: var(--wb-surface-shell); }
+.editor-group__surface--task { padding: 0; }
 .editor-group__empty { display: grid; place-items: center; height: 100%; color: var(--wb-text-muted); font-size: 12px; }
 
 </style>

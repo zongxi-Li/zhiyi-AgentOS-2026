@@ -16,6 +16,7 @@
       >{{ isOpen ? '▾' : '▸' }}</button>
       <span v-else class="run-symbol__fold run-symbol__fold--empty" aria-hidden="true"></span>
       <span class="run-symbol__status" :class="`is-${symbol.status}`" aria-hidden="true">{{ statusMark }}</span>
+      <span class="run-symbol__current-slot" aria-hidden="true"></span>
       <span v-if="isCurrent" class="run-symbol__current" aria-label="当前执行" title="当前执行">▶</span>
       <button
         type="button"
@@ -125,29 +126,31 @@ const handleMainClick = () => {
 </script>
 
 <style scoped>
-.run-symbol { min-width: 0; color: var(--wb-text); }
-.run-symbol__line { display: flex; align-items: baseline; min-width: 0; min-height: 28px; padding: 2px 0; }
-.run-symbol__fold { flex: 0 0 18px; width: 18px; height: 22px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font: 12px/22px var(--font-mono, monospace); text-align: center; }
+.run-symbol { --run-tree-indent: 42px; min-width: 0; color: var(--wb-text); }
+.run-symbol__line { position: relative; display: grid; grid-template-columns: 18px 15px 13px minmax(0, 1fr) auto; align-items: baseline; min-width: 0; min-height: 28px; padding: 2px 0; }
+.run-symbol__fold { width: 18px; height: 22px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font: 12px/22px var(--font-mono, monospace); text-align: center; }
 .run-symbol__fold:hover, .run-symbol__fold:focus-visible { color: var(--wb-accent); }
 .run-symbol__fold--empty { cursor: default; }
 .run-symbol__fold:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
-.run-symbol__status { flex: 0 0 15px; width: 15px; color: var(--wb-text-muted); font-size: 11px; text-align: center; }
+.run-symbol__status { width: 15px; color: var(--wb-text-muted); font-size: 11px; text-align: center; }
 .run-symbol__status.is-running { color: var(--wb-accent); }
 .run-symbol__status.is-completed { color: var(--wb-success); }
 .run-symbol__status.is-warning { color: var(--wb-warning); }
 .run-symbol__status.is-failed { color: var(--wb-danger); }
-.run-symbol__current { flex: 0 0 13px; width: 13px; color: var(--wb-accent); font-size: 9px; text-align: center; }
-.run-symbol__main { display: flex; align-items: baseline; flex: 1 1 auto; gap: 9px; min-width: 0; width: 0; min-height: 24px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; }
+.run-symbol__current-slot { width: 13px; }
+.run-symbol__current { position: absolute; top: 8px; left: 33px; width: 13px; color: var(--wb-accent); font-size: 9px; text-align: center; }
+.run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: baseline; gap: 12px; min-width: 0; width: auto; min-height: 24px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; }
 .run-symbol__main:hover { color: var(--wb-text); background: var(--wb-hover); }
 .run-symbol__main.is-selected { color: var(--wb-text); background: var(--wb-selected); box-shadow: inset 2px 0 var(--wb-accent); }
 .run-symbol__main:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
 .run-symbol__title { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.run-symbol__title:only-child { grid-column: 1 / -1; }
 .run-symbol[data-symbol-type='planner'] > .run-symbol__line .run-symbol__title,
 .run-symbol[data-symbol-type='task'] > .run-symbol__line .run-symbol__title { font-weight: 650; }
-.run-symbol__subtitle { min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.run-symbol__subtitle { min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .run-symbol__action { flex: 0 0 auto; margin: 0 5px 0 6px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: var(--wb-radius-sm); color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 10px; white-space: nowrap; }
 .run-symbol__action:hover { border-color: var(--wb-accent); background: var(--wb-accent-soft); }
-.run-symbol__body { min-width: 0; padding: 1px 0 5px 46px; border-left: 1px solid var(--wb-border-soft); margin-left: 7px; }
+.run-symbol__body { min-width: 0; padding: 1px 0 5px var(--run-tree-indent); border-left: 1px solid var(--wb-border-soft); margin-left: 7px; }
 .run-symbol__children { min-width: 0; }
 .run-symbol__children > .run-symbol { position: relative; }
 .run-symbol__metrics { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 2px 8px 5px 0; color: var(--wb-text-muted); font: 10px/1.45 var(--font-mono, monospace); }
@@ -160,8 +163,8 @@ const handleMainClick = () => {
 .run-symbol[data-symbol-type='artifact'] > .run-symbol__line .run-symbol__title { color: var(--wb-text-secondary); }
 
 @media (max-width: 720px) {
-  .run-symbol__body { padding-left: 35px; }
+  .run-symbol { --run-tree-indent: 32px; }
   .run-symbol__action { display: none; }
-  .run-symbol__main { gap: 6px; }
+  .run-symbol__main { grid-template-columns: minmax(100px, .9fr) minmax(0, 1.2fr); gap: 6px; }
 }
 </style>
