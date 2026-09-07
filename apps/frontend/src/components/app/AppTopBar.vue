@@ -27,6 +27,28 @@
     </nav>
 
     <div class="app-topbar__command" v-bind="dragRegionProps">
+      <div class="app-topbar__history" role="group" aria-label="历史导航">
+        <button
+          type="button"
+          class="app-topbar__history-button"
+          :disabled="!canGoBack"
+          aria-label="上一步"
+          title="上一步"
+          @click="goBack"
+        >
+          <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
+        </button>
+        <button
+          type="button"
+          class="app-topbar__history-button"
+          :disabled="!canGoForward"
+          aria-label="下一步"
+          title="下一步"
+          @click="goForward"
+        >
+          <el-icon aria-hidden="true"><ArrowRight /></el-icon>
+        </button>
+      </div>
       <label class="app-command-center" :class="{ 'is-focused': commandFocused }">
         <el-icon class="app-command-center__icon" aria-hidden="true"><Search /></el-icon>
         <input
@@ -48,8 +70,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
+  ArrowLeft,
+  ArrowRight,
   Search
 } from '@element-plus/icons-vue'
 import DesktopWindowControls from '@window-controls'
@@ -83,6 +108,28 @@ const navigationActionLabel = computed(() => {
 const clearCommand = () => {
   query.value = ''
 }
+
+// 历史导航：vue-router 不暴露 canGoBack/canGoForward，用写入 history.state 的
+// position 对账——current 为当前栈位，furthest 记录本次会话到过的最深处。
+const router = useRouter()
+const currentPosition = ref(0)
+const furthestPosition = ref(0)
+
+const syncHistoryPosition = () => {
+  const state = router.options.history.state as { position?: number } | null
+  const position = Number(state?.position ?? 0)
+  currentPosition.value = position
+  furthestPosition.value = Math.max(furthestPosition.value, position)
+}
+
+const canGoBack = computed(() => currentPosition.value > 0)
+const canGoForward = computed(() => currentPosition.value < furthestPosition.value)
+const goBack = () => router.back()
+const goForward = () => router.forward()
+
+const stopTrackingHistory = router.afterEach(syncHistoryPosition)
+onMounted(syncHistoryPosition)
+onBeforeUnmount(() => stopTrackingHistory())
 </script>
 
 <style scoped>
@@ -215,22 +262,71 @@ const clearCommand = () => {
   min-width: 0;
 }
 
+.app-topbar__command {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.app-topbar__history {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.app-topbar__history-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--app-topbar-muted);
+  font-size: 15px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.app-topbar__history-button:hover:not(:disabled),
+.app-topbar__history-button:focus-visible:not(:disabled) {
+  color: var(--app-topbar-text);
+  background: var(--app-topbar-hover);
+}
+
+.app-topbar__history-button:focus-visible {
+  outline: 2px solid var(--app-topbar-focus-ring);
+  outline-offset: 1px;
+}
+
+.app-topbar__history-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.app-topbar__history-button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
 .app-command-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
+  position: static;
   display: flex;
   align-items: center;
   width: clamp(300px, 34vw, 520px);
-  height: 34px;
-  margin: 0 auto;
+  height: 32px;
+  flex: 0 1 auto;
+  min-width: 0;
   padding: 0 9px;
-  transform: translate(-50%, -50%);
   color: var(--app-topbar-text);
   background: var(--app-topbar-input-bg);
   border: 1px solid var(--app-topbar-input-border);
-  border-radius: 10px;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 6%, transparent), 0 0 0 1px color-mix(in srgb, var(--app-topbar-text) 16%, transparent) inset;
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
@@ -299,9 +395,7 @@ const clearCommand = () => {
   }
 
   .app-command-center {
-    position: static;
-    width: min(calc(100vw - 150px), 420px);
-    transform: none;
+    width: min(calc(100vw - 210px), 420px);
   }
 }
 
@@ -311,7 +405,7 @@ const clearCommand = () => {
   }
 
   .app-command-center {
-    width: calc(100vw - 145px);
+    width: calc(100vw - 205px);
   }
 
   .app-command-center kbd {
@@ -321,6 +415,7 @@ const clearCommand = () => {
 
 @media (prefers-reduced-motion: reduce) {
   .app-topbar__brand,
+  .app-topbar__history-button,
   .app-command-center {
     transition: none;
   }
@@ -330,12 +425,6 @@ const clearCommand = () => {
 .app-topbar__menu-links button {
   height: 30px;
   border-radius: 6px;
-}
-
-.app-command-center {
-  height: 32px;
-  border-radius: 9px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
 }
 
 .app-command-center.is-focused {
