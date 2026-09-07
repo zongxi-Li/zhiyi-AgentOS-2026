@@ -22,7 +22,7 @@
 
     <nav class="app-topbar__menu-links" aria-label="工作台菜单">
       <button type="button" @click="emit('navigate', '/agentos/acg')">项目</button>
-      <button type="button" @click="emit('navigate', '/agentos-console')">运行</button>
+      <button type="button" @click="emit('navigate', '/history?tab=acg')">运行</button>
       <button type="button" @click="emit('navigate', '/agentos/resources')">资源</button>
     </nav>
 

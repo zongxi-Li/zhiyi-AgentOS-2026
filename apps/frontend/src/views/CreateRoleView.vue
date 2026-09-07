@@ -444,7 +444,7 @@ const handleSubmit = async () => {
         
         // 4. 返回角色管理页面
         setTimeout(() => {
-          router.push('/roles')
+          router.push('/agentos/resources?tab=roles')
         }, 500)
         
       } catch (error: any) {

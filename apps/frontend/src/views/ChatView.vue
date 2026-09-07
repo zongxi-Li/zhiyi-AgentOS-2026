@@ -1692,7 +1692,7 @@ const openActiveWorkflowOperations = () => {
 
 const openActiveWorkflowConsole = () => {
   if (!activeWorkflowRunId.value) return
-  void router.push({ path: '/agentos-console', query: { runId: activeWorkflowRunId.value } })
+  void router.push({ path: '/history', query: { tab: 'acg', runId: activeWorkflowRunId.value } })
 }
 
 const handleChatWorkflowReviewed = async (run: WorkflowRun) => {
@@ -2212,7 +2212,7 @@ const toggleWriterMode = async () => {
 }
 
 const openFederatedConsole = () => {
-  router.push('/federated-learning')
+  router.push('/agentos/resources?tab=federated')
 }
 
 const handleFederatedOptimize = async () => {

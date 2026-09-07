@@ -17,6 +17,26 @@ describe('RunRuntimeStore streaming projection', () => {
     expect(store.nodes.A.outputBuffer).toBe('AB'); expect(store.nodes.A.phase).toBe('STREAMING')
     raf.mockRestore()
   })
+  it('accumulates multiple node deltas queued in the same animation frame', () => {
+    const callbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => {
+      callbacks.push(cb)
+      return callbacks.length
+    })
+    const store = new RunRuntimeStore('run')
+
+    try {
+      store.apply(event(1, 'model.output.delta', 'A', 'a1', 'A'))
+      store.apply(event(2, 'model.output.delta', 'A', 'a1', 'B'))
+      expect(store.nodes.A.outputBuffer).toBe('')
+
+      callbacks[0]?.(0)
+
+      expect(store.nodes.A.outputBuffer).toBe('AB')
+    } finally {
+      raf.mockRestore()
+    }
+  })
   it('isolates nodes and attempts', async () => {
     const store = new RunRuntimeStore('run')
     store.apply(event(1, 'model.output.delta', 'A', 'a1', 'OLD'))

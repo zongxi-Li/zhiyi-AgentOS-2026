@@ -84,22 +84,6 @@
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
               </el-menu-item>
-              <el-menu-item index="/agentos-console">
-                <el-icon><Monitor /></el-icon>
-                <span>ACG 历史记录</span>
-              </el-menu-item>
-              <el-menu-item index="/roles">
-                <el-icon><User /></el-icon>
-                <span>{{ $t('nav.roles') }}</span>
-              </el-menu-item>
-              <el-menu-item index="/federated-learning">
-                <el-icon><Connection /></el-icon>
-                <span>联邦管理</span>
-              </el-menu-item>
-              <el-menu-item index="/federated-models">
-                <el-icon><Box /></el-icon>
-                <span>模型管理</span>
-              </el-menu-item>
               <el-menu-item index="/settings">
                 <el-icon><Setting /></el-icon>
                 <span>{{ $t('nav.settings') }}</span>
@@ -362,22 +346,6 @@
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
               </el-menu-item>
-              <el-menu-item index="/agentos-console">
-                <el-icon><Monitor /></el-icon>
-                <span>运行审计</span>
-              </el-menu-item>
-              <el-menu-item index="/roles">
-                <el-icon><User /></el-icon>
-                <span>{{ $t('nav.roles') }}</span>
-              </el-menu-item>
-              <el-menu-item index="/federated-learning">
-                <el-icon><Connection /></el-icon>
-                <span>联邦管理</span>
-              </el-menu-item>
-              <el-menu-item index="/federated-models">
-                <el-icon><Box /></el-icon>
-                <span>模型管理</span>
-              </el-menu-item>
               <el-menu-item index="/settings">
                 <el-icon><Setting /></el-icon>
                 <span>{{ $t('nav.settings') }}</span>
@@ -461,10 +429,10 @@
           </button>
         </template>
         <template v-else>
-          <button type="button" role="menuitem" @click="editSidebarConversation">
+          <button type="button" role="menuitem" @click="() => editSidebarConversation()">
             <el-icon><Edit /></el-icon><span>编辑标题</span>
           </button>
-          <button type="button" role="menuitem" class="is-danger" @click="deleteSidebarActionConversation">
+          <button type="button" role="menuitem" class="is-danger" @click="() => deleteSidebarActionConversation()">
             <el-icon><Delete /></el-icon><span>删除对话</span>
           </button>
         </template>
@@ -477,9 +445,9 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, User, Search,
-  Clock, Setting, SwitchButton, Connection,
-  Monitor, Cpu, Box,
+  ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
+  Clock, Setting, SwitchButton,
+  Monitor, Cpu,
   Fold
 } from '@element-plus/icons-vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
@@ -510,7 +478,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
-const isPublicRoute = computed(() => route.path === '/' || route.path === '/login')
+const isPublicRoute = computed(() => route.path === '/')
 const chatStore = useChatStore()
 const workflowRunsStore = useWorkflowRunsStore()
 const userStore = useUserStore()
@@ -748,7 +716,7 @@ const startNewChat = async () => {
 
 const openWorkspaceHistory = () => {
   if (workspaceMode.value === 'agent') {
-    void router.push({ path: '/agentos-console', query: { tab: 'runs', source: 'agent' } })
+    void router.push({ path: '/history', query: { tab: 'acg', source: 'agent' } })
     return
   }
   void router.push({ path: '/history', query: { workspace: 'chat' } })
@@ -1022,10 +990,10 @@ const selectWorkspaceMode = (mode: WorkspaceMode) => {
   })
 }
 
-// Immersive mode: only keep login page immersive
+// Immersive mode: keep landing auth immersive without a standalone login page.
 const isImmersive = computed(() => {
   const path = route.path
-  return path.startsWith('/login')
+  return path === '/' && route.query.auth === '1'
 })
 
 const usesDrawerNavigation = computed(() => {
@@ -1219,9 +1187,7 @@ const handleViewportChange = (event: MediaQueryListEvent) => {
 const isRouteScrollable = computed(() => {
   const path = route.path
   return (
-    path.startsWith('/federated-learning') ||
-    path.startsWith('/federated-models') ||
-    path.startsWith('/agentos-console') ||
+    path.startsWith('/history') ||
     path.startsWith('/agentos/resources') ||
     path.startsWith('/rag') ||
     path.startsWith('/voice-chat')
@@ -1231,15 +1197,11 @@ const isRouteScrollable = computed(() => {
 const activeMenu = computed(() => {
   const path = route.path
   if (path === '/chat' || path.startsWith('/chat')) return '/chat'
-  if (path.startsWith('/agentos-console')) return '/agentos-console'
   if (path.startsWith('/agentos/resources')) return '/agentos/resources'
   if (path.startsWith('/agentos/acg') || isMissionWorkspacePath(path)) return '/agentos/acg'
-  if (path === '/roles' || path.startsWith('/roles')) return '/roles'
   if (path === '/rag' || path.startsWith('/rag')) return '/rag'
   if (path === '/settings' || path.startsWith('/settings')) return '/settings'
   if (path.startsWith('/history')) return '/history'
-  if (path.startsWith('/federated-models')) return '/federated-models'
-  if (path.startsWith('/federated-learning')) return '/federated-learning'
   if (path.startsWith('/user')) return '/user'
   return path
 })
@@ -1282,7 +1244,7 @@ const handleLogout = async () => {
     if (result.success) {
       userStore.setCurrentUser(null)
       ElMessage.success(result.message || '退出登录成功')
-      await router.replace('/login')
+      await router.replace({ path: '/', query: { auth: '1', redirect: '/chat' } })
     } else {
       ElMessage.error(result.message || '退出登录失败')
     }

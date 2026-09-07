@@ -2,7 +2,7 @@
   <div class="resource-center">
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.layout.v1">
       <template #main>
-        <main class="resource-center__main" aria-label="资源中心">
+        <main class="resource-center__main" aria-label="资源中心" data-max-width="1400px">
           <WorkspacePageHero eyebrow="RESOURCE CENTER" title="资源中心" description="统一管理系统资源、角色、联邦能力与模型。">
             <template #actions>
               <button class="resource-action" type="button" :disabled="resourceTab !== 'overview'" @click="refreshOverview">

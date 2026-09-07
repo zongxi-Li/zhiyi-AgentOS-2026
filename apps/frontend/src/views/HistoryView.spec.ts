@@ -34,4 +34,117 @@ describe('HistoryView tabs', () => {
     expect(testRouter.currentRoute.value.path).toBe('/history')
     expect(testRouter.currentRoute.value.query.tab).toBe('acg')
   })
+
+  it('defaults to conversations and follows browser query changes', async () => {
+    const testRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/history', component: HistoryView }]
+    })
+    await testRouter.push('/history')
+    await testRouter.isReady()
+
+    const wrapper = mount(HistoryView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          ConversationList: { template: '<div data-testid="conversation-history" />' },
+          FileHistoryList: { template: '<div data-testid="file-history" />' },
+          AcgHistoryPanel: { template: '<div data-testid="acg-history" />' },
+          'el-icon': true
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="history-tab-conversations"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="conversation-history"]').exists()).toBe(true)
+
+    await testRouter.push('/history?tab=files')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="history-tab-files"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="file-history"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="conversation-history"]').exists()).toBe(false)
+  })
+
+  it('follows browser back and forward tab changes', async () => {
+    const testRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/history', component: HistoryView }]
+    })
+    await testRouter.push('/history')
+    await testRouter.isReady()
+
+    const wrapper = mount(HistoryView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          ConversationList: { template: '<div data-testid="conversation-history" />' },
+          FileHistoryList: { template: '<div data-testid="file-history" />' },
+          AcgHistoryPanel: { template: '<div data-testid="acg-history" />' },
+          'el-icon': true
+        }
+      }
+    })
+
+    await testRouter.push('/history?tab=files')
+    await testRouter.push('/history?tab=acg')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="history-tab-acg"]').classes()).toContain('active')
+
+    testRouter.back()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="history-tab-files"]').classes()).toContain('active')
+
+    testRouter.forward()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="history-tab-acg"]').classes()).toContain('active')
+  })
+
+  it('normalizes an unknown tab query to the default URL', async () => {
+    const testRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/history', component: HistoryView }]
+    })
+    await testRouter.push('/history?tab=unknown')
+    await testRouter.isReady()
+
+    mount(HistoryView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          ConversationList: { template: '<div />' },
+          FileHistoryList: { template: '<div />' },
+          AcgHistoryPanel: { template: '<div />' },
+          'el-icon': true
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(testRouter.currentRoute.value.fullPath).toBe('/history')
+  })
+
+  it('renders the shared semantic hero and constrained page canvas', async () => {
+    const testRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/history', component: HistoryView }]
+    })
+    await testRouter.push('/history')
+    await testRouter.isReady()
+
+    const wrapper = mount(HistoryView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          ConversationList: { template: '<div />' },
+          FileHistoryList: { template: '<div />' },
+          AcgHistoryPanel: { template: '<div />' },
+          'el-icon': true
+        }
+      }
+    })
+
+    expect(wrapper.get('h1').text()).toBe('历史记录')
+    expect(wrapper.get('.history-view').attributes('data-max-width')).toBe('1400px')
+  })
 })

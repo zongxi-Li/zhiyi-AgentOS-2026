@@ -88,6 +88,7 @@ describe('App Agent project sidebar', () => {
       history: createMemoryHistory(),
       routes: [
         { path: '/chat', component: { template: '<div />' } },
+        { path: '/history', component: { template: '<div />' } },
         { path: '/agentos/missions/:missionId/workspace', component: { template: '<div />' } }
       ]
     })
@@ -125,6 +126,10 @@ describe('App Agent project sidebar', () => {
     expect(wrapper.findAll('.chat-project-row')).toHaveLength(2)
     expect(wrapper.text()).toContain('供应商质量追溯')
     expect(wrapper.text()).toContain('医院门诊优化')
+    expect(wrapper.text()).not.toContain('ACG 历史记录')
+    expect(wrapper.text()).not.toContain('联邦管理')
+    expect(wrapper.text()).not.toContain('模型管理')
+    expect(wrapper.text()).not.toContain('nav.roles')
 
     await wrapper.findAll('.chat-project-action-trigger')[0].trigger('click')
     await flushPromises()
@@ -139,6 +144,47 @@ describe('App Agent project sidebar', () => {
     wrapper.unmount()
   })
 
+  it('routes the Agent history shortcut to the unified ACG history tab', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/chat', component: { template: '<div />' } },
+        { path: '/history', component: { template: '<div />' } }
+      ]
+    })
+    await router.push('/chat?workspace=agent')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [router],
+        mocks: { $t: (key: string) => key },
+        stubs: {
+          AppTopBar: passthrough,
+          DesktopRuntimeStatus: passthrough,
+          UserAvatar: passthrough,
+          ErrorBoundary: passthrough,
+          'el-container': passthrough,
+          'el-aside': passthrough,
+          'el-main': passthrough,
+          'el-menu': passthrough,
+          'el-menu-item': passthrough,
+          'el-drawer': passthrough,
+          'el-alert': passthrough,
+          'el-icon': iconStub
+        }
+      }
+    })
+    await flushPromises()
+
+    await wrapper.find('.history-action').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/history')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'acg', source: 'agent' })
+
+    wrapper.unmount()
+  })
+
   it('exposes edit and delete actions for Chat conversations', async () => {
     localStorage.setItem('layout.workspace_mode', 'chat')
     vi.mocked(conversationApi.getUserConversations).mockResolvedValue([{
@@ -147,7 +193,10 @@ describe('App Agent project sidebar', () => {
     }])
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ path: '/chat', component: { template: '<div />' } }]
+      routes: [
+        { path: '/chat', component: { template: '<div />' } },
+        { path: '/history', component: { template: '<div />' } }
+      ]
     })
     await router.push('/chat?workspace=chat')
     await router.isReady()

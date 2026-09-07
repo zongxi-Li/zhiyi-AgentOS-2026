@@ -1373,8 +1373,8 @@ watch(
 
 const openOperations = () => {
   void router.push({
-    path: '/agentos-console',
-    query: activeRunId.value ? { runId: activeRunId.value, source: 'acg' } : { source: 'acg' }
+    path: '/history',
+    query: activeRunId.value ? { tab: 'acg', runId: activeRunId.value, source: 'acg' } : { tab: 'acg', source: 'acg' }
   })
 }
 
@@ -1397,7 +1397,7 @@ const handleAcgRunDeletedFromExplorer = async (runId: string) => {
 }
 
 const openAcgOperationsFromExplorer = () => {
-  void router.push({ path: '/agentos-console', query: { tab: 'runs', source: 'acg' } })
+  void router.push({ path: '/history', query: { tab: 'acg', source: 'acg' } })
 }
 
 const openRelatedRun = (runId: string) => {

@@ -113,7 +113,7 @@ const mountPage = async (query = ''): Promise<{ wrapper: VueWrapper; router: Rou
     history: createMemoryHistory(),
     routes: [
       { path: '/agentos/acg', component: { template: '<div />' } },
-      { path: '/agentos-console', component: { template: '<div />' } }
+      { path: '/history', component: { template: '<div />' } }
     ]
   })
   await router.push(`/agentos/acg${query}`)
@@ -253,6 +253,26 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     await flushPromises()
     expect(router.currentRoute.value.query.runId).toBe('run_2')
     expect(wrapper.findAll('.workbench-editor-tab')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('opens the unified ACG history tab with the active Run context', async () => {
+    const { wrapper, router } = await mountPage('?runId=run_1')
+    const vm = wrapper.vm as unknown as {
+      openOperations: () => void
+      openAcgOperationsFromExplorer: () => void
+    }
+
+    vm.openOperations()
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/history')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'acg', runId: 'run_1', source: 'acg' })
+
+    await router.push('/agentos/acg')
+    vm.openAcgOperationsFromExplorer()
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/history')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'acg', source: 'acg' })
     wrapper.unmount()
   })
 

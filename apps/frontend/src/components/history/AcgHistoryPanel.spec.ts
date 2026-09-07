@@ -7,7 +7,7 @@ import { workflowApi, type AcgView, type WorkflowProgress, type WorkflowRun, typ
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
-import AgentOsConsoleView from './AgentOsConsoleView.vue'
+import AcgHistoryPanel from './AcgHistoryPanel.vue'
 
 vi.mock('@/services/api/workflow', async importOriginal => {
   const actual = await importOriginal<typeof import('@/services/api/workflow')>()
@@ -48,18 +48,18 @@ const acg: AcgView = {
 const mountConsole = async (query = '') => {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/agentos-console', component: { template: '<div />' } }]
+    routes: [{ path: '/history', component: { template: '<div />' } }]
   })
-  await router.push(`/agentos-console${query}`)
+  await router.push(`/history${query}`)
   await router.isReady()
-  const wrapper = shallowMount(AgentOsConsoleView, {
+  const wrapper = shallowMount(AcgHistoryPanel, {
     global: { plugins: [router], stubs: { 'el-icon': true } }
   })
   await flushPromises()
   return { wrapper, router }
 }
 
-describe('AgentOsConsoleView control plane', () => {
+describe('AcgHistoryPanel control plane', () => {
   beforeEach(() => {
     localStorage.clear()
     localStorage.setItem('token', 'token')
@@ -127,7 +127,7 @@ describe('AgentOsConsoleView control plane', () => {
 
   it('restores a selected Run from URL without starting a workflow or loading full ACG during planning', async () => {
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({ runId: 'run_url', phase: 'planning', percent: null }))
-    const { wrapper } = await mountConsole('?runId=run_url')
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_url')
 
     expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run_url', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
@@ -142,7 +142,7 @@ describe('AgentOsConsoleView control plane', () => {
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
       phase: 'completed', status: 'completed', percent: 100, completedSteps: 4
     }))
-    const { wrapper } = await mountConsole('?runId=run_1')
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_1')
     await flushPromises()
 
     expect(workflowApi.getRun).toHaveBeenCalledTimes(1)
@@ -165,7 +165,7 @@ describe('AgentOsConsoleView control plane', () => {
       runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'test', status: 'completed',
       eventCount: 1, events: [{ eventId: 'trace_1', eventType: 'run_completed', payload: {} }]
     })
-    const { wrapper } = await mountConsole('?runId=run_1')
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_1')
     await flushPromises()
 
     const fullDetail = (wrapper.vm as any).loadSelectedDetail({ full: true, acg: true, review: true })
@@ -189,7 +189,7 @@ describe('AgentOsConsoleView control plane', () => {
       ...run, status: 'waiting_review',
       steps: [{ stepId: 'human_review', name: '人工审核', agentName: 'reviewer', status: 'waiting_review' }]
     })
-    const { wrapper } = await mountConsole('?runId=run_1')
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_1')
     await flushPromises()
 
     expect(workflowApi.getRun).toHaveBeenCalledWith('run_1', expect.any(Object))
@@ -221,7 +221,7 @@ describe('AgentOsConsoleView control plane', () => {
       isAxiosError: true,
       response: { status: 404 }
     }))
-    const { wrapper } = await mountConsole('?runId=run_missing')
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_missing')
     await flushPromises()
 
     expect(workflowApi.startWorkflowAsync).not.toHaveBeenCalled()
@@ -241,7 +241,7 @@ describe('AgentOsConsoleView control plane', () => {
       status: 'waiting_review', phase: 'review', waitingReviewSteps: 1
     }))
 
-    const { wrapper } = await mountConsole('?runId=run_1')
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_1')
     await flushPromises()
 
     expect(wrapper.find('.run-item-delete').exists()).toBe(false)

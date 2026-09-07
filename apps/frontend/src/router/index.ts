@@ -2,15 +2,27 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
-import LoginView from '@/views/LoginView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import UserView from '@/views/UserView.vue'
 // Sidebar destinations are part of the desktop shell's primary workflow.
 // Keep them in the entry graph so a Tauri WebView never blanks the outgoing
 // view while waiting for a route chunk that may be stale or unavailable.
 import HistoryView from '@/views/HistoryView.vue'
-import RoleView from '@/views/RoleView.vue'
 import ResourceCenterView from '@/views/ResourceCenterView.vue'
+
+const normalizeRedirect = (redirect?: string) => {
+  if (!redirect) return '/chat'
+  if (!redirect.startsWith('/') || redirect.startsWith('//')) return '/chat'
+  return redirect
+}
+
+const stringQuery = (value: unknown) => typeof value === 'string' ? value : undefined
+
+const landingAuthQuery = (redirect?: unknown, from?: unknown) => ({
+  auth: '1',
+  redirect: normalizeRedirect(stringQuery(redirect)),
+  ...(typeof from === 'string' ? { from } : {})
+})
 
 const routes: RouteRecordRaw[] = [
   {
@@ -25,10 +37,10 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'Login',
-    // Authentication is the recovery surface after logout and token expiry.
-    // Keep it in the entry bundle so a missing/stale route chunk cannot leave
-    // the user with no page to recover the session.
-    component: LoginView,
+    redirect: to => ({
+      path: '/',
+      query: landingAuthQuery(to.query.redirect, to.query.from)
+    }),
     meta: {
       title: '登录',
       requiresAuth: false
@@ -73,11 +85,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/roles',
     name: 'Roles',
-    component: RoleView,
-    meta: {
-      title: '角色管理',
-      requiresAuth: true
-    }
+    redirect: to => ({ path: '/agentos/resources', query: { ...to.query, tab: 'roles' } })
   },
   {
     path: '/create-role',
@@ -111,20 +119,12 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/federated-models',
     name: 'FederatedModelManagement',
-    component: () => import('@/views/FederatedModelManagementView.vue'),
-    meta: {
-      title: '联邦模型管理',
-      requiresAuth: true
-    }
+    redirect: to => ({ path: '/agentos/resources', query: { ...to.query, tab: 'models' } })
   },
   {
     path: '/federated-learning',
     name: 'FederatedLearning',
-    component: () => import('@/views/FederatedLearningView.vue'),
-    meta: {
-      title: '联邦学习管理',
-      requiresAuth: true
-    }
+    redirect: to => ({ path: '/agentos/resources', query: { ...to.query, tab: 'federated' } })
   },
   {
     path: '/federated-agent-workbench',
@@ -134,11 +134,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/agentos-console',
     name: 'AgentOsConsole',
-    component: () => import('@/views/AgentOsConsoleView.vue'),
-    meta: {
-      title: 'ACG 历史记录',
-      requiresAuth: true
-    }
+    redirect: to => ({ path: '/history', query: { ...to.query, tab: 'acg' } })
   },
   {
     path: '/agentos/legal/contract-review',
@@ -245,12 +241,6 @@ const clearAuthState = () => {
   localStorage.removeItem('userId')
 }
 
-const normalizeRedirect = (redirect?: string) => {
-  if (!redirect) return '/chat'
-  if (!redirect.startsWith('/') || redirect.startsWith('//')) return '/chat'
-  return redirect
-}
-
 // Global route guard
 router.beforeEach(async (to, _from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - 知弈AgentOS` : '知弈AgentOS'
@@ -258,18 +248,23 @@ router.beforeEach(async (to, _from, next) => {
   const token = localStorage.getItem('token')
   const requiresAuth = Boolean(to.meta.requiresAuth)
 
-  // The desktop shell opens on the authenticated product surface. Keep the
-  // public landing page as the browser entry point, but never show it inside
-  // the Tauri app before login.
+  // The desktop shell opens auth on the landing surface instead of using a
+  // standalone login page.
   if (to.path === '/' && isDesktop()) {
-    next({ path: '/login', replace: true })
-    return
+    if (!token && to.query.auth !== '1') {
+      next({ path: '/', query: landingAuthQuery('/chat'), replace: true })
+      return
+    }
+    if (token && to.query.auth !== '1') {
+      next({ path: '/chat', replace: true })
+      return
+    }
   }
 
   // Validate login state for protected routes
   if (requiresAuth) {
     if (!token) {
-      next(`/login?redirect=${encodeURIComponent(to.fullPath)}`)
+      next({ path: '/', query: landingAuthQuery(to.fullPath) })
       return
     }
 
@@ -277,18 +272,18 @@ router.beforeEach(async (to, _from, next) => {
       const result = await authApi.verifyToken()
       if (!result.valid) {
         clearAuthState()
-        next(`/login?redirect=${encodeURIComponent(to.fullPath)}`)
+        next({ path: '/', query: landingAuthQuery(to.fullPath) })
         return
       }
     } catch {
       clearAuthState()
-      next('/login')
+      next({ path: '/', query: landingAuthQuery(to.fullPath) })
       return
     }
   }
 
-  // 已登录时访问登录页，回到来源页（如果有）或默认聊天页。
-  if (to.path === '/login' && token) {
+  // 已登录时打开首页内嵌认证入口，回到来源页（如果有）或默认聊天页。
+  if (to.path === '/' && to.query.auth === '1' && token) {
     try {
       const result = await authApi.verifyToken()
       if (result.valid) {

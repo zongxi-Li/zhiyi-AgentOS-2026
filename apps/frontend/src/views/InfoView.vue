@@ -28,7 +28,7 @@
               </div>
               <h4>角色管理</h4>
               <p>创建和管理AI角色</p>
-              <el-button type="primary" @click="$router.push('/roles')">进入</el-button>
+              <el-button type="primary" @click="$router.push('/agentos/resources?tab=roles')">进入</el-button>
             </el-card>
           </el-col>
           

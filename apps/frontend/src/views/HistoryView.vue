@@ -1,29 +1,23 @@
 <template>
-  <div class="history-view">
-    <header class="history-header">
-      <div class="history-title">
-        <span class="history-title__icon"><el-icon><Clock /></el-icon></span>
-        <div>
-          <h1>历史记录</h1>
-          <p>查看和管理对话、文件与 ACG 运行记录</p>
+  <div class="history-view" data-max-width="1400px">
+    <WorkspacePageHero eyebrow="HISTORY" title="历史记录" description="查看和管理对话、文件与 ACG 运行记录">
+      <template #actions>
+        <div class="history-actions">
+          <label class="history-search">
+            <el-icon><Search /></el-icon>
+            <input v-model="searchKeyword" type="search" placeholder="搜索历史记录..." />
+          </label>
+          <button type="button" class="history-action" :disabled="refreshing" @click="refresh">
+            <el-icon><Refresh /></el-icon>
+            <span>{{ refreshing ? '刷新中' : '刷新' }}</span>
+          </button>
+          <button type="button" class="history-action history-action--danger" @click="clearAll">
+            <el-icon><Delete /></el-icon>
+            <span>清空对话</span>
+          </button>
         </div>
-      </div>
-
-      <div class="history-actions">
-        <label class="history-search">
-          <el-icon><Search /></el-icon>
-          <input v-model="searchKeyword" type="search" placeholder="搜索历史记录..." />
-        </label>
-        <button type="button" class="history-action" @click="refresh">
-          <el-icon><Refresh /></el-icon>
-          <span>刷新</span>
-        </button>
-        <button type="button" class="history-action history-action--danger" @click="clearAll">
-          <el-icon><Delete /></el-icon>
-          <span>清空对话</span>
-        </button>
-      </div>
-    </header>
+      </template>
+    </WorkspacePageHero>
 
     <nav class="history-tabs" aria-label="历史记录类型">
       <button
@@ -75,10 +69,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatLineRound, Clock, Delete, Document, Monitor, Refresh, Search } from '@element-plus/icons-vue'
+import { ChatLineRound, Delete, Document, Monitor, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import WorkspacePageHero from '@/components/app/WorkspacePageHero.vue'
 import ConversationList from '@/components/ConversationList.vue'
 import FileHistoryList from '@/components/FileHistoryList.vue'
 import AcgHistoryPanel from '@/components/history/AcgHistoryPanel.vue'
@@ -92,28 +87,38 @@ const route = useRoute()
 const userStore = useUserStore()
 const searchKeyword = ref('')
 const refreshKey = ref(0)
+const refreshing = ref(false)
 
 const normalizeTab = (value: unknown): HistoryTab => {
   return value === 'files' || value === 'acg' ? value : 'conversations'
 }
 
-const activeTab = ref<HistoryTab>(normalizeTab(route.query.tab))
+const activeTab = computed<HistoryTab>(() => normalizeTab(route.query.tab))
 
 const selectTab = (tab: HistoryTab) => {
-  activeTab.value = tab
   void router.replace({
     path: '/history',
     query: tab === 'conversations' ? {} : { tab },
   })
 }
 
+watch(() => route.query.tab, value => {
+  if (value !== undefined && (value !== 'files' && value !== 'acg')) {
+    void router.replace({ path: '/history', query: {} })
+  }
+}, { immediate: true })
+
 const handleSelectConversation = (conversation: { id: string; contextId?: string }) => {
   const contextId = conversation.contextId || conversation.id
   void router.push({ path: '/chat', query: { contextId, workspace: 'chat' } })
 }
 
-const refresh = () => {
+const refresh = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
   refreshKey.value += 1
+  await nextTick()
+  refreshing.value = false
   ElMessage.success('已刷新')
 }
 
@@ -144,8 +149,10 @@ const clearAll = async () => {
 
 <style scoped lang="scss">
 .history-view {
+  width: min(100%, 1400px);
   height: 100%;
   min-height: 0;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;

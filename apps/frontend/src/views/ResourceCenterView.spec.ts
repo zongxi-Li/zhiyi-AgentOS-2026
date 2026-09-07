@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { agentosApi } from '@/services/api/agentos'
+import { federatedModelApi } from '@/services/api/federatedModel'
+import { roleApi } from '@/services/api/role'
 import ResourceCenterView from './ResourceCenterView.vue'
 
 const layoutStub = { template: '<div class="layout-stub"><slot name="main" /></div>' }
@@ -88,5 +90,135 @@ describe('ResourceCenterView', () => {
 
     expect(testRouter.currentRoute.value.path).toBe('/agentos/resources')
     expect(testRouter.currentRoute.value.query.tab).toBe('roles')
+  })
+
+  it('defaults to overview and follows browser query changes', async () => {
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
+    const testRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/agentos/resources', component: ResourceCenterView }]
+    })
+    await testRouter.push('/agentos/resources')
+    await testRouter.isReady()
+
+    const wrapper = mount(ResourceCenterView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          WorkbenchLayout: layoutStub,
+          RoleManagementPanel: { template: '<div data-testid="roles-panel" />' },
+          FederatedManagementPanel: { template: '<div data-testid="federated-panel" />' },
+          ModelManagementPanel: { template: '<div data-testid="models-panel" />' },
+          'el-icon': true
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="resource-tab-overview"]').classes()).toContain('active')
+
+    await testRouter.push('/agentos/resources?tab=models')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="resource-tab-models"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="models-panel"]').exists()).toBe(true)
+  })
+
+  it('normalizes an unknown tab query to the default URL', async () => {
+    const testRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/agentos/resources', component: ResourceCenterView }]
+    })
+    await testRouter.push('/agentos/resources?tab=unknown')
+    await testRouter.isReady()
+
+    mount(ResourceCenterView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          WorkbenchLayout: layoutStub,
+          ResourceOverviewPanel: { template: '<div />' },
+          'el-icon': true
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(testRouter.currentRoute.value.fullPath).toBe('/agentos/resources')
+  })
+
+  it('renders the shared semantic hero and constrained page canvas', async () => {
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
+    const wrapper = mount(ResourceCenterView, {
+      global: { plugins: [await createTestRouter(), createPinia()], stubs: { WorkbenchLayout: layoutStub, 'el-icon': true } }
+    })
+
+    expect(wrapper.get('h1').text()).toBe('资源中心')
+    expect(wrapper.get('.resource-center__main').attributes('data-max-width')).toBe('1400px')
+  })
+
+  it('keeps roles, federated management and model management wired to the existing stores and APIs', async () => {
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(roleApi, 'getBuiltinRoles').mockResolvedValue([{
+      id: 'role_builtin',
+      name: '内置助手',
+      description: '内置角色',
+      systemPrompt: 'system prompt',
+      isBuiltin: true
+    }])
+    vi.spyOn(roleApi, 'getCustomRoles').mockResolvedValue([])
+    vi.spyOn(federatedModelApi, 'listModels').mockResolvedValue({
+      success: true,
+      data: {
+        legal: {
+          lawyer: {
+            name: '律师Agent模型',
+            version: '1.0.0',
+            status: 'active',
+            performance: { accuracy: 0.9, speed: 0.8, quality: 0.85 }
+          }
+        }
+      }
+    })
+    const testRouter = await createTestRouter()
+    const wrapper = mount(ResourceCenterView, {
+      global: {
+        plugins: [testRouter, createPinia()],
+        stubs: {
+          WorkbenchLayout: layoutStub,
+          RoleCard: { props: ['role'], template: '<article class="role-card">{{ role.name }}</article>' },
+          EditRoleDialog: true,
+          FederatedTopologyGraph: true,
+          TrainingCurveChart: true,
+          ModelAggregationCard: true,
+          'el-button': { template: '<button type="button"><slot /></button>' },
+          'el-input': { template: '<input />' },
+          'el-select': { template: '<select><slot /></select>' },
+          'el-option': { template: '<option />' },
+          'el-empty': { template: '<div />' },
+          'el-tag': { template: '<span><slot /></span>' },
+          'el-progress': true,
+          'el-icon': true
+        },
+        directives: {
+          loading: {}
+        }
+      }
+    })
+
+    await wrapper.get('[data-testid="resource-tab-roles"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="role-management-panel"]').exists()).toBe(true)
+    expect(roleApi.getBuiltinRoles).toHaveBeenCalled()
+    expect(roleApi.getCustomRoles).toHaveBeenCalled()
+
+    await wrapper.get('[data-testid="resource-tab-federated"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="federated-management-panel"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="resource-tab-models"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="model-management-panel"]').exists()).toBe(true)
+    expect(federatedModelApi.listModels).toHaveBeenCalled()
   })
 })

@@ -1,5 +1,5 @@
 <template>
-  <main class="acg-history-panel agentos-console ui-shell" data-testid="acg-history-panel">
+  <main class="acg-history-panel acg-history-console ui-shell" data-testid="acg-history-panel">
     <header class="console-header ui-hero ui-hero--compact">
       <div class="console-title">
         <span class="ui-icon-badge"><el-icon><Monitor /></el-icon></span>
@@ -823,7 +823,7 @@ const formatRelativeTime = (value?: string | null) => value ? new Date(value).to
 </script>
 
 <style scoped>
-.agentos-console { height: 100%; min-height: 0; padding: 0; gap: 0; color: var(--text-primary); overflow: hidden; }
+.acg-history-console { height: 100%; min-height: 0; padding: 0; gap: 0; color: var(--text-primary); overflow: hidden; }
 .console-header { z-index: 1; flex: 0 0 50px; min-height: 50px; border-width: 0 0 1px; border-radius: 0; box-shadow: none; }
 .console-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .console-refresh,
@@ -931,10 +931,9 @@ select:focus, input:focus { border-color: var(--primary-line); box-shadow: 0 0 0
 .acg-summary__facts span { padding: 4px 7px; border-radius: 5px; background: var(--bg-input); font-size: 11px; }
 @keyframes list-progress { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
 @media (prefers-reduced-motion: reduce) { .run-mini-progress.indeterminate > span { animation: none; transform: translateX(80%); } }
-@media (max-width: 1180px) { .agentos-console { height: auto; min-height: 100%; overflow: visible; } .console-layout { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); flex: none; height: auto; overflow: visible; } .console-resizer { display: none; } .run-sidebar, .console-main, .console-side { height: auto; } .console-side { grid-column: 2; } .run-sidebar { max-height: 720px; } }
-@media (max-width: 760px) { .agentos-console { padding: 0; } .console-header { align-items: flex-start; flex-direction: column; flex-basis: auto; } .console-layout { grid-template-columns: 1fr; } .console-side { grid-column: 1; } .run-sidebar { max-height: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .run-toolbar { align-items: flex-start; flex-direction: column; } .run-toolbar nav { justify-content: flex-start; } }
+@media (max-width: 1180px) { .acg-history-console { height: auto; min-height: 100%; overflow: visible; } .console-layout { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); flex: none; height: auto; overflow: visible; } .console-resizer { display: none; } .run-sidebar, .console-main, .console-side { height: auto; } .console-side { grid-column: 2; } .run-sidebar { max-height: 720px; } }
+@media (max-width: 760px) { .acg-history-console { padding: 0; } .console-header { align-items: flex-start; flex-direction: column; flex-basis: auto; } .console-layout { grid-template-columns: 1fr; } .console-side { grid-column: 1; } .run-sidebar { max-height: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .run-toolbar { align-items: flex-start; flex-direction: column; } .run-toolbar nav { justify-content: flex-start; } }
 .acg-history-panel { height: 100%; min-height: 0; overflow: hidden; }
 .acg-history-panel .console-header { display: none; }
 </style>
-
 

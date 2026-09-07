@@ -6,7 +6,7 @@ import AppTopBar from './AppTopBar.vue'
 const routes = [
   { path: '/', component: { template: '<div />' } },
   { path: '/agentos/acg', component: { template: '<div />' } },
-  { path: '/agentos-console', component: { template: '<div />' } }
+  { path: '/history', component: { template: '<div />' } }
 ]
 
 const mountTopBar = async (props: Record<string, unknown> = {}): Promise<{ wrapper: ReturnType<typeof mount>; router: Router }> => {
@@ -47,12 +47,12 @@ describe('AppTopBar', () => {
     const { wrapper } = await mountTopBar()
 
     await wrapper.get('[aria-label="收起导航"]').trigger('click')
-    await wrapper.find('.app-topbar__menu-links button').trigger('click')
+    await wrapper.findAll('.app-topbar__menu-links button')[1].trigger('click')
     await wrapper.get('input').setValue('trace')
     await wrapper.get('input').trigger('keydown.esc')
 
     expect(wrapper.emitted('menu')).toHaveLength(1)
-    expect(wrapper.emitted('navigate')).toEqual([['/agentos/acg']])
+    expect(wrapper.emitted('navigate')).toEqual([['/history?tab=acg']])
     expect(wrapper.get('input').element).toHaveProperty('value', '')
   })
 
@@ -134,7 +134,7 @@ describe('AppTopBar', () => {
     expect(back.attributes('disabled')).toBeUndefined()
     expect(forward.attributes('disabled')).toBeDefined()
 
-    await router.push('/agentos-console')
+    await router.push('/history?tab=acg')
     await flushPromises()
     await popHistoryTo(rootState, '/')
     expect(router.currentRoute.value.fullPath).toBe('/')

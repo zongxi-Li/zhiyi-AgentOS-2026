@@ -159,6 +159,7 @@ export class RunRuntimeStore {
       n.phase = 'WAITING'
       n.outputBuffer = ''
       n.chunkCount = 0
+      this.pending.delete(id)
     }
     if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
     if (event.eventType === 'node.started') n.status = 'RUNNING'
@@ -176,7 +177,9 @@ export class RunRuntimeStore {
       n.phase = 'STREAMING'
       n.lastActivityAt = timestampOrNow(event)
       n.chunkCount++
-      this.pending.set(id, n.outputBuffer + String(p.delta || ''))
+      const base = this.pending.get(id) ?? n.outputBuffer
+      const next = base + String(p.delta || '')
+      this.pending.set(id, next.length > 65536 ? next.slice(-65536) : next)
       this.schedule()
     } else if (event.eventType === 'model.completed') n.phase = 'FINALIZING'
     else if (event.eventType === 'node.completed') {
