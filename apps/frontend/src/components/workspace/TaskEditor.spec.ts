@@ -38,7 +38,8 @@ describe('TaskEditor stage output', () => {
 
     expect(agentosApi.getRunOutput).toHaveBeenCalledWith('run_1', 'output:node_1', expect.anything())
     expect(wrapper.get('[data-testid="task-stage-output"]').text()).toContain('架构方案')
-    expect(wrapper.text()).toContain('STAGE OUTPUT / 阶段结果')
+    expect(wrapper.text()).toContain('RESULT')
+    expect(wrapper.text()).not.toContain('PERSISTED')
   })
 
   it('prefers the current live stream while a node is executing', async () => {
@@ -56,5 +57,24 @@ describe('TaskEditor stage output', () => {
 
     expect(wrapper.get('[data-testid="task-stage-output"]').text()).toContain('正在生成的新阶段结果')
     expect(wrapper.get('[data-testid="task-stage-output"]').text()).not.toContain('旧结果')
+  })
+
+  it('promotes a structured result item to the shared Inspector selection', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({
+      runId: 'run_1', outputRef: 'output:node_1', content: {
+        constraints: [{ constraint: 'RTO 不得超过 2 小时', mandatory: true, source: 'constraint:3' }]
+      }
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    await wrapper.get('.stage-output-viewer__item').trigger('click')
+
+    expect(wrapper.emitted('selectSymbol')?.[0]?.[0]).toMatchObject({
+      id: 'task-result:design:constraints:0',
+      type: 'result',
+      title: 'RTO 不得超过 2 小时',
+      subtitle: 'constraints · constraint:3'
+    })
   })
 })

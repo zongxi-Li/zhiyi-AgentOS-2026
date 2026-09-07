@@ -285,6 +285,7 @@ describe('MissionWorkspaceView', () => {
     await activateGraphTab(wrapper)
     await wrapper.find('.graph-open').trigger('click')
     expect(wrapper.find('.task-editor').exists()).toBe(true)
+    expect(wrapper.find('.editor-group__surface--task').exists()).toBe(true)
     expect(wrapper.find('.task-editor').text()).toContain('capacity')
   })
 
@@ -410,14 +411,14 @@ describe('MissionWorkspaceView', () => {
         .mockResolvedValue(second)
       const { wrapper } = await mountWorkspace()
       await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('Capacity'))?.trigger('click')
-      expect(wrapper.find('.task-editor__status').text()).toBe('running')
+      expect(wrapper.find('.task-editor__status').text()).toBe('Running')
 
       await vi.advanceTimersByTimeAsync(8000)
       await flushPromises()
 
       expect(getWorkspace).toHaveBeenCalledTimes(2)
-      expect(wrapper.find('.task-editor__status').text()).toBe('completed')
-      expect(wrapper.find('.task-editor__stats').text()).toContain('Artifacts1')
+      expect(wrapper.find('.task-editor__status').text()).toBe('Completed')
+      expect(wrapper.find('.task-editor__section--artifacts .task-editor__section-meta').text()).toBe('1')
       wrapper.unmount()
     } finally {
       vi.useRealTimers()
