@@ -174,7 +174,12 @@ describe('App Agent project sidebar', () => {
     })
     await flushPromises()
 
-    await wrapper.find('.chat-project-action-trigger').trigger('click')
+    expect(wrapper.findAll('.chat-project-action')).toHaveLength(3)
+    expect(wrapper.find('.chat-project-action--edit').exists()).toBe(true)
+    expect(wrapper.find('.chat-project-action--delete').exists()).toBe(true)
+    expect(wrapper.find('.chat-project-action--open').exists()).toBe(true)
+
+    await wrapper.find('.chat-project-row').trigger('contextmenu', { clientX: 120, clientY: 160 })
     await flushPromises()
     const menu = document.body.querySelector('.sidebar-action-menu')
     expect(menu?.textContent).toContain('编辑标题')

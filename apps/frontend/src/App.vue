@@ -216,7 +216,11 @@
                     </button>
                     <button
                       class="chat-project-action-trigger"
+                      :class="{ 'is-open': isAgentSidebarActionOpen(mission.missionId) }"
                       type="button"
+                      aria-haspopup="menu"
+                      aria-controls="sidebar-action-menu"
+                      :aria-expanded="isAgentSidebarActionOpen(mission.missionId)"
                       :aria-label="`打开项目操作：${mission.title || '未命名工程'}`"
                       title="更多操作"
                       @click.stop="openSidebarActionMenu($event, { kind: 'agent', project: mission })"
@@ -229,7 +233,7 @@
                   <div
                     v-for="conversation in visibleRecentConversations"
                     :key="conversation.id"
-                    class="chat-project-row"
+                    class="chat-project-row chat-project-row--chat"
                     :class="{ active: route.query.contextId === (conversation.contextId || conversation.id) }"
                     role="listitem"
                     @contextmenu.prevent.stop="openSidebarActionMenu($event, { kind: 'chat', conversation })"
@@ -249,15 +253,17 @@
                       </span>
                       <el-icon class="chat-project-arrow" aria-hidden="true"><ArrowRight /></el-icon>
                     </button>
-                    <button
-                      class="chat-project-action-trigger"
-                      type="button"
-                      :aria-label="`打开对话操作：${conversation.title || '未命名对话'}`"
-                      title="更多操作"
-                      @click.stop="openSidebarActionMenu($event, { kind: 'chat', conversation })"
-                    >
-                      <el-icon><MoreFilled /></el-icon>
-                    </button>
+                    <div class="chat-project-actions" aria-label="瀵硅瘽鎿嶄綔">
+                      <button class="chat-project-action chat-project-action--edit" type="button" title="缂栬緫鏍囬" @click.stop="editSidebarConversation(conversation)">
+                        <el-icon><Edit /></el-icon>
+                      </button>
+                      <button class="chat-project-action chat-project-action--delete" type="button" title="鍒犻櫎瀵硅瘽" @click.stop="deleteSidebarActionConversation(conversation)">
+                        <el-icon><Delete /></el-icon>
+                      </button>
+                      <button class="chat-project-action chat-project-action--open" type="button" title="鎵撳紑瀵硅瘽" @click.stop="openConversation(conversation)">
+                        <el-icon><ArrowRight /></el-icon>
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div v-else class="chat-submenu-empty">
@@ -423,6 +429,7 @@
       <div
         v-if="sidebarActionMenu.target"
         ref="sidebarActionMenuElement"
+        id="sidebar-action-menu"
         class="sidebar-action-menu"
         role="menu"
         aria-label="对话项目操作"
@@ -804,6 +811,10 @@ const closeSidebarActionMenu = () => {
   sidebarActionMenu.target = null
 }
 
+const isAgentSidebarActionOpen = (missionId: string) => (
+  sidebarActionMenu.target?.kind === 'agent' && sidebarActionMenu.target.project.missionId === missionId
+)
+
 const openSidebarActionMenu = async (event: MouseEvent, target: SidebarActionTarget) => {
   sidebarActionMenu.target = target
   const trigger = event.currentTarget as HTMLElement | null
@@ -884,10 +895,10 @@ const deleteSidebarProject = async () => {
   }
 }
 
-const editSidebarConversation = async () => {
+const editSidebarConversation = async (conversationOverride?: Conversation) => {
   const target = sidebarActionMenu.target
-  if (!target || target.kind !== 'chat') return
-  const conversation = target.conversation
+  const conversation = conversationOverride || (target?.kind === 'chat' ? target.conversation : null)
+  if (!conversation) return
   closeSidebarActionMenu()
   try {
     const { value: newTitle } = await ElMessageBox.prompt(
@@ -915,11 +926,12 @@ const editSidebarConversation = async () => {
   }
 }
 
-const deleteSidebarActionConversation = () => {
+const deleteSidebarActionConversation = (conversationOverride?: Conversation) => {
   const target = sidebarActionMenu.target
-  if (!target || target.kind !== 'chat') return
+  const conversation = conversationOverride || (target?.kind === 'chat' ? target.conversation : null)
+  if (!conversation) return
   closeSidebarActionMenu()
-  void deleteSidebarConversation(target.conversation)
+  void deleteSidebarConversation(conversation)
 }
 
 const deleteSidebarConversation = async (conversation: Conversation) => {
@@ -1998,11 +2010,76 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
+.chat-project-action-trigger.is-open {
+  opacity: 1;
+}
+
 .chat-project-action-trigger:hover,
 .chat-project-action-trigger:focus-visible {
   background: color-mix(in srgb, var(--primary-color) 9%, transparent);
   color: var(--primary-color);
   outline: none;
+}
+
+.chat-project-actions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(10px, -50%);
+  transition: opacity 220ms var(--ease-out, ease) 35ms, transform 220ms var(--ease-out, ease) 35ms;
+}
+
+.chat-project-row--chat {
+  position: relative;
+  display: block;
+}
+
+.chat-project-row--chat:hover .chat-project-actions,
+.chat-project-row--chat:focus-within .chat-project-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(0, -50%);
+}
+
+.chat-project-action {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.chat-project-action .el-icon {
+  font-size: 15px;
+}
+
+.chat-project-action:hover,
+.chat-project-action:focus-visible {
+  background: color-mix(in srgb, var(--primary-color) 9%, transparent);
+  color: var(--primary-color);
+  outline: none;
+}
+
+.chat-project-action--delete:hover,
+.chat-project-action--delete:focus-visible {
+  background: var(--danger-fade);
+  color: var(--danger);
+}
+
+.chat-project-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .sidebar-action-menu {
@@ -2563,7 +2640,11 @@ onUnmounted(() => {
 
 .chat-project-item {
   min-height: 34px;
-  padding: 6px 9px;
+  padding: 6px 38px 6px 9px;
+}
+
+.chat-project-row--chat .chat-project-item {
+  padding-right: 92px;
 }
 
 .chat-project-time {
