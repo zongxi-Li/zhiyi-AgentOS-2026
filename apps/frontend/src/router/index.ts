@@ -5,11 +5,6 @@ import { isDesktop } from '@/platform'
 import LoginView from '@/views/LoginView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import UserView from '@/views/UserView.vue'
-// Sidebar destinations are part of the desktop shell's primary workflow.
-// Keep them in the entry graph so a Tauri WebView never blanks the outgoing
-// view while waiting for a route chunk that may be stale or unavailable.
-import HistoryView from '@/views/HistoryView.vue'
-import ResourceCenterView from '@/views/ResourceCenterView.vue'
 
 const normalizeRedirect = (redirect?: string) => {
   if (!redirect) return '/chat'
@@ -76,7 +71,11 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/history',
     name: 'History',
-    component: HistoryView,
+    // These workspace surfaces pull in graph and visualization libraries.
+    // Load them only after navigation so the login shell does not ask Vite to
+    // transform the entire authenticated workspace at startup. Chunk failures
+    // remain covered by the one-shot router recovery below.
+    component: () => import('@/views/HistoryView.vue'),
     meta: {
       title: '历史记录',
       requiresAuth: true
@@ -161,7 +160,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/agentos/resources',
     name: 'ResourceCenter',
-    component: ResourceCenterView,
+    component: () => import('@/views/ResourceCenterView.vue'),
     meta: {
       title: 'Resource Center',
       requiresAuth: true
@@ -250,6 +249,11 @@ const clearAuthState = () => {
   localStorage.removeItem('userId')
 }
 
+const isAuthorizationFailure = (error: unknown) => {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status
+  return status === 401 || status === 403
+}
+
 // Global route guard
 router.beforeEach(async (to, _from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - 知弈AgentOS` : '知弈AgentOS'
@@ -278,9 +282,15 @@ router.beforeEach(async (to, _from, next) => {
         next(unauthRedirect(to.fullPath))
         return
       }
-    } catch {
-      clearAuthState()
-      next(unauthRedirect(to.fullPath))
+    } catch (error) {
+      if (isAuthorizationFailure(error)) {
+        clearAuthState()
+        next(unauthRedirect(to.fullPath))
+      } else {
+        // A temporary backend/dev-server interruption is not an authentication
+        // decision. Keep the session and route so recovery does not force login.
+        next()
+      }
       return
     }
   }
@@ -295,8 +305,8 @@ router.beforeEach(async (to, _from, next) => {
         return
       }
       clearAuthState()
-    } catch {
-      clearAuthState()
+    } catch (error) {
+      if (isAuthorizationFailure(error)) clearAuthState()
     }
   }
 

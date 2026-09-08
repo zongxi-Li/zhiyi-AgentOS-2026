@@ -52,6 +52,38 @@ describe('user center route contract', () => {
   })
 })
 
+describe('authentication outage handling', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    await router.push('/')
+  })
+
+  it('keeps the session and protected route on a temporary network failure', async () => {
+    localStorage.setItem('token', 'still-valid-token')
+    localStorage.setItem('userId', 'user-1')
+    vi.mocked(authApi.verifyToken).mockRejectedValue(new Error('Network Error'))
+
+    await router.push('/chat')
+
+    expect(router.currentRoute.value.path).toBe('/chat')
+    expect(localStorage.getItem('token')).toBe('still-valid-token')
+    expect(localStorage.getItem('userId')).toBe('user-1')
+  })
+
+  it('clears the session when token verification explicitly returns unauthorized', async () => {
+    localStorage.setItem('token', 'expired-token')
+    localStorage.setItem('userId', 'user-1')
+    vi.mocked(authApi.verifyToken).mockRejectedValue({ response: { status: 401 } })
+
+    await router.push('/chat')
+
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(localStorage.getItem('userId')).toBeNull()
+  })
+})
+
 describe('integrated legacy route contract', () => {
   it.each([
     ['/roles', '/agentos/resources', 'roles'],
