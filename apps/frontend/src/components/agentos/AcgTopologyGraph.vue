@@ -201,6 +201,8 @@ const props = defineProps<{
   workbench?: boolean
   focusNodeId?: string | null
   runtimePhases?: Record<string, string>
+  /** 容器尺寸变化时保持缩放并重定位视图（仅独立编辑器画布开启；内嵌多列场景会与列宽布局互相干扰） */
+  observeResize?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -230,6 +232,10 @@ let renderRequest = 0
 let renderTimer: number | undefined
 let layoutFinalized = false
 let pendingViewState: { position: { x: number; y: number }; scale: number } | null = null
+let graphResizeObserver: ResizeObserver | null = null
+let graphResizeTarget: Element | null = null
+let graphResizeTimer: number | undefined
+let graphResizeFrame: number | undefined
 
 const ENDPOINT_MIN_GAP = 190
 const ENDPOINT_MAX_GAP = 280
@@ -713,6 +719,7 @@ const render = async () => {
   layoutFinalized = false
   const data = { nodes: nodesData, edges: edgesData }
   network = new Network(graphRef.value, data as any, options as any)
+  ensureGraphResizeObserver()
   if (selectedNodeId.value) network.selectNodes([selectedNodeId.value])
   network.on('selectNode', params => {
     selectedNodeId.value = String(params.nodes[0] || '')
@@ -759,6 +766,66 @@ const syncFullscreenState = () => {
     network?.redraw()
     resetView(false)
   }, 120)
+}
+
+// 容器尺寸响应分三种场景：非 workbench 独立页面走原生 autoResize；
+// observeResize 的画布（graph.acg 编辑器）autoResize 关闭以省持续开销，
+// 由下方防抖 ResizeObserver 补齐：只更新位图尺寸并保持用户视图
+// （position/scale），不重新 fit、不动布局；内嵌多列场景（运行进度
+// GRAPH 列等）不开启：列宽由内容布局决定，resize 时的相机恢复会与
+// 列宽互相干扰导致视图爆炸，保持渲染即可。
+const ensureGraphResizeObserver = () => {
+  if (!props.observeResize || typeof ResizeObserver !== 'function') return
+  const target = graphRef.value
+  if (!target) return
+  if (graphResizeObserver) {
+    if (graphResizeTarget === target) return
+    graphResizeObserver.disconnect()
+  }
+  graphResizeTarget = target
+  graphResizeObserver = new ResizeObserver(() => scheduleGraphRedraw())
+  graphResizeObserver.observe(target)
+}
+
+const redrawPreservingView = () => {
+  if (!network || !graphRef.value) return
+  if (graphRef.value.clientWidth <= 0 || graphRef.value.clientHeight <= 0) return
+  const position = network.getViewPosition()
+  const scale = network.getScale()
+  // redraw() 内部会先触发 canvas 的 setSize 拾取容器新尺寸（内部按宽高比临时缩放视图），
+  // 随后用 moveTo 恢复原缩放，并把原视野中心的内容放回新画布正中 —— 不重新 fit、不动布局。
+  network.redraw()
+  network.moveTo({ position, scale, animation: false })
+}
+
+const scheduleGraphRedraw = () => {
+  if (graphResizeTimer !== undefined) window.clearTimeout(graphResizeTimer)
+  // 收起/展开侧栏时 flex 布局会连续发出多次通知，合并成一次重绘。
+  graphResizeTimer = window.setTimeout(() => {
+    graphResizeTimer = undefined
+    if (graphResizeFrame !== undefined) return
+    graphResizeFrame = typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame(() => {
+          graphResizeFrame = undefined
+          redrawPreservingView()
+        })
+      : window.setTimeout(() => {
+          graphResizeFrame = undefined
+          redrawPreservingView()
+        }, 16)
+  }, 64)
+}
+
+const cancelGraphRedraw = () => {
+  if (graphResizeTimer !== undefined) {
+    window.clearTimeout(graphResizeTimer)
+    graphResizeTimer = undefined
+  }
+  if (graphResizeFrame !== undefined) {
+    if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(graphResizeFrame)
+    else window.clearTimeout(graphResizeFrame)
+    graphResizeFrame = undefined
+  }
 }
 
 const toggleFullscreen = async () => {
@@ -860,6 +927,10 @@ onBeforeUnmount(() => {
   }
   stopPhysics()
   cancelScheduledRender()
+  cancelGraphRedraw()
+  graphResizeObserver?.disconnect()
+  graphResizeObserver = null
+  graphResizeTarget = null
   themeObserver?.disconnect()
   themeObserver = null
   network?.destroy()

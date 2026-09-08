@@ -14,6 +14,7 @@
         :focus-node-id="focusNodeId"
         :runtime-phases="runtimePhases"
         :workbench="true"
+        :observe-resize="true"
         @node-selected="handleNodeSelected"
         @node-double-clicked="handleNodeDoubleClicked"
       />
@@ -57,7 +58,7 @@ const handleNodeDoubleClicked = (nodeId: string) => emit('openSemanticTask', res
 </script>
 
 <style scoped>
-.graph-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-section); color: var(--wb-text); box-shadow: var(--wb-shadow-section); }
+.graph-editor { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; min-width: 0; height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-section); color: var(--wb-text); box-shadow: var(--wb-shadow-section); }
 .graph-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 44px; padding: 7px 16px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
 .graph-editor__header strong,
 .graph-editor__header small { display: block; }
