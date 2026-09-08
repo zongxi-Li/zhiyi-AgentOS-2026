@@ -84,10 +84,6 @@
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
               </el-menu-item>
-              <el-menu-item index="/settings">
-                <el-icon><Setting /></el-icon>
-                <span>{{ $t('nav.settings') }}</span>
-              </el-menu-item>
             </el-menu>
           </div>
 
@@ -111,6 +107,18 @@
                 <el-icon><SwitchButton /></el-icon>
               </button>
             </div>
+            <el-menu
+              :default-active="activeMenu"
+              router
+              class="sidebar-menu sidebar-settings-menu"
+              :collapse="mainSidebarCompact"
+              :collapse-transition="false"
+            >
+              <el-menu-item index="/settings">
+                <el-icon><Setting /></el-icon>
+                <span>{{ $t('nav.settings') }}</span>
+              </el-menu-item>
+            </el-menu>
           </div>
           </div>
 
@@ -346,15 +354,38 @@
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
               </el-menu-item>
-              <el-menu-item index="/settings">
-                <el-icon><Setting /></el-icon>
-                <span>{{ $t('nav.settings') }}</span>
-              </el-menu-item>
             </el-menu>
 
             <div class="sidebar-footer drawer-footer">
               <div class="user-profile">
+                <button
+                  class="user-identity"
+                  type="button"
+                  :aria-label="userIdentityActionLabel"
+                  :title="userIdentityActionLabel"
+                  @click="handleUserIdentityClick"
+                >
+                  <UserAvatar :size="28" class="user-avatar" :fallback="sidebarUserInitial" />
+                  <div class="user-info">
+                    <span class="user-name">{{ sidebarUserName }}</span>
+                    <span class="user-status">{{ sidebarUserMeta }}</span>
+                  </div>
+                </button>
+                <button class="user-logout" type="button" aria-label="退出登录" title="退出登录" @click="handleLogout">
+                  <el-icon><SwitchButton /></el-icon>
+                </button>
               </div>
+              <el-menu
+                :default-active="activeMenu"
+                router
+                class="sidebar-menu sidebar-settings-menu"
+                @select="simpleNavOpen = false"
+              >
+                <el-menu-item index="/settings">
+                  <el-icon><Setting /></el-icon>
+                  <span>{{ $t('nav.settings') }}</span>
+                </el-menu-item>
+              </el-menu>
             </div>
           </div>
         </el-drawer>
@@ -1645,11 +1676,11 @@ onUnmounted(() => {
 }
 
 .chat-nav-group.active > .chat-nav-trigger {
-  border-color: var(--primary-line);
-  background: color-mix(in srgb, var(--primary-fade) 74%, var(--surface-solid));
+  border-color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 14%, var(--sidebar-bg));
   color: var(--primary-color);
-  font-weight: 550;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 76%, transparent), var(--shadow-sm);
+  font-weight: 500;
+  box-shadow: none;
 }
 
 .chat-nav-group.active > .chat-nav-trigger::before {
@@ -2226,11 +2257,11 @@ onUnmounted(() => {
 }
 
 .sidebar-menu :deep(.el-menu-item.is-active) {
-  border-color: var(--primary-line);
-  background: color-mix(in srgb, var(--primary-fade) 74%, var(--surface-solid));
+  border-color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 14%, var(--sidebar-bg));
   color: var(--primary-color);
-  font-weight: 550;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 76%, transparent), var(--shadow-sm);
+  font-weight: 500;
+  box-shadow: none;
 }
 
 .sidebar-menu :deep(.el-menu-item.is-active::before) {
@@ -2276,8 +2307,17 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: 10px 10px 12px;
   margin-top: auto;
-  border-top: 1px solid var(--sidebar-border);
+  border-top: 0;
   background: color-mix(in srgb, var(--bg-sidebar) 86%, var(--bg-app));
+}
+
+.sidebar-settings-menu {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.sidebar-settings-menu :deep(.el-menu-item) {
+  margin-bottom: 0;
 }
 
 .app-sidebar.collapsed .sidebar-footer {
