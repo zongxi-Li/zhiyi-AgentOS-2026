@@ -13,11 +13,19 @@ from components.resource.health_store import SQLiteResourceHealthStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from adapters.guarded_model import GuardedModelRuntime
+from adapters.model_compatibility import ModelCompatibilityRegistry
 from runtime import ExecutionRuntime
 from contracts.resource import DeploymentTier, ResourceEndpoint, ResourceProfile, ResourceSnapshot, ResourceType
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
-from app.execution.wiring import build_default_runtime, build_model_setup, close_runtime
+from app.execution.wiring import (
+    GatewayIntentLLM,
+    bind_registered_planner_llm,
+    build_default_runtime,
+    build_model_setup,
+    close_runtime,
+)
+from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
 
 
 class _InjectedToolRuntime:
@@ -31,6 +39,28 @@ class _InjectedModelRuntime:
 
 class _InjectedIntentLLM:
     pass
+
+
+class _UnavailablePlannerProvider:
+    provider_name = "unavailable"
+    model = ""
+
+    def generate_text(self, prompt, **kwargs):
+        raise AssertionError("unavailable planner provider should not be called")
+
+    def generate_json(self, prompt, schema, **kwargs):
+        raise AssertionError("unavailable planner provider should not be called")
+
+
+class _PlannerRuntimeWithoutConfiguredModel:
+    def __init__(self) -> None:
+        self._intent_llm = GatewayIntentLLM()
+        self.model_registry = ModelCompatibilityRegistry()
+        self.bound = False
+
+    def set_intent_llm(self, intent_llm) -> None:
+        self.bound = True
+        self._intent_llm = intent_llm
 
 
 class _InjectedRedis:
@@ -189,3 +219,14 @@ def test_model_setup_reuses_the_single_workflow_runtime_registry(tmp_path: Path)
         assert setup.model_registry is runtime.model_registry
     finally:
         close_runtime(runtime)
+
+
+def test_planner_registry_binding_skips_unconfigured_gateway_model() -> None:
+    runtime = _PlannerRuntimeWithoutConfiguredModel()
+    set_llm_gateway_for_tests(LLMGateway(provider=_UnavailablePlannerProvider()))
+    try:
+        assert bind_registered_planner_llm(runtime) is False
+        assert runtime.bound is False
+        assert isinstance(runtime._intent_llm, GatewayIntentLLM)
+    finally:
+        set_llm_gateway_for_tests(None)

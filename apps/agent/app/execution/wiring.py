@@ -126,6 +126,13 @@ def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
     current = getattr(runtime, "_intent_llm", None)
     if not isinstance(current, GatewayIntentLLM):
         return False
+    from app.llm.gateway import get_llm_gateway
+
+    gateway = get_llm_gateway()
+    provider = str(gateway.provider_name or "").strip()
+    model = str(gateway.model or "").strip()
+    if provider in {"", "mock", "unavailable"} or not model:
+        return False
     candidate = RegisteredPlannerLLM(runtime)
     if not candidate.is_available():
         return False
