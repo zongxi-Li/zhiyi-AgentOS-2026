@@ -51,6 +51,14 @@ export default defineConfig(({ mode }) => {
       alias: [
         { find: '@platform', replacement: platformAdapter },
         { find: '@window-controls', replacement: windowControls },
+        // 桌面端 Ctrl+滚轮界面缩放的初始化入口；Web 构建换空占位，保证永不解析 @tauri-apps/api/webview。
+        {
+          find: '@ui-zoom',
+          replacement: resolve(
+            __dirname,
+            isDesktop ? 'src/platform/desktop/uiZoom.ts' : 'src/platform/web/uiZoomStub.ts'
+          )
+        },
         ...(isDesktop ? [
           { find: '@tauri-apps/api', replacement: resolve(desktopNodeModules, '@tauri-apps/api') },
           { find: '@tauri-apps/plugin-dialog', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-dialog') },

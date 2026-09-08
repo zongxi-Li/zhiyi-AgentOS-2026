@@ -455,6 +455,8 @@
         </template>
       </div>
     </Teleport>
+    <!-- 桌面端 Ctrl+滚轮/Ctrl± 缩放指示条；Web 构建下 useUiZoom 不会初始化，始终不渲染 -->
+    <ZoomIndicator />
   </ErrorBoundary>
 </template>
 
@@ -493,6 +495,8 @@ import {
   type AcgHistoryRole
 } from '@/utils/acgHistoryFilter'
 import { isDesktop } from '@/platform'
+import { initUiZoom } from '@ui-zoom'
+import ZoomIndicator from '@/components/desktop/ZoomIndicator.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1273,6 +1277,9 @@ const handleLogout = async () => {
   }
 }
 
+// 桌面端 VSCode 式 Ctrl+滚轮缩放接管；Web 构建经 @ui-zoom 别名拿到空实现。
+let disposeUiZoom: (() => void) | null = null
+
 onMounted(() => {
   window.addEventListener('global-error', handleGlobalError as EventListener)
   window.addEventListener('history-refresh', handleHistoryRefresh)
@@ -1284,9 +1291,12 @@ onMounted(() => {
   if (chatNavOpen.value) void loadRecentConversations()
   if (localStorage.getItem('userId')) void userStore.loadCurrentUser()
   void workflowRunsStore.bootstrap()
+  disposeUiZoom = initUiZoom()
 })
 
 onUnmounted(() => {
+  disposeUiZoom?.()
+  disposeUiZoom = null
   conversationLoadController?.abort()
   stopSidebarResize()
   stopChatPanelResize()

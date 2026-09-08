@@ -5,6 +5,7 @@
       "@/*": ["src/*"],
       "@platform": ["src/platform/desktop/adapter.ts"],
       "@window-controls": ["src/components/desktop/DesktopWindowControls.vue"],
+      "@ui-zoom": ["src/platform/desktop/uiZoom.ts"],
       "@tauri-apps/*": ["../desktop/node_modules/@tauri-apps/*"]
     }
   },

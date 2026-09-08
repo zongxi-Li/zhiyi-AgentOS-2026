@@ -19,7 +19,8 @@
     "paths": {
       "@/*": ["src/*"],
       "@platform": ["src/platform/web/adapter.ts"],
-      "@window-controls": ["src/platform/web/windowControlsStub.ts"]
+      "@window-controls": ["src/platform/web/windowControlsStub.ts"],
+      "@ui-zoom": ["src/platform/web/uiZoomStub.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],
