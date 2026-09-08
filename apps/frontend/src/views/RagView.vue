@@ -2,7 +2,7 @@
 <template>
   <div class="rag-view">
     <!-- 页面头部 -->
-    <div class="page-header workspace-page-header">
+    <header class="page-header workspace-page-header">
       <div class="header-inner">
         <div class="header-left">
           <div class="header-icon-wrapper workspace-page-header__icon">
@@ -21,16 +21,18 @@
           </div>
         </div>
       </div>
-    </div>
+    </header>
 
     <!-- 主要内容区域 -->
     <div class="page-content">
       <div class="content-inner">
         <!-- 标签导航 -->
-        <div class="tabs-nav">
+        <nav class="tabs-nav" role="tablist" aria-label="知识库功能">
           <button
             class="tab-button"
             :class="{ active: activeTab === 'query' }"
+            role="tab"
+            :aria-selected="activeTab === 'query'"
             @click="activeTab = 'query'"
           >
             <el-icon><Search /></el-icon>
@@ -39,6 +41,8 @@
           <button
             class="tab-button"
             :class="{ active: activeTab === 'graph' }"
+            role="tab"
+            :aria-selected="activeTab === 'graph'"
             @click="activeTab = 'graph'"
           >
             <el-icon><Share /></el-icon>
@@ -47,12 +51,14 @@
           <button
             class="tab-button"
             :class="{ active: activeTab === 'docs' }"
+            role="tab"
+            :aria-selected="activeTab === 'docs'"
             @click="activeTab = 'docs'"
           >
             <el-icon><Document /></el-icon>
             <span>文档管理</span>
           </button>
-        </div>
+        </nav>
         
         <div class="layout-grid" v-if="activeTab === 'query'">
           <!-- 查询区域 -->
@@ -901,4 +907,318 @@ onMounted(() => {
 .doc-icon { font-size: 14px; }
 .doc-name { margin-bottom: 2px; font-size: 12px; }
 .doc-time { font-size: 10px; }
+
+/* Knowledge workspace refinement: quieter surfaces, clearer hierarchy, less dead space. */
+.rag-view {
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-app);
+}
+
+.page-header {
+  min-height: 52px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg-card) 86%, transparent);
+  border-color: var(--border-light);
+  box-shadow: var(--shadow-sm);
+}
+
+.header-inner {
+  min-height: 34px;
+}
+
+.header-left {
+  gap: 10px;
+}
+
+.header-icon-wrapper {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--surface-solid);
+}
+
+.header-icon {
+  font-size: 16px;
+}
+
+.header-text .page-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.header-stats {
+  gap: 8px;
+}
+
+.stat-badge {
+  height: 30px;
+  padding: 0 10px;
+  gap: 7px;
+  border-radius: 6px;
+  background: var(--surface-solid);
+}
+
+.stat-icon {
+  font-size: 14px;
+}
+
+.stat-value {
+  font-size: 13px;
+}
+
+.stat-label {
+  font-size: 11px;
+}
+
+.page-content {
+  flex: 1;
+  min-height: 0;
+}
+
+.content-inner {
+  height: 100%;
+}
+
+.tabs-nav {
+  height: 38px;
+  min-height: 38px;
+  margin-bottom: 8px;
+  gap: 2px;
+  border-bottom-color: var(--border-light);
+}
+
+.tab-button {
+  height: 38px;
+  padding: 0 13px;
+  gap: 7px;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+}
+
+.tab-button:hover {
+  background: color-mix(in srgb, var(--primary-fade) 54%, transparent);
+}
+
+.tab-button.active {
+  background: color-mix(in srgb, var(--primary-fade) 72%, transparent);
+}
+
+.tab-button .el-icon {
+  font-size: 14px;
+}
+
+.layout-grid {
+  height: calc(100% - 46px);
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.85fr) minmax(280px, 0.85fr);
+  gap: 10px;
+}
+
+.query-section,
+.docs-section,
+.graph-section,
+.docs-only-section {
+  min-height: 0;
+}
+
+.docs-card,
+.query-section :deep(.query-card),
+.graph-section :deep(.knowledge-graph-viz) {
+  border-radius: 9px;
+  box-shadow: var(--shadow-sm);
+}
+
+.docs-card {
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+}
+
+.card-header {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
+.header-title {
+  gap: 7px;
+}
+
+.title-icon {
+  font-size: 15px;
+}
+
+.title-text {
+  font-size: 13px;
+}
+
+.upload-button {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.docs-list {
+  display: flex;
+  flex: 1;
+  padding: 8px;
+  max-height: none;
+}
+
+.empty-docs {
+  width: 100%;
+  flex: 1;
+  min-height: 220px;
+  padding: 32px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-icon-wrapper {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 10px;
+  border-radius: 9px;
+}
+
+.empty-icon {
+  font-size: 20px;
+}
+
+.empty-text {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.empty-hint {
+  font-size: 11px;
+  text-align: center;
+}
+
+.docs-items {
+  width: 100%;
+  gap: 6px;
+}
+
+.doc-item {
+  gap: 8px;
+  padding: 8px;
+  border-radius: 7px;
+}
+
+.doc-icon-wrapper {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+}
+
+.doc-icon {
+  font-size: 14px;
+}
+
+.doc-name {
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.doc-time {
+  font-size: 10px;
+}
+
+.doc-action {
+  width: 26px;
+  height: 26px;
+}
+
+.query-section :deep(.query-body) {
+  overflow-y: auto;
+}
+
+.query-section :deep(.recommendation-panel) {
+  gap: 10px;
+}
+
+.query-section :deep(.recommendation-head h4) {
+  font-size: 13px;
+}
+
+.query-section :deep(.recommendation-head p) {
+  font-size: 11px;
+}
+
+.query-section :deep(.refresh-button) {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.query-section :deep(.recommendation-list) {
+  gap: 6px;
+}
+
+.query-section :deep(.recommendation-item) {
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.query-section :deep(.recommendation-main strong) {
+  font-size: 12px;
+}
+
+.query-section :deep(.recommendation-item p) {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.query-section :deep(.confidence) {
+  font-size: 11px;
+}
+
+.upload-area {
+  :deep(.el-upload-dragger) {
+    border-radius: 9px;
+  }
+}
+
+@media (max-width: 1180px) and (min-width: 1025px) {
+  .layout-grid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.9fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .rag-view {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .page-header {
+    min-height: 48px;
+    padding: 7px 9px;
+  }
+
+  .header-stats {
+    align-self: flex-end;
+  }
+
+  .tabs-nav {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tabs-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-button {
+    flex: 0 0 auto;
+  }
+
+  .layout-grid {
+    height: auto;
+  }
+}
 </style>

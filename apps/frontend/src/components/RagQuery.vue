@@ -493,6 +493,109 @@ onMounted(() => {
 .result-title { font-size: 13px; }
 .answer-box { margin-bottom: 14px; padding: 12px; border-radius: 7px; }
 .answer-content { font-size: 13px; line-height: 1.65; }
+
+/* Keep query controls aligned with the compact Workbench surface language. */
+.query-card {
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-header {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
+.header-left {
+  gap: 7px;
+}
+
+.header-icon {
+  font-size: 15px;
+}
+
+.header-title {
+  font-size: 13px;
+}
+
+.header-settings {
+  gap: 6px;
+}
+
+.settings-label {
+  font-size: 11px;
+}
+
+.k-input {
+  width: 82px;
+}
+
+.query-body {
+  min-height: 0;
+  padding: 12px;
+  gap: 10px;
+}
+
+.query-textarea {
+  min-height: 112px;
+  padding: 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.input-footer {
+  min-height: 30px;
+}
+
+.hint-text {
+  font-size: 10px;
+}
+
+.submit-button {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.submit-icon {
+  font-size: 14px;
+}
+
+.result-area {
+  margin-top: 14px;
+  padding: 14px 12px 12px;
+}
+
+.result-header {
+  margin-bottom: 10px;
+}
+
+.result-title {
+  font-size: 13px;
+}
+
+.answer-box {
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 7px;
+}
+
+.answer-content {
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+@media (max-width: 768px) {
+  .query-body {
+    padding: 10px;
+  }
+
+  .query-textarea {
+    min-height: 128px;
+  }
+}
 </style>
 
 
