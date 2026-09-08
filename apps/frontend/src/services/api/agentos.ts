@@ -357,10 +357,25 @@ export interface ExecutionBinding {
 
 export type RuntimeResourceType = 'agent' | 'model' | 'embedding' | 'tool' | 'worker' | 'skill' | string
 export type RuntimeResourceHealth = 'unknown' | 'online' | 'degraded' | 'offline' | string
+export type RuntimeDeploymentTier = 'local' | 'terminal' | 'edge' | 'cloud' | string
+
+export interface RuntimeResourceEndpoint {
+  protocol: 'local' | 'http' | 'https' | 'grpc' | string
+  address: string
+}
+
+export interface RuntimeComputeCapacity {
+  cpuCores: number
+  memoryMb: number
+  gpuType?: string | null
+  gpuMemoryMb: number
+  bandwidthMbps: number
+}
 
 export interface RuntimeResourceProfile {
   resourceId: string
   resourceType: RuntimeResourceType
+  deploymentTier?: RuntimeDeploymentTier | null
   capabilities: string[]
   domains: string[]
   labels: Record<string, string>
@@ -369,6 +384,10 @@ export interface RuntimeResourceProfile {
   costMetadata: Record<string, number>
   capacity: number
   ownerScope?: string | null
+  privacyLevel?: string | null
+  executionEndpoint?: RuntimeResourceEndpoint | null
+  computeCapacity?: RuntimeComputeCapacity
+  modelIds?: string[]
   enabled: boolean
   metadata: Record<string, unknown>
   version: number
@@ -414,6 +433,21 @@ export interface ResourceBindingObservation extends ExecutionBinding {
   attemptStatus: string
   startedAt?: string | null
   finishedAt?: string | null
+  deploymentTier: RuntimeDeploymentTier | null
+  placementReasons: string[]
+  scoreFactors: Record<string, number>
+}
+
+export interface ResourceFailoverObservation {
+  eventId: string
+  stepId: string | null
+  timestamp: string | null
+  failedResources: Array<{
+    stepId?: string
+    resourceId: string
+    error?: string | null
+  }>
+  retryStepIds: string[]
 }
 
 export interface ResourceObservation {
@@ -422,6 +456,7 @@ export interface ResourceObservation {
   bindings: ResourceBindingObservation[]
   attemptCount: number
   source: string
+  failoverEvents: ResourceFailoverObservation[]
 }
 
 export interface IdentityAttemptDetail {
