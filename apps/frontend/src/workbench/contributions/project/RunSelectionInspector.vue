@@ -42,7 +42,11 @@ const statusValue = computed(() => props.selectedSymbol?.status || props.graphNo
 const statusLabel = computed(() => props.selectedSymbol?.status || props.graphNode?.status || props.entry?.status || props.runStatus || '未观测')
 const statusMark = computed(() => ({ running: '●', completed: '✓', warning: '!', failed: '×', pending: '○' }[statusValue.value] || '○'))
 const sectionTitle = computed(() => {
-  if (props.selectedSymbol) return props.selectedSymbol.type === 'runtime' ? 'STRUCTURED OUTPUT' : props.selectedSymbol.type.toUpperCase()
+  if (props.selectedSymbol) {
+    if (props.selectedSymbol.type === 'runtime') return 'STRUCTURED OUTPUT'
+    if (props.selectedSymbol.type === 'planner') return 'PLANNING'
+    return props.selectedSymbol.type.toUpperCase()
+  }
   return 'RUN'
 })
 
@@ -60,6 +64,11 @@ const rows = computed<InspectorProperty[]>(() => {
     { label: 'Stage', value: symbol.children.find(item => item.status === 'running')?.title || 'Planning' },
     { label: 'Task Count', value: symbolMetric('Task Count') ?? symbolMetric('taskCount') ?? childMetric('Task Plan', 'taskCount') ?? '未观测' },
     { label: 'Dependency Count', value: symbolMetric('Dependency Count') ?? symbolMetric('dependencyCount') ?? childMetric('Task Plan', 'dependencyCount') ?? '未观测' },
+    { label: 'Run ID', value: symbol.runId, code: true }
+  ]
+  if (symbol.type === 'execution') return [
+    { label: 'Task Count', value: symbol.children.length },
+    { label: 'Status', value: statusLabel.value },
     { label: 'Run ID', value: symbol.runId, code: true }
   ]
   if (symbol.type === 'task' || symbol.type === 'acg-node') return [
@@ -94,6 +103,17 @@ const rows = computed<InspectorProperty[]>(() => {
     { label: 'Nodes', value: symbolMetric('Nodes') },
     { label: 'Edges', value: symbolMetric('Edges') },
     { label: 'Graph ID', value: props.entry?.graphId, code: true },
+    { label: 'Run ID', value: symbol.runId, code: true }
+  ]
+  if (symbol.type === 'result') return [
+    { label: 'Result', value: symbol.title },
+    { label: 'Status', value: statusLabel.value },
+    { label: 'Summary', value: symbol.subtitle },
+    { label: 'Run ID', value: symbol.runId, code: true }
+  ]
+  if (symbol.type === 'runtime') return [
+    { label: 'Output', value: symbol.title },
+    { label: 'Format', value: symbol.subtitle || 'structured' },
     { label: 'Run ID', value: symbol.runId, code: true }
   ]
   return [

@@ -7,6 +7,7 @@ import type { RuntimeEventStore, NodeRuntimeState } from './runtimeEvents'
 export type RunDocumentSymbolType =
   | 'run'
   | 'planner'
+  | 'execution'
   | 'stage'
   | 'task'
   | 'agent'
@@ -61,7 +62,7 @@ export interface RunDocumentProjectionInput {
 const ACTIVE_STATUSES = new Set(['pending', 'queued', 'starting', 'planning', 'running', 'executing', 'retrying'])
 const COMPLETED_STATUSES = new Set(['completed', 'succeeded', 'success'])
 const FAILED_STATUSES = new Set(['failed', 'cancelled', 'error'])
-const STAGE_ORDER = ['intent_profile', 'outline', 'detail', 'relations', 'decompose', 'repair', 'repair_coverage']
+const STAGE_ORDER = ['intent_profile', 'outline', 'detail', 'relations']
 const STAGE_LABELS: Record<string, string> = {
   intent_profile: 'Intent Profile',
   outline: 'Task Plan',
@@ -218,17 +219,23 @@ const modelSymbolFromLivePlanning = (
   return model
 }
 
+const stageItems = (items: ModelOutputItem[], stage: string) => items.filter(item => (
+  item.stage === stage
+  || (stage === 'intent_profile' && item.kind === 'profile_resolved')
+  || (stage === 'outline' && item.kind === 'plan_parsed')
+))
+
 const stageStatus = (items: ModelOutputItem[], liveStage: string | null, stage: string): RunDocumentSymbolStatus => {
-  const scoped = items.filter(item => item.stage === stage)
+  const scoped = stageItems(items, stage)
   if (scoped.some(item => item.kind === 'failed' || item.status === 'failed')) return 'failed'
   if (scoped.some(item => item.kind === 'retry' || item.status === 'warning')) return 'warning'
-  if (scoped.some(item => item.kind === 'stage_completed')) return 'completed'
+  if (scoped.some(item => ['stage_completed', 'profile_resolved', 'plan_parsed'].includes(item.kind))) return 'completed'
   if (scoped.some(item => item.status === 'running') || liveStage === stage) return 'running'
   return 'pending'
 }
 
 const latestStageText = (items: ModelOutputItem[], stage: string) => {
-  const latest = [...items].reverse().find(item => item.stage === stage)
+  const latest = [...stageItems(items, stage)].reverse()[0]
   return latest?.detail || latest?.title || undefined
 }
 
@@ -256,8 +263,8 @@ const plannerSymbol = (
   plannerItems: ModelOutputItem[],
   runtimeStore: RuntimeEventStore | null | undefined,
   traces: RuntimeTraceObservation[],
-  graphNodes: WorkspaceGraphNode[],
-  graph: AcgBlueprint | null | undefined
+  _graphNodes: WorkspaceGraphNode[],
+  _graph: AcgBlueprint | null | undefined
 ): RunDocumentSymbol | null => {
   const planning = runtimeStore?.planning
   const hasPlanner = plannerItems.length > 0 || Boolean(planning && planning.status !== 'IDLE')
@@ -267,28 +274,51 @@ const plannerSymbol = (
   const completed = planning?.status === 'COMPLETED' || plannerItems.some(item => item.kind === 'completed')
   const status: RunDocumentSymbolStatus = failed ? 'failed' : completed ? 'completed' : 'running'
   const stages = new Map<string, ModelOutputItem[]>()
-  plannerItems.filter(item => item.stage).forEach(item => {
-    const stage = item.stage as string
-    stages.set(stage, [...(stages.get(stage) || []), item])
+  plannerItems.forEach(item => {
+    const stage = STAGE_ORDER.includes(item.stage as string)
+      ? item.stage as string
+      : item.kind === 'profile_resolved' ? 'intent_profile'
+        : item.kind === 'plan_parsed' ? 'outline' : null
+    if (stage) stages.set(stage, [...(stages.get(stage) || []), item])
   })
-  if (planning?.stage && !stages.has(planning.stage)) stages.set(planning.stage, [])
-  const stageKeys = [...new Set([...STAGE_ORDER, ...stages.keys()])].filter(stage => stages.has(stage))
-  const children: RunDocumentSymbol[] = stageKeys.map(stage => {
+  const children: RunDocumentSymbol[] = STAGE_ORDER.map(stage => {
     const scoped = stages.get(stage) || []
-    const stageStatusValue = stageStatus(plannerItems, planning?.stage || null, stage)
+    const observedStatus = stageStatus(plannerItems, planning?.stage || null, stage)
+    const stageStatusValue = observedStatus === 'pending' && (
+      (stage === 'intent_profile' && Boolean(planning?.profile))
+      || (stage === 'outline' && Boolean(planning?.plan))
+    ) ? 'completed' : observedStatus
     const stageSymbol = symbol({
       id: `stage:${runId}:${stage}`,
       type: 'stage',
       status: stageStatusValue,
       title: STAGE_LABELS[stage] || stage,
       subtitle: latestStageText(scoped, stage) || (planning?.stage === stage ? LIVE_STAGE_LABELS[stage] : undefined),
-      detail: latestStageText(scoped, stage),
+      detail: latestStageText(scoped, stage) || (planning?.stage === stage ? LIVE_STAGE_LABELS[stage] : undefined),
       runId,
       metrics: {},
       defaultExpanded: stageStatusValue === 'running' || stageStatusValue === 'failed'
     })
     const result = [...scoped].reverse().find(item => ['profile_resolved', 'plan_parsed'].includes(item.kind))
     if (result) stageSymbol.children.push(plannerResultSymbol(runId, result))
+    if (!result && stage === 'intent_profile' && planning?.profile) stageSymbol.children.push(symbol({
+      id: `result:${runId}:live-profile`,
+      type: 'result',
+      status: 'completed',
+      title: 'Intent Profile',
+      subtitle: `Profile: ${planning.profile.requiredCapabilityCount ?? 0} capabilities · ${planning.profile.expectedArtifactCount ?? 0} artifacts`,
+      runId,
+      defaultExpanded: false
+    }))
+    if (!result && stage === 'outline' && planning?.plan) stageSymbol.children.push(symbol({
+      id: `result:${runId}:live-plan`,
+      type: 'result',
+      status: 'completed',
+      title: 'Task Plan',
+      subtitle: `Plan: ${planning.plan.taskCount ?? 0} tasks · ${planning.plan.dependencyCount ?? 0} dependencies`,
+      runId,
+      defaultExpanded: false
+    }))
     if (planning?.stage === stage) {
       const liveModel = modelSymbolFromLivePlanning(runId, planning, traces, [...plannerItems].reverse().find(item => item.stage === stage))
       if (liveModel) stageSymbol.children.push(liveModel)
@@ -296,81 +326,11 @@ const plannerSymbol = (
     return stageSymbol
   })
 
-  const graphResult = [...plannerItems].reverse().find(item => item.kind === 'graph_compiled')
-  const nodeCount = graphResult?.metrics.nodeCount ?? planning?.graph?.nodeCount ?? graphNodes.length
-  const edgeCount = graphResult?.metrics.edgeCount ?? planning?.graph?.edgeCount ?? graph?.edges?.length
-  const graphStatus: RunDocumentSymbolStatus = graphResult || graph
-    ? 'completed'
-    : planning?.draft.nodes.length ? 'running' : 'pending'
-  const graphSymbol = symbol({
-    id: `acg:${runId}`,
-    type: 'acg',
-    status: graphStatus,
-    title: 'ACG',
-    subtitle: [
-      planning?.draft.nodes.length && graphStatus === 'running' ? '规划草图' : '',
-      nodeCount != null ? `${nodeCount} nodes` : '',
-      edgeCount != null ? `${edgeCount} edges` : ''
-    ].filter(Boolean).join(' · '),
-    runId,
-    metrics: {
-      ...(nodeCount != null ? { Nodes: nodeCount } : {}),
-      ...(edgeCount != null ? { Edges: edgeCount } : {})
-    },
-    defaultExpanded: false
-  })
-  const draftNodes = (planning?.draft.nodes || []).map((node, index) => ({
-        acgNodeId: node.key,
-        nodeType: 'task',
-        name: node.title,
-        semanticTaskKey: node.key,
-        displayOrder: index
-      } as WorkspaceGraphNode))
-  const outlineNodes = planning?.draft.nodes.length && graphStatus === 'running'
-    ? draftNodes
-    : graphNodes.length ? graphNodes : draftNodes
-  graphSymbol.children = outlineNodes
-    .slice()
-    .sort((left, right) => left.displayOrder - right.displayOrder)
-    .map(node => symbol({
-      id: `acg-node:${runId}:${node.acgNodeId}`,
-      type: 'acg-node',
-      status: statusOf(node.status),
-      title: node.name || node.acgNodeId,
-      subtitle: node.semanticTaskKey || node.acgNodeId,
-      runId,
-      semanticTaskKey: node.semanticTaskKey,
-      graphNodeId: node.acgNodeId,
-      defaultExpanded: false
-    }))
-  children.push(graphSymbol)
-  if (planning?.profile) children.unshift(symbol({
-    id: `result:${runId}:live-profile`,
-    type: 'result',
-    status: 'completed',
-    title: 'Intent Profile',
-    subtitle: `Profile: ${planning.profile.requiredCapabilityCount ?? 0} capabilities · ${planning.profile.expectedArtifactCount ?? 0} artifacts`,
-    runId,
-    defaultExpanded: false
-  }))
-  if (planning?.plan) children.unshift(symbol({
-    id: `result:${runId}:live-plan`,
-    type: 'result',
-    status: 'completed',
-    title: 'Task Plan',
-    subtitle: `Plan: ${planning.plan.taskCount ?? 0} tasks · ${planning.plan.dependencyCount ?? 0} dependencies`,
-    runId,
-    defaultExpanded: false
-  }))
-  const liveModel = planning && planning.stage && !children.some(item => item.children.some(child => child.type === 'model'))
-    ? modelSymbolFromLivePlanning(runId, planning, traces)
-    : null
-  if (liveModel) children.push(liveModel)
   return symbol({
     id: `planner:${runId}`,
     type: 'planner',
     status,
-    title: '任务规划',
+    title: 'Planning',
     subtitle: failed ? `规划失败${plannerItems.find(item => item.detail)?.detail ? ` · ${plannerItems.find(item => item.detail)?.detail}` : ''}` : plannerDigest(plannerItems, planning),
     detail: failed ? plannerItems.find(item => item.detail)?.detail || '规划失败' : undefined,
     runId,
@@ -384,15 +344,48 @@ const plannerSymbol = (
   })
 }
 
+const acgSymbol = (
+  runId: string,
+  plannerItems: ModelOutputItem[],
+  runtimeStore: RuntimeEventStore | null | undefined,
+  graphNodes: WorkspaceGraphNode[],
+  graph: AcgBlueprint | null | undefined
+): RunDocumentSymbol => {
+  const planning = runtimeStore?.planning
+  const graphResult = [...plannerItems].reverse().find(item => item.kind === 'graph_compiled')
+  // An empty graphNodes projection means that ACG has not materialized yet;
+  // it must not be presented as a verified "0 nodes" graph.
+  const projectedNodeCount = graphNodes.length > 0 ? graphNodes.length : null
+  const nodeCount = graphResult?.metrics.nodeCount ?? planning?.graph?.nodeCount ?? projectedNodeCount
+  const edgeCount = graphResult?.metrics.edgeCount ?? planning?.graph?.edgeCount ?? graph?.edges?.length
+  const compiled = Boolean(graphResult || graph || graphNodes.length)
+  const status: RunDocumentSymbolStatus = compiled
+    ? 'completed'
+    : planning?.draft.nodes.length ? 'running' : 'pending'
+  const subtitle = compiled
+    ? [nodeCount != null ? `${nodeCount} nodes` : '', edgeCount != null ? `${edgeCount} edges` : ''].filter(Boolean).join(' · ') || 'Compiled'
+    : planning?.draft.nodes.length ? 'Compiling' : 'Waiting for compilation'
+  return symbol({
+    id: `acg:${runId}`,
+    type: 'acg',
+    status,
+    title: 'ACG',
+    subtitle,
+    runId,
+    metrics: {
+      ...(nodeCount != null ? { Nodes: nodeCount } : {}),
+      ...(edgeCount != null ? { Edges: edgeCount } : {})
+    },
+    defaultExpanded: false
+  })
+}
+
 const plannerDigest = (items: ModelOutputItem[], planning: NonNullable<RuntimeEventStore['planning']> | undefined) => {
   const parts: string[] = []
   const plan = [...items].reverse().find(item => item.kind === 'plan_parsed')
-  const graph = [...items].reverse().find(item => item.kind === 'graph_compiled')
   if (plan) parts.push(plannerResultDigest('Task Plan', plan.metrics))
-  if (graph) parts.push(plannerResultDigest('ACG', graph.metrics))
   if (planning?.profile) parts.push(`${planning.profile.requiredCapabilityCount ?? 0} capabilities`)
   if (planning?.plan) parts.push(`${planning.plan.taskCount ?? 0} tasks`)
-  if (planning?.graph) parts.push(`${planning.graph.nodeCount ?? 0} nodes`)
   return [...new Set(parts)].join(' · ')
 }
 
@@ -506,6 +499,11 @@ const taskSymbol = (
     },
     defaultExpanded: false
   })))
+  const artifactCount = entries.filter(item => item.kind === 'artifact' && (
+    (group.semanticTaskKey && item.semanticTaskKey === group.semanticTaskKey)
+    || (group.graphNodeId && item.acgNodeId === group.graphNodeId)
+    || (entry?.entryId && item.parentEntryId === entry.entryId)
+  )).length
   entries
     .filter(item => item.kind === 'artifact' && (
       (group.semanticTaskKey && item.semanticTaskKey === group.semanticTaskKey)
@@ -545,8 +543,11 @@ const taskSymbol = (
     title: group.title,
     subtitle: group.status === 'failed'
       ? group.errorCode || 'Execution failed'
-      : group.durationMs != null ? formatDuration(group.durationMs) || undefined
-        : group.status === 'running' ? 'Running · 正在执行' : undefined,
+      : [
+        group.durationMs != null ? formatDuration(group.durationMs) : '',
+        artifactCount ? `${artifactCount} artifact${artifactCount === 1 ? '' : 's'}` : '',
+        group.status === 'running' ? 'Running' : ''
+      ].filter(Boolean).join(' · ') || undefined,
     detail: group.errorCode || undefined,
     runId,
     semanticTaskKey: group.semanticTaskKey,
@@ -586,6 +587,28 @@ const taskGroups = (
   }, node, entries, observation?.traces || [], runtimeStore))
 }
 
+const artifactSymbol = (runId: string, artifact: WorkspaceEntry): RunDocumentSymbol => symbol({
+  id: `artifact:${artifact.artifactKey || artifact.artifactId || artifact.entryId}`,
+  type: 'artifact',
+  status: 'completed',
+  title: artifact.name,
+  subtitle: artifact.artifactType || artifact.mediaType || undefined,
+  runId,
+  semanticTaskKey: artifact.semanticTaskKey,
+  graphNodeId: artifact.acgNodeId,
+  artifactKey: artifact.artifactKey,
+  artifactId: artifact.artifactId,
+  defaultExpanded: false
+})
+
+const executionStatus = (tasks: RunDocumentSymbol[]): RunDocumentSymbolStatus => {
+  if (tasks.some(task => task.status === 'failed')) return 'failed'
+  if (tasks.some(task => task.status === 'running')) return 'running'
+  if (tasks.some(task => task.status === 'warning')) return 'warning'
+  if (tasks.length && tasks.every(task => task.status === 'completed')) return 'completed'
+  return 'pending'
+}
+
 export const projectRunDocument = (input: RunDocumentProjectionInput): RunDocumentModel => {
   const runId = input.runId || input.runtimeObservation?.runId || ''
   if (!runId) return { id: 'run:empty:progress', runId: '', title: input.mission.goal, status: 'pending', symbols: [] }
@@ -594,9 +617,45 @@ export const projectRunDocument = (input: RunDocumentProjectionInput): RunDocume
   ))
   const planner = plannerSymbol(runId, plannerItems, input.runtimeStore, input.runtimeObservation?.traces || [], input.graphNodes, input.graph)
   const tasks = taskGroups(runId, input.runtimeObservation, input.graphNodes, input.entries, input.runtimeStore)
+  const planning = planner || symbol({
+    id: `planner:${runId}`,
+    type: 'planner',
+    status: 'pending',
+    title: 'Planning',
+    subtitle: 'Waiting for planning',
+    runId,
+    defaultExpanded: false
+  })
+  const execution = symbol({
+    id: `execution:${runId}`,
+    type: 'execution',
+    status: executionStatus(tasks),
+    title: 'Execution',
+    subtitle: tasks.length ? `${tasks.length} tasks` : 'Waiting for tasks',
+    runId,
+    metrics: { 'Task Count': tasks.length },
+    children: tasks,
+    defaultExpanded: tasks.some(task => task.status === 'running' || task.status === 'warning' || task.status === 'failed')
+  })
+  const artifacts = input.entries
+    .filter(entry => entry.kind === 'artifact')
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId))
+    .map(artifact => artifactSymbol(runId, artifact))
+  const result = symbol({
+    id: `result:${runId}`,
+    type: 'result',
+    status: artifacts.length ? 'completed' : 'pending',
+    title: 'Result',
+    subtitle: artifacts.length ? `${artifacts.length} artifact${artifacts.length === 1 ? '' : 's'}` : 'No artifacts',
+    runId,
+    children: artifacts,
+    defaultExpanded: false
+  })
   const symbols = [
-    ...(planner ? [planner] : []),
-    ...tasks
+    planning,
+    acgSymbol(runId, plannerItems, input.runtimeStore, input.graphNodes, input.graph),
+    execution,
+    result
   ]
   const runStatus = input.runtimeObservation?.runStatus || ''
   return {

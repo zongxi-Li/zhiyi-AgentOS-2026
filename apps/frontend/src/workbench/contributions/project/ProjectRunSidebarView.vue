@@ -24,8 +24,8 @@
 
     <InspectorSection v-if="showGraphSummary" title="图信息" :badge="graphIdentity">
       <div class="sidebar-metrics" aria-label="图统计">
-        <div><strong>{{ nodeCount }}</strong><span>节点</span></div>
-        <div><strong>{{ edgeCount }}</strong><span>边</span></div>
+        <div><strong>{{ nodeCount ?? '—' }}</strong><span>{{ nodeCount == null ? '节点待编译' : '节点' }}</span></div>
+        <div><strong>{{ edgeCount ?? '—' }}</strong><span>{{ edgeCount == null ? '边待编译' : '边' }}</span></div>
         <div><strong>{{ graphVersion ?? '—' }}</strong><span>版本</span></div>
       </div>
       <InspectorPropertyList :rows="[
@@ -162,19 +162,20 @@ const taskKey = computed(() => props.graphNode?.semanticTaskKey || props.entry?.
 const isArtifact = computed(() => props.entry?.kind === 'artifact')
 const isTask = computed(() => props.entry?.kind === 'task')
 const isGraph = computed(() => props.entry?.kind === 'graph' || props.entry?.kind === 'run' || !props.entry)
-const showGraphSummary = computed(() => isGraph.value && !props.graphNode && Boolean(props.graph || props.graphNodes.length))
+const showGraphSummary = computed(() => isGraph.value && !props.graphNode)
 const showTaskSummary = computed(() => Boolean(props.graphNode || isTask.value))
 const showArtifactSummary = computed(() => isArtifact.value)
 const attemptCount = computed(() => props.graphNode?.attemptId ? 1 : props.entry?.attemptCount ?? 0)
 const artifactCount = computed(() => props.graphNode?.artifactCount ?? props.entry?.artifactCount ?? 0)
 const latestAttemptId = computed(() => props.graphNode?.attemptId || props.entry?.latestAttemptId || props.entry?.attemptId || null)
-const nodeCount = computed(() => props.graph?.nodes?.length ?? props.graphNodes.length)
-const edgeCount = computed(() => props.graph?.edges?.length ?? 0)
+const nodeCount = computed(() => props.graph?.nodes?.length ?? (props.graphNodes.length > 0 ? props.graphNodes.length : null))
+const edgeCount = computed(() => props.graph?.edges?.length ?? null)
 const graphVersion = computed(() => {
   const graph = props.graph as (AcgBlueprint & { graphVersion?: number }) | null
   return graph?.graphVersion ?? graph?.metadata?.graphVersion ?? props.entry?.graphVersion ?? null
 })
 const graphIdentity = computed(() => {
+  if (!props.graph && !props.graphNodes.length) return '等待编译'
   if (!props.graphNodes.length) return 'unproven'
   if (props.graphNodes.every(node => node.identityQuality === 'canonical')) return 'canonical'
   if (props.graphNodes.some(node => node.identityQuality === 'legacy')) return 'mixed / legacy'

@@ -36,7 +36,7 @@ describe('RunSelectionInspector', () => {
       metrics: { 'Task Count': 26, 'Dependency Count': 34 }
     }))
 
-    expect(wrapper.text()).toContain('PLANNER')
+    expect(wrapper.text()).toContain('PLANNING')
     expect(wrapper.text()).toContain('Task Count26')
     expect(wrapper.text()).toContain('Dependency Count34')
   })

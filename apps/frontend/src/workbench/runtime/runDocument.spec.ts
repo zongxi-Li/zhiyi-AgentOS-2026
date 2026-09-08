@@ -26,7 +26,7 @@ const nodes: WorkspaceGraphNode[] = [{ acgNodeId: 'node_capacity', nodeType: 'ta
 const entries: WorkspaceEntry[] = [{ entryId: 'artifact:capacity', kind: 'artifact', name: 'capacity-analysis.md', group: 'output', displayOrder: 0, artifactKey: 'capacity-analysis', artifactId: 'artifact_1', semanticTaskKey: 'capacity.analysis', mediaType: 'text/markdown' }]
 
 describe('run document projection', () => {
-  it('projects one live document into nested planner, task, tool and artifact symbols', () => {
+  it('projects one live document into the fixed planning, execution and result sections', () => {
     const model = projectRunDocument({
       runId: 'run_1', mission, graphNodes: nodes, entries,
       runtimeObservation: observation([
@@ -37,24 +37,45 @@ describe('run document projection', () => {
     })
 
     const planner = model.symbols.find(item => item.type === 'planner')!
-    const task = model.symbols.find(item => item.type === 'task')!
+    const acg = model.symbols.find(item => item.type === 'acg')!
+    const execution = model.symbols.find(item => item.type === 'execution')!
+    const task = execution.children.find(item => item.type === 'task')!
+    const result = model.symbols.find(item => item.type === 'result')!
     expect(model.id).toBe('run:run_1:progress')
+    expect(model.symbols.map(item => item.type)).toEqual(['planner', 'acg', 'execution', 'result'])
     expect(planner.children.some(item => item.type === 'stage' && item.title === 'Detail')).toBe(true)
-    expect(planner.children.some(item => item.type === 'acg')).toBe(true)
+    expect(acg.children).toEqual([])
     expect(task.children.map(item => item.type)).toEqual(['agent', 'tool', 'artifact'])
     expect(task.children.find(item => item.type === 'tool')?.title).toBe('Read Material')
+    expect(result.children.map(item => item.type)).toEqual(['artifact'])
     expect(model.symbols.some(item => item.type === 'runtime')).toBe(false)
   })
 
-  it('keeps ACG as an outline projection instead of a card collection', () => {
+  it('keeps ACG as a leaf outline symbol instead of a card collection', () => {
     const model = projectRunDocument({ runId: 'run_1', mission, graphNodes: nodes, entries, runtimeObservation: observation([
       trace('planner-graph', { planningProgress: true, category: 'planner', kind: 'graph_compiled', nodeCount: 1, edgeCount: 0 })
     ]) })
-    const acg = model.symbols.find(item => item.type === 'planner')!
-    expect(acg.type).toBe('planner')
-    const graph = acg.children.find(item => item.type === 'acg')!
-    expect(graph.children[0].type).toBe('acg-node')
-    expect(graph.children[0].graphNodeId).toBe('node_capacity')
+    const acg = model.symbols.find(item => item.type === 'acg')!
+    expect(acg.type).toBe('acg')
+    expect(acg.children).toEqual([])
+    expect(acg.subtitle).toBe('1 nodes · 0 edges')
+  })
+
+  it('keeps an unmaterialized ACG in a waiting state instead of claiming zero nodes', () => {
+    const model = projectRunDocument({
+      runId: 'run_1',
+      mission,
+      graphNodes: [],
+      entries: [],
+      runtimeObservation: observation([
+        trace('planner-started', { planningProgress: true, category: 'planner', kind: 'started' })
+      ])
+    })
+
+    const graph = model.symbols.find(item => item.type === 'acg')!
+    expect(graph.subtitle).toBe('Waiting for compilation')
+    expect(graph.metrics).toEqual({})
+    expect(graph.subtitle).not.toContain('0 nodes')
   })
 
   it('filters sensitive structured output before the editor receives it', () => {
