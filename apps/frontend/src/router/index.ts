@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
+import LoginView from '@/views/LoginView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import UserView from '@/views/UserView.vue'
 // Sidebar destinations are part of the desktop shell's primary workflow.
@@ -24,6 +25,12 @@ const landingAuthQuery = (redirect?: unknown, from?: unknown) => ({
   ...(typeof from === 'string' ? { from } : {})
 })
 
+// Unauthenticated access to a protected route: web falls back to landing
+// embedded auth, the desktop shell returns to the standalone login page.
+const unauthRedirect = (fullPath: string) => isDesktop()
+  ? `/login?redirect=${encodeURIComponent(fullPath)}`
+  : { path: '/', query: landingAuthQuery(fullPath) }
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
@@ -37,10 +44,12 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'Login',
-    redirect: to => ({
-      path: '/',
-      query: landingAuthQuery(to.query.redirect, to.query.from)
-    }),
+    component: LoginView,
+    // Web presents auth embedded on the landing page; the desktop shell keeps
+    // the standalone login surface with its own title-bar chrome.
+    beforeEnter: to => (isDesktop()
+      ? true
+      : { path: '/', query: landingAuthQuery(to.query.redirect, to.query.from) }),
     meta: {
       title: '登录',
       requiresAuth: false
@@ -248,23 +257,17 @@ router.beforeEach(async (to, _from, next) => {
   const token = localStorage.getItem('token')
   const requiresAuth = Boolean(to.meta.requiresAuth)
 
-  // The desktop shell opens auth on the landing surface instead of using a
-  // standalone login page.
+  // The desktop shell never shows the public landing page: unauthenticated
+  // sessions open the standalone login surface instead.
   if (to.path === '/' && isDesktop()) {
-    if (!token && to.query.auth !== '1') {
-      next({ path: '/', query: landingAuthQuery('/chat'), replace: true })
-      return
-    }
-    if (token && to.query.auth !== '1') {
-      next({ path: '/chat', replace: true })
-      return
-    }
+    next({ path: '/login', replace: true })
+    return
   }
 
   // Validate login state for protected routes
   if (requiresAuth) {
     if (!token) {
-      next({ path: '/', query: landingAuthQuery(to.fullPath) })
+      next(unauthRedirect(to.fullPath))
       return
     }
 
@@ -272,13 +275,28 @@ router.beforeEach(async (to, _from, next) => {
       const result = await authApi.verifyToken()
       if (!result.valid) {
         clearAuthState()
-        next({ path: '/', query: landingAuthQuery(to.fullPath) })
+        next(unauthRedirect(to.fullPath))
         return
       }
     } catch {
       clearAuthState()
-      next({ path: '/', query: landingAuthQuery(to.fullPath) })
+      next(unauthRedirect(to.fullPath))
       return
+    }
+  }
+
+  // 已登录时访问登录页，回到来源页（如果有）或默认聊天页。
+  if (to.path === '/login' && token) {
+    try {
+      const result = await authApi.verifyToken()
+      if (result.valid) {
+        const redirect = normalizeRedirect(typeof to.query.redirect === 'string' ? to.query.redirect : undefined)
+        next(redirect)
+        return
+      }
+      clearAuthState()
+    } catch {
+      clearAuthState()
     }
   }
 

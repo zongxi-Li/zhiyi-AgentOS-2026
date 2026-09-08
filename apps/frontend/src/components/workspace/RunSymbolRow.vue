@@ -10,23 +10,12 @@
       :selected="selectedSymbolId === symbol.id"
     >
       <template #gutter>
-        <button
-          v-if="hasChildren"
-          type="button"
-          class="run-symbol__fold"
-          :aria-label="isOpen ? `收起 ${symbol.title}` : `展开 ${symbol.title}`"
-          :aria-expanded="isOpen"
-          @click.stop="emit('toggle', symbol)"
-        >{{ isOpen ? '▾' : '▸' }}</button>
-        <span v-else class="run-symbol__fold run-symbol__fold--empty" aria-hidden="true"></span>
         <span class="run-symbol__status" :class="`is-${symbol.status}`" aria-hidden="true">{{ statusMark }}</span>
-        <span v-if="isCurrent" class="run-symbol__current" aria-label="当前执行" title="当前执行">▶</span>
       </template>
       <button
         type="button"
         class="run-symbol__main"
         :class="{
-          'is-selected': selectedSymbolId === symbol.id,
           'run-progress-group__head': symbol.type === 'planner' || symbol.type === 'task'
         }"
         :aria-current="selectedSymbolId === symbol.id ? 'true' : undefined"
@@ -38,13 +27,7 @@
       </button>
       <template #meta>
         <button
-          v-if="symbol.type === 'acg'"
-          type="button"
-          class="run-progress-result__action run-symbol__action"
-          @click.stop="emit('open', symbol)"
-        >打开 graph.acg</button>
-        <button
-          v-else-if="symbol.type === 'artifact'"
+          v-if="symbol.type === 'artifact'"
           type="button"
           class="run-progress-artifact__open run-symbol__action"
           @click.stop="emit('open', symbol)"
@@ -142,19 +125,13 @@ const handleMainClick = () => {
 
 <style scoped>
 .run-symbol { min-width: 0; color: var(--wb-text); }
-.run-symbol__fold { width: 18px; height: 22px; flex: 0 0 18px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font: 12px/22px var(--font-mono, monospace); text-align: center; }
-.run-symbol__fold:hover, .run-symbol__fold:focus-visible { color: var(--wb-accent); }
-.run-symbol__fold--empty { cursor: default; }
-.run-symbol__fold:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
 .run-symbol__status { width: 15px; flex: 0 0 15px; color: var(--wb-text-muted); font-size: 11px; text-align: center; }
 .run-symbol__status.is-running { color: var(--wb-accent); }
 .run-symbol__status.is-completed { color: var(--wb-success); }
 .run-symbol__status.is-warning { color: var(--wb-warning); }
 .run-symbol__status.is-failed { color: var(--wb-danger); }
-.run-symbol__current { width: 9px; flex: 0 0 9px; color: var(--wb-accent); font-size: 9px; text-align: center; }
 .run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: baseline; gap: 12px; min-width: 0; width: auto; min-height: 24px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; }
 .run-symbol__main:hover { color: var(--wb-text); background: var(--wb-hover); }
-.run-symbol__main.is-selected { color: var(--wb-text); background: color-mix(in srgb, var(--wb-selected) 34%, transparent); box-shadow: inset 2px 0 color-mix(in srgb, var(--wb-accent) 62%, transparent); }
 .run-symbol__main:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
 .run-symbol__title { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .run-symbol__title:only-child { grid-column: 1 / -1; }
