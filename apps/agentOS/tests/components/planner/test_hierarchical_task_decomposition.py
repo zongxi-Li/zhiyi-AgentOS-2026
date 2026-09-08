@@ -327,6 +327,54 @@ def test_staged_dependency_cycle_is_repaired_once_without_regenerating_tasks() -
     assert "capabilityRequirements" in llm.calls[-1]["prompt"]
 
 
+def test_staged_capability_binding_cycle_repairs_only_model_relation() -> None:
+    catalog = build_default_capability_catalog()
+    outline = {"tasks": [
+        {"key": "process", "title": "Process", "capabilityId": "process_decomposition", "logicalRole": "task", "sourceRefs": []},
+        {"key": "capacity", "title": "Capacity", "capabilityId": "resource_planning", "logicalRole": "task", "sourceRefs": []},
+        {"key": "decision", "title": "Decision", "capabilityId": "solution_design", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    details = {"tasks": [
+        {"key": "process", "title": "Process", "objective": "Design the operating process", "acceptanceCriteria": ["process is defined"]},
+        {"key": "capacity", "title": "Capacity", "objective": "Calculate resource capacity", "acceptanceCriteria": ["capacity is quantified"]},
+        {"key": "decision", "title": "Decision", "objective": "Define decision rules", "acceptanceCriteria": ["rules are explicit"]},
+    ]}
+    cyclic = {"relations": [
+        {"sourceKey": "capacity", "targetKey": "decision", "relationType": "depends_on"},
+        {"sourceKey": "decision", "targetKey": "process", "relationType": "depends_on"},
+    ], "controlPolicies": []}
+    repaired = {"operations": [
+        {"op": "remove_relation", "relationIndex": 1},
+    ]}
+    llm = _SequencePlanLLM(outline, details, cyclic, repaired)
+
+    plan = TaskDecomposer(catalog, llm).decompose(
+        mission_id="mission_0123456789ab",
+        profile=TaskSemanticProfile(
+            primaryGoal="Design a capacity-aware operating process",
+            requiredCapabilities=[
+                "process_decomposition", "resource_planning", "solution_design",
+            ],
+            estimatedComplexity=ComplexityLevel.COMPLEX,
+        ),
+        strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"},
+        use_llm=True,
+    )
+
+    pairs = {(item.source_key, item.target_key) for item in plan.relations}
+    assert ("process", "capacity") in pairs
+    assert ("capacity", "decision") in pairs
+    assert ("decision", "process") not in pairs
+    assert len(llm.calls) == 4
+    assert llm.calls[-1]["prompt_version"] == (
+        f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1"
+    )
+    assert '"code": "capability_binding_conflict"' in llm.calls[-1]["prompt"]
+    assert '"mutationPolicy": "rebindable"' in llm.calls[-1]["prompt"]
+    assert '"mutationPolicy": "repairable"' in llm.calls[-1]["prompt"]
+
+
 def test_staged_detail_normalizes_legacy_model_workset_shape() -> None:
     outline = {"tasks": [
         {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
