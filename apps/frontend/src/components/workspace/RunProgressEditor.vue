@@ -33,9 +33,24 @@
       <div ref="scrollBody" class="run-progress__body" @scroll="onScroll">
         <div class="run-progress__stream">
           <div v-if="visibleSymbols.length" class="run-progress__browser" aria-label="Run document columns">
-            <section v-for="column in browserColumns" :key="column.id" class="run-progress__column">
+            <section
+              v-for="column in browserColumns"
+              :key="column.id"
+              class="run-progress__column"
+              :class="{ 'is-graph-column': column.graph, 'is-detail-column': column.detail }"
+            >
               <div class="run-progress__column-head">{{ column.title }}</div>
-              <div v-if="column.detail" class="run-progress__detail">
+              <div v-if="column.graph" class="run-progress__graph-preview">
+                <AcgTopologyGraph
+                  :blueprint="projection.activeGraph || null"
+                  :focus-node-id="graphFocusNodeId"
+                  :runtime-phases="graphRuntimePhases"
+                  workbench
+                  @node-selected="selectGraphNode"
+                  @node-double-clicked="openGraphNode"
+                />
+              </div>
+              <div v-else-if="column.detail" class="run-progress__detail">
                 <div class="run-progress__detail-status">
                   <span class="run-progress__detail-mark" :class="`is-${column.detail.status}`">{{ detailStatusMark(column.detail.status) }}</span>
                   <strong>{{ column.detail.title }}</strong>
@@ -69,7 +84,7 @@
           </p>
         </div>
 
-        <button v-if="!followLatest" type="button" class="run-progress__follow" @click="scrollToLatest">↘ 跟随最新运行</button>
+        <button v-if="!followLatest" type="button" class="run-progress__follow" @click="scrollToLatest">跟随最新运行</button>
       </div>
     </template>
   </section>
@@ -80,6 +95,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
+import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
 import RunBreadcrumb from './RunBreadcrumb.vue'
 import RunSymbolRow from './RunSymbolRow.vue'
 import { findRunDocumentSymbol, projectRunDocument, type RunDocumentSymbol } from '@/workbench/runtime/runDocument'
@@ -98,7 +114,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectSemanticTask: [semanticTaskKey: string | null]
   selectSymbol: [symbol: RunDocumentSymbol]
-  locateGraph: [entry: WorkspaceEntry]
   openArtifact: [entry: WorkspaceEntry]
   openEntry: [entry: WorkspaceEntry]
   openSemanticTask: [semanticTaskKey: string | null]
@@ -243,7 +258,7 @@ const detailRows = (symbol: RunDocumentSymbol) => {
   return rows
 }
 const browserColumns = computed(() => {
-  const columns: Array<{ id: string; title: string; symbols: RunDocumentSymbol[]; detail?: RunDocumentSymbol }> = [{
+  const columns: Array<{ id: string; title: string; symbols: RunDocumentSymbol[]; detail?: RunDocumentSymbol; graph?: boolean }> = [{
     id: 'root',
     title: 'OUTLINE',
     symbols: visibleSymbols.value
@@ -258,17 +273,34 @@ const browserColumns = computed(() => {
   const selected = findRunDocumentSymbol(documentModel.value.symbols, selectedSymbolIdForView.value)
   const selectedIsVisible = selected && columns.some(column => column.symbols.some(item => item.id === selected.id))
   if (selected && selectedIsVisible && !selected.children.length) {
-    columns.push({ id: `detail:${selected.id}`, title: 'INSPECTOR', symbols: [], detail: selected })
+    columns.push(selected.type === 'acg'
+      ? { id: `graph:${selected.id}`, title: 'GRAPH', symbols: [], graph: true }
+      : { id: `detail:${selected.id}`, title: 'INSPECTOR', symbols: [], detail: selected })
   }
   return columns
 })
+const graphRuntimePhases = computed(() => Object.fromEntries(
+  Object.entries(props.runtimeStore?.nodes || {}).map(([nodeId, state]) => [nodeId, state.phase])
+))
+const graphFocusNodeId = computed(() => (
+  props.graphNodes.find(node => node.semanticTaskKey === props.selectedSemanticTaskKey)?.acgNodeId || null
+))
+const selectGraphNode = (nodeId: string) => {
+  const node = props.graphNodes.find(item => item.acgNodeId === nodeId)
+  if (node?.semanticTaskKey) emit('selectSemanticTask', node.semanticTaskKey)
+}
+const openGraphNode = (nodeId: string) => {
+  const node = props.graphNodes.find(item => item.acgNodeId === nodeId)
+  emit('openSemanticTask', node?.semanticTaskKey || null)
+}
 const isBrowserExpanded = (symbol: RunDocumentSymbol) => horizontalPath.value.includes(symbol.id)
 const toggleBrowser = (symbol: RunDocumentSymbol) => {
   const columnIndex = browserColumns.value.findIndex(column => column.symbols.some(item => item.id === symbol.id))
   if (columnIndex < 0 || !symbol.children.length) return
   const prefix = horizontalPath.value.slice(0, columnIndex)
   const isOpen = horizontalPath.value[columnIndex] === symbol.id
-  horizontalPath.value = isOpen ? prefix : [...prefix, symbol.id]
+  if (isOpen) return
+  horizontalPath.value = [...prefix, symbol.id]
 }
 const parentPathFor = (symbols: RunDocumentSymbol[], targetId: string, parents: string[] = []): string[] | null => {
   for (const item of symbols) {
@@ -349,9 +381,6 @@ const selectSymbol = (item: RunDocumentSymbol) => {
   if (item.type === 'artifact') {
     const entry = symbolEntry(item)
     if (entry) emit('openArtifact', entry)
-  } else if (item.type === 'acg') {
-    const entry = props.projection.entries.find(candidate => candidate.kind === 'graph')
-    if (entry) emit('locateGraph', entry)
   }
 }
 
@@ -363,11 +392,6 @@ const openSymbol = (item: RunDocumentSymbol) => {
   if (item.type === 'artifact') {
     const entry = symbolEntry(item)
     if (entry) emit('openArtifact', entry)
-    return
-  }
-  if (item.type === 'acg') {
-    const entry = props.projection.entries.find(candidate => candidate.kind === 'graph')
-    if (entry) emit('locateGraph', entry)
   }
 }
 
@@ -435,13 +459,16 @@ watch(documentModel, async () => {
 .run-progress__filter { display: flex; align-items: center; gap: 7px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 .run-progress__filter input { width: 130px; padding: 4px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); outline: 0; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
 .run-progress__filter input:focus { border-color: var(--wb-accent); }
-.run-progress__body { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: var(--wb-border-strong) transparent; scrollbar-width: thin; }
-.run-progress__stream { box-sizing: border-box; width: max-content; min-width: 100%; min-height: 100%; padding-bottom: 42px; }
-.run-progress__browser { display: flex; min-width: 100%; min-height: 100%; padding-inline: var(--run-content-inset); }
-.run-progress__column { flex: 0 0 clamp(280px, 30vw, 380px); min-width: 0; min-height: 100%; border-right: 1px solid var(--wb-border-soft); }
+.run-progress__body { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; scrollbar-color: var(--wb-border-strong) transparent; scrollbar-width: thin; }
+.run-progress__stream { box-sizing: border-box; display: flex; flex: 1 0 auto; flex-direction: column; width: max-content; min-width: 100%; min-height: 100%; padding-bottom: 42px; }
+.run-progress__browser { display: flex; flex: 1 0 auto; align-items: stretch; min-width: 100%; min-height: 100%; padding-inline: var(--run-content-inset); }
+.run-progress__column { flex: 0 0 clamp(280px, 30vw, 380px); align-self: stretch; min-width: 0; min-height: 100%; border-right: 1px solid var(--wb-border-soft); }
+.run-progress__column.is-graph-column { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
 .run-progress__column:first-child { border-left: 1px solid var(--wb-border-soft); }
 .run-progress__column-head { padding: 9px 12px 8px; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
 .run-progress__column-body { padding: 4px 8px 24px; }
+.run-progress__graph-preview { display: flex; flex: 1 1 auto; height: auto; min-height: 540px; overflow: hidden; }
+.run-progress__graph-preview :deep(.acg-topology) { height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
 .run-progress__detail { padding: 14px 16px 24px; }
 .run-progress__detail-status { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--wb-text); }
 .run-progress__detail-status strong { font-size: 13px; font-weight: 650; }
@@ -461,6 +488,7 @@ watch(documentModel, async () => {
 
 @media (max-width: 680px) {
   .run-progress { --run-content-inset: 16px; }
+  .run-progress__column.is-graph-column { min-width: 520px; }
   .run-progress__heading-row { display: grid; gap: 8px; }
   .run-progress__summary { white-space: normal; }
   .run-progress__mission-link { justify-self: start; }
