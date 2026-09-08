@@ -20,18 +20,20 @@
 
           <div v-if="isSectionOpen(section.key)" class="stage-output-viewer__section-body">
             <div v-if="Array.isArray(section.value)" class="stage-output-viewer__list">
-              <article
+              <EditorObjectRow
                 v-for="(item, index) in section.value"
                 :key="`${section.key}-${index}`"
+                tag="article"
+                :index="padIndex(index)"
+                :selected="selectedId === selectionId(section.key, index)"
+                :interactive="true"
                 class="stage-output-viewer__item"
-                :class="{ 'is-selected': selectedId === selectionId(section.key, index) }"
                 role="button"
                 tabindex="0"
                 @click="emit('select', selectionFor(section.key, index, item))"
                 @keydown.enter.prevent="emit('select', selectionFor(section.key, index, item))"
                 @keydown.space.prevent="emit('select', selectionFor(section.key, index, item))"
               >
-                <span class="stage-output-viewer__index">{{ padIndex(index) }}</span>
                 <div class="stage-output-viewer__item-content">
                   <template v-if="isRecord(item)">
                     <p v-if="primaryEntry(item)" class="stage-output-viewer__semantic">
@@ -59,7 +61,7 @@
                   </template>
                   <p v-else class="stage-output-viewer__semantic">{{ displayValue(item) }}</p>
                 </div>
-              </article>
+              </EditorObjectRow>
             </div>
 
             <dl v-else-if="isRecord(section.value)" class="stage-output-viewer__fields">
@@ -114,6 +116,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import EditorObjectRow from './EditorObjectRow.vue'
 
 type JsonRecord = Record<string, unknown>
 
@@ -262,12 +265,8 @@ const selectionFor = (sectionKey: string, index: number, value: unknown): StageO
 .stage-output-viewer__section-count { margin-left: 2px; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); font-weight: 400; }
 .stage-output-viewer__section-body { padding: 4px 0 6px 18px; }
 .stage-output-viewer__list { display: grid; }
-.stage-output-viewer__item { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; padding: 8px 4px 8px 0; border-radius: var(--wb-radius-sm); cursor: pointer; transition: background-color 140ms var(--ease-out); }
+.stage-output-viewer__item { padding: 8px 4px 8px 0; border-radius: var(--wb-radius-sm); }
 .stage-output-viewer__item + .stage-output-viewer__item { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 72%, transparent); }
-.stage-output-viewer__item:hover { color: var(--wb-text); background: color-mix(in srgb, var(--wb-hover) 58%, transparent); }
-.stage-output-viewer__item.is-selected { color: var(--wb-text); background: color-mix(in srgb, var(--wb-accent-soft) 34%, transparent); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--wb-accent) 58%, transparent); }
-.stage-output-viewer__item:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
-.stage-output-viewer__index { color: var(--wb-accent); font: 11px/1.7 var(--font-mono, monospace); text-align: right; }
 .stage-output-viewer__item-content { min-width: 0; }
 .stage-output-viewer__semantic { margin: 0; color: var(--wb-text); font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .stage-output-viewer__metadata { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 9px; margin-top: 5px; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); opacity: .86; }
