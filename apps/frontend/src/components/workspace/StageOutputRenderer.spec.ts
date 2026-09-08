@@ -61,4 +61,44 @@ describe('StageOutputRenderer', () => {
     expect(wrapper.text()).toContain('设计文档')
     expect(wrapper.findAll('.structured-value__list').length).toBeGreaterThan(0)
   })
+
+  it('gives narrative fields a readable full-width treatment while keeping raw keys visible', () => {
+    const wrapper = mount(StageOutputRenderer, {
+      props: {
+        value: JSON.stringify({
+          architecture: {
+            deployment: '企业内部部署方案：事件总线与微服务集群。'.repeat(24),
+            rationale: '基于约束与审计要求形成的设计依据。'.repeat(24),
+            style: '事件驱动微服务架构'
+          }
+        })
+      }
+    })
+
+    const narrativeFields = wrapper.findAll('.stage-output-viewer__fields--record > .is-narrative')
+    expect(narrativeFields).toHaveLength(2)
+    expect(narrativeFields.every(field => field.classes('is-narrative'))).toBe(true)
+    expect(wrapper.text()).toContain('部署方案')
+    expect(wrapper.text()).toContain('deployment')
+    expect(wrapper.findAll('.structured-value__text.is-long')).toHaveLength(2)
+    expect(wrapper.get('.stage-output-viewer__field-label').element).toBeTruthy()
+  })
+
+  it('collapses oversized conclusions and keeps a readable preview before expansion', async () => {
+    const conclusion = '指标与供应商协同规则：'.concat('每条规则都必须保留来源、阈值、权重与触发条件；'.repeat(40))
+    const wrapper = mount(StageOutputRenderer, {
+      props: {
+        value: JSON.stringify({ solution_design: [{ overview: conclusion }] })
+      }
+    })
+
+    const disclosure = wrapper.get('.structured-value__disclosure')
+    expect((disclosure.element as HTMLDetailsElement).open).toBe(false)
+    expect(disclosure.get('summary').text()).toContain('展开完整结论')
+    expect(disclosure.get('summary').text()).toContain('字符')
+
+    await disclosure.get('summary').trigger('click')
+    expect((disclosure.element as HTMLDetailsElement).open).toBe(true)
+    expect(disclosure.findAll('.structured-value__markdown p').length).toBeGreaterThan(1)
+  })
 })

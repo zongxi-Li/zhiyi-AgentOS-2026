@@ -40,6 +40,7 @@
                       v-if="primaryEntry(item)"
                       :value="primaryEntry(item)?.[1]"
                       :markdown="isRichTextKey(primaryEntry(item)?.[0] || '')"
+                      :collapsible="true"
                     />
                     <div v-if="metadataEntries(item).length" class="stage-output-viewer__metadata">
                       <template v-for="[fieldKey, fieldValue] in metadataEntries(item)" :key="fieldKey">
@@ -55,9 +56,9 @@
                       </template>
                     </div>
                     <dl v-if="secondaryEntries(item).length" class="stage-output-viewer__fields">
-                      <div v-for="[fieldKey, fieldValue] in secondaryEntries(item)" :key="fieldKey">
+                      <div v-for="[fieldKey, fieldValue] in secondaryEntries(item)" :key="fieldKey" :class="fieldToneClass(fieldKey, fieldValue)">
                         <dt>{{ labelForKey(fieldKey) }}</dt>
-                        <dd :class="valueClass(fieldValue)"><StructuredValue :value="fieldValue" /></dd>
+                        <dd :class="valueClass(fieldValue)"><StructuredValue :value="fieldValue" :markdown="isRichTextKey(fieldKey)" :collapsible="true" /></dd>
                       </div>
                     </dl>
                   </template>
@@ -66,10 +67,17 @@
               </EditorObjectRow>
             </div>
 
-            <dl v-else-if="isRecord(section.value)" class="stage-output-viewer__fields">
-              <div v-for="[fieldKey, fieldValue] in recordEntries(section.value)" :key="fieldKey">
-                <dt>{{ labelForKey(fieldKey) }}</dt>
-                <dd :class="valueClass(fieldValue)"><StructuredValue :value="fieldValue" /></dd>
+            <dl v-else-if="isRecord(section.value)" class="stage-output-viewer__fields stage-output-viewer__fields--record">
+              <div
+                v-for="[fieldKey, fieldValue] in recordEntries(section.value)"
+                :key="fieldKey"
+                :class="{ ...fieldClass(fieldKey, fieldValue), ...fieldToneClass(fieldKey, fieldValue) }"
+              >
+                <dt class="stage-output-viewer__field-label">
+                  <span>{{ labelForKey(fieldKey) }}</span>
+                  <code>{{ fieldKey }}</code>
+                </dt>
+                <dd :class="valueClass(fieldValue)"><StructuredValue :value="fieldValue" :markdown="isRichTextKey(fieldKey)" :collapsible="true" /></dd>
               </div>
             </dl>
             <p v-else class="stage-output-viewer__semantic">{{ displayValue(section.value) }}</p>
@@ -161,6 +169,14 @@ const keyLabels: Record<string, string> = {
   recommendations: '\u5efa\u8bae',
   expected_outcomes: '\u9884\u671f\u7ed3\u679c',
   unknowns: '\u672a\u77e5\u4e8b\u9879',
+  architecture: '\u67b6\u6784\u65b9\u6848',
+  deployment: '\u90e8\u7f72\u65b9\u6848',
+  rationale: '\u8bbe\u8ba1\u4f9d\u636e',
+  style: '\u65b9\u6848\u98ce\u683c',
+  components: '\u7cfb\u7edf\u7ec4\u4ef6',
+  interfaces: '\u63a5\u53e3\u8bbe\u8ba1',
+  data_flow: '\u6570\u636e\u6d41',
+  dataFlow: '\u6570\u636e\u6d41',
   source: '\u6765\u6e90',
   mandatory: '\u5f3a\u5236\u8981\u6c42',
   required: '\u5f3a\u5236\u8981\u6c42',
@@ -247,6 +263,23 @@ const displayMetadata = (key: string, value: unknown) => {
   if (['validation', 'validationStatus', 'validation_status'].includes(key)) return displayValue(value).split('_').join(' ')
   return displayValue(value)
 }
+const isLongValue = (value: unknown) => typeof value === 'string' && (value.length > 180 || value.includes('\n'))
+const fieldClass = (key: string, value: unknown) => ({
+  'is-narrative': isRichTextKey(key) || isLongValue(value),
+  'is-complex': Array.isArray(value) || isRecord(value)
+})
+const fieldToneClass = (key: string, value: unknown) => {
+  const normalizedValue = typeof value === 'string' ? value.toLowerCase() : ''
+  return {
+    'is-constraint': ['constraint', 'constraints', 'mandatory', 'required'].includes(key),
+    'is-validation': ['validation', 'validationStatus', 'validation_status'].includes(key),
+    'is-reference': referenceKeys.has(key),
+    'is-status': key === 'status',
+    'is-success': ['completed', 'success', 'passed', 'valid', 'approved', 'online'].includes(normalizedValue),
+    'is-warning': ['pending', 'unknown', 'advisory', 'degraded', 'review'].includes(normalizedValue),
+    'is-danger': ['failed', 'error', 'offline', 'rejected'].includes(normalizedValue)
+  }
+}
 const metadataClass = (key: string, value: unknown) => ({
   'is-hard': ['mandatory', 'required'].includes(key) && value === true,
   'is-validation': ['validation', 'validationStatus', 'validation_status', 'status'].includes(key)
@@ -280,30 +313,50 @@ const selectionFor = (sectionKey: string, index: number, value: unknown): StageO
 .stage-output-viewer__sections { max-height: min(58vh, 720px); overflow: auto; scrollbar-gutter: stable; }
 .stage-output-viewer__section { border-bottom: 1px solid var(--wb-border-soft); }
 .stage-output-viewer__section:last-child { border-bottom: 0; }
-.stage-output-viewer__section-head { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 34px; padding: 0 2px; border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; font-size: 13px; font-weight: 650; text-align: left; }
+.stage-output-viewer__section-head { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 34px; padding: 0 2px; border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; font-size: 13px; font-weight: 700; text-align: left; }
 .stage-output-viewer__section-head:hover { color: var(--wb-text); }
 .stage-output-viewer__section-head:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
 .stage-output-viewer__section-title { display: inline-flex; align-items: center; gap: 6px; }
 .stage-output-viewer__fold { width: 12px; color: var(--wb-accent); font: 11px var(--font-mono, monospace); }
-.stage-output-viewer__section-count { margin-left: 2px; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); font-weight: 400; }
+.stage-output-viewer__section-count { margin-left: 2px; color: var(--wb-text-muted); font: 500 11px var(--font-mono, monospace); }
 .stage-output-viewer__section-body { padding: 4px 0 6px 18px; }
 .stage-output-viewer__list { display: grid; }
 .stage-output-viewer__item { padding: 8px 4px 8px 0; border-radius: var(--wb-radius-sm); }
 .stage-output-viewer__item + .stage-output-viewer__item { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 72%, transparent); }
 .stage-output-viewer__item-content { min-width: 0; }
-.stage-output-viewer__semantic { margin: 0; color: var(--wb-text); font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
-.stage-output-viewer__metadata { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 9px; margin-top: 5px; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); opacity: .86; }
+.stage-output-viewer__semantic { margin: 0; color: var(--wb-text); font-size: 14px; font-weight: 500; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty; }
+.stage-output-viewer__metadata { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 9px; margin-top: 6px; color: var(--wb-text-muted); font: 500 10px var(--font-mono, monospace); opacity: .9; }
 .stage-output-viewer__meta { color: inherit; }
 .stage-output-viewer__meta--reference { padding: 0; border: 0; background: transparent; cursor: pointer; font: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
 .stage-output-viewer__meta--reference:hover { color: var(--wb-accent); }
-.stage-output-viewer__meta.is-hard { color: color-mix(in srgb, var(--wb-warning) 62%, var(--wb-text-muted)); }
-.stage-output-viewer__meta.is-validation { color: color-mix(in srgb, var(--wb-accent) 68%, var(--wb-text-muted)); }
+.stage-output-viewer__meta.is-hard { color: var(--wb-warning); font-weight: 700; }
+.stage-output-viewer__meta.is-validation { color: var(--wb-success); font-weight: 650; }
 .stage-output-viewer__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px 24px; margin: 8px 0 0; }
 .stage-output-viewer__fields > div { min-width: 0; }
 .stage-output-viewer__fields dt { margin-bottom: 1px; color: var(--wb-text-muted); font-size: 11px; }
-.stage-output-viewer__fields dd { min-width: 0; margin: 0; color: var(--wb-text-secondary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.stage-output-viewer__fields dd.is-code { color: var(--wb-text); font: 11px var(--font-mono, monospace); }
-.stage-output-viewer__fields dd.is-boolean { color: var(--wb-accent); }
+.stage-output-viewer__fields dd { min-width: 0; margin: 0; color: var(--wb-text-secondary); font-size: 11px; font-weight: 450; line-height: 1.55; overflow-wrap: anywhere; }
+.stage-output-viewer__fields dd.is-code { color: var(--wb-text); font: 500 11px var(--font-mono, monospace); }
+.stage-output-viewer__fields dd.is-boolean { color: var(--wb-accent); font-weight: 650; }
+.stage-output-viewer__fields--record { gap: 0 28px; margin-top: 2px; }
+.stage-output-viewer__fields--record > div { padding: 11px 0 13px; border-bottom: 1px solid color-mix(in srgb, var(--wb-border-soft) 76%, transparent); }
+.stage-output-viewer__fields--record > div:last-child { border-bottom: 0; }
+.stage-output-viewer__fields--record > div.is-narrative { grid-column: 1 / -1; }
+.stage-output-viewer__field-label { display: flex; align-items: baseline; gap: 7px; }
+.stage-output-viewer__field-label::before { content: ''; width: 3px; height: 12px; flex: 0 0 auto; border-radius: 2px; background: var(--wb-border-strong); }
+.stage-output-viewer__field-label span { color: var(--wb-text-secondary); font-size: 12px; font-weight: 700; }
+.stage-output-viewer__field-label code { color: var(--wb-text-muted); font: 500 10px var(--font-mono, monospace); opacity: .82; }
+.stage-output-viewer__fields--record > div.is-narrative .stage-output-viewer__field-label::before { height: 16px; background: var(--wb-accent); }
+.stage-output-viewer__fields--record > div.is-constraint .stage-output-viewer__field-label::before { background: var(--wb-warning); }
+.stage-output-viewer__fields--record > div.is-validation .stage-output-viewer__field-label::before { background: var(--wb-success); }
+.stage-output-viewer__fields--record > div.is-reference .stage-output-viewer__field-label::before { background: var(--wb-accent); }
+.stage-output-viewer__fields--record > div.is-status .stage-output-viewer__field-label::before { background: var(--wb-success); }
+.stage-output-viewer__fields--record > div.is-constraint .stage-output-viewer__field-label span { color: var(--wb-warning); }
+.stage-output-viewer__fields--record > div.is-validation .stage-output-viewer__field-label span { color: var(--wb-success); }
+.stage-output-viewer__fields--record > div.is-status.is-success dd { color: var(--wb-success); font-weight: 650; }
+.stage-output-viewer__fields--record > div.is-status.is-warning dd { color: var(--wb-warning); font-weight: 650; }
+.stage-output-viewer__fields--record > div.is-status.is-danger dd { color: var(--wb-danger); font-weight: 650; }
+.stage-output-viewer__fields--record > div.is-complex .stage-output-viewer__field-label span { color: var(--wb-text); }
+.stage-output-viewer__fields--record > div.is-narrative > dd { margin-top: 7px; }
 .stage-output-viewer__source { margin-top: 8px; border-top: 1px solid var(--wb-border-soft); color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); }
 .stage-output-viewer__source > summary { padding: 8px 2px 5px; cursor: pointer; }
 .stage-output-viewer__source-preview { margin-top: 2px; }
@@ -328,5 +381,6 @@ const selectionFor = (sectionKey: string, index: number, value: unknown): StageO
 @media (max-width: 720px) {
   .stage-output-viewer__section-body { padding-left: 12px; }
   .stage-output-viewer__fields { grid-template-columns: minmax(0, 1fr); }
+  .stage-output-viewer__field-label { flex-wrap: wrap; gap: 2px 7px; }
 }
 </style>
