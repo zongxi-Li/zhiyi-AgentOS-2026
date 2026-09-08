@@ -146,6 +146,63 @@ describe('RunProgressEditor', () => {
     expect(wrapper.findAll('.run-progress__column')).toHaveLength(3)
   })
 
+  it('keeps Planning open when the parent synchronizes the selected symbol after the click', async () => {
+    const wrapper = mountEditor()
+
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    await wrapper.setProps({ selectedSymbolId: 'planner:run_1' })
+
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(2)
+    expect(wrapper.findAll('.run-progress__column')[1].text()).toContain('Intent Profile')
+  })
+
+  it('reopens Planning automatically when its children arrive after selection', async () => {
+    const wrapper = mountEditor({
+      graphNodes: [],
+      runtimeObservation: observation([])
+    })
+
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    await wrapper.setProps({ selectedSymbolId: 'planner:run_1' })
+    expect(wrapper.findAll('.run-progress__column')[1].find('.run-progress__column-head').text()).toBe('INSPECTOR')
+
+    await wrapper.setProps({ runtimeObservation: observation(plannerEvents()) })
+
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(2)
+    expect(wrapper.findAll('.run-progress__column')[1].text()).toContain('Intent Profile')
+  })
+
+  it('trims a sibling stage branch before showing a nested leaf inspector', async () => {
+    const runtimeStore = new RunRuntimeStore('run_1')
+    runtimeStore.apply(runtimeEvent(1, 'planner.started'))
+    runtimeStore.apply({
+      ...runtimeEvent(2, 'planner.stage.started'),
+      payload: { stage: 'relations', callKey: 'relations' }
+    })
+
+    const wrapper = mountEditor({ runtimeObservation: observation([]), runtimeStore })
+    const detail = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Detail'))!
+
+    await detail.find('.run-symbol__main').trigger('click')
+
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(3)
+    expect(wrapper.findAll('.run-progress__column')[2].find('.run-progress__column-head').text()).toBe('INSPECTOR')
+  })
+
+  it('resets an open Execution branch when selecting root-level Planning', async () => {
+    const wrapper = mountEditor({
+      runtimeObservation: observation([
+        traceEvent('task-1', { status: 'started' }, { stepId: 'node_a', eventType: 'step_started' })
+      ])
+    })
+
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(2)
+    expect(wrapper.findAll('.run-progress__column')[1].find('.run-progress__column-head').text()).toBe('INSPECTOR')
+    expect(wrapper.findAll('.run-progress__column')[1].text()).toContain('Planning')
+  })
+
   it('lets the graph column use the remaining editor width', async () => {
     const wrapper = mountEditor()
 
@@ -154,6 +211,7 @@ describe('RunProgressEditor', () => {
 
     expect(wrapper.find('.run-progress__column.is-graph-column').exists()).toBe(true)
     expect(wrapper.find('.run-progress__column.is-detail-column').exists()).toBe(false)
+    expect(wrapper.find('.run-progress__body').classes()).toContain('is-graph-mode')
   })
 
   it('shows a flat inspector column for the selected leaf symbol', async () => {
@@ -273,11 +331,11 @@ describe('RunProgressEditor', () => {
     expect(wrapper.find('.run-progress-result__action').exists()).toBe(false)
     expect(wrapper.emitted('locateGraph')).toBeUndefined()
 
+    await wrapper.get('[data-symbol-type="result"] .run-symbol__main').trigger('click')
     const stepArtifact = wrapper.get('[data-symbol-type="artifact"]')
     await stepArtifact.find('.run-progress-artifact__open').trigger('click')
     expect(wrapper.emitted('openArtifact')![0][0]).toMatchObject({ kind: 'artifact', artifactId: 'art_1' })
 
-    await wrapper.get('[data-symbol-type="result"] .run-symbol__main').trigger('click')
     await wrapper.find('.run-progress-artifact__open').trigger('click')
     expect(wrapper.emitted('openArtifact')!.at(-1)![0]).toMatchObject({ kind: 'artifact', artifactId: 'art_1' })
   })
@@ -325,6 +383,7 @@ describe('RunProgressEditor', () => {
     await acg.find('.run-symbol__main').trigger('click')
     expect(wrapper.find('[data-symbol-type="acg-node"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="planner-growing-graph"]').exists()).toBe(false)
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
     const intentProfile = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Intent Profile'))!
     await intentProfile.find('.run-symbol__main').trigger('click')
     expect(wrapper.text()).toContain('Profile: 2 capabilities · 1 artifacts')

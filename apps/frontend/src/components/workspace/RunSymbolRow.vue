@@ -130,15 +130,15 @@ const handleMainClick = () => {
 .run-symbol__status.is-completed { color: var(--wb-success); }
 .run-symbol__status.is-warning { color: var(--wb-warning); }
 .run-symbol__status.is-failed { color: var(--wb-danger); }
-.run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: baseline; gap: 12px; min-width: 0; width: auto; min-height: 24px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; }
+.run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: center; gap: 12px; min-width: 0; width: auto; min-height: 30px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; line-height: 1.25; }
 .run-symbol__main:hover { color: var(--wb-text); background: var(--wb-hover); }
 .run-symbol__main:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
-.run-symbol__title { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.run-symbol__title { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .run-symbol__title:only-child { grid-column: 1 / -1; }
 .run-symbol[data-symbol-type='planner'] .run-symbol__title,
 .run-symbol[data-symbol-type='execution'] .run-symbol__title,
 .run-symbol[data-symbol-type='task'] .run-symbol__title { font-weight: 650; }
-.run-symbol__subtitle { min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.run-symbol__subtitle { min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 10px/1.25 var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .run-symbol__action { flex: 0 0 auto; margin: 0 5px 0 6px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: var(--wb-radius-sm); color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 10px; opacity: 0; pointer-events: none; white-space: nowrap; }
 .run-symbol:hover .run-symbol__action, .run-symbol__action:focus-visible { opacity: 1; pointer-events: auto; }
 .run-symbol__action:hover { border-color: var(--wb-accent); background: var(--wb-accent-soft); }

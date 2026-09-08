@@ -78,6 +78,35 @@ describe('run document projection', () => {
     expect(graph.subtitle).not.toContain('0 nodes')
   })
 
+  it('keeps Planning completed when the graph is materialized but its completion event is unavailable', () => {
+    const model = projectRunDocument({
+      runId: 'run_1',
+      mission,
+      graphNodes: nodes,
+      entries: [],
+      runtimeObservation: observation([])
+    })
+
+    const planning = model.symbols.find(item => item.type === 'planner')!
+    expect(planning.status).toBe('completed')
+    expect(planning.subtitle).toBe('Planning completed')
+  })
+
+  it('keeps a failed Planning state ahead of graph completion evidence', () => {
+    const model = projectRunDocument({
+      runId: 'run_1',
+      mission,
+      graphNodes: nodes,
+      entries: [],
+      runtimeObservation: observation([
+        trace('planner-failed', { planningProgress: true, category: 'planner', kind: 'failed', status: 'failed' })
+      ])
+    })
+
+    const planning = model.symbols.find(item => item.type === 'planner')!
+    expect(planning.status).toBe('failed')
+  })
+
   it('filters sensitive structured output before the editor receives it', () => {
     const output = safeStructuredOutput(JSON.stringify({ answer: 'safe', reasoning_content: 'SECRET_REASONING_MARKER', nested: { system_prompt: 'SECRET_SYSTEM_PROMPT' } }))
     expect(output).toContain('safe')

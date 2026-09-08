@@ -289,15 +289,24 @@ const plannerSymbol = (
   plannerItems: ModelOutputItem[],
   runtimeStore: RuntimeEventStore | null | undefined,
   traces: RuntimeTraceObservation[],
-  _graphNodes: WorkspaceGraphNode[],
-  _graph: AcgBlueprint | null | undefined
+  graphNodes: WorkspaceGraphNode[],
+  graph: AcgBlueprint | null | undefined
 ): RunDocumentSymbol | null => {
   const planning = runtimeStore?.planning
-  const hasPlanner = plannerItems.length > 0 || Boolean(planning && planning.status !== 'IDLE')
+  // A materialized graph is a verified planning output. The planner event
+  // stream can arrive late (or be unavailable after a reconnect), so do not
+  // regress an already compiled plan to the fallback "Waiting" state.
+  const hasCompiledGraph = plannerItems.some(item => item.kind === 'graph_compiled')
+    || Boolean(graph)
+    || graphNodes.length > 0
+  const hasPlannerProjection = plannerItems.length > 0 || Boolean(planning && planning.status !== 'IDLE')
+  const hasPlanner = hasPlannerProjection || hasCompiledGraph
   if (!hasPlanner) return null
 
   const failed = planning?.status === 'FAILED' || plannerItems.some(item => item.status === 'failed')
-  const completed = planning?.status === 'COMPLETED' || plannerItems.some(item => item.kind === 'completed')
+  const completed = planning?.status === 'COMPLETED'
+    || plannerItems.some(item => ['completed', 'graph_compiled'].includes(item.kind))
+    || (hasCompiledGraph && !hasPlannerProjection)
   const status: RunDocumentSymbolStatus = failed ? 'failed' : completed ? 'completed' : 'running'
   const stages = new Map<string, ModelOutputItem[]>()
   plannerItems.forEach(item => {
@@ -307,7 +316,7 @@ const plannerSymbol = (
         : item.kind === 'plan_parsed' ? 'outline' : null
     if (stage) stages.set(stage, [...(stages.get(stage) || []), item])
   })
-  const children: RunDocumentSymbol[] = STAGE_ORDER.map(stage => {
+  const children: RunDocumentSymbol[] = hasPlannerProjection ? STAGE_ORDER.map(stage => {
     const scoped = stages.get(stage) || []
     const observedStatus = stageStatus(plannerItems, planning?.stage || null, stage)
     const stageStatusValue = observedStatus === 'pending' && (
@@ -350,14 +359,16 @@ const plannerSymbol = (
       if (liveModel) stageSymbol.children.push(liveModel)
     }
     return stageSymbol
-  })
+  }) : []
 
   return symbol({
     id: `planner:${runId}`,
     type: 'planner',
     status,
     title: 'Planning',
-    subtitle: failed ? `规划失败${plannerItems.find(item => item.detail)?.detail ? ` · ${plannerItems.find(item => item.detail)?.detail}` : ''}` : plannerDigest(plannerItems, planning),
+    subtitle: failed
+      ? `规划失败${plannerItems.find(item => item.detail)?.detail ? ` · ${plannerItems.find(item => item.detail)?.detail}` : ''}`
+      : plannerDigest(plannerItems, planning) || (completed ? 'Planning completed' : undefined),
     detail: failed ? plannerItems.find(item => item.detail)?.detail || '规划失败' : undefined,
     runId,
     metrics: {

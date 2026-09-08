@@ -30,7 +30,12 @@
         </label>
       </div>
 
-      <div ref="scrollBody" class="run-progress__body" @scroll="onScroll">
+      <div
+        ref="scrollBody"
+        class="run-progress__body"
+        :class="{ 'is-graph-mode': hasGraphColumn }"
+        @scroll="onScroll"
+      >
         <div class="run-progress__stream">
           <div v-if="visibleSymbols.length" class="run-progress__browser" aria-label="Run document columns">
             <section
@@ -38,6 +43,7 @@
               :key="column.id"
               class="run-progress__column"
               :class="{ 'is-graph-column': column.graph, 'is-detail-column': column.detail }"
+              :style="column.graph ? graphColumnStyle : undefined"
             >
               <div class="run-progress__column-head">{{ column.title }}</div>
               <div v-if="column.graph" class="run-progress__graph-preview">
@@ -279,6 +285,12 @@ const browserColumns = computed(() => {
   }
   return columns
 })
+const hasGraphColumn = computed(() => browserColumns.value.some(column => column.graph))
+const graphColumnWidth = ref<number | null>(null)
+const graphColumnStyle = computed(() => graphColumnWidth.value == null ? undefined : {
+  flex: `0 0 ${graphColumnWidth.value}px`,
+  width: `${graphColumnWidth.value}px`
+})
 const graphRuntimePhases = computed(() => Object.fromEntries(
   Object.entries(props.runtimeStore?.nodes || {}).map(([nodeId, state]) => [nodeId, state.phase])
 ))
@@ -310,6 +322,22 @@ const parentPathFor = (symbols: RunDocumentSymbol[], targetId: string, parents: 
   }
   return null
 }
+const syncHorizontalPathForSelection = (selectedId: string | null, symbols = documentModel.value.symbols) => {
+  if (!selectedId) return
+  const selected = findRunDocumentSymbol(symbols, selectedId)
+  const parentPath = parentPathFor(symbols, selectedId)
+  if (!selected || !parentPath) return
+  // A selected parent owns the next column; a selected leaf owns the
+  // inspector column attached to its existing parent column.
+  if (selected.children.length) {
+    horizontalPath.value = [...parentPath, selected.id]
+    return
+  }
+  // A leaf owns the inspector column attached to its parent. Resetting the
+  // path is important for root-level selections: clicking Planning while an
+  // Execution branch is open must not append a third column to that branch.
+  horizontalPath.value = parentPath
+}
 const defaultPathFor = (symbols: RunDocumentSymbol[]) => {
   const path: string[] = []
   let current = symbols
@@ -333,7 +361,13 @@ watch(documentModel, model => {
   // The runtime may expose the current task before the user has selected a
   // symbol. Following that real active node keeps the Inspector useful while
   // leaving completed/pending Runs unselected.
-  if (props.selectedSymbolId || props.selectedSemanticTaskKey) return
+  if (props.selectedSymbolId) {
+    // Planning children may arrive after the click; reconcile the path so a
+    // second click is not required to reveal the detail column.
+    syncHorizontalPathForSelection(props.selectedSymbolId, model.symbols)
+    return
+  }
+  if (props.selectedSemanticTaskKey) return
   const current = firstRunningTask(model.symbols)
   if (current) {
     const currentPath = parentPathFor(model.symbols, current.id)
@@ -348,9 +382,7 @@ watch(documentModel, model => {
 }, { immediate: true })
 watch(() => props.selectedSymbolId, selectedId => {
   activeSymbolId.value = selectedId || null
-  if (!selectedId) return
-  const path = parentPathFor(documentModel.value.symbols, selectedId)
-  if (path) horizontalPath.value = path
+  syncHorizontalPathForSelection(selectedId)
 }, { immediate: true })
 
 const breadcrumbItems = computed(() => {
@@ -376,6 +408,7 @@ const symbolEntry = (item: RunDocumentSymbol) => props.projection.entries.find(e
 
 const selectSymbol = (item: RunDocumentSymbol) => {
   activeSymbolId.value = item.id
+  syncHorizontalPathForSelection(item.id)
   emit('selectSymbol', item)
   if (item.semanticTaskKey) emit('selectSemanticTask', item.semanticTaskKey)
   if (item.type === 'artifact') {
@@ -415,6 +448,20 @@ const locateBreadcrumb = (id: string) => {
 }
 
 const scrollBody = ref<HTMLElement | null>(null)
+const captureGraphColumnWidth = async () => {
+  if (!hasGraphColumn.value || graphColumnWidth.value !== null) return
+  await nextTick()
+  const column = scrollBody.value?.querySelector<HTMLElement>('.run-progress__column.is-graph-column')
+  const width = column?.getBoundingClientRect().width || column?.offsetWidth || 0
+  if (width > 0) graphColumnWidth.value = Math.round(width)
+}
+watch(hasGraphColumn, visible => {
+  if (!visible) {
+    graphColumnWidth.value = null
+    return
+  }
+  void captureGraphColumnWidth()
+}, { immediate: true })
 const followLatest = ref(true)
 const onScroll = () => {
   const el = scrollBody.value
@@ -460,14 +507,20 @@ watch(documentModel, async () => {
 .run-progress__filter input { width: 130px; padding: 4px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); outline: 0; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
 .run-progress__filter input:focus { border-color: var(--wb-accent); }
 .run-progress__body { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; scrollbar-color: var(--wb-border-strong) transparent; scrollbar-width: thin; }
+.run-progress__body.is-graph-mode { overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; }
 .run-progress__stream { box-sizing: border-box; display: flex; flex: 1 0 auto; flex-direction: column; width: max-content; min-width: 100%; min-height: 100%; padding-bottom: 42px; }
 .run-progress__browser { display: flex; flex: 1 0 auto; align-items: stretch; min-width: 100%; min-height: 100%; padding-inline: var(--run-content-inset); }
 .run-progress__column { flex: 0 0 clamp(280px, 30vw, 380px); align-self: stretch; min-width: 0; min-height: 100%; border-right: 1px solid var(--wb-border-soft); }
 .run-progress__column.is-graph-column { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
+.run-progress__body.is-graph-mode .run-progress__stream,
+.run-progress__body.is-graph-mode .run-progress__browser,
+.run-progress__body.is-graph-mode .run-progress__column { min-height: 0; height: 100%; }
+.run-progress__body.is-graph-mode .run-progress__stream { flex: 1 1 auto; padding-bottom: 0; }
 .run-progress__column:first-child { border-left: 1px solid var(--wb-border-soft); }
 .run-progress__column-head { padding: 9px 12px 8px; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
 .run-progress__column-body { padding: 4px 8px 24px; }
 .run-progress__graph-preview { display: flex; flex: 1 1 auto; height: auto; min-height: 540px; overflow: hidden; }
+.run-progress__body.is-graph-mode .run-progress__graph-preview { min-height: 0; height: auto; }
 .run-progress__graph-preview :deep(.acg-topology) { height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
 .run-progress__detail { padding: 14px 16px 24px; }
 .run-progress__detail-status { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--wb-text); }
