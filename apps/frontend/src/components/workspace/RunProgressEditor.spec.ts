@@ -113,14 +113,45 @@ describe('RunProgressEditor', () => {
 
     const planners = wrapper.findAll('[data-symbol-type="planner"]')
     expect(planners).toHaveLength(1)
-    expect(planners[0].text()).toContain('任务规划')
+    expect(planners[0].text()).toContain('Planning')
     // 内部阶段不得一级平铺为用户可读的"正在理解…"文案
     expect(wrapper.text()).not.toContain('正在理解')
     // 完成后组收起，digest 汇总真实计数
     expect(wrapper.text()).toContain('Task Plan · 6 Tasks · 8 Dependencies')
     expect(wrapper.text()).toContain('ACG')
-    expect(wrapper.text()).toContain('5 Nodes')
-    expect(wrapper.text()).toContain('11 Edges')
+    expect(wrapper.text()).toContain('5 nodes')
+    expect(wrapper.text()).toContain('11 edges')
+  })
+
+  it('opens each symbol level in a right-hand column instead of nesting a tree below the row', async () => {
+    const wrapper = mountEditor()
+
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(1)
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(2)
+    expect(wrapper.findAll('.run-progress__column')[1].text()).toContain('Intent Profile')
+    expect(wrapper.find('.run-symbol__body').exists()).toBe(false)
+
+    const taskPlan = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Task Plan'))!
+    await taskPlan.find('.run-symbol__main').trigger('click')
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(3)
+  })
+
+  it('shows a flat inspector column for the selected leaf symbol', async () => {
+    const wrapper = mountEditor({
+      runtimeObservation: observation([
+        ...plannerEvents(),
+        traceEvent('t1', { status: 'started' }, { stepId: 'node_a', eventType: 'step_started' }),
+        traceEvent('tool-1', { tool: 'web_search', name: 'Read File', status: 'succeeded', latencyMs: 821 }, { stepId: 'node_a', eventType: 'tool_called' })
+      ])
+    })
+
+    await wrapper.get('[data-symbol-type="tool"] .run-symbol__main').trigger('click')
+    expect(wrapper.find('.run-progress__column:last-child .run-progress__column-head').text()).toBe('INSPECTOR')
+    expect(wrapper.find('.run-progress__detail').text()).toContain('Read File')
+    expect(wrapper.find('.run-progress__detail').text()).toContain('Duration821 ms')
+    expect(wrapper.find('.run-progress__detail').text()).toContain('Task')
   })
 
   it('shows the latest planner phase note while planning is still running', () => {
@@ -166,15 +197,15 @@ describe('RunProgressEditor', () => {
     })
 
     const groups = wrapper.findAll('.run-progress-group')
-    expect(groups).toHaveLength(3)
+    expect(groups).toHaveLength(4)
     // running 的任务排在最前，已完成任务收起为摘要行
     const running = groups.find(node => node.text().includes('架构设计'))!
     const done = groups.find(node => node.text().includes('需求分析'))!
     expect(running.classes()).toContain('is-open')
-    expect(running.text()).toContain('正在执行')
-    expect(running.findAll('.run-progress-tool')).toHaveLength(1)
-    expect(running.text()).toContain('Read File')
-    expect(running.text()).toContain('821 ms')
+    expect(running.text()).toContain('Running')
+    expect(wrapper.findAll('.run-progress-tool')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Read File')
+    expect(wrapper.text()).toContain('821 ms')
     expect(done.classes()).not.toContain('is-open')
     expect(done.text()).toContain('18s')
   })
@@ -204,7 +235,7 @@ describe('RunProgressEditor', () => {
       ])
     })
 
-    await wrapper.find('.run-progress-group__head').trigger('click')
+    await wrapper.get('[data-symbol-type="task"] .run-symbol__main').trigger('click')
     const emitted = wrapper.emitted('selectSemanticTask')
     expect(emitted).toBeTruthy()
     expect(emitted!.at(-1)).toEqual(['requirements.analysis'])
@@ -218,14 +249,17 @@ describe('RunProgressEditor', () => {
       ])
     })
 
-    // 完成态 planner 组默认收起：先展开才能看到结果子项
-    await wrapper.find('.run-progress-group__head').trigger('click')
+    // Finder-style columns keep graph and result as sibling sections.
     await wrapper.find('.run-progress-result__action').trigger('click')
     expect(wrapper.emitted('locateGraph')![0][0]).toMatchObject({ kind: 'graph' })
 
-    const taskGroups = wrapper.findAll('.run-progress-group')
-    await taskGroups[1].find('.run-progress-artifact__open').trigger('click')
+    const stepArtifact = wrapper.get('[data-symbol-type="artifact"]')
+    await stepArtifact.find('.run-progress-artifact__open').trigger('click')
     expect(wrapper.emitted('openArtifact')![0][0]).toMatchObject({ kind: 'artifact', artifactId: 'art_1' })
+
+    await wrapper.get('[data-symbol-type="result"] .run-symbol__main').trigger('click')
+    await wrapper.find('.run-progress-artifact__open').trigger('click')
+    expect(wrapper.emitted('openArtifact')!.at(-1)![0]).toMatchObject({ kind: 'artifact', artifactId: 'art_1' })
   })
 
   it('renders legacy planningProgress events with engineering wording', () => {
@@ -261,16 +295,18 @@ describe('RunProgressEditor', () => {
     expect(wrapper.text()).toContain('PLANNING')
     expect(wrapper.text()).toContain('生成任务骨架')
     expect(wrapper.text()).toContain('模型响应中')
-    expect(wrapper.text()).toContain('TTFT 83 ms')
-    expect(wrapper.text()).toContain('Idle 5 ms')
-    expect(wrapper.text()).toContain('Call outline')
+    expect(wrapper.text()).toContain('Attempt 1')
+    expect(wrapper.text()).toContain('1 chunks')
+    expect(wrapper.text()).toContain('102 ms')
     expect(wrapper.get('[data-testid="planner-live-output"]').text()).toContain('draft')
     expect(wrapper.text()).toContain('1 chunks')
     const acg = wrapper.get('[data-symbol-type="acg"]')
     expect(acg.text()).toContain('ACG')
     await acg.find('.run-symbol__main').trigger('click')
-    expect(wrapper.get('[data-symbol-type="acg-node"]').text()).toContain('理解任务')
+    expect(wrapper.find('[data-symbol-type="acg-node"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="planner-growing-graph"]').exists()).toBe(false)
+    const intentProfile = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Intent Profile'))!
+    await intentProfile.find('.run-symbol__main').trigger('click')
     expect(wrapper.text()).toContain('Profile: 2 capabilities · 1 artifacts')
   })
 

@@ -32,16 +32,38 @@
 
       <div ref="scrollBody" class="run-progress__body" @scroll="onScroll">
         <div class="run-progress__stream">
-          <RunSymbolRow
-            v-for="item in visibleSymbols"
-            :key="item.id"
-            :symbol="item"
-            :selected-symbol-id="selectedSymbolId"
-            :is-expanded="isExpanded"
-            @toggle="toggleExpanded"
-            @select="selectSymbol"
-            @open="openSymbol"
-          />
+          <div v-if="visibleSymbols.length" class="run-progress__browser" aria-label="Run document columns">
+            <section v-for="column in browserColumns" :key="column.id" class="run-progress__column">
+              <div class="run-progress__column-head">{{ column.title }}</div>
+              <div v-if="column.detail" class="run-progress__detail">
+                <div class="run-progress__detail-status">
+                  <span class="run-progress__detail-mark" :class="`is-${column.detail.status}`">{{ detailStatusMark(column.detail.status) }}</span>
+                  <strong>{{ column.detail.title }}</strong>
+                </div>
+                <p v-if="column.detail.subtitle" class="run-progress__detail-summary">{{ column.detail.subtitle }}</p>
+                <dl v-if="detailRows(column.detail).length" class="run-progress__detail-list">
+                  <div v-for="row in detailRows(column.detail)" :key="row.label">
+                    <dt>{{ row.label }}</dt>
+                    <dd>{{ row.value }}</dd>
+                  </div>
+                </dl>
+                <pre v-if="column.detail.content" class="run-progress__detail-content">{{ column.detail.content }}</pre>
+              </div>
+              <div v-else class="run-progress__column-body">
+                <RunSymbolRow
+                  v-for="item in column.symbols"
+                  :key="item.id"
+                  :symbol="item"
+                  :selected-symbol-id="selectedSymbolIdForView"
+                  :is-expanded="isBrowserExpanded"
+                  horizontal
+                  @toggle="toggleBrowser"
+                  @select="selectSymbol"
+                  @open="openSymbol"
+                />
+              </div>
+            </section>
+          </div>
           <p v-if="!visibleSymbols.length" class="run-progress__waiting">
             {{ filterText ? '没有匹配的 Symbol。' : runState === 'running' ? '等待 Runtime Projection…' : '该 Run 暂无可展示的 Runtime facts。' }}
           </p>
@@ -197,6 +219,76 @@ const filterTree = (symbols: RunDocumentSymbol[], needle: string): RunDocumentSy
 }
 const visibleSymbols = computed(() => filterTree(documentModel.value.symbols, filterText.value.trim().toLowerCase()))
 
+const horizontalPath = ref<string[]>([])
+const activeSymbolId = ref<string | null>(props.selectedSymbolId || null)
+const selectedSymbolIdForView = computed(() => props.selectedSymbolId || activeSymbolId.value)
+const detailStatusMark = (status: RunDocumentSymbol['status']) => ({
+  running: '●',
+  completed: '✓',
+  warning: '!',
+  failed: '×',
+  pending: '○'
+}[status])
+const detailRows = (symbol: RunDocumentSymbol) => {
+  const rows: Array<{ label: string; value: string | number }> = [
+    { label: 'Type', value: symbol.type },
+    ...(symbol.semanticTaskKey ? [{ label: 'semanticTaskKey', value: symbol.semanticTaskKey }] : []),
+    ...(symbol.graphNodeId ? [{ label: 'ACG Node', value: symbol.graphNodeId }] : []),
+    ...(symbol.artifactKey ? [{ label: 'artifactKey', value: symbol.artifactKey }] : []),
+    ...(symbol.artifactId ? [{ label: 'artifactId', value: symbol.artifactId }] : [])
+  ]
+  for (const [key, value] of Object.entries(symbol.metrics || {})) {
+    rows.push({ label: key, value: key === 'Duration' && typeof value === 'number' ? `${value} ms` : value })
+  }
+  return rows
+}
+const browserColumns = computed(() => {
+  const columns: Array<{ id: string; title: string; symbols: RunDocumentSymbol[]; detail?: RunDocumentSymbol }> = [{
+    id: 'root',
+    title: 'OUTLINE',
+    symbols: visibleSymbols.value
+  }]
+  let currentSymbols = visibleSymbols.value
+  for (const selectedId of horizontalPath.value) {
+    const selected = currentSymbols.find(item => item.id === selectedId)
+    if (!selected || !selected.children.length) break
+    columns.push({ id: selected.id, title: selected.title, symbols: selected.children })
+    currentSymbols = selected.children
+  }
+  const selected = findRunDocumentSymbol(documentModel.value.symbols, selectedSymbolIdForView.value)
+  const selectedIsVisible = selected && columns.some(column => column.symbols.some(item => item.id === selected.id))
+  if (selected && selectedIsVisible && !selected.children.length) {
+    columns.push({ id: `detail:${selected.id}`, title: 'INSPECTOR', symbols: [], detail: selected })
+  }
+  return columns
+})
+const isBrowserExpanded = (symbol: RunDocumentSymbol) => horizontalPath.value.includes(symbol.id)
+const toggleBrowser = (symbol: RunDocumentSymbol) => {
+  const columnIndex = browserColumns.value.findIndex(column => column.symbols.some(item => item.id === symbol.id))
+  if (columnIndex < 0 || !symbol.children.length) return
+  const prefix = horizontalPath.value.slice(0, columnIndex)
+  const isOpen = horizontalPath.value[columnIndex] === symbol.id
+  horizontalPath.value = isOpen ? prefix : [...prefix, symbol.id]
+}
+const parentPathFor = (symbols: RunDocumentSymbol[], targetId: string, parents: string[] = []): string[] | null => {
+  for (const item of symbols) {
+    if (item.id === targetId) return parents
+    const nested = parentPathFor(item.children, targetId, [...parents, item.id])
+    if (nested) return nested
+  }
+  return null
+}
+const defaultPathFor = (symbols: RunDocumentSymbol[]) => {
+  const path: string[] = []
+  let current = symbols
+  while (true) {
+    const next = current.find(item => item.defaultExpanded && item.children.length)
+    if (!next) return path
+    path.push(next.id)
+    current = next.children
+  }
+}
+
 const firstRunningTask = (symbols: RunDocumentSymbol[]): RunDocumentSymbol | null => {
   for (const item of symbols) {
     if (item.type === 'task' && item.status === 'running') return item
@@ -212,9 +304,21 @@ watch(documentModel, model => {
   if (props.selectedSymbolId || props.selectedSemanticTaskKey) return
   const current = firstRunningTask(model.symbols)
   if (current) {
+    const currentPath = parentPathFor(model.symbols, current.id)
+    horizontalPath.value = currentPath
+      ? current.children.length ? [...currentPath, current.id] : currentPath
+      : horizontalPath.value
     emit('selectSymbol', current)
     emit('selectSemanticTask', current.semanticTaskKey || null)
+  } else if (!horizontalPath.value.length) {
+    horizontalPath.value = defaultPathFor(model.symbols)
   }
+}, { immediate: true })
+watch(() => props.selectedSymbolId, selectedId => {
+  activeSymbolId.value = selectedId || null
+  if (!selectedId) return
+  const path = parentPathFor(documentModel.value.symbols, selectedId)
+  if (path) horizontalPath.value = path
 }, { immediate: true })
 
 const breadcrumbItems = computed(() => {
@@ -239,6 +343,7 @@ const symbolEntry = (item: RunDocumentSymbol) => props.projection.entries.find(e
 )) || null
 
 const selectSymbol = (item: RunDocumentSymbol) => {
+  activeSymbolId.value = item.id
   emit('selectSymbol', item)
   if (item.semanticTaskKey) emit('selectSemanticTask', item.semanticTaskKey)
   if (item.type === 'artifact') {
@@ -307,7 +412,7 @@ watch(documentModel, async () => {
 
 <style scoped>
 .run-progress { --run-content-max: 1440px; --run-content-inset: clamp(18px, 2.4vw, 34px); display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); }
-.run-progress__document-head, .run-progress__toolbar, .run-progress__stream { box-sizing: border-box; width: min(100%, var(--run-content-max)); margin-inline: auto; padding-inline: var(--run-content-inset); }
+.run-progress__document-head, .run-progress__toolbar { box-sizing: border-box; width: min(100%, var(--run-content-max)); margin-inline: auto; padding-inline: var(--run-content-inset); }
 .run-progress__document-head { padding-bottom: 2px; }
 .run-progress__header { display: grid; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--wb-border-soft); }
 .run-progress__eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .12em; }
@@ -331,8 +436,27 @@ watch(documentModel, async () => {
 .run-progress__filter input { width: 130px; padding: 4px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); outline: 0; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
 .run-progress__filter input:focus { border-color: var(--wb-accent); }
 .run-progress__body { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: var(--wb-border-strong) transparent; scrollbar-width: thin; }
-.run-progress__stream { padding-top: 2px; padding-bottom: 42px; }
-.run-progress__waiting { padding: 16px 0; color: var(--wb-text-muted); font-size: 12px; }
+.run-progress__stream { box-sizing: border-box; width: max-content; min-width: 100%; min-height: 100%; padding-bottom: 42px; }
+.run-progress__browser { display: flex; min-width: 100%; min-height: 100%; padding-inline: var(--run-content-inset); }
+.run-progress__column { flex: 0 0 clamp(280px, 30vw, 380px); min-width: 0; min-height: 100%; border-right: 1px solid var(--wb-border-soft); }
+.run-progress__column:first-child { border-left: 1px solid var(--wb-border-soft); }
+.run-progress__column-head { padding: 9px 12px 8px; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
+.run-progress__column-body { padding: 4px 8px 24px; }
+.run-progress__detail { padding: 14px 16px 24px; }
+.run-progress__detail-status { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--wb-text); }
+.run-progress__detail-status strong { font-size: 13px; font-weight: 650; }
+.run-progress__detail-mark { width: 14px; color: var(--wb-text-muted); font: 12px var(--font-mono, monospace); text-align: center; }
+.run-progress__detail-mark.is-running { color: var(--wb-accent); }
+.run-progress__detail-mark.is-completed { color: var(--wb-success); }
+.run-progress__detail-mark.is-warning { color: var(--wb-warning); }
+.run-progress__detail-mark.is-failed { color: var(--wb-danger); }
+.run-progress__detail-summary { margin: 5px 0 14px; color: var(--wb-text-secondary); font-size: 11px; line-height: 1.5; }
+.run-progress__detail-list { margin: 0; border-top: 1px solid var(--wb-border-soft); }
+.run-progress__detail-list > div { display: grid; grid-template-columns: minmax(80px, .65fr) minmax(0, 1.35fr); gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--wb-border-soft); }
+.run-progress__detail-list dt { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.run-progress__detail-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--wb-text-secondary); font: 10px/1.45 var(--font-mono, monospace); }
+.run-progress__detail-content { max-height: 360px; margin: 14px 0 0; padding: 10px 0; overflow: auto; border-top: 1px solid var(--wb-border-soft); color: var(--wb-text-secondary); background: transparent; font: 10px/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-progress__waiting { padding: 16px var(--run-content-inset); color: var(--wb-text-muted); font-size: 12px; }
 .run-progress__follow { position: sticky; bottom: 10px; display: block; margin: 0 auto; padding: 5px 14px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: 999px; color: var(--wb-accent); background: var(--wb-surface-2); cursor: pointer; font-size: 11px; box-shadow: 0 2px 8px rgb(0 0 0 / 18%); }
 
 @media (max-width: 680px) {
