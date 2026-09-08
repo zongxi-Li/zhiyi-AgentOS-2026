@@ -58,6 +58,7 @@ def test_case_b_conflict_contains_complete_cycle_and_edge_origins() -> None:
     ]
     assert conflict.cycle_edges[0].mutation_policy is EdgeMutationPolicy.REBINDABLE
     assert all(edge.mutation_policy is EdgeMutationPolicy.REPAIRABLE for edge in conflict.cycle_edges[1:])
+    assert is_model_repair_eligible(conflict) is True
 
 
 def test_terminal_edge_has_internal_provenance_but_public_relation_does_not() -> None:
@@ -138,6 +139,14 @@ def test_immutable_only_cycle_is_not_model_repair_eligible() -> None:
     conflict = TopologyConflict(
         code=TopologyConflictCode.DEPENDENCY_CYCLE, phase="final_validation",
         cycle_nodes=("A", "B", "A"), cycle_edges=fixed, fixed_edges=fixed,
+    )
+    assert is_model_repair_eligible(conflict) is False
+
+
+def test_binding_conflict_without_model_edges_is_not_model_repair_eligible() -> None:
+    conflict = TopologyConflict(
+        code=TopologyConflictCode.CAPABILITY_BINDING_CONFLICT,
+        phase="capability_binding",
     )
     assert is_model_repair_eligible(conflict) is False
 

@@ -2,7 +2,6 @@
   <aside class="workspace-explorer" aria-label="Mission Project Explorer">
     <header class="workspace-explorer__header">
       <button class="workspace-explorer__back" type="button" @click="emit('back')">
-        <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
         <span>Projects</span>
       </button>
       <div class="workspace-explorer__title-row">
@@ -18,7 +17,6 @@
     <nav class="workspace-tree" aria-label="Project files">
       <section v-for="section in sections" :key="section.group" class="workspace-tree__section">
         <button class="workspace-tree__section-toggle" type="button" :aria-expanded="isExpanded(section.group)" @click="toggleSection(section.group)">
-          <el-icon><ArrowDown v-if="isExpanded(section.group)" /><ArrowRight v-else /></el-icon>
           <span>{{ section.label }}</span>
           <small v-if="section.items.length">{{ section.items.length }}</small>
         </button>
@@ -37,19 +35,6 @@
               :title="entry.name"
               @click="handleEntryClick(entry)"
             >
-              <span
-                v-if="entry.kind === 'task' && taskChildren(entry).length"
-                class="workspace-tree__entry-toggle"
-                role="button"
-                tabindex="0"
-                :aria-label="`${isTaskExpanded(entry) ? '收起' : '展开'} ${entry.name} 的产物`"
-                @click.stop="toggleTask(entry)"
-                @keydown.enter.stop.prevent="toggleTask(entry)"
-                @keydown.space.stop.prevent="toggleTask(entry)"
-              >
-                <el-icon><ArrowDown v-if="isTaskExpanded(entry)" /><ArrowRight v-else /></el-icon>
-              </span>
-              <span v-else-if="entry.kind === 'task'" class="workspace-tree__entry-toggle workspace-tree__entry-toggle--empty" aria-hidden="true"></span>
               <span v-if="entry.kind === 'task'" class="workspace-tree__order">{{ formatOrder(entry.displayOrder) }}</span>
               <el-icon class="workspace-tree__entry-icon"><component :is="entryIcon(entry)" /></el-icon>
               <span class="workspace-tree__entry-name">{{ entry.name }}</span>
@@ -67,7 +52,7 @@
               <span v-if="entry.kind === 'run'" class="workspace-tree__run-state">{{ runLabel(entry.status) }}</span>
               <span v-else-if="entry.identityQuality === 'legacy'" class="workspace-tree__legacy">legacy</span>
             </button>
-            <div v-if="entry.kind === 'task' && isTaskExpanded(entry)" class="workspace-tree__children">
+            <div v-if="entry.kind === 'task' && taskChildren(entry).length" class="workspace-tree__children">
               <button
                 v-for="child in taskChildren(entry)"
                 :key="child.entryId"
@@ -109,7 +94,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowLeft, ArrowRight, FolderOpened } from '@element-plus/icons-vue'
+import { FolderOpened } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 
@@ -141,7 +126,6 @@ const expandedSections = ref<Record<string, boolean>>({
   output: true,
   runs: true
 })
-const expandedTasks = ref<Record<string, boolean>>({})
 
 const groupLabels: Record<string, { label: string; empty: string }> = {
   overview: { label: 'OVERVIEW', empty: '当前 Run 尚未生成概览文件' },
@@ -171,9 +155,6 @@ const isExpanded = (group: string) => expandedSections.value[group] !== false
 const taskChildren = (task: WorkspaceEntry) => props.projection.entries
   .filter(entry => entry.parentEntryId === task.entryId && entry.kind === 'artifact')
   .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId))
-
-const isTaskExpanded = (task: WorkspaceEntry) => expandedTasks.value[task.entryId] !== false
-const toggleTask = (task: WorkspaceEntry) => { expandedTasks.value[task.entryId] = !isTaskExpanded(task) }
 
 const handleEntryClick = (entry: WorkspaceEntry) => {
   if (entry.kind === 'run' && entry.runId) {
@@ -320,7 +301,7 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 }
 
 .workspace-tree__section-toggle {
-  gap: 4px;
+  gap: 0;
   min-height: 27px;
   padding: 0 7px;
   cursor: pointer;
@@ -353,9 +334,6 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 .workspace-tree__entry.is-task { min-height: 32px; padding-left: 6px; }
 .workspace-tree__entry--child { min-height: 28px; padding-left: 43px; font-size: 11px; }
 .workspace-tree__children { padding-bottom: 2px; }
-.workspace-tree__entry-toggle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 17px; width: 17px; height: 17px; color: var(--wb-text-muted); cursor: pointer; }
-.workspace-tree__entry-toggle:hover { color: var(--wb-accent); }
-.workspace-tree__entry-toggle--empty { cursor: default; }
 .workspace-tree__order { flex: 0 0 20px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-align: right; }
 .workspace-tree__entry-icon { flex: 0 0 auto; color: var(--wb-text-muted); }
 .workspace-tree__entry.is-active .workspace-tree__entry-icon { color: var(--wb-accent); }

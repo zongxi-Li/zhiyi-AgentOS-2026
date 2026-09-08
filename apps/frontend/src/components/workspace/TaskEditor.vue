@@ -25,6 +25,7 @@
     </header>
 
     <div class="task-editor__body">
+      <div class="task-editor__content" :style="{ width: `${contentWidth}px` }">
       <section class="task-editor__section task-editor__section--contract">
         <div class="task-editor__section-heading"><span>CONTRACT</span></div>
         <div class="task-editor__symbol-heading"><span aria-hidden="true">▾</span><strong>Objective</strong></div>
@@ -98,12 +99,27 @@
           </div>
         </div>
       </section>
+      <button
+        class="task-editor__resize-handle"
+        type="button"
+        role="separator"
+        aria-label="调整内容宽度"
+        aria-orientation="vertical"
+        :aria-valuemin="TASK_CONTENT_WIDTH_MIN"
+        :aria-valuemax="TASK_CONTENT_WIDTH_MAX"
+        :aria-valuenow="contentWidth"
+        title="拖动调整内容宽度，双击恢复默认"
+        @pointerdown="startResize"
+        @keydown="onResizeKeydown"
+        @dblclick="resetContentWidth"
+      />
+      </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { agentosApi } from '@/services/api/agentos'
 import StageOutputRenderer, { type StageOutputSelection } from './StageOutputRenderer.vue'
 import type {
@@ -154,6 +170,60 @@ const stageOutputLoading = ref(false)
 const stageOutputError = ref('')
 const executionExpanded = ref(!['completed', 'succeeded', 'failed', 'cancelled'].includes(props.entry.status || ''))
 const evidenceExpanded = ref(false)
+const TASK_CONTENT_WIDTH_KEY = 'kinlin.task-editor.content-width'
+const TASK_CONTENT_WIDTH_DEFAULT = 1480
+const TASK_CONTENT_WIDTH_MIN = 720
+const TASK_CONTENT_WIDTH_MAX = 1900
+
+const readContentWidth = () => {
+  if (typeof window === 'undefined') return TASK_CONTENT_WIDTH_DEFAULT
+  try {
+    const stored = Number(window.localStorage.getItem(TASK_CONTENT_WIDTH_KEY))
+    return Number.isFinite(stored)
+      ? Math.min(TASK_CONTENT_WIDTH_MAX, Math.max(TASK_CONTENT_WIDTH_MIN, stored))
+      : TASK_CONTENT_WIDTH_DEFAULT
+  } catch {
+    return TASK_CONTENT_WIDTH_DEFAULT
+  }
+}
+const contentWidth = ref(readContentWidth())
+const setContentWidth = (value: number) => {
+  contentWidth.value = Math.round(Math.min(TASK_CONTENT_WIDTH_MAX, Math.max(TASK_CONTENT_WIDTH_MIN, value)) / 20) * 20
+  try { window.localStorage.setItem(TASK_CONTENT_WIDTH_KEY, String(contentWidth.value)) } catch { /* storage is optional */ }
+}
+const resetContentWidth = () => setContentWidth(TASK_CONTENT_WIDTH_DEFAULT)
+let resizeStart: { x: number; width: number } | null = null
+const onResizePointerMove = (event: PointerEvent) => {
+  if (!resizeStart) return
+  setContentWidth(resizeStart.width + event.clientX - resizeStart.x)
+}
+const stopResize = () => {
+  resizeStart = null
+  window.removeEventListener('pointermove', onResizePointerMove)
+  window.removeEventListener('pointerup', stopResize)
+  document.body.classList.remove('task-editor-is-resizing')
+}
+const startResize = (event: PointerEvent) => {
+  if (event.button !== 0) return
+  resizeStart = { x: event.clientX, width: contentWidth.value }
+  window.addEventListener('pointermove', onResizePointerMove)
+  window.addEventListener('pointerup', stopResize)
+  document.body.classList.add('task-editor-is-resizing')
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+const onResizeKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'ArrowLeft') {
+    setContentWidth(contentWidth.value - 40)
+    event.preventDefault()
+  } else if (event.key === 'ArrowRight') {
+    setContentWidth(contentWidth.value + 40)
+    event.preventDefault()
+  } else if (event.key === 'Home') {
+    resetContentWidth()
+    event.preventDefault()
+  }
+}
 
 const formatStageOutput = (value: unknown) => {
   if (typeof value === 'string') return value
@@ -280,6 +350,7 @@ const openMission = () => emit('openEntry', {
   displayOrder: 0,
   content: props.projection.mission.goal
 })
+onBeforeUnmount(stopResize)
 </script>
 
 <style scoped>
@@ -307,15 +378,16 @@ const openMission = () => emit('openEntry', {
 .task-editor__actions button:hover:not(:disabled) { color: var(--wb-accent); border-color: color-mix(in srgb, var(--wb-accent) 42%, var(--wb-border)); background: var(--wb-accent-soft); }
 .task-editor__actions button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 1px; }
 .task-editor__actions button:disabled { color: var(--text-disabled); cursor: not-allowed; }
-.task-editor__body { flex: 1; min-height: 0; padding: 24px 24px 42px; overflow-y: auto; scrollbar-gutter: stable; }
-.task-editor__section { max-width: 1120px; margin: 0 auto; padding: 0 0 10px; border-bottom: 1px solid var(--wb-border-soft); }
+.task-editor__body { flex: 1; min-height: 0; padding: 22px clamp(18px, 2.4vw, 42px) 42px; overflow-y: auto; scrollbar-gutter: stable; }
+.task-editor__content { position: relative; width: 1480px; max-width: 100%; margin: 0 auto; }
+.task-editor__section { max-width: none; margin: 0; padding: 0 0 10px; border-bottom: 1px solid var(--wb-border-soft); }
 .task-editor__section + .task-editor__section { margin-top: 24px; }
 .task-editor__section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); letter-spacing: .1em; }
 .task-editor__section-meta { color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); letter-spacing: 0; }
 .task-editor__symbol-heading { display: flex; align-items: center; gap: 7px; margin-left: 8px; color: var(--wb-text-secondary); font-size: 13px; }
 .task-editor__symbol-heading > span { color: var(--wb-accent); font: 11px var(--font-mono, monospace); }
 .task-editor__symbol-heading strong { font-weight: 650; }
-.task-editor__objective { max-width: 960px; margin: 7px 0 0 29px; color: var(--wb-text); font-size: 15px; line-height: 1.7; white-space: pre-wrap; }
+.task-editor__objective { max-width: 1260px; margin: 7px 0 0 29px; color: var(--wb-text); font-size: 15px; line-height: 1.7; white-space: pre-wrap; }
 .task-editor__inline-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 9px; margin: 11px 0 0 29px; color: var(--wb-text-muted); font-size: 11px; }
 .task-editor__inline-label { font: 10px var(--font-mono, monospace); }
 .task-editor__inline-row code { padding: 2px 5px; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
@@ -341,9 +413,15 @@ const openMission = () => emit('openEntry', {
 .task-editor__properties dt { color: var(--wb-text-muted); }
 .task-editor__properties dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--wb-text-secondary); text-align: right; }
 .task-editor__properties dd.is-code { color: var(--wb-text); font: 10px var(--font-mono, monospace); }
+.task-editor__resize-handle { position: absolute; z-index: 2; top: 0; right: -10px; width: 20px; height: 100%; min-height: 160px; padding: 0; border: 0; color: transparent; background: transparent; cursor: ew-resize; touch-action: none; }
+.task-editor__resize-handle::after { content: ''; position: absolute; top: 36px; right: 9px; width: 2px; height: 48px; border-radius: 2px; background: var(--wb-border-strong); opacity: 0; transition: opacity 140ms var(--ease-out), background-color 140ms var(--ease-out); }
+.task-editor__resize-handle:hover::after, .task-editor__resize-handle:focus-visible::after { background: var(--wb-accent); opacity: 1; }
+.task-editor__resize-handle:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
+:global(body.task-editor-is-resizing) { cursor: ew-resize; user-select: none; }
 @media (max-width: 720px) {
   .task-editor__header { align-items: flex-start; flex-direction: column; gap: 10px; }
   .task-editor__body { padding: 16px 14px 36px; }
+  .task-editor__resize-handle { display: none; }
   .task-editor__objective, .task-editor__inline-row { margin-left: 22px; }
   .task-editor__properties > div { grid-template-columns: minmax(100px, 38%) minmax(0, 1fr); gap: 8px; }
 }

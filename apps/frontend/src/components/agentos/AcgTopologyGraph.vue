@@ -223,11 +223,11 @@ let network: Network | null = null
 let nodesData: DataSet<any> | null = null
 let edgesData: DataSet<any> | null = null
 let graphStructureKey = ''
+let graphDataKey = ''
 let stabilizationTimer: number | undefined
 let themeObserver: MutationObserver | null = null
-let graphResizeObserver: ResizeObserver | null = null
-let graphResizeFrame: number | undefined
-let graphResizeTimer: number | undefined
+let renderRequest = 0
+let renderTimer: number | undefined
 let layoutFinalized = false
 let pendingViewState: { position: { x: number; y: number }; scale: number } | null = null
 
@@ -566,7 +566,7 @@ const buildEdgeRows = (edges: AcgEdge[]) => {
 }
 
 const options = {
-  autoResize: true,
+  autoResize: !props.workbench,
   layout: { improvedLayout: true, randomSeed: 42 },
   physics: {
     enabled: true,
@@ -672,16 +672,10 @@ const finalizeGraphLayout = (animation = true) => {
   }
 }
 
-const redrawPreservingView = () => {
-  if (!network) return
-  const position = network.getViewPosition()
-  const scale = network.getScale()
-  network.redraw()
-  network.moveTo({ position, scale, animation: false })
-}
-
 const render = async () => {
+  const request = ++renderRequest
   await nextTick()
+  if (request !== renderRequest) return
   const blueprint = visibleBlueprint.value
   if (!graphRef.value || !hasData.value || !blueprint) return
   if (selectedNodeId.value && !blueprint.nodes.some(node => node.nodeId === selectedNodeId.value)) {
@@ -692,13 +686,15 @@ const render = async () => {
   const nodeRows = buildNodeRows(blueprint.nodes, completed, states)
   const edgeRows = buildEdgeRows(blueprint.edges)
   const nextStructureKey = getStructureKey(blueprint)
+  const nextDataKey = JSON.stringify({ nodes: nodeRows, edges: edgeRows })
 
   // Polling frequently returns a new object with the same graph structure.
   // Update labels/status in place so existing positions and user dragging are preserved.
+  if (network && nodesData && edgesData && graphDataKey === nextDataKey) return
   if (network && nodesData && edgesData && graphStructureKey === nextStructureKey) {
     nodesData.update(nodeRows)
     edgesData.update(edgeRows)
-    redrawPreservingView()
+    graphDataKey = nextDataKey
     return
   }
 
@@ -713,6 +709,7 @@ const render = async () => {
   nodesData = new DataSet(nodeRows)
   edgesData = new DataSet(edgeRows)
   graphStructureKey = nextStructureKey
+  graphDataKey = nextDataKey
   layoutFinalized = false
   const data = { nodes: nodesData, edges: edgesData }
   network = new Network(graphRef.value, data as any, options as any)
@@ -720,7 +717,7 @@ const render = async () => {
   network.on('selectNode', params => {
     selectedNodeId.value = String(params.nodes[0] || '')
     if (selectedNodeId.value) emit('nodeSelected', selectedNodeId.value)
-    void render()
+    scheduleRender()
   })
   network.on('doubleClick', params => {
     const nodeId = String(params.nodes?.[0] || '')
@@ -728,7 +725,7 @@ const render = async () => {
   })
   network.on('deselectNode', () => {
     selectedNodeId.value = ''
-    void render()
+    scheduleRender()
   })
 
   // 布局展开成形后，完全冻结 physics —— 节点定住不再漂移抖动。
@@ -764,38 +761,6 @@ const syncFullscreenState = () => {
   }, 120)
 }
 
-const scheduleGraphRedraw = () => {
-  if (graphResizeTimer !== undefined) window.clearTimeout(graphResizeTimer)
-  // Collapse/expand can produce several ResizeObserver notifications while
-  // flex layout settles. Coalesce them so vis-network paints once afterwards.
-  graphResizeTimer = window.setTimeout(() => {
-    graphResizeTimer = undefined
-    if (graphResizeFrame !== undefined) return
-    const redraw = () => {
-      graphResizeFrame = undefined
-      if (!network || !graphRef.value) return
-      if (graphRef.value.clientWidth <= 0 || graphRef.value.clientHeight <= 0) return
-      // vis-network may adjust the camera scale when its canvas changes size.
-      // Preserve the user's exact viewport across a pane collapse/expand.
-      redrawPreservingView()
-    }
-    graphResizeFrame = typeof window.requestAnimationFrame === 'function'
-      ? window.requestAnimationFrame(redraw)
-      : window.setTimeout(redraw, 16)
-  }, 64)
-}
-
-const cancelGraphRedraw = () => {
-  if (graphResizeTimer !== undefined) {
-    window.clearTimeout(graphResizeTimer)
-    graphResizeTimer = undefined
-  }
-  if (graphResizeFrame === undefined) return
-  if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(graphResizeFrame)
-  else window.clearTimeout(graphResizeFrame)
-  graphResizeFrame = undefined
-}
-
 const toggleFullscreen = async () => {
   if (!sectionRef.value || !fullscreenSupported) return
   try {
@@ -820,7 +785,7 @@ const handleFullscreenEscape = (event: KeyboardEvent) => {
 const clearSelection = () => {
   selectedNodeId.value = ''
   network?.unselectAll()
-  void render()
+  scheduleRender()
 }
 
 const selectRelatedNode = (nodeId: string) => {
@@ -828,7 +793,7 @@ const selectRelatedNode = (nodeId: string) => {
   selectedNodeId.value = nodeId
   network?.selectNodes([nodeId])
   network?.focus(nodeId, { scale: 1.2, animation: true })
-  void render()
+  scheduleRender()
 }
 
 const setViewMode = (mode: GraphViewMode) => {
@@ -842,6 +807,7 @@ const setViewMode = (mode: GraphViewMode) => {
   nodesData = null
   edgesData = null
   graphStructureKey = ''
+  graphDataKey = ''
   pendingViewState = null
 }
 
@@ -851,12 +817,26 @@ const focusNode = (nodeId: string) => {
   network.selectNodes([nodeId])
   network.focus(nodeId, { scale: 1.2, animation: true })
   emit('nodeSelected', nodeId)
-  void render()
+  scheduleRender()
+}
+
+const scheduleRender = () => {
+  if (renderTimer !== undefined) return
+  renderTimer = window.setTimeout(() => {
+    renderTimer = undefined
+    void render()
+  }, 100)
+}
+
+const cancelScheduledRender = () => {
+  if (renderTimer === undefined) return
+  window.clearTimeout(renderTimer)
+  renderTimer = undefined
 }
 
 watch(
   () => [props.blueprint, props.completedStepIds, props.stepStates, selectedEdgeTypes.value, viewMode.value],
-  () => render(),
+  () => scheduleRender(),
   { deep: true }
 )
 watch(
@@ -868,13 +848,8 @@ watch(
 onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreenState)
   document.addEventListener('keydown', handleFullscreenEscape)
-  themeObserver = new MutationObserver(() => render())
+  themeObserver = new MutationObserver(() => scheduleRender())
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-color-scheme'] })
-  if (props.workbench && typeof ResizeObserver !== 'undefined' && sectionRef.value) {
-    graphResizeObserver = new ResizeObserver(() => scheduleGraphRedraw())
-    graphResizeObserver.observe(sectionRef.value)
-    if (graphRef.value) graphResizeObserver.observe(graphRef.value)
-  }
   render()
 })
 onBeforeUnmount(() => {
@@ -884,11 +859,9 @@ onBeforeUnmount(() => {
     void document.exitFullscreen()
   }
   stopPhysics()
+  cancelScheduledRender()
   themeObserver?.disconnect()
   themeObserver = null
-  cancelGraphRedraw()
-  graphResizeObserver?.disconnect()
-  graphResizeObserver = null
   network?.destroy()
   network = null
   nodesData = null

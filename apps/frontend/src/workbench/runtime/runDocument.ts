@@ -83,6 +83,12 @@ const LIVE_STAGE_LABELS: Record<string, string> = {
 }
 const SENSITIVE_KEY = /(?:reasoning|chain[_-]?of[_-]?thought|hidden[_-]?prompt|system[_-]?prompt|credential|password|secret|api[_-]?key|authorization|bearer|token)/i
 const SENSITIVE_MARKER = /(?:reasoning_content|chain_of_thought|hidden_prompt|system_prompt|credential|SECRET_REASONING_MARKER|SECRET_SYSTEM_PROMPT|SECRET_CREDENTIAL)/i
+const MODEL_EVENT_TYPES = new Set(['model_called', 'model.started', 'model.completed'])
+
+interface RunTraceIndex {
+  latestAgentByNode: Map<string, string>
+  latestModelEventByNode: Map<string, RuntimeTraceObservation>
+}
 
 const asRecord = (value: unknown): Record<string, any> => (
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
@@ -95,8 +101,28 @@ const safeText = (value: unknown): string | null => {
 }
 
 const safeNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) && number >= 0 ? number : null
+}
+
+const buildRunTraceIndex = (traces: RuntimeTraceObservation[]): RunTraceIndex => {
+  const latestAgentByNode = new Map<string, string>()
+  const latestModelEventByNode = new Map<string, RuntimeTraceObservation>()
+  for (let index = traces.length - 1; index >= 0; index -= 1) {
+    const event = traces[index]
+    const nodeId = event.stepId
+    if (!nodeId) continue
+    if (!latestModelEventByNode.has(nodeId) && MODEL_EVENT_TYPES.has(event.eventType)) {
+      latestModelEventByNode.set(nodeId, event)
+    }
+    if (!latestAgentByNode.has(nodeId)) {
+      const payload = asRecord(event.payload)
+      const agent = safeText(payload.agentName) || safeText(payload.agent) || safeText(payload.agentId)
+      if (agent) latestAgentByNode.set(nodeId, agent)
+    }
+  }
+  return { latestAgentByNode, latestModelEventByNode }
 }
 
 const statusOf = (value: unknown): RunDocumentSymbolStatus => {
@@ -396,24 +422,15 @@ const plannerResultDigest = (title: string, metrics: Record<string, any>) => {
   return `${title}${values.filter(Boolean).length ? ` · ${values.filter(Boolean).join(' · ')}` : ''}`
 }
 
-const traceAgentName = (traces: RuntimeTraceObservation[], nodeId: string, entry?: WorkspaceEntry) => {
+const traceAgentName = (traceIndex: RunTraceIndex, nodeId: string, entry?: WorkspaceEntry) => {
   const metadata = asRecord(entry?.metadata)
   const metadataAgent = safeText(metadata.agentName) || safeText(metadata.agent)
   if (metadataAgent) return metadataAgent
-  for (let index = traces.length - 1; index >= 0; index -= 1) {
-    const event = traces[index]
-    if (event.stepId !== nodeId) continue
-    const payload = asRecord(event.payload)
-    const agent = safeText(payload.agentName) || safeText(payload.agent) || safeText(payload.agentId)
-    if (agent) return agent
-  }
-  return null
+  return traceIndex.latestAgentByNode.get(nodeId) || null
 }
 
-const taskModelSymbol = (runId: string, nodeId: string, traces: RuntimeTraceObservation[], nodeState?: NodeRuntimeState) => {
-  const modelEvent = [...traces].reverse().find(event => event.stepId === nodeId && (
-    event.eventType === 'model_called' || event.eventType === 'model.started' || event.eventType === 'model.completed'
-  ))
+const taskModelSymbol = (runId: string, nodeId: string, traceIndex: RunTraceIndex, nodeState?: NodeRuntimeState) => {
+  const modelEvent = traceIndex.latestModelEventByNode.get(nodeId)
   const payload = asRecord(modelEvent?.payload)
   const modelName = safeText(nodeState?.modelName) || safeText(payload.modelName) || safeText(payload.model)
   if (!modelEvent && !modelName && !nodeState) return null
@@ -460,7 +477,7 @@ const taskSymbol = (
   group: RunProgressTaskGroup,
   node: WorkspaceGraphNode | undefined,
   entries: WorkspaceEntry[],
-  traces: RuntimeTraceObservation[],
+  traceIndex: RunTraceIndex,
   runtimeStore?: RuntimeEventStore | null
 ): RunDocumentSymbol => {
   const status: RunDocumentSymbolStatus = group.status === 'success'
@@ -470,7 +487,7 @@ const taskSymbol = (
     item.semanticTaskKey === group.semanticTaskKey || item.acgNodeId === group.graphNodeId
   ))
   const children: RunDocumentSymbol[] = []
-  const agent = traceAgentName(traces, group.graphNodeId || '', entry)
+  const agent = traceAgentName(traceIndex, group.graphNodeId || '', entry)
   if (agent) children.push(symbol({
     id: `agent:${runId}:${group.graphNodeId}:${agent}`,
     type: 'agent',
@@ -482,7 +499,7 @@ const taskSymbol = (
     graphNodeId: group.graphNodeId,
     defaultExpanded: false
   }))
-  const model = taskModelSymbol(runId, group.graphNodeId || '', traces, group.graphNodeId ? runtimeStore?.nodes[group.graphNodeId] : undefined)
+  const model = taskModelSymbol(runId, group.graphNodeId || '', traceIndex, group.graphNodeId ? runtimeStore?.nodes[group.graphNodeId] : undefined)
   if (model) children.push(model)
   group.tools.forEach(tool => children.push(symbol({
     id: `tool:${runId}:${tool.id}`,
@@ -567,9 +584,11 @@ const taskGroups = (
   observation: RuntimeObservation | null,
   graphNodes: WorkspaceGraphNode[],
   entries: WorkspaceEntry[],
+  plannerItems: ModelOutputItem[],
+  traceIndex: RunTraceIndex,
   runtimeStore?: RuntimeEventStore | null
 ) => {
-  const timeline = projectRunProgress(observation, graphNodes)
+  const timeline = projectRunProgress(observation, graphNodes, plannerItems)
   const groups = new Map(timeline.tasks.map(task => [task.graphNodeId, task]))
   const nodeList = graphNodes
     .filter(node => ['task', 'step'].includes(node.nodeType) || groups.has(node.acgNodeId))
@@ -584,7 +603,7 @@ const taskGroups = (
     durationMs: null,
     errorCode: null,
     tools: []
-  }, node, entries, observation?.traces || [], runtimeStore))
+  }, node, entries, traceIndex, runtimeStore))
 }
 
 const artifactSymbol = (runId: string, artifact: WorkspaceEntry): RunDocumentSymbol => symbol({
@@ -612,11 +631,13 @@ const executionStatus = (tasks: RunDocumentSymbol[]): RunDocumentSymbolStatus =>
 export const projectRunDocument = (input: RunDocumentProjectionInput): RunDocumentModel => {
   const runId = input.runId || input.runtimeObservation?.runId || ''
   if (!runId) return { id: 'run:empty:progress', runId: '', title: input.mission.goal, status: 'pending', symbols: [] }
-  const plannerItems = projectModelOutput(input.runtimeObservation?.traces || []).filter(item => (
+  const traces = input.runtimeObservation?.traces || []
+  const plannerItems = projectModelOutput(traces).filter(item => (
     item.kind !== 'stage_updated' || item.category === 'runtime'
   ))
-  const planner = plannerSymbol(runId, plannerItems, input.runtimeStore, input.runtimeObservation?.traces || [], input.graphNodes, input.graph)
-  const tasks = taskGroups(runId, input.runtimeObservation, input.graphNodes, input.entries, input.runtimeStore)
+  const traceIndex = buildRunTraceIndex(traces)
+  const planner = plannerSymbol(runId, plannerItems, input.runtimeStore, traces, input.graphNodes, input.graph)
+  const tasks = taskGroups(runId, input.runtimeObservation, input.graphNodes, input.entries, plannerItems, traceIndex, input.runtimeStore)
   const planning = planner || symbol({
     id: `planner:${runId}`,
     type: 'planner',

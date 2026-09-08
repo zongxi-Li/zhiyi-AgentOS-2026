@@ -156,7 +156,9 @@ const selectedSymbolType = ref<RunDocumentSymbol['type'] | null>(null)
 const selectedSymbol = ref<RunDocumentSymbol | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
-const runtimeObservation = ref<RuntimeObservation | null>(null)
+// Runtime observations can contain tens of thousands of immutable trace rows.
+// The snapshot is replaced as a whole, so deep Vue proxies only add work here.
+const runtimeObservation = shallowRef<RuntimeObservation | null>(null)
 const runtimeStore = shallowRef<RunRuntimeStore | null>(null)
 let runtimeStoreRunId: string | null = null
 const artifactChoices = ref<WorkspaceEntry[]>([])

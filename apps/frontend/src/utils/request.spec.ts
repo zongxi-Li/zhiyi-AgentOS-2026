@@ -65,7 +65,7 @@ describe('request error notifications', () => {
 
     await pending.catch(() => undefined)
 
-    expect(window.location.hash).toBe('#/?auth=1&redirect=%2Froles%3Ftab%3Dfavorites')
+    expect(window.location.hash).toBe('#/login?redirect=%2Froles%3Ftab%3Dfavorites')
     expect(localStorage.getItem('token')).toBeNull()
     expect(errorMessage).toHaveBeenCalledWith('登录状态已过期，请重新登录')
   })

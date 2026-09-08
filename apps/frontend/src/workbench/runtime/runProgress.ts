@@ -1,5 +1,5 @@
 import type { WorkspaceGraphNode } from '@/services/api/agentos'
-import type { RuntimeObservation } from './observation'
+import type { ModelOutputItem, RuntimeObservation } from './observation'
 import { projectModelOutput } from './observation'
 
 export interface RunProgressMetrics {
@@ -55,8 +55,23 @@ export interface RunProgressTimeline {
 }
 
 const numberOf = (value: unknown): number | undefined => {
+  if (value === null || value === undefined || value === '') return undefined
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+const durationOf = (value: unknown): number | undefined => {
+  if (value === null || value === undefined || value === '') return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+const durationBetween = (startedAt: string | null | undefined, finishedAt: string | null | undefined) => {
+  if (!startedAt || !finishedAt) return null
+  const started = Date.parse(startedAt)
+  const finished = Date.parse(finishedAt)
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished <= started) return null
+  return finished - started
 }
 
 const PLANNER_RESULT_KINDS = new Set(['plan_parsed', 'graph_compiled', 'profile_resolved'])
@@ -71,10 +86,11 @@ const PLANNER_RESULT_KINDS = new Set(['plan_parsed', 'graph_compiled', 'profile_
  */
 export const projectRunProgress = (
   observation: RuntimeObservation | null,
-  graphNodes: WorkspaceGraphNode[]
+  graphNodes: WorkspaceGraphNode[],
+  projectedPlannerItems?: ModelOutputItem[]
 ): RunProgressTimeline => {
   const traces = observation?.traces || []
-  const plannerItems = projectModelOutput(traces).filter(item => (
+  const plannerItems = projectedPlannerItems ?? projectModelOutput(traces).filter(item => (
     item.kind !== 'stage_updated' || item.category === 'runtime'
   ))
 
@@ -135,6 +151,7 @@ export const projectRunProgress = (
   const nodeById = new Map(graphNodes.map(node => [node.acgNodeId, node]))
   const taskKinds = new Set(['step_started', 'step_succeeded', 'step_completed', 'step_failed'])
   const tasks = new Map<string, RunProgressTaskGroup>()
+  const taskStartedAt = new Map<string, string>()
   const tools: RunProgressItem[] = []
   for (const event of traces) {
     if (event.payload.planningProgress) continue
@@ -170,12 +187,18 @@ export const projectRunProgress = (
     }
     if (event.eventType === 'step_started') {
       group.status = 'running'
+      if (event.timestamp) taskStartedAt.set(stepId, event.timestamp)
     } else if (event.eventType === 'step_failed') {
       group.status = 'failed'
       group.errorCode = String(event.payload.errorCode || 'STEP_FAILED')
+      group.durationMs = durationOf(event.durationMs)
+        ?? durationOf(event.payload.durationMs)
+        ?? durationBetween(taskStartedAt.get(stepId), event.timestamp)
     } else if (group.status !== 'failed') {
       group.status = 'success'
-      group.durationMs = numberOf(event.durationMs) ?? numberOf(event.payload.durationMs) ?? null
+      group.durationMs = durationOf(event.durationMs)
+        ?? durationOf(event.payload.durationMs)
+        ?? durationBetween(taskStartedAt.get(stepId), event.timestamp)
     }
     tasks.set(stepId, group)
   }

@@ -43,10 +43,6 @@
                 >
                   <el-icon><ChatDotRound /></el-icon>
                   <span v-if="!mainSidebarCompact" class="chat-nav-label">{{ $t('nav.chat') }}</span>
-                  <el-icon v-if="!mainSidebarCompact" class="chat-nav-chevron">
-                    <ArrowDown v-if="chatNavOpen" />
-                    <ArrowRight v-else />
-                  </el-icon>
                 </button>
 
               </div>
@@ -62,10 +58,6 @@
                 >
                   <img class="acg-nav-logo" src="/acglogo.png" alt="" aria-hidden="true" />
                   <span v-if="!mainSidebarCompact" class="chat-nav-label">ACG 动态群体智能引擎</span>
-                  <el-icon v-if="!mainSidebarCompact" class="chat-nav-chevron">
-                    <ArrowDown v-if="acgNavOpen" />
-                    <ArrowRight v-else />
-                  </el-icon>
                 </button>
               </div>
 
@@ -204,7 +196,6 @@
                           {{ agentProjectState(mission) }} · {{ formatConversationTime(mission.updatedAt || mission.createdAt) }}
                         </span>
                       </span>
-                      <el-icon class="chat-project-arrow" aria-hidden="true"><ArrowRight /></el-icon>
                     </button>
                     <button
                       class="chat-project-action-trigger"
@@ -243,7 +234,6 @@
                         <span class="chat-project-title">{{ conversation.title || '未命名对话' }}</span>
                         <span class="chat-project-time">{{ formatConversationTime(conversation.updatedAt || conversation.createdAt) }}</span>
                       </span>
-                      <el-icon class="chat-project-arrow" aria-hidden="true"><ArrowRight /></el-icon>
                     </button>
                     <div class="chat-project-actions" aria-label="瀵硅瘽鎿嶄綔">
                       <button class="chat-project-action chat-project-action--edit" type="button" title="缂栬緫鏍囬" @click.stop="editSidebarConversation(conversation)">
@@ -251,9 +241,6 @@
                       </button>
                       <button class="chat-project-action chat-project-action--delete" type="button" title="鍒犻櫎瀵硅瘽" @click.stop="deleteSidebarActionConversation(conversation)">
                         <el-icon><Delete /></el-icon>
-                      </button>
-                      <button class="chat-project-action chat-project-action--open" type="button" title="鎵撳紑瀵硅瘽" @click.stop="openConversation(conversation)">
-                        <el-icon><ArrowRight /></el-icon>
                       </button>
                     </div>
                   </div>
@@ -270,7 +257,6 @@
                     <strong>{{ workspaceMode === 'agent' ? '查看所有 ACG 记录' : '查找所有聊天记录' }}</strong>
                     <small>{{ workspaceMode === 'agent' ? '搜索、审计与任务管理' : '搜索、编辑与管理' }}</small>
                   </span>
-                  <el-icon class="history-action__arrow" aria-hidden="true"><ArrowRight /></el-icon>
                 </button>
               </div>
               <div
@@ -437,7 +423,7 @@
       >
         <template v-if="sidebarActionMenu.target.kind === 'agent'">
           <button type="button" role="menuitem" @click="openSidebarActionTarget">
-            <el-icon><ArrowRight /></el-icon><span>打开项目</span>
+            <span>打开项目</span>
           </button>
           <button
             type="button"
@@ -476,7 +462,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowDown, ArrowRight, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
+  ArrowDown, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
   Clock, Setting, SwitchButton,
   Monitor, Cpu,
   Fold
@@ -506,6 +492,7 @@ import {
   saveAcgHistoryRole,
   type AcgHistoryRole
 } from '@/utils/acgHistoryFilter'
+import { isDesktop } from '@/platform'
 
 const route = useRoute()
 const router = useRouter()
@@ -1275,7 +1262,7 @@ const handleLogout = async () => {
     if (result.success) {
       userStore.setCurrentUser(null)
       ElMessage.success(result.message || '退出登录成功')
-      await router.replace({ path: '/', query: { auth: '1', redirect: '/chat' } })
+      await router.replace(isDesktop() ? { path: '/login' } : { path: '/', query: { auth: '1', redirect: '/chat' } })
     } else {
       ElMessage.error(result.message || '退出登录失败')
     }
@@ -1661,13 +1648,6 @@ onUnmounted(() => {
   flex: 1;
 }
 
-.chat-nav-chevron {
-  flex: 0 0 auto;
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--text-disabled);
-}
-
 .chat-nav-trigger:hover {
   border-color: var(--border-light);
   background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
@@ -1957,16 +1937,6 @@ onUnmounted(() => {
   line-height: 1.2;
 }
 
-.chat-project-arrow {
-  display: none;
-}
-
-.chat-project-item:hover .chat-project-arrow,
-.chat-project-row.active .chat-project-arrow {
-  color: var(--primary-color);
-  transform: translateX(1px);
-}
-
 .chat-project-row.active {
   background: var(--primary-fade);
   color: var(--primary-color);
@@ -2190,17 +2160,6 @@ onUnmounted(() => {
 
 .history-action__copy small {
   display: none;
-}
-
-.history-action__arrow {
-  flex: 0 0 auto;
-  color: var(--text-disabled);
-  font-size: 13px;
-  transition: transform 0.16s ease;
-}
-
-.history-action:hover .history-action__arrow {
-  transform: translateX(2px);
 }
 
 .app-sidebar.collapsed .sidebar-menu :deep(.el-menu-item) {

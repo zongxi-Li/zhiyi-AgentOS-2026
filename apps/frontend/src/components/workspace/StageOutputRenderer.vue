@@ -36,9 +36,11 @@
               >
                 <div class="stage-output-viewer__item-content">
                   <template v-if="isRecord(item)">
-                    <p v-if="primaryEntry(item)" class="stage-output-viewer__semantic">
-                      {{ displayValue(primaryEntry(item)?.[1]) }}
-                    </p>
+                    <StructuredValue
+                      v-if="primaryEntry(item)"
+                      :value="primaryEntry(item)?.[1]"
+                      :markdown="isRichTextKey(primaryEntry(item)?.[0] || '')"
+                    />
                     <div v-if="metadataEntries(item).length" class="stage-output-viewer__metadata">
                       <template v-for="[fieldKey, fieldValue] in metadataEntries(item)" :key="fieldKey">
                         <button
@@ -55,7 +57,7 @@
                     <dl v-if="secondaryEntries(item).length" class="stage-output-viewer__fields">
                       <div v-for="[fieldKey, fieldValue] in secondaryEntries(item)" :key="fieldKey">
                         <dt>{{ labelForKey(fieldKey) }}</dt>
-                        <dd :class="valueClass(fieldValue)">{{ displayValue(fieldValue) }}</dd>
+                        <dd :class="valueClass(fieldValue)"><StructuredValue :value="fieldValue" /></dd>
                       </div>
                     </dl>
                   </template>
@@ -67,7 +69,7 @@
             <dl v-else-if="isRecord(section.value)" class="stage-output-viewer__fields">
               <div v-for="[fieldKey, fieldValue] in recordEntries(section.value)" :key="fieldKey">
                 <dt>{{ labelForKey(fieldKey) }}</dt>
-                <dd :class="valueClass(fieldValue)">{{ displayValue(fieldValue) }}</dd>
+                <dd :class="valueClass(fieldValue)"><StructuredValue :value="fieldValue" /></dd>
               </div>
             </dl>
             <p v-else class="stage-output-viewer__semantic">{{ displayValue(section.value) }}</p>
@@ -75,9 +77,9 @@
         </section>
       </div>
 
-      <details class="stage-output-viewer__source">
-        <summary>STRUCTURED SOURCE</summary>
-        <div class="stage-output-viewer__source-preview">
+      <details class="stage-output-viewer__source" @toggle="onSourceToggle">
+        <summary @click="sourceOpen = true">STRUCTURED SOURCE</summary>
+        <div v-if="sourceOpen" class="stage-output-viewer__source-preview">
           <div v-if="isStructured" class="stage-output-viewer__source-sections">
             <section v-for="section in sections" :key="section.key" class="stage-output-viewer__source-section">
               <div class="stage-output-viewer__source-section-head">
@@ -102,9 +104,9 @@
             </section>
           </div>
           <pre v-else class="stage-output-viewer__source-fallback">{{ value }}</pre>
-          <details class="stage-output-viewer__raw">
-            <summary>RAW JSON</summary>
-            <pre>{{ value }}</pre>
+          <details class="stage-output-viewer__raw" @toggle="onRawToggle">
+            <summary @click="rawOpen = true">RAW JSON</summary>
+            <pre v-if="rawOpen">{{ value }}</pre>
           </details>
         </div>
       </details>
@@ -115,8 +117,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import EditorObjectRow from './EditorObjectRow.vue'
+import StructuredValue from './StructuredValue.vue'
 
 type JsonRecord = Record<string, unknown>
 
@@ -165,7 +168,7 @@ const keyLabels: Record<string, string> = {
   validation: '\u9a8c\u8bc1\u72b6\u6001',
   status: '\u72b6\u6001'
 }
-const primaryKeys = ['constraint', 'criterion', 'acceptance_criteria', 'assumption', 'finding', 'decision', 'summary', 'description', 'title', 'text']
+const primaryKeys = ['constraint', 'criterion', 'acceptance_criteria', 'assumption', 'finding', 'decision', 'summary', 'overview', 'description', 'title', 'content', 'text']
 const metadataKeys = new Set(['mandatory', 'required', 'source', 'sourceRef', 'source_ref', 'status', 'validation', 'validationStatus', 'validation_status', 'provenance'])
 const referenceKeys = new Set(['source', 'sourceRef', 'source_ref', 'provenance'])
 
@@ -184,12 +187,31 @@ const sections = computed(() => {
   return []
 })
 const collapsedSections = ref(new Set<string>())
+const sourceOpen = ref(false)
+const rawOpen = ref(false)
 const isSectionOpen = (key: string) => !collapsedSections.value.has(key)
 const toggleSection = (key: string) => {
   const next = new Set(collapsedSections.value)
   if (next.has(key)) next.delete(key)
   else next.add(key)
   collapsedSections.value = next
+}
+const isLargeSection = (value: unknown) => {
+  if (Array.isArray(value) && value.length > 20) return true
+  if (isRecord(value) && Object.keys(value).length > 14) return true
+  if (typeof value === 'string') return value.length > 8000
+  try { return JSON.stringify(value).length > 12000 } catch { return false }
+}
+watch(sections, (next) => {
+  const autoCollapsed = next.filter(section => isLargeSection(section.value)).map(section => section.key)
+  if (!autoCollapsed.length) return
+  collapsedSections.value = new Set([...collapsedSections.value, ...autoCollapsed])
+}, { immediate: true })
+const onSourceToggle = (event: Event) => {
+  sourceOpen.value = (event.currentTarget as HTMLDetailsElement).open
+}
+const onRawToggle = (event: Event) => {
+  rawOpen.value = (event.currentTarget as HTMLDetailsElement).open
 }
 
 const recordEntries = (value: JsonRecord) => Object.entries(value)
@@ -234,6 +256,7 @@ const valueClass = (value: unknown) => ({
   'is-code': typeof value !== 'string' || value === null,
   'is-boolean': typeof value === 'boolean'
 })
+const isRichTextKey = (key: string) => ['content', 'overview', 'description', 'summary', 'final_answer', 'report', 'report_markdown'].includes(key)
 const selectionFor = (sectionKey: string, index: number, value: unknown): StageOutputSelection => {
   const title = isRecord(value)
     ? displayValue(primaryEntry(value)?.[1] || value.title || labelForKey(sectionKey))
@@ -275,7 +298,7 @@ const selectionFor = (sectionKey: string, index: number, value: unknown): StageO
 .stage-output-viewer__meta--reference:hover { color: var(--wb-accent); }
 .stage-output-viewer__meta.is-hard { color: color-mix(in srgb, var(--wb-warning) 62%, var(--wb-text-muted)); }
 .stage-output-viewer__meta.is-validation { color: color-mix(in srgb, var(--wb-accent) 68%, var(--wb-text-muted)); }
-.stage-output-viewer__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px 14px; margin: 5px 0 0; }
+.stage-output-viewer__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px 24px; margin: 8px 0 0; }
 .stage-output-viewer__fields > div { min-width: 0; }
 .stage-output-viewer__fields dt { margin-bottom: 1px; color: var(--wb-text-muted); font-size: 11px; }
 .stage-output-viewer__fields dd { min-width: 0; margin: 0; color: var(--wb-text-secondary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }

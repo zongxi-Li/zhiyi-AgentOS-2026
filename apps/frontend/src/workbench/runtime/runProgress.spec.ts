@@ -101,6 +101,32 @@ describe('projectRunProgress', () => {
     expect(design).toMatchObject({ status: 'failed', errorCode: 'TOOL_TIMEOUT' })
   })
 
+  it('derives a task duration from start and completion timestamps when no duration is supplied', () => {
+    const timeline = projectRunProgress(observation([
+      traceEvent('t1', { status: 'started' }, {
+        stepId: 'node_a',
+        eventType: 'step_started',
+        timestamp: '2026-09-02T00:00:01.000Z'
+      }),
+      traceEvent('t2', { status: 'succeeded' }, {
+        stepId: 'node_a',
+        eventType: 'step_completed',
+        timestamp: '2026-09-02T00:00:02.250Z'
+      })
+    ]), graphNodes)
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'success', durationMs: 1250 })
+  })
+
+  it('does not turn missing task duration data into zero milliseconds', () => {
+    const timeline = projectRunProgress(observation([
+      traceEvent('t1', { status: 'started' }, { stepId: 'node_a', eventType: 'step_started' }),
+      traceEvent('t2', { status: 'succeeded' }, { stepId: 'node_a', eventType: 'step_completed' })
+    ]), graphNodes)
+
+    expect(timeline.tasks[0].durationMs).toBeNull()
+  })
+
   it('returns an empty timeline without inventing planner state for legacy-free runs', () => {
     const timeline = projectRunProgress(observation([]), graphNodes)
 

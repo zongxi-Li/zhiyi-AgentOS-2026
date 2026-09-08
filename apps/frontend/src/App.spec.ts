@@ -227,10 +227,10 @@ describe('App Agent project sidebar', () => {
     })
     await flushPromises()
 
-    expect(wrapper.findAll('.chat-project-action')).toHaveLength(3)
+    expect(wrapper.findAll('.chat-project-action')).toHaveLength(2)
     expect(wrapper.find('.chat-project-action--edit').exists()).toBe(true)
     expect(wrapper.find('.chat-project-action--delete').exists()).toBe(true)
-    expect(wrapper.find('.chat-project-action--open').exists()).toBe(true)
+    expect(wrapper.find('.chat-project-action--open').exists()).toBe(false)
 
     await wrapper.find('.chat-project-row').trigger('contextmenu', { clientX: 120, clientY: 160 })
     await flushPromises()

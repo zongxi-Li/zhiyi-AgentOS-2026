@@ -86,6 +86,10 @@ const projection = (overrides: Partial<MissionWorkspaceProjection> = {}): Missio
   ...overrides
 } as MissionWorkspaceProjection)
 
+const topologyStub = {
+  template: '<div data-testid="acg-preview" />'
+}
+
 const mountEditor = (props: Record<string, unknown> = {}) => mount(RunProgressEditor, {
   props: {
     entry: entry(),
@@ -94,7 +98,8 @@ const mountEditor = (props: Record<string, unknown> = {}) => mount(RunProgressEd
     runId: 'run_1',
     runtimeObservation: observation(plannerEvents()),
     ...props
-  }
+  },
+  global: { stubs: { AcgTopologyGraph: topologyStub } }
 })
 const runtimeEvent = (sequence: number, eventType: string) => ({
   eventId: `runtime-${sequence}`,
@@ -133,9 +138,22 @@ describe('RunProgressEditor', () => {
     expect(wrapper.findAll('.run-progress__column')[1].text()).toContain('Intent Profile')
     expect(wrapper.find('.run-symbol__body').exists()).toBe(false)
 
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(2)
+
     const taskPlan = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Task Plan'))!
     await taskPlan.find('.run-symbol__main').trigger('click')
     expect(wrapper.findAll('.run-progress__column')).toHaveLength(3)
+  })
+
+  it('lets the graph column use the remaining editor width', async () => {
+    const wrapper = mountEditor()
+
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    await wrapper.get('[data-symbol-type="acg"] .run-symbol__main').trigger('click')
+
+    expect(wrapper.find('.run-progress__column.is-graph-column').exists()).toBe(true)
+    expect(wrapper.find('.run-progress__column.is-detail-column').exists()).toBe(false)
   })
 
   it('shows a flat inspector column for the selected leaf symbol', async () => {
@@ -210,7 +228,7 @@ describe('RunProgressEditor', () => {
     expect(done.text()).toContain('18s')
   })
 
-  it('preserves manual collapse and expand across polling updates', async () => {
+  it('preserves manual expansion across polling updates and repeated clicks', async () => {
     const wrapper = mountEditor({
       runtimeObservation: observation(plannerEvents())
     })
@@ -224,7 +242,7 @@ describe('RunProgressEditor', () => {
     expect(wrapper.find('.run-progress-group').classes()).toContain('is-open')
 
     await wrapper.find('.run-progress-group__head').trigger('click')
-    expect(wrapper.find('.run-progress-group').classes()).not.toContain('is-open')
+    expect(wrapper.find('.run-progress-group').classes()).toContain('is-open')
   })
 
   it('selects the semantic task without forcing an editor switch', async () => {
@@ -241,7 +259,7 @@ describe('RunProgressEditor', () => {
     expect(emitted!.at(-1)).toEqual(['requirements.analysis'])
   })
 
-  it('opens the existing graph editor and artifact editor through existing channels', async () => {
+  it('shows the graph beside the outline and opens artifacts through the existing channel', async () => {
     const wrapper = mountEditor({
       runtimeObservation: observation([
         ...plannerEvents(),
@@ -249,9 +267,11 @@ describe('RunProgressEditor', () => {
       ])
     })
 
-    // Finder-style columns keep graph and result as sibling sections.
-    await wrapper.find('.run-progress-result__action').trigger('click')
-    expect(wrapper.emitted('locateGraph')![0][0]).toMatchObject({ kind: 'graph' })
+    const acg = wrapper.get('[data-symbol-type="acg"]')
+    await acg.find('.run-symbol__main').trigger('click')
+    expect(wrapper.find('[data-testid="acg-preview"]').exists()).toBe(true)
+    expect(wrapper.find('.run-progress-result__action').exists()).toBe(false)
+    expect(wrapper.emitted('locateGraph')).toBeUndefined()
 
     const stepArtifact = wrapper.get('[data-symbol-type="artifact"]')
     await stepArtifact.find('.run-progress-artifact__open').trigger('click')

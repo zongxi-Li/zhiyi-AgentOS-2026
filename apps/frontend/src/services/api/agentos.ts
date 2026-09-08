@@ -649,6 +649,16 @@ export interface ArtifactContentResponse extends ArtifactDetail {
   content: string
 }
 
+const readBlobText = async (blob: Blob): Promise<string> => {
+  if (typeof blob.text === 'function') return blob.text()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Unable to read artifact response'))
+    reader.readAsText(blob)
+  })
+}
+
 export interface RunOutputResponse {
   runId: string
   outputRef: string
@@ -1261,22 +1271,14 @@ export const agentosApi = {
     contentRef: string,
     options: { signal?: AbortSignal } = {}
   ): Promise<ArtifactContentResponse> {
-    const detail = await this.getArtifactDetail(runId, contentRef, options)
-    const items: ArtifactFragment[] = []
-    let cursor: string | undefined
-    do {
-      const response = await agentosRequest.get<{
-        manifest: ArtifactDetail
-        items: ArtifactFragment[]
-        nextCursor?: string | null
-      }>(`${runPath(runId)}/artifacts/${encodeURIComponent(contentRef)}/fragments`, {
-        params: { cursor, pageSize: 200 },
-        signal: options.signal
-      })
-      items.push(...(response.data.items || []))
-      cursor = response.data.nextCursor || undefined
-    } while (cursor)
-    return { ...detail, content: items.map(item => item.content).join('') }
+    // Sealed artifacts already expose a verified streaming assembly endpoint.
+    // Reading that stream avoids one JSON request per fragment page and keeps
+    // large documents from being copied into several intermediate arrays.
+    const [detail, blob] = await Promise.all([
+      this.getArtifactDetail(runId, contentRef, options),
+      this.downloadArtifact(runId, contentRef, options)
+    ])
+    return { ...detail, content: await readBlobText(blob) }
   },
 
   async downloadArtifact(

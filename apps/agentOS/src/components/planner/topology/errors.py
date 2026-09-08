@@ -41,6 +41,9 @@ class TopologyCompileError(ValueError):
 
 def is_model_repair_eligible(conflict: TopologyConflict) -> bool:
     return (
-        conflict.code is TopologyConflictCode.DEPENDENCY_CYCLE
+        conflict.code in {
+            TopologyConflictCode.DEPENDENCY_CYCLE,
+            TopologyConflictCode.CAPABILITY_BINDING_CONFLICT,
+        }
         and bool(conflict.repairable_edges)
     )
