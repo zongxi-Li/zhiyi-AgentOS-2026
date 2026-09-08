@@ -34,6 +34,12 @@ services:
     build:
       context: ./apps/frontend
       dockerfile: Dockerfile.dev
+    # Vite/esbuild transforms the authenticated workspace's graph and
+    # visualization modules during development. The production nginx limit is
+    # intentionally small, but 256 MiB / 0.5 CPU can kill the esbuild child
+    # process and make the dev server restart in a loop.
+    cpus: ${KINLIN_FRONTEND_DEV_CPUS:-2}
+    mem_limit: ${KINLIN_FRONTEND_DEV_MEMORY:-1g}
     ports:
       - "127.0.0.1:${KINLIN_DEV_PORT:-3000}:3000"
     volumes:
