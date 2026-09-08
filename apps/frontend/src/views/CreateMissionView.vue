@@ -165,7 +165,7 @@
 
           <p v-if="errorMessage" class="create-mission__error" role="alert">{{ errorMessage }}</p>
           <footer class="create-mission__footer">
-            <span class="create-mission__footer-hint">创建 Mission 后立即启动首个 Run</span>
+            <!-- <span class="create-mission__footer-hint">创建 Mission 后立即启动首个 Run</span> -->
             <div class="create-mission__footer-actions">
               <button class="create-mission__cancel" type="button" @click="goBack">取消</button>
               <button class="create-mission__submit" type="submit" :disabled="submitting || fileState === 'parsing'" :aria-busy="submitting">
