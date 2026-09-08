@@ -41,6 +41,8 @@ import {
   type ModelCallUsage,
   type ModelCapabilitySnapshot,
   type ContentManifestSummary,
+  type RunMemoryEvent,
+  type RunMemoryEventsResponse,
 } from './agentos'
 
 export type {
@@ -72,6 +74,8 @@ export type {
   WorkflowProgress,
   WorkflowProgressPhase,
   WorkflowRunSummary,
+  RunMemoryEvent,
+  RunMemoryEventsResponse,
   ReviewDecision,
   StepStatus,
   TraceEvent,
@@ -127,6 +131,10 @@ export const workflowApi = {
 
   getRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     return agentosApi.getWorkflowRun(runId, options)
+  },
+
+  listMemoryEvents(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunMemoryEventsResponse> {
+    return agentosApi.listMemoryEvents(runId, options)
   },
 
   getRunResourceUsage(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunResourceUsage> {

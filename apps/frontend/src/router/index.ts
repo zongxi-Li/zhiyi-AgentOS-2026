@@ -167,6 +167,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/agentos/memory',
+    name: 'MemoryCenter',
+    component: () => import('@/views/MemoryView.vue'),
+    meta: {
+      title: 'Run Memory',
+      requiresAuth: true
+    }
+  },
+  {
     path: '/agentos/missions/new',
     name: 'CreateMission',
     component: () => import('@/views/CreateMissionView.vue'),

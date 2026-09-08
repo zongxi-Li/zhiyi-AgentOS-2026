@@ -271,6 +271,11 @@ public class AgentOsGatewayController {
         return response(gateway.get(runPath(runId) + "/trace"));
     }
 
+    @GetMapping("/runs/{runId}/memory-events")
+    public ResponseEntity<Map<String, Object>> getMemoryEvents(@PathVariable String runId) {
+        return response(gateway.get(runPath(runId) + "/memory-events"));
+    }
+
     @GetMapping("/runs/{runId}/provenance")
     public ResponseEntity<Map<String, Object>> getProvenance(@PathVariable String runId) {
         return response(gateway.get(runPath(runId) + "/provenance"));

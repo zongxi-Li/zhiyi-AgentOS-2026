@@ -71,6 +71,53 @@ export interface WorkflowRunSummary extends WorkflowProgress {
   createdAt?: string | null
 }
 
+export interface MemoryAccessEvent {
+  kind: 'memory_access'
+  stepId: string | null
+  retrievalMode: string | null
+  hitRefs: string[]
+  budget: number | null
+  fallbackReason: string | null
+  createdAt: string | null
+}
+
+export interface MemoryWriteEvent {
+  kind: 'memory_event'
+  eventId?: string
+  runId?: string
+  stepId?: string | null
+  commitId?: string
+  summary?: string
+  evidenceRefs?: string[]
+  metrics?: {
+    fieldCount?: number
+    evidenceCount?: number
+    modelInvocationCount?: number
+    toolCallCount?: number
+  }
+  decision?: string
+  relations?: Array<{ sourceStepId: string; targetStepId: string }>
+  [key: string]: unknown
+}
+
+export interface PhaseCapsuleEvent {
+  kind: 'phase_capsule'
+  phaseId?: string
+  capsuleRef?: string
+  sourceMemoryRefs?: string[]
+  evidenceRefs?: string[]
+  tokenCount?: number
+  [key: string]: unknown
+}
+
+export type RunMemoryEvent = MemoryAccessEvent | MemoryWriteEvent | PhaseCapsuleEvent
+
+export interface RunMemoryEventsResponse {
+  runId: string
+  items: RunMemoryEvent[]
+  total: number
+}
+
 export interface WorkflowExecutionState {
   parentRunId?: string | null
   sourceRunId?: string | null
@@ -1258,6 +1305,16 @@ export const agentosApi = {
 
   async getWorkflowRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     const response = await agentosRequest.get<WorkflowRun>(runPath(runId), {
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async listMemoryEvents(
+    runId: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<RunMemoryEventsResponse> {
+    const response = await agentosRequest.get<RunMemoryEventsResponse>(`${runPath(runId)}/memory-events`, {
       signal: options.signal
     })
     return response.data

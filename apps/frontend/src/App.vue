@@ -72,6 +72,10 @@
               </el-menu-item>
 
               <div v-if="!mainSidebarCompact" class="menu-group-title">{{ $t('nav.system') }}</div>
+              <el-menu-item index="/agentos/memory">
+                <el-icon><Coin /></el-icon>
+                <span>运行记忆</span>
+              </el-menu-item>
               <el-menu-item index="/agentos/resources">
                 <el-icon><Cpu /></el-icon>
                 <span>资源中心</span>
@@ -466,7 +470,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowDown, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
   Clock, Setting, SwitchButton,
-  Monitor, Cpu,
+  Monitor, Cpu, Coin,
   Fold
 } from '@element-plus/icons-vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
