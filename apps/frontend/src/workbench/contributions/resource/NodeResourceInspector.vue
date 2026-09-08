@@ -2,12 +2,17 @@
   <InspectorSection title="Resource" :badge="binding ? healthLabel(resourceHealth) : 'not observed'">
     <InspectorPropertyList :rows="[
       { label: 'resourceId', value: binding?.resourceId || '未观测', code: true },
+      { label: 'deploymentTier', value: tierLabel(binding?.deploymentTier) },
       { label: 'agentId', value: binding?.agentId || '未观测', code: true },
       { label: 'modelId', value: binding?.modelId || '未观测', code: true },
       { label: 'bindingId', value: binding?.bindingId || '未观测', code: true },
       { label: 'attemptId', value: binding?.attemptId || graphNode.attemptId, code: true },
       { label: 'health', value: binding ? healthLabel(resourceHealth) : '未观测' }
     ]" />
+    <div v-if="binding?.placementReasons.length" class="resource-reasons">
+      <strong>调度理由</strong>
+      <span v-for="reason in binding.placementReasons" :key="reason">{{ reason }}</span>
+    </div>
     <p v-if="!binding" class="resource-empty">当前节点没有可证明的 ExecutionBinding。</p>
   </InspectorSection>
 </template>
@@ -43,8 +48,15 @@ const healthLabel = (value: string) => ({
   degraded: 'Degraded',
   offline: 'Offline'
 }[value] || value || 'Unknown / 未知')
+
+const tierLabel = (value?: string | null) => ({
+  local: '本地', terminal: '端侧', edge: '边缘', cloud: '云端'
+}[value || ''] || value || '未分层')
 </script>
 
 <style scoped>
 .resource-empty { margin: 10px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.resource-reasons { display: flex; gap: 5px; margin-top: 10px; flex-wrap: wrap; }
+.resource-reasons strong { width: 100%; color: var(--text-muted); font-size: 10px; font-weight: 500; }
+.resource-reasons span { padding: 2px 5px; border: 1px solid var(--border-light); color: var(--text-muted); font: 9px var(--font-mono, monospace); }
 </style>

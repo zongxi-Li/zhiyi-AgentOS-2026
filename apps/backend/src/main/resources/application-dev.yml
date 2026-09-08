@@ -27,8 +27,16 @@ spring:
       enabled: true
       path: /h2-console
   
+  cache:
+    type: simple
+
   # 禁用Redis（使用内存缓存替代）
   data:
+    redis:
+      enabled: false
+
+management:
+  health:
     redis:
       enabled: false
 

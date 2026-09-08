@@ -15,11 +15,19 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
+
+  cache:
+    type: simple
   
   data:
     redis:
       host: localhost
       port: 6379
+
+management:
+  health:
+    redis:
+      enabled: false
 
 ai:
   service:
@@ -29,4 +37,3 @@ ai:
 logging:
   level:
     com.kinlin.ai: DEBUG
-

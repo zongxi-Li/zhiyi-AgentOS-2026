@@ -3,6 +3,7 @@
     <InspectorSection v-if="selectedBinding" title="节点资源" :badge="healthLabel(selectedHealth)">
       <InspectorPropertyList :rows="[
         { label: 'resourceId', value: selectedBinding.resourceId, code: true },
+        { label: 'deploymentTier', value: tierLabel(selectedBinding.deploymentTier) },
         { label: 'agentId', value: selectedBinding.agentId, code: true },
         { label: 'modelId', value: selectedBinding.modelId, code: true },
         { label: 'ExecutionBinding', value: selectedBinding.bindingId, code: true },
@@ -27,10 +28,16 @@
         <div v-for="resource in boundResources" :key="resource.resourceId" class="resource-list__row">
           <div>
             <strong>{{ resource.resourceId }}</strong>
-            <span>{{ resource.agentId }} · {{ resource.modelId }}</span>
+            <span>{{ tierLabel(resource.deploymentTier) }} · {{ resource.agentId }} · {{ resource.modelId }}</span>
           </div>
           <span>{{ healthLabel(resource.health) }}</span>
         </div>
+      </div>
+      <div v-if="resourceObservation?.failoverEvents?.length" class="resource-switch-list" aria-label="资源切换记录">
+        <strong>资源切换</strong>
+        <span v-for="event in resourceObservation.failoverEvents" :key="event.eventId">
+          {{ event.failedResources.map(item => item.resourceId).join('、') }} → {{ event.retryStepIds.join('、') || '原步骤' }}
+        </span>
       </div>
       <p v-else class="sidebar-empty">{{ resourceObservation ? '当前 Run 没有可证明的资源绑定。' : '未观测到 Resource。' }}</p>
     </InspectorSection>
@@ -74,7 +81,7 @@ const healthLabel = (value: string | null | undefined) => ({
 const boundResources = computed(() => {
   const observation = props.resourceObservation
   if (!observation) return []
-  const grouped = new Map<string, { resourceId: string; agentId: string; modelId: string; health: string }>()
+  const grouped = new Map<string, { resourceId: string; agentId: string; modelId: string; health: string; deploymentTier: string | null }>()
   for (const binding of observation.bindings) {
     if (grouped.has(binding.resourceId)) continue
     const profile = observation.items.find(item => item.profile.resourceId === binding.resourceId)
@@ -82,7 +89,8 @@ const boundResources = computed(() => {
       resourceId: binding.resourceId,
       agentId: binding.agentId,
       modelId: binding.modelId,
-      health: profile?.snapshot.healthStatus || 'unknown'
+      health: profile?.snapshot.healthStatus || 'unknown',
+      deploymentTier: binding.deploymentTier || profile?.profile.deploymentTier || null
     })
   }
   return [...grouped.values()]
@@ -91,6 +99,9 @@ const boundResources = computed(() => {
 const boundResourceCount = computed(() => boundResources.value.length)
 const agentCount = computed(() => new Set((props.resourceObservation?.bindings || []).map(item => item.agentId)).size)
 const modelCount = computed(() => new Set((props.resourceObservation?.bindings || []).map(item => item.modelId)).size)
+const tierLabel = (value?: string | null) => ({
+  local: '本地', terminal: '端侧', edge: '边缘', cloud: '云端'
+}[value || ''] || value || '未分层')
 </script>
 
 <style scoped>
@@ -105,5 +116,7 @@ const modelCount = computed(() => new Set((props.resourceObservation?.bindings |
 .resource-list__row strong { overflow: hidden; color: var(--wb-text); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .resource-list__row div span, .resource-list__row > span { color: var(--wb-text-muted); font-size: 10px; }
 .resource-list__row > span { flex: 0 0 auto; }
+.resource-switch-list { display: grid; gap: 5px; margin-top: 10px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); color: var(--wb-text-muted); font-size: 10px; }
+.resource-switch-list span { color: var(--wb-text-secondary); font: 9px var(--font-mono, monospace); }
 .sidebar-empty { margin: 10px 0 0; color: var(--wb-text-muted); font-size: 11px; line-height: 1.5; }
 </style>

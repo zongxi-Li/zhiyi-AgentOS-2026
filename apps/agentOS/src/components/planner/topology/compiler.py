@@ -65,7 +65,10 @@ class TaskPlanTopologyCompiler:
     ) -> TopologyCompileResult:
         positions = {node.key: index for index, node in enumerate(nodes)}
         capabilities = {
-            node.key: (node.capability_requirements[0] if node.capability_requirements else None)
+            node.key: (
+                self.capability_catalog.resolve(node.capability_requirements[0]).capability_id
+                if node.capability_requirements else None
+            )
             for node in nodes
         }
         edges: list[TopologyEdge] = []
