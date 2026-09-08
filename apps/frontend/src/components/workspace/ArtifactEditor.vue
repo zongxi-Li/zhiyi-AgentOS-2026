@@ -55,12 +55,14 @@ const loading = ref(false)
 const errorMessage = ref('')
 let controller: AbortController | null = null
 
+const normalizeMediaType = (value: string) => value.toLowerCase().split(';', 1)[0].trim()
 const contentRef = computed(() => props.entry.contentRef || props.entry.artifactId || '')
-const mediaType = computed(() => (content.value?.mediaType || props.entry.mediaType || '').toLowerCase())
+const mediaType = computed(() => normalizeMediaType(content.value?.mediaType || props.entry.mediaType || ''))
 const renderer = computed<'markdown' | 'text' | 'json' | 'generic'>(() => {
   if (mediaType.value === 'text/markdown' || mediaType.value.endsWith('+markdown')) return 'markdown'
   if (mediaType.value === 'text/plain') return 'text'
   if (mediaType.value === 'application/json' || mediaType.value.endsWith('+json')) return 'json'
+  if (mediaType.value.startsWith('text/')) return 'text'
   return 'generic'
 })
 const renderedMarkdown = computed(() => renderMarkdown(content.value?.content || ''))
@@ -70,7 +72,18 @@ const formattedJson = computed(() => {
   catch { return raw }
 })
 const canLocateGraph = computed(() => props.available && props.entry.identityQuality !== 'legacy' && Boolean(props.entry.semanticTaskKey))
-const bodyReadable = (value: string) => value === 'text/markdown' || value === 'text/plain' || value === 'application/json' || value.endsWith('+markdown') || value.endsWith('+json')
+const bodyReadable = (value: string) => {
+  const normalized = normalizeMediaType(value)
+  return normalized.startsWith('text/') || normalized === 'application/json' || normalized.endsWith('+markdown') || normalized.endsWith('+json')
+}
+const inlineContent = () => {
+  if (typeof props.entry.content !== 'string') return null
+  return {
+    manifestId: props.entry.contentRef || props.entry.artifactId || props.entry.entryId,
+    mediaType: normalizeMediaType(props.entry.mediaType || 'text/plain') || 'text/plain',
+    content: props.entry.content
+  } as ArtifactContentResponse
+}
 
 const loadContent = async () => {
   controller?.abort()
@@ -81,16 +94,20 @@ const loadContent = async () => {
   const requestController = controller
   loading.value = true
   try {
-    const requestedMediaType = (props.entry.mediaType || '').toLowerCase()
-    if (bodyReadable(requestedMediaType)) {
+    const requestedMediaType = normalizeMediaType(props.entry.mediaType || '')
+    const typeHint = requestedMediaType || normalizeMediaType(props.entry.artifactType || '')
+    if (bodyReadable(typeHint) || !typeHint) {
       content.value = await agentosApi.getArtifactContent(props.runId, contentRef.value, { signal: requestController.signal })
     } else {
       const detail = await agentosApi.getArtifactDetail(props.runId, contentRef.value, { signal: requestController.signal })
-      content.value = { ...detail, content: '' }
+      const detailContent = (detail as ArtifactContentResponse).content
+      content.value = { ...detail, content: typeof detailContent === 'string' ? detailContent : '' }
     }
   } catch (error: unknown) {
     if ((error as { name?: string }).name === 'CanceledError' || (error as { name?: string }).name === 'AbortError') return
-    errorMessage.value = '无法读取当前 Run 的 sealed ContentManifest。'
+    const fallback = inlineContent()
+    if (fallback) content.value = fallback
+    else errorMessage.value = '无法读取当前 Run 的 sealed ContentManifest。'
   } finally {
     if (controller === requestController && !requestController.signal.aborted) loading.value = false
   }

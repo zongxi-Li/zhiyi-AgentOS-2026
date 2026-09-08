@@ -42,6 +42,14 @@ describe('ArtifactEditor', () => {
     expect(wrapper.find('.markdown-body').exists()).toBe(false)
   })
 
+  it('normalizes media types with parameters before choosing a readable renderer', async () => {
+    vi.spyOn(agentosApi, 'getArtifactContent').mockResolvedValue({ mediaType: 'text/markdown; charset=utf-8', content: '# Read me', manifestId: 'manifest_1' })
+    const wrapper = mountEditor({ mediaType: 'text/markdown; charset=utf-8' })
+    await flushPromises()
+    expect(wrapper.find('.markdown-body').exists()).toBe(true)
+    expect(wrapper.find('.markdown-body').text()).toContain('Read me')
+  })
+
   it('keeps unknown media types in a generic preview', async () => {
     const getContent = vi.spyOn(agentosApi, 'getArtifactContent')
     vi.spyOn(agentosApi, 'getArtifactDetail').mockResolvedValue({ mediaType: 'application/pdf', manifestId: 'manifest_1', byteLength: 12 })

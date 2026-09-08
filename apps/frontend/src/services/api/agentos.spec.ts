@@ -388,20 +388,16 @@ describe('AgentOS v2 application API', () => {
     expect(get).not.toHaveBeenCalledWith(expect.stringContaining('/artifacts/'), expect.anything())
   })
 
-  it('reads sealed Artifact fragments only when content is requested', async () => {
+  it('reads sealed Artifact content through the streaming assembly endpoint', async () => {
     const get = vi.spyOn(agentosRequest, 'get')
       .mockResolvedValueOnce({ data: { manifestId: 'manifest_1', mediaType: 'text/plain' } } as never)
-      .mockResolvedValueOnce({ data: { manifest: { manifestId: 'manifest_1' }, items: [{ content: 'first' }], nextCursor: 'next' } } as never)
-      .mockResolvedValueOnce({ data: { manifest: { manifestId: 'manifest_1' }, items: [{ content: ' second' }], nextCursor: null } } as never)
+      .mockResolvedValueOnce({ data: new Blob(['first second']) } as never)
 
     await expect(agentosApi.getArtifactContent('run_1', 'manifest_1')).resolves.toMatchObject({
       manifestId: 'manifest_1', content: 'first second'
     })
-    expect(get).toHaveBeenNthCalledWith(2, '/runs/run_1/artifacts/manifest_1/fragments', expect.objectContaining({
-      params: { cursor: undefined, pageSize: 200 }
-    }))
-    expect(get).toHaveBeenNthCalledWith(3, '/runs/run_1/artifacts/manifest_1/fragments', expect.objectContaining({
-      params: { cursor: 'next', pageSize: 200 }
+    expect(get).toHaveBeenCalledWith('/runs/run_1/artifacts/manifest_1/download', expect.objectContaining({
+      responseType: 'blob'
     }))
   })
 

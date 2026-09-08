@@ -1,7 +1,8 @@
 <template>
-  <InspectorSection title="Result" :badge="selectedSymbol?.subtitle || 'selected'">
-    <div class="task-result-inspector__title">{{ selectedSymbol?.title }}</div>
-    <InspectorPropertyList :rows="rows" />
+    <InspectorSection title="Result" :badge="selectedSymbol?.subtitle || 'selected'">
+      <div class="task-result-inspector__title">{{ selectedSymbol?.title }}</div>
+      <StructuredValue v-if="parsedValue" :value="parsedValue" />
+      <InspectorPropertyList v-else :rows="rows" />
   </InspectorSection>
 </template>
 
@@ -10,6 +11,7 @@ import { computed } from 'vue'
 import type { WorkspaceEntry } from '@/services/api/agentos'
 import InspectorPropertyList, { type InspectorProperty } from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
+import StructuredValue from '@/components/workspace/StructuredValue.vue'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 
 const props = defineProps<{
