@@ -698,7 +698,10 @@ const render = async () => {
   // Update labels/status in place so existing positions and user dragging are preserved.
   if (network && nodesData && edgesData && graphDataKey === nextDataKey) return
   if (network && nodesData && edgesData && graphStructureKey === nextStructureKey) {
-    nodesData.update(nodeRows)
+    // 起终点行的初始坐标 (0,±440) 只是首次布局的占位：placeEndpointsSafely
+    // 已把它们摆到内容包围盒外。就地更新时必须剥掉坐标，否则每次投影刷新
+    // 都会把起终点拽回图中央（内容 cluster 内部）。
+    nodesData.update(nodeRows.map(({ x: _initX, y: _initY, ...row }) => row))
     edgesData.update(edgeRows)
     graphDataKey = nextDataKey
     return
