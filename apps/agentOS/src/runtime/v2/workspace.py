@@ -144,6 +144,7 @@ class MissionWorkspaceProjector:
         "final_output",
         "synthesis",
         "final_synthesis",
+        "aggregate",
     }
 
     def __init__(self, repositories: RepositorySet, content_manifest_store: Any | None = None) -> None:

@@ -41,7 +41,7 @@ def _runtime_binding(run_id: str, attempt_id: str, node_id: str) -> RuntimeExecu
     )
 
 
-def _mission_graph(service, bridge):
+def _mission_graph(service, bridge, *, final_role="deliverable"):
     mission = service.create_mission(user_id="user-1", goal="设备人员规划")
     plan = TaskPlan(
         missionId=mission.mission_id,
@@ -59,7 +59,7 @@ def _mission_graph(service, bridge):
                 title="最终交付",
                 objective="汇总并交付最终方案",
                 capabilityRequirements=("artifact_generation",),
-                logicalRole="deliverable",
+                logicalRole=final_role,
             ),
         ),
     )
@@ -82,7 +82,7 @@ def _mission_graph(service, bridge):
                     name="最终交付",
                     agentName="delivery-agent",
                     capability="artifact_generation",
-                    logicalRole="deliverable",
+                    logicalRole=final_role,
                 ),
             ],
             edges=[ACGEdge(sourceId="equipment-node", targetId="final-node", edgeType=EdgeType.DEPENDENCY)],
@@ -270,6 +270,27 @@ def test_workspace_artifact_entries_support_multiple_slots_and_final_output(tmp_
         assert final.parent_entry_id == "folder:output"
         assert next(item for item in projection.entries if item.entry_id == "task:final_delivery").artifact_count == 2
         assert all(item.content is None for item in artifacts)
+    finally:
+        _close(foundation)
+
+
+def test_workspace_aggregate_primary_artifact_is_projected_to_output(tmp_path):
+    foundation = _foundation(tmp_path)
+    _storage, service, bridge, content, query = foundation
+    try:
+        mission, tasks, blueprint = _mission_graph(service, bridge, final_role="aggregate")
+        run = _run(service, mission.mission_id, blueprint.blueprint_id, status=RunStatus.SUCCEEDED)
+        _artifact(service, bridge, content, run, tasks["final_delivery"].task_id, "final-node", "primary", "final report")
+
+        artifacts = [
+            item for item in query.mission_workspace(mission.mission_id).entries
+            if item.kind is WorkspaceEntryKind.ARTIFACT
+        ]
+
+        assert len(artifacts) == 1
+        assert artifacts[0].group == "output"
+        assert artifacts[0].name == "final.md"
+        assert artifacts[0].parent_entry_id == "folder:output"
     finally:
         _close(foundation)
 

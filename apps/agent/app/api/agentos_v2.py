@@ -460,19 +460,27 @@ def create_router(
             raise HTTPException(status_code=503, detail="identity query source unavailable")
         return identity_queries
 
+    def require_mission_owner_access(mission_id: str):
+        require_identity_queries()
+        mission = identity_repositories.missions.get(mission_id)
+        if mission is None:
+            raise HTTPException(status_code=404, detail="mission not found")
+        actor = current_trusted_user()
+        tenant = str(mission.metadata.get("tenantId") or "")
+        if actor is not None and (
+            mission.user_id != actor.user_id
+            or (tenant and tenant != actor.tenant_id)
+        ):
+            raise HTTPException(status_code=404, detail="mission not found")
+        return mission
+
     def require_mission_access(mission_id: str):
         query = require_identity_queries()
+        require_mission_owner_access(mission_id)
         try:
             detail = query.get_mission(mission_id)
         except EntityNotFoundError as exc:
             raise HTTPException(status_code=404, detail="mission not found") from exc
-        actor = current_trusted_user()
-        tenant = str(detail.mission.metadata.get("tenantId") or "")
-        if actor is not None and (
-            detail.mission.user_id != actor.user_id
-            or (tenant and tenant != actor.tenant_id)
-        ):
-            raise HTTPException(status_code=404, detail="mission not found")
         return detail
 
     def require_run_access(run_id: str):
@@ -480,7 +488,7 @@ def create_router(
         run = identity_repositories.runs.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
-        require_mission_access(run.mission_id)
+        require_mission_owner_access(run.mission_id)
         return query, run
 
     def load_run(run_id: str) -> RuntimeRunRecord:
@@ -1392,10 +1400,23 @@ def create_router(
 
     @router.get("/runs/{run_id}/outputs/{output_ref}")
     async def get_output(run_id: str, output_ref: str):
-        run = load_run(run_id)
-        allowed = set((_state(run).get("outputRefs") or {}).values())
-        if output_ref not in allowed:
-            raise HTTPException(status_code=404, detail="output not found")
+        # The output body already enforces both the owning run and the value kind.
+        # Prefer the compact V2 identity projection for access control so reading a
+        # small node result does not deserialize the complete Runtime Run snapshot
+        # (which can contain tens of thousands of trace events).  Keep the Runtime
+        # fallback for pre-identity/legacy runs and preserve its current-ref check.
+        identity_run = (
+            identity_repositories.runs.get(run_id)
+            if identity_repositories is not None
+            else None
+        )
+        if identity_run is not None:
+            require_mission_owner_access(identity_run.mission_id)
+        else:
+            run = load_run(run_id)
+            allowed = set((_state(run).get("outputRefs") or {}).values())
+            if output_ref not in allowed:
+                raise HTTPException(status_code=404, detail="output not found")
         try:
             content = runtime.execution_value_store.get_output(run_id=run_id, output_ref=output_ref)
         except (KeyError, ValueError) as exc:

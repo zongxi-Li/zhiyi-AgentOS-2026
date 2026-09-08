@@ -159,6 +159,32 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert any(event["payload"].get("prompt") == "[redacted]" for event in trace.json()["events"])
 
 
+async def test_v2_output_uses_identity_access_without_loading_full_runtime_run(tmp_path, monkeypatch) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    task = runtime.create_mission(
+        "Output lookup must stay lightweight",
+        workflow_id="api-workflow",
+    )
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
+    output_ref = run.output["outputRef"]
+
+    def fail_full_run_load(_run_id: str):
+        raise AssertionError("output lookup must not deserialize the Runtime Run snapshot")
+
+    monkeypatch.setattr(runtime, "get_status", fail_full_run_load)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        output = await client.get(f"/agentos/v2/runs/{run.run_id}/outputs/{output_ref}")
+        assert output.status_code == 200
+        assert output.json()["content"] == {"report": _SECRET}
+        missing = await client.get(
+            f"/agentos/v2/runs/{run.run_id}/outputs/output:{run.run_id}:missing:hash"
+        )
+        assert missing.status_code == 404
+
+
 def test_v2_runtime_events_endpoint_streams_http_before_publisher_finishes(tmp_path, monkeypatch) -> None:
     runtime = _runtime(tmp_path)
     task = runtime.create_mission("Runtime event HTTP stream", workflow_id="api-workflow")
