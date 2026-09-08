@@ -91,6 +91,7 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
   const leftAutoHidden = ref(false)
   const rightAutoHidden = ref(false)
   const rightCollapsedByUser = ref(false)
+  const rightRevealRequested = ref(false)
   const resizingSide = ref<WorkbenchPaneSide | null>(null)
 
   let resizeObserver: ResizeObserver | null = null
@@ -120,7 +121,14 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
   ))
 
   const toggleRightPane = () => {
-    rightCollapsedByUser.value = !rightCollapsedByUser.value
+    if (rightPaneVisible.value) {
+      rightCollapsedByUser.value = true
+      rightRevealRequested.value = false
+    } else {
+      rightCollapsedByUser.value = false
+      rightRevealRequested.value = rightAutoHidden.value
+    }
+    syncAutoHidden()
   }
 
   // 左侧导航被 auto-hide 后的"一键唤回"：窗口放不下"左+右+主"时先让右侧详情
@@ -133,6 +141,7 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
       && containerWidth.value < requiredWidth(true, true)
     ) {
       rightCollapsedByUser.value = true
+      rightRevealRequested.value = false
     }
     const availableLeft = containerWidth.value > 0
       ? containerWidth.value - mainMinWidth - HANDLE_WIDTH
@@ -168,13 +177,14 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
       return
     }
 
-    const includeLeft = true
+    const preferRightPane = rightRevealRequested.value && rightEnabled.value && !rightCollapsedByUser.value
+    const includeLeft = !preferRightPane
     const includeRight = Boolean(rightEnabled.value)
     const shouldAutoHideRight = includeRight && (
-      rightPaneWidth.value <= right.minWidth || width < requiredWidth(includeLeft, includeRight)
+      (!preferRightPane && rightPaneWidth.value <= right.minWidth) || width < requiredWidth(includeLeft, includeRight)
     )
     const shouldAutoHideLeft = (
-      leftPaneWidth.value <= left.minWidth || width < requiredWidth(includeLeft, includeRight && !shouldAutoHideRight)
+      leftPaneWidth.value <= left.minWidth || width < requiredWidth(true, includeRight && !shouldAutoHideRight)
     )
 
     rightAutoHidden.value = shouldAutoHideRight

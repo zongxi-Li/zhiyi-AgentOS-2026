@@ -180,6 +180,30 @@ describe('WorkbenchLayout', () => {
     wrapper.unmount()
   })
 
+  it('wakes an auto-hidden inspector by giving it priority over the left pane', async () => {
+    const wrapper = mountLayout()
+
+    await setContainerWidth(wrapper, 1000)
+    expect(layoutState(wrapper)).toMatchObject({
+      rightAutoHidden: true,
+      leftAutoHidden: false,
+      rightPaneVisible: false
+    })
+
+    await wrapper.find('.toggle-right').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.workbench-pane--right').exists()).toBe(true)
+    expect(wrapper.find('.workbench-pane--left').exists()).toBe(false)
+    expect(layoutState(wrapper)).toMatchObject({
+      rightAutoHidden: false,
+      leftAutoHidden: true,
+      rightPaneVisible: true
+    })
+
+    wrapper.unmount()
+  })
+
   it('mounts the optional bottom-panel slot inside the shared vertical split', () => {
     const wrapper = mount(WorkbenchLayout, {
       props: {
