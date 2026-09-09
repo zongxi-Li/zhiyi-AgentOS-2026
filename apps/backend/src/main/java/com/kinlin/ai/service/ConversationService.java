@@ -8,8 +8,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -40,18 +44,32 @@ public class ConversationService {
     }
 
     private List<Conversation> hydrateConversationPreviews(List<Conversation> conversations) {
-        // 为每个对话自动生成标题（如果还没有）
+        if (conversations.isEmpty()) {
+            return conversations;
+        }
+
+        List<UUID> conversationIds = conversations.stream()
+                .map(Conversation::getId)
+                .toList();
+        Map<UUID, String> userPreviews = new HashMap<>();
+        messageRepository.findFirstMessagePreviews(conversationIds, Message.MessageRole.USER)
+                .forEach(preview -> userPreviews.putIfAbsent(preview.getConversationId(), preview.getContent()));
+        Set<UUID> conversationsWithMessages = new HashSet<>(
+                messageRepository.findConversationIdsWithMessages(conversationIds)
+        );
+
+        // 批量读取首条用户消息，避免为每个对话单独查询完整消息列表。
         conversations.forEach(conv -> {
-            String preview = getPreviewContent(conv.getId());
+            String preview = userPreviews.get(conv.getId());
+            if (preview == null) {
+                preview = conversationsWithMessages.contains(conv.getId()) ? "暂无预览" : "暂无消息";
+            } else if (preview.length() > 50) {
+                preview = preview.substring(0, 50) + "...";
+            }
             conv.setPreview(preview);
             if (conv.getTitle() == null || conv.getTitle().isEmpty()) {
-                try {
-                    String title = preview.length() > 30 ? preview.substring(0, 30) + "..." : preview;
-                    conv.setTitle(title);
-                    conversationRepository.save(conv);
-                } catch (Exception e) {
-                    // 忽略错误，继续处理
-                }
+                String title = preview.length() > 30 ? preview.substring(0, 30) + "..." : preview;
+                conv.setTitle(title);
             }
         });
         return conversations;
