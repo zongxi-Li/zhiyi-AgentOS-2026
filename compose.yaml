@@ -185,6 +185,9 @@ services:
       SPRING_REDIS_HOST: redis
       SPRING_REDIS_PORT: "6379"
       AI_SERVICE_URL: http://ai-service:8000
+      # runs/trace 等读接口经 ai-service 大 payload 全表扫描，热态即 3-4s，
+      # 5s 默认会在 run 进行期稳定超时；各栈经 env 覆盖（见 .env.windows）
+      AGENT_PROGRESS_TIMEOUT_MS: ${AGENT_PROGRESS_TIMEOUT_MS:-5000}
       APP_UPLOAD_DIR: /app/data/uploads
       CORS_ALLOWED_ORIGINS: "${KINLIN_PUBLIC_ORIGIN:-http://localhost},http://localhost:8080,http://127.0.0.1:8080,http://tauri.localhost,tauri://localhost,http://127.0.0.1:3000,http://localhost:3000"
     secrets: [db_password, redis_password, jwt_secret, ai_internal_token]
