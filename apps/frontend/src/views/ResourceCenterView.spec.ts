@@ -44,10 +44,10 @@ describe('ResourceCenterView', () => {
     await flushPromises()
 
     expect(wrapper.find('.resource-row').text()).toContain('Unknown / 未知')
-    expect(wrapper.find('.resource-row').text()).toContain('2 / 2')
+    expect(wrapper.find('.resource-row').text()).toContain('算力')
+    expect(wrapper.find('.resource-row').text()).toContain('未观测')
     expect(wrapper.text()).not.toContain('Online')
     expect(wrapper.text()).not.toContain('GPU')
-    expect(wrapper.text()).not.toContain('utilization')
   })
 
   it('shows an empty state when ResourceService has no profiles', async () => {
@@ -83,7 +83,6 @@ describe('ResourceCenterView', () => {
 
     expect(wrapper.text()).toContain('资源概览')
     expect(wrapper.text()).toContain('角色管理')
-    expect(wrapper.text()).toContain('联邦管理')
     expect(wrapper.text()).toContain('模型管理')
     await wrapper.get('[data-testid="resource-tab-roles"]').trigger('click')
     await flushPromises()
@@ -107,7 +106,6 @@ describe('ResourceCenterView', () => {
         stubs: {
           WorkbenchLayout: layoutStub,
           RoleManagementPanel: { template: '<div data-testid="roles-panel" />' },
-          FederatedManagementPanel: { template: '<div data-testid="federated-panel" />' },
           ModelManagementPanel: { template: '<div data-testid="models-panel" />' },
           'el-icon': true
         }
@@ -157,7 +155,7 @@ describe('ResourceCenterView', () => {
     expect(wrapper.get('.resource-center__main').attributes('data-max-width')).toBe('1400px')
   })
 
-  it('keeps roles, federated management and model management wired to the existing stores and APIs', async () => {
+  it('keeps roles and model management wired to the existing stores and APIs', async () => {
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
     vi.spyOn(roleApi, 'getBuiltinRoles').mockResolvedValue([{
       id: 'role_builtin',
@@ -212,9 +210,7 @@ describe('ResourceCenterView', () => {
     expect(roleApi.getBuiltinRoles).toHaveBeenCalled()
     expect(roleApi.getCustomRoles).toHaveBeenCalled()
 
-    await wrapper.get('[data-testid="resource-tab-federated"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="federated-management-panel"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="resource-tab-models"]').trigger('click')
     await flushPromises()

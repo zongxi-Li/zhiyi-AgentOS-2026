@@ -17,7 +17,19 @@ from .auth import (
 )
 from .crypto import ResourceSecretBox
 from .directory import AgentResource, ResourceConflictError, ResourceDirectory, ResourceNotFoundError
-from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
+from .models import (
+    NodeHealth,
+    ResourceCandidate,
+    ResourceHealth,
+    VersionedAgentSnapshot,
+    VersionedNodeSnapshot,
+    VersionedResourceSnapshot,
+)
+from .agent_service import AgentService
+from .agent_store import AgentStore, InMemoryAgentStore
+from .node_health import NodeHealthMonitor, infer_load_status
+from .node_service import NodeService
+from .node_store import InMemoryNodeStore, NodeStore
 from .service import IssuedResourceCredential, ResourceService
 from .store import (
     InMemoryResourceStore,
@@ -53,5 +65,16 @@ __all__ = [
     "IssuedResourceCredential",
     "VersionConflict",
     "VersionedResourceSnapshot",
+    "AgentService",
+    "AgentStore",
+    "InMemoryAgentStore",
+    "InMemoryNodeStore",
+    "NodeHealth",
+    "NodeHealthMonitor",
+    "NodeService",
+    "NodeStore",
+    "VersionedAgentSnapshot",
+    "VersionedNodeSnapshot",
+    "infer_load_status",
     "build_resource_signature",
 ]

@@ -68,6 +68,11 @@ public class AgentOsGatewayController {
         return response(gateway.get(UPSTREAM_ROOT + "/resources"));
     }
 
+    @PostMapping("/resources/register")
+    public ResponseEntity<Map<String, Object>> registerResource(@RequestBody Map<String, Object> body) {
+        return response(gateway.post(UPSTREAM_ROOT + "/resources/register", body));
+    }
+
     @GetMapping("/missions")
     public ResponseEntity<Map<String, Object>> listMissions(
             @RequestParam(required = false) String status,

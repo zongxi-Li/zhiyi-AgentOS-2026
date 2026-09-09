@@ -7,20 +7,21 @@
         <span>来自 ResourceService 的只读快照</span>
       </div>
       <div class="resource-summary__metrics">
-        <div class="resource-summary__metric">
-          <span>登记资源</span>
-          <strong>{{ resources.length }}</strong>
-          <small>profiles</small>
+        <div v-for="tier in tierStats" :key="tier.id" class="resource-summary__metric resource-summary__metric--tier" :class="`is-tier-${tier.id}`">
+          <span>{{ tier.label }}</span>
+          <strong>{{ tier.count }}</strong>
+          <small>资源</small>
+        </div>
+        <div class="resource-summary__metric resource-summary__metric--compute">
+          <span>总算力</span>
+          <strong>{{ computeTotals.hasCapacity ? `${computeTotals.cpu}核` : '未观测' }}</strong>
+          <small v-if="computeTotals.hasCapacity">{{ computeTotals.memory }}G 内存<template v-if="computeTotals.gpu > 0"> · {{ computeTotals.gpu }}G GPU</template></small>
+          <small v-else>未登记算力</small>
         </div>
         <div class="resource-summary__metric resource-summary__metric--health">
-          <span>健康状态</span>
+          <span>健康分布</span>
           <strong>{{ healthyResourceCount }}</strong>
-          <small>online / {{ unknownResourceCount }} unknown</small>
-        </div>
-        <div class="resource-summary__metric resource-summary__metric--enabled">
-          <span>已启用</span>
-          <strong>{{ enabledResourceCount }}</strong>
-          <small>可参与调度</small>
+          <small>在线 · {{ degradedResourceCount }} 降级 · {{ offlineResourceCount }} 离线</small>
         </div>
       </div>
     </div>
@@ -30,7 +31,7 @@
         <span class="resource-search__icon" aria-hidden="true"><el-icon><Search /></el-icon></span>
         <span class="resource-search__copy">
           <span class="resource-search__label">筛选资源</span>
-          <input v-model="searchText" type="search" placeholder="搜索 Resource ID 或 capability" />
+          <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索 Resource ID 或 capability" />
         </span>
         <kbd>/</kbd>
       </label>
@@ -53,56 +54,99 @@
       <strong>{{ searchText ? '没有匹配的 Resource' : '暂无已登记 Resource' }}</strong>
       <span>{{ searchText ? '换一个 ID 或 capability 试试。' : 'ResourceService 当前没有可展示的 profile。' }}</span>
     </section>
-    <section v-else class="resource-list" aria-label="System Resources">
-      <div class="resource-list__header" aria-hidden="true">
-        <span>资源</span>
-        <span>能力</span>
-        <div class="resource-list__header-facts">
-          <span>Health</span>
-          <span>Slots</span>
-          <span>Observed</span>
-          <span>Enabled</span>
+    <div v-else class="resource-groups" aria-label="系统资源">
+      <section v-for="group in groupedResources" :key="group.tier" class="resource-tier-group" :class="`is-tier-${group.tier}`">
+        <header class="resource-tier-group__header">
+          <span class="resource-tier-group__dot" aria-hidden="true"></span>
+          <strong>{{ group.label }}</strong>
+          <span class="resource-tier-group__count">{{ group.items.length }} 个资源</span>
+        </header>
+        <div class="resource-list">
+          <article v-for="item in group.items" :key="item.profile.resourceId" class="resource-row" @click="openDetail(item)">
+            <div class="resource-row__identity">
+              <span class="resource-row__icon" aria-hidden="true">
+                <el-icon><component :is="resourceTypeIcon(item.profile.resourceType)" /></el-icon>
+                <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
+              </span>
+              <div>
+                <strong>{{ item.profile.resourceId }}</strong>
+                <span class="resource-row__meta"><ResourceTypeBadge :type="item.profile.resourceType" /> · v{{ item.profile.version }}</span>
+              </div>
+            </div>
+            <div class="resource-row__capabilities">
+              <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
+            </div>
+            <dl class="resource-row__facts">
+              <div><dt>Health</dt><dd :class="`is-${item.snapshot.healthStatus}`"><i class="resource-status-dot" aria-hidden="true"></i>{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
+              <div><dt>算力</dt><dd class="resource-row__capacity">{{ formatCapacity(item.profile.computeCapacity) }}</dd></div>
+              <div><dt>利用率</dt><dd class="resource-row__util"><span class="resource-row__util-track"><i :style="{ width: utilizationPercent(item.snapshot.utilization) }"></i></span><em>{{ formatPercent(item.snapshot.utilization) }}</em></dd></div>
+              <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
+            </dl>
+            <div class="resource-row__extra">
+              <span class="resource-row__privacy">{{ item.profile.privacyLevel || 'internal' }}</span>
+              <span v-if="item.profile.dataZone" class="resource-row__zone">{{ item.profile.dataZone }}</span>
+              <button type="button" class="resource-row__open" :aria-label="`查看 ${item.profile.resourceId} 详情`" @click.stop="openDetail(item)">详情</button>
+            </div>
+          </article>
         </div>
-      </div>
-      <article v-for="item in filteredResources" :key="item.profile.resourceId" class="resource-row">
-        <div class="resource-row__identity">
-          <span class="resource-row__icon" aria-hidden="true">
-            <el-icon><Cpu /></el-icon>
-            <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
-          </span>
-          <div>
-            <strong>{{ item.profile.resourceId }}</strong>
-            <span>{{ item.profile.resourceType }} · v{{ item.profile.version }}</span>
-          </div>
-        </div>
-        <div class="resource-row__capabilities">
-          <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
-        </div>
-        <dl class="resource-row__facts">
-          <div><dt>Health</dt><dd :class="`is-${item.snapshot.healthStatus}`"><i class="resource-status-dot" aria-hidden="true"></i>{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
-          <div><dt>Slots</dt><dd>{{ item.snapshot.availableSlots }} / {{ item.profile.capacity }}</dd></div>
-          <div><dt>Observed</dt><dd>{{ formatDate(item.snapshot.observedAt) }}</dd></div>
-          <div><dt>Enabled</dt><dd :class="item.profile.enabled ? 'is-enabled' : 'is-disabled'">{{ item.profile.enabled ? '已启用' : '已停用' }}</dd></div>
-        </dl>
-      </article>
-    </section>
+      </section>
+    </div>
   </section>
+
+  <el-drawer v-model="drawerOpen" :title="selectedResource ? selectedResource.profile.resourceId : '资源详情'" size="440px" append-to-body class="resource-detail-drawer">
+    <ResourceDetailPanel v-if="selectedResource" :item="selectedResource" />
+  </el-drawer>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Cpu, Search } from '@element-plus/icons-vue'
-import { agentosApi, type RuntimeResourceHealth, type RuntimeResourceItem } from '@/services/api/agentos'
+import { Search } from '@element-plus/icons-vue'
+import { agentosApi, type RuntimeResourceItem } from '@/services/api/agentos'
+import ResourceDetailPanel from './ResourceDetailPanel.vue'
+import ResourceTypeBadge from './ResourceTypeBadge.vue'
+import { formatCapacity, formatMetric, formatPercent, healthLabel } from '@/utils/resourceFormat'
+import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const searchText = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
+const selectedResource = ref<RuntimeResourceItem | null>(null)
+const drawerOpen = ref(false)
+const searchInput = ref<HTMLInputElement | null>(null)
 let controller: AbortController | null = null
 
+const TIER_ORDER: Array<{ id: string; label: string }> = [
+  { id: 'local', label: '本地' },
+  { id: 'terminal', label: '端侧' },
+  { id: 'edge', label: '边缘' },
+  { id: 'cloud', label: '云端' }
+]
+
 const healthyResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'online').length)
-const unknownResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'unknown').length)
-const enabledResourceCount = computed(() => resources.value.filter(item => item.profile.enabled).length)
+const degradedResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'degraded').length)
+const offlineResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'offline').length)
+
+const tierStats = computed(() => TIER_ORDER.map(tier => ({
+  ...tier,
+  count: resources.value.filter(item => (item.profile.deploymentTier || 'local') === tier.id).length
+})))
+
+const computeTotals = computed(() => {
+  let cpu = 0
+  let memory = 0
+  let gpu = 0
+  let hasCapacity = false
+  for (const item of resources.value) {
+    const capacity = item.profile.computeCapacity
+    if (!capacity) continue
+    hasCapacity = true
+    cpu += capacity.cpuCores
+    memory += Math.round(capacity.memoryMb / 1024)
+    gpu += Math.round(capacity.gpuMemoryMb / 1024)
+  }
+  return { cpu, memory, gpu, hasCapacity }
+})
 
 const filteredResources = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase()
@@ -110,21 +154,33 @@ const filteredResources = computed(() => {
   return resources.value.filter(item => [
     item.profile.resourceId,
     item.profile.resourceType,
-    ...item.profile.capabilities
-  ].some(value => value.toLocaleLowerCase().includes(query)))
+    ...item.profile.capabilities,
+    item.profile.deploymentTier || ''
+  ].some(value => (value || '').toLocaleLowerCase().includes(query)))
 })
 
-const healthLabel = (value: RuntimeResourceHealth) => ({
-  unknown: 'Unknown / 未知',
-  online: 'Online',
-  degraded: 'Degraded',
-  offline: 'Offline'
-}[value] || `${value} / 未知`)
+const filteredCount = computed(() => filteredResources.value.length)
 
-const formatDate = (value: string) => {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value || '未观测'
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
+const groupedResources = computed(() => {
+  const groups = new Map<string, RuntimeResourceItem[]>()
+  for (const item of filteredResources.value) {
+    const tier = item.profile.deploymentTier || 'local'
+    if (!groups.has(tier)) groups.set(tier, [])
+    groups.get(tier)!.push(item)
+  }
+  return TIER_ORDER
+    .filter(tier => groups.has(tier.id))
+    .map(tier => ({ tier: tier.id, label: tier.label, items: groups.get(tier.id)! }))
+})
+
+const utilizationPercent = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(100, Math.round(value * 100)))
+}
+
+const openDetail = (item: RuntimeResourceItem) => {
+  selectedResource.value = item
+  drawerOpen.value = true
 }
 
 const loadResources = async () => {
@@ -147,15 +203,24 @@ const loadResources = async () => {
 
 defineExpose({ loadResources })
 
-onMounted(() => { void loadResources() })
-onBeforeUnmount(() => controller?.abort())
+const focusSearch = (event: KeyboardEvent) => {
+  if (event.key !== '/') return
+  const target = event.target as HTMLElement | null
+  const tag = target?.tagName?.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return
+  event.preventDefault()
+  searchInput.value?.focus()
+}
+
+onMounted(() => { void loadResources(); window.addEventListener('keydown', focusSearch) })
+onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown', focusSearch) })
 </script>
 
 <style scoped>
 .resource-overview-panel {
   --resource-surface: color-mix(in srgb, var(--bg-card) 92%, var(--bg-panel));
   --resource-inset: color-mix(in srgb, var(--bg-input) 78%, var(--bg-card));
-  --resource-grid: minmax(220px, 1.1fr) minmax(180px, 1fr) minmax(310px, 1.3fr);
+  --resource-grid: minmax(180px, 0.9fr) minmax(140px, 0.7fr) minmax(360px, 1.6fr) auto;
   min-width: 0;
   color: var(--text-primary);
 }
@@ -175,13 +240,18 @@ onBeforeUnmount(() => controller?.abort())
 .resource-summary__intro strong { color: var(--text-primary); font-size: 14px; font-weight: 650; }
 .resource-summary__intro > span:last-child { color: var(--text-muted); font-size: 10px; }
 .resource-summary__eyebrow { color: var(--primary-color); font: 9px var(--font-mono, monospace); letter-spacing: .12em; }
-.resource-summary__metrics { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); min-width: min(480px, 50%); }
+.resource-summary__metrics { display: grid; grid-template-columns: repeat(6, minmax(96px, 1fr)); min-width: min(600px, 62%); }
 .resource-summary__metric { display: grid; align-content: center; gap: 1px; padding: 0 18px; border-left: 1px solid var(--border-light); }
 .resource-summary__metric span, .resource-summary__metric small { color: var(--text-muted); font-size: 10px; }
 .resource-summary__metric strong { color: var(--text-primary); font: 650 20px/1.2 var(--font-mono, monospace); }
 .resource-summary__metric small { color: var(--text-secondary); font: 9px var(--font-mono, monospace); white-space: nowrap; }
 .resource-summary__metric--health strong { color: var(--success); }
-.resource-summary__metric--enabled strong { color: var(--primary-color); }
+.resource-summary__metric--compute strong { color: var(--primary-color); }
+.resource-summary__metric--tier strong { color: var(--text-secondary); }
+.resource-summary__metric--tier.is-tier-cloud strong { color: var(--primary-color); }
+.resource-summary__metric--tier.is-tier-edge strong { color: var(--success); }
+.resource-summary__metric--tier.is-tier-terminal strong { color: var(--accent-color, #6f668f); }
+.resource-summary__metric--tier.is-tier-local strong { color: var(--text-secondary); }
 .resource-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0 12px; color: var(--text-muted); font-size: 11px; }
 .resource-search { display: flex; align-items: center; gap: 9px; width: min(500px, 100%); min-height: 42px; padding: 0 11px; border: 1px solid var(--border-light); border-radius: var(--radius-control, 6px); color: var(--text-muted); background: var(--resource-inset); transition: var(--transition); }
 .resource-search:hover, .resource-search:focus-within, .resource-search.has-query { border-color: var(--primary-line); background: var(--bg-input); }
@@ -195,10 +265,18 @@ onBeforeUnmount(() => controller?.abort())
 .resource-toolbar__count b { color: var(--text-primary); font: 650 12px var(--font-mono, monospace); }
 .resource-toolbar__mode { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font: 9px var(--font-mono, monospace); text-transform: uppercase; letter-spacing: .05em; }
 .resource-toolbar__mode i { width: 5px; height: 5px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-fade); }
+.resource-groups { display: grid; gap: 16px; }
+.resource-tier-group { display: grid; gap: 8px; }
+.resource-tier-group__header { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; color: var(--text-secondary); }
+.resource-tier-group__header strong { font-size: 12px; font-weight: 650; }
+.resource-tier-group__count { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
+.resource-tier-group__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary-color); }
+.is-tier-local .resource-tier-group__dot { background: var(--text-secondary); }
+.is-tier-terminal .resource-tier-group__dot { background: var(--accent-color, #6f668f); }
+.is-tier-edge .resource-tier-group__dot { background: var(--success); }
+.is-tier-cloud .resource-tier-group__dot { background: var(--primary-color); }
 .resource-list { overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-card, 9px); background: var(--resource-surface); box-shadow: var(--shadow-sm); }
-.resource-list__header { display: grid; grid-template-columns: var(--resource-grid); align-items: center; gap: 24px; min-height: 34px; padding: 0 16px; border-bottom: 1px solid var(--border-light); color: var(--text-muted); background: var(--resource-inset); font: 9px var(--font-mono, monospace); letter-spacing: .04em; text-transform: uppercase; }
-.resource-list__header-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.resource-row { display: grid; grid-template-columns: var(--resource-grid); align-items: center; gap: 24px; min-height: 88px; padding: 15px 16px; border-bottom: 1px solid var(--border-light); background: var(--resource-surface); transition: var(--transition); }
+.resource-row { display: grid; grid-template-columns: var(--resource-grid); align-items: center; gap: 24px; min-height: 88px; padding: 15px 16px; border-bottom: 1px solid var(--border-light); background: var(--resource-surface); transition: var(--transition); cursor: pointer; }
 .resource-row:last-child { border-bottom: 0; }
 .resource-row:hover { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--primary-color); }
 .resource-row__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -211,6 +289,7 @@ onBeforeUnmount(() => controller?.abort())
 .resource-row__identity strong, .resource-row__identity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-row__identity strong { color: var(--text-primary); font: 600 11px var(--font-mono, monospace); }
 .resource-row__identity span { margin-top: 4px; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
+.resource-row__identity .resource-row__meta { display: inline-flex; align-items: center; gap: 5px; }
 .resource-row__capabilities { display: flex; gap: 5px; min-width: 0; flex-wrap: wrap; }
 .resource-row__capabilities span { padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--border-light) 82%, var(--primary-color)); border-radius: 4px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-input) 76%, transparent); font: 10px var(--font-mono, monospace); }
 .resource-row__facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
@@ -223,6 +302,16 @@ onBeforeUnmount(() => controller?.abort())
 .resource-row__facts dd.is-offline, .resource-row__facts dd.is-disabled { color: var(--danger); }
 .resource-row__facts dd.is-enabled { color: var(--text-secondary); }
 .resource-status-dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+.resource-row__capacity { font-size: 9px !important; }
+.resource-row__util { display: flex; align-items: center; gap: 6px; }
+.resource-row__util-track { position: relative; display: inline-block; flex: 0 0 auto; width: 46px; height: 4px; border-radius: 2px; background: var(--border-light); overflow: hidden; }
+.resource-row__util-track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--primary-color); }
+.resource-row__util em { font-style: normal; }
+.resource-row__extra { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.resource-row__privacy { padding: 2px 7px; border: 1px solid var(--border-light); border-radius: 999px; color: var(--text-muted); font: 9px var(--font-mono, monospace); white-space: nowrap; }
+.resource-row__zone { color: var(--text-muted); font: 9px var(--font-mono, monospace); white-space: nowrap; }
+.resource-row__open { min-height: 26px; padding: 0 10px; border: 1px solid var(--primary-line); border-radius: 5px; color: var(--primary-color); background: transparent; cursor: pointer; font-size: 10px; }
+.resource-row__open:hover { background: var(--primary-fade); }
 .resource-state { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 280px; color: var(--text-secondary); font-size: 12px; text-align: center; }
 .resource-state strong { color: var(--text-primary); font-size: 14px; }
 .resource-state span { line-height: 1.6; }
@@ -231,7 +320,6 @@ onBeforeUnmount(() => controller?.abort())
 @media (max-width: 900px) {
   .resource-summary { flex-direction: column; gap: 16px; }
   .resource-summary__metrics { min-width: 0; }
-  .resource-list__header { display: none; }
   .resource-row { grid-template-columns: 1fr; gap: 12px; min-height: 0; padding: 16px; }
   .resource-row__facts { gap: 10px; }
   .resource-row__facts dt { display: block; }

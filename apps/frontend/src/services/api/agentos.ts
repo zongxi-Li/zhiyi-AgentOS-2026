@@ -411,7 +411,7 @@ export interface ExecutionBinding {
   createdAt?: string
 }
 
-export type RuntimeResourceType = 'agent' | 'model' | 'embedding' | 'tool' | 'worker' | 'skill' | string
+export type RuntimeResourceType = 'agent' | 'model' | 'embedding' | 'tool' | 'worker' | 'skill' | 'mcp' | string
 export type RuntimeResourceHealth = 'unknown' | 'online' | 'degraded' | 'offline' | string
 export type RuntimeDeploymentTier = 'local' | 'terminal' | 'edge' | 'cloud' | string
 
@@ -464,6 +464,11 @@ export interface RuntimeResourceItem {
   profile: RuntimeResourceProfile
   snapshot: RuntimeResourceSnapshot
   snapshotVersion: number
+}
+
+export interface ResourceRegistrationRequest {
+  profile: RuntimeResourceProfile
+  snapshot: RuntimeResourceSnapshot
 }
 
 export interface RunProvenanceEvent {
@@ -1492,6 +1497,11 @@ export const agentosApi = {
     const response = await agentosRequest.get<{ items: RuntimeResourceItem[]; total: number }>('/resources', {
       signal: options.signal
     })
+    return response.data
+  },
+
+  async registerResource(payload: ResourceRegistrationRequest): Promise<{ resourceId: string }> {
+    const response = await agentosRequest.post<{ resourceId: string }>('/resources/register', payload)
     return response.data
   },
 

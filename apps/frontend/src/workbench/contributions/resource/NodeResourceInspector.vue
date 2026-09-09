@@ -44,6 +44,7 @@ import { computed, ref } from 'vue'
 import type { ResourceBindingObservation, ResourceObservation, WorkspaceGraphNode } from '@/services/api/agentos'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
+import { healthLabel, tierLabel } from '@/utils/resourceFormat'
 
 const props = defineProps<{
   graphNode: WorkspaceGraphNode
@@ -66,16 +67,6 @@ const resourceHealth = computed(() => {
 })
 const modelLabel = computed(() => binding.value?.modelId === 'runtime-default' ? 'Runtime Default' : (binding.value?.modelId || '未观测'))
 
-const healthLabel = (value: string) => ({
-  unknown: 'Unknown / 未知',
-  online: 'Online',
-  degraded: 'Degraded',
-  offline: 'Offline'
-}[value] || value || 'Unknown / 未知')
-
-const tierLabel = (value?: string | null) => ({
-  local: '本地', terminal: '端侧', edge: '边缘', cloud: '云端'
-}[value || ''] || value || '未分层')
 const reasonLabel = (value: string) => {
   const [key, rawValue] = value.split('=', 2)
   const labels: Record<string, string> = {
