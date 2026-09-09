@@ -2,9 +2,7 @@
   <section class="artifact-editor" aria-label="Artifact editor">
     <header class="artifact-editor__header">
       <div class="artifact-editor__title">
-        <span class="artifact-editor__eyebrow">ARTIFACT</span>
         <strong>{{ entry.name }}</strong>
-        <small>{{ entry.mediaType || 'unknown media type' }} · {{ entry.artifactKey || 'legacy identity' }}</small>
       </div>
       <div class="artifact-editor__actions">
         <button type="button" :disabled="!canLocateGraph" @click="emit('locateGraph')">在图中定位</button>
