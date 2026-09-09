@@ -868,6 +868,7 @@ export interface SingleStepRetryRequest {
   clientRequestId: string
   reason?: string
   expectedRuntimeRevision?: number
+  mode?: 'successor_run' | 'current_run'
 }
 
 export type AsyncWorkflowStartResponse = WorkflowRun

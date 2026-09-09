@@ -25,6 +25,7 @@ import {
   type AsyncWorkflowStartRequest,
   type AsyncWorkflowStartResponse,
   type WorkflowRerunRequest,
+  type SingleStepRetryRequest,
   type WorkflowProgress,
   type WorkflowProgressPhase,
   type WorkflowRunSummary,
@@ -71,6 +72,7 @@ export type {
   AsyncWorkflowStartRequest,
   AsyncWorkflowStartResponse,
   WorkflowRerunRequest,
+  SingleStepRetryRequest,
   WorkflowProgress,
   WorkflowProgressPhase,
   WorkflowRunSummary,
@@ -113,6 +115,15 @@ export const workflowApi = {
     options: { signal?: AbortSignal } = {}
   ): Promise<WorkflowRun> {
     return agentosApi.rerunWorkflowAsync(missionId, payload, options)
+  },
+
+  retryWorkflowStepAsync(
+    runId: string,
+    stepId: string,
+    payload: SingleStepRetryRequest,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<WorkflowRun> {
+    return agentosApi.retryWorkflowStepAsync(runId, stepId, payload, options)
   },
 
   getWorkflowProgress(

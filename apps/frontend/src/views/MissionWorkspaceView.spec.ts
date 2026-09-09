@@ -4,6 +4,11 @@ import { ElMessageBox } from 'element-plus'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
+import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
+
+vi.mock('@/utils/retryModeChoice', () => ({
+  chooseFailedRunRetryMode: vi.fn().mockResolvedValue('successor_run')
+}))
 
 const defaultLayoutStubState = {
   leftAutoHidden: false,
@@ -400,6 +405,47 @@ describe('MissionWorkspaceView', () => {
     expect(router.currentRoute.value.query.runId).toBe('run_3')
     expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith('mission_1', expect.objectContaining({ runId: 'run_3' }))
     expect(wrapper.text()).not.toContain('Historical / Read-only')
+  })
+
+  it('continues a failed Run from its failed step instead of replaying completed work', async () => {
+    vi.mocked(chooseFailedRunRetryMode).mockResolvedValue('successor_run')
+    const source = projection({
+      activeRun: { runId: 'run_1', status: 'failed', createdAt: '2026-08-28T00:01:00Z', isActive: true }
+    })
+    const successor = projection({
+      activeRun: { runId: 'run_3', status: 'running', createdAt: '2026-08-28T00:03:00Z', isActive: true },
+      runs: [...source.runs, { runId: 'run_3', status: 'running', createdAt: '2026-08-28T00:03:00Z', isActive: true }]
+    })
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue({
+      runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops',
+      status: 'failed', runtimeRevision: 9,
+      steps: [
+        { stepId: 'source', name: 'source', agentName: 'native', status: 'completed' },
+        { stepId: 'design', name: 'design', agentName: 'native', status: 'failed' },
+        { stepId: 'final', name: 'final', agentName: 'native', status: 'pending' }
+      ]
+    } as any)
+    const resume = vi.spyOn(agentosApi, 'retryWorkflowStepAsync').mockResolvedValue({
+      runId: 'run_3', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'pending', steps: []
+    } as any)
+    const rerun = vi.spyOn(agentosApi, 'rerunWorkflowAsync')
+    const { wrapper, router } = await mountWorkspace(
+      runId => runId === 'run_3' ? successor : source,
+      '/agentos/missions/mission_1/workspace?runId=run_1'
+    )
+
+    expect(wrapper.find('.workspace-tree__rerun').text()).toContain('从失败处继续')
+    await wrapper.find('.workspace-tree__rerun').trigger('click')
+    await flushPromises()
+
+    expect(rerun).not.toHaveBeenCalled()
+    expect(resume).toHaveBeenCalledWith('run_1', 'design', expect.objectContaining({
+      reason: 'resume_failed', expectedRuntimeRevision: 9, mode: 'successor_run', clientRequestId: expect.any(String)
+    }))
+    expect(router.currentRoute.value.query.runId).toBe('run_3')
+    expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith(
+      'mission_1', expect.objectContaining({ runId: 'run_3' })
+    )
   })
 
   it('keeps mission and Run navigation available before identity projection exists', async () => {

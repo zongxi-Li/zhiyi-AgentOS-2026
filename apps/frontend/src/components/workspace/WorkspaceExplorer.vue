@@ -78,7 +78,7 @@
             @click="emit('rerun')"
           >
             <span aria-hidden="true">+</span>
-            <span>{{ rerunPending ? '正在创建…' : '再次运行' }}</span>
+            <span>{{ rerunPending ? '正在创建…' : rerunLabel }}</span>
           </button>
         </div>
       </section>
@@ -106,10 +106,12 @@ const props = withDefaults(defineProps<{
   canRerun?: boolean
   rerunPending?: boolean
   rerunDisabledReason?: string
+  rerunLabel?: string
 }>(), {
   canRerun: false,
   rerunPending: false,
   rerunDisabledReason: '当前运行尚未结束',
+  rerunLabel: '再次运行',
   selectedSemanticTaskKey: null
 })
 

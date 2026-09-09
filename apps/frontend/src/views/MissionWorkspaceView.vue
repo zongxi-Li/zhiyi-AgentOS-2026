@@ -136,6 +136,7 @@ import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelecti
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
+import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
 
 const route = useRoute()
 const router = useRouter()
@@ -251,6 +252,7 @@ const cancellableRunStatuses = new Set(['pending', 'planning', 'running', 'retry
 const canRerunSelectedRun = computed(() => Boolean(
   projection.value?.activeRun?.runId && terminalRunStatuses.has(projection.value.activeRun.status || '')
 ))
+const shouldResumeSelectedRun = computed(() => projection.value?.activeRun?.status === 'failed')
 const canCancelActiveRun = computed(() => Boolean(
   projection.value?.activeRun?.runId
   && !isHistorical.value
@@ -259,8 +261,12 @@ const canCancelActiveRun = computed(() => Boolean(
 ))
 const rerunDisabledReason = computed(() => {
   if (rerunPending.value) return '正在创建新的 Run'
-  return canRerunSelectedRun.value ? '从当前 Run 创建新的执行版本' : '当前运行尚未结束'
+  if (!canRerunSelectedRun.value) return '当前运行尚未结束'
+  return shouldResumeSelectedRun.value
+    ? '复用已完成节点，从失败节点继续执行'
+    : '从当前 Run 创建新的执行版本'
 })
+const rerunLabel = computed(() => shouldResumeSelectedRun.value ? '从失败处继续' : '再次运行')
 
 const workbenchContext = computed(() => createWorkbenchContext({
   missionId: missionId.value,
@@ -285,7 +291,8 @@ const sidebarProps = computed(() => ({
   selectedRunId: selectedRunId.value,
   canRerun: canRerunSelectedRun.value,
   rerunPending: rerunPending.value,
-  rerunDisabledReason: rerunDisabledReason.value
+  rerunDisabledReason: rerunDisabledReason.value,
+  rerunLabel: rerunLabel.value
 }))
 const panelTabs = computed<WorkbenchBottomTab[]>(() => registry.getPanels(workbenchContext.value).map(panel => ({
   id: panel.id,
@@ -612,6 +619,26 @@ const rerunSelectedRun = async () => {
   loadError.value = ''
   const clientRequestId = createClientRequestId()
   try {
+    if (shouldResumeSelectedRun.value) {
+      const sourceRun = await agentosApi.getWorkflowRun(sourceRunId)
+      const failedStep = sourceRun.steps.find(step => step.status === 'failed')
+      if (!failedStep?.stepId) {
+        throw new Error('未找到可恢复的失败节点')
+      }
+      const mode = await chooseFailedRunRetryMode(sourceRunId)
+      if (!mode) return
+      const nextRun = await agentosApi.retryWorkflowStepAsync(sourceRunId, failedStep.stepId, {
+        clientRequestId,
+        reason: 'resume_failed',
+        expectedRuntimeRevision: sourceRun.runtimeRevision,
+        mode
+      })
+      currentRunId.value = nextRun.runId
+      selectedRunId.value = nextRun.runId
+      await persistRunInUrl(nextRun.runId)
+      await loadWorkspace(nextRun.runId, { focusProgress: true })
+      return
+    }
     const history = await agentosApi.getWorkflowHistoryConfig(sourceRunId)
     const nextRun = await agentosApi.rerunWorkflowAsync(missionId.value, {
       reviewMode: history.reviewMode || 'auto',
