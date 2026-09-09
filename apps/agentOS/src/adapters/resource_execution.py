@@ -11,7 +11,7 @@ import secrets
 import httpx
 
 from components.resource.auth import build_resource_signature
-from contracts.resource import ResourceProfile
+from contracts.resource import NodeProfile, ResourceEndpoint, ResourceProfile
 from service.agents.base import AgentOutput, AgentRunContext, BaseAgent
 
 
@@ -151,6 +151,33 @@ def normalize_execution_endpoint(address: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
+def _build_remote_adapter(
+    resource_id: str,
+    endpoint: ResourceEndpoint,
+    *,
+    credential_provider: ResourceCredentialProvider,
+    client: httpx.AsyncClient | None = None,
+    timeout_seconds: float = 120.0,
+) -> ResourceExecutionAdapter:
+    """Validate the endpoint and construct the shared HTTP adapter."""
+    if endpoint.protocol not in {"http", "https"}:
+        raise ResourceExecutionError(
+            f"REMOTE_EXECUTION_CONFIG_INVALID: unsupported protocol {endpoint.protocol}"
+        )
+    parsed = urlsplit(endpoint.address)
+    if parsed.scheme != endpoint.protocol:
+        raise ResourceExecutionError(
+            f"REMOTE_EXECUTION_CONFIG_INVALID: endpoint scheme does not match protocol for {resource_id}"
+        )
+    return HttpResourceExecutionAdapter(
+        resource_id=resource_id,
+        address=endpoint.address,
+        credential_provider=credential_provider,
+        client=client,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def build_resource_execution_adapter(
     profile: ResourceProfile,
     *,
@@ -164,18 +191,31 @@ def build_resource_execution_adapter(
         raise ResourceExecutionError(
             f"REMOTE_EXECUTION_CONFIG_INVALID: {profile.resource_id} has no endpoint"
         )
-    if endpoint.protocol not in {"http", "https"}:
+    return _build_remote_adapter(
+        profile.resource_id,
+        endpoint,
+        credential_provider=credential_provider,
+        client=client,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def build_node_execution_adapter(
+    node: NodeProfile,
+    *,
+    credential_provider: ResourceCredentialProvider,
+    client: httpx.AsyncClient | None = None,
+    timeout_seconds: float = 120.0,
+) -> ResourceExecutionAdapter:
+    """Construct a remote execution adapter from a node profile."""
+    endpoint = node.execution_endpoint
+    if endpoint is None:
         raise ResourceExecutionError(
-            f"REMOTE_EXECUTION_CONFIG_INVALID: unsupported protocol {endpoint.protocol}"
+            f"REMOTE_EXECUTION_CONFIG_INVALID: {node.node_id} has no endpoint"
         )
-    parsed = urlsplit(endpoint.address)
-    if parsed.scheme != endpoint.protocol:
-        raise ResourceExecutionError(
-            f"REMOTE_EXECUTION_CONFIG_INVALID: endpoint scheme does not match protocol for {profile.resource_id}"
-        )
-    return HttpResourceExecutionAdapter(
-        resource_id=profile.resource_id,
-        address=endpoint.address,
+    return _build_remote_adapter(
+        node.node_id,
+        endpoint,
         credential_provider=credential_provider,
         client=client,
         timeout_seconds=timeout_seconds,
