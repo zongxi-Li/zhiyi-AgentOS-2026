@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from contracts.resource import ResourceProfile, ResourceSnapshot
+from contracts.resource import AgentSnapshot, NodeHealthStatus, NodeSnapshot, ResourceProfile, ResourceSnapshot
 
 
 @dataclass(frozen=True)
@@ -39,3 +39,29 @@ class ResourceCandidate:
     snapshot: VersionedResourceSnapshot
     health: ResourceHealth
     score: float
+
+
+@dataclass(frozen=True)
+class VersionedNodeSnapshot:
+    """附带单调递增版本号的节点快照。"""
+
+    snapshot: NodeSnapshot
+    version: int
+
+
+@dataclass(frozen=True)
+class VersionedAgentSnapshot:
+    """附带单调递增版本号的 Agent 快照。"""
+
+    snapshot: AgentSnapshot
+    version: int
+
+
+@dataclass(frozen=True)
+class NodeHealth:
+    """节点健康投影：分级状态 + 最后心跳 + 连续失败次数。"""
+
+    node_id: str
+    status: NodeHealthStatus
+    last_heartbeat: datetime | None
+    consecutive_failures: int

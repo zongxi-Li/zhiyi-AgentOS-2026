@@ -223,3 +223,107 @@ class SchedulingDecision(BaseModel):
         elif self.resource_id is not None or self.lease is not None:
             raise ValueError("queued/rejected decisions must not include allocation fields")
         return self
+
+
+class NodeType(str, Enum):
+    """节点资源表记录的服务/算力节点类型。"""
+
+    WORKER = "worker"
+    MODEL = "model"
+    EMBEDDING = "embedding"
+    TOOL = "tool"
+    MCP = "mcp"
+
+
+class NodeHealthStatus(str, Enum):
+    """节点健康分级：在线、忙碌、过载、陈旧、离线。"""
+
+    ONLINE = "online"
+    BUSY = "busy"
+    OVERLOADED = "overloaded"
+    STALE = "stale"
+    OFFLINE = "offline"
+
+
+class NodeProfile(BaseModel):
+    """节点资源表：可参与计算的设备或服务节点的静态能力。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    node_id: StrictStr = Field(alias="nodeId", min_length=1, description="节点唯一标识。")
+    node_type: NodeType = Field(default=NodeType.WORKER, alias="nodeType")
+    deployment_tier: DeploymentTier = Field(default=DeploymentTier.LOCAL, alias="deploymentTier")
+    cpu_cores: float = Field(default=0.0, ge=0.0, alias="cpuCores")
+    gpu_type: StrictStr | None = Field(default=None, alias="gpuType")
+    gpu_memory_mb: int = Field(default=0, ge=0, alias="gpuMemoryMb")
+    memory_mb: int = Field(default=0, ge=0, alias="memoryMb")
+    max_model_params: StrictStr | None = Field(default=None, alias="maxModelParams", description="能承载的最大模型参数量。")
+    privacy_level: StrictStr = Field(default="internal", alias="privacyLevel")
+    data_zone: StrictStr | None = Field(default=None, alias="dataZone", description="所属隐私区域。")
+    cost_per_unit: float = Field(default=0.0, ge=0.0, alias="costPerUnit", description="单位时间成本。")
+    labels: dict[str, str] = Field(default_factory=dict)
+    location: StrictStr | None = Field(default=None)
+    enabled: bool = Field(default=True)
+    metadata: dict[str, Any] = Field(default_factory=dict, description="荣耀生态专属字段等。")
+    version: int = Field(default=1, ge=1)
+
+
+class NodeSnapshot(BaseModel):
+    """节点资源表：由心跳实时刷新的动态状态。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    node_id: StrictStr = Field(alias="nodeId", min_length=1)
+    observation_sequence: int = Field(default=0, ge=0, alias="observationSequence")
+    observed_at: datetime = Field(default_factory=_utc_now, alias="observedAt")
+    cpu_utilization: float = Field(default=0.0, ge=0.0, le=1.0, alias="cpuUtilization")
+    gpu_utilization: float = Field(default=0.0, ge=0.0, le=1.0, alias="gpuUtilization")
+    available_memory_mb: int = Field(default=0, ge=0, alias="availableMemoryMb")
+    queued_tasks: int = Field(default=0, ge=0, alias="queuedTasks")
+    latency_ms: float | None = Field(default=None, ge=0.0, alias="latencyMs", description="预估网络延迟。")
+    health_status: NodeHealthStatus = Field(default=NodeHealthStatus.ONLINE, alias="healthStatus")
+    last_heartbeat: datetime | None = Field(default=None, alias="lastHeartbeat")
+    consecutive_failures: int = Field(default=0, ge=0, alias="consecutiveFailures")
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class AgentState(str, Enum):
+    """Agent 忙闲状态。"""
+
+    IDLE = "idle"
+    BUSY = "busy"
+
+
+class AgentProfile(BaseModel):
+    """Agent 注册表：每一个 Agent 的静态属性。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    agent_id: StrictStr = Field(alias="agentId", min_length=1)
+    capabilities: list[StrictStr] = Field(min_length=1, description="能力标签（含 skill）。")
+    required_model_ids: list[StrictStr] = Field(default_factory=list, alias="requiredModelIds", description="所需模型。")
+    required_gpu_memory_mb: int = Field(default=0, ge=0, alias="requiredGpuMemoryMb", description="所需显存。")
+    min_privacy_level: StrictStr = Field(default="internal", alias="minPrivacyLevel", description="最低允许运行的隐私等级。")
+    allowed_node_ids: list[StrictStr] = Field(default_factory=list, alias="allowedNodeIds", description="可部署的节点白名单。")
+    labels: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = Field(default=True)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    version: int = Field(default=1, ge=1)
+
+
+class AgentSnapshot(BaseModel):
+    """Agent 注册表：由事件驱动心跳刷新的动态状态。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    agent_id: StrictStr = Field(alias="agentId", min_length=1)
+    observation_sequence: int = Field(default=0, ge=0, alias="observationSequence")
+    observed_at: datetime = Field(default_factory=_utc_now, alias="observedAt")
+    state: AgentState = Field(default=AgentState.IDLE)
+    node_id: StrictStr | None = Field(default=None, alias="nodeId", description="当前运行节点。")
+    current_step_id: StrictStr | None = Field(default=None, alias="currentStepId", description="正在执行的 Step。")
+    success_rate: float = Field(default=0.0, ge=0.0, le=1.0, alias="successRate", description="历史成功率。")
+    avg_latency_ms: float = Field(default=0.0, ge=0.0, alias="avgLatencyMs", description="平均耗时。")
+    avg_tokens: float = Field(default=0.0, ge=0.0, alias="avgTokens", description="平均 Token 消耗。")
+    health_status: ResourceHealthStatus = Field(default=ResourceHealthStatus.UNKNOWN, alias="healthStatus")
+    metrics: dict[str, float] = Field(default_factory=dict)
