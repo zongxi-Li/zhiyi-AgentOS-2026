@@ -50,6 +50,7 @@ import type { ResourceBindingObservation, ResourceObservation } from '@/services
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import type { WorkbenchInspectorContext } from '@/workbench/types'
+import { healthLabel, tierLabel } from '@/utils/resourceFormat'
 
 const props = defineProps<{
   context: WorkbenchInspectorContext
@@ -70,13 +71,6 @@ const selectedHealth = computed(() => {
   const resourceId = selectedBinding.value?.resourceId
   return props.resourceObservation?.items.find(item => item.profile.resourceId === resourceId)?.snapshot.healthStatus || 'unknown'
 })
-
-const healthLabel = (value: string | null | undefined) => ({
-  unknown: 'Unknown / 未知',
-  online: 'Online',
-  degraded: 'Degraded',
-  offline: 'Offline'
-}[value || 'unknown'] || value || 'Unknown / 未知')
 
 const boundResources = computed(() => {
   const observation = props.resourceObservation
@@ -99,9 +93,6 @@ const boundResources = computed(() => {
 const boundResourceCount = computed(() => boundResources.value.length)
 const agentCount = computed(() => new Set((props.resourceObservation?.bindings || []).map(item => item.agentId)).size)
 const modelCount = computed(() => new Set((props.resourceObservation?.bindings || []).map(item => item.modelId)).size)
-const tierLabel = (value?: string | null) => ({
-  local: '本地', terminal: '端侧', edge: '边缘', cloud: '云端'
-}[value || ''] || value || '未分层')
 </script>
 
 <style scoped>

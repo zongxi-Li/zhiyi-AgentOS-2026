@@ -23,6 +23,7 @@ class ResourceType(str, Enum):
     TOOL = "tool"
     WORKER = "worker"
     SKILL = "skill"
+    MCP = "mcp"
 
 
 class DeploymentTier(str, Enum):

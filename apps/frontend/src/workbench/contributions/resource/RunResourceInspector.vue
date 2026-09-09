@@ -37,21 +37,15 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ResourceFailoverObservation, ResourceObservation } from '@/services/api/agentos'
+import type { ResourceObservation } from '@/services/api/agentos'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
+import { failoverSummary, formatDate, formatMetric, healthLabel, tierLabel } from '@/utils/resourceFormat'
 
 const props = defineProps<{
   runId: string | null
   resourceObservation: ResourceObservation | null
 }>()
-
-const healthLabel = (value: string | null) => ({
-  unknown: 'Unknown / 未知',
-  online: 'Online',
-  degraded: 'Degraded',
-  offline: 'Offline'
-}[value || 'unknown'] || value || 'Unknown / 未知')
 
 const boundResources = computed(() => {
   const observation = props.resourceObservation
@@ -86,26 +80,6 @@ const boundResources = computed(() => {
   }
   return [...grouped.values()]
 })
-
-const tierLabel = (value?: string | null) => ({
-  local: '本地', terminal: '端侧', edge: '边缘', cloud: '云端'
-}[value || ''] || value || '未分层')
-
-const formatMetric = (value: number | null | undefined, unit: string) => (
-  typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value)} ${unit}` : '未观测'
-)
-
-const formatDate = (value: string | null) => {
-  if (!value) return '时间未知'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
-}
-
-const failoverSummary = (event: ResourceFailoverObservation) => {
-  const failed = event.failedResources.map(item => item.resourceId).join('、')
-  const retry = event.retryStepIds.join('、') || '原步骤'
-  return `${failed} 失效，步骤 ${retry} 重新调度`
-}
 </script>
 
 <style scoped>

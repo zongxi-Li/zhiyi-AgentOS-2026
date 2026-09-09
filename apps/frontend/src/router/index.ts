@@ -132,7 +132,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/federated-learning',
     name: 'FederatedLearning',
-    redirect: to => ({ path: '/agentos/resources', query: { ...to.query, tab: 'federated' } })
+    redirect: to => ({ path: '/agentos/resources', query: { ...to.query } })
   },
   {
     path: '/federated-agent-workbench',
