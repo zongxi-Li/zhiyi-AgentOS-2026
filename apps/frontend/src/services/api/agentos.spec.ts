@@ -65,6 +65,24 @@ describe('AgentOS v2 application API', () => {
     )
   })
 
+  it('requests a controlled retry for one failed step', async () => {
+    const signal = new AbortController().signal
+    const retry = { ...run, runId: 'run_retry', status: 'running' as const }
+    const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: retry } as never)
+
+    await expect(agentosApi.retryWorkflowStepAsync('run/1', 'final/node', {
+      clientRequestId: 'request_retry',
+      reason: 'retry final synthesis',
+      expectedRuntimeRevision: 7
+    }, { signal })).resolves.toEqual(retry)
+
+    expect(post).toHaveBeenCalledWith(
+      '/runs/run%2F1/steps/final%2Fnode/retry',
+      expect.objectContaining({ clientRequestId: 'request_retry', expectedRuntimeRevision: 7 }),
+      { signal }
+    )
+  })
+
   it('derives progress only from the reference-first run projection', async () => {
     const signal = new AbortController().signal
     const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: run } as never)
@@ -118,7 +136,7 @@ describe('AgentOS v2 application API', () => {
 
   it('dereferences owned outputs and projects real artifacts', async () => {
     const artifact = {
-      artifactId: 'artifact_1', type: 'report', title: 'Final result',
+      artifactId: 'artifact_1', type: 'run_deliverable', artifactKey: 'final', artifactType: 'run_deliverable', title: 'Final result',
       mediaType: 'text/markdown', content: '# Final', structuredData: { riskCount: 2 }
     }
     const get = vi.spyOn(agentosRequest, 'get')
@@ -244,6 +262,32 @@ describe('AgentOS v2 application API', () => {
     expect(result.finalReport).toBeNull()
     expect(result.finalArtifacts).toEqual([])
     expect(get).toHaveBeenCalledTimes(7)
+  })
+
+  it('does not infer a final report from one completed node without run outputRef', async () => {
+    const completedRun = {
+      ...run,
+      outputRef: undefined,
+      steps: [{ ...run.steps[0], outputRef: 'output:run_1:deliver' }],
+      executionState: {
+        outputRefs: { deliver: 'output:run_1:deliver' },
+        resourceBindings: {}
+      }
+    }
+    const get = vi.spyOn(agentosRequest, 'get')
+      .mockResolvedValueOnce({ data: completedRun } as never)
+      .mockResolvedValueOnce({ data: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] } } as never)
+      .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
+      .mockResolvedValueOnce({ data: { events: [] } } as never)
+      .mockResolvedValueOnce({ data: executionTree() } as never)
+      .mockResolvedValueOnce({ data: { content: { answer: 'only intermediate output' } } } as never)
+
+    const result = await agentosApi.getAcgView('run_1')
+
+    expect(result.stepOutputs).toHaveLength(1)
+    expect(result.finalReport).toBeNull()
+    expect(result.finalArtifacts).toEqual([])
+    expect(get).toHaveBeenCalledTimes(6)
   })
 
   it('projects low-entropy metrics and lineage from legacy provenance snapshots', async () => {

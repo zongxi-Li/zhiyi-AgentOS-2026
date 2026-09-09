@@ -175,6 +175,22 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.text()).not.toContain('最终答案')
   })
 
+  it('opens a canonical Run deliverable by default for a completed Run', async () => {
+    const completed = projection({
+      activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true },
+      runs: [{ runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }],
+      entries: [
+        ...folders(),
+        { entryId: 'overview:graph.acg', kind: 'graph', name: 'graph.acg', group: 'overview', displayOrder: 0 },
+        { entryId: 'overview:mission.md', kind: 'virtual_document', name: 'mission.md', group: 'overview', displayOrder: 1, content: '# Mission' },
+        { entryId: 'artifact:final', kind: 'artifact', name: 'final.md', group: 'output', displayOrder: 0, artifactKey: 'final', artifactType: 'run_deliverable', artifactId: 'artifact_final', identityQuality: 'canonical', runId: 'run_1' }
+      ]
+    })
+    const { wrapper } = await mountWorkspace(completed)
+    expect(wrapper.find('.artifact-editor-stub').text()).toContain('final.md')
+    expect(wrapper.find('.editor-tab.is-active').text()).toContain('final.md')
+  })
+
   it('stops the active Run from the project workspace', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     const cancel = vi.spyOn(agentosApi, 'cancelWorkflowRun').mockResolvedValue({

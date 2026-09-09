@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 import { apiUrl } from '@/platform'
 
 export const agentosRequest = axios.create({
@@ -122,6 +123,14 @@ export interface WorkflowExecutionState {
   parentRunId?: string | null
   sourceRunId?: string | null
   rerunReason?: string | null
+  retryTargetStepId?: string | null
+  reusedStepIds?: string[]
+  singleStepRetry?: {
+    sourceRunId: string
+    targetStepId: string
+    reason?: string
+    reusedStepIds: string[]
+  }
   supersedesRunId?: string | null
   supersededByRunId?: string | null
   sourcePatchId?: string | null
@@ -855,6 +864,12 @@ export interface WorkflowRerunRequest {
   rerunReason: 'manual_rerun' | 'current_configuration' | 'retry_after_failure' | 'planning_variant' | 'review_rerun'
 }
 
+export interface SingleStepRetryRequest {
+  clientRequestId: string
+  reason?: string
+  expectedRuntimeRevision?: number
+}
+
 export type AsyncWorkflowStartResponse = WorkflowRun
 
 export class WorkflowApiContractError extends Error {
@@ -1042,6 +1057,8 @@ export interface AcgDeliverable {
 export interface AcgFinalArtifact {
   artifactId: string
   type: string
+  artifactKey?: string
+  artifactType?: string
   title: string
   mediaType: string
   content: string
@@ -1406,6 +1423,23 @@ export const agentosApi = {
     return response.data
   },
 
+  async retryWorkflowStepAsync(
+    runId: string,
+    stepId: string,
+    payload: SingleStepRetryRequest,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<WorkflowRun> {
+    const response = await agentosRequest.post<WorkflowRun>(
+      `${runPath(runId)}/steps/${encodeURIComponent(stepId)}/retry`,
+      payload,
+      { signal: options.signal }
+    )
+    if (!response.data?.runId) {
+      throw new WorkflowApiContractError('single-step retry response is missing a valid Run')
+    }
+    return response.data
+  },
+
   async listRunResourceCalls(
     runId: string,
     params: { stepId?: string; cursor?: string; pageSize?: number } = {},
@@ -1583,21 +1617,28 @@ export const agentosApi = {
     const tokensDelivered = metricSource.reduce((sum, item) => sum + Number(item.tokensDelivered || 0), 0)
     // 运行中每个 outputRef 都是节点级中间结果；只有 Runtime 在终态写入的
     // run.outputRef 才能升级为最终交付，避免把最后一个中间节点冒充报告。
-    const finalOutput = run.status === 'completed'
-      ? (run.outputRef
-        ? outputs.find(item => item.outputRef === run.outputRef)
-        : outputs.length === 1 ? outputs[0] : undefined)
+    const finalOutput = run.status === 'completed' && run.outputRef
+      ? outputs.find(item => item.outputRef === run.outputRef)
       : undefined
-    const finalReport = finalOutput ? outputMarkdown(finalOutput.output) : null
     const finalArtifacts = finalOutput ? (() => {
       const item = finalOutput
       const artifact = item.output.artifact
       if (!artifact || typeof artifact !== 'object') return []
       const candidate = artifact as Record<string, unknown>
       if (typeof candidate.artifactId !== 'string' || typeof candidate.content !== 'string') return []
+      if (!isRunDeliverableEntry({
+        artifactKey: typeof candidate.artifactKey === 'string' ? candidate.artifactKey : null,
+        artifactType: typeof candidate.artifactType === 'string'
+          ? candidate.artifactType
+          : typeof candidate.type === 'string' ? candidate.type : null,
+      })) return []
       return [{
         artifactId: candidate.artifactId,
         type: typeof candidate.type === 'string' ? candidate.type : 'report',
+        artifactKey: typeof candidate.artifactKey === 'string' ? candidate.artifactKey : undefined,
+        artifactType: typeof candidate.artifactType === 'string'
+          ? candidate.artifactType
+          : typeof candidate.type === 'string' ? candidate.type : undefined,
         title: typeof candidate.title === 'string' ? candidate.title : item.name,
         mediaType: typeof candidate.mediaType === 'string' ? candidate.mediaType : 'text/markdown',
         content: candidate.content,
@@ -1607,6 +1648,7 @@ export const agentosApi = {
         stepId: item.stepId
       } satisfies AcgFinalArtifact]
     })() : []
+    const finalReport = finalArtifacts.length && finalOutput ? outputMarkdown(finalOutput.output) : null
     const executionTree = identityResult.executionTree
     const identityNodesByAcgId = new Map<string, RunExecutionNode>(
       (executionTree?.nodes || []).filter(item => item.acgNodeId).map(item => [item.acgNodeId as string, item] as const)

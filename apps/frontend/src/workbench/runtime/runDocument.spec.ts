@@ -114,4 +114,32 @@ describe('run document projection', () => {
     expect(output).not.toContain('SECRET_SYSTEM_PROMPT')
     expect(safeStructuredOutput('SECRET_CREDENTIAL')).toBeNull()
   })
+
+  it('opens the canonical Run deliverable first and reports supporting artifacts', () => {
+    const model = projectRunDocument({
+      runId: 'run_1', mission, graphNodes: nodes,
+      entries: [
+        { ...entries[0], artifactType: 'primary_artifact' },
+        { entryId: 'artifact:final', kind: 'artifact', name: 'final.md', group: 'output', displayOrder: 5, artifactKey: 'final', artifactType: 'run_deliverable', artifactId: 'artifact_final', semanticTaskKey: 'deliver', mediaType: 'text/markdown' }
+      ],
+      runtimeObservation: observation([])
+    })
+    const result = model.symbols.find(item => item.type === 'result')!
+    expect(result.status).toBe('completed')
+    expect(result.children[0].artifactKey).toBe('final')
+    expect(result.children[0].defaultExpanded).toBe(true)
+    expect(result.subtitle).toContain('1 final deliverable')
+    expect(result.subtitle).toContain('1 supporting artifact')
+  })
+
+  it('does not promote a primary artifact when the Run deliverable is missing', () => {
+    const model = projectRunDocument({
+      runId: 'run_1', mission, graphNodes: nodes,
+      entries: [{ ...entries[0], artifactType: 'primary_artifact' }],
+      runtimeObservation: observation([])
+    })
+    const result = model.symbols.find(item => item.type === 'result')!
+    expect(result.status).toBe('warning')
+    expect(result.subtitle).toContain('Final deliverable missing')
+  })
 })

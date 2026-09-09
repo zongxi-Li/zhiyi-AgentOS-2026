@@ -135,6 +135,7 @@ import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
+import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 
 const route = useRoute()
 const router = useRouter()
@@ -306,12 +307,13 @@ const openDefaultEditor = (nextProjection: MissionWorkspaceProjection) => {
   if (openEditors.value.length) return
   const promptEntry = nextProjection.entries.find(entry => entry.entryId === 'overview:mission.md')
   const first = nextProjection.entries.find(entry => entry.entryId === 'overview:graph.acg')
+  const finalEntry = nextProjection.entries.find(entry => entry.kind === 'artifact' && isRunDeliverableEntry(entry))
   const runActive = nextProjection.activeRun?.status === 'running' || nextProjection.activeRun?.status === 'pending'
   const progressEntry = progressEntryFor(nextProjection.activeRun?.runId || selectedRunId.value)
   const openIds = [
     ...(runActive ? [progressEntry.entryId] : []),
     ...(runActive && promptEntry ? [promptEntry.entryId] : []),
-    ...(first ? [first.entryId] : [])
+    ...(finalEntry ? [finalEntry.entryId] : first ? [first.entryId] : [])
   ]
   if (!openIds.length && promptEntry) openIds.push(promptEntry.entryId)
   if (!openIds.length) return

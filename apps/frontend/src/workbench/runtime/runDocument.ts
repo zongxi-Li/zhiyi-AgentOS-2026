@@ -3,6 +3,7 @@ import type { RuntimeObservation, RuntimeTraceObservation, ModelOutputItem } fro
 import { projectModelOutput } from './observation'
 import { projectRunProgress, type RunProgressTaskGroup } from './runProgress'
 import type { RuntimeEventStore, NodeRuntimeState } from './runtimeEvents'
+import { isRunDeliverableEntry } from './deliverableIdentity'
 
 export type RunDocumentSymbolType =
   | 'run'
@@ -628,7 +629,8 @@ const artifactSymbol = (runId: string, artifact: WorkspaceEntry): RunDocumentSym
   graphNodeId: artifact.acgNodeId,
   artifactKey: artifact.artifactKey,
   artifactId: artifact.artifactId,
-  defaultExpanded: false
+  detail: isRunDeliverableEntry(artifact) ? 'Run deliverable' : 'Supporting artifact',
+  defaultExpanded: isRunDeliverableEntry(artifact)
 })
 
 const executionStatus = (tasks: RunDocumentSymbol[]): RunDocumentSymbolStatus => {
@@ -669,19 +671,30 @@ export const projectRunDocument = (input: RunDocumentProjectionInput): RunDocume
     children: tasks,
     defaultExpanded: tasks.some(task => task.status === 'running' || task.status === 'warning' || task.status === 'failed')
   })
-  const artifacts = input.entries
+  const artifactEntries = input.entries
     .filter(entry => entry.kind === 'artifact')
-    .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId))
+  const finalArtifacts = artifactEntries.filter(isRunDeliverableEntry)
+  const supportingArtifacts = artifactEntries.filter(entry => !isRunDeliverableEntry(entry))
+  const artifacts = [...finalArtifacts, ...supportingArtifacts]
+    .sort((left, right) => (
+      Number(isRunDeliverableEntry(right)) - Number(isRunDeliverableEntry(left))
+      || left.displayOrder - right.displayOrder
+      || left.entryId.localeCompare(right.entryId)
+    ))
     .map(artifact => artifactSymbol(runId, artifact))
   const result = symbol({
     id: `result:${runId}`,
     type: 'result',
-    status: artifacts.length ? 'completed' : 'pending',
+    status: finalArtifacts.length ? 'completed' : artifactEntries.length ? 'warning' : 'pending',
     title: 'Result',
-    subtitle: artifacts.length ? `${artifacts.length} artifact${artifacts.length === 1 ? '' : 's'}` : 'No artifacts',
+    subtitle: finalArtifacts.length
+      ? `${finalArtifacts.length} final deliverable${finalArtifacts.length === 1 ? '' : 's'} · ${supportingArtifacts.length} supporting artifact${supportingArtifacts.length === 1 ? '' : 's'}`
+      : artifactEntries.length
+        ? `Final deliverable missing · ${supportingArtifacts.length} supporting artifact${supportingArtifacts.length === 1 ? '' : 's'}`
+        : 'Final deliverable missing',
     runId,
     children: artifacts,
-    defaultExpanded: false
+    defaultExpanded: finalArtifacts.length > 0
   })
   const symbols = [
     planning,
