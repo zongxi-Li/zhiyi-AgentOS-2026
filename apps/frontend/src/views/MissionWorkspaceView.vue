@@ -757,14 +757,28 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mission-workspace-view { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
-.workspace-loading-pane { display: grid; align-content: center; gap: 8px; height: 100%; padding: 22px; color: var(--text-secondary); font-size: 12px; }
+.workspace-loading-pane { display: grid; place-items: center; align-content: center; gap: 8px; box-sizing: border-box; height: 100%; padding: 22px; color: var(--text-secondary); font-size: 12px; text-align: center; }
+.workspace-loading-pane::before,
+.workspace-main-state::before { width: 7px; height: 7px; border: 1px solid color-mix(in srgb, var(--primary-color) 60%, var(--border-light)); border-radius: 50%; background: var(--primary-fade); box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary-color) 8%, transparent); content: ''; animation: workspace-state-pulse 1.8s ease-in-out infinite; }
 .workspace-loading-pane strong { color: var(--text-primary); font-size: 13px; }
-.workspace-loading-pane span:not(.workspace-loading-pane__mark) { line-height: 1.6; }
+.workspace-loading-pane span:not(.workspace-loading-pane__mark) { max-width: 230px; line-height: 1.6; }
 .workspace-loading-pane__mark { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
 .workspace-loading-pane button, .workspace-main-state button { width: max-content; min-height: 29px; padding: 0 10px; border: 1px solid var(--border-light); border-radius: 5px; color: var(--text-secondary); background: transparent; cursor: pointer; font-size: 11px; }
 .workspace-loading-pane button:hover, .workspace-main-state button:hover { color: var(--primary-color); border-color: var(--primary-line); background: var(--primary-fade); }
-.workspace-main-state { display: grid; place-items: center; align-content: center; gap: 8px; height: 100%; color: var(--text-secondary); font-size: 12px; text-align: center; }
-.workspace-main-state strong { color: var(--text-primary); font-size: 14px; }
+.workspace-main-state { display: grid; place-items: center; align-content: center; gap: 8px; box-sizing: border-box; height: 100%; min-height: 260px; padding: 24px; color: var(--text-secondary); font-size: 12px; text-align: center; }
+.workspace-main-state strong { color: var(--text-primary); font-size: 14px; font-weight: 650; }
+.workspace-main-state > span { max-width: 320px; line-height: 1.65; }
+.workspace-main-state button { margin-top: 3px; }
+
+@keyframes workspace-state-pulse {
+  0%, 100% { opacity: .42; transform: scale(.88); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-loading-pane::before,
+  .workspace-main-state::before { animation: none; }
+}
 .workspace-request-error { position: fixed; top: 14px; right: 18px; z-index: 12; display: flex; align-items: center; gap: 12px; max-width: min(520px, calc(100vw - 36px)); padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border-light)); color: var(--danger); background: var(--bg-card); box-shadow: var(--shadow-sm); font-size: 11px; }
 .workspace-request-error button { flex: 0 0 auto; padding: 4px 7px; border: 1px solid var(--border-light); border-radius: 4px; color: var(--text-secondary); background: transparent; cursor: pointer; font-size: 10px; }
 .workspace-request-error button:hover { color: var(--primary-color); border-color: var(--primary-line); }
