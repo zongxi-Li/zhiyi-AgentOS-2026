@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import secrets
+import uuid
 
-from contracts.resource import NodeHealthStatus, NodeProfile, NodeSnapshot
+from contracts.resource import DeploymentTier, NodeHealthStatus, NodeProfile, NodeSnapshot
 
+from .crypto import ResourceSecretBox
 from .models import NodeHealth, VersionedNodeSnapshot
 from .node_health import NodeHealthMonitor, infer_load_status
 from .node_store import InMemoryNodeStore, NodeStore
+from .store import ResourceCredentialRecord
+
+
+@dataclass(frozen=True)
+class IssuedNodeCredential:
+    """远程节点登记响应中一次性返回的密钥。"""
+
+    node_id: str
+    credential_id: str
+    owner_scope: str
+    secret: str
 
 _PRIVACY_RANK = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
 
@@ -24,12 +40,42 @@ class NodeService:
         self,
         store: NodeStore | None = None,
         health_monitor: NodeHealthMonitor | None = None,
+        *,
+        credential_key: str | bytes | None = None,
     ) -> None:
         self.store = store or InMemoryNodeStore()
         self.health_monitor = health_monitor or NodeHealthMonitor()
+        self.secret_box = ResourceSecretBox(credential_key)
 
     def register(self, profile: NodeProfile, snapshot: NodeSnapshot) -> VersionedNodeSnapshot:
         return self.store.register(profile, snapshot)
+
+    def register_remote(
+        self, profile: NodeProfile, snapshot: NodeSnapshot
+    ) -> IssuedNodeCredential:
+        """登记远程节点并生成只能在注册响应中读取一次的凭据。"""
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            raise ValueError("remote node must use a non-local deployment tier")
+        if not profile.owner_scope:
+            raise ValueError("remote node ownerScope is required")
+        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
+            raise ValueError("remote node execution endpoint is required")
+        secret = secrets.token_urlsafe(32)
+        record = ResourceCredentialRecord(
+            resource_id=profile.node_id,
+            credential_id=f"nc_{uuid.uuid4().hex}",
+            owner_scope=profile.owner_scope,
+            secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            encrypted_secret=self.secret_box.encrypt(secret),
+            created_at=datetime.now(timezone.utc),
+        )
+        self.store.register_remote(profile, snapshot, record)
+        return IssuedNodeCredential(
+            node_id=profile.node_id,
+            credential_id=record.credential_id,
+            owner_scope=record.owner_scope,
+            secret=secret,
+        )
 
     def heartbeat(
         self,
