@@ -504,7 +504,11 @@ import ZoomIndicator from '@/components/desktop/ZoomIndicator.vue'
 
 const route = useRoute()
 const router = useRouter()
-const isPublicRoute = computed(() => route.path === '/')
+// Public surfaces own their full-page layout and, on desktop, their own
+// title-bar chrome. Keep the authenticated shell (including AppTopBar) out of
+// the standalone login route so it does not render a second set of window
+// controls above LoginView's auth-topbar.
+const isPublicRoute = computed(() => route.path === '/' || route.path === '/login')
 const chatStore = useChatStore()
 const workflowRunsStore = useWorkflowRunsStore()
 const userStore = useUserStore()

@@ -18,6 +18,7 @@ from contracts.communication import (
 )
 from contracts.artifacts import (
     canonicalize_artifact_identity,
+    final_synthesis_output_schema,
 )
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, utc_now
 from adapters.model.native_prompt import (
@@ -292,7 +293,10 @@ class NativeGeneralAgent(BaseAgent):
                 "No production model is configured for native ACG execution.",
             )
 
-        output_schema = dict(context.step.output_spec or descriptor.output_contract)
+        output_schema = final_synthesis_output_schema(
+            dict(context.step.output_spec or descriptor.output_contract),
+            context.step.logical_role,
+        )
         generation_schema = self._generation_schema(capability, output_schema)
         pack = context.context_pack
         source_data = getattr(pack, "source_data", {}) if pack is not None else {}
@@ -323,7 +327,10 @@ class NativeGeneralAgent(BaseAgent):
         max_output_tokens = _output_budget_for(capability)
         invocations: list[dict[str, Any]] = []
         base_prompt_version = prompt_version_for_capability(capability)
-        repair_used = False
+        # Parsing repair and contract repair address different failure classes.
+        # Keep one bounded attempt for each so a valid JSON repair does not
+        # consume the later opportunity to repair a schema violation.
+        repair_attempts = {"json": 0, "contract": 0}
         thinking_fallback_reason: str | None = None
         recovered_output: dict[str, Any] | None = None
         runtime_events: list[dict[str, Any]] = []
@@ -438,7 +445,9 @@ class NativeGeneralAgent(BaseAgent):
             elif exc.code != "MODEL_OUTPUT_INVALID_JSON":
                 raise
             else:
-                repair_used = True
+                if repair_attempts["json"] >= 1:
+                    raise
+                repair_attempts["json"] += 1
                 generated = await runtime.generate_json(
                     prompt=self.prompt_builder.build_json_repair(
                         original_prompt=prompt,
@@ -481,12 +490,12 @@ class NativeGeneralAgent(BaseAgent):
                 direction="output",
             )
         except ContextContractError as exc:
-            if repair_used:
+            if repair_attempts["contract"] >= 1:
                 raise StructuredGenerationError(
                     "OUTPUT_CONTRACT_VIOLATION",
                     str(exc),
                 ) from exc
-            repair_used = True
+            repair_attempts["contract"] += 1
             repaired = await runtime.generate_json(
                 prompt=self.prompt_builder.build_repair(
                     original_prompt=prompt,

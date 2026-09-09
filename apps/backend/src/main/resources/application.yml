@@ -82,7 +82,7 @@ app:
 cors:
   # Tauri 2 production WebViews use http://tauri.localhost on Windows and
   # tauri://localhost on macOS/Linux. Keep browser origins configurable.
-  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8080,http://127.0.0.1:8080,http://localhost:3000,http://127.0.0.1:3000,http://tauri.localhost,tauri://localhost}
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8080,http://127.0.0.1:8080,http://localhost:15100,http://127.0.0.1:15100,http://localhost:3000,http://127.0.0.1:3000,http://tauri.localhost,tauri://localhost}
   allowed-methods:
     - GET
     - POST

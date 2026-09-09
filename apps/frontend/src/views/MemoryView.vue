@@ -12,10 +12,21 @@
           <aside class="memory-runs" aria-label="运行列表" :aria-busy="runsLoading">
             <div class="memory-runs__head">
               <div>
-                <span class="memory-runs__title">运行</span>
-                <span class="memory-runs__subtitle">按最近活动排序</span>
+                <span class="memory-runs__title">记忆来源</span>
+                <span class="memory-runs__subtitle">Mission · Run 层级</span>
               </div>
-              <span class="memory-runs__count">{{ runsLoading ? '…' : runs.length }}</span>
+              <div class="memory-runs__actions">
+                <span class="memory-runs__count">{{ runsLoading ? '…' : `${runs.length} RUN` }}</span>
+                <button
+                  type="button"
+                  class="memory-runs__collapse"
+                  :disabled="!missionGroups.length"
+                  :aria-label="allMissionsCollapsed ? '展开全部 Mission' : '折叠全部 Mission'"
+                  @click="toggleAllMissions"
+                >
+                  {{ allMissionsCollapsed ? '展开全部' : '折叠全部' }}
+                </button>
+              </div>
             </div>
             <div v-if="runsLoading" class="memory-runs__loading" aria-label="正在加载运行列表">
               <div v-for="index in 6" :key="index" class="memory-run-skeleton">
@@ -32,20 +43,51 @@
             </div>
             <div v-else-if="!runs.length" class="memory-runs__hint">暂无运行记录</div>
             <ul v-else class="memory-runs__list">
-              <li v-for="run in runs" :key="run.runId">
+              <li v-for="group in missionGroups" :key="group.missionId" class="memory-mission">
                 <button
                   type="button"
-                  class="memory-run"
-                  :class="{ 'is-active': run.runId === selectedRunId }"
-                  :aria-current="run.runId === selectedRunId ? 'true' : undefined"
-                  @click="selectRun(run.runId)"
+                  class="memory-mission__head"
+                  :aria-expanded="isMissionExpanded(group.missionId)"
+                  :aria-controls="`memory-mission-${group.missionId}`"
+                  @click="toggleMission(group.missionId)"
                 >
-                  <span class="memory-run__dot" :data-status="run.status" aria-hidden="true" />
-                  <span class="memory-run__meta">
-                    <span class="memory-run__title">{{ run.title || run.missionId }}</span>
-                    <span class="memory-run__sub">{{ run.runId }} · {{ formatTime(run.updatedAt) }}</span>
+                  <span
+                    class="memory-mission__chevron"
+                    :class="{ 'is-expanded': isMissionExpanded(group.missionId) }"
+                    aria-hidden="true"
+                  />
+                  <span class="memory-mission__identity">
+                    <span class="memory-mission__eyebrow">MISSION</span>
+                    <span class="memory-mission__title">{{ group.title }}</span>
+                    <span class="memory-mission__id">{{ group.missionId }}</span>
                   </span>
+                  <span class="memory-mission__count">{{ group.runs.length }} RUN</span>
                 </button>
+
+                <ul
+                  v-if="isMissionExpanded(group.missionId)"
+                  :id="`memory-mission-${group.missionId}`"
+                  class="memory-mission__runs"
+                >
+                  <li v-for="(run, runIndex) in group.runs" :key="run.runId">
+                    <button
+                      type="button"
+                      class="memory-run"
+                      :class="{ 'is-active': run.runId === selectedRunId }"
+                      :aria-current="run.runId === selectedRunId ? 'true' : undefined"
+                      @click="selectRun(run.runId)"
+                    >
+                      <span class="memory-run__dot" :data-status="run.status" aria-hidden="true" />
+                      <span class="memory-run__meta">
+                        <span class="memory-run__title">
+                          <span class="memory-run__index">Run {{ formatRunNumber(runIndex) }}</span>
+                          <span class="memory-run__status">{{ formatRunStatus(run.status) }}</span>
+                        </span>
+                        <span class="memory-run__sub">{{ run.runId }} · {{ formatTime(run.updatedAt) }}</span>
+                      </span>
+                    </button>
+                  </li>
+                </ul>
               </li>
             </ul>
           </aside>
@@ -311,7 +353,7 @@ import { useRoute } from 'vue-router'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import WorkspacePageHero from '@/components/app/WorkspacePageHero.vue'
 import { workflowApi } from '@/services/api/workflow'
-import type { MemoryWriteEvent, RunMemoryEvent, WorkflowRunSummary } from '@/services/api/agentos'
+import { agentosApi, type MemoryWriteEvent, type MissionListItem, type RunMemoryEvent, type WorkflowRunSummary } from '@/services/api/agentos'
 import {
   projectMemoryFlow,
   shortStepLabel,
@@ -332,11 +374,19 @@ interface FlowWithNodes extends MemoryFlowProjection {
   nodes: FlowNode[]
 }
 
+interface MemoryMissionGroup {
+  missionId: string
+  title: string
+  runs: WorkflowRunSummary[]
+}
+
 const route = useRoute()
 const runs = ref<WorkflowRunSummary[]>([])
+const missions = ref<MissionListItem[]>([])
 const runsLoading = ref(false)
 const runsError = ref<string | null>(null)
 const selectedRunId = ref<string | null>(null)
+const expandedMissionIds = ref<Set<string>>(new Set())
 const eventsLoading = ref(false)
 const eventsError = ref<string | null>(null)
 const rawEvents = ref<RunMemoryEvent[]>([])
@@ -348,6 +398,28 @@ let pollGeneration = 0
 const ACTIVE_STATUSES = new Set(['running', 'pending', 'planning', 'executing', 'graph_building', 'understanding'])
 
 const selectedRun = computed(() => runs.value.find(run => run.runId === selectedRunId.value) || null)
+
+const missionGroups = computed<MemoryMissionGroup[]>(() => {
+  const missionTitles = new Map(missions.value.map(mission => [mission.missionId, mission.title]))
+  const groups = new Map<string, MemoryMissionGroup>()
+
+  for (const run of runs.value) {
+    const existing = groups.get(run.missionId)
+    if (existing) {
+      existing.runs.push(run)
+      continue
+    }
+    groups.set(run.missionId, {
+      missionId: run.missionId,
+      title: missionTitles.get(run.missionId) || run.title || run.missionId,
+      runs: [run]
+    })
+  }
+
+  return [...groups.values()]
+})
+
+const allMissionsCollapsed = computed(() => missionGroups.value.every(group => !expandedMissionIds.value.has(group.missionId)))
 
 const flow = computed<FlowWithNodes | null>(() => {
   if (!rawEvents.value.length) {
@@ -421,6 +493,30 @@ function formatTime(iso: string | null | undefined): string {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+function formatRunNumber(index: number): string {
+  return String(index + 1).padStart(2, '0')
+}
+
+function isMissionExpanded(missionId: string): boolean {
+  return expandedMissionIds.value.has(missionId)
+}
+
+function toggleMission(missionId: string): void {
+  const next = new Set(expandedMissionIds.value)
+  if (next.has(missionId)) {
+    next.delete(missionId)
+  } else {
+    next.add(missionId)
+  }
+  expandedMissionIds.value = next
+}
+
+function toggleAllMissions(): void {
+  expandedMissionIds.value = allMissionsCollapsed.value
+    ? new Set(missionGroups.value.map(group => group.missionId))
+    : new Set()
+}
+
 function formatRunStatus(status: string | null | undefined): string {
   const labels: Record<string, string> = {
     completed: '已完成',
@@ -444,9 +540,18 @@ function formatRunsError(error: unknown): string {
 async function loadRuns(): Promise<void> {
   runsLoading.value = true
   runsError.value = null
+  const missionsRequest = agentosApi.listMissions({ page: 1, pageSize: 100 })
+    .then(page => {
+      missions.value = page.items
+    })
+    .catch(() => {
+      // Mission metadata is supplemental. Run IDs still provide a usable fallback grouping.
+      missions.value = []
+    })
   try {
     const page = await workflowApi.listRuns({ page: 1, pageSize: 50 })
     runs.value = page.items
+    expandedMissionIds.value = new Set()
     if (!selectedRunId.value && runs.value.length) {
       const fromQuery = typeof route.query.runId === 'string' ? route.query.runId : null
       const target = fromQuery && runs.value.some(run => run.runId === fromQuery) ? fromQuery : runs.value[0].runId
@@ -460,11 +565,18 @@ async function loadRuns(): Promise<void> {
   } finally {
     runsLoading.value = false
   }
+  await missionsRequest
 }
 
 function selectRun(runId: string): void {
   if (selectedRunId.value === runId) {
     return
+  }
+  const run = runs.value.find(item => item.runId === runId)
+  if (run) {
+    const next = new Set(expandedMissionIds.value)
+    next.add(run.missionId)
+    expandedMissionIds.value = next
   }
   selectedRunId.value = runId
   void loadEvents(true)
@@ -612,6 +724,13 @@ onUnmounted(() => {
   font-size: 10px;
 }
 
+.memory-runs__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
 .memory-runs__count,
 .memory-flow__count {
   display: inline-flex;
@@ -624,6 +743,31 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--wb-accent-soft) 72%, var(--wb-surface-section));
   font: 10px var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
+}
+
+.memory-runs__collapse {
+  padding: 0;
+  border: 0;
+  color: var(--wb-accent);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.memory-runs__collapse:hover {
+  color: var(--wb-text);
+}
+
+.memory-runs__collapse:disabled {
+  color: var(--wb-text-muted);
+  cursor: default;
+}
+
+.memory-runs__collapse:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .memory-runs__hint {
@@ -695,6 +839,101 @@ onUnmounted(() => {
   scrollbar-gutter: stable;
 }
 
+.memory-mission {
+  margin-bottom: 4px;
+}
+
+.memory-mission:last-child {
+  margin-bottom: 0;
+}
+
+.memory-mission__head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 62px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--wb-radius-sm);
+  color: inherit;
+  background: color-mix(in srgb, var(--wb-surface-pane) 42%, transparent);
+  cursor: pointer;
+  text-align: left;
+  transition: var(--transition);
+}
+
+.memory-mission__head:hover {
+  border-color: var(--wb-border-soft);
+  background: var(--wb-hover);
+}
+
+.memory-mission__head:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.memory-mission__chevron {
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-right: 1.5px solid var(--wb-text-muted);
+  border-bottom: 1.5px solid var(--wb-text-muted);
+  transform: rotate(-45deg);
+  transition: transform 160ms ease;
+}
+
+.memory-mission__chevron.is-expanded {
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.memory-mission__identity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.memory-mission__eyebrow {
+  color: var(--wb-accent);
+  font: 9px var(--font-mono, monospace);
+  letter-spacing: .1em;
+}
+
+.memory-mission__title,
+.memory-mission__id {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.memory-mission__title {
+  color: var(--wb-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.memory-mission__id {
+  color: var(--wb-text-muted);
+  font: 10px var(--font-mono, monospace);
+}
+
+.memory-mission__count {
+  align-self: start;
+  margin-top: 2px;
+  color: var(--wb-text-muted);
+  font: 10px var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.memory-mission__runs {
+  list-style: none;
+  margin: 0 8px 7px 20px;
+  padding: 3px 0 2px 10px;
+  border-left: 1px solid color-mix(in srgb, var(--wb-accent) 20%, var(--wb-border-soft));
+}
+
 .memory-run {
   display: flex;
   align-items: center;
@@ -709,6 +948,12 @@ onUnmounted(() => {
   cursor: pointer;
   text-align: left;
   transition: var(--transition);
+}
+
+.memory-mission__runs .memory-run {
+  min-height: 49px;
+  padding: 7px 8px;
+  border-radius: 6px;
 }
 
 .memory-run:hover {
@@ -758,9 +1003,24 @@ onUnmounted(() => {
 }
 
 .memory-run__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   color: var(--wb-text);
   font-size: 12px;
   font-weight: 520;
+}
+
+.memory-run__index {
+  color: var(--wb-text-secondary);
+  font: 11px var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-run__status {
+  color: var(--wb-text-muted);
+  font-size: 10px;
+  font-weight: 450;
 }
 
 .memory-run__sub {

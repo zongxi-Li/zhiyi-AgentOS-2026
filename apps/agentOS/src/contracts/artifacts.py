@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
 
@@ -67,6 +68,29 @@ def canonicalize_artifact_identity(
     return normalized
 
 
+def final_synthesis_output_schema(
+    schema: Mapping[str, Any], logical_role: Any = ""
+) -> dict[str, Any]:
+    """Allow the canonical final artifact type at the output boundary.
+
+    Older persisted plans describe the final artifact as ``report`` while the
+    Run-level identity contract canonicalizes it to ``run_deliverable``. Keep
+    every other schema constraint intact and apply this compatibility only to
+    a final-synthesis step's singular artifact type.
+    """
+    normalized = deepcopy(dict(schema))
+    if not is_final_synthesis_role(logical_role):
+        return normalized
+    properties = normalized.get("properties")
+    artifact = properties.get("artifact") if isinstance(properties, dict) else None
+    artifact_properties = artifact.get("properties") if isinstance(artifact, dict) else None
+    type_schema = artifact_properties.get("type") if isinstance(artifact_properties, dict) else None
+    enum = type_schema.get("enum") if isinstance(type_schema, dict) else None
+    if isinstance(enum, list) and RUN_DELIVERABLE_ARTIFACT_TYPE not in enum:
+        type_schema["enum"] = [*enum, RUN_DELIVERABLE_ARTIFACT_TYPE]
+    return normalized
+
+
 def canonicalize_final_synthesis_nodes(
     nodes: Sequence[Any], relations: Sequence[Any]
 ) -> list[Any]:
@@ -99,6 +123,7 @@ __all__ = [
     "RUN_DELIVERABLE_ARTIFACT_TYPE",
     "canonicalize_artifact_identity",
     "canonicalize_final_synthesis_nodes",
+    "final_synthesis_output_schema",
     "is_final_synthesis_role",
     "is_run_deliverable_identity",
 ]

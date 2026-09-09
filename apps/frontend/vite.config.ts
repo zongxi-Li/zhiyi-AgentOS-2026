@@ -79,8 +79,8 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: {
-      port: 3000,
-      // 桌面模式端口是 tauri dev 的硬约定（tauri.conf.json devUrl=127.0.0.1:3000，
+      port: isDesktop ? 15100 : 3000,
+      // 桌面模式端口是 tauri dev 的硬约定（tauri.conf.json devUrl=127.0.0.1:15100，
       // 后端 CORS 白名单也只围绕该源设计）：端口被占就快速失败，
       // 禁止 Vite 静默漂移到 3001 导致 API 全部落入 CORS 陷阱。
       strictPort: isDesktop,

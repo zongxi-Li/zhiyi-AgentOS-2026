@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi } from '@/services/api/agentos'
-import type { RunMemoryEvent, WorkflowRunSummary } from '@/services/api/agentos'
+import type { MissionListItem, RunMemoryEvent, WorkflowRunSummary } from '@/services/api/agentos'
 import MemoryView from './MemoryView.vue'
 
 const layoutStub = {
@@ -85,8 +85,25 @@ const memoryEvents: RunMemoryEvent[] = [
 
 const mountedWrappers: Array<{ unmount: () => void }> = []
 
-const mountPage = async (options: { runs?: WorkflowRunSummary[]; events?: RunMemoryEvent[]; query?: Record<string, string> } = {}) => {
+const mountPage = async (options: {
+  runs?: WorkflowRunSummary[]
+  missions?: MissionListItem[]
+  events?: RunMemoryEvent[]
+  query?: Record<string, string>
+} = {}) => {
   const runs = options.runs ?? [makeRun({ runId: 'run_1' }), makeRun({ runId: 'run_2', title: '知识服务平台', status: 'failed' })]
+  const missions = options.missions ?? runs.map((run, index) => ({
+    missionId: run.missionId,
+    userId: 'user_1',
+    title: run.title || `Mission ${index + 1}`,
+    description: '',
+    status: 'active',
+    latestRunId: run.runId,
+    latestRunStatus: run.status,
+    createdAt: run.createdAt || run.startedAt || '',
+    updatedAt: run.updatedAt || run.startedAt || '',
+    runCount: 1
+  }))
   const events = options.events ?? memoryEvents
   const router = createRouter({
     history: createMemoryHistory(),
@@ -97,6 +114,7 @@ const mountPage = async (options: { runs?: WorkflowRunSummary[]; events?: RunMem
   await router.push({ path: '/agentos/memory', query: options.query ?? {} })
   await router.isReady()
   const listRunsSpy = vi.spyOn(agentosApi, 'listWorkflowRuns').mockResolvedValue({ items: runs, total: runs.length, page: 1, pageSize: 50 })
+  const listMissionsSpy = vi.spyOn(agentosApi, 'listMissions').mockResolvedValue({ items: missions, total: missions.length, page: 1, pageSize: 100 })
   const listEventsSpy = vi.spyOn(agentosApi, 'listMemoryEvents').mockResolvedValue({
     runId: 'run_1',
     items: events,
@@ -107,7 +125,7 @@ const mountPage = async (options: { runs?: WorkflowRunSummary[]; events?: RunMem
   })
   mountedWrappers.push(wrapper)
   await flushPromises()
-  return { wrapper, listRunsSpy, listEventsSpy }
+  return { wrapper, listRunsSpy, listMissionsSpy, listEventsSpy }
 }
 
 afterEach(() => {
@@ -142,9 +160,48 @@ describe('MemoryView', () => {
 
   it('点击其它运行切换并重新拉取记忆事件', async () => {
     const { wrapper, listEventsSpy } = await mountPage()
-    await wrapper.findAll('.memory-run')[1].trigger('click')
+    await wrapper.findAll('.memory-mission__head')[1].trigger('click')
+    await wrapper.findAll('.memory-mission')[1].find('.memory-run').trigger('click')
     await flushPromises()
     expect(listEventsSpy.mock.calls.at(-1)?.[0]).toBe('run_2')
+  })
+
+  it('按 Mission 分组，并将 Run 作为可折叠的二级条目展示', async () => {
+    const runs = [
+      makeRun({ runId: 'run_1', missionId: 'mission_a', title: '同一 Mission' }),
+      makeRun({ runId: 'run_2', missionId: 'mission_a', title: '同一 Mission', status: 'failed' }),
+      makeRun({ runId: 'run_3', missionId: 'mission_b', title: '另一个 Mission' })
+    ]
+    const missions: MissionListItem[] = [
+      {
+        missionId: 'mission_a', userId: 'user_1', title: '同一 Mission', description: '', status: 'active',
+        latestRunId: 'run_1', latestRunStatus: 'completed', createdAt: '', updatedAt: '', runCount: 2
+      },
+      {
+        missionId: 'mission_b', userId: 'user_1', title: '另一个 Mission', description: '', status: 'active',
+        latestRunId: 'run_3', latestRunStatus: 'completed', createdAt: '', updatedAt: '', runCount: 1
+      }
+    ]
+    const { wrapper } = await mountPage({ runs, missions })
+
+    expect(wrapper.findAll('.memory-mission')).toHaveLength(2)
+    expect(wrapper.findAll('.memory-mission__head')[0].text()).toContain('同一 Mission')
+    expect(wrapper.findAll('.memory-mission__count')[0].text()).toBe('2 RUN')
+    expect(wrapper.findAll('.memory-mission__runs')[0].findAll('.memory-run')).toHaveLength(2)
+    expect(wrapper.findAll('.memory-run__index').map(item => item.text())).toEqual(['Run 01', 'Run 02'])
+
+    const collapseAll = wrapper.find('.memory-runs__collapse')
+    expect(collapseAll.text()).toBe('折叠全部')
+    await collapseAll.trigger('click')
+    expect(wrapper.findAll('.memory-mission__runs')).toHaveLength(0)
+    expect(collapseAll.text()).toBe('展开全部')
+
+    await collapseAll.trigger('click')
+    expect(wrapper.findAll('.memory-mission__runs')).toHaveLength(2)
+
+    await wrapper.findAll('.memory-mission__head')[0].trigger('click')
+    expect(wrapper.find('#memory-mission-mission_a').exists()).toBe(false)
+    expect(wrapper.findAll('.memory-mission__head')[0].attributes('aria-expanded')).toBe('false')
   })
 
   it('支持 ?runId= 直达指定运行', async () => {

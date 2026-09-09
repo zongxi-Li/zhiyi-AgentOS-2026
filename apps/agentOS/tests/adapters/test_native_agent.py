@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
 from adapters.model.native import NativeGeneralAgent
 from components.content import ContentWorksetSession, SQLiteContentManifestStore
@@ -160,6 +162,44 @@ class _GenericRecoveryModel:
                 "constraints": [], "success_criteria": [], "assumptions": [],
                 "open_questions": [],
             }
+        return StructuredGenerationResult(data=data, provider="test", model="test")
+
+
+class _JsonThenContractRepairModel:
+    """Reproduce invalid JSON followed by a valid but incomplete payload."""
+
+    def __init__(self, *, complete_contract_repair: bool = True) -> None:
+        self.calls: list[dict] = []
+        self.complete_contract_repair = complete_contract_repair
+
+    def is_available(self) -> bool:
+        return True
+
+    async def generate_json(self, **kwargs) -> StructuredGenerationResult:
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_INVALID_JSON",
+                "provider returned invalid JSON",
+            )
+        if len(self.calls) == 2:
+            data = {"solution_design": {"overview": "lightweight option"}}
+        elif self.complete_contract_repair:
+            data = {
+                "solution_design": {
+                    "overview": "lightweight option",
+                    "phases": [
+                        {
+                            "name": "pilot",
+                            "milestones": ["validated"],
+                            "dependencies": ["baseline data"],
+                            "deliverables": ["operating rules"],
+                        }
+                    ],
+                }
+            }
+        else:
+            data = {"solution_design": {"overview": "still incomplete"}}
         return StructuredGenerationResult(data=data, provider="test", model="test")
 
 
@@ -335,6 +375,15 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
             agentName=agent.profile.agent_name, capability="artifact_generation",
             acceptanceCriteria=["全部覆盖"], sourceRefs=["source:1"],
             logicalRole="final_synthesis",
+            outputSpec={
+                "type": "object",
+                "properties": {
+                    "artifact": {
+                        "type": "object",
+                        "properties": {"type": {"type": "string", "enum": ["report"]}},
+                    },
+                },
+            },
         ),
         memory=[],
         contextPack=ContextPack(runId=run.run_id, stepId="artifact", evidenceRefs=["source:1"]),
@@ -384,3 +433,91 @@ def test_generic_output_exhaustion_decomposes_and_pairwise_reduces() -> None:
     assert result.output["task_summary"] == "merged"
     assert len(result.model_invocations) == 5
     assert result.model_invocations[0]["outputExhausted"] is True
+
+
+def test_invalid_json_repair_does_not_consume_contract_repair() -> None:
+    agent = NativeGeneralAgent()
+    model = _JsonThenContractRepairModel()
+    descriptor = build_default_capability_catalog().get("solution_design")
+    task = RuntimeMissionRecord(
+        missionId="task-json-contract-repair",
+        title="design a lightweight option",
+    )
+    run = RuntimeRunRecord(
+        missionId=task.mission_id,
+        workflowId="native",
+        domain="general",
+        runtimeEngine="acg",
+    )
+    context = AgentRunContext(
+        task=task,
+        run=run,
+        workflow=WorkflowDefinition(
+            workflowId="native",
+            name="native",
+            domain="general",
+            runtimeEngine="acg",
+        ),
+        step=WorkflowStep(
+            stepId="design",
+            name="design",
+            agentName=agent.profile.agent_name,
+            capability="solution_design",
+        ),
+        memory=[],
+        contextPack=ContextPack(runId=run.run_id, stepId="design"),
+        modelRuntime=model,
+        capabilityDescriptor=descriptor,
+        commitId="commit:json-contract-repair",
+    )
+
+    result = asyncio.run(agent.run(context))
+
+    assert len(model.calls) == 3
+    assert model.calls[1]["prompt_version"].endswith(".json-repair1")
+    assert model.calls[2]["prompt_version"].endswith(".repair1")
+    assert result.output["solution_design"]["phases"][0]["name"] == "pilot"
+    assert len(result.model_invocations) == 2
+
+
+def test_contract_repair_remains_bounded_after_invalid_json_repair() -> None:
+    agent = NativeGeneralAgent()
+    model = _JsonThenContractRepairModel(complete_contract_repair=False)
+    descriptor = build_default_capability_catalog().get("solution_design")
+    task = RuntimeMissionRecord(
+        missionId="task-bounded-contract-repair",
+        title="design a lightweight option",
+    )
+    run = RuntimeRunRecord(
+        missionId=task.mission_id,
+        workflowId="native",
+        domain="general",
+        runtimeEngine="acg",
+    )
+    context = AgentRunContext(
+        task=task,
+        run=run,
+        workflow=WorkflowDefinition(
+            workflowId="native",
+            name="native",
+            domain="general",
+            runtimeEngine="acg",
+        ),
+        step=WorkflowStep(
+            stepId="design",
+            name="design",
+            agentName=agent.profile.agent_name,
+            capability="solution_design",
+        ),
+        memory=[],
+        contextPack=ContextPack(runId=run.run_id, stepId="design"),
+        modelRuntime=model,
+        capabilityDescriptor=descriptor,
+        commitId="commit:bounded-contract-repair",
+    )
+
+    with pytest.raises(StructuredGenerationError) as error:
+        asyncio.run(agent.run(context))
+
+    assert error.value.code == "OUTPUT_CONTRACT_VIOLATION"
+    assert len(model.calls) == 3
