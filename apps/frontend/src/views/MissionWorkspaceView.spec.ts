@@ -17,8 +17,9 @@ const workspaceLayoutStub = {
 }
 
 const graphEditorStub = {
+  props: ['focusNodeId'],
   emits: ['selectSemanticTask', 'openSemanticTask'],
-  template: '<div class="graph-editor-stub"><button class="graph-select" @click="$emit(\'selectSemanticTask\', \'capacity\')">select</button><button class="graph-open" @click="$emit(\'openSemanticTask\', \'capacity\')">open</button></div>'
+  template: '<div class="graph-editor-stub" :data-focus-node-id="focusNodeId || undefined"><button class="graph-select" @click="$emit(\'selectSemanticTask\', \'capacity\')">select</button><button class="graph-open" @click="$emit(\'openSemanticTask\', \'capacity\')">open</button></div>'
 }
 
 const artifactEditorStub = {
@@ -317,6 +318,14 @@ describe('MissionWorkspaceView', () => {
     await wrapper.find('.artifact-locate').trigger('click')
     expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
     expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
+  })
+
+  it('locates a task in graph and passes its node id after graph mount', async () => {
+    const { wrapper } = await mountWorkspace()
+    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('Capacity'))?.trigger('click')
+    await wrapper.find('.task-editor__actions button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.graph-editor-stub').attributes('data-focus-node-id')).toBe('node_capacity')
   })
 
   it('disables graph positioning for legacy artifacts', async () => {

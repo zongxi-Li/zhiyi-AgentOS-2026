@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
@@ -736,8 +736,12 @@ const locateGraph = (entry: WorkspaceEntry) => {
   if (!graphEntry || !graphNode) return
   selectedSemanticTaskKey.value = entry.semanticTaskKey
   selectedGraphNodeId.value = graphNode.acgNodeId
-  focusNodeId.value = graphNode.acgNodeId
+  // 先打开 Graph Editor，再写入 focusNodeId，确保首次挂载时也能被图组件的 watcher 捕获。
+  focusNodeId.value = null
   openEntry(graphEntry)
+  void nextTick(() => {
+    focusNodeId.value = graphNode.acgNodeId
+  })
 }
 
 void loadWorkspace()
