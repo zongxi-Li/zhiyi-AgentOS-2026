@@ -1584,7 +1584,7 @@ def _output_schema(capability_id: str) -> dict:
                     "unresolvedGaps",
                 ),
                 "artifact": _record(
-                    {"artifactId": _TEXT, "artifactKey": _TEXT, "type": {"type": "string", "enum": ["report"]}, "title": _TEXT, "mediaType": {"type": "string", "enum": ["text/markdown"]}, "content": _DELIVERABLE_TEXT, "structuredData": {"type": "object"}, "manifestId": _TEXT, "checksum": _TEXT},
+                    {"artifactId": _TEXT, "artifactKey": _TEXT, "artifactType": _TEXT, "type": {"type": "string", "enum": ["report", "primary_artifact", "supporting_artifact", "run_deliverable"]}, "title": _TEXT, "mediaType": {"type": "string", "enum": ["text/markdown"]}, "content": _DELIVERABLE_TEXT, "structuredData": {"type": "object"}, "manifestId": _TEXT, "checksum": _TEXT, "metadata": {"type": "object"}},
                     "artifactId",
                     "type",
                     "title",
@@ -1713,7 +1713,10 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
             aliases=["报告", "方案", "交付物", "文档"], planningStage="deliver",
             dependsOn=["task_understanding"],
             optionalDependencies=["information_extraction", "information_retrieval", "requirement_analysis", "process_decomposition", "resource_planning", "architecture_design", "analysis", "comparative_analysis", "evidence_analysis", "cost_analysis", "risk_analysis", "solution_design", "verification"],
-            inputContract=_schema("task_summary"),
+            # A Run deliverable consumes the declared leaf outputs as a
+            # multi-source ContextPack.  Mission/task facts are already present
+            # in the runtime request, so no single upstream field is mandatory.
+            inputContract=_schema(),
             outputContract=_output_schema("artifact_generation"),
             producesArtifact=True, writesMemory=True, parallelizable=False,
             domainHints=general, priority=60,

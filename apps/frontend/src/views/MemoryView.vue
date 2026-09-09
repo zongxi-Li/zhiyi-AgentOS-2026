@@ -8,7 +8,7 @@
           description="每个节点完成时写入一张记忆卡片，后续节点起跑时按 run 范围召回；流向图展示「谁读了谁的记忆」。"
         />
 
-        <div class="memory-page__body">
+        <div class="memory-page__body" :class="{ 'is-loading': runsLoading }">
           <aside class="memory-runs" aria-label="运行列表" :aria-busy="runsLoading">
             <div class="memory-runs__head">
               <div>
@@ -25,6 +25,10 @@
                   <span class="memory-skeleton-line memory-skeleton-line--meta" />
                 </span>
               </div>
+            </div>
+            <div v-else-if="runsError" class="memory-runs__error" role="alert">
+              <p>{{ runsError }}</p>
+              <button type="button" class="memory-runs__retry" @click="loadRuns">重试</button>
             </div>
             <div v-else-if="!runs.length" class="memory-runs__hint">暂无运行记录</div>
             <ul v-else class="memory-runs__list">
@@ -68,11 +72,30 @@
                   <span class="memory-skeleton-line memory-skeleton-line--flow-meta" />
                 </div>
                 <div class="memory-loading-state__network">
-                  <span v-for="index in 5" :key="index" class="memory-loading-node" :style="{ '--node-index': index }" />
-                  <span class="memory-loading-state__track" />
+                </div>
+              </div>
+              <div class="memory-loading-state__trace" aria-hidden="true">
+                <div class="memory-loading-state__trace-head">
+                  <span class="memory-skeleton-line memory-skeleton-line--trace-title" />
+                  <span class="memory-skeleton-line memory-skeleton-line--trace-meta" />
+                </div>
+                <div class="memory-loading-state__trace-list">
+                  <div v-for="index in 3" :key="index" class="memory-loading-trace">
+                    <span class="memory-loading-trace__dot" />
+                    <span class="memory-loading-trace__copy">
+                      <span class="memory-skeleton-line memory-skeleton-line--trace-main" />
+                      <span class="memory-skeleton-line memory-skeleton-line--trace-sub" />
+                    </span>
+                    <span class="memory-skeleton-line memory-skeleton-line--trace-state" />
+                  </div>
                 </div>
               </div>
             </section>
+            <div v-else-if="runsError" class="memory-detail__empty memory-detail__empty--error" role="alert">
+              <strong>运行记录加载失败</strong>
+              <p>{{ runsError }}</p>
+              <button type="button" class="memory-detail__retry" @click="loadRuns">重新加载</button>
+            </div>
             <div v-else-if="!selectedRunId" class="memory-detail__empty">
               <p>选择左侧一个运行，查看它的记忆流。</p>
             </div>
@@ -141,13 +164,17 @@
                         viewBox="0 0 8 8"
                         refX="7"
                         refY="4"
-                        markerWidth="7"
-                        markerHeight="7"
+                        markerWidth="5"
+                        markerHeight="5"
                         orient="auto-start-reverse"
                       >
                         <path d="M 0 0 L 8 4 L 0 8 z" class="memory-flow__arrow" />
                       </marker>
                     </defs>
+                    <g class="memory-flow__guides" aria-hidden="true">
+                      <line x1="24" y1="64" :x2="flowLayout.width - 24" y2="64" />
+                      <line x1="24" y1="152" :x2="flowLayout.width - 24" y2="152" />
+                    </g>
                     <path
                       v-for="(edge, index) in flow.edges"
                       :key="index"
@@ -164,6 +191,7 @@
                       @mouseenter="hoveredStepId = node.stepId"
                       @mouseleave="hoveredStepId = null"
                     >
+                      <circle :cx="node.x" :cy="node.y" r="22" class="memory-flow__halo" />
                       <circle
                         :cx="node.x"
                         :cy="node.y"
@@ -171,6 +199,7 @@
                         class="memory-flow__circle"
                         :class="{ 'has-write': node.hasWrite }"
                       />
+                      <circle v-if="node.hasWrite" :cx="node.x" :cy="node.y" r="3" class="memory-flow__write-dot" />
                       <text :x="node.x" :y="node.y + (node.row === 0 ? -26 : 36)" class="memory-flow__label">
                         {{ shortStepLabel(node.stepId) }}
                       </text>
@@ -306,6 +335,7 @@ interface FlowWithNodes extends MemoryFlowProjection {
 const route = useRoute()
 const runs = ref<WorkflowRunSummary[]>([])
 const runsLoading = ref(false)
+const runsError = ref<string | null>(null)
 const selectedRunId = ref<string | null>(null)
 const eventsLoading = ref(false)
 const eventsError = ref<string | null>(null)
@@ -324,13 +354,13 @@ const flow = computed<FlowWithNodes | null>(() => {
     return null
   }
   const projection = projectMemoryFlow(rawEvents.value)
-  const nodeGap = 130
+  const nodeGap = 148
   const rowY = [64, 152]
   const nodes = projection.steps.map((step, index) => {
     const row = (index % 2) as 0 | 1
     return {
       stepId: step.stepId,
-      x: 66 + index * nodeGap,
+      x: 82 + index * nodeGap,
       y: rowY[row],
       row,
       hasWrite: step.write != null
@@ -342,8 +372,8 @@ const flow = computed<FlowWithNodes | null>(() => {
 const flowLayout = computed(() => {
   const count = flow.value?.steps.length ?? 0
   return {
-    width: Math.max(count * 130 + 30, 420),
-    height: 230
+    width: Math.max(count * 148 + 46, 520),
+    height: 214
   }
 })
 
@@ -404,8 +434,16 @@ function formatRunStatus(status: string | null | undefined): string {
   return labels[status || ''] || status || '未知状态'
 }
 
+function formatRunsError(error: unknown): string {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status
+  if (status === 401 || status === 403) return '登录状态已失效，请重新登录后再查看运行记忆。'
+  if (status != null && status >= 500) return '运行服务暂时不可用，请稍后重试。'
+  return error instanceof Error && error.message ? error.message : '运行记录暂时无法加载，请重试。'
+}
+
 async function loadRuns(): Promise<void> {
   runsLoading.value = true
+  runsError.value = null
   try {
     const page = await workflowApi.listRuns({ page: 1, pageSize: 50 })
     runs.value = page.items
@@ -416,6 +454,9 @@ async function loadRuns(): Promise<void> {
     }
   } catch (error) {
     runs.value = []
+    selectedRunId.value = null
+    rawEvents.value = []
+    runsError.value = formatRunsError(error)
   } finally {
     runsLoading.value = false
   }
@@ -487,6 +528,8 @@ onUnmounted(() => {
 
 <style scoped>
 .memory-page {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -507,7 +550,18 @@ onUnmounted(() => {
   gap: 16px;
   width: min(100%, 1400px);
   margin: 20px auto 0;
-  align-items: start;
+  align-items: stretch;
+}
+
+.memory-page__body.is-loading {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.memory-page__body.is-loading .memory-detail,
+.memory-page__body.is-loading .memory-loading-state {
+  min-height: 0;
+  height: 100%;
 }
 
 .memory-runs,
@@ -578,10 +632,37 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.memory-runs__error {
+  display: grid;
+  gap: 8px;
+  padding: 16px 14px 18px;
+  color: var(--wb-danger);
+  background: color-mix(in srgb, var(--wb-danger) 5%, var(--wb-surface-section));
+  font-size: 12px;
+}
+
+.memory-runs__error p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.memory-runs__retry {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--wb-accent);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .memory-runs__loading {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   gap: 2px;
   padding: 8px;
+  align-content: stretch;
 }
 
 .memory-run-skeleton {
@@ -700,8 +781,28 @@ onUnmounted(() => {
   text-align: center;
 }
 
+.memory-detail__empty--error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--wb-danger) 26%, var(--wb-border-soft));
+  background: color-mix(in srgb, var(--wb-danger) 5%, var(--wb-surface-section));
+}
+
+.memory-detail__empty--error strong {
+  display: block;
+  color: var(--wb-text);
+}
+
+.memory-detail__empty--error p {
+  margin: 8px 0 14px;
+  color: var(--wb-danger);
+}
+
 .memory-loading-state {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   min-height: 410px;
+  overflow: hidden;
   padding: 22px;
   border: 1px solid var(--wb-border-soft);
   border-radius: var(--wb-radius-section);
@@ -709,7 +810,22 @@ onUnmounted(() => {
   box-shadow: var(--wb-shadow-section);
 }
 
+.memory-loading-state::before {
+  position: absolute;
+  top: -120px;
+  right: 12%;
+  width: 280px;
+  height: 220px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--wb-accent) 9%, transparent);
+  content: '';
+  filter: blur(24px);
+  pointer-events: none;
+}
+
 .memory-loading-state__intro {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -754,6 +870,8 @@ onUnmounted(() => {
 }
 
 .memory-loading-state__stats {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
@@ -770,14 +888,33 @@ onUnmounted(() => {
   border-right: 1px solid var(--wb-border-soft);
 }
 
+.memory-loading-stat:nth-child(2) .memory-skeleton-line { animation-delay: 120ms; }
+.memory-loading-stat:nth-child(3) .memory-skeleton-line { animation-delay: 240ms; }
+.memory-loading-stat:nth-child(4) .memory-skeleton-line { animation-delay: 360ms; }
+
 .memory-loading-stat:last-child { border-right: 0; }
 
 .memory-loading-state__flow {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 220px;
   min-height: 220px;
   overflow: hidden;
   border: 1px solid var(--wb-border-soft);
   border-radius: var(--wb-radius-sm);
   background: color-mix(in srgb, var(--wb-surface-inset) 60%, var(--wb-surface-section));
+}
+
+.memory-loading-state__flow::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -24%;
+  width: 24%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wb-accent) 7%, transparent), transparent);
+  content: '';
+  animation: memory-flow-scan 3.6s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .memory-loading-state__flow-head {
@@ -787,37 +924,75 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--wb-border-soft);
 }
 
+.memory-loading-state__trace {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 180px;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid var(--wb-border-soft);
+  border-radius: var(--wb-radius-sm);
+  background: color-mix(in srgb, var(--wb-surface-inset) 48%, var(--wb-surface-section));
+}
+
+.memory-loading-state__trace-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--wb-border-soft);
+}
+
+.memory-loading-state__trace-list {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: repeat(3, minmax(52px, 1fr));
+  padding: 2px 16px 10px;
+}
+
+.memory-loading-trace {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--wb-border-soft) 72%, transparent);
+}
+
+.memory-loading-trace:last-child { border-bottom: 0; }
+
+.memory-loading-trace__dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--wb-accent) 26%, var(--wb-surface-inset));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--wb-accent) 7%, transparent);
+}
+
+.memory-loading-trace__copy {
+  display: grid;
+  flex: 1;
+  gap: 7px;
+  min-width: 0;
+}
+
 .memory-loading-state__network {
   position: relative;
   height: 164px;
   margin: 0 18px;
 }
 
-.memory-loading-state__track {
+.memory-loading-state__network::before {
   position: absolute;
-  top: 82px;
-  right: 4%;
-  left: 4%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wb-accent) 35%, var(--wb-border)), transparent);
+  inset: 18px 4% 16px;
+  background-image: linear-gradient(color-mix(in srgb, var(--wb-border) 48%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--wb-border) 48%, transparent) 1px, transparent 1px);
+  background-size: 42px 42px;
+  content: '';
+  opacity: .34;
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
 }
-
-.memory-loading-node {
-  position: absolute;
-  top: 54px;
-  left: calc(8% + (var(--node-index) - 1) * 21%);
-  z-index: 1;
-  width: 16px;
-  height: 16px;
-  border: 2px solid color-mix(in srgb, var(--wb-accent) 42%, var(--wb-border));
-  border-radius: 50%;
-  background: var(--wb-surface-section);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--wb-accent) 8%, transparent);
-  animation: memory-node-breathe 1.8s ease-in-out infinite;
-  animation-delay: calc(var(--node-index) * 120ms);
-}
-
-.memory-loading-node:nth-child(even) { top: 112px; }
 
 .memory-skeleton-line {
   display: block;
@@ -834,6 +1009,11 @@ onUnmounted(() => {
 .memory-skeleton-line--label { width: 48px; height: 7px; }
 .memory-skeleton-line--flow-title { width: 92px; }
 .memory-skeleton-line--flow-meta { width: 64px; height: 7px; }
+.memory-skeleton-line--trace-title { width: 108px; }
+.memory-skeleton-line--trace-meta { width: 72px; height: 7px; }
+.memory-skeleton-line--trace-main { width: min(42%, 280px); }
+.memory-skeleton-line--trace-sub { width: min(27%, 180px); height: 7px; }
+.memory-skeleton-line--trace-state { width: 54px; height: 7px; flex: none; }
 
 @keyframes memory-shimmer {
   0%, 100% { background-position: 100% 0; opacity: .64; }
@@ -845,15 +1025,16 @@ onUnmounted(() => {
   50% { opacity: 1; transform: scale(1); }
 }
 
-@keyframes memory-node-breathe {
-  0%, 100% { transform: translateY(0); opacity: .62; }
-  50% { transform: translateY(-3px); opacity: 1; }
+@keyframes memory-flow-scan {
+  0%, 20% { transform: translateX(0); opacity: 0; }
+  35% { opacity: 1; }
+  80%, 100% { transform: translateX(560%); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .memory-skeleton-line,
   .memory-loading-state__status i,
-  .memory-loading-node { animation: none; }
+  .memory-loading-state__flow::after { animation: none; }
 }
 
 .memory-detail__error {
@@ -969,7 +1150,7 @@ onUnmounted(() => {
 
 .memory-flow {
   margin-bottom: 18px;
-  padding: 0 8px 9px;
+  padding: 0 0 12px;
   overflow: hidden;
 }
 
@@ -980,21 +1161,35 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   min-height: 55px;
-  padding: 9px 10px 8px;
+  padding: 11px 16px 10px;
   border-bottom: 1px solid var(--wb-border-soft);
 }
 
 .memory-flow__count { min-height: 20px; }
-.memory-flow__scroll { overflow-x: auto; padding: 8px 0 0; }
-.memory-flow__svg { display: block; height: 230px; }
-.memory-flow__edge { fill: none; stroke: color-mix(in srgb, var(--wb-accent) 48%, var(--wb-border)); stroke-width: 1.5; opacity: .5; transition: opacity 160ms ease, stroke 160ms ease, stroke-width 160ms ease; }
-.memory-flow__edge.is-highlight { stroke: var(--wb-accent); stroke-width: 2.5; opacity: 1; }
-.memory-flow__arrow { fill: color-mix(in srgb, var(--wb-accent) 48%, var(--wb-border)); }
-.memory-flow__circle { fill: var(--wb-surface-inset); stroke: color-mix(in srgb, var(--wb-accent) 48%, var(--wb-border)); stroke-width: 1.6; cursor: default; transition: fill 160ms ease, stroke 160ms ease, r 160ms ease; }
+.memory-flow__scroll {
+  overflow-x: auto;
+  margin: 12px 12px 0;
+  padding: 3px 0;
+  border: 1px solid color-mix(in srgb, var(--wb-accent) 9%, var(--wb-border-soft));
+  border-radius: var(--wb-radius-sm);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--wb-accent) 3%, transparent) 1px, transparent 1px) 0 0 / 148px 100%,
+    color-mix(in srgb, var(--wb-surface-inset) 48%, var(--wb-surface-section));
+}
+.memory-flow__svg { display: block; height: 214px; }
+.memory-flow__guides line { stroke: color-mix(in srgb, var(--wb-accent) 14%, var(--wb-border-soft)); stroke-width: 1; stroke-dasharray: 2 7; }
+.memory-flow__edge { fill: none; stroke: color-mix(in srgb, var(--wb-accent) 46%, var(--wb-border)); stroke-width: 1.1; opacity: .16; transition: opacity 160ms ease, stroke 160ms ease, stroke-width 160ms ease; }
+.memory-flow__edge.is-highlight { stroke: var(--wb-accent); stroke-width: 2.2; opacity: .92; }
+.memory-flow__arrow { fill: color-mix(in srgb, var(--wb-accent) 48%, var(--wb-border)); opacity: .4; }
+.memory-flow__node { outline: none; }
+.memory-flow__halo { fill: color-mix(in srgb, var(--wb-accent-soft) 70%, transparent); opacity: 0; transition: opacity 160ms ease; }
+.memory-flow__circle { fill: var(--wb-surface-inset); stroke: color-mix(in srgb, var(--wb-accent) 58%, var(--wb-border)); stroke-width: 1.5; cursor: default; transition: fill 160ms ease, stroke 160ms ease, r 160ms ease; }
 .memory-flow__circle.has-write { fill: var(--wb-accent-soft); stroke: var(--wb-accent); }
+.memory-flow__write-dot { fill: var(--wb-accent); pointer-events: none; }
+.memory-flow__node.is-highlight .memory-flow__halo { opacity: .9; }
 .memory-flow__node.is-highlight .memory-flow__circle { stroke-width: 2.6; }
-.memory-flow__label { fill: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); text-anchor: middle; }
-.memory-flow__legend { margin: 6px 12px 0; color: var(--wb-text-muted); font-size: 10px; }
+.memory-flow__label { fill: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); text-anchor: middle; paint-order: stroke; stroke: var(--wb-surface-section); stroke-width: 5px; stroke-linejoin: round; }
+.memory-flow__legend { margin: 8px 16px 0; color: var(--wb-text-muted); font-size: 10px; }
 
 .memory-steps {
   display: flex;

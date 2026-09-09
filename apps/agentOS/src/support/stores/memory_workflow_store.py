@@ -19,6 +19,7 @@ from support.stores._policy import (
 from support.stores.workflow_store import (
     RuntimeRunRecordDeleteResult,
     RuntimeMissionRunSummary,
+    RuntimeRunOverview,
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
     WorkflowStorePage,
@@ -375,6 +376,73 @@ class MemoryWorkflowStore(WorkflowStore):
             reverse=True,
         )
         return paginate_items(runs, page=page, page_size=page_size)
+
+    def list_run_overviews(
+        self,
+        *,
+        status: WorkflowStatus | str | None = None,
+        statuses=None,
+        domain: str | None = None,
+        workflow_id: str | None = None,
+        mission_id: str | None = None,
+        lifecycle_phase: str | None = None,
+        source: str | None = None,
+        sources=None,
+        mission_record_state: MissionRecordState | str | None = None,
+        owner_user_id: str | None = None,
+        owner_tenant_id: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> WorkflowStorePage[RuntimeRunOverview]:
+        """复用 ``list_runs`` 的筛选排序分页，把当前页映射为轻量行投影。"""
+        result = self.list_runs(
+            status=status,
+            statuses=statuses,
+            domain=domain,
+            workflow_id=workflow_id,
+            mission_id=mission_id,
+            lifecycle_phase=lifecycle_phase,
+            source=source,
+            sources=sources,
+            mission_record_state=mission_record_state,
+            owner_user_id=owner_user_id,
+            owner_tenant_id=owner_tenant_id,
+            page=page,
+            page_size=page_size,
+        )
+        overviews = []
+        for run in result.items:
+            source_raw = run.input.get("source")
+            overviews.append(
+                RuntimeRunOverview(
+                    run_id=run.run_id,
+                    mission_id=run.mission_id,
+                    workflow_id=run.workflow_id,
+                    domain=run.domain,
+                    status=run.status,
+                    lifecycle_phase=(
+                        run.lifecycle_phase.value if run.lifecycle_phase is not None else None
+                    ),
+                    lifecycle_message=run.lifecycle_message,
+                    source=str(source_raw) if source_raw not in (None, "") else None,
+                    current_step_id=run.current_step_id,
+                    started_at=run.started_at,
+                    created_at=run.created_at,
+                    updated_at=run.updated_at,
+                    runtime_revision=int(run.runtime_revision),
+                    title=(
+                        self._tasks[run.mission_id].title
+                        if run.mission_id in self._tasks
+                        else None
+                    ),
+                )
+            )
+        return WorkflowStorePage(
+            items=tuple(overviews),
+            total=result.total,
+            page=result.page,
+            page_size=result.page_size,
+        )
 
     def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """返回最新优先的未终态运行深复制，数量下限为 1，复杂度 ``O(R log R)``。"""

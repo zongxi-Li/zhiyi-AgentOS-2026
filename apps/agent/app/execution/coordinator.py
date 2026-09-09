@@ -56,7 +56,16 @@ class RunExecutionCoordinator:
 
     async def startup(self, *, orphan_limit: int = 200) -> list[str]:
         self._accepting = True
-        return await self.runtime.close_orphaned_runs(limit=orphan_limit)
+        closed = await self.runtime.close_orphaned_runs(limit=orphan_limit)
+        # close_orphaned_runs persists terminal Runtime state and its
+        # run.finished lifecycle event.  Runtime construction performs the
+        # initial identity reconciliation before this startup hook, so flush
+        # once more here or the identity projection can remain stale at
+        # running while the authoritative Runtime is already failed.
+        flush_identity_outbox = getattr(self.runtime, "_flush_identity_outbox", None)
+        if callable(flush_identity_outbox):
+            flush_identity_outbox()
+        return closed
 
     async def shutdown(self) -> None:
         async with self._lock:

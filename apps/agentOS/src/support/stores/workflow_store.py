@@ -41,6 +41,30 @@ class RuntimeRunListSummary:
 
 
 @dataclass(frozen=True)
+class RuntimeRunOverview:
+    """Payload-free Run row projection for list endpoints.
+
+    Backed by summary columns joined with the mission title; loading a page
+    must not deserialize run payloads.
+    """
+
+    run_id: str
+    mission_id: str
+    workflow_id: str
+    domain: str
+    status: WorkflowStatus
+    lifecycle_phase: str | None
+    lifecycle_message: str | None
+    source: str | None
+    current_step_id: str | None
+    started_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    runtime_revision: int
+    title: str | None
+
+
+@dataclass(frozen=True)
 class RuntimeMissionRunSummary:
     """Batch summary of the runtime runs belonging to visible missions."""
 
@@ -129,6 +153,9 @@ _SAFE_EXECUTION_STATE_KEYS = {
     "supersedesRunId",
     "supersededByRunId",
     "rerunReason",
+    "singleStepRetry",
+    "retryTargetStepId",
+    "reusedStepIds",
     "traceRefs",
 }
 
@@ -290,6 +317,27 @@ class WorkflowStore(ABC):
         page_size: int = 20,
     ) -> WorkflowStorePage[RuntimeRunRecord]:
         """按状态、归属和来源条件分页列出运行；筛选条件共同取交集。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_run_overviews(
+        self,
+        *,
+        status: WorkflowStatus | str | None = None,
+        statuses: Sequence[WorkflowStatus | str] | None = None,
+        domain: str | None = None,
+        workflow_id: str | None = None,
+        mission_id: str | None = None,
+        lifecycle_phase: str | None = None,
+        source: str | None = None,
+        sources: Sequence[str] | None = None,
+        mission_record_state: MissionRecordState | str | None = None,
+        owner_user_id: str | None = None,
+        owner_tenant_id: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> WorkflowStorePage[RuntimeRunOverview]:
+        """与 ``list_runs`` 同筛选/排序/分页，但返回不载入 payload 的轻量行投影。"""
         raise NotImplementedError
 
     @abstractmethod

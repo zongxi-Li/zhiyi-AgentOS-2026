@@ -25,6 +25,7 @@ from components.content import ContentManifestStore, ContentWorksetSession
 from adapters.agent_invocation import AgentInvocationAdapter
 from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.communication import validate_contract_payload
+from contracts.artifacts import canonicalize_artifact_identity
 from contracts.governance import AuditRequest
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
@@ -522,6 +523,7 @@ class ACGNodeRunner:
             controlled = self._persist_artifact_manifest(
                 run_id=state.run_id,
                 step_id=step_id,
+                logical_role=step.logical_role,
                 controlled=controlled,
             )
 
@@ -966,7 +968,7 @@ class ACGNodeRunner:
             raise ValueError("audit decision is required before memory write")
 
     def _persist_artifact_manifest(
-        self, *, run_id: str, step_id: str, controlled: dict[str, Any]
+        self, *, run_id: str, step_id: str, controlled: dict[str, Any], logical_role: str = ""
     ) -> dict[str, Any]:
         """Seal artifact bodies and return only manifest references to projection."""
         raw = controlled.get("artifacts")
@@ -981,7 +983,7 @@ class ACGNodeRunner:
         for raw_artifact in raw:
             if not isinstance(raw_artifact, dict):
                 continue
-            artifact = dict(raw_artifact)
+            artifact = canonicalize_artifact_identity(raw_artifact, logical_role)
             artifact.setdefault("artifactKey", "primary")
             manifest_id = artifact.get("manifestId")
             checksum = artifact.get("checksum")

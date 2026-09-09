@@ -334,6 +334,7 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
             stepId="artifact", name="artifact", goal="生成完整报告",
             agentName=agent.profile.agent_name, capability="artifact_generation",
             acceptanceCriteria=["全部覆盖"], sourceRefs=["source:1"],
+            logicalRole="final_synthesis",
         ),
         memory=[],
         contextPack=ContextPack(runId=run.run_id, stepId="artifact", evidenceRefs=["source:1"]),
@@ -349,6 +350,9 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
     assert len(result.output["deliverable"]["sections"]) == 2
     assert "## 第1章" in result.output["final_answer"]
     assert "完整内容 2" in result.output["artifact"]["content"]
+    assert result.output["artifact"]["artifactKey"] == "final"
+    assert result.output["artifact"]["artifactType"] == "run_deliverable"
+    assert result.output["artifact"]["metadata"]["logicalRole"] == "final_synthesis"
     assert result.output["verification"]["status"] == "passed"
     assert len(result.model_invocations) == 5
 

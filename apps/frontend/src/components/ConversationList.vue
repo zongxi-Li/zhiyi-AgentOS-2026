@@ -81,7 +81,6 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { User, ArrowRight, ChatLineRound, Edit, Delete } from '@element-plus/icons-vue'
 import { conversationApi } from '@/services/api/conversation'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useUserStore } from '@/stores/user'
 import { getConversationWorkspace } from '@/utils/conversationWorkspace'
 
 interface Conversation {
@@ -96,7 +95,6 @@ interface Conversation {
 
 interface Props {
   searchKeyword?: string
-  userId?: string
   workspaceMode?: 'agent' | 'chat'
 }
 
@@ -105,8 +103,6 @@ const props = withDefaults(defineProps<Props>(), {
   userId: '',
   workspaceMode: 'chat'
 })
-
-const userStore = useUserStore()
 
 defineEmits<{
   select: [conversation: Conversation]
@@ -117,21 +113,14 @@ const loading = ref(false)
 
 // 从API获取对话列表
 const loadConversations = async () => {
-  // 优先使用props中的userId，否则从userStore获取
-  const userId = props.userId || userStore.currentUser?.id
-  
-  if (!userId) {
-    conversations.value = []
-    return
-  }
-
   if (loading.value) {
     return
   }
 
   try {
     loading.value = true
-    const apiConversations = await conversationApi.getUserConversations(userId, props.workspaceMode)
+    // 后端从已认证请求中解析用户身份，历史列表无需先等待用户资料请求。
+    const apiConversations = await conversationApi.getUserConversations(undefined, props.workspaceMode)
     
     // 转换为组件需要的格式，预览内容由列表接口直接返回，避免逐条请求详情触发限流。
     const conversationsWithPreview = apiConversations.map((conv) => {
@@ -219,11 +208,7 @@ const handleRefresh = () => {
   loadConversations()
 }
 
-onMounted(async () => {
-  // 如果userStore中没有用户信息，先加载
-  if (!userStore.currentUser) {
-    await userStore.loadCurrentUser()
-  }
+onMounted(() => {
   loadConversations()
   
   // 监听刷新事件
@@ -232,16 +217,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('history-refresh', handleRefresh)
-})
-
-// 监听userId变化
-watch(() => props.userId, () => {
-  loadConversations()
-})
-
-// 监听userStore中的用户变化
-watch(() => userStore.currentUser, () => {
-  loadConversations()
 })
 
 const filteredConversations = computed(() => {

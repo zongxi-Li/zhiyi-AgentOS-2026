@@ -16,6 +16,9 @@ from contracts.communication import (
     compact_contract_text_arrays,
     validate_contract_payload,
 )
+from contracts.artifacts import (
+    canonicalize_artifact_identity,
+)
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, utc_now
 from adapters.model.native_prompt import (
     NativeCapabilityPromptBuilder,
@@ -1131,12 +1134,17 @@ class NativeGeneralAgent(BaseAgent):
                 "utf-8"
             )
         ).hexdigest()[:16]
+        requested_key = (
+            str(context.step.input.get("artifactKey") or "primary")
+            if isinstance(context.step.input, dict)
+            else "primary"
+        )
+        artifact_identity = canonicalize_artifact_identity(
+            {"artifactKey": requested_key}, context.step.logical_role
+        )
         normalized["artifact"] = {
             "artifactId": artifact_id,
-            "type": "report",
-            "artifactKey": str(context.step.input.get("artifactKey") or "primary")
-            if isinstance(context.step.input, dict)
-            else "primary",
+            **artifact_identity,
             "title": str(deliverable.get("title") or context.task.title),
             "mediaType": "text/markdown",
             "content": final_answer,

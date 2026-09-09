@@ -54,7 +54,6 @@
         v-if="activeTab === 'conversations'"
         :key="`conversations-${refreshKey}`"
         :search-keyword="searchKeyword"
-        :user-id="userStore.currentUser?.id"
         workspace-mode="chat"
         @select="handleSelectConversation"
       />

@@ -17,8 +17,9 @@ const workspaceLayoutStub = {
 }
 
 const graphEditorStub = {
+  props: ['focusNodeId'],
   emits: ['selectSemanticTask', 'openSemanticTask'],
-  template: '<div class="graph-editor-stub"><button class="graph-select" @click="$emit(\'selectSemanticTask\', \'capacity\')">select</button><button class="graph-open" @click="$emit(\'openSemanticTask\', \'capacity\')">open</button></div>'
+  template: '<div class="graph-editor-stub" :data-focus-node-id="focusNodeId || undefined"><button class="graph-select" @click="$emit(\'selectSemanticTask\', \'capacity\')">select</button><button class="graph-open" @click="$emit(\'openSemanticTask\', \'capacity\')">open</button></div>'
 }
 
 const artifactEditorStub = {
@@ -174,6 +175,22 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.text()).not.toContain('最终答案')
   })
 
+  it('opens a canonical Run deliverable by default for a completed Run', async () => {
+    const completed = projection({
+      activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true },
+      runs: [{ runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }],
+      entries: [
+        ...folders(),
+        { entryId: 'overview:graph.acg', kind: 'graph', name: 'graph.acg', group: 'overview', displayOrder: 0 },
+        { entryId: 'overview:mission.md', kind: 'virtual_document', name: 'mission.md', group: 'overview', displayOrder: 1, content: '# Mission' },
+        { entryId: 'artifact:final', kind: 'artifact', name: 'final.md', group: 'output', displayOrder: 0, artifactKey: 'final', artifactType: 'run_deliverable', artifactId: 'artifact_final', identityQuality: 'canonical', runId: 'run_1' }
+      ]
+    })
+    const { wrapper } = await mountWorkspace(completed)
+    expect(wrapper.find('.artifact-editor-stub').text()).toContain('final.md')
+    expect(wrapper.find('.editor-tab.is-active').text()).toContain('final.md')
+  })
+
   it('stops the active Run from the project workspace', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     const cancel = vi.spyOn(agentosApi, 'cancelWorkflowRun').mockResolvedValue({
@@ -317,6 +334,14 @@ describe('MissionWorkspaceView', () => {
     await wrapper.find('.artifact-locate').trigger('click')
     expect(wrapper.find('.graph-editor-stub').exists()).toBe(true)
     expect(wrapper.findAll('.editor-tab')).toHaveLength(4)
+  })
+
+  it('locates a task in graph and passes its node id after graph mount', async () => {
+    const { wrapper } = await mountWorkspace()
+    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('Capacity'))?.trigger('click')
+    await wrapper.find('.task-editor__actions button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.graph-editor-stub').attributes('data-focus-node-id')).toBe('node_capacity')
   })
 
   it('disables graph positioning for legacy artifacts', async () => {

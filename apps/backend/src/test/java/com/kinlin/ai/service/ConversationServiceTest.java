@@ -1,6 +1,7 @@
 package com.kinlin.ai.service;
 
 import com.kinlin.ai.entity.Conversation;
+import com.kinlin.ai.entity.Message;
 import com.kinlin.ai.repository.ConversationRepository;
 import com.kinlin.ai.repository.MessageRepository;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import java.util.Optional;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.inOrder;
@@ -81,6 +83,36 @@ class ConversationServiceTest {
 
         verify(conversationRepository).findRecentConversationsByUserIdAndWorkspaceMode(userId, "agent");
         verify(conversationRepository, never()).findRecentConversationsByUserId(userId);
+    }
+
+    @Test
+    void hydratesConversationPreviewsWithBulkMessageQueries() {
+        UUID userId = UUID.randomUUID();
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        Conversation first = conversation(firstId, userId);
+        Conversation second = conversation(secondId, userId);
+        second.setTitle("已有标题");
+        when(conversationRepository.findRecentConversationsByUserIdAndWorkspaceMode(userId, "chat"))
+                .thenReturn(List.of(first, second));
+
+        MessageRepository.ConversationMessagePreview firstPreview =
+                org.mockito.Mockito.mock(MessageRepository.ConversationMessagePreview.class);
+        when(firstPreview.getConversationId()).thenReturn(firstId);
+        when(firstPreview.getContent()).thenReturn("第一条用户消息");
+        when(messageRepository.findFirstMessagePreviews(
+                List.of(firstId, secondId), Message.MessageRole.USER
+        )).thenReturn(List.of(firstPreview));
+        when(messageRepository.findConversationIdsWithMessages(List.of(firstId, secondId)))
+                .thenReturn(List.of(firstId, secondId));
+
+        List<Conversation> result = conversationService.getUserConversations(userId, "chat");
+
+        assertEquals("第一条用户消息", result.get(0).getPreview());
+        assertEquals("第一条用户消息", result.get(0).getTitle());
+        assertEquals("暂无预览", result.get(1).getPreview());
+        verify(messageRepository, never()).findByConversationIdOrderByCreatedAtAsc(firstId);
+        verify(messageRepository, never()).findByConversationIdOrderByCreatedAtAsc(secondId);
     }
 
     @Test

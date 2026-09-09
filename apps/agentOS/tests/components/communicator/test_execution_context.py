@@ -7,6 +7,7 @@ import pytest
 from components.communicator import CommunicatorService
 from components.executor.value_store import ExecutionValueAccessError
 from components.executor.value_store import InMemoryExecutionValueStore
+from support.acg.models import build_default_capability_catalog
 
 
 def test_strict_contract_reads_only_declared_upstream_fields() -> None:
@@ -67,6 +68,33 @@ def test_execution_context_marks_missing_required_slot_invalid() -> None:
 
     assert pack.contract_status == "invalid"
     assert pack.missing_fields == ["abstract"]
+
+
+def test_run_deliverable_context_keeps_all_declared_leaf_sources() -> None:
+    """The final synthesis contract must accept a complete multi-source pack."""
+    store = InMemoryExecutionValueStore()
+    refs = {
+        f"leaf-{index}": store.put_output(
+            run_id="run-1", step_id=f"leaf-{index}",
+            payload={f"result_{index}": f"source-{index}"},
+        )
+        for index in range(5)
+    }
+    descriptor = build_default_capability_catalog().get("artifact_generation")
+    pack = CommunicatorService().assemble_execution_context(
+        run_id="run-1",
+        step_id="final",
+        input_spec={
+            "from": {step_id: [f"result_{index}"] for index, step_id in enumerate(refs)},
+            "schema": descriptor.input_contract,
+        },
+        upstream_refs=refs,
+        value_store=store,
+    )
+
+    assert pack.contract_status == "valid"
+    assert len(pack.source_data) == 5
+    assert pack.data == {f"result_{index}": f"source-{index}" for index in range(5)}
 
 
 def test_execution_context_reuses_consumption_and_interaction_for_same_commit() -> None:

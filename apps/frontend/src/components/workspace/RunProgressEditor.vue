@@ -241,6 +241,7 @@ const filterTree = (symbols: RunDocumentSymbol[], needle: string): RunDocumentSy
 const visibleSymbols = computed(() => filterTree(documentModel.value.symbols, filterText.value.trim().toLowerCase()))
 
 const horizontalPath = ref<string[]>([])
+const scrollBody = ref<HTMLElement | null>(null)
 const activeSymbolId = ref<string | null>(props.selectedSymbolId || null)
 const selectedSymbolIdForView = computed(() => props.selectedSymbolId || activeSymbolId.value)
 const detailStatusMark = (status: RunDocumentSymbol['status']) => ({
@@ -285,6 +286,42 @@ const browserColumns = computed(() => {
   }
   return columns
 })
+const scrollToBrowserColumn = async (columnIndex?: number) => {
+  await nextTick()
+  const container = scrollBody.value
+  if (!container) return
+  const columns = Array.from(container.querySelectorAll<HTMLElement>('.run-progress__column'))
+  if (!columns.length) return
+  const index = Math.min(Math.max(columnIndex ?? columns.length - 1, 0), columns.length - 1)
+  const column = columns[index]
+  const containerRect = container.getBoundingClientRect()
+  const columnRect = column.getBoundingClientRect()
+  const leftOverflow = columnRect.left - containerRect.left
+  const rightOverflow = columnRect.right - containerRect.right
+  const delta = rightOverflow > 0 ? rightOverflow : leftOverflow < 0 ? leftOverflow : 0
+  if (Math.abs(delta) < 1) return
+  const targetLeft = Math.max(0, container.scrollLeft + delta)
+  if (typeof container.scrollTo === 'function') {
+    container.scrollTo({ left: targetLeft, behavior: 'smooth' })
+  } else {
+    container.scrollLeft = targetLeft
+  }
+}
+const setHorizontalPath = (nextPath: string[], options: { scroll?: boolean; targetColumn?: number } = {}) => {
+  const scroll = options.scroll ?? true
+  const previousDepth = horizontalPath.value.length
+  const nextDepth = nextPath.length
+  const changed = previousDepth !== nextDepth
+    || horizontalPath.value.some((item, index) => item !== nextPath[index])
+  horizontalPath.value = nextPath
+  if (!scroll) return
+  // 进入下一级时显示新列；返回上一级时把父级所在列重新带回视口。
+  const targetColumn = previousDepth > nextDepth
+    ? Math.max(0, nextDepth - 1)
+    : options.targetColumn ?? nextDepth
+  // 路径未变时，可能只是刚刚出现了 Inspector 列，也需要将新列带入视口。
+  if (changed || options.targetColumn != null) void scrollToBrowserColumn(targetColumn)
+}
 const hasGraphColumn = computed(() => browserColumns.value.some(column => column.graph))
 const graphColumnWidth = ref<number | null>(null)
 const graphColumnStyle = computed(() => graphColumnWidth.value == null ? undefined : {
@@ -312,7 +349,7 @@ const toggleBrowser = (symbol: RunDocumentSymbol) => {
   const prefix = horizontalPath.value.slice(0, columnIndex)
   const isOpen = horizontalPath.value[columnIndex] === symbol.id
   if (isOpen) return
-  horizontalPath.value = [...prefix, symbol.id]
+  setHorizontalPath([...prefix, symbol.id])
 }
 const parentPathFor = (symbols: RunDocumentSymbol[], targetId: string, parents: string[] = []): string[] | null => {
   for (const item of symbols) {
@@ -322,7 +359,7 @@ const parentPathFor = (symbols: RunDocumentSymbol[], targetId: string, parents: 
   }
   return null
 }
-const syncHorizontalPathForSelection = (selectedId: string | null, symbols = documentModel.value.symbols) => {
+const syncHorizontalPathForSelection = (selectedId: string | null, symbols = documentModel.value.symbols, scroll = true) => {
   if (!selectedId) return
   const selected = findRunDocumentSymbol(symbols, selectedId)
   const parentPath = parentPathFor(symbols, selectedId)
@@ -330,13 +367,19 @@ const syncHorizontalPathForSelection = (selectedId: string | null, symbols = doc
   // A selected parent owns the next column; a selected leaf owns the
   // inspector column attached to its existing parent column.
   if (selected.children.length) {
-    horizontalPath.value = [...parentPath, selected.id]
+    setHorizontalPath([...parentPath, selected.id], {
+      scroll,
+      targetColumn: parentPath.length + 1
+    })
     return
   }
   // A leaf owns the inspector column attached to its parent. Resetting the
   // path is important for root-level selections: clicking Planning while an
   // Execution branch is open must not append a third column to that branch.
-  horizontalPath.value = parentPath
+  setHorizontalPath(parentPath, {
+    scroll,
+    targetColumn: parentPath.length + 1
+  })
 }
 const defaultPathFor = (symbols: RunDocumentSymbol[]) => {
   const path: string[] = []
@@ -364,16 +407,19 @@ watch(documentModel, model => {
   if (props.selectedSymbolId) {
     // Planning children may arrive after the click; reconcile the path so a
     // second click is not required to reveal the detail column.
-    syncHorizontalPathForSelection(props.selectedSymbolId, model.symbols)
+    syncHorizontalPathForSelection(props.selectedSymbolId, model.symbols, false)
     return
   }
   if (props.selectedSemanticTaskKey) return
   const current = firstRunningTask(model.symbols)
   if (current) {
     const currentPath = parentPathFor(model.symbols, current.id)
-    horizontalPath.value = currentPath
-      ? current.children.length ? [...currentPath, current.id] : currentPath
-      : horizontalPath.value
+    setHorizontalPath(
+      currentPath
+        ? current.children.length ? [...currentPath, current.id] : currentPath
+        : horizontalPath.value,
+      { scroll: false }
+    )
     emit('selectSymbol', current)
     emit('selectSemanticTask', current.semanticTaskKey || null)
   } else if (!horizontalPath.value.length) {
@@ -447,7 +493,6 @@ const locateBreadcrumb = (id: string) => {
   if (item) selectSymbol(item)
 }
 
-const scrollBody = ref<HTMLElement | null>(null)
 const captureGraphColumnWidth = async () => {
   if (!hasGraphColumn.value || graphColumnWidth.value !== null) return
   await nextTick()
@@ -463,9 +508,12 @@ watch(hasGraphColumn, visible => {
   void captureGraphColumnWidth()
 }, { immediate: true })
 const followLatest = ref(true)
+let lastVerticalScrollTop = 0
 const onScroll = () => {
   const el = scrollBody.value
-  if (el) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  if (!el || Math.abs(el.scrollTop - lastVerticalScrollTop) < 1) return
+  lastVerticalScrollTop = el.scrollTop
+  followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
 }
 const scrollToLatest = async () => {
   followLatest.value = true

@@ -287,6 +287,39 @@ async def test_v2_run_history_applies_all_filters_and_matches_detail_visibility(
     assert hidden_detail.status_code == 404
 
 
+async def test_v2_run_list_summary_projects_payload_free_rows(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission(
+        "Summary fast path run",
+        workflow_id="api-workflow",
+        input={"source": "acg"},
+    )
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    runtime.workflow_store.save_run(run)
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        summary = await client.get(
+            "/agentos/v2/runs",
+            params={"summary": "true", "statuses": "running,pending"},
+        )
+        detail = await client.get("/agentos/v2/runs", params={"summary": "false"})
+
+    assert summary.status_code == 200
+    assert summary.json()["total"] == 1
+    item = summary.json()["items"][0]
+    assert item["runId"] == run.run_id
+    assert item["title"] == "Summary fast path run"
+    assert item["steps"] == []
+    assert item["executionState"] == {}
+    assert item["activeStepIds"] == []
+
+    assert detail.status_code == 200
+    assert detail.json()["items"][0]["runId"] == run.run_id
+    assert len(detail.json()["items"][0]["steps"]) == len(run.steps)
+
+
 async def test_v2_run_history_does_not_apply_removed_architecture_heuristics(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     current_task = runtime.create_mission(
@@ -1141,6 +1174,59 @@ async def test_v2_deferred_planning_preserves_identity_projection_alignment(tmp_
         runtime.identity_lifecycle.lifecycle_service.close()
 
 
+async def test_v2_workspace_includes_runtime_only_deferred_runs(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    task = runtime.create_mission("Workspace Run history", workflow_id="api-workflow")
+    materialized = await runtime.start(task.mission_id, workflow_id="api-workflow")
+    _, deferred = runtime.prepare_run(
+        task.mission_id,
+        workflow_id="api-workflow",
+        defer_acg_planning=True,
+    )
+    deferred.status = WorkflowStatus.FAILED
+    deferred.lifecycle_phase = WorkflowProgressPhase.FAILED
+    deferred.error = {
+        "code": "interrupted_after_restart",
+        "message": "任务因服务重启而中断。",
+    }
+    runtime.workflow_store.save_run(deferred)
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            projected = await client.get(
+                f"/agentos/v2/missions/{task.mission_id}/workspace",
+                params={"runId": materialized.run_id},
+            )
+            runtime_only = await client.get(
+                f"/agentos/v2/missions/{task.mission_id}/workspace",
+                params={"runId": deferred.run_id},
+            )
+
+        assert projected.status_code == 200
+        assert {item["runId"] for item in projected.json()["runs"]} == {
+            materialized.run_id,
+            deferred.run_id,
+        }
+        deferred_summary = next(
+            item for item in projected.json()["runs"] if item["runId"] == deferred.run_id
+        )
+        assert deferred_summary["status"] == "failed"
+
+        assert runtime_only.status_code == 200
+        assert {item["runId"] for item in runtime_only.json()["runs"]} == {
+            materialized.run_id,
+            deferred.run_id,
+        }
+        assert any(
+            item["code"] == "PLANNING_PROJECTION_PENDING"
+            for item in runtime_only.json()["diagnostics"]
+        )
+    finally:
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
 async def test_v2_rerun_creates_another_run_under_same_mission(tmp_path) -> None:
     runtime = _runtime(tmp_path, with_identity=True)
     task = runtime.create_mission(
@@ -1187,6 +1273,69 @@ async def test_v2_rerun_creates_another_run_under_same_mission(tmp_path) -> None
     finally:
         await coordinator.shutdown()
         runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_v2_single_step_retry_is_idempotent_and_enqueues_child_run(tmp_path, monkeypatch) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("Single failed step retry", workflow_id="api-workflow")
+    _, source = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    source.status = WorkflowStatus.FAILED
+    source.current_step_id = "report"
+    source.steps[0].status = StepStatus.FAILED
+    source.steps[0].error = "final node failed"
+    runtime.workflow_store.save_run(source)
+
+    coordinator = RunExecutionCoordinator(runtime)
+    submitted: list[str] = []
+    prepared: list[dict[str, object]] = []
+
+    async def submit(run_id: str) -> None:
+        submitted.append(run_id)
+
+    def prepare_retry(**kwargs):
+        prepared.append(dict(kwargs))
+        child = source.model_copy(deep=True)
+        child.run_id = "run_single_step_retry"
+        child.status = WorkflowStatus.PENDING
+        child.current_step_id = "report"
+        child.idempotency_key = kwargs["idempotency_key"]
+        child.idempotency_fingerprint = kwargs["idempotency_fingerprint"]
+        child.execution_state = {
+            "singleStepRetry": {
+                "sourceRunId": source.run_id,
+                "targetStepId": "report",
+                "reusedStepIds": [],
+            },
+        }
+        runtime.workflow_store.save_run(child)
+        return child
+
+    monkeypatch.setattr(coordinator, "submit", submit)
+    monkeypatch.setattr(runtime, "prepare_single_step_retry", prepare_retry)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    payload = {
+        "clientRequestId": "single-step-retry-request",
+        "reason": "retry final node",
+        "expectedRuntimeRevision": source.runtime_revision,
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/agentos/v2/runs/{source.run_id}/steps/report/retry",
+            json=payload,
+        )
+        repeated = await client.post(
+            f"/agentos/v2/runs/{source.run_id}/steps/report/retry",
+            json=payload,
+        )
+
+    assert created.status_code == 202
+    assert repeated.status_code == 202
+    assert created.json()["runId"] == "run_single_step_retry"
+    assert repeated.json()["runId"] == created.json()["runId"]
+    assert len(prepared) == 1
+    assert submitted == ["run_single_step_retry"]
 
 
 async def test_v2_deferred_planning_failure_is_classified_without_identity_backlog(tmp_path) -> None:

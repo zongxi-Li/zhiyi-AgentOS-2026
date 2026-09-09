@@ -11,6 +11,10 @@ from contracts.planning import (
     PlannedTask,
     TaskPlanRelation,
 )
+from contracts.artifacts import (
+    FINAL_SYNTHESIS_LOGICAL_ROLE,
+    canonicalize_final_synthesis_nodes,
+)
 from support.acg.models import CapabilityCatalog, TaskSemanticProfile
 from .intent_analyzer import IntentLLM
 from .task_decomposer import TaskDecomposer
@@ -83,7 +87,11 @@ class SemanticPlanner:
                 capabilityRequirements=(descriptor.capability_id,),
                 acceptanceCriteria=tuple(descriptor.prompt_profile.quality_criteria[:1]),
                 decompositionRationale="Compatibility plan generated from the capability dependency graph.",
-                logicalRole=descriptor.planning_stage,
+                logicalRole=(
+                    FINAL_SYNTHESIS_LOGICAL_ROLE
+                    if capability == "artifact_generation"
+                    else descriptor.planning_stage
+                ),
                 metadata={"plannerStrategy": strategy},
             ))
         relations = tuple(
@@ -127,6 +135,9 @@ class SemanticPlanner:
             })
             for node in declared_nodes
         )
+        nodes = tuple(canonicalize_final_synthesis_nodes(
+            nodes, tuple(getattr(workflow, "planning_relations", ()) or ())
+        ))
         return validate_task_plan_for_execution(
             capability_catalog=self.capability_catalog,
             mission_id=mission_id,

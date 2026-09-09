@@ -14,6 +14,7 @@ import secrets
 import threading
 from time import monotonic
 from contracts.identity import new_attempt_id, new_step_execution_id
+from contracts.artifacts import is_final_synthesis_role
 from typing import Any, Callable, Mapping, Optional
 from uuid import uuid4
 
@@ -652,6 +653,269 @@ class ExecutionRuntime:
         )
         return task, run
 
+    def prepare_single_step_retry(
+        self,
+        source_run_id: str,
+        step_id: str,
+        *,
+        reason: str = "operator_requested",
+        expected_runtime_revision: int | None = None,
+        idempotency_key: str | None = None,
+        idempotency_fingerprint: str | None = None,
+    ) -> RuntimeRunRecord:
+        """Prepare one controlled retry Run for a failed final ACG step.
+
+        The source Run remains immutable.  The child Run reuses only committed
+        upstream output references copied through ``ExecutionValueStore`` and
+        seeds the ACG state so the graph scheduler can execute exactly the
+        requested leaf step.
+        """
+
+        normalized_reason = str(reason or "").strip()
+        if not normalized_reason:
+            raise ValueError("single-step retry reason must not be empty")
+        if idempotency_key:
+            existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                if existing.idempotency_fingerprint != idempotency_fingerprint:
+                    raise ValueError("idempotency key conflicts with the single-step retry request")
+                return existing
+
+        with self.run_lock_manager.lock_for(source_run_id):
+            source = self.workflow_store.get_run(source_run_id)
+            if idempotency_key:
+                existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
+                if existing is not None:
+                    if existing.idempotency_fingerprint != idempotency_fingerprint:
+                        raise ValueError("idempotency key conflicts with the single-step retry request")
+                    return existing
+            if source.status is not WorkflowStatus.FAILED:
+                raise ValueError("single-step retry requires a failed source Run")
+            if expected_runtime_revision is not None and source.runtime_revision != expected_runtime_revision:
+                raise ValueError("source Run changed after the retry request was prepared")
+            if self._normalize_runtime_engine(source.runtime_engine) != "acg":
+                raise ValueError("single-step retry is only available for ACG Runs")
+            if source.active_step_ids:
+                raise ValueError("single-step retry requires no active source steps")
+
+            blueprint_data = source.acg_blueprint
+            if not isinstance(blueprint_data, dict):
+                raise ValueError("single-step retry requires a persisted ACG Blueprint")
+            blueprint = RuntimeBlueprintSpec.model_validate(blueprint_data)
+            raw_package = source.execution_state.get("compiledACGPackage")
+            if not isinstance(raw_package, dict):
+                raise ValueError("single-step retry requires a persisted compiled ACG package")
+            from contracts.compiled_acg import CompiledACGPackage
+
+            package = CompiledACGPackage.model_validate(raw_package)
+            graph = ACGGraphCompiler().compile(
+                blueprint,
+                run_id=source.run_id,
+                package=package,
+            )
+            target_spec = graph.node_specs.get(step_id)
+            target_node = next(
+                (node for node in blueprint.step_nodes() if node.node_id == step_id),
+                None,
+            )
+            source_step = source.get_step(step_id)
+            if target_spec is None or target_spec.kind != "step" or target_node is None:
+                raise ValueError("single-step retry target must be an executable ACG step")
+            if target_spec.communication_mode != "STRICT_CONTRACT":
+                raise ValueError("single-step retry target must use STRICT_CONTRACT communication")
+            if source_step.status is not StepStatus.FAILED:
+                raise ValueError("single-step retry target must be failed")
+            if source_step.capability != "artifact_generation":
+                raise ValueError("single-step retry target must be artifact_generation")
+            if not is_final_synthesis_role(target_node.logical_role):
+                raise ValueError("single-step retry target must be the final synthesis step")
+            if any(source_id == step_id for source_id, _ in graph.edges):
+                raise ValueError("single-step retry target must be a leaf step")
+            source_state = self._acg_execution_state_from_run(source)
+            if source_state.output_refs.get(step_id):
+                raise ValueError("single-step retry target already has a committed output")
+
+            if source_state.active_step_ids:
+                raise ValueError("single-step retry requires no active source steps")
+            if (
+                source_state.control_frames
+                or source_state.loop_iterations
+                or source_state.loop_paths
+                or source_state.blackboard_snapshots
+                or source_state.debate_sessions
+                or source_state.review_payload
+                or source_state.control_review_decisions
+            ):
+                raise ValueError("single-step retry does not support control or review state")
+            settled = set(source_state.completed_step_ids) | set(source_state.skipped_step_ids)
+            graph_nodes = set(graph.nodes)
+            if step_id in settled or settled | {step_id} != graph_nodes:
+                raise ValueError("single-step retry requires the target to be the only unsettled graph node")
+
+            reusable_outputs: list[tuple[str, str, dict[str, Any], str]] = []
+            for reusable_step_id in source_state.completed_step_ids:
+                reusable_spec = graph.node_specs.get(reusable_step_id)
+                if reusable_spec is None:
+                    raise ValueError(
+                        f"single-step retry found an unknown completed graph node: {reusable_step_id}"
+                    )
+                if reusable_spec.kind != "step":
+                    continue
+                source_ref = source_state.output_refs.get(reusable_step_id)
+                if not source_ref:
+                    raise ValueError(
+                        f"single-step retry requires a committed upstream output: {reusable_step_id}"
+                    )
+                payload = self.execution_value_store.get_output(
+                    run_id=source.run_id,
+                    output_ref=source_ref,
+                )
+                reusable_outputs.append((
+                    reusable_step_id,
+                    source_ref,
+                    payload,
+                    source_state.output_summaries.get(reusable_step_id, ""),
+                ))
+
+            task_plan = source.execution_state.get("taskPlan")
+            task_bindings = source.execution_state.get("taskBindings")
+            if not isinstance(task_plan, dict) or not isinstance(task_bindings, list):
+                raise ValueError("single-step retry requires persisted TaskPlan and bindings")
+
+            _, retry = self.prepare_run(
+                source.mission_id,
+                workflow_id=source.workflow_id,
+                review_mode=source.review_mode,
+                idempotency_key=idempotency_key,
+                idempotency_fingerprint=idempotency_fingerprint,
+                enabled_plugin_ids=list(source.enabled_plugin_ids),
+                defer_acg_planning=False,
+                input_override={
+                    "acgBlueprint": deepcopy(source.acg_blueprint),
+                    "taskPlan": deepcopy(task_plan),
+                    "taskBindings": deepcopy(task_bindings),
+                },
+                parent_run_id=source.run_id,
+                rerun_reason="single_step_retry",
+            )
+            if retry.run_id == source.run_id:
+                raise ValueError("single-step retry cannot reuse the source Run")
+
+            copied_refs: dict[str, str] = {}
+            copied_summaries: dict[str, str] = {}
+            for reusable_step_id, source_ref, payload, summary in reusable_outputs:
+                commit_id = f"single-step-retry:{retry.run_id}:{reusable_step_id}"
+                self.execution_value_store.prepare_node_commit(
+                    run_id=retry.run_id,
+                    commit_id=commit_id,
+                )
+                child_ref = self.execution_value_store.put_output(
+                    run_id=retry.run_id,
+                    step_id=reusable_step_id,
+                    payload=payload,
+                    operation_id=commit_id,
+                )
+                self.execution_value_store.complete_node_commit(
+                    run_id=retry.run_id,
+                    commit_id=commit_id,
+                    payload={
+                        "outputRef": child_ref,
+                        "outputSummary": summary,
+                        "reusedFromRunId": source.run_id,
+                        "reusedFromOutputRef": source_ref,
+                    },
+                )
+                copied_refs[reusable_step_id] = child_ref
+                copied_summaries[reusable_step_id] = summary
+
+            state = self._acg_execution_state_from_run(retry)
+            state.completed_step_ids = list(source_state.completed_step_ids)
+            state.skipped_step_ids = list(source_state.skipped_step_ids)
+            state.active_step_ids = []
+            state.current_step_id = step_id
+            state.output_refs = copied_refs
+            state.output_summaries = copied_summaries
+            state.context_refs = {}
+            state.memory_refs = {}
+            state.trace_refs = {}
+            state.provenance_refs = {}
+            state.graph_patch_refs = []
+            state.communication_usage = {}
+            state.checkpoint_id = None
+            state.review_payload = None
+            state.control_review_decisions = {}
+            retry.execution_state.update(state.model_dump(by_alias=True, mode="json"))
+            retry.execution_state.update({
+                "singleStepRetry": {
+                    "sourceRunId": source.run_id,
+                    "targetStepId": step_id,
+                    "reason": normalized_reason[:500],
+                    "reusedStepIds": sorted(copied_refs),
+                },
+                "retryTargetStepId": step_id,
+                "reusedStepIds": sorted(copied_refs),
+            })
+            retry.completed_step_ids = list(source_state.completed_step_ids)
+            retry.active_step_ids = []
+            retry.current_step_id = step_id
+            retry.output = {}
+            retry.error = None
+            retry.recovery_count = source.recovery_count + 1
+            for child_step in retry.steps:
+                if child_step.step_id in source_state.completed_step_ids:
+                    source_completed = source.get_step(child_step.step_id)
+                    child_step.status = StepStatus.COMPLETED
+                    child_step.started_at = source_completed.started_at
+                    child_step.completed_at = source_completed.completed_at
+                    child_step.attempt = source_completed.attempt
+                    child_step.retry_count = source_completed.retry_count
+                elif child_step.step_id in source_state.skipped_step_ids:
+                    child_step.status = StepStatus.SKIPPED_BY_CONDITION
+                    child_step.completed_at = source.get_step(child_step.step_id).completed_at
+                elif child_step.step_id == step_id:
+                    child_step.status = StepStatus.PENDING
+                    child_step.error = None
+                    child_step.started_at = None
+                    child_step.completed_at = None
+                    child_step.attempt = max(source_step.attempt, source_step.retry_count)
+                    child_step.retry_count = source_step.retry_count
+                else:
+                    raise ValueError(
+                        f"single-step retry found an unsettled sibling step: {child_step.step_id}"
+                    )
+            self.trace_store.append(
+                retry,
+                TraceEventType.RUN_RECOVERED,
+                step_id=step_id,
+                observation="Single failed final step retry prepared",
+                payload={
+                    "sourceRunId": source.run_id,
+                    "targetStepId": step_id,
+                    "reusedStepIds": sorted(copied_refs),
+                    "reason": normalized_reason[:500],
+                },
+            )
+            retry.updated_at = utc_now()
+            self.workflow_store.save_run(retry)
+            if self.identity_lifecycle is not None:
+                self._flush_identity_outbox()
+            return retry
+
+    @staticmethod
+    def _acg_execution_state_from_run(run: RuntimeRunRecord) -> ACGExecutionState:
+        """Read the ACG state subset from a Run snapshot's wider state map."""
+
+        raw = run.execution_state if isinstance(run.execution_state, dict) else {}
+        state_data: dict[str, Any] = {}
+        for field_name, field in ACGExecutionState.model_fields.items():
+            alias = field.alias or field_name
+            if alias in raw:
+                state_data[alias] = raw[alias]
+            elif field_name in raw:
+                state_data[alias] = raw[field_name]
+        state_data.setdefault("runId", run.run_id)
+        return ACGExecutionState.model_validate(state_data)
+
     def _materialize_acg_run(
         self,
         *,
@@ -916,7 +1180,7 @@ class ExecutionRuntime:
             message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.EXECUTING],
             set_started_at=True,
         )
-        if self.identity_lifecycle is not None:
+        if self.identity_lifecycle is not None or run.execution_state.get("sourceRunId"):
             self.mission_manager.mark_running_for_new_run(task, run_id=run.run_id)
         else:
             self.mission_manager.mark_running(task)
@@ -940,7 +1204,7 @@ class ExecutionRuntime:
             if cancel_requested.is_set():
                 return await self._finalize_cancelled_run(run, execution_state)
             self._persist_acg_state(run, execution_state)
-            run.output = self._acg_output(execution_state)
+            run.output = self._acg_output(execution_state, blueprint)
             run = self._set_run_lifecycle(
                 run,
                 status=WorkflowStatus.COMPLETED,
@@ -2157,13 +2421,30 @@ class ExecutionRuntime:
             self._fault_hook(stage)
 
     @staticmethod
-    def _acg_output(state: ACGExecutionState) -> dict[str, str]:
-        """选择最后完成步骤的输出引用作为运行最终产物，不复制真实输出正文。"""
+    def _acg_output(
+        state: ACGExecutionState,
+        blueprint: RuntimeBlueprintSpec | None = None,
+    ) -> dict[str, str]:
+        """Select the final-synthesis output ref without copying its body."""
         if not state.completed_step_ids:
             return {}
-        # Enriched planner graphs may complete support/control projections after
-        # the last value-producing step. Select the latest committed output,
-        # not merely the last completed node identifier.
+        if blueprint is not None:
+            final_step_ids = {
+                node.node_id
+                for node in blueprint.step_nodes()
+                if is_final_synthesis_role(node.logical_role)
+            }
+            for step_id in reversed(state.completed_step_ids):
+                if step_id in final_step_ids and state.output_refs.get(step_id):
+                    return {"outputRef": state.output_refs[step_id]}
+            if final_step_ids:
+                # A completed Run with a declared final step but no committed
+                # final output has no authoritative deliverable.
+                return {}
+            # Historical blueprints predate the final role. Keep their legacy
+            # reference for compatibility; Workspace/API still refuse to
+            # promote it without the canonical Artifact identity.
+        # Compatibility fallback for callers that only provide the legacy state.
         for final_step_id in reversed(state.completed_step_ids):
             output_ref = state.output_refs.get(final_step_id)
             if output_ref:

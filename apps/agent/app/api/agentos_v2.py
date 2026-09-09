@@ -75,6 +75,18 @@ class MissionRunCreateRequest(BaseModel):
     rerun_reason: str = Field(alias="rerunReason", min_length=1, max_length=80)
 
 
+class SingleStepRetryRequest(BaseModel):
+    """Request one controlled retry of a failed final ACG step."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    client_request_id: str = Field(alias="clientRequestId", min_length=1, max_length=200)
+    reason: str = Field(default="operator_requested", min_length=1, max_length=500)
+    expected_runtime_revision: int | None = Field(
+        default=None, alias="expectedRuntimeRevision", ge=0
+    )
+
+
 class MaterialCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -224,7 +236,8 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
         "evolutionPolicyVersion", "parentRunId", "sourceRunId", "rerunReason",
         "supersedesRunId", "supersededByRunId", "sourcePatchId",
         "consensusResults", "controlFrames", "loopIterations",
-        "loopPaths", "debateSessions", "recoveryOutcome",
+        "loopPaths", "debateSessions", "recoveryOutcome", "singleStepRetry",
+        "retryTargetStepId", "reusedStepIds",
     )
     state = {key: raw[key] for key in allowed if key in raw}
     review_payload = raw.get("reviewPayload")
@@ -433,6 +446,27 @@ def _idempotency(request: MissionCreateRequest | MissionRunCreateRequest) -> tup
     caller = f"{getattr(actor, 'tenant_id', '')}:{getattr(actor, 'user_id', '')}" if actor else "internal"
     key = hashlib.sha256(f"{caller}:agentos-v2:{request.client_request_id}".encode()).hexdigest()
     body = request.model_dump(by_alias=True, mode="json", exclude={"client_request_id"})
+    fingerprint = hashlib.sha256(
+        json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return key, fingerprint
+
+
+def _single_step_retry_idempotency(
+    run_id: str,
+    step_id: str,
+    request: SingleStepRetryRequest,
+) -> tuple[str, str]:
+    actor = current_trusted_user()
+    caller = f"{getattr(actor, 'tenant_id', '')}:{getattr(actor, 'user_id', '')}" if actor else "internal"
+    key = hashlib.sha256(
+        f"{caller}:agentos-v2:single-step-retry:{run_id}:{step_id}:{request.client_request_id}".encode()
+    ).hexdigest()
+    body = {
+        "runId": run_id,
+        "stepId": step_id,
+        **request.model_dump(by_alias=True, mode="json", exclude={"client_request_id"}),
+    }
     fingerprint = hashlib.sha256(
         json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -877,6 +911,62 @@ def create_router(
     ):
         mission_detail = require_mission_access(mission_id)
         actor = current_trusted_user()
+
+        runtime_status_map = {
+            "pending": RunStatus.PENDING,
+            "planning": RunStatus.PENDING,
+            "running": RunStatus.RUNNING,
+            "retrying": RunStatus.RUNNING,
+            "waiting_review": RunStatus.RUNNING,
+            "completed": RunStatus.SUCCEEDED,
+            "failed": RunStatus.FAILED,
+            "cancelled": RunStatus.CANCELLED,
+            "superseded": RunStatus.SUPERSEDED,
+        }
+        terminal_run_statuses = {
+            RunStatus.SUCCEEDED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.SUPERSEDED,
+        }
+
+        def list_runtime_runs() -> list[RuntimeRunRecord]:
+            """Load every visible Run so Workspace and Project use one Run set."""
+            items: list[RuntimeRunRecord] = []
+            page = 1
+            page_size = 100
+            while True:
+                result = runtime.workflow_store.list_runs(
+                    mission_id=mission_id,
+                    owner_user_id=(actor.user_id if actor else None),
+                    owner_tenant_id=(actor.tenant_id if actor else None),
+                    page=page,
+                    page_size=page_size,
+                )
+                items.extend(result.items)
+                if not result.items or page * result.page_size >= result.total:
+                    return items
+                page += 1
+
+        def runtime_run_summary(item: RuntimeRunRecord, *, is_active: bool) -> WorkspaceRunSummary:
+            raw_status = getattr(item.status, "value", item.status)
+            status = runtime_status_map.get(str(raw_status), RunStatus.PENDING)
+            execution_state = item.execution_state if isinstance(item.execution_state, dict) else {}
+            completed_at = (
+                item.updated_at
+                if status in terminal_run_statuses
+                else None
+            )
+            return WorkspaceRunSummary(
+                runId=item.run_id,
+                status=status,
+                parentRunId=execution_state.get("parentRunId"),
+                sourceRunId=execution_state.get("sourceRunId"),
+                createdAt=item.created_at,
+                completedAt=completed_at,
+                isActive=is_active,
+            )
+
         if not run_id:
             runtime_runs = runtime.workflow_store.list_runs(
                 mission_id=mission_id,
@@ -972,6 +1062,60 @@ def create_router(
                     },
                 )],
             )
+
+        # A deferred planning failure is intentionally not materialized into
+        # the Identity graph. Keep it in the Workspace Run navigator anyway:
+        # every user-triggered Run is a real historical Run, even when it has
+        # no Blueprint or TaskPlan to project.
+        runtime_runs = list_runtime_runs()
+        runtime_summaries = {
+            item.run_id: runtime_run_summary(
+                item,
+                is_active=item.run_id == (
+                    projection.active_run.run_id
+                    if projection.active_run is not None
+                    else run_id
+                ),
+            )
+            for item in runtime_runs
+        }
+        merged_runs: list[WorkspaceRunSummary] = []
+        projected_run_ids: set[str] = set()
+        for item in projection.runs:
+            runtime_summary = runtime_summaries.get(item.run_id)
+            if runtime_summary is None:
+                merged_runs.append(item)
+            else:
+                projected_run_ids.add(item.run_id)
+                merged_runs.append(item.model_copy(update={
+                    "status": runtime_summary.status,
+                    "parent_run_id": runtime_summary.parent_run_id or item.parent_run_id,
+                    "source_run_id": runtime_summary.source_run_id or item.source_run_id,
+                    "completed_at": runtime_summary.completed_at or item.completed_at,
+                }))
+        merged_runs.extend(
+            item
+            for run_id_value, item in runtime_summaries.items()
+            if run_id_value not in projected_run_ids
+        )
+        active_run = projection.active_run
+        if active_run is not None:
+            runtime_summary = runtime_summaries.get(active_run.run_id)
+            if runtime_summary is not None:
+                active_run = active_run.model_copy(update={
+                    "status": runtime_summary.status,
+                    "parent_run_id": runtime_summary.parent_run_id or active_run.parent_run_id,
+                    "source_run_id": runtime_summary.source_run_id or active_run.source_run_id,
+                    "completed_at": runtime_summary.completed_at or active_run.completed_at,
+                })
+        projection = projection.model_copy(update={
+            "active_run": active_run,
+            "runs": sorted(
+                merged_runs,
+                key=lambda item: (item.created_at, item.run_id),
+            ),
+        })
+
         # Identity owns stable task semantics; the execution runtime owns
         # transient/persisted node results. Join only their references here so
         # the workspace can expose a stage result without promoting it to a
@@ -1219,7 +1363,7 @@ def create_router(
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     ):
         actor = current_trusted_user()
-        result = runtime.workflow_store.list_runs(
+        common = dict(
             status=status_value,
             statuses=_csv_values(statuses_value),
             domain=domain,
@@ -1234,6 +1378,42 @@ def create_router(
             page=page,
             page_size=page_size,
         )
+        if _summary:
+            # Payload-free fast path: summary columns + mission title only.
+            # Heavy keys keep their project_run shape so list consumers that
+            # tolerate missing bodies see empty collections, not new contracts.
+            result = runtime.workflow_store.list_run_overviews(**common)
+            return {
+                "items": [
+                    {
+                        "runId": item.run_id,
+                        "missionId": item.mission_id,
+                        "title": item.title,
+                        "workflowId": item.workflow_id,
+                        "domain": item.domain,
+                        "source": item.source,
+                        "status": item.status.value,
+                        "lifecyclePhase": item.lifecycle_phase,
+                        "lifecycleMessage": item.lifecycle_message,
+                        "currentStepId": item.current_step_id,
+                        "completedStepIds": [],
+                        "activeStepIds": [],
+                        "skippedStepIds": [],
+                        "outputRef": None,
+                        "runtimeRevision": item.runtime_revision,
+                        "executionState": {},
+                        "steps": [],
+                        "createdAt": item.created_at,
+                        "updatedAt": item.updated_at,
+                        "startedAt": item.started_at,
+                    }
+                    for item in result.items
+                ],
+                "total": result.total,
+                "page": result.page,
+                "pageSize": result.page_size,
+            }
+        result = runtime.workflow_store.list_runs(**common)
         return {
             "items": [project(run) for run in result.items],
             "total": result.total,
@@ -1523,6 +1703,36 @@ def create_router(
                 extra={"missionId": mission_id, "sourceRunId": request.source_run_id},
             )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post("/runs/{run_id}/steps/{step_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+    async def retry_failed_step(run_id: str, step_id: str, request: SingleStepRetryRequest):
+        """Prepare and enqueue exactly one controlled final ACG step retry."""
+
+        source_run = load_run(run_id)
+        key, fingerprint = _single_step_retry_idempotency(run_id, step_id, request)
+        existing = runtime.workflow_store.find_run_by_idempotency_key(key)
+        if existing is not None:
+            _require_access(existing)
+            if existing.idempotency_fingerprint != fingerprint:
+                raise HTTPException(status_code=409, detail="clientRequestId conflict")
+            return project(existing)
+        try:
+            retry_run = runtime.prepare_single_step_retry(
+                source_run_id=source_run.run_id,
+                step_id=step_id,
+                reason=request.reason,
+                expected_runtime_revision=request.expected_runtime_revision,
+                idempotency_key=key,
+                idempotency_fingerprint=fingerprint,
+            )
+            await coordinator.submit(retry_run.run_id)
+            return project(runtime.get_status(retry_run.run_id))
+        except (KeyError, ValueError) as exc:
+            logger.warning(
+                "agentos_v2_single_step_retry_rejected",
+                extra={"sourceRunId": run_id, "stepId": step_id, "errorType": type(exc).__name__},
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/runs/{run_id}/artifacts/{manifest_id}/download")
     async def download_artifact(run_id: str, manifest_id: str):
