@@ -885,6 +885,18 @@ class SQLiteRunArtifactBindingRepository(_SQLiteRepository):
                         "RunArtifactBinding slot already belongs to different immutable binding"
                     )
                 return existing
+            if binding.artifact_key.strip().lower() == "final":
+                existing_final = conn.execute(
+                    """SELECT b.binding_id FROM run_artifact_bindings b
+                       JOIN artifacts a ON a.artifact_id = b.artifact_id
+                       WHERE b.run_id = ? AND lower(trim(b.artifact_key)) = 'final'
+                         AND a.artifact_type = 'run_deliverable'""",
+                    (binding.run_id,),
+                ).fetchone()
+                if existing_final is not None:
+                    raise IdentityConflictError(
+                        "a Run may contain at most one run_deliverable artifact"
+                    )
             try:
                 conn.execute(
                     """INSERT INTO run_artifact_bindings(

@@ -882,3 +882,4 @@ def test_terminal_semantic_results_are_connected_to_final_artifact() -> None:
     edges = {(item.source_key, item.target_key) for item in plan.relations}
     assert ("branch-a", "deliver") in edges
     assert ("branch-b", "deliver") in edges
+    assert next(node for node in plan.nodes if node.key == "deliver").logical_role == "final_synthesis"

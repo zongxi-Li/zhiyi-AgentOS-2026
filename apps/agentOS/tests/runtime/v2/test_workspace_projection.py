@@ -7,6 +7,7 @@ from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
 from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
 from domain.models import RunStatus
+from domain.repository import IdentityConflictError
 from runtime.v2 import (
     AcgIdentityLifecycleService,
     IdentityProjectionBridge,
@@ -132,7 +133,12 @@ def _artifacts(service, bridge, content, run, task_id: str, node_id: str, items)
         descriptors.append({
             "artifactKey": artifact_key,
             "title": artifact_key,
-            "type": "report",
+            "artifactType": (
+                "run_deliverable"
+                if artifact_key == "final"
+                else "primary_artifact"
+            ),
+            "type": "run_deliverable" if artifact_key == "final" else "primary_artifact",
             "manifestId": manifest.manifest_id,
             "checksum": manifest.checksum,
         })
@@ -259,17 +265,32 @@ def test_workspace_artifact_entries_support_multiple_slots_and_final_output(tmp_
             service, bridge, content, run,
             tasks["final_delivery"].task_id,
             "final-node",
-            [("primary", "final"), ("assumptions", "assumptions")],
+            [("final", "final"), ("assumptions", "assumptions")],
         )
         projection = query.mission_workspace(mission.mission_id)
         artifacts = [item for item in projection.entries if item.kind is WorkspaceEntryKind.ARTIFACT]
-        assert {item.artifact_key for item in artifacts} == {"primary", "assumptions"}
+        assert {item.artifact_key for item in artifacts} == {"primary", "final", "assumptions"}
         assert {item.group for item in artifacts} == {"steps", "output"}
-        final = next(item for item in artifacts if item.artifact_key == "primary" and item.group == "output")
+        final = next(item for item in artifacts if item.artifact_key == "final" and item.group == "output")
         assert final.name == "final.md"
         assert final.parent_entry_id == "folder:output"
+        assert final.logical_role == "final_synthesis"
+        assert final.artifact_type == "run_deliverable"
         assert next(item for item in projection.entries if item.entry_id == "task:final_delivery").artifact_count == 2
         assert all(item.content is None for item in artifacts)
+    finally:
+        _close(foundation)
+
+
+def test_workspace_rejects_a_second_run_deliverable_slot(tmp_path):
+    foundation = _foundation(tmp_path)
+    _storage, service, bridge, content, _query = foundation
+    try:
+        mission, tasks, blueprint = _mission_graph(service, bridge)
+        run = _run(service, mission.mission_id, blueprint.blueprint_id, status=RunStatus.SUCCEEDED)
+        _artifact(service, bridge, content, run, tasks["final_delivery"].task_id, "final-node", "final", "first final")
+        with pytest.raises(IdentityConflictError, match="RunArtifactBinding slot"):
+            _artifact(service, bridge, content, run, tasks["final_delivery"].task_id, "final-node", "final", "second final")
     finally:
         _close(foundation)
 
@@ -280,7 +301,7 @@ def test_workspace_aggregate_primary_artifact_is_projected_to_output(tmp_path):
     try:
         mission, tasks, blueprint = _mission_graph(service, bridge, final_role="aggregate")
         run = _run(service, mission.mission_id, blueprint.blueprint_id, status=RunStatus.SUCCEEDED)
-        _artifact(service, bridge, content, run, tasks["final_delivery"].task_id, "final-node", "primary", "final report")
+        _artifact(service, bridge, content, run, tasks["final_delivery"].task_id, "final-node", "final", "final report")
 
         artifacts = [
             item for item in query.mission_workspace(mission.mission_id).entries
@@ -469,6 +490,7 @@ def test_workspace_keeps_artifact_generation_capability_in_steps_without_final_r
         ]
         assert len(artifacts) == 1
         assert artifacts[0].group == "steps"
+        assert any(item.code == "RUN_DELIVERABLE_MISSING" for item in query.mission_workspace(mission.mission_id).diagnostics)
     finally:
         _close(foundation)
 

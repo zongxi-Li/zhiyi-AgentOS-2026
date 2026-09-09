@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from contracts.content import ContentKind
+from contracts.artifacts import FINAL_SYNTHESIS_LOGICAL_ROLE, is_run_deliverable_identity
 from contracts.planning import SemanticTaskRelationType
 from domain.identity_graph import RunArtifactDisposition
 from domain.models import (
@@ -136,17 +137,6 @@ class MissionWorkspaceProjector:
     """Build a workspace without creating or mutating any persistent state."""
 
     _ACTIVE_STATUSES = {RunStatus.PENDING, RunStatus.RUNNING}
-    _FINAL_ROLES = {
-        "deliver",
-        "delivery",
-        "deliverable",
-        "final",
-        "final_output",
-        "synthesis",
-        "final_synthesis",
-        "aggregate",
-    }
-
     def __init__(self, repositories: RepositorySet, content_manifest_store: Any | None = None) -> None:
         self.repositories = repositories
         self.content_manifest_store = content_manifest_store
@@ -213,6 +203,16 @@ class MissionWorkspaceProjector:
                 diagnostics,
             ))
             entries.extend(artifact_entries)
+            if selected_run.status is RunStatus.SUCCEEDED and not any(
+                entry.group == "output" and entry.kind is WorkspaceEntryKind.ARTIFACT
+                for entry in artifact_entries
+            ):
+                diagnostics.append(WorkspaceDiagnostic(
+                    code="RUN_DELIVERABLE_MISSING",
+                    message="Run completed without a canonical run_deliverable; supporting artifacts are not promoted.",
+                    severity="warning",
+                    details={"runId": selected_run.run_id},
+                ))
             entries.extend(self._run_entries(summaries))
         else:
             entries.extend(self._run_entries(summaries))
@@ -543,6 +543,12 @@ class MissionWorkspaceProjector:
                 checksum=artifact.checksum,
                 attempt_id=artifact.producer_attempt_id,
                 acg_node_id=artifact.acg_node_id,
+                logical_role=(
+                    FINAL_SYNTHESIS_LOGICAL_ROLE
+                    if final
+                    else str(artifact.metadata.get("logicalRole"))
+                    if artifact.metadata.get("logicalRole") else None
+                ),
                 run_id=run.run_id,
                 disposition=detail.binding.disposition,
                 source_run_id=detail.binding.source_run_id,
@@ -587,8 +593,8 @@ class MissionWorkspaceProjector:
                 entry_id=f"legacy:{manifest.manifest_id}",
                 kind=WorkspaceEntryKind.ARTIFACT,
                 name=manifest.manifest_id,
-                group="output",
-                parent_entry_id="folder:output",
+                group="steps",
+                parent_entry_id="folder:steps",
                 display_order=start + offset,
                 content_ref=manifest.manifest_id,
                 media_type=manifest.media_type,
@@ -676,31 +682,9 @@ class MissionWorkspaceProjector:
         graph_node: dict[str, Any],
         artifact: Artifact,
     ) -> bool:
-        # Artifact identity is the strongest signal.  A capability describes
-        # how a node can work, not whether one of its products is the Mission
-        # final output.
-        if artifact.artifact_key.strip().lower() == "final":
-            return True
-        role = str(getattr(plan_node, "logical_role", "") or "").strip().lower()
-        graph_role = str(graph_node.get("logicalRole") or "").strip().lower()
-        metadata = dict(task.metadata if task is not None else {})
-        if role in self._FINAL_ROLES:
-            return True
-        if graph_role in self._FINAL_ROLES:
-            return True
-        graph_metadata = graph_node.get("metadata")
-        if isinstance(graph_metadata, dict):
-            terminal_role = str(
-                graph_metadata.get("logicalRole")
-                or graph_metadata.get("outputRole")
-                or graph_metadata.get("terminalOutputRole")
-                or ""
-            ).strip().lower()
-            if terminal_role in self._FINAL_ROLES:
-                return True
-            if graph_metadata.get("terminalOutput") is True:
-                return True
-        return str(metadata.get("logicalRole") or "").strip().lower() in self._FINAL_ROLES
+        # Final status is an Artifact identity, never a capability or task-role
+        # inference.  Older primary/report products remain supporting artifacts.
+        return is_run_deliverable_identity(artifact.model_dump(by_alias=True))
 
     @staticmethod
     def _mission_document(

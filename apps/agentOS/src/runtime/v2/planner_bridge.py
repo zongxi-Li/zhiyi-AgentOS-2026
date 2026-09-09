@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from contracts.identity import MissionId
+from contracts.artifacts import canonicalize_final_synthesis_nodes
 from contracts.planning import TaskPlan, PlannedTask, TaskPlanPatch
 from domain.models import SemanticTask
 from domain.repository import IdentityConflictError
@@ -31,6 +32,7 @@ class PlannerIdentityBridge:
         mission_id: MissionId,
         nodes: Sequence[PlannedTask],
     ) -> list[SemanticTask]:
+        nodes = canonicalize_final_synthesis_nodes(nodes, ())
         plan = validate_task_plan_for_execution(
             capability_catalog=self.capability_catalog,
             mission_id=mission_id,

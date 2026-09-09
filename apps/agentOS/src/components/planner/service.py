@@ -39,6 +39,7 @@ from .algorithms import (
     PlanningVariantGenerator,
     normalize_planning_diversity,
 )
+from contracts.artifacts import canonicalize_final_synthesis_nodes
 from .topology import EdgeOrigin, validate_task_plan_for_execution
 from components.mission_manager.store import WorkflowRegistry
 
@@ -620,12 +621,13 @@ def apply_task_plan_patch(
         if relation.source_key in nodes and relation.target_key in nodes
     ]
     relations.extend(patch.relations)
+    normalized_nodes = canonicalize_final_synthesis_nodes(tuple(nodes.values()), relations)
     catalog = capability_catalog or build_default_capability_catalog()
     return validate_task_plan_for_execution(
         capability_catalog=catalog,
         mission_id=current.mission_id,
         plan_version=patch.plan_version,
-        nodes=tuple(nodes.values()),
+        nodes=tuple(normalized_nodes),
         relations=relations,
         control_policies=current.control_policies,
         relation_origin=EdgeOrigin.PLAN_PATCH,

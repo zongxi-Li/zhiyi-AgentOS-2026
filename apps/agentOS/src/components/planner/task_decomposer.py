@@ -17,6 +17,10 @@ from contracts.planning import (
     VerificationLoopPolicy,
     WorksetSpec,
 )
+from contracts.artifacts import (
+    FINAL_SYNTHESIS_LOGICAL_ROLE,
+    canonicalize_final_synthesis_nodes,
+)
 from components.planner.topology import (
     REPAIR_PATCH_SCHEMA, EdgeOrigin, TaskPlanTopologyCompiler, TopologyCompileError,
     apply_repair_patch, conflict_context, is_model_repair_eligible,
@@ -1045,6 +1049,7 @@ class TaskDecomposer:
                 )
                 for item in payload.get("relations", [])
             ]
+        nodes = canonicalize_final_synthesis_nodes(nodes, raw_relations)
         control_policies = tuple(
             VerificationLoopPolicy.model_validate({
                 **item,
@@ -1347,7 +1352,11 @@ class TaskDecomposer:
                 ),
                 sourceRefs=tuple(profile.expected_artifacts),
                 decompositionRationale="Explicit degraded deterministic plan after v2 decomposition failure.",
-                logicalRole=descriptor.planning_stage,
+                logicalRole=(
+                    FINAL_SYNTHESIS_LOGICAL_ROLE
+                    if capability == "artifact_generation"
+                    else descriptor.planning_stage
+                ),
                 metadata={"plannerStrategy": strategy, "degraded": True, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))
         keys = {node.capability_requirements[0]: node.key for node in nodes}
