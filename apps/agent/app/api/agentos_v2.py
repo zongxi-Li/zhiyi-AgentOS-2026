@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -76,7 +76,7 @@ class MissionRunCreateRequest(BaseModel):
 
 
 class SingleStepRetryRequest(BaseModel):
-    """Request one controlled retry of a failed final ACG step."""
+    """Resume a failed ACG step in a successor or the current Run."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -85,6 +85,7 @@ class SingleStepRetryRequest(BaseModel):
     expected_runtime_revision: int | None = Field(
         default=None, alias="expectedRuntimeRevision", ge=0
     )
+    mode: Literal["successor_run", "current_run"] = "successor_run"
 
 
 class MaterialCreateRequest(BaseModel):
@@ -1706,11 +1707,15 @@ def create_router(
 
     @router.post("/runs/{run_id}/steps/{step_id}/retry", status_code=status.HTTP_202_ACCEPTED)
     async def retry_failed_step(run_id: str, step_id: str, request: SingleStepRetryRequest):
-        """Prepare and enqueue exactly one controlled final ACG step retry."""
+        """Reuse committed outputs and continue from the selected failed step."""
 
         source_run = load_run(run_id)
         key, fingerprint = _single_step_retry_idempotency(run_id, step_id, request)
-        existing = runtime.workflow_store.find_run_by_idempotency_key(key)
+        existing = (
+            runtime.workflow_store.find_run_by_idempotency_key(key)
+            if request.mode == "successor_run"
+            else None
+        )
         if existing is not None:
             _require_access(existing)
             if existing.idempotency_fingerprint != fingerprint:
@@ -1724,6 +1729,7 @@ def create_router(
                 expected_runtime_revision=request.expected_runtime_revision,
                 idempotency_key=key,
                 idempotency_fingerprint=fingerprint,
+                reuse_source_run=request.mode == "current_run",
             )
             await coordinator.submit(retry_run.run_id)
             return project(runtime.get_status(retry_run.run_id))
