@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config'
 import { loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import Components from 'unplugin-vue-components/vite'
+import AutoImport from 'unplugin-auto-import/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 const DEV_PROXY_TIMEOUT_MS = 240000
 
@@ -23,7 +26,11 @@ export default defineConfig(({ mode }) => {
     'http://localhost:8080'
 
   return {
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      Components({ resolvers: [ElementPlusResolver()] }),
+      AutoImport({ resolvers: [ElementPlusResolver()] })
+    ],
     css: {
       preprocessorOptions: {
         scss: {
@@ -39,6 +46,12 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       globals: true,
+      css: false,
+      server: {
+        deps: {
+          inline: ['element-plus']
+        }
+      },
       include: ['src/**/*.spec.ts'],
       alias: {
         '@': resolve(__dirname, 'src'),

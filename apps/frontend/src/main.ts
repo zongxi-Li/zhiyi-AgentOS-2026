@@ -1,53 +1,9 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import {
-  ElAlert,
-  ElAside,
-  ElAvatar,
-  ElButton,
-  ElCard,
-  ElCheckbox,
-  ElCol,
-  ElCollapse,
-  ElCollapseItem,
-  ElColorPicker,
-  ElContainer,
-  ElDialog,
-  ElDrawer,
-  ElEmpty,
-  ElForm,
-  ElFormItem,
-  ElHeader,
-  ElIcon,
-  ElImage,
-  ElInput,
-  ElInputNumber,
-  ElMain,
-  ElMenu,
-  ElMenuItem,
-  ElMessage,
-  ElMessageBox,
-  ElOption,
-  ElProgress,
-  ElRadio,
-  ElRadioButton,
-  ElRadioGroup,
-  ElResult,
-  ElRow,
-  ElSelect,
-  ElSlider,
-  ElSwitch,
-  ElTable,
-  ElTableColumn,
-  ElTabPane,
-  ElTabs,
-  ElTag,
-  ElTooltip,
-  ElUpload,
-  ElLoading,
-  provideGlobalConfig
-} from 'element-plus'
-import 'element-plus/dist/index.css'
+import { ElLoading, ElMessage, ElMessageBox, provideGlobalConfig } from 'element-plus'
+import 'element-plus/theme-chalk/el-message.css'
+import 'element-plus/theme-chalk/el-message-box.css'
+import 'element-plus/theme-chalk/el-loading.css'
 import zhCN from 'element-plus/dist/locale/zh-cn.mjs'
 import en from 'element-plus/dist/locale/en.mjs'
 
@@ -64,58 +20,9 @@ initTheme()
 const app = createApp(App)
 const pinia = createPinia()
 
-const elementPlugins = [
-  ElLoading,
-  ElMessage,
-  ElMessageBox
-]
-
-const elementComponents = [
-  ElAlert,
-  ElAside,
-  ElAvatar,
-  ElButton,
-  ElCard,
-  ElCheckbox,
-  ElCol,
-  ElCollapse,
-  ElCollapseItem,
-  ElColorPicker,
-  ElContainer,
-  ElDialog,
-  ElDrawer,
-  ElEmpty,
-  ElForm,
-  ElFormItem,
-  ElHeader,
-  ElIcon,
-  ElImage,
-  ElInput,
-  ElInputNumber,
-  ElMain,
-  ElMenu,
-  ElMenuItem,
-  ElOption,
-  ElProgress,
-  ElRadio,
-  ElRadioButton,
-  ElRadioGroup,
-  ElResult,
-  ElRow,
-  ElSelect,
-  ElSlider,
-  ElSwitch,
-  ElTable,
-  ElTableColumn,
-  ElTabPane,
-  ElTabs,
-  ElTag,
-  ElTooltip,
-  ElUpload
-]
-
-for (const plugin of elementPlugins) app.use(plugin)
-for (const component of elementComponents) app.use(component)
+app.use(ElLoading)
+app.use(ElMessage)
+app.use(ElMessageBox)
 
 // 根据当前语言设置 Element Plus 语言
 const getElementPlusLocale = () => {
