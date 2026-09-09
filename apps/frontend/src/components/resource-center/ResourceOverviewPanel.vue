@@ -31,7 +31,7 @@
         <span class="resource-search__icon" aria-hidden="true"><el-icon><Search /></el-icon></span>
         <span class="resource-search__copy">
           <span class="resource-search__label">筛选资源</span>
-          <input v-model="searchText" type="search" placeholder="搜索 Resource ID 或 capability" />
+          <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索 Resource ID 或 capability" />
         </span>
         <kbd>/</kbd>
       </label>
@@ -65,7 +65,7 @@
           <article v-for="item in group.items" :key="item.profile.resourceId" class="resource-row" @click="openDetail(item)">
             <div class="resource-row__identity">
               <span class="resource-row__icon" aria-hidden="true">
-                <el-icon><Cpu /></el-icon>
+                <el-icon><component :is="resourceTypeIcon(item.profile.resourceType)" /></el-icon>
                 <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
               </span>
               <div>
@@ -100,11 +100,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Cpu, Search } from '@element-plus/icons-vue'
+import { Search } from '@element-plus/icons-vue'
 import { agentosApi, type RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
 import { formatCapacity, formatMetric, formatPercent, healthLabel } from '@/utils/resourceFormat'
+import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const searchText = ref('')
@@ -112,6 +113,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const selectedResource = ref<RuntimeResourceItem | null>(null)
 const drawerOpen = ref(false)
+const searchInput = ref<HTMLInputElement | null>(null)
 let controller: AbortController | null = null
 
 const TIER_ORDER: Array<{ id: string; label: string }> = [
@@ -201,8 +203,17 @@ const loadResources = async () => {
 
 defineExpose({ loadResources })
 
-onMounted(() => { void loadResources() })
-onBeforeUnmount(() => controller?.abort())
+const focusSearch = (event: KeyboardEvent) => {
+  if (event.key !== '/') return
+  const target = event.target as HTMLElement | null
+  const tag = target?.tagName?.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return
+  event.preventDefault()
+  searchInput.value?.focus()
+}
+
+onMounted(() => { void loadResources(); window.addEventListener('keydown', focusSearch) })
+onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown', focusSearch) })
 </script>
 
 <style scoped>

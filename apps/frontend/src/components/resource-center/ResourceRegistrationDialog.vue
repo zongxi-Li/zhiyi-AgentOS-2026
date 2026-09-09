@@ -130,22 +130,24 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { Box, Connection, DataLine, MagicStick, Monitor, Tools, User } from '@element-plus/icons-vue'
+import { Connection } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { agentosApi, type RuntimeResourceProfile, type RuntimeResourceSnapshot } from '@/services/api/agentos'
 import { resourceTypeMeta } from '@/utils/resourceFormat'
+import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e: 'registered'): void }>()
 
 const resourceTypeOptions = [
-  { value: 'agent', label: 'Agent', icon: User, desc: '智能体运行时' },
-  { value: 'skill', label: 'Skill', icon: MagicStick, desc: '可复用技能' },
-  { value: 'mcp', label: 'MCP', icon: Connection, desc: 'MCP 工具协议' },
-  { value: 'tool', label: 'Tool', icon: Tools, desc: '工具调用' },
-  { value: 'model', label: 'Model', icon: Box, desc: '模型服务' },
-  { value: 'worker', label: 'Worker', icon: Monitor, desc: '工作节点' },
-  { value: 'embedding', label: 'Embedding', icon: DataLine, desc: '向量嵌入' }
-].map(option => ({ ...option, tone: resourceTypeMeta(option.value).tone }))
+  { value: 'agent', label: 'Agent', desc: '智能体运行时' },
+  { value: 'skill', label: 'Skill', desc: '可复用技能' },
+  { value: 'mcp', label: 'MCP', desc: 'MCP 工具协议' },
+  { value: 'tool', label: 'Tool', desc: '工具调用' },
+  { value: 'model', label: 'Model', desc: '模型服务' },
+  { value: 'worker', label: 'Worker', desc: '工作节点' },
+  { value: 'embedding', label: 'Embedding', desc: '向量嵌入' }
+].map(option => ({ ...option, icon: resourceTypeIcon(option.value), tone: resourceTypeMeta(option.value).tone }))
 
 const tierOptions = [
   { value: 'local', label: '本地' },
@@ -236,6 +238,7 @@ const submit = async () => {
   errorMessage.value = ''
   try {
     await agentosApi.registerResource({ profile: buildProfile(), snapshot: buildSnapshot() })
+    ElMessage.success('资源注册成功')
     emit('registered')
   } catch {
     errorMessage.value = '注册失败，请检查资源标识是否已存在，或端点信息是否正确。'

@@ -1,7 +1,7 @@
 <template>
   <div class="resource-detail">
     <header class="resource-detail__hero">
-      <span class="resource-detail__icon" aria-hidden="true"><el-icon><Cpu /></el-icon></span>
+      <span class="resource-detail__icon" aria-hidden="true"><el-icon><component :is="resourceTypeIcon(item.profile.resourceType)" /></el-icon></span>
       <div class="resource-detail__identity">
         <div class="resource-detail__title">
           <strong>{{ item.profile.resourceId }}</strong>
@@ -92,10 +92,10 @@
 </template>
 
 <script setup lang="ts">
-import { Cpu } from '@element-plus/icons-vue'
 import type { RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
 import { formatDate, formatMetric, formatPercent, healthLabel, tierLabel } from '@/utils/resourceFormat'
+import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 defineProps<{ item: RuntimeResourceItem }>()
 </script>
