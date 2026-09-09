@@ -157,6 +157,25 @@ describe('MemoryView', () => {
     expect(wrapper.find('.memory-runs__hint').text()).toContain('暂无运行记录')
   })
 
+  it('运行列表加载失败时展示错误与重试入口', async () => {
+    vi.restoreAllMocks()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/agentos/memory', name: 'MemoryCenter', component: MemoryView }]
+    })
+    await router.push('/agentos/memory')
+    await router.isReady()
+    vi.spyOn(agentosApi, 'listWorkflowRuns').mockRejectedValue(new Error('运行服务不可用'))
+    const wrapper = mount(MemoryView, {
+      global: { plugins: [router], stubs: { WorkbenchLayout: layoutStub, Teleport: true } }
+    })
+    mountedWrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.find('.memory-runs__error').text()).toContain('运行服务不可用')
+    expect(wrapper.find('.memory-detail__empty--error').text()).toContain('运行记录加载失败')
+    expect(wrapper.find('.memory-runs__retry').exists()).toBe(true)
+  })
+
   it('记忆事件加载失败时展示错误与重试入口', async () => {
     vi.restoreAllMocks()
     const runs = [makeRun({ runId: 'run_1' })]

@@ -26,6 +26,10 @@
                 </span>
               </div>
             </div>
+            <div v-else-if="runsError" class="memory-runs__error" role="alert">
+              <p>{{ runsError }}</p>
+              <button type="button" class="memory-runs__retry" @click="loadRuns">重试</button>
+            </div>
             <div v-else-if="!runs.length" class="memory-runs__hint">暂无运行记录</div>
             <ul v-else class="memory-runs__list">
               <li v-for="run in runs" :key="run.runId">
@@ -73,6 +77,11 @@
                 </div>
               </div>
             </section>
+            <div v-else-if="runsError" class="memory-detail__empty memory-detail__empty--error" role="alert">
+              <strong>运行记录加载失败</strong>
+              <p>{{ runsError }}</p>
+              <button type="button" class="memory-detail__retry" @click="loadRuns">重新加载</button>
+            </div>
             <div v-else-if="!selectedRunId" class="memory-detail__empty">
               <p>选择左侧一个运行，查看它的记忆流。</p>
             </div>
@@ -306,6 +315,7 @@ interface FlowWithNodes extends MemoryFlowProjection {
 const route = useRoute()
 const runs = ref<WorkflowRunSummary[]>([])
 const runsLoading = ref(false)
+const runsError = ref<string | null>(null)
 const selectedRunId = ref<string | null>(null)
 const eventsLoading = ref(false)
 const eventsError = ref<string | null>(null)
@@ -404,8 +414,16 @@ function formatRunStatus(status: string | null | undefined): string {
   return labels[status || ''] || status || '未知状态'
 }
 
+function formatRunsError(error: unknown): string {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status
+  if (status === 401 || status === 403) return '登录状态已失效，请重新登录后再查看运行记忆。'
+  if (status != null && status >= 500) return '运行服务暂时不可用，请稍后重试。'
+  return error instanceof Error && error.message ? error.message : '运行记录暂时无法加载，请重试。'
+}
+
 async function loadRuns(): Promise<void> {
   runsLoading.value = true
+  runsError.value = null
   try {
     const page = await workflowApi.listRuns({ page: 1, pageSize: 50 })
     runs.value = page.items
@@ -416,6 +434,9 @@ async function loadRuns(): Promise<void> {
     }
   } catch (error) {
     runs.value = []
+    selectedRunId.value = null
+    rawEvents.value = []
+    runsError.value = formatRunsError(error)
   } finally {
     runsLoading.value = false
   }
@@ -578,6 +599,30 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.memory-runs__error {
+  display: grid;
+  gap: 8px;
+  padding: 16px 14px 18px;
+  color: var(--wb-danger);
+  background: color-mix(in srgb, var(--wb-danger) 5%, var(--wb-surface-section));
+  font-size: 12px;
+}
+
+.memory-runs__error p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.memory-runs__retry {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--wb-accent);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .memory-runs__loading {
   display: grid;
   gap: 2px;
@@ -700,8 +745,26 @@ onUnmounted(() => {
   text-align: center;
 }
 
+.memory-detail__empty--error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--wb-danger) 26%, var(--wb-border-soft));
+  background: color-mix(in srgb, var(--wb-danger) 5%, var(--wb-surface-section));
+}
+
+.memory-detail__empty--error strong {
+  display: block;
+  color: var(--wb-text);
+}
+
+.memory-detail__empty--error p {
+  margin: 8px 0 14px;
+  color: var(--wb-danger);
+}
+
 .memory-loading-state {
+  position: relative;
   min-height: 410px;
+  overflow: hidden;
   padding: 22px;
   border: 1px solid var(--wb-border-soft);
   border-radius: var(--wb-radius-section);
@@ -709,7 +772,22 @@ onUnmounted(() => {
   box-shadow: var(--wb-shadow-section);
 }
 
+.memory-loading-state::before {
+  position: absolute;
+  top: -120px;
+  right: 12%;
+  width: 280px;
+  height: 220px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--wb-accent) 9%, transparent);
+  content: '';
+  filter: blur(24px);
+  pointer-events: none;
+}
+
 .memory-loading-state__intro {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -754,6 +832,8 @@ onUnmounted(() => {
 }
 
 .memory-loading-state__stats {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
@@ -770,14 +850,32 @@ onUnmounted(() => {
   border-right: 1px solid var(--wb-border-soft);
 }
 
+.memory-loading-stat:nth-child(2) .memory-skeleton-line { animation-delay: 120ms; }
+.memory-loading-stat:nth-child(3) .memory-skeleton-line { animation-delay: 240ms; }
+.memory-loading-stat:nth-child(4) .memory-skeleton-line { animation-delay: 360ms; }
+
 .memory-loading-stat:last-child { border-right: 0; }
 
 .memory-loading-state__flow {
+  position: relative;
+  z-index: 1;
   min-height: 220px;
   overflow: hidden;
   border: 1px solid var(--wb-border-soft);
   border-radius: var(--wb-radius-sm);
   background: color-mix(in srgb, var(--wb-surface-inset) 60%, var(--wb-surface-section));
+}
+
+.memory-loading-state__flow::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -24%;
+  width: 24%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wb-accent) 7%, transparent), transparent);
+  content: '';
+  animation: memory-flow-scan 3.6s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .memory-loading-state__flow-head {
@@ -793,6 +891,16 @@ onUnmounted(() => {
   margin: 0 18px;
 }
 
+.memory-loading-state__network::before {
+  position: absolute;
+  inset: 18px 4% 16px;
+  background-image: linear-gradient(color-mix(in srgb, var(--wb-border) 48%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--wb-border) 48%, transparent) 1px, transparent 1px);
+  background-size: 42px 42px;
+  content: '';
+  opacity: .34;
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
 .memory-loading-state__track {
   position: absolute;
   top: 82px;
@@ -800,6 +908,7 @@ onUnmounted(() => {
   left: 4%;
   height: 1px;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wb-accent) 35%, var(--wb-border)), transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--wb-accent) 16%, transparent);
 }
 
 .memory-loading-node {
@@ -850,10 +959,17 @@ onUnmounted(() => {
   50% { transform: translateY(-3px); opacity: 1; }
 }
 
+@keyframes memory-flow-scan {
+  0%, 20% { transform: translateX(0); opacity: 0; }
+  35% { opacity: 1; }
+  80%, 100% { transform: translateX(560%); opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .memory-skeleton-line,
   .memory-loading-state__status i,
-  .memory-loading-node { animation: none; }
+  .memory-loading-node,
+  .memory-loading-state__flow::after { animation: none; }
 }
 
 .memory-detail__error {
