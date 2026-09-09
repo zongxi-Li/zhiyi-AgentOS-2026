@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Sequence
 
 from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
-from support.stores._policy import matches_run, matches_mission, reject_terminal_overwrite, run_priority, validate_run_state
+from support.stores._policy import matches_mission, reject_terminal_overwrite, validate_run_state
 from support.stores.workflow_store import (
     RuntimeMissionRunSummary,
     RuntimeRunListSummary,
+    RuntimeRunOverview,
     RuntimeRunRecordDeleteResult,
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
@@ -181,15 +182,26 @@ class SQLiteWorkflowStore(WorkflowStore):
         conn.execute(
             """INSERT INTO runs(
                    run_id, mission_id, payload, updated_at,
-                   status, owner_user_id, owner_tenant_id
-               ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                   status, owner_user_id, owner_tenant_id,
+                   domain, workflow_id, lifecycle_phase, lifecycle_message,
+                   source, current_step_id, started_at, created_at, runtime_revision
+               ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(run_id) DO UPDATE SET
                    mission_id=excluded.mission_id,
                    payload=excluded.payload,
                    updated_at=excluded.updated_at,
                    status=excluded.status,
                    owner_user_id=excluded.owner_user_id,
-                   owner_tenant_id=excluded.owner_tenant_id""",
+                   owner_tenant_id=excluded.owner_tenant_id,
+                   domain=excluded.domain,
+                   workflow_id=excluded.workflow_id,
+                   lifecycle_phase=excluded.lifecycle_phase,
+                   lifecycle_message=excluded.lifecycle_message,
+                   source=excluded.source,
+                   current_step_id=excluded.current_step_id,
+                   started_at=excluded.started_at,
+                   created_at=excluded.created_at,
+                   runtime_revision=excluded.runtime_revision""",
             (
                 run.run_id,
                 run.mission_id,
@@ -198,6 +210,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                 run.status.value,
                 owner_user_id,
                 owner_tenant_id,
+                *SQLiteWorkflowStore._run_summary_values(run),
             ),
         )
         return True
@@ -366,6 +379,103 @@ class SQLiteWorkflowStore(WorkflowStore):
             )
         return summaries
 
+    _RUN_PRIORITY_SQL = (
+        "CASE r.status WHEN 'waiting_review' THEN 2 "
+        "WHEN 'completed' THEN 0 WHEN 'failed' THEN 0 "
+        "WHEN 'cancelled' THEN 0 WHEN 'superseded' THEN 0 ELSE 1 END"
+    )
+
+    @staticmethod
+    def _normalize_record_state(
+        mission_record_state: MissionRecordState | str | None,
+    ) -> str | None:
+        return (
+            mission_record_state.value
+            if isinstance(mission_record_state, MissionRecordState)
+            else mission_record_state
+        )
+
+    @staticmethod
+    def _run_list_where(
+        *,
+        expected_status: str | None,
+        expected_statuses: set[str] | None,
+        domain: str | None,
+        workflow_id: str | None,
+        mission_id: str | None,
+        lifecycle_phase: str | None,
+        source: str | None,
+        expected_sources: set[str] | None,
+        expected_record_state: str | None,
+        owner_user_id: str | None,
+        owner_tenant_id: str | None,
+    ) -> tuple[str, list]:
+        """Translate the legacy ``matches_run`` predicate onto summary columns.
+
+        Owner clauses mirror ``matches_run`` exactly: runs with no owner stay
+        visible to every actor, while an owned run must match both the caller
+        and (when the run declares one) the tenant. A NULL bind parameter
+        degrades to the legacy "owned runs are hidden from anonymous callers".
+        """
+        clauses: list[str] = []
+        params: list = []
+        if expected_status is not None:
+            clauses.append("r.status = ?")
+            params.append(expected_status)
+        if expected_statuses is not None:
+            values = sorted(expected_statuses)
+            clauses.append(f"r.status IN ({', '.join('?' for _ in values)})")
+            params.extend(values)
+        if domain is not None:
+            clauses.append("r.domain = ?")
+            params.append(domain)
+        if workflow_id is not None:
+            clauses.append("r.workflow_id = ?")
+            params.append(workflow_id)
+        if mission_id is not None:
+            clauses.append("r.mission_id = ?")
+            params.append(mission_id)
+        if lifecycle_phase is not None:
+            clauses.append("r.lifecycle_phase = ?")
+            params.append(lifecycle_phase)
+        if source is not None:
+            clauses.append("r.source = ?")
+            params.append(source)
+        if expected_sources is not None:
+            values = sorted(expected_sources)
+            clauses.append(f"r.source IN ({', '.join('?' for _ in values)})")
+            params.extend(values)
+        if expected_record_state is not None:
+            # Legacy list_runs drops orphan runs (no parent mission) under a
+            # record-state filter; the NOT NULL guard keeps that semantics.
+            clauses.append(
+                "(t.mission_id IS NOT NULL AND "
+                "COALESCE(json_extract(t.payload, '$.recordState'), 'active') = ?)"
+            )
+            params.append(expected_record_state)
+        owner_clause = "(r.owner_user_id IS NULL OR r.owner_user_id = ''"
+        if owner_user_id is not None:
+            owner_clause += " OR r.owner_user_id = ?"
+            params.append(owner_user_id)
+        clauses.append(owner_clause + ")")
+        tenant_clause = (
+            "(r.owner_user_id IS NULL OR r.owner_user_id = '' "
+            "OR r.owner_tenant_id IS NULL OR r.owner_tenant_id = ''"
+        )
+        if owner_tenant_id is not None:
+            tenant_clause += " OR r.owner_tenant_id = ?"
+            params.append(owner_tenant_id)
+        clauses.append(tenant_clause + ")")
+        return " AND ".join(clauses), params
+
+    @classmethod
+    def _run_list_order(cls, expected_statuses: set[str] | None) -> str:
+        if expected_statuses is not None:
+            return f"{cls._RUN_PRIORITY_SQL} DESC, r.updated_at DESC, r.run_id DESC"
+        return "r.updated_at DESC, r.run_id DESC"
+
+    _RUN_LIST_FROM = "FROM runs r LEFT JOIN tasks t ON t.mission_id = r.mission_id"
+
     def list_runs(
         self,
         *,
@@ -383,46 +493,126 @@ class SQLiteWorkflowStore(WorkflowStore):
         page: int = 1,
         page_size: int = 20,
     ) -> WorkflowStorePage[RuntimeRunRecord]:
-        """载入、筛选并分页运行；多状态查询按运行优先级、更新时间和标识降序，复杂度 ``O(R log R)``。"""
+        """在 SQL 侧按摘要列过滤、排序并分页，仅反序列化当前页 payload。
+
+        多状态查询按等待审核、非终态、终态优先，再按更新时间和标识降序，与内存实现
+        的 ``matches_run`` + ``run_priority`` 语义一致。
+        """
         expected_status = status_value(status)
         expected_statuses = status_values(statuses)
         expected_sources = {str(item) for item in sources} if sources else None
-        expected_record_state = (
-            mission_record_state.value if isinstance(mission_record_state, MissionRecordState)
-            else mission_record_state
+        expected_record_state = self._normalize_record_state(mission_record_state)
+        where_sql, params = self._run_list_where(
+            expected_status=expected_status,
+            expected_statuses=expected_statuses,
+            domain=domain,
+            workflow_id=workflow_id,
+            mission_id=mission_id,
+            lifecycle_phase=lifecycle_phase,
+            source=source,
+            expected_sources=expected_sources,
+            expected_record_state=expected_record_state,
+            owner_user_id=owner_user_id,
+            owner_tenant_id=owner_tenant_id,
         )
-        rows = self._fetch_all("SELECT payload FROM runs")
-        mission_states = {
-            str(row["mission_id"]): RuntimeMissionRecord.model_validate(
-                json.loads(row["payload"])
-            ).record_state.value
-            for row in self._fetch_all("SELECT mission_id, payload FROM tasks")
-        }
-        runs = [
-            run
-            for run in (RuntimeRunRecord.model_validate(json.loads(row["payload"])) for row in rows)
-            if (
-                expected_record_state is None
-                or mission_states.get(run.mission_id) == expected_record_state
-            ) and matches_run(
-                run,
-                status=expected_status,
-                statuses=expected_statuses,
-                domain=domain,
-                workflow_id=workflow_id,
-                mission_id=mission_id,
-                lifecycle_phase=lifecycle_phase,
-                source=source,
-                sources=expected_sources,
-                owner_user_id=owner_user_id,
-                owner_tenant_id=owner_tenant_id,
+        safe_page = max(1, page)
+        safe_size = max(1, page_size)
+        total = int(
+            self._fetch_one(
+                f"SELECT COUNT(*) {self._RUN_LIST_FROM} WHERE {where_sql}",
+                tuple(params),
+            )[0]
+        )
+        rows = self._fetch_all(
+            f"SELECT r.payload {self._RUN_LIST_FROM} WHERE {where_sql} "
+            f"ORDER BY {self._run_list_order(expected_statuses)} LIMIT ? OFFSET ?",
+            (*params, safe_size, (safe_page - 1) * safe_size),
+        )
+        runs = tuple(
+            RuntimeRunRecord.model_validate(json.loads(row["payload"])) for row in rows
+        )
+        return WorkflowStorePage(
+            items=runs, total=total, page=safe_page, page_size=safe_size
+        )
+
+    def list_run_overviews(
+        self,
+        *,
+        status: WorkflowStatus | str | None = None,
+        statuses=None,
+        domain: str | None = None,
+        workflow_id: str | None = None,
+        mission_id: str | None = None,
+        lifecycle_phase: str | None = None,
+        source: str | None = None,
+        sources=None,
+        mission_record_state: MissionRecordState | str | None = None,
+        owner_user_id: str | None = None,
+        owner_tenant_id: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> WorkflowStorePage[RuntimeRunOverview]:
+        """与 ``list_runs`` 同筛选排序分页，但只读摘要列与任务标题，零 payload 反序列化。"""
+        expected_status = status_value(status)
+        expected_statuses = status_values(statuses)
+        expected_sources = {str(item) for item in sources} if sources else None
+        expected_record_state = self._normalize_record_state(mission_record_state)
+        where_sql, params = self._run_list_where(
+            expected_status=expected_status,
+            expected_statuses=expected_statuses,
+            domain=domain,
+            workflow_id=workflow_id,
+            mission_id=mission_id,
+            lifecycle_phase=lifecycle_phase,
+            source=source,
+            expected_sources=expected_sources,
+            expected_record_state=expected_record_state,
+            owner_user_id=owner_user_id,
+            owner_tenant_id=owner_tenant_id,
+        )
+        safe_page = max(1, page)
+        safe_size = max(1, page_size)
+        total = int(
+            self._fetch_one(
+                f"SELECT COUNT(*) {self._RUN_LIST_FROM} WHERE {where_sql}",
+                tuple(params),
+            )[0]
+        )
+        rows = self._fetch_all(
+            f"""SELECT r.run_id, r.mission_id, r.workflow_id, r.domain, r.status,
+                       r.lifecycle_phase, r.lifecycle_message, r.source,
+                       r.current_step_id, r.started_at, r.created_at,
+                       r.updated_at, r.runtime_revision,
+                       json_extract(t.payload, '$.title') AS title
+                {self._RUN_LIST_FROM} WHERE {where_sql}
+                ORDER BY {self._run_list_order(expected_statuses)}
+                LIMIT ? OFFSET ?""",
+            (*params, safe_size, (safe_page - 1) * safe_size),
+        )
+        overviews = tuple(
+            RuntimeRunOverview(
+                run_id=str(row["run_id"]),
+                mission_id=str(row["mission_id"]),
+                workflow_id=str(row["workflow_id"] or ""),
+                domain=str(row["domain"] or ""),
+                status=WorkflowStatus(str(row["status"])),
+                lifecycle_phase=str(row["lifecycle_phase"]) if row["lifecycle_phase"] else None,
+                lifecycle_message=str(row["lifecycle_message"]) if row["lifecycle_message"] else None,
+                source=str(row["source"]) if row["source"] else None,
+                current_step_id=str(row["current_step_id"]) if row["current_step_id"] else None,
+                started_at=(
+                    datetime.fromisoformat(str(row["started_at"])) if row["started_at"] else None
+                ),
+                created_at=datetime.fromisoformat(str(row["created_at"])),
+                updated_at=datetime.fromisoformat(str(row["updated_at"])),
+                runtime_revision=int(row["runtime_revision"] or 0),
+                title=str(row["title"]) if row["title"] else None,
             )
-        ]
-        runs.sort(
-            key=lambda run: (run_priority(run) if expected_statuses else 0, run.updated_at, run.run_id),
-            reverse=True,
+            for row in rows
         )
-        return paginate_items(runs, page=page, page_size=page_size)
+        return WorkflowStorePage(
+            items=overviews, total=total, page=safe_page, page_size=safe_size
+        )
 
     def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """通过 SQLite JSON 条件返回最新优先的未终态运行；数量下限为 1。"""
@@ -545,9 +735,15 @@ class SQLiteWorkflowStore(WorkflowStore):
             run_columns = {
                 str(row[1]) for row in conn.execute("PRAGMA table_info(runs)").fetchall()
             }
-            for column in ("status", "owner_user_id", "owner_tenant_id"):
+            for column, column_type in (
+                ("status", "TEXT"), ("owner_user_id", "TEXT"), ("owner_tenant_id", "TEXT"),
+                ("domain", "TEXT"), ("workflow_id", "TEXT"), ("lifecycle_phase", "TEXT"),
+                ("lifecycle_message", "TEXT"), ("source", "TEXT"), ("current_step_id", "TEXT"),
+                ("started_at", "TEXT"), ("created_at", "TEXT"),
+                ("runtime_revision", "INTEGER"),
+            ):
                 if column not in run_columns:
-                    conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
+                    conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {column_type}")
             conn.execute(
                 """UPDATE runs
                    SET status = COALESCE(status, json_extract(payload, '$.status')),
@@ -561,9 +757,23 @@ class SQLiteWorkflowStore(WorkflowStore):
                        )
                    WHERE status IS NULL"""
             )
+            self._backfill_run_summary_columns(conn)
             conn.execute(
                 """CREATE INDEX IF NOT EXISTS idx_runs_mission_updated_at
                    ON runs(mission_id, updated_at DESC, run_id DESC)"""
+            )
+            # Run payloads sit between the key columns and the summary
+            # columns, so reading any tail column from the table b-tree walks
+            # the row's overflow chain (tens of MB per heavy run). This
+            # covering index serves list/overview queries entirely from index
+            # pages and never touches payloads.
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_runs_owner_overview
+                   ON runs(owner_user_id, owner_tenant_id, updated_at DESC, run_id DESC,
+                           mission_id, workflow_id, domain, status,
+                           lifecycle_phase, lifecycle_message, source,
+                           current_step_id, started_at, created_at,
+                           runtime_revision)"""
             )
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS lifecycle_outbox (
@@ -578,6 +788,56 @@ class SQLiteWorkflowStore(WorkflowStore):
                    )"""
             )
             conn.commit()
+
+    @staticmethod
+    def _run_summary_values(run: RuntimeRunRecord) -> tuple:
+        source_raw = run.input.get("source")
+        return (
+            run.domain,
+            run.workflow_id,
+            run.lifecycle_phase.value if run.lifecycle_phase is not None else None,
+            run.lifecycle_message,
+            str(source_raw) if source_raw not in (None, "") else None,
+            run.current_step_id,
+            run.started_at.isoformat() if run.started_at is not None else None,
+            run.created_at.isoformat(),
+            int(run.runtime_revision),
+        )
+
+    @staticmethod
+    def _backfill_run_summary_columns(conn: sqlite3.Connection) -> None:
+        """One-shot summary-column migration for rows written before they existed.
+
+        ``domain`` is required on every RuntimeRunRecord, so ``domain IS NULL``
+        marks rows that were never backfilled; the pass runs once per row and
+        skips clean databases on restart. Payload dicts are read raw instead of
+        going through pydantic so startup cost stays near a plain JSON parse.
+        """
+        pending = conn.execute(
+            "SELECT run_id, payload FROM runs WHERE domain IS NULL"
+        ).fetchall()
+        for row in pending:
+            data = json.loads(row[1])
+            source_raw = (data.get("input") or {}).get("source")
+            conn.execute(
+                """UPDATE runs
+                   SET domain = ?, workflow_id = ?, lifecycle_phase = ?, lifecycle_message = ?,
+                       source = ?, current_step_id = ?, started_at = ?, created_at = ?,
+                       runtime_revision = ?
+                   WHERE run_id = ?""",
+                (
+                    str(data.get("domain") or ""),
+                    str(data.get("workflowId") or ""),
+                    data.get("lifecyclePhase") or None,
+                    data.get("lifecycleMessage") or None,
+                    str(source_raw) if source_raw not in (None, "") else None,
+                    data.get("currentStepId") or None,
+                    data.get("startedAt") or None,
+                    str(data.get("createdAt") or ""),
+                    int(data.get("runtimeRevision") or 0),
+                    row[0],
+                ),
+            )
 
     @staticmethod
     def _append_outbox(

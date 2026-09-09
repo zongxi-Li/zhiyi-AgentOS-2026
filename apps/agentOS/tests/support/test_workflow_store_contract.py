@@ -6,7 +6,14 @@ import sqlite3
 
 import pytest
 
-from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
+from contracts.workflow import (
+    MissionRecordState,
+    RuntimeMissionRecord,
+    RuntimeRunRecord,
+    WorkflowProgressPhase,
+    WorkflowStatus,
+    utc_now,
+)
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -203,6 +210,238 @@ def test_sqlite_mission_summary_does_not_deserialize_run_payload(tmp_path: Path)
     assert summary.latest_run is not None
     assert summary.latest_run.run_id == run.run_id
     assert summary.latest_run.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
+)
+def test_list_runs_filter_matrix_matches_owner_scope_and_pagination(store_factory, tmp_path: Path) -> None:
+    store = store_factory(tmp_path)
+    active = RuntimeMissionRecord(missionId="mission_matrix_active", title="Active mission")
+    deleted = RuntimeMissionRecord(missionId="mission_matrix_deleted", title="Deleted mission")
+    store.save_mission(active)
+    store.save_mission(deleted)
+    store.set_mission_record_state(deleted.mission_id, MissionRecordState.DELETED)
+
+    base = utc_now()
+    seed = dict(
+        missionId=active.mission_id, workflowId="wf-1", domain="general", runtimeEngine="acg",
+    )
+
+    def run(run_id: str, **overrides) -> RuntimeRunRecord:
+        defaults = dict(
+            input={"authenticatedUserId": "user-a", "authenticatedTenantId": "tenant-a"}
+        )
+        return RuntimeRunRecord(runId=run_id, **{**seed, **defaults, **overrides})
+
+    store.save_run(run("run_owner_completed", status=WorkflowStatus.COMPLETED, updatedAt=base))
+    store.save_run(run(
+        "run_owner_running", status=WorkflowStatus.RUNNING,
+        updatedAt=base + timedelta(seconds=30),
+    ))
+    store.save_run(run(
+        "run_owner_retrying", status=WorkflowStatus.RETRYING, updatedAt=base + timedelta(seconds=10),
+    ))
+    store.save_run(run(
+        "run_other_owner", status=WorkflowStatus.FAILED,
+        input={"authenticatedUserId": "user-b", "authenticatedTenantId": "tenant-a"},
+        updatedAt=base + timedelta(seconds=20),
+    ))
+    store.save_run(run(
+        "run_owner_other_tenant", status=WorkflowStatus.FAILED,
+        input={"authenticatedUserId": "user-a", "authenticatedTenantId": "tenant-b"},
+        updatedAt=base + timedelta(seconds=25),
+    ))
+    store.save_run(run(
+        "run_deleted_mission", missionId=deleted.mission_id, status=WorkflowStatus.COMPLETED,
+        input={"authenticatedUserId": "user-a"},
+        updatedAt=base + timedelta(seconds=40),
+    ))
+    store.save_run(run(
+        "run_chat_source", status=WorkflowStatus.COMPLETED,
+        input={"source": "chat"}, updatedAt=base + timedelta(seconds=50),
+    ))
+    store.save_run(run(
+        "run_legal_domain", status=WorkflowStatus.COMPLETED, domain="legal", input={},
+        updatedAt=base + timedelta(seconds=60),
+    ))
+
+    owner_page = store.list_runs(
+        mission_record_state=MissionRecordState.ACTIVE,
+        owner_user_id="user-a",
+        owner_tenant_id="tenant-a",
+        page=1,
+        page_size=10,
+    )
+    assert owner_page.total == 5
+    assert [item.run_id for item in owner_page.items] == [
+        # updated_at 降序；其他 owner / 异 tenant / deleted mission 均不可见。
+        "run_legal_domain", "run_chat_source", "run_owner_running",
+        "run_owner_retrying", "run_owner_completed",
+    ]
+
+    statuses_page = store.list_runs(
+        statuses=["completed", "retrying"],
+        mission_record_state=MissionRecordState.ACTIVE,
+        owner_user_id="user-a",
+        owner_tenant_id="tenant-a",
+        page=1,
+        page_size=10,
+    )
+    assert [item.run_id for item in statuses_page.items] == [
+        # 多状态模式下非终态优先于终态，同级按更新时间降序。
+        "run_owner_retrying", "run_legal_domain", "run_chat_source", "run_owner_completed",
+    ]
+
+    scoped = dict(owner_user_id="user-a", owner_tenant_id="tenant-a")
+    assert [item.run_id for item in store.list_runs(
+        source="chat", page_size=10, **scoped
+    ).items] == ["run_chat_source"]
+    assert [item.run_id for item in store.list_runs(
+        domain="legal", page_size=10, **scoped
+    ).items] == ["run_legal_domain"]
+    assert store.list_runs(workflow_id="wf-2", **scoped).total == 0
+
+    page_one = store.list_runs(
+        mission_record_state=MissionRecordState.ACTIVE, page=1, page_size=2, **scoped
+    )
+    page_two = store.list_runs(
+        mission_record_state=MissionRecordState.ACTIVE, page=2, page_size=2, **scoped
+    )
+    assert page_one.total == 5 and page_two.total == 5
+    assert [item.run_id for item in page_one.items] == ["run_legal_domain", "run_chat_source"]
+    assert [item.run_id for item in page_two.items][0] == "run_owner_running"
+
+    anonymous = store.list_runs(owner_user_id=None, page_size=10)
+    assert anonymous.total == 2
+    assert {item.run_id for item in anonymous.items} == {"run_chat_source", "run_legal_domain"}
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
+)
+def test_list_run_overviews_matches_list_runs_projection(store_factory, tmp_path: Path) -> None:
+    store = store_factory(tmp_path)
+    mission = RuntimeMissionRecord(missionId="mission_overview", title="Overview mission")
+    store.save_mission(mission)
+    run_record = RuntimeRunRecord(
+        runId="run_overview",
+        missionId=mission.mission_id,
+        workflowId="wf-overview",
+        domain="legal",
+        runtimeEngine="acg",
+        status=WorkflowStatus.RUNNING,
+        lifecyclePhase=WorkflowProgressPhase.EXECUTING,
+        lifecycleMessage="executing step",
+        currentStepId="step_2",
+        startedAt=utc_now() - timedelta(minutes=5),
+        input={"source": "acg", "authenticatedUserId": "user-a"},
+        updatedAt=utc_now(),
+    )
+    store.save_run(run_record)
+
+    overviews = store.list_run_overviews(
+        owner_user_id="user-a", mission_record_state=MissionRecordState.ACTIVE
+    )
+    assert overviews.total == 1
+    item = overviews.items[0]
+    assert item.run_id == run_record.run_id
+    assert item.mission_id == run_record.mission_id
+    assert item.workflow_id == run_record.workflow_id
+    assert item.domain == run_record.domain
+    assert item.status is WorkflowStatus.RUNNING
+    assert item.lifecycle_phase == "executing"
+    assert item.lifecycle_message == "executing step"
+    assert item.source == "acg"
+    assert item.current_step_id == "step_2"
+    assert item.started_at == run_record.started_at
+    assert item.created_at == run_record.created_at
+    assert item.updated_at == run_record.updated_at
+    assert item.runtime_revision == run_record.runtime_revision
+    assert item.title == "Overview mission"
+
+    detail = store.list_runs(owner_user_id="user-a")
+    assert [item.run_id for item in overviews.items] == [item.run_id for item in detail.items]
+    assert overviews.total == detail.total
+
+
+def test_sqlite_list_run_overviews_never_deserializes_run_payload(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    store = SQLiteWorkflowStore(db_path)
+    mission = RuntimeMissionRecord(missionId="mission_overview_payload", title="Mission")
+    store.save_mission(mission)
+    run = RuntimeRunRecord(
+        runId="run_overview_payload",
+        missionId=mission.mission_id,
+        workflowId="workflow-1",
+        domain="general",
+        runtimeEngine="acg",
+        status=WorkflowStatus.COMPLETED,
+        input={"authenticatedUserId": "user-a"},
+    )
+    store.save_run(run)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE runs SET payload = 'not-list-readable' WHERE run_id = ?", (run.run_id,))
+        conn.commit()
+
+    overviews = SQLiteWorkflowStore(db_path).list_run_overviews(owner_user_id="user-a")
+    assert overviews.total == 1
+    assert overviews.items[0].run_id == run.run_id
+    assert overviews.items[0].status is WorkflowStatus.COMPLETED
+    assert overviews.items[0].title == "Mission"
+
+
+def test_sqlite_summary_columns_backfill_survives_legacy_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    store = SQLiteWorkflowStore(db_path)
+    mission = RuntimeMissionRecord(missionId="mission_backfill", title="Backfill mission")
+    store.save_mission(mission)
+    run = RuntimeRunRecord(
+        runId="run_backfill",
+        missionId=mission.mission_id,
+        workflowId="wf-backfill",
+        domain="legal",
+        runtimeEngine="acg",
+        status=WorkflowStatus.RUNNING,
+        currentStepId="step_backfill",
+        startedAt=utc_now() - timedelta(minutes=1),
+        input={"source": "acg", "authenticatedUserId": "user-a"},
+        updatedAt=utc_now(),
+    )
+    store.save_run(run)
+
+    legacy_columns = (
+        "domain", "workflow_id", "lifecycle_phase", "lifecycle_message", "source",
+        "current_step_id", "started_at", "created_at", "runtime_revision",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE runs SET {', '.join(f'{column} = NULL' for column in legacy_columns)} "
+            "WHERE run_id = ?",
+            (run.run_id,),
+        )
+        conn.commit()
+
+    reopened = SQLiteWorkflowStore(db_path)
+    overviews = reopened.list_run_overviews(owner_user_id="user-a")
+    assert overviews.total == 1
+    item = overviews.items[0]
+    assert item.domain == "legal"
+    assert item.workflow_id == "wf-backfill"
+    assert item.status is WorkflowStatus.RUNNING
+    assert item.source == "acg"
+    assert item.current_step_id == "step_backfill"
+    assert item.started_at == run.started_at
+    assert item.created_at == run.created_at
+    assert item.updated_at == run.updated_at
+    assert item.runtime_revision == run.runtime_revision
+    assert item.title == "Backfill mission"
+
+    # Reopening again must not touch backfilled rows or lose the filter.
+    assert SQLiteWorkflowStore(db_path).list_runs(owner_user_id="user-a").total == 1
 
 
 @pytest.mark.parametrize(
