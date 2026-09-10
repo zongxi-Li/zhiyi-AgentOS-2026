@@ -22,7 +22,9 @@ _RUN_TRANSITIONS = {
     # outcome directly from PENDING.
     RunStatus.PENDING: {RunStatus.RUNNING, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.SUPERSEDED},
     RunStatus.RUNNING: {RunStatus.FAILED, RunStatus.SUCCEEDED, RunStatus.CANCELLED, RunStatus.SUPERSEDED},
-    RunStatus.FAILED: set(),
+    # An operator may explicitly reopen the same execution Run for a
+    # checkpoint retry.  Other terminal states remain immutable.
+    RunStatus.FAILED: {RunStatus.PENDING},
     RunStatus.SUCCEEDED: set(),
     RunStatus.CANCELLED: set(),
     RunStatus.SUPERSEDED: set(),

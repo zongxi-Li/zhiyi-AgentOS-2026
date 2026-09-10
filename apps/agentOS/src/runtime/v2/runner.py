@@ -305,6 +305,12 @@ class AcgIdentityLifecycleService:
                 self.repositories.missions.update_status(task.mission_id, MissionStatus.READY)
         return finished
 
+    def retry_failed_run(self, run_id: RunId) -> WorkflowRun:
+        """Move a failed identity Run back to pending for an operator retry."""
+        run = self._run(run_id)
+        require_transition(run.status, RunStatus.PENDING)
+        return self.repositories.runs.reopen_failed(run_id)
+
     def _mission(self, mission_id: MissionId) -> Mission:
         task = self.repositories.missions.get(mission_id)
         if task is None:

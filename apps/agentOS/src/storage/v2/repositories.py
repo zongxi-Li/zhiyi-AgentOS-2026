@@ -423,6 +423,22 @@ class SQLiteRunRepository(_SQLiteRepository):
         assert run is not None
         return run
 
+    def reopen_failed(self, run_id: RunId) -> WorkflowRun:
+        """Reopen one failed Run for an explicit in-place retry."""
+        now = _now()
+        with self.storage.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE workflow_runs_v2
+                   SET status = ?, finished_at = NULL, updated_at = ?
+                   WHERE run_id = ? AND status = ?""",
+                (RunStatus.PENDING.value, _iso(now), run_id, RunStatus.FAILED.value),
+            )
+            if cursor.rowcount != 1:
+                raise IdentityConflictError("only a failed WorkflowRunV2 can be retried in place")
+        run = self.get(run_id)
+        assert run is not None
+        return run
+
     def merge_metadata(self, run_id: RunId, metadata: dict[str, Any]) -> WorkflowRun:
         immutable_keys = {
             "compiledPackageId",
@@ -1068,6 +1084,22 @@ class SQLiteLifecycleProjectionEventRepository(_SQLiteRepository):
     def mark_failed(self, event_id: str, error: str) -> LifecycleProjectionEvent:
         return self._mark(event_id, "failed", error[:2000])
 
+    def record_replay_failure(self, event_id: str, error: str) -> LifecycleProjectionEvent:
+        """Count one failed journal replay so dead-letter caps can engage."""
+        with self.storage.transaction() as conn:
+            cursor = conn.execute(
+                f"""UPDATE {self.table_name}
+                   SET status = 'failed', attempts = attempts + 1,
+                       last_error = ?, updated_at = ?
+                   WHERE event_id = ?""",
+                (error[:2000], _iso(_now()), event_id),
+            )
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError(f"projection event not found: {event_id}")
+        stored = self.get(event_id)
+        assert stored is not None
+        return stored
+
     def get(self, event_id: str) -> LifecycleProjectionEvent | None:
         with self.storage.read() as conn:
             row = conn.execute(
@@ -1355,6 +1387,17 @@ class SQLiteV2Repositories:
                    WHERE run_id = ? AND task_id = ? ORDER BY attempt_number""",
                 (run_id, task_id),
             ).fetchall()
+            # The emitter's attemptId is the idempotency anchor.  A replay of
+            # the same attempt must return the persisted row even when its
+            # attemptNumber drifted (resumed Runs, later loop iterations), so
+            # the identity check runs before any numbering validation.
+            if attempt_id is not None:
+                by_attempt_id = next(
+                    (row for row in rows if str(row["attempt_id"]) == attempt_id),
+                    None,
+                )
+                if by_attempt_id is not None:
+                    return SQLiteAttemptRepository._from_row(by_attempt_id)
             expected = attempt_number or (len(rows) + 1)
             existing = next(
                 (row for row in rows if int(row["attempt_number"]) == expected),
