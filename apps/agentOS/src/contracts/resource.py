@@ -261,6 +261,8 @@ class NodeProfile(BaseModel):
     privacy_level: StrictStr = Field(default="internal", alias="privacyLevel")
     data_zone: StrictStr | None = Field(default=None, alias="dataZone", description="所属隐私区域。")
     cost_per_unit: float = Field(default=0.0, ge=0.0, alias="costPerUnit", description="单位时间成本。")
+    owner_scope: StrictStr | None = Field(default=None, alias="ownerScope")
+    execution_endpoint: ResourceEndpoint | None = Field(default=None, alias="executionEndpoint")
     labels: dict[str, str] = Field(default_factory=dict)
     location: StrictStr | None = Field(default=None)
     enabled: bool = Field(default=True)

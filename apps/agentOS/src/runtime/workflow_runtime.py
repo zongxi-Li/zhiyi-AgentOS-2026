@@ -62,7 +62,9 @@ from contracts.planning import (
     TaskImplementationBinding,
     TaskPlan,
 )
+from components.resource.agent_service import AgentService
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
+from components.resource.node_service import NodeService
 from components.resource.service import ResourceService
 from components.scheduler.models import SchedulerAllocationTimeout, SchedulerNoEligibleResource
 from components.scheduler.service import SchedulerService
@@ -271,6 +273,8 @@ class ExecutionRuntime:
         resource_service: ResourceService | None = None,
         resource_directory: ResourceDirectory | None = None,
         scheduler_service: SchedulerService | None = None,
+        node_service: NodeService | None = None,
+        agent_service: AgentService | None = None,
         evolution_service: EvolutionService | None = None,
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
@@ -302,6 +306,8 @@ class ExecutionRuntime:
         self.scheduler_service = scheduler_service or SchedulerService(
             resource_service=self.resource_service
         )
+        self.node_service = node_service or NodeService()
+        self.agent_service = agent_service or AgentService()
         self.scheduler_wait_timeout = float(scheduler_wait_timeout)
         self.model_max_concurrency = int(model_max_concurrency)
         self.model_min_interval_seconds = float(model_min_interval_seconds)

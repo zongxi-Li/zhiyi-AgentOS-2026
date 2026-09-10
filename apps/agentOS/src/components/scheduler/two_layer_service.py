@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from contracts.resource import AgentProfile, NodeProfile
+
+
+@dataclass(frozen=True)
+class TwoLayerPlacement:
+    """两层调度的一次决策结果：选定 Agent 与目标节点。"""
+
+    agent: AgentProfile
+    node: NodeProfile
 
 from ..resource.agent_service import AgentService
 from ..resource.node_service import NodeService
@@ -61,3 +70,27 @@ class TwoLayerSchedulerService:
             if best is None or score > best[0]:
                 best = (score, profile)
         return best[1] if best else None
+
+    def schedule(
+        self,
+        *,
+        capabilities: list[str],
+        min_gpu_memory_mb: int = 0,
+        min_privacy_level: str | None = None,
+        node_types: list[str] | None = None,
+        only_idle: bool = True,
+        now: datetime | None = None,
+    ) -> TwoLayerPlacement | None:
+        """两层调度：先选 Agent，再放置节点；任一步无候选返回 None。"""
+        agent = self.select_agent(capabilities=capabilities, only_idle=only_idle)
+        if agent is None:
+            return None
+        node = self.place_node(
+            min_gpu_memory_mb=min_gpu_memory_mb,
+            min_privacy_level=min_privacy_level,
+            node_types=node_types,
+            now=now,
+        )
+        if node is None:
+            return None
+        return TwoLayerPlacement(agent=agent, node=node)

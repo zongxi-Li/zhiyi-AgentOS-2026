@@ -25,6 +25,7 @@ from .models import (
     VersionedNodeSnapshot,
     VersionedResourceSnapshot,
 )
+from .agent_directory import AgentDirectory
 from .agent_service import AgentService
 from .agent_store import AgentStore, InMemoryAgentStore
 from .node_health import NodeHealthMonitor, infer_load_status
@@ -65,6 +66,7 @@ __all__ = [
     "IssuedResourceCredential",
     "VersionConflict",
     "VersionedResourceSnapshot",
+    "AgentDirectory",
     "AgentService",
     "AgentStore",
     "InMemoryAgentStore",

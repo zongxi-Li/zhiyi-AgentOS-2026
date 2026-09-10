@@ -19,6 +19,15 @@ class NodeStore(Protocol):
         """登记匹配的节点画像与首份快照；重复登记抛出 ``ValueError``。"""
         ...
 
+    def register_remote(
+        self,
+        profile: NodeProfile,
+        snapshot: NodeSnapshot,
+        credential: ResourceCredentialRecord,
+    ) -> VersionedNodeSnapshot:
+        """原子登记远程节点及其首个凭据。"""
+        ...
+
     def get_profile(self, node_id: str) -> NodeProfile:
         """读取节点画像副本；未知标识抛出 ``KeyError``。"""
         ...
@@ -79,6 +88,25 @@ class InMemoryNodeStore:
             self._profiles[profile.node_id] = profile.model_copy(deep=True)
             versioned = VersionedNodeSnapshot(snapshot=snapshot.model_copy(deep=True), version=1)
             self._snapshots[profile.node_id] = versioned
+            return self._copy(versioned)
+
+    def register_remote(
+        self,
+        profile: NodeProfile,
+        snapshot: NodeSnapshot,
+        credential: ResourceCredentialRecord,
+    ) -> VersionedNodeSnapshot:
+        if profile.node_id != snapshot.node_id or profile.node_id != credential.resource_id:
+            raise ValueError("remote registration nodeId values must match")
+        with self._lock:
+            if profile.node_id in self._profiles:
+                raise ValueError(f"node already registered: {profile.node_id}")
+            if any(item.credential_id == credential.credential_id for item in self._credentials.values()):
+                raise ValueError(f"node credential already exists: {credential.credential_id}")
+            versioned = VersionedNodeSnapshot(snapshot=snapshot.model_copy(deep=True), version=1)
+            self._profiles[profile.node_id] = profile.model_copy(deep=True)
+            self._snapshots[profile.node_id] = versioned
+            self._credentials[profile.node_id] = credential
             return self._copy(versioned)
 
     def get_profile(self, node_id: str) -> NodeProfile:
