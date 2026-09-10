@@ -49,9 +49,9 @@ foreach ($process in $installedProcesses) {
   }
 }
 
-$occupiedPort = Get-NetTCPConnection -State Listen -LocalPort 3000 -ErrorAction SilentlyContinue
+$occupiedPort = Get-NetTCPConnection -State Listen -LocalPort 15100 -ErrorAction SilentlyContinue
 if ($occupiedPort) {
-  Pause-Launcher '3000 端口已经被其他程序占用，请关闭旧的开发窗口后再重试。'
+  Pause-Launcher '15100 端口已经被其他程序占用，请关闭旧的开发窗口后再重试。'
   exit 1
 }
 

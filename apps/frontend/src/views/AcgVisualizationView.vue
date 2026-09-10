@@ -543,6 +543,7 @@ import AcgOperationalInspector from '@/components/agentos/AcgOperationalInspecto
 import AcgProvenancePanel from '@/components/agentos/AcgProvenancePanel.vue'
 import AcgRunManager from '@/components/agentos/AcgRunManager.vue'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
+import { chooseFailedRunRetryMode, type FailedRunRetryMode } from '@/utils/retryModeChoice'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { getRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
@@ -990,7 +991,7 @@ const advancedSettingsSummary = computed(() => `${thinkingModeSummary.value}思�
   exploratory: '探索'
 } as const)[draft.planningDiversity]}规划`)
 const mainAction = computed<{
-  action: 'start' | 'planning' | 'view' | 'review' | 'rerun' | 'retry'
+  action: 'start' | 'planning' | 'view' | 'review' | 'rerun' | 'retry' | 'resume'
   label: string
   type: 'primary' | 'warning' | 'danger' | 'info'
   loading: boolean
@@ -1005,7 +1006,7 @@ const mainAction = computed<{
   if (!activeRunId.value) return { action: 'start', label: '启动 ACG', type: 'primary', loading: false, disabled: false }
   if (status === 'waiting_review' || phase === 'review') return { action: 'review', label: '进入人工审核', type: 'warning', loading: false, disabled: false }
   if (status === 'completed' || phase === 'completed') return { action: 'rerun', label: '基于当前配置重新运行', type: 'primary', loading: false, disabled: false }
-  if (status === 'failed' || phase === 'failed') return { action: 'retry', label: '修改配置并重试', type: 'danger', loading: false, disabled: false }
+  if (status === 'failed' || phase === 'failed') return { action: 'resume', label: '从失败处继续', type: 'danger', loading: false, disabled: false }
   if (status === 'cancelled' || phase === 'cancelled') return { action: 'retry', label: '重新运行', type: 'primary', loading: false, disabled: false }
   if (status === 'pending' || status === 'planning') return { action: 'planning', label: '正在生成编排', type: 'info', loading: true, disabled: true }
   return { action: 'view', label: '查看运行', type: 'primary', loading: false, disabled: false }
@@ -1462,6 +1463,10 @@ const handleMainAction = () => {
     void startRun('retry_after_failure')
     return
   }
+  if (mainAction.value.action === 'resume') {
+    void chooseAndResumeFailedRun()
+    return
+  }
   if (mainAction.value.action === 'review') {
     scrollToSection('.workflow-review')
     return
@@ -1585,6 +1590,65 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
     // 提交成功立即拉取一次图与资源详情，运行中再由进度 watcher 按 8s 节奏续刷。
     void refreshAcgForRun(res.runId, true)
     await router.replace({ query: { ...route.query, runId: res.runId } })
+  } catch (error: unknown) {
+    if (axios.isCancel(error)) return
+    startError.value = startErrorMessage(error)
+  } finally {
+    isSubmitting.value = false
+    submitController = null
+  }
+}
+
+const chooseAndResumeFailedRun = async () => {
+  const sourceRunId = activeRun.value?.runId
+  if (!sourceRunId) return
+  const mode = await chooseFailedRunRetryMode(sourceRunId)
+  if (mode) await resumeFailedRun(mode)
+}
+
+const resumeFailedRun = async (mode: FailedRunRetryMode) => {
+  if (isSubmitting.value) return
+  const sourceRun = activeRun.value
+  const failedStep = sourceRun?.steps.find(step => step.status === 'failed')
+  if (!sourceRun?.runId || !failedStep?.stepId) {
+    startError.value = '未找到可恢复的失败节点，请刷新运行状态后重试'
+    return
+  }
+
+  isSubmitting.value = true
+  startError.value = null
+  submitController?.abort()
+  submitController = new AbortController()
+  try {
+    const resumed = await workflowApi.retryWorkflowStepAsync(
+      sourceRun.runId,
+      failedStep.stepId,
+      {
+        clientRequestId: createClientRequestId(),
+        reason: 'resume_failed',
+        expectedRuntimeRevision: sourceRun.runtimeRevision,
+        mode
+      },
+      { signal: submitController.signal }
+    )
+    progressTracker.reset()
+    clearRunData()
+    activeRunId.value = resumed.runId
+    ensureEditorTab(resumed.runId, sourceRun.title || taskName.value, resumed.status)
+    draftEditorTabOpen.value = false
+    workflowRunsStore.register({
+      runId: resumed.runId,
+      missionId: resumed.missionId,
+      workflowId: resumed.workflowId || sourceRun.workflowId || 'native_acg_runtime_v1',
+      source: 'acg',
+      status: resumed.status,
+      phase: resumed.lifecyclePhase || undefined
+    })
+    window.dispatchEvent(new Event('acg-runs-refresh'))
+    terminalNotificationRunId = resumed.runId
+    void progressTracker.start(resumed.runId, { fresh: true })
+    void refreshAcgForRun(resumed.runId, true)
+    await router.replace({ query: { ...route.query, runId: resumed.runId } })
   } catch (error: unknown) {
     if (axios.isCancel(error)) return
     startError.value = startErrorMessage(error)

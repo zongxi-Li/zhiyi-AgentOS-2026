@@ -25,7 +25,7 @@ from components.content import ContentManifestStore, ContentWorksetSession
 from adapters.agent_invocation import AgentInvocationAdapter
 from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.communication import validate_contract_payload
-from contracts.artifacts import canonicalize_artifact_identity
+from contracts.artifacts import canonicalize_artifact_identity, final_synthesis_output_schema
 from contracts.governance import AuditRequest
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
@@ -432,7 +432,12 @@ class ACGNodeRunner:
         if isinstance(runtime_events, list):
             tool_events.extend(runtime_events)
         payload = dict(output.output)
-        validate_contract_payload(payload, step.output_spec, step_id=step_id, direction="output")
+        validate_contract_payload(
+            payload,
+            final_synthesis_output_schema(step.output_spec, step.logical_role),
+            step_id=step_id,
+            direction="output",
+        )
         allowed = set((step.output_spec.get("properties") or {}).keys()) if step.output_spec else set(payload)
         controlled = {key: value for key, value in payload.items() if key in allowed}
         risk_level = (output.risk_level or "").lower()

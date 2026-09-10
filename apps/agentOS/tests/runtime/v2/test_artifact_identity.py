@@ -7,6 +7,7 @@ import pytest
 
 from components.content import SQLiteContentManifestStore
 from components.executor.node_runner import ACGNodeRunner
+from contracts.artifacts import final_synthesis_output_schema
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
 from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
@@ -20,6 +21,25 @@ from runtime.v2 import (
 )
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 from support.acg.models import ACGBlueprint, StepNode
+
+
+def test_final_synthesis_output_schema_accepts_canonical_run_deliverable_type() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "artifact": {
+                "type": "object",
+                "properties": {"type": {"type": "string", "enum": ["report"]}},
+            },
+        },
+    }
+
+    compatible = final_synthesis_output_schema(schema, "finalization")
+
+    assert schema["properties"]["artifact"]["properties"]["type"]["enum"] == ["report"]
+    assert compatible["properties"]["artifact"]["properties"]["type"]["enum"] == [
+        "report", "run_deliverable",
+    ]
 
 
 def _foundation(tmp_path):

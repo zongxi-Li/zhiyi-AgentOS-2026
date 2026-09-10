@@ -11,6 +11,11 @@ import {
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 import AcgVisualizationView from './AcgVisualizationView.vue'
+import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
+
+vi.mock('@/utils/retryModeChoice', () => ({
+  chooseFailedRunRetryMode: vi.fn().mockResolvedValue('successor_run')
+}))
 
 vi.mock('@/services/api/workflow', async importOriginal => {
   const actual = await importOriginal<typeof import('@/services/api/workflow')>()
@@ -20,6 +25,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
       ...actual.workflowApi,
       startWorkflowAsync: vi.fn(),
       rerunWorkflowAsync: vi.fn(),
+      retryWorkflowStepAsync: vi.fn(),
       getWorkflowProgress: vi.fn(),
       getRun: vi.fn(),
       getRunHistoryConfig: vi.fn(),
@@ -165,6 +171,9 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue(run({ status: 'pending', lifecyclePhase: 'planning' }))
     vi.mocked(workflowApi.rerunWorkflowAsync).mockResolvedValue(run({
       runId: 'run_2', missionId: 'mission_1', status: 'pending', lifecyclePhase: 'planning'
+    }))
+    vi.mocked(workflowApi.retryWorkflowStepAsync).mockResolvedValue(run({
+      runId: 'run_2', missionId: 'mission_1', status: 'pending', lifecyclePhase: 'executing'
     }))
   })
 
@@ -357,6 +366,44 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
         sourceRunId: 'run_1',
         rerunReason: 'current_configuration',
         input: expect.objectContaining({ taskName: '测试任务实施方案' })
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(router.currentRoute.value.query.runId).toBe('run_2')
+    wrapper.unmount()
+  })
+
+  it('resumes a failed Run from its failed step without replaying the whole configuration', async () => {
+    vi.mocked(chooseFailedRunRetryMode).mockResolvedValue('successor_run')
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      status: 'failed', phase: 'failed', percent: 60, failedSteps: 1
+    }))
+    vi.mocked(workflowApi.getRun).mockResolvedValue(run({
+      status: 'failed',
+      lifecyclePhase: 'failed',
+      runtimeRevision: 12,
+      steps: [
+        { stepId: 'source', name: 'source', agentName: 'native', status: 'completed' },
+        { stepId: 'design', name: 'design', agentName: 'native', status: 'failed' },
+        { stepId: 'final', name: 'final', agentName: 'native', status: 'pending' }
+      ]
+    }))
+    const { wrapper, router } = await mountPage('?runId=run_1')
+
+    const resumeButton = wrapper.findAll('button').find(item => item.text().includes('从失败处继续'))
+    expect(resumeButton).toBeTruthy()
+    await resumeButton!.trigger('click')
+    await flushPromises()
+
+    expect(workflowApi.rerunWorkflowAsync).not.toHaveBeenCalled()
+    expect(workflowApi.retryWorkflowStepAsync).toHaveBeenCalledWith(
+      'run_1',
+      'design',
+      expect.objectContaining({
+        reason: 'resume_failed',
+        expectedRuntimeRevision: 12,
+        mode: 'successor_run',
+        clientRequestId: expect.any(String)
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )

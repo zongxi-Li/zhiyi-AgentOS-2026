@@ -668,19 +668,20 @@ class ExecutionRuntime:
         expected_runtime_revision: int | None = None,
         idempotency_key: str | None = None,
         idempotency_fingerprint: str | None = None,
+        reuse_source_run: bool = False,
     ) -> RuntimeRunRecord:
-        """Prepare one controlled retry Run for a failed final ACG step.
+        """Prepare a successor Run that resumes from a failed ACG step.
 
         The source Run remains immutable.  The child Run reuses only committed
         upstream output references copied through ``ExecutionValueStore`` and
-        seeds the ACG state so the graph scheduler can execute exactly the
-        requested leaf step.
+        seeds the ACG state so the graph scheduler executes the failed step and
+        every still-unsettled downstream step without replaying completed work.
         """
 
         normalized_reason = str(reason or "").strip()
         if not normalized_reason:
             raise ValueError("single-step retry reason must not be empty")
-        if idempotency_key:
+        if idempotency_key and not reuse_source_run:
             existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
             if existing is not None:
                 if existing.idempotency_fingerprint != idempotency_fingerprint:
@@ -689,7 +690,14 @@ class ExecutionRuntime:
 
         with self.run_lock_manager.lock_for(source_run_id):
             source = self.workflow_store.get_run(source_run_id)
-            if idempotency_key:
+            in_place_requests = source.execution_state.get("inPlaceRetryRequests")
+            if reuse_source_run and idempotency_key and isinstance(in_place_requests, dict):
+                previous_fingerprint = in_place_requests.get(idempotency_key)
+                if previous_fingerprint is not None:
+                    if previous_fingerprint != idempotency_fingerprint:
+                        raise ValueError("idempotency key conflicts with the in-place retry request")
+                    return source
+            if idempotency_key and not reuse_source_run:
                 existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
                 if existing is not None:
                     if existing.idempotency_fingerprint != idempotency_fingerprint:
@@ -701,9 +709,6 @@ class ExecutionRuntime:
                 raise ValueError("source Run changed after the retry request was prepared")
             if self._normalize_runtime_engine(source.runtime_engine) != "acg":
                 raise ValueError("single-step retry is only available for ACG Runs")
-            if source.active_step_ids:
-                raise ValueError("single-step retry requires no active source steps")
-
             blueprint_data = source.acg_blueprint
             if not isinstance(blueprint_data, dict):
                 raise ValueError("single-step retry requires a persisted ACG Blueprint")
@@ -731,18 +736,21 @@ class ExecutionRuntime:
                 raise ValueError("single-step retry target must use STRICT_CONTRACT communication")
             if source_step.status is not StepStatus.FAILED:
                 raise ValueError("single-step retry target must be failed")
-            if source_step.capability != "artifact_generation":
-                raise ValueError("single-step retry target must be artifact_generation")
-            if not is_final_synthesis_role(target_node.logical_role):
-                raise ValueError("single-step retry target must be the final synthesis step")
-            if any(source_id == step_id for source_id, _ in graph.edges):
-                raise ValueError("single-step retry target must be a leaf step")
             source_state = self._acg_execution_state_from_run(source)
             if source_state.output_refs.get(step_id):
                 raise ValueError("single-step retry target already has a committed output")
 
-            if source_state.active_step_ids:
+            stale_active_step_ids = set(source_state.active_step_ids)
+            if stale_active_step_ids and (
+                stale_active_step_ids != {step_id}
+                or source_step.status is not StepStatus.FAILED
+                or source_state.output_refs.get(step_id)
+            ):
                 raise ValueError("single-step retry requires no active source steps")
+            # A restart can persist the failed target in the ACG state while
+            # the authoritative Run projection has already cleared its active
+            # steps.  Only that exact failed, output-less target is safe to
+            # reconcile here; any other active marker remains a hard reject.
             if (
                 source_state.control_frames
                 or source_state.loop_iterations
@@ -754,9 +762,15 @@ class ExecutionRuntime:
             ):
                 raise ValueError("single-step retry does not support control or review state")
             settled = set(source_state.completed_step_ids) | set(source_state.skipped_step_ids)
-            graph_nodes = set(graph.nodes)
-            if step_id in settled or settled | {step_id} != graph_nodes:
-                raise ValueError("single-step retry requires the target to be the only unsettled graph node")
+            resumable_step_ids = {
+                node_id
+                for node_id in graph.nodes
+                if node_id not in settled
+                and (unsettled_spec := graph.node_specs.get(node_id)) is not None
+                and unsettled_spec.kind == "step"
+            }
+            if step_id in settled or step_id not in resumable_step_ids:
+                raise ValueError("single-step retry target is not resumable from persisted state")
 
             reusable_outputs: list[tuple[str, str, dict[str, Any], str]] = []
             for reusable_step_id in source_state.completed_step_ids:
@@ -783,56 +797,62 @@ class ExecutionRuntime:
                     source_state.output_summaries.get(reusable_step_id, ""),
                 ))
 
-            task_plan = source.execution_state.get("taskPlan")
-            task_bindings = source.execution_state.get("taskBindings")
-            if not isinstance(task_plan, dict) or not isinstance(task_bindings, list):
-                raise ValueError("single-step retry requires persisted TaskPlan and bindings")
-
-            _, retry = self.prepare_run(
-                source.mission_id,
-                workflow_id=source.workflow_id,
-                review_mode=source.review_mode,
-                idempotency_key=idempotency_key,
-                idempotency_fingerprint=idempotency_fingerprint,
-                enabled_plugin_ids=list(source.enabled_plugin_ids),
-                defer_acg_planning=False,
-                input_override={
-                    "acgBlueprint": deepcopy(source.acg_blueprint),
-                    "taskPlan": deepcopy(task_plan),
-                    "taskBindings": deepcopy(task_bindings),
-                },
-                parent_run_id=source.run_id,
-                rerun_reason="single_step_retry",
-            )
-            if retry.run_id == source.run_id:
-                raise ValueError("single-step retry cannot reuse the source Run")
-
             copied_refs: dict[str, str] = {}
             copied_summaries: dict[str, str] = {}
-            for reusable_step_id, source_ref, payload, summary in reusable_outputs:
-                commit_id = f"single-step-retry:{retry.run_id}:{reusable_step_id}"
-                self.execution_value_store.prepare_node_commit(
-                    run_id=retry.run_id,
-                    commit_id=commit_id,
-                )
-                child_ref = self.execution_value_store.put_output(
-                    run_id=retry.run_id,
-                    step_id=reusable_step_id,
-                    payload=payload,
-                    operation_id=commit_id,
-                )
-                self.execution_value_store.complete_node_commit(
-                    run_id=retry.run_id,
-                    commit_id=commit_id,
-                    payload={
-                        "outputRef": child_ref,
-                        "outputSummary": summary,
-                        "reusedFromRunId": source.run_id,
-                        "reusedFromOutputRef": source_ref,
+            if reuse_source_run:
+                retry = source
+                copied_refs = {
+                    reusable_step_id: source_ref
+                    for reusable_step_id, source_ref, _payload, _summary in reusable_outputs
+                }
+                copied_summaries = {
+                    reusable_step_id: summary
+                    for reusable_step_id, _source_ref, _payload, summary in reusable_outputs
+                }
+            else:
+                task_plan = source.execution_state.get("taskPlan")
+                task_bindings = source.execution_state.get("taskBindings")
+                if not isinstance(task_plan, dict) or not isinstance(task_bindings, list):
+                    raise ValueError("single-step retry requires persisted TaskPlan and bindings")
+                _, retry = self.prepare_run(
+                    source.mission_id,
+                    workflow_id=source.workflow_id,
+                    review_mode=source.review_mode,
+                    idempotency_key=idempotency_key,
+                    idempotency_fingerprint=idempotency_fingerprint,
+                    enabled_plugin_ids=list(source.enabled_plugin_ids),
+                    defer_acg_planning=False,
+                    input_override={
+                        "acgBlueprint": deepcopy(source.acg_blueprint),
+                        "taskPlan": deepcopy(task_plan),
+                        "taskBindings": deepcopy(task_bindings),
                     },
+                    parent_run_id=source.run_id,
+                    rerun_reason="resume_failed",
                 )
-                copied_refs[reusable_step_id] = child_ref
-                copied_summaries[reusable_step_id] = summary
+                if retry.run_id == source.run_id:
+                    raise ValueError("single-step retry cannot reuse the source Run")
+                for reusable_step_id, source_ref, payload, summary in reusable_outputs:
+                    commit_id = f"single-step-retry:{retry.run_id}:{reusable_step_id}"
+                    self.execution_value_store.prepare_node_commit(run_id=retry.run_id, commit_id=commit_id)
+                    child_ref = self.execution_value_store.put_output(
+                        run_id=retry.run_id,
+                        step_id=reusable_step_id,
+                        payload=payload,
+                        operation_id=commit_id,
+                    )
+                    self.execution_value_store.complete_node_commit(
+                        run_id=retry.run_id,
+                        commit_id=commit_id,
+                        payload={
+                            "outputRef": child_ref,
+                            "outputSummary": summary,
+                            "reusedFromRunId": source.run_id,
+                            "reusedFromOutputRef": source_ref,
+                        },
+                    )
+                    copied_refs[reusable_step_id] = child_ref
+                    copied_summaries[reusable_step_id] = summary
 
             state = self._acg_execution_state_from_run(retry)
             state.completed_step_ids = list(source_state.completed_step_ids)
@@ -858,6 +878,14 @@ class ExecutionRuntime:
                     "reason": normalized_reason[:500],
                     "reusedStepIds": sorted(copied_refs),
                 },
+                "checkpointResume": {
+                    "sourceRunId": source.run_id,
+                    "failedStepId": step_id,
+                    "reason": normalized_reason[:500],
+                    "reusedStepIds": sorted(copied_refs),
+                    "resumeStepIds": sorted(resumable_step_ids),
+                    "mode": "current_run" if reuse_source_run else "successor_run",
+                },
                 "retryTargetStepId": step_id,
                 "reusedStepIds": sorted(copied_refs),
             })
@@ -867,6 +895,17 @@ class ExecutionRuntime:
             retry.output = {}
             retry.error = None
             retry.recovery_count = source.recovery_count + 1
+            if reuse_source_run:
+                retry.status = self.state_machine.transition(retry.status, WorkflowStatus.RETRYING)
+                retry.lifecycle_phase = WorkflowProgressPhase.RECOVERY
+                retry.lifecycle_message = _LIFECYCLE_MESSAGES[WorkflowProgressPhase.RECOVERY]
+                requests = retry.execution_state.setdefault("inPlaceRetryRequests", {})
+                if idempotency_key and isinstance(requests, dict):
+                    requests[idempotency_key] = idempotency_fingerprint
+                retry.execution_state["inPlaceRetry"] = {
+                    "failedStepId": step_id,
+                    "reason": normalized_reason[:500],
+                }
             for child_step in retry.steps:
                 if child_step.step_id in source_state.completed_step_ids:
                     source_completed = source.get_step(child_step.step_id)
@@ -878,31 +917,35 @@ class ExecutionRuntime:
                 elif child_step.step_id in source_state.skipped_step_ids:
                     child_step.status = StepStatus.SKIPPED_BY_CONDITION
                     child_step.completed_at = source.get_step(child_step.step_id).completed_at
-                elif child_step.step_id == step_id:
+                else:
+                    source_unsettled = source.get_step(child_step.step_id)
                     child_step.status = StepStatus.PENDING
                     child_step.error = None
                     child_step.started_at = None
                     child_step.completed_at = None
-                    child_step.attempt = max(source_step.attempt, source_step.retry_count)
-                    child_step.retry_count = source_step.retry_count
-                else:
-                    raise ValueError(
-                        f"single-step retry found an unsettled sibling step: {child_step.step_id}"
+                    child_step.attempt = max(
+                        source_unsettled.attempt,
+                        source_unsettled.retry_count,
                     )
+                    child_step.retry_count = source_unsettled.retry_count
             self.trace_store.append(
                 retry,
                 TraceEventType.RUN_RECOVERED,
                 step_id=step_id,
-                observation="Single failed final step retry prepared",
+                observation="Failed Run checkpoint resume prepared",
                 payload={
                     "sourceRunId": source.run_id,
-                    "targetStepId": step_id,
+                    "failedStepId": step_id,
                     "reusedStepIds": sorted(copied_refs),
+                    "resumeStepIds": sorted(resumable_step_ids),
                     "reason": normalized_reason[:500],
+                    "mode": "current_run" if reuse_source_run else "successor_run",
                 },
             )
             retry.updated_at = utc_now()
             self.workflow_store.save_run(retry)
+            if reuse_source_run:
+                self.mission_manager.mark_retrying(source.mission_id)
             if self.identity_lifecycle is not None:
                 self._flush_identity_outbox()
             return retry
@@ -1058,7 +1101,16 @@ class ExecutionRuntime:
                     latest = self.workflow_store.get_run(run.run_id)
                     self._discard_run_cancellation(run.run_id)
                     return latest
-            return await self._execute_acg(run)
+            retry_state = (
+                self._acg_execution_state_from_run(run)
+                if (
+                    isinstance(run.execution_state.get("singleStepRetry"), dict)
+                    or isinstance(run.execution_state.get("checkpointResume"), dict)
+                    or isinstance(run.execution_state.get("inPlaceRetry"), dict)
+                )
+                else None
+            )
+            return await self._execute_acg(run, state=retry_state)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
 

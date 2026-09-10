@@ -1329,13 +1329,24 @@ async def test_v2_single_step_retry_is_idempotent_and_enqueues_child_run(tmp_pat
             f"/agentos/v2/runs/{source.run_id}/steps/report/retry",
             json=payload,
         )
+        current_run_retry = await client.post(
+            f"/agentos/v2/runs/{source.run_id}/steps/report/retry",
+            json={
+                **payload,
+                "clientRequestId": "same-run-step-retry-request",
+                "mode": "current_run",
+            },
+        )
 
     assert created.status_code == 202
     assert repeated.status_code == 202
+    assert current_run_retry.status_code == 202
     assert created.json()["runId"] == "run_single_step_retry"
     assert repeated.json()["runId"] == created.json()["runId"]
-    assert len(prepared) == 1
-    assert submitted == ["run_single_step_retry"]
+    assert len(prepared) == 2
+    assert prepared[0]["reuse_source_run"] is False
+    assert prepared[1]["reuse_source_run"] is True
+    assert submitted == ["run_single_step_retry", "run_single_step_retry"]
 
 
 async def test_v2_deferred_planning_failure_is_classified_without_identity_backlog(tmp_path) -> None:

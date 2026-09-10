@@ -76,29 +76,29 @@ Set-Location C:\Users\LZX\Desktop\kinlin_ai
 在第二个 PowerShell 窗口执行：
 
 ```powershell
-Set-Location C:\Users\LZX\Desktop\kinlin_ai\desktop
+Set-Location C:\Users\LZX\Desktop\kinlin_ai\apps\desktop
 npm run dev
 ```
 
 Tauri 会自动执行 `frontend` 的桌面模式 Vite 服务，地址为：
 
-`http://127.0.0.1:3000`
+`http://127.0.0.1:15100`
 
-桌面开发模式下不需要再单独执行 `frontend\npm run dev`，否则可能与 Tauri 的 Vite 服务争用 3000 端口。
+桌面开发模式下不需要再单独执行 `apps\frontend\npm run dev`，否则可能与 Tauri 的 Vite 服务争用 15100 端口。
 
 ### 3. 使用桌面快捷方式
 
 项目提供了一个热更新启动脚本：
 
 ```text
-scripts\start-desktop-hot.ps1
+ops\scripts\start-desktop-hot.ps1
 ```
 
 桌面上的 **知弈 AgentOS（热更新开发版）** 快捷方式会执行这个脚本。双击后会：
 
 1. 检查前端和桌面端依赖；
 2. 关闭正在运行的已安装旧版 `kinlin-desktop.exe`；
-3. 检查 3000 端口是否空闲；
+3. 检查 15100 端口是否空闲；
 4. 启动当前仓库源码的 Tauri 开发版。
 
 修改 `frontend` 源码后，Vite 会自动热更新桌面窗口。该快捷方式只用于开发预览，不生成稳定安装包，也不会替换原来的稳定版快捷方式。
