@@ -725,6 +725,48 @@ def create_router(
             })
         return {"items": items, "total": len(items)}
 
+    @router.get("/nodes")
+    async def get_nodes():
+        """Return the Node table's static profiles and last observations."""
+        node_service = getattr(runtime, "node_service", None)
+        if node_service is None:
+            raise HTTPException(status_code=503, detail="node query source unavailable")
+        items: list[dict[str, Any]] = []
+        for profile in node_service.profiles():
+            versioned = node_service.snapshot(profile.node_id)
+            health = node_service.health_monitor.health(profile.node_id)
+            items.append({
+                "profile": profile.model_dump(by_alias=True, mode="json"),
+                "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
+                "snapshotVersion": versioned.version,
+                "health": {
+                    "status": health.status.value,
+                    "lastHeartbeat": (
+                        health.last_heartbeat.isoformat()
+                        if health.last_heartbeat is not None
+                        else None
+                    ),
+                    "consecutiveFailures": health.consecutive_failures,
+                },
+            })
+        return {"items": items, "total": len(items)}
+
+    @router.get("/agents")
+    async def get_agents():
+        """Return the Agent table's static profiles and last observations."""
+        agent_service = getattr(runtime, "agent_service", None)
+        if agent_service is None:
+            raise HTTPException(status_code=503, detail="agent query source unavailable")
+        items: list[dict[str, Any]] = []
+        for profile in agent_service.profiles():
+            versioned = agent_service.snapshot(profile.agent_id)
+            items.append({
+                "profile": profile.model_dump(by_alias=True, mode="json"),
+                "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
+                "snapshotVersion": versioned.version,
+            })
+        return {"items": items, "total": len(items)}
+
     @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_resource(request: RemoteResourceRegistrationRequest):
         """Register a remote resource and issue its one-time credential secret."""
