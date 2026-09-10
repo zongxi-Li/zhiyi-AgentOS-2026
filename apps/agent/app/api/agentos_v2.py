@@ -26,7 +26,7 @@ from components.resource.auth import (
     ResourceRequestNotFound,
     ResourceRequestReplay,
 )
-from contracts.resource import ResourceProfile, ResourceSnapshot
+from contracts.resource import NodeProfile, NodeSnapshot, ResourceProfile, ResourceSnapshot
 from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
 from runtime import ExecutionRuntime
@@ -112,6 +112,13 @@ class RemoteResourceRegistrationRequest(BaseModel):
 
     profile: ResourceProfile
     snapshot: ResourceSnapshot
+
+
+class NodeRegistrationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    profile: NodeProfile
+    snapshot: NodeSnapshot
 
 
 class ReviewApplyRequest(BaseModel):
@@ -784,6 +791,28 @@ def create_router(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
             "resourceId": issued.resource_id,
+            "credentialId": issued.credential_id,
+            "ownerScope": issued.owner_scope,
+            "secret": issued.secret,
+            "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
+        }
+
+    @router.post("/nodes/register", status_code=status.HTTP_201_CREATED)
+    async def register_remote_node(request: NodeRegistrationRequest):
+        """Register a remote node and issue its one-time credential secret."""
+        node_service = getattr(runtime, "node_service", None)
+        if node_service is None:
+            raise HTTPException(status_code=503, detail="node registration source unavailable")
+        profile = request.profile
+        if request.snapshot.node_id != profile.node_id:
+            raise HTTPException(status_code=422, detail="profile and snapshot nodeId must match")
+        require_resource_operator(str(profile.owner_scope or ""))
+        try:
+            issued = node_service.register_remote(profile, request.snapshot)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "nodeId": issued.node_id,
             "credentialId": issued.credential_id,
             "ownerScope": issued.owner_scope,
             "secret": issued.secret,
