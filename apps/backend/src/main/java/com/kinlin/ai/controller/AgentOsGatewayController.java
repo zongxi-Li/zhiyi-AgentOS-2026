@@ -309,6 +309,18 @@ public class AgentOsGatewayController {
         return response(gateway.post(runPath(runId) + "/cancel", Map.of()));
     }
 
+    @PostMapping("/runs/{runId}/steps/{stepId}/retry")
+    public ResponseEntity<Map<String, Object>> retryRunStep(
+            @PathVariable String runId,
+            @PathVariable String stepId,
+            @RequestBody Map<String, Object> body
+    ) {
+        return response(gateway.post(
+                runPath(runId) + "/steps/" + segment(stepId) + "/retry",
+                body
+        ));
+    }
+
     private String runPath(String runId) {
         return UPSTREAM_ROOT + "/runs/" + segment(runId);
     }
