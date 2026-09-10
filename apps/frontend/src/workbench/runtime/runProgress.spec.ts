@@ -101,6 +101,38 @@ describe('projectRunProgress', () => {
     expect(design).toMatchObject({ status: 'failed', errorCode: 'TOOL_TIMEOUT' })
   })
 
+  it('projects a retried task from its latest state instead of retaining a historical failure', () => {
+    const timeline = projectRunProgress(observation([
+      traceEvent('t1', { status: 'started' }, {
+        stepId: 'node_a', eventType: 'step_started', timestamp: '2026-09-02T00:00:01.000Z'
+      }),
+      traceEvent('t2', { errorCode: 'MODEL_TIMEOUT' }, {
+        stepId: 'node_a', eventType: 'step_failed', timestamp: '2026-09-02T00:00:02.000Z'
+      }),
+      traceEvent('t3', { status: 'started' }, {
+        stepId: 'node_a', eventType: 'step_started', timestamp: '2026-09-02T00:00:03.000Z'
+      }),
+      traceEvent('t4', { status: 'succeeded' }, {
+        stepId: 'node_a', eventType: 'step_succeeded', timestamp: '2026-09-02T00:00:04.000Z'
+      })
+    ]), graphNodes)
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'success', errorCode: null, durationMs: 1000 })
+  })
+
+  it('keeps the latest failure when it happens after an earlier success', () => {
+    const timeline = projectRunProgress(observation([
+      traceEvent('t1', { status: 'succeeded' }, {
+        stepId: 'node_a', eventType: 'step_succeeded', timestamp: '2026-09-02T00:00:02.000Z'
+      }),
+      traceEvent('t2', { errorCode: 'OUTPUT_INVALID' }, {
+        stepId: 'node_a', eventType: 'step_failed', timestamp: '2026-09-02T00:00:03.000Z'
+      })
+    ]), graphNodes)
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'failed', errorCode: 'OUTPUT_INVALID' })
+  })
+
   it('derives a task duration from start and completion timestamps when no duration is supplied', () => {
     const timeline = projectRunProgress(observation([
       traceEvent('t1', { status: 'started' }, {

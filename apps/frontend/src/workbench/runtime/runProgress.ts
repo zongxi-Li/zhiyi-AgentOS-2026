@@ -187,6 +187,7 @@ export const projectRunProgress = (
     }
     if (event.eventType === 'step_started') {
       group.status = 'running'
+      group.errorCode = null
       if (event.timestamp) taskStartedAt.set(stepId, event.timestamp)
     } else if (event.eventType === 'step_failed') {
       group.status = 'failed'
@@ -194,8 +195,12 @@ export const projectRunProgress = (
       group.durationMs = durationOf(event.durationMs)
         ?? durationOf(event.payload.durationMs)
         ?? durationBetween(taskStartedAt.get(stepId), event.timestamp)
-    } else if (group.status !== 'failed') {
+    } else {
+      // A failed event belongs to one attempt. A later completion is the
+      // current task state after retry, so historical failures must not make
+      // the projection permanently failed.
       group.status = 'success'
+      group.errorCode = null
       group.durationMs = durationOf(event.durationMs)
         ?? durationOf(event.payload.durationMs)
         ?? durationBetween(taskStartedAt.get(stepId), event.timestamp)
