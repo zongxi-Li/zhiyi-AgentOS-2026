@@ -97,8 +97,24 @@
       </template>
     </WorkbenchLayout>
 
-    <div v-if="loadError && projection" class="workspace-request-error" role="alert">
-      <span>{{ loadError }}</span>
+    <div
+      v-if="loadError && projection"
+      class="workspace-request-error"
+      :class="{ 'is-collapsed': requestErrorCollapsed }"
+      role="alert"
+    >
+      <span class="workspace-request-error__indicator" aria-hidden="true" />
+      <span class="workspace-request-error__message">{{ loadError }}</span>
+      <button
+        class="workspace-request-error__toggle"
+        type="button"
+        :aria-expanded="!requestErrorCollapsed"
+        :aria-label="requestErrorCollapsed ? '展开错误提示' : '收起错误提示'"
+        :title="requestErrorCollapsed ? '展开错误提示' : '收起错误提示'"
+        @click="requestErrorCollapsed = !requestErrorCollapsed"
+      >
+        <span aria-hidden="true">{{ requestErrorCollapsed ? '‹' : '›' }}</span>
+      </button>
       <button type="button" @click="loadWorkspace()">重新加载当前 Run</button>
     </div>
 
@@ -121,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
@@ -146,6 +162,7 @@ const registry = createNativeWorkbenchRegistry()
 const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+const requestErrorCollapsed = ref(false)
 const rerunPending = ref(false)
 const cancelPending = ref(false)
 const selectedRunId = ref<string | null>(typeof route.query.runId === 'string' ? route.query.runId : null)
@@ -563,6 +580,10 @@ const rerunErrorMessage = (error: unknown) => {
   return '创建新的 Run 失败，请稍后重试'
 }
 
+watch(loadError, (nextError, previousError) => {
+  if (!nextError || nextError !== previousError) requestErrorCollapsed.value = false
+})
+
 const cancelErrorMessage = (error: unknown) => {
   const status = responseStatus(error)
   if (status === 401 || status === 403) return '当前账户无权停止这个 Run'
@@ -808,9 +829,141 @@ onBeforeUnmount(() => {
   .workspace-loading-pane::before,
   .workspace-main-state::before { animation: none; }
 }
-.workspace-request-error { position: fixed; top: 14px; right: 18px; z-index: 12; display: flex; align-items: center; gap: 12px; max-width: min(520px, calc(100vw - 36px)); padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border-light)); color: var(--danger); background: var(--bg-card); box-shadow: var(--shadow-sm); font-size: 11px; }
-.workspace-request-error button { flex: 0 0 auto; padding: 4px 7px; border: 1px solid var(--border-light); border-radius: 4px; color: var(--text-secondary); background: transparent; cursor: pointer; font-size: 10px; }
-.workspace-request-error button:hover { color: var(--primary-color); border-color: var(--primary-line); }
+.workspace-request-error {
+  /* Keep the notice in the route viewport. Fixed positioning put it under the
+     desktop title bar, so only the lower edge was visible in Tauri. */
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  z-index: 12;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: min(560px, calc(100% - 36px));
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 48%, var(--border-light));
+  border-radius: 10px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--danger) 6%);
+  box-shadow: var(--shadow-md), 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent) inset;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  font-size: 11px;
+  transition: width 180ms var(--ease-out), padding 180ms var(--ease-out), border-radius 180ms ease, box-shadow 180ms ease;
+  animation: workspace-request-error-enter 180ms var(--ease-out);
+}
+.workspace-request-error__indicator {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.workspace-request-error__message {
+  flex: 1 1 auto;
+  order: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-wrap: pretty;
+  line-height: 1.45;
+}
+.workspace-request-error > button:not(.workspace-request-error__toggle) {
+  order: 2;
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+.workspace-request-error > button:not(.workspace-request-error__toggle):hover {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border-light));
+  color: var(--danger);
+  background: var(--surface-hover);
+}
+.workspace-request-error > button:not(.workspace-request-error__toggle):active { transform: translateY(1px); }
+.workspace-request-error > button:not(.workspace-request-error__toggle):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  outline-offset: 2px;
+}
+.workspace-request-error__toggle {
+  order: 3;
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+.workspace-request-error__toggle:hover,
+.workspace-request-error__toggle:focus-visible {
+  border-color: var(--border-light);
+  color: var(--text-primary);
+  background: var(--surface-subtle);
+}
+.workspace-request-error__toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  outline-offset: 2px;
+}
+.workspace-request-error.is-collapsed {
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  min-height: 46px;
+  gap: 8px;
+  padding: 8px 6px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--danger) 9%, transparent) inset;
+}
+.workspace-request-error.is-collapsed .workspace-request-error__indicator {
+  flex-basis: 7px;
+  margin-top: 0;
+}
+.workspace-request-error.is-collapsed .workspace-request-error__message,
+.workspace-request-error.is-collapsed > button:not(.workspace-request-error__toggle) {
+  display: none;
+}
+.workspace-request-error.is-collapsed .workspace-request-error__toggle {
+  order: 2;
+}
+@keyframes workspace-request-error-enter {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-request-error,
+  .workspace-request-error__toggle,
+  .workspace-request-error > button:not(.workspace-request-error__toggle) {
+    animation: none;
+    transition: none;
+  }
+}
+@media (max-width: 760px) {
+  .workspace-request-error {
+    top: 10px;
+    right: 12px;
+    width: calc(100% - 24px);
+  }
+}
 .artifact-choice { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--bg-app) 55%, transparent); }
 .artifact-choice__panel { width: min(420px, 100%); border: 1px solid var(--border-light); background: var(--bg-card); box-shadow: var(--shadow-md); }
 .artifact-choice__panel header { display: flex; justify-content: space-between; gap: 18px; padding: 14px 16px; border-bottom: 1px solid var(--border-light); }
