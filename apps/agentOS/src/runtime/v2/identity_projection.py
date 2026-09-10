@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 import hashlib
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -52,6 +53,13 @@ from components.planner.service import apply_task_plan_patch
 from .context import ExecutionContext
 from .planner_bridge import PlannerIdentityBridge
 from .runner import AcgIdentityLifecycleService
+
+logger = logging.getLogger(__name__)
+
+# Delivery cap shared by projection replay and outbox consumption: an event
+# whose delivery keeps failing becomes a dead letter that stays persisted for
+# manual repair instead of poisoning every later flush (2026-09-10 incident).
+DEAD_LETTER_MAX_ATTEMPTS = 5
 
 
 _EDGE_RELATIONS = {
@@ -597,9 +605,24 @@ class IdentityProjectionBridge:
         return self.lifecycle_service.create_attempt(
             run_id=run.run_id,
             task_id=node.task_id,
-            attempt_number=attempt_number,
+            # Events carry the emitter's attemptId, so the projection owns
+            # contiguous numbering; the emitter's attemptNumber may drift after
+            # checkpoint resumes or loop re-entry and must not poison applies.
+            # Id-less direct calls keep the number as their only idempotency key.
+            attempt_number=None if attempt_id is not None else attempt_number,
             attempt_id=attempt_id,
         ).attempt_id
+
+    def next_attempt_number(self, run_id: str, step_id: str) -> int:
+        """Return the next contiguous Attempt number for one Run node."""
+        domain_run = self._run(run_id)
+        node = self._resolve_semantic_task(domain_run.blueprint_id, step_id)
+        attempts = [
+            attempt
+            for attempt in self.repositories.attempts.list_for_run(run_id)
+            if attempt.task_id == node.task_id
+        ]
+        return max((attempt.attempt_number for attempt in attempts), default=0) + 1
 
     def on_resource_bound(
         self,
@@ -958,6 +981,21 @@ class IdentityProjectionBridge:
         ):
             self._on_run_finished(run_id, status)
 
+    def on_run_retry_prepared(self, run_id: str, recovery_count: int) -> None:
+        payload = {"runId": run_id, "recoveryCount": recovery_count}
+        with self._projection(
+            f"run.retry_prepared:{run_id}:{recovery_count}",
+            "run.retry_prepared",
+            run_id,
+            payload,
+        ):
+            run = self._run(run_id)
+            if run.status is RunStatus.PENDING:
+                return
+            if run.status is not RunStatus.FAILED:
+                raise IdentityConflictError("only a failed WorkflowRunV2 can be retried in place")
+            self.lifecycle_service.retry_failed_run(run_id)
+
     def on_run_superseded(
         self,
         run_id: str,
@@ -1306,14 +1344,35 @@ class IdentityProjectionBridge:
         events = self.repositories.projection_events.list_unapplied(limit=limit)
         applied = 0
         failed = 0
+        dead_lettered = 0
         for event in events:
+            if int(event.attempts or 0) >= DEAD_LETTER_MAX_ATTEMPTS:
+                dead_lettered += 1
+                logger.warning(
+                    "identity_projection_dead_letter_bypassed",
+                    extra={
+                        "eventId": event.event_id,
+                        "eventType": event.event_type,
+                        "attempts": event.attempts,
+                    },
+                )
+                continue
             try:
                 self._replay_event(event.event_type, event.payload)
-            except Exception:
+            except Exception as exc:
                 failed += 1
+                self.repositories.projection_events.record_replay_failure(
+                    event.event_id, str(exc)
+                )
             else:
                 applied += 1
-        return {"examined": len(events), "applied": applied, "failed": failed}
+                self.repositories.projection_events.mark_applied(event.event_id)
+        return {
+            "examined": len(events),
+            "applied": applied,
+            "failed": failed,
+            "dead_lettered": dead_lettered,
+        }
 
     def apply_lifecycle_event(self, event_type: str, payload: dict[str, Any]) -> None:
         """Apply one event already admitted by the Identity Inbox."""
@@ -1448,6 +1507,11 @@ class IdentityProjectionBridge:
             return
         if event_type == "run.finished":
             self.on_run_finished(payload["runId"], payload["status"])
+            return
+        if event_type == "run.retry_prepared":
+            self.on_run_retry_prepared(
+                payload["runId"], int(payload.get("recoveryCount") or 0)
+            )
             return
         if event_type == "run.superseded":
             self.on_run_superseded(

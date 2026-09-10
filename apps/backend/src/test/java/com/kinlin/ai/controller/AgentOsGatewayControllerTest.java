@@ -301,6 +301,28 @@ class AgentOsGatewayControllerTest {
         assertEquals(conflictPath, gateway.lastPostPath);
     }
 
+    @Test
+    void failedStepRetryForwardsRunStepAndPreservesAcceptedStatus() throws Exception {
+        String retryPath = "/ai/agentos/v2/runs/run%20001/steps/design%20step/retry";
+        gateway.postResponses.put(retryPath, response(202, Map.of(
+                "runId", "run_002", "status", "pending"
+        )));
+
+        mockMvc.perform(post(
+                        "/api/agentos/v2/runs/{runId}/steps/{stepId}/retry",
+                        "run 001",
+                        "design step"
+                )
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientRequestId\":\"retry-1\",\"mode\":\"successor_run\"}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.runId").value("run_002"));
+
+        assertEquals(retryPath, gateway.lastPostPath);
+        assertEquals("retry-1", ((Map<?, ?>) gateway.lastPostBody).get("clientRequestId"));
+        assertEquals("successor_run", ((Map<?, ?>) gateway.lastPostBody).get("mode"));
+    }
+
     private static Map<String, Object> response(int status, Map<String, Object> body) {
         Map<String, Object> result = new LinkedHashMap<>(body);
         result.put(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY, status);

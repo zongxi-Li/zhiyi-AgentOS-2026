@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import logging
 from typing import Any
 
 from contracts.planning import TaskImplementationBinding, TaskPlan
@@ -14,7 +15,9 @@ from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
 from support.acg.models import RuntimeBlueprintSpec
 from types import SimpleNamespace
 
-from .identity_projection import IdentityProjectionBridge
+from .identity_projection import DEAD_LETTER_MAX_ATTEMPTS, IdentityProjectionBridge
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,6 +31,7 @@ class IdentityReconciliationReport:
     outbox_backlog: int = 0
     outbox_failed_count: int = 0
     failed_event_count: int = 0
+    dead_letter_count: int = 0
     oldest_event_at: str | None = None
     failures: list[str] = field(default_factory=list)
     failed_aggregate_ids: set[str] = field(default_factory=set, repr=False)
@@ -169,6 +173,19 @@ class IdentityProjectionReconciler:
             requested = max(limit, workflow_store.outbox_stats()["backlog"])
         events = workflow_store.list_outbox(limit=requested)
         for event in events:
+            delivery_attempts = int(event.get("attempts") or 0)
+            if delivery_attempts >= DEAD_LETTER_MAX_ATTEMPTS:
+                report.dead_letter_count += 1
+                logger.warning(
+                    "identity_outbox_dead_letter_bypassed",
+                    extra={
+                        "eventId": event["event_id"],
+                        "eventType": event["event_type"],
+                        "aggregateId": event["aggregate_id"],
+                        "attempts": delivery_attempts,
+                    },
+                )
+                continue
             inbox_event: LifecycleProjectionEvent | None = None
             try:
                 payload = json.loads(event["payload"])
@@ -330,6 +347,17 @@ class IdentityProjectionReconciler:
                         "cancelled": "cancelled",
                     }[runtime_status],
                 )
+            return
+        if (
+            runtime_status == "retrying"
+            and run.status is RunStatus.FAILED
+        ):
+            recovery_count = int(
+                getattr(runtime_run, "recovery_count", 0)
+                or (getattr(runtime_run, "execution_state", None) or {}).get("recoveryCount")
+                or 0
+            )
+            self.adapter.on_run_retry_prepared(runtime_run.run_id, recovery_count)
             return
         if not runtime_terminal and identity_terminal:
             raise ValueError("non-terminal execution Run points to terminal identity Run")

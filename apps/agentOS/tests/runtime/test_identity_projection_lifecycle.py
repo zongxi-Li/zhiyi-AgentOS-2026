@@ -20,13 +20,14 @@ from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, Reso
 from contracts.workflow import WorkflowDefinition, RuntimeRunRecord, WorkflowStepDefinition, WorkflowStatus
 from domain.identity_graph import IdentityResolver
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
-from domain.lifecycle_projection import ProjectionEventStatus
+from domain.lifecycle_projection import LifecycleProjectionEvent, ProjectionEventStatus
 from runtime.v2 import (
     AcgIdentityLifecycleService,
     IdentityProjectionReconciler,
     IdentityQueryService,
     IdentityProjectionBridge,
 )
+from runtime.v2.reconciliation import DEAD_LETTER_MAX_ATTEMPTS
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -239,6 +240,46 @@ def test_attempt_allocation_is_concurrency_safe_and_idempotent() -> None:
         identity_runtime.close()
 
 
+def test_event_attempt_number_drift_is_healed_by_attempt_id_anchoring() -> None:
+    """事件携带的 attemptNumber 漂移不得毒化投影（2026-09-10 事故回归）。
+
+    断点恢复后 step 计数器与投影历史错位：要么编号不连续，要么同一编号换了
+    attemptId。attemptId 是唯一幂等锚点：新 attemptId 一律由投影分配下一个
+    连续编号，同 attemptId 重放返回既有行。
+    """
+    runtime, identity_runtime, bridge, task = _runtime()
+    try:
+        _, run = runtime.prepare_run(task.mission_id)
+
+        def ensured(attempt_id: str, attempt_number: int) -> None:
+            bridge.apply_lifecycle_event("attempt.ensured", {
+                "runId": run.run_id,
+                "missionId": task.mission_id,
+                "stepId": "analyse",
+                "attemptId": attempt_id,
+                "attemptNumber": attempt_number,
+            })
+
+        ensured("attempt_000000000001", 1)
+        # Incident shape 1: the resumed emitter's counter ran past the
+        # projection history, so its attemptNumber was not contiguous.
+        ensured("attempt_000000000002", 4)
+        # Incident shape 2: the same (step, #1) re-emitted under the same
+        # attemptId while rebuilding the execution state (idempotent replay).
+        ensured("attempt_000000000002", 1)
+
+        attempts = sorted(
+            identity_runtime.repositories.attempts.list_for_run(run.run_id),
+            key=lambda item: item.attempt_number,
+        )
+        assert [(item.attempt_id, item.attempt_number) for item in attempts] == [
+            ("attempt_000000000001", 1),
+            ("attempt_000000000002", 2),
+        ]
+    finally:
+        identity_runtime.close()
+
+
 def test_projection_journal_replays_an_interrupted_idempotent_event() -> None:
     _runtime_instance, identity_runtime, bridge, task = _runtime()
     try:
@@ -251,10 +292,39 @@ def test_projection_journal_replays_an_interrupted_idempotent_event() -> None:
         report = bridge.replay_unapplied()
         event = identity_runtime.repositories.projection_events.get(event_id)
 
-        assert report == {"examined": 1, "applied": 1, "failed": 0}
+        assert report == {"examined": 1, "applied": 1, "failed": 0, "dead_lettered": 0}
         assert event.status is ProjectionEventStatus.APPLIED
         assert event.attempts == 2
         assert identity_runtime.repositories.missions.get(task.mission_id) is not None
+    finally:
+        identity_runtime.close()
+
+
+def test_projection_replay_bypasses_dead_letters_after_delivery_cap() -> None:
+    """重放侧死信帽：反复失败的事件被旁路，不再拖垮每次 flush 的报告。"""
+    runtime, identity_runtime, _bridge, task = _runtime()
+    try:
+        repositories = identity_runtime.repositories
+        poison = LifecycleProjectionEvent(
+            eventId="run.finished:run_ghost:failed",
+            eventType="run.finished",
+            aggregateId="run_ghost",
+            payload={"runId": "run_ghost", "status": "failed"},
+            payloadHash="0" * 64,
+        )
+        repositories.projection_events.begin(poison)
+        for _ in range(DEAD_LETTER_MAX_ATTEMPTS):
+            repositories.projection_events.record_replay_failure(
+                poison.event_id, "simulated delivery failure"
+            )
+
+        report = _bridge.replay_unapplied()
+
+        assert report["dead_lettered"] == 1
+        assert report["failed"] == 0
+        stored = repositories.projection_events.get(poison.event_id)
+        assert stored.status is ProjectionEventStatus.FAILED
+        assert stored.attempts >= DEAD_LETTER_MAX_ATTEMPTS
     finally:
         identity_runtime.close()
 

@@ -889,6 +889,18 @@ class ExecutionRuntime:
                 "retryTargetStepId": step_id,
                 "reusedStepIds": sorted(copied_refs),
             })
+            # A resumed node is a new Attempt even when the operator chooses
+            # to keep the same Run identity.  Retaining the failed attempt's
+            # generated IDs would replay its projection keys with different
+            # scheduling content.
+            for identity_key in ("attemptIds", "stepExecutionIds"):
+                persisted_ids = retry.execution_state.get(identity_key)
+                if isinstance(persisted_ids, dict):
+                    retry.execution_state[identity_key] = {
+                        key: value
+                        for key, value in persisted_ids.items()
+                        if str(key).split(":", 1)[0] not in resumable_step_ids
+                    }
             retry.completed_step_ids = list(source_state.completed_step_ids)
             retry.active_step_ids = []
             retry.current_step_id = step_id
@@ -906,6 +918,21 @@ class ExecutionRuntime:
                     "failedStepId": step_id,
                     "reason": normalized_reason[:500],
                 }
+            persisted_attempt_counts: dict[str, int] = {}
+            if reuse_source_run and self.identity_lifecycle is not None:
+                next_attempt_number = getattr(
+                    self.identity_lifecycle,
+                    "next_attempt_number",
+                    None,
+                )
+                if callable(next_attempt_number):
+                    persisted_attempt_counts = {
+                        resumable_step_id: max(
+                            0,
+                            int(next_attempt_number(retry.run_id, resumable_step_id)) - 1,
+                        )
+                        for resumable_step_id in resumable_step_ids
+                    }
             for child_step in retry.steps:
                 if child_step.step_id in source_state.completed_step_ids:
                     source_completed = source.get_step(child_step.step_id)
@@ -923,11 +950,19 @@ class ExecutionRuntime:
                     child_step.error = None
                     child_step.started_at = None
                     child_step.completed_at = None
-                    child_step.attempt = max(
-                        source_unsettled.attempt,
-                        source_unsettled.retry_count,
-                    )
-                    child_step.retry_count = source_unsettled.retry_count
+                    if child_step.step_id in persisted_attempt_counts:
+                        child_step.attempt = persisted_attempt_counts[child_step.step_id]
+                        child_step.retry_count = persisted_attempt_counts[child_step.step_id]
+                    else:
+                        child_step.attempt = max(
+                            source_unsettled.attempt,
+                            source_unsettled.retry_count,
+                        ) + (1 if reuse_source_run and child_step.step_id == step_id else 0)
+                        child_step.retry_count = (
+                            source_unsettled.retry_count + 1
+                            if reuse_source_run and child_step.step_id == step_id
+                            else source_unsettled.retry_count
+                        )
             self.trace_store.append(
                 retry,
                 TraceEventType.RUN_RECOVERED,
@@ -1777,7 +1812,7 @@ class ExecutionRuntime:
                 safe["artifacts"] = descriptors
         return safe
 
-    def _flush_identity_outbox(self) -> None:
+    def _flush_identity_outbox(self, *, raise_on_failure: bool = True) -> None:
         if self.identity_lifecycle is None:
             return
         from runtime.v2.reconciliation import IdentityProjectionReconciler
@@ -1786,8 +1821,20 @@ class ExecutionRuntime:
             self.workflow_store,
             limit=200,
         )
-        if report.failures:
+        if report.failures and raise_on_failure:
             raise RuntimeError("identity inbox consumption failed: " + "; ".join(report.failures))
+        if report.failures:
+            # Startup reconciliation must never block service availability:
+            # failed events stay persisted for repair instead of crashing the
+            # process into a restart loop (a single dead letter previously
+            # took the whole Chat surface to HTTP 503).
+            logger.error(
+                "identity_outbox_flush_failures",
+                extra={
+                    "failures": report.failures[:10],
+                    "deadLetterCount": report.dead_letter_count,
+                },
+            )
 
     def _reuse_persisted_lifecycle_events(self, events: list[dict]) -> list[dict]:
         """Reuse the first committed event body during an idempotent attempt resume.

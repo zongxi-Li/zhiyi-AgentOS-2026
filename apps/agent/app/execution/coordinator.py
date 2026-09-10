@@ -26,7 +26,7 @@ class RunExecutionCoordinator:
         self._accepting = True
 
     async def submit(self, run_id: str) -> bool:
-        """Submit one pending run once in this process."""
+        """Submit one new or explicitly retrying Run once in this process."""
         async with self._lock:
             existing = self._tasks.get(run_id)
             if existing is not None and not existing.done():
@@ -34,7 +34,10 @@ class RunExecutionCoordinator:
             if not self._accepting:
                 raise RuntimeError("workflow execution coordinator is shutting down")
             run = self.runtime.workflow_store.get_run(run_id)
-            if run.status.value != "pending" or run.started_at is not None:
+            run_status = run.status.value
+            is_new_run = run_status == "pending" and run.started_at is None
+            is_in_place_retry = run_status == "retrying"
+            if not (is_new_run or is_in_place_retry):
                 return False
             task = asyncio.create_task(self._run_managed(run_id), name=f"workflow-run:{run_id}")
             self._tasks[run_id] = task
@@ -61,10 +64,15 @@ class RunExecutionCoordinator:
         # run.finished lifecycle event.  Runtime construction performs the
         # initial identity reconciliation before this startup hook, so flush
         # once more here or the identity projection can remain stale at
-        # running while the authoritative Runtime is already failed.
+        # running while the authoritative Runtime is already failed.  The
+        # flush must never take startup down: projection dead letters stay
+        # persisted for repair instead of crashing the service loop.
         flush_identity_outbox = getattr(self.runtime, "_flush_identity_outbox", None)
         if callable(flush_identity_outbox):
-            flush_identity_outbox()
+            try:
+                flush_identity_outbox(raise_on_failure=False)
+            except Exception:
+                logger.exception("identity outbox startup reconciliation crashed")
         return closed
 
     async def shutdown(self) -> None:
