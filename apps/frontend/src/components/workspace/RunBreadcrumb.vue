@@ -26,7 +26,7 @@ const emit = defineEmits<{ locate: [symbolId: string] }>()
 <style scoped>
 .run-breadcrumb { display: flex; align-items: center; min-width: 0; gap: 10px; margin-bottom: 13px; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
 .run-breadcrumb::-webkit-scrollbar { display: none; }
-.run-breadcrumb__item { max-width: 230px; overflow: hidden; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.run-breadcrumb__item { max-width: 230px; overflow: hidden; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font: 12px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .run-breadcrumb__item:hover, .run-breadcrumb__item:focus-visible { color: var(--wb-accent); }
 .run-breadcrumb__item.is-current { color: var(--wb-text-secondary); }
 .run-breadcrumb__item:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: 2px; }

@@ -125,7 +125,7 @@ const handleMainClick = () => {
 
 <style scoped>
 .run-symbol { min-width: 0; color: var(--wb-text); }
-.run-symbol__status { width: 15px; flex: 0 0 15px; color: var(--wb-text-muted); font-size: 11px; text-align: center; }
+.run-symbol__status { width: 15px; flex: 0 0 15px; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
 .run-symbol__status.is-running { color: var(--wb-accent); }
 .run-symbol__status.is-completed { color: var(--wb-success); }
 .run-symbol__status.is-warning { color: var(--wb-warning); }
@@ -133,22 +133,22 @@ const handleMainClick = () => {
 .run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: center; gap: 12px; min-width: 0; width: auto; min-height: 30px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; line-height: 1.25; }
 .run-symbol__main:hover { color: var(--wb-text); background: var(--wb-hover); }
 .run-symbol__main:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
-.run-symbol__title { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.run-symbol__title { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 500; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .run-symbol__title:only-child { grid-column: 1 / -1; }
 .run-symbol[data-symbol-type='planner'] .run-symbol__title,
 .run-symbol[data-symbol-type='execution'] .run-symbol__title,
 .run-symbol[data-symbol-type='task'] .run-symbol__title { font-weight: 650; }
-.run-symbol__subtitle { min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 10px/1.25 var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
-.run-symbol__action { flex: 0 0 auto; margin: 0 5px 0 6px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: var(--wb-radius-sm); color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 10px; opacity: 0; pointer-events: none; white-space: nowrap; }
+.run-symbol__subtitle { min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 12px/1.3 var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.run-symbol__action { flex: 0 0 auto; margin: 0 5px 0 6px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); border-radius: var(--wb-radius-sm); color: var(--wb-accent); background: transparent; cursor: pointer; font-size: 12px; opacity: 0; pointer-events: none; white-space: nowrap; }
 .run-symbol:hover .run-symbol__action, .run-symbol__action:focus-visible { opacity: 1; pointer-events: auto; }
 .run-symbol__action:hover { border-color: var(--wb-accent); background: var(--wb-accent-soft); }
 .run-symbol__body { min-width: 0; padding: 1px 0 5px 42px; border-left: 1px solid var(--wb-border-soft); margin-left: 7px; }
 .run-symbol__children { min-width: 0; }
 .run-symbol__children > .run-symbol { position: relative; }
-.run-symbol__metrics { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 2px 8px 5px 0; color: var(--wb-text-muted); font: 10px/1.45 var(--font-mono, monospace); }
+.run-symbol__metrics { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 2px 8px 5px 0; color: var(--wb-text-muted); font: 12px/1.45 var(--font-mono, monospace); }
 .run-symbol__metrics span { overflow-wrap: anywhere; }
-.run-symbol__detail { margin: 3px 8px 6px 0; color: var(--wb-text-secondary); font-size: 11px; line-height: 1.5; }
-.run-symbol__content { max-height: 220px; margin: 4px 8px 7px 0; padding: 8px; overflow: auto; border: 1px solid var(--wb-border-soft); color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-symbol__detail { margin: 3px 8px 6px 0; color: var(--wb-text-secondary); font-size: 13px; line-height: 1.5; }
+.run-symbol__content { max-height: 220px; margin: 4px 8px 7px 0; padding: 8px; overflow: auto; border: 1px solid var(--wb-border-soft); color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 12px/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 .run-symbol[data-symbol-type='runtime'] .run-symbol__title { color: var(--wb-text-secondary); }
 .run-symbol[data-symbol-type='agent'] .run-symbol__title,
 .run-symbol[data-symbol-type='tool'] .run-symbol__title,

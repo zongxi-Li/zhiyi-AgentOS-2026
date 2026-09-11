@@ -113,6 +113,18 @@ const runtimeEvent = (sequence: number, eventType: string) => ({
 })
 
 describe('RunProgressEditor', () => {
+  it('renders a clickable directory path for the current run document', async () => {
+    const wrapper = mountEditor()
+
+    expect(wrapper.get('[aria-label="运行目录层级"]').text()).toContain('OUTLINE')
+    expect(wrapper.get('[aria-label="运行目录层级"]').text()).not.toContain('Run 01')
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+
+    const directory = wrapper.get('[aria-label="运行目录层级"]')
+    expect(directory.text()).toContain('Planning')
+    expect(directory.text()).not.toContain('Intent Profile')
+  })
+
   it('renders the planner as one aggregated group with deterministic result metrics', () => {
     const wrapper = mountEditor()
 

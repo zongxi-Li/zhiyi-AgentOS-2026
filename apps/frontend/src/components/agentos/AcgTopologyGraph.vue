@@ -966,12 +966,35 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 .acg-topology.is-workbench .panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  justify-content: initial;
   flex: 0 0 34px;
   box-sizing: border-box;
   min-height: 34px;
   margin: 0;
   padding: 0 10px;
   border-bottom: 1px solid var(--wb-border);
+}
+.acg-topology.is-workbench .head-left {
+  min-width: 0;
+  justify-content: flex-start;
+}
+.acg-topology.is-workbench .panel-head h4 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acg-topology.is-workbench .head-right {
+  position: static;
+  min-width: 0;
+  justify-self: end;
+}
+.acg-topology.is-workbench .meta {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .acg-topology.is-workbench .action-group { padding: 2px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); box-shadow: none; }
 .acg-topology.is-workbench .action-btn { width: 28px; height: 28px; border-radius: 4px; }
