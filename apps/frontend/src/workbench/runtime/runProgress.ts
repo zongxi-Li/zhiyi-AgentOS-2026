@@ -148,16 +148,43 @@ export const projectRunProgress = (
     results
   } : null
 
-  const nodeById = new Map(graphNodes.map(node => [node.acgNodeId, node]))
+  // A trace stepId may be the blueprint node id, task id, or semantic key.
+  // Resolve all of them to the same graph node before grouping activity.
+  const nodeByLookupId = new Map<string, WorkspaceGraphNode>()
+  graphNodes.forEach(node => {
+    nodeByLookupId.set(node.acgNodeId, node)
+    if (node.taskId) nodeByLookupId.set(node.taskId, node)
+    if (node.semanticTaskKey) nodeByLookupId.set(node.semanticTaskKey, node)
+  })
+  const nodeForStep = (stepId: string | null) => stepId ? nodeByLookupId.get(stepId) : undefined
   const taskKinds = new Set(['step_started', 'step_succeeded', 'step_completed', 'step_failed'])
   const tasks = new Map<string, RunProgressTaskGroup>()
   const taskStartedAt = new Map<string, string>()
   const tools: RunProgressItem[] = []
+  const ensureTask = (stepId: string, node?: WorkspaceGraphNode) => {
+    const graphNodeId = node?.acgNodeId || stepId
+    const existing = tasks.get(graphNodeId)
+    if (existing) return { group: existing, graphNodeId }
+    const group: RunProgressTaskGroup = {
+      category: 'task',
+      status: 'running',
+      title: node?.name || stepId,
+      semanticTaskKey: node?.semanticTaskKey || null,
+      graphNodeId,
+      durationMs: null,
+      errorCode: null,
+      tools: []
+    }
+    tasks.set(graphNodeId, group)
+    return { group, graphNodeId }
+  }
   for (const event of traces) {
     if (event.payload.planningProgress) continue
     const stepId = event.stepId
     if (event.eventType === 'tool_called') {
-      const node = stepId ? nodeById.get(stepId) : undefined
+      if (!stepId) continue
+      const node = nodeForStep(stepId)
+      const { graphNodeId } = ensureTask(stepId, node)
       tools.push({
         id: event.eventId,
         timestamp: event.timestamp,
@@ -167,34 +194,25 @@ export const projectRunProgress = (
         title: String(event.payload.name || event.payload.tool || 'Tool'),
         summary: null,
         semanticTaskKey: node?.semanticTaskKey || null,
-        graphNodeId: stepId,
+        graphNodeId,
         toolName: String(event.payload.tool || event.payload.name || ''),
         metrics: { latencyMs: numberOf(event.payload.latencyMs) }
       })
       continue
     }
     if (!stepId || !taskKinds.has(event.eventType)) continue
-    const node = nodeById.get(stepId)
-    const group = tasks.get(stepId) || {
-      category: 'task' as const,
-      status: 'running' as RunProgressTaskGroup['status'],
-      title: node?.name || stepId,
-      semanticTaskKey: node?.semanticTaskKey || null,
-      graphNodeId: stepId,
-      durationMs: null as number | null,
-      errorCode: null as string | null,
-      tools: [] as RunProgressItem[]
-    }
+    const node = nodeForStep(stepId)
+    const { group, graphNodeId } = ensureTask(stepId, node)
     if (event.eventType === 'step_started') {
       group.status = 'running'
       group.errorCode = null
-      if (event.timestamp) taskStartedAt.set(stepId, event.timestamp)
+      if (event.timestamp) taskStartedAt.set(graphNodeId, event.timestamp)
     } else if (event.eventType === 'step_failed') {
       group.status = 'failed'
       group.errorCode = String(event.payload.errorCode || 'STEP_FAILED')
       group.durationMs = durationOf(event.durationMs)
         ?? durationOf(event.payload.durationMs)
-        ?? durationBetween(taskStartedAt.get(stepId), event.timestamp)
+        ?? durationBetween(taskStartedAt.get(graphNodeId), event.timestamp)
     } else {
       // A failed event belongs to one attempt. A later completion is the
       // current task state after retry, so historical failures must not make
@@ -203,9 +221,8 @@ export const projectRunProgress = (
       group.errorCode = null
       group.durationMs = durationOf(event.durationMs)
         ?? durationOf(event.payload.durationMs)
-        ?? durationBetween(taskStartedAt.get(stepId), event.timestamp)
+        ?? durationBetween(taskStartedAt.get(graphNodeId), event.timestamp)
     }
-    tasks.set(stepId, group)
   }
   for (const tool of tools) {
     const owner = tool.graphNodeId ? tasks.get(tool.graphNodeId) : undefined

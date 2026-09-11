@@ -21,6 +21,7 @@ export type RunDocumentSymbolType =
   | 'runtime'
 
 export type RunDocumentSymbolStatus = 'pending' | 'running' | 'completed' | 'warning' | 'failed'
+export type RunDocumentViewKey = 'intent-profile' | 'task-plan' | 'detail' | 'relations'
 
 export interface RunDocumentSymbol {
   id: string
@@ -34,6 +35,7 @@ export interface RunDocumentSymbol {
   graphNodeId?: string | null
   artifactKey?: string | null
   artifactId?: string | null
+  viewKey?: RunDocumentViewKey
   metrics?: Record<string, string | number>
   children: RunDocumentSymbol[]
   /** Used only for first appearance. A user's explicit fold choice wins. */
@@ -147,14 +149,6 @@ const formatDuration = (value: unknown) => {
   return `${Number((ms / 1000).toFixed(1))}s`
 }
 
-const metricText = (metrics: Record<string, string | number> | undefined, keys: string[]) => {
-  if (!metrics) return ''
-  return keys
-    .map(key => metrics[key] == null ? '' : `${metrics[key]} ${key}`)
-    .filter(Boolean)
-    .join(' · ')
-}
-
 const scrubStructuredValue = (value: unknown, depth = 0): unknown => {
   if (depth > 8) return '[depth limited]'
   if (Array.isArray(value)) return value.map(item => scrubStructuredValue(item, depth + 1))
@@ -266,23 +260,12 @@ const latestStageText = (items: ModelOutputItem[], stage: string) => {
   return latest?.detail || latest?.title || undefined
 }
 
-const plannerResultSymbol = (runId: string, item: ModelOutputItem): RunDocumentSymbol => {
+const plannerItemMetrics = (item?: ModelOutputItem | null): Record<string, string | number> => {
   const metrics: Record<string, string | number> = {}
-  for (const [key, value] of Object.entries(item.metrics)) {
+  for (const [key, value] of Object.entries(item?.metrics || {})) {
     if (value != null) metrics[key] = value
   }
-  const title = item.kind === 'plan_parsed'
-    ? 'Task Plan'
-    : item.kind === 'graph_compiled' ? 'ACG Compile' : 'Intent Profile'
-  return symbol({
-    id: `result:${runId}:${item.id}`,
-    type: 'result',
-    status: item.status === 'failed' ? 'failed' : 'completed',
-    title,
-    subtitle: metricText(metrics, ['taskCount', 'dependencyCount', 'nodeCount', 'edgeCount', 'constraintCount']),
-    runId,
-    metrics
-  })
+  return metrics
 }
 
 const plannerSymbol = (
@@ -319,11 +302,24 @@ const plannerSymbol = (
   })
   const children: RunDocumentSymbol[] = hasPlannerProjection ? STAGE_ORDER.map(stage => {
     const scoped = stages.get(stage) || []
+    const result = [...scoped].reverse().find(item => ['profile_resolved', 'plan_parsed'].includes(item.kind))
     const observedStatus = stageStatus(plannerItems, planning?.stage || null, stage)
     const stageStatusValue = observedStatus === 'pending' && (
       (stage === 'intent_profile' && Boolean(planning?.profile))
       || (stage === 'outline' && Boolean(planning?.plan))
     ) ? 'completed' : observedStatus
+    const stageMetrics: Record<string, string | number> = {
+      ...(stage === 'intent_profile' && planning?.profile ? {
+        constraintCount: planning.profile.constraintCount ?? 0,
+        requiredCapabilityCount: planning.profile.requiredCapabilityCount ?? 0,
+        expectedArtifactCount: planning.profile.expectedArtifactCount ?? 0
+      } : {}),
+      ...(stage === 'outline' && planning?.plan ? {
+        taskCount: planning.plan.taskCount ?? 0,
+        dependencyCount: planning.plan.dependencyCount ?? 0
+      } : {}),
+      ...plannerItemMetrics(result)
+    }
     const stageSymbol = symbol({
       id: `stage:${runId}:${stage}`,
       type: 'stage',
@@ -332,29 +328,10 @@ const plannerSymbol = (
       subtitle: latestStageText(scoped, stage) || (planning?.stage === stage ? LIVE_STAGE_LABELS[stage] : undefined),
       detail: latestStageText(scoped, stage) || (planning?.stage === stage ? LIVE_STAGE_LABELS[stage] : undefined),
       runId,
-      metrics: {},
+      viewKey: stage === 'intent_profile' ? 'intent-profile' : stage === 'outline' ? 'task-plan' : stage === 'detail' ? 'detail' : stage === 'relations' ? 'relations' : undefined,
+      metrics: stageMetrics,
       defaultExpanded: stageStatusValue === 'running' || stageStatusValue === 'failed'
     })
-    const result = [...scoped].reverse().find(item => ['profile_resolved', 'plan_parsed'].includes(item.kind))
-    if (result) stageSymbol.children.push(plannerResultSymbol(runId, result))
-    if (!result && stage === 'intent_profile' && planning?.profile) stageSymbol.children.push(symbol({
-      id: `result:${runId}:live-profile`,
-      type: 'result',
-      status: 'completed',
-      title: 'Intent Profile',
-      subtitle: `Profile: ${planning.profile.requiredCapabilityCount ?? 0} capabilities · ${planning.profile.expectedArtifactCount ?? 0} artifacts`,
-      runId,
-      defaultExpanded: false
-    }))
-    if (!result && stage === 'outline' && planning?.plan) stageSymbol.children.push(symbol({
-      id: `result:${runId}:live-plan`,
-      type: 'result',
-      status: 'completed',
-      title: 'Task Plan',
-      subtitle: `Plan: ${planning.plan.taskCount ?? 0} tasks · ${planning.plan.dependencyCount ?? 0} dependencies`,
-      runId,
-      defaultExpanded: false
-    }))
     if (planning?.stage === stage) {
       const liveModel = modelSymbolFromLivePlanning(runId, planning, traces, [...plannerItems].reverse().find(item => item.stage === stage))
       if (liveModel) stageSymbol.children.push(liveModel)
@@ -441,7 +418,13 @@ const traceAgentName = (traceIndex: RunTraceIndex, nodeId: string, entry?: Works
   return traceIndex.latestAgentByNode.get(nodeId) || null
 }
 
-const taskModelSymbol = (runId: string, nodeId: string, traceIndex: RunTraceIndex, nodeState?: NodeRuntimeState) => {
+const taskModelSymbol = (
+  runId: string,
+  nodeId: string,
+  semanticTaskKey: string | null,
+  traceIndex: RunTraceIndex,
+  nodeState?: NodeRuntimeState
+) => {
   const modelEvent = traceIndex.latestModelEventByNode.get(nodeId)
   const payload = asRecord(modelEvent?.payload)
   const modelName = safeText(nodeState?.modelName) || safeText(payload.modelName) || safeText(payload.model)
@@ -462,6 +445,7 @@ const taskModelSymbol = (runId: string, nodeId: string, traceIndex: RunTraceInde
       formatDuration(modelEvent?.durationMs) || ''
     ].filter(Boolean).join(' · '),
     runId,
+    semanticTaskKey,
     graphNodeId: nodeId,
     metrics: {
       ...(payload.attempt != null ? { Attempt: Number(payload.attempt) } : {}),
@@ -483,6 +467,26 @@ const taskModelSymbol = (runId: string, nodeId: string, traceIndex: RunTraceInde
   }))
   return model
 }
+
+const taskToolSymbol = (
+  runId: string,
+  group: RunProgressTaskGroup,
+  tool: RunProgressTaskGroup['tools'][number]
+): RunDocumentSymbol => symbol({
+  id: `tool:${runId}:${tool.id}`,
+  type: 'tool',
+  status: tool.status === 'failed' ? 'failed' : 'completed',
+  title: tool.title,
+  subtitle: [tool.metrics.latencyMs != null ? `${tool.metrics.latencyMs} ms` : '', tool.toolName || ''].filter(Boolean).join(' · '),
+  runId,
+  semanticTaskKey: group.semanticTaskKey,
+  graphNodeId: group.graphNodeId,
+  metrics: {
+    ...(tool.metrics.latencyMs != null ? { Duration: tool.metrics.latencyMs } : {}),
+    Task: group.title
+  },
+  defaultExpanded: false
+})
 
 const taskSymbol = (
   runId: string,
@@ -511,23 +515,28 @@ const taskSymbol = (
     graphNodeId: group.graphNodeId,
     defaultExpanded: false
   }))
-  const model = taskModelSymbol(runId, group.graphNodeId || '', traceIndex, group.graphNodeId ? runtimeStore?.nodes[group.graphNodeId] : undefined)
-  if (model) children.push(model)
-  group.tools.forEach(tool => children.push(symbol({
-    id: `tool:${runId}:${tool.id}`,
-    type: 'tool',
-    status: tool.status === 'failed' ? 'failed' : 'completed',
-    title: tool.title,
-    subtitle: [tool.metrics.latencyMs != null ? `${tool.metrics.latencyMs} ms` : '', tool.toolName || ''].filter(Boolean).join(' · '),
+  const model = taskModelSymbol(
     runId,
-    semanticTaskKey: group.semanticTaskKey,
-    graphNodeId: group.graphNodeId,
-    metrics: {
-      ...(tool.metrics.latencyMs != null ? { Duration: tool.metrics.latencyMs } : {}),
-      Task: group.title
-    },
-    defaultExpanded: false
-  })))
+    group.graphNodeId || '',
+    group.semanticTaskKey,
+    traceIndex,
+    group.graphNodeId ? runtimeStore?.nodes[group.graphNodeId] : undefined
+  )
+  const toolSymbols = group.tools.map(tool => taskToolSymbol(runId, group, tool))
+  if (model) {
+    // Model calls own the tools emitted with the same stepId. This makes the
+    // invocation chain visible as Task -> Model -> Tool instead of reporting
+    // Activity 0 on the model while showing unrelated sibling rows on Task.
+    model.children.unshift(...toolSymbols)
+    if (toolSymbols.length) {
+      model.metrics = { ...(model.metrics || {}), Tools: toolSymbols.length }
+    }
+    children.push(model)
+  } else {
+    // Some historical traces have tool events but no model_called event. Keep
+    // those tools visible directly under the task rather than dropping them.
+    children.push(...toolSymbols)
+  }
   const artifactCount = entries.filter(item => item.kind === 'artifact' && (
     (group.semanticTaskKey && item.semanticTaskKey === group.semanticTaskKey)
     || (group.graphNodeId && item.acgNodeId === group.graphNodeId)

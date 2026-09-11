@@ -158,6 +158,19 @@ describe('RunProgressEditor', () => {
     expect(wrapper.findAll('.run-progress__column')).toHaveLength(3)
   })
 
+  it('returns to the selected parent column from the breadcrumb', async () => {
+    const wrapper = mountEditor()
+
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    const taskPlan = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Task Plan'))!
+    await taskPlan.find('.run-symbol__main').trigger('click')
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(3)
+
+    await wrapper.get('[aria-label="运行目录层级"] button[title="Planning"]').trigger('click')
+    expect(wrapper.findAll('.run-progress__column')).toHaveLength(2)
+    expect(wrapper.findAll('.run-progress__column')[1].find('.run-progress__column-head').text()).toBe('Planning')
+  })
+
   it('keeps Planning open when the parent synchronizes the selected symbol after the click', async () => {
     const wrapper = mountEditor()
 
@@ -240,6 +253,86 @@ describe('RunProgressEditor', () => {
     expect(wrapper.find('.run-progress__detail').text()).toContain('Read File')
     expect(wrapper.find('.run-progress__detail').text()).toContain('Duration821 ms')
     expect(wrapper.find('.run-progress__detail').text()).toContain('Task')
+  })
+
+  it('keeps the parent task activity visible while inspecting a tool', async () => {
+    const wrapper = mountEditor({
+      runtimeObservation: observation([
+        ...plannerEvents(),
+        traceEvent('task-1', { status: 'started' }, { stepId: 'node_a', eventType: 'step_started' }),
+        traceEvent('task-2', { status: 'started' }, { stepId: 'node_b', eventType: 'step_started' }),
+        traceEvent('tool-2', { tool: 'web_search', name: 'Web Search', status: 'succeeded', latencyMs: 240 }, { stepId: 'node_b', eventType: 'tool_called' })
+      ])
+    })
+
+    const taskRows = wrapper.findAll('[data-symbol-type="task"]')
+    await taskRows[1].find('.run-symbol__main').trigger('click')
+    expect(wrapper.findAll('.run-progress__column')[2].text()).toContain('Web Search')
+
+    await wrapper.get('[data-symbol-type="tool"] .run-symbol__main').trigger('click')
+    expect(wrapper.findAll('.run-progress__column')[2].text()).toContain('Web Search')
+    expect(wrapper.find('.run-progress__column:last-child .run-progress__column-head').text()).toBe('INSPECTOR')
+    expect(wrapper.find('.run-progress__detail').text()).toContain('Web Search')
+  })
+
+  it('opens the model tool-call chain as the next browser column', async () => {
+    const wrapper = mountEditor({
+      runtimeObservation: observation([
+        ...plannerEvents(),
+        traceEvent('task-2', { status: 'started' }, { stepId: 'node_b', eventType: 'step_started' }),
+        traceEvent('model-2', { model: 'glm-5.3-flash' }, { stepId: 'node_b', eventType: 'model_called' }),
+        traceEvent('tool-2', { tool: 'web_search', name: 'Web Search', status: 'succeeded' }, { stepId: 'node_b', eventType: 'tool_called' })
+      ])
+    })
+
+    await wrapper.get('[data-symbol-id="task:architecture.design"] .run-symbol__main').trigger('click')
+    await wrapper.get('[data-symbol-type="model"] .run-symbol__main').trigger('click')
+
+    expect(wrapper.findAll('.run-progress__column')[3].text()).toContain('Web Search')
+    expect(wrapper.findAll('.run-progress__column')[3].find('[data-symbol-type="tool"]').exists()).toBe(true)
+  })
+
+  it('renders Intent Profile as a structured planning artifact', async () => {
+    const runtimeStore = new RunRuntimeStore('run_1')
+    runtimeStore.apply({ ...runtimeEvent(1, 'planner.started') })
+    runtimeStore.apply({ ...runtimeEvent(2, 'planner.stage.started'), payload: { stage: 'intent_profile', callKey: 'intent-profile' } })
+    runtimeStore.apply({
+      ...runtimeEvent(3, 'planner.profile.resolved'),
+      payload: { constraintCount: 13, requiredCapabilityCount: 4, expectedArtifactCount: 2 }
+    })
+
+    const wrapper = mountEditor({ runtimeObservation: observation([]), runtimeStore })
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    const intentProfile = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Intent Profile'))!
+    await intentProfile.find('.run-symbol__main').trigger('click')
+
+    const artifact = wrapper.get('[data-testid="intent-profile-artifact"]')
+    expect(artifact.text()).toContain('任务意图画像')
+    expect(artifact.text()).toContain('13')
+    expect(artifact.text()).toContain('4')
+    expect(artifact.text()).toContain('2')
+    expect(artifact.text()).toContain('Task Plan')
+    expect(wrapper.get('[aria-label="Run document breadcrumb"]').text().match(/Intent Profile/g)).toHaveLength(1)
+    expect(intentProfile.find('[data-symbol-type="result"]').exists()).toBe(false)
+  })
+
+  it('renders the remaining planning stages as dedicated artifacts', async () => {
+    const wrapper = mountEditor()
+
+    await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
+    const taskPlan = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Task Plan'))!
+    await taskPlan.find('.run-symbol__main').trigger('click')
+    expect(wrapper.get('[data-testid="planning-task-plan-artifact"]').text()).toContain('6')
+    expect(wrapper.get('[data-testid="planning-task-plan-artifact"]').text()).toContain('8')
+    expect(taskPlan.find('[data-symbol-type="result"]').exists()).toBe(false)
+
+    const detail = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Detail'))!
+    await detail.find('.run-symbol__main').trigger('click')
+    expect(wrapper.get('[data-testid="planning-detail-artifact"]').text()).toContain('任务细化')
+
+    const relations = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Relations'))!
+    await relations.find('.run-symbol__main').trigger('click')
+    expect(wrapper.get('[data-testid="planning-relations-artifact"]').text()).toContain('依赖关系')
   })
 
   it('shows the latest planner phase note while planning is still running', () => {
@@ -398,7 +491,9 @@ describe('RunProgressEditor', () => {
     await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
     const intentProfile = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Intent Profile'))!
     await intentProfile.find('.run-symbol__main').trigger('click')
-    expect(wrapper.text()).toContain('Profile: 2 capabilities · 1 artifacts')
+    const artifact = wrapper.get('[data-testid="intent-profile-artifact"]')
+    expect(artifact.text()).toContain('2')
+    expect(artifact.text()).toContain('1')
   })
 
   it('never renders reasoning, prompt or raw json markers', () => {

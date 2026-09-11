@@ -8,6 +8,7 @@
     <EditorObjectRow
       :depth="horizontal ? 0 : depth"
       :selected="selectedSymbolId === symbol.id"
+      interactive
     >
       <template #gutter>
         <span class="run-symbol__status" :class="`is-${symbol.status}`" aria-hidden="true">{{ statusMark }}</span>
@@ -125,13 +126,12 @@ const handleMainClick = () => {
 
 <style scoped>
 .run-symbol { min-width: 0; color: var(--wb-text); }
-.run-symbol__status { width: 15px; flex: 0 0 15px; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
+.run-symbol__status { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-inline: auto; color: var(--wb-text-muted); font-size: 12px; line-height: 1; text-align: center; }
 .run-symbol__status.is-running { color: var(--wb-accent); }
 .run-symbol__status.is-completed { color: var(--wb-success); }
 .run-symbol__status.is-warning { color: var(--wb-warning); }
 .run-symbol__status.is-failed { color: var(--wb-danger); }
-.run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: center; gap: 12px; min-width: 0; width: auto; min-height: 30px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; line-height: 1.25; }
-.run-symbol__main:hover { color: var(--wb-text); background: var(--wb-hover); }
+.run-symbol__main { display: grid; grid-template-columns: minmax(160px, .9fr) minmax(0, 1.8fr); align-items: center; gap: 12px; min-width: 0; width: 100%; min-height: 30px; padding: 2px 6px; border: 0; color: var(--wb-text); background: transparent; cursor: pointer; text-align: left; line-height: 1.25; }
 .run-symbol__main:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
 .run-symbol__title { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 500; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .run-symbol__title:only-child { grid-column: 1 / -1; }

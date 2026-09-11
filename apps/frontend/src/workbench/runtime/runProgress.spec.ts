@@ -101,6 +101,30 @@ describe('projectRunProgress', () => {
     expect(design).toMatchObject({ status: 'failed', errorCode: 'TOOL_TIMEOUT' })
   })
 
+  it('keeps a tool when it arrives before the task lifecycle event', () => {
+    const nodes = [{
+      acgNodeId: 'node_a',
+      taskId: 'task_a',
+      nodeType: 'task',
+      name: '需求分析',
+      semanticTaskKey: 'requirements.analysis',
+      displayOrder: 1
+    }] as unknown as WorkspaceGraphNode[]
+
+    const timeline = projectRunProgress(observation([
+      traceEvent('tool-1', { tool: 'knowledge_search', name: 'Knowledge Search', status: 'succeeded' }, {
+        stepId: 'task_a', eventType: 'tool_called'
+      })
+    ]), nodes)
+
+    expect(timeline.tasks).toHaveLength(1)
+    expect(timeline.tasks[0]).toMatchObject({
+      graphNodeId: 'node_a',
+      semanticTaskKey: 'requirements.analysis'
+    })
+    expect(timeline.tasks[0].tools.map(tool => tool.toolName)).toEqual(['knowledge_search'])
+  })
+
   it('projects a retried task from its latest state instead of retaining a historical failure', () => {
     const timeline = projectRunProgress(observation([
       traceEvent('t1', { status: 'started' }, {

@@ -51,6 +51,24 @@ describe('run document projection', () => {
     expect(model.symbols.some(item => item.type === 'runtime')).toBe(false)
   })
 
+  it('nests tool calls under the model that invoked them', () => {
+    const model = projectRunDocument({
+      runId: 'run_1', mission, graphNodes: nodes, entries,
+      runtimeObservation: observation([
+        trace('task-1', { status: 'started' }, { stepId: 'node_capacity', eventType: 'step_started' }),
+        trace('model-1', { model: 'glm-5.3-flash' }, { stepId: 'node_capacity', eventType: 'model_called' }),
+        trace('tool-1', { tool: 'knowledge_search', name: 'Knowledge Search', status: 'succeeded' }, { stepId: 'node_capacity', eventType: 'tool_called' })
+      ])
+    })
+
+    const task = model.symbols.find(item => item.type === 'execution')!.children[0]
+    const modelCall = task.children.find(item => item.type === 'model')!
+    expect(task.children.filter(item => item.type === 'tool')).toHaveLength(0)
+    expect(modelCall.children.map(item => item.type)).toEqual(['tool'])
+    expect(modelCall.children[0].title).toBe('Knowledge Search')
+    expect(modelCall.metrics).toMatchObject({ Tools: 1 })
+  })
+
   it('keeps ACG as a leaf outline symbol instead of a card collection', () => {
     const model = projectRunDocument({ runId: 'run_1', mission, graphNodes: nodes, entries, runtimeObservation: observation([
       trace('planner-graph', { planningProgress: true, category: 'planner', kind: 'graph_compiled', nodeCount: 1, edgeCount: 0 })

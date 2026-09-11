@@ -357,6 +357,8 @@ export interface ModelOutputMetrics {
   nodeCount?: number
   edgeCount?: number
   constraintCount?: number
+  requiredCapabilityCount?: number
+  expectedArtifactCount?: number
   timeoutSeconds?: number
 }
 
@@ -489,6 +491,8 @@ export const projectModelOutput = (traces: RuntimeTraceObservation[]): ModelOutp
         nodeCount: scalarCount(payload.nodeCount) ?? undefined,
         edgeCount: scalarCount(payload.edgeCount) ?? undefined,
         constraintCount: scalarCount(payload.constraintCount) ?? undefined,
+        requiredCapabilityCount: scalarCount(payload.requiredCapabilityCount) ?? undefined,
+        expectedArtifactCount: scalarCount(payload.expectedArtifactCount) ?? undefined,
         timeoutSeconds: scalarCount(payload.timeoutSeconds) ?? undefined
       }
     }

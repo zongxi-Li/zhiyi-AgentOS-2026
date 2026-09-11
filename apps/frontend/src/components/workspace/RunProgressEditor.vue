@@ -60,10 +60,29 @@
               v-for="column in browserColumns"
               :key="column.id"
               class="run-progress__column"
-              :class="{ 'is-graph-column': column.graph, 'is-detail-column': column.detail }"
-              :style="column.graph ? graphColumnStyle : undefined"
+              :class="{
+                'is-graph-column': column.graph,
+                'is-detail-column': column.detail,
+                'is-terminal-column': !column.graph && !column.detail && column.context?.type === 'task'
+              }"
+              :style="column.detail ? detailColumnStyle : column.graph ? graphColumnStyle : undefined"
             >
-              <div class="run-progress__column-head">{{ column.title }}</div>
+              <div class="run-progress__column-head">
+                {{ column.context?.type === 'task' && !column.detail ? 'TASK DETAIL' : column.title }}
+              </div>
+              <div
+                v-if="column.detail"
+                class="run-progress__resize-handle"
+                data-testid="detail-resize-handle"
+                role="separator"
+                aria-label="调整详情栏宽度"
+                :aria-valuenow="detailColumnWidth || undefined"
+                aria-valuemin="320"
+                aria-valuemax="720"
+                tabindex="0"
+                @pointerdown="startDetailResize"
+                @keydown="handleDetailResizeKeydown"
+              ></div>
               <div v-if="column.graph" class="run-progress__graph-preview">
                 <AcgTopologyGraph
                   :blueprint="projection.activeGraph || null"
@@ -72,6 +91,22 @@
                   workbench
                   @node-selected="selectGraphNode"
                   @node-double-clicked="openGraphNode"
+                />
+              </div>
+              <div v-else-if="column.detail && column.detail.viewKey === 'intent-profile'" class="run-progress__detail run-progress__detail--artifact">
+                <IntentProfileArtifact
+                  :symbol="column.detail"
+                  :mission-goal="goalSource"
+                  :run-id="resolvedRunId"
+                  :profile="runtimeStore?.planning.profile || null"
+                />
+              </div>
+              <div v-else-if="column.detail && planningStageViewKey(column.detail)" class="run-progress__detail run-progress__detail--artifact">
+                <PlanningStageArtifact
+                  :symbol="column.detail"
+                  :mission-goal="goalSource"
+                  :run-id="resolvedRunId"
+                  :view-key="planningStageViewKey(column.detail) || 'detail'"
                 />
               </div>
               <div v-else-if="column.detail" class="run-progress__detail">
@@ -88,7 +123,34 @@
                 </dl>
                 <pre v-if="column.detail.content" class="run-progress__detail-content">{{ column.detail.content }}</pre>
               </div>
-              <div v-else class="run-progress__column-body">
+              <div
+                v-else
+                class="run-progress__column-body"
+                :class="{ 'is-terminal-body': !column.graph && !column.detail && column.context?.type === 'task' }"
+              >
+                <section v-if="column.context?.type === 'task'" class="run-progress__terminal-summary" aria-label="任务摘要">
+                  <div class="run-progress__terminal-summary-head">
+                    <span class="run-progress__terminal-eyebrow">SELECTED TASK</span>
+                    <span class="run-progress__terminal-status" :class="`is-${column.context.status}`">
+                      <span aria-hidden="true">{{ detailStatusMark(column.context.status) }}</span>
+                      {{ column.context.status === 'completed' ? '已完成' : column.context.status === 'running' ? '进行中' : column.context.status === 'failed' ? '失败' : column.context.status === 'warning' ? '需关注' : '待开始' }}
+                    </span>
+                  </div>
+                  <h2>{{ column.context.title }}</h2>
+                  <p v-if="column.context.detail" class="run-progress__terminal-detail">{{ column.context.detail }}</p>
+                  <p v-if="column.context.subtitle" class="run-progress__terminal-summary-copy">{{ column.context.subtitle }}</p>
+                  <dl v-if="detailRows(column.context).length" class="run-progress__terminal-metrics">
+                    <div v-for="row in detailRows(column.context).slice(0, 6)" :key="row.label">
+                      <dt>{{ row.label }}</dt>
+                      <dd :title="String(row.value)">{{ row.value }}</dd>
+                    </div>
+                  </dl>
+                </section>
+                <div v-if="column.context?.type === 'task'" class="run-progress__activity-heading">
+                  <span>ACTIVITY</span>
+                  <small>{{ column.symbols.length }} 项<span v-if="column.symbols.length"> · {{ activitySummary(column.symbols) }}</span></small>
+                </div>
+                <p v-if="column.context?.type === 'task' && !column.symbols.length" class="run-progress__activity-empty">暂无可展示的运行活动</p>
                 <RunSymbolRow
                   v-for="item in column.symbols"
                   :key="item.id"
@@ -120,9 +182,13 @@ import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } f
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
+import IntentProfileArtifact from './IntentProfileArtifact.vue'
+import PlanningStageArtifact from './PlanningStageArtifact.vue'
 import RunBreadcrumb from './RunBreadcrumb.vue'
 import RunSymbolRow from './RunSymbolRow.vue'
-import { findRunDocumentSymbol, projectRunDocument, type RunDocumentSymbol } from '@/workbench/runtime/runDocument'
+import { findRunDocumentSymbol, projectRunDocument, type RunDocumentSymbol, type RunDocumentViewKey } from '@/workbench/runtime/runDocument'
+
+type PlanningStageViewKey = Exclude<RunDocumentViewKey, 'intent-profile'>
 
 const props = defineProps<{
   entry: WorkspaceEntry
@@ -201,7 +267,10 @@ watch(runState, state => {
     durationTimer = null
   }
 }, { immediate: true })
-onBeforeUnmount(() => { if (durationTimer !== null) clearInterval(durationTimer) })
+onBeforeUnmount(() => {
+  if (durationTimer !== null) clearInterval(durationTimer)
+  stopDetailResize()
+})
 
 const formatDuration = (ms: number) => {
   const total = Math.max(0, Math.floor(ms / 1000))
@@ -271,7 +340,9 @@ const detailStatusMark = (status: RunDocumentSymbol['status']) => ({
 }[status])
 const detailRows = (symbol: RunDocumentSymbol) => {
   const rows: Array<{ label: string; value: string | number }> = [
+    { label: 'Status', value: symbol.status },
     { label: 'Type', value: symbol.type },
+    { label: 'Activity', value: `${symbol.children.length} items` },
     ...(symbol.semanticTaskKey ? [{ label: 'semanticTaskKey', value: symbol.semanticTaskKey }] : []),
     ...(symbol.graphNodeId ? [{ label: 'ACG Node', value: symbol.graphNodeId }] : []),
     ...(symbol.artifactKey ? [{ label: 'artifactKey', value: symbol.artifactKey }] : []),
@@ -280,10 +351,28 @@ const detailRows = (symbol: RunDocumentSymbol) => {
   for (const [key, value] of Object.entries(symbol.metrics || {})) {
     rows.push({ label: key, value: key === 'Duration' && typeof value === 'number' ? `${value} ms` : value })
   }
-  return rows
+  const seen = new Set<string>()
+  return rows.filter(row => {
+    if (seen.has(row.label)) return false
+    seen.add(row.label)
+    return true
+  })
+}
+const activitySummary = (symbols: RunDocumentSymbol[]) => {
+  const labels: Record<RunDocumentSymbol['type'], string> = {
+    run: '运行', planner: '规划', execution: '执行', stage: '阶段', task: '任务', agent: 'Agent',
+    model: '模型', tool: '工具', artifact: '产物', acg: 'ACG', 'acg-node': '节点', result: '结果', runtime: '输出'
+  }
+  const counts = new Map<string, number>()
+  symbols.forEach(symbol => counts.set(symbol.type, (counts.get(symbol.type) || 0) + 1))
+  return Array.from(counts.entries()).map(([type, count]) => `${labels[type as RunDocumentSymbol['type']] || type} ${count}`).join(' · ')
+}
+const planningStageViewKey = (symbol: RunDocumentSymbol): PlanningStageViewKey | null => {
+  const key = symbol.viewKey
+  return key && key !== 'intent-profile' ? key : null
 }
 const browserColumns = computed(() => {
-  const columns: Array<{ id: string; title: string; symbols: RunDocumentSymbol[]; detail?: RunDocumentSymbol; graph?: boolean }> = [{
+  const columns: Array<{ id: string; title: string; symbols: RunDocumentSymbol[]; detail?: RunDocumentSymbol; graph?: boolean; context?: RunDocumentSymbol }> = [{
     id: 'root',
     title: 'OUTLINE',
     symbols: visibleSymbols.value
@@ -292,12 +381,12 @@ const browserColumns = computed(() => {
   for (const selectedId of horizontalPath.value) {
     const selected = currentSymbols.find(item => item.id === selectedId)
     if (!selected || !selected.children.length) break
-    columns.push({ id: selected.id, title: selected.title, symbols: selected.children })
+    columns.push({ id: selected.id, title: selected.title, symbols: selected.children, context: selected })
     currentSymbols = selected.children
   }
   const selected = findRunDocumentSymbol(documentModel.value.symbols, selectedSymbolIdForView.value)
   const selectedIsVisible = selected && columns.some(column => column.symbols.some(item => item.id === selected.id))
-  if (selected && selectedIsVisible && !selected.children.length) {
+  if (selected && selectedIsVisible && (selected.viewKey || !selected.children.length)) {
     columns.push(selected.type === 'acg'
       ? { id: `graph:${selected.id}`, title: 'GRAPH', symbols: [], graph: true }
       : { id: `detail:${selected.id}`, title: 'INSPECTOR', symbols: [], detail: selected })
@@ -333,10 +422,9 @@ const setHorizontalPath = (nextPath: string[], options: { scroll?: boolean; targ
     || horizontalPath.value.some((item, index) => item !== nextPath[index])
   horizontalPath.value = nextPath
   if (!scroll) return
-  // 进入下一级时显示新列；返回上一级时把父级所在列重新带回视口。
-  const targetColumn = previousDepth > nextDepth
-    ? Math.max(0, nextDepth - 1)
-    : options.targetColumn ?? nextDepth
+  // 新路径的列索引与路径深度一致：返回时要把父级列本身带回视口，
+  // 而不是再向左多退一列。
+  const targetColumn = options.targetColumn ?? nextDepth
   // 路径未变时，可能只是刚刚出现了 Inspector 列，也需要将新列带入视口。
   if (changed || options.targetColumn != null) void scrollToBrowserColumn(targetColumn)
 }
@@ -346,6 +434,57 @@ const graphColumnStyle = computed(() => graphColumnWidth.value == null ? undefin
   flex: `0 0 ${graphColumnWidth.value}px`,
   width: `${graphColumnWidth.value}px`
 })
+const DETAIL_COLUMN_MIN_WIDTH = 320
+const DETAIL_COLUMN_MAX_WIDTH = 720
+const detailColumnWidth = ref<number | null>(null)
+const detailColumnStyle = computed(() => detailColumnWidth.value == null ? undefined : {
+  flex: `0 0 ${detailColumnWidth.value}px`,
+  width: `${detailColumnWidth.value}px`
+})
+let detailResizeCleanup: (() => void) | null = null
+const clampDetailColumnWidth = (width: number) => Math.min(
+  DETAIL_COLUMN_MAX_WIDTH,
+  Math.max(DETAIL_COLUMN_MIN_WIDTH, Math.round(width))
+)
+const stopDetailResize = () => {
+  detailResizeCleanup?.()
+  detailResizeCleanup = null
+}
+const startDetailResize = (event: PointerEvent) => {
+  if (event.button !== 0) return
+  const handle = event.currentTarget as HTMLElement
+  const column = handle.closest<HTMLElement>('.run-progress__column')
+  const startWidth = column?.getBoundingClientRect().width || 480
+  const startX = event.clientX
+  const previousCursor = document.body.style.cursor
+  const previousUserSelect = document.body.style.userSelect
+  detailColumnWidth.value = clampDetailColumnWidth(startWidth)
+  const onMove = (moveEvent: PointerEvent) => {
+    detailColumnWidth.value = clampDetailColumnWidth(startWidth - (moveEvent.clientX - startX))
+  }
+  const onUp = () => stopDetailResize()
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  detailResizeCleanup = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+    document.body.style.cursor = previousCursor
+    document.body.style.userSelect = previousUserSelect
+  }
+  event.preventDefault()
+}
+const handleDetailResizeKeydown = (event: KeyboardEvent) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  event.preventDefault()
+  const handle = event.currentTarget as HTMLElement
+  const column = handle.closest<HTMLElement>('.run-progress__column')
+  const currentWidth = detailColumnWidth.value || column?.getBoundingClientRect().width || 480
+  detailColumnWidth.value = clampDetailColumnWidth(currentWidth + (event.key === 'ArrowLeft' ? 24 : -24))
+}
 const graphRuntimePhases = computed(() => Object.fromEntries(
   Object.entries(props.runtimeStore?.nodes || {}).map(([nodeId, state]) => [nodeId, state.phase])
 ))
@@ -363,7 +502,7 @@ const openGraphNode = (nodeId: string) => {
 const isBrowserExpanded = (symbol: RunDocumentSymbol) => horizontalPath.value.includes(symbol.id)
 const toggleBrowser = (symbol: RunDocumentSymbol) => {
   const columnIndex = browserColumns.value.findIndex(column => column.symbols.some(item => item.id === symbol.id))
-  if (columnIndex < 0 || !symbol.children.length) return
+  if (columnIndex < 0 || !symbol.children.length || symbol.viewKey) return
   const prefix = horizontalPath.value.slice(0, columnIndex)
   const isOpen = horizontalPath.value[columnIndex] === symbol.id
   if (isOpen) return
@@ -384,6 +523,13 @@ const syncHorizontalPathForSelection = (selectedId: string | null, symbols = doc
   if (!selected || !parentPath) return
   // A selected parent owns the next column; a selected leaf owns the
   // inspector column attached to its existing parent column.
+  if (selected.viewKey) {
+    setHorizontalPath(parentPath, {
+      scroll,
+      targetColumn: parentPath.length + 1
+    })
+    return
+  }
   if (selected.children.length) {
     setHorizontalPath([...parentPath, selected.id], {
       scroll,
@@ -462,6 +608,8 @@ const breadcrumbItems = computed(() => {
   }
   visit(documentModel.value.symbols)
   return path
+    .filter(item => !(item.type === 'result' && item.viewKey))
+    .filter((item, index, items) => index === 0 || item.title !== items[index - 1].title)
 })
 
 const symbolEntry = (item: RunDocumentSymbol) => props.projection.entries.find(entry => (
@@ -589,6 +737,7 @@ watch(documentModel, async () => {
 .run-progress__stream { box-sizing: border-box; display: flex; flex: 1 0 auto; flex-direction: column; width: max-content; min-width: 100%; min-height: 100%; padding-bottom: 42px; }
 .run-progress__browser { display: flex; flex: 1 0 auto; align-items: stretch; min-width: 100%; min-height: 100%; padding-inline: var(--run-content-inset); }
 .run-progress__column { flex: 0 0 clamp(280px, 30vw, 380px); align-self: stretch; min-width: 0; min-height: 100%; border-right: 1px solid var(--wb-border-soft); }
+.run-progress__column.is-detail-column { position: relative; flex-basis: clamp(400px, 34vw, 560px); }
 .run-progress__column.is-graph-column { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
 .run-progress__body.is-graph-mode .run-progress__stream,
 .run-progress__body.is-graph-mode .run-progress__browser,
@@ -596,7 +745,37 @@ watch(documentModel, async () => {
 .run-progress__body.is-graph-mode .run-progress__stream { flex: 1 1 auto; padding-bottom: 0; }
 .run-progress__column:first-child { border-left: 1px solid var(--wb-border-soft); }
 .run-progress__column-head { padding: 10px 12px 9px; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text-muted); font: 12px var(--font-mono, monospace); letter-spacing: .1em; }
+.run-progress__resize-handle { position: absolute; z-index: 3; top: 0; bottom: 0; left: -5px; width: 10px; cursor: col-resize; touch-action: none; }
+.run-progress__resize-handle::after { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--wb-accent); content: ''; opacity: 0; transition: opacity .15s ease; }
+.run-progress__resize-handle:hover::after, .run-progress__resize-handle:focus-visible::after { opacity: .75; }
+.run-progress__resize-handle:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: -1px; }
 .run-progress__column-body { padding: 4px 8px 24px; }
+.run-progress__column-body.is-terminal-body { padding: 14px 16px 28px; }
+.run-progress__terminal-summary { padding: 1px 0 15px; border-bottom: 1px solid var(--wb-border-soft); }
+.run-progress__terminal-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.run-progress__terminal-eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
+.run-progress__terminal-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--wb-border-strong) 72%, transparent); border-radius: 999px; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); white-space: nowrap; }
+.run-progress__terminal-status.is-running { border-color: color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border)); color: var(--wb-accent); }
+.run-progress__terminal-status.is-completed { border-color: color-mix(in srgb, var(--wb-success) 34%, var(--wb-border)); color: var(--wb-success); }
+.run-progress__terminal-status.is-warning { border-color: color-mix(in srgb, var(--wb-warning) 34%, var(--wb-border)); color: var(--wb-warning); }
+.run-progress__terminal-status.is-failed { border-color: color-mix(in srgb, var(--wb-danger) 34%, var(--wb-border)); color: var(--wb-danger); }
+.run-progress__terminal-summary h2 { margin: 10px 0 0; color: var(--wb-text); font-size: 16px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.run-progress__terminal-detail { margin: 7px 0 0; color: var(--wb-text-secondary); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.run-progress__terminal-summary-copy { margin: 6px 0 0; color: var(--wb-text-secondary); font-size: 12px; line-height: 1.5; }
+.run-progress__terminal-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 13px 0 0; border-top: 1px solid var(--wb-border-soft); }
+.run-progress__terminal-metrics > div { min-width: 0; padding: 9px 0 1px; }
+.run-progress__terminal-metrics > div:nth-child(odd) { padding-right: 14px; }
+.run-progress__terminal-metrics > div:nth-child(even) { padding-left: 14px; border-left: 1px solid var(--wb-border-soft); }
+.run-progress__terminal-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--wb-border-soft); }
+.run-progress__terminal-metrics dt { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.run-progress__terminal-metrics dd { min-width: 0; margin: 4px 0 0; overflow: hidden; color: var(--wb-text-secondary); font: 11px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.run-progress__activity-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 20px 2px 7px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
+.run-progress__activity-heading small { color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); letter-spacing: 0; }
+.run-progress__activity-empty { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text-muted); font-size: 12px; }
+.run-progress__column-body.is-terminal-body :deep(.run-symbol) { border-bottom: 1px solid var(--wb-border-soft); background: transparent; }
+.run-progress__column-body.is-terminal-body :deep(.run-symbol:first-of-type) { border-top: 1px solid var(--wb-border-soft); }
+.run-progress__column-body.is-terminal-body :deep(.run-symbol + .run-symbol) { margin-top: 0; }
+.run-progress__column-body.is-terminal-body :deep(.editor-object-row) { min-height: 42px; }
 .run-progress__graph-preview { display: flex; flex: 1 1 auto; height: auto; min-height: 540px; overflow: hidden; }
 .run-progress__body.is-graph-mode .run-progress__graph-preview { min-height: 0; height: auto; }
 .run-progress__graph-preview :deep(.acg-topology) { height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
