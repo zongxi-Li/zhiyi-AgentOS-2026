@@ -104,6 +104,10 @@ services:
       AGENTOS_AUDIT_DB: /app/data/agentos/audit_decisions.sqlite3
       AGENTOS_EVOLUTION_DB: /app/data/agentos/evolution.sqlite3
       AGENTOS_IDENTITY_DB: /app/data/agentos/identity_v2.sqlite3
+      AGENTOS_ATTACHMENT_STORAGE_DIR: /app/data/agentos/attachments
+      AGENTOS_ATTACHMENT_MAX_FILE_BYTES: ${AGENTOS_ATTACHMENT_MAX_FILE_BYTES:-}
+      AGENTOS_ATTACHMENT_MAX_TOTAL_BYTES: ${AGENTOS_ATTACHMENT_MAX_TOTAL_BYTES:-}
+      AGENTOS_ATTACHMENT_MAX_CONTEXT_CHARACTERS: ${AGENTOS_ATTACHMENT_MAX_CONTEXT_CHARACTERS:-120000}
       AGENTOS_SQLITE_BUSY_TIMEOUT_MS: ${AGENTOS_SQLITE_BUSY_TIMEOUT_MS:-5000}
       # read_only 根文件系统下 SQLite 临时目录落到 /tmp tmpfs(256m)，大排序溢出会
       # 误报 database or disk is full；指向数据卷交给真实磁盘（2026-09-08 run_889c69df00b4 根因）
