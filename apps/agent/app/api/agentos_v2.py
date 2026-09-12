@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,6 +39,8 @@ from runtime.v2.workspace import (
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
+from components.attachments import AttachmentError
+from contracts.attachments import InputAttachmentStatus
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ class MissionCreateRequest(BaseModel):
     priority: str = "normal"
     enabled_plugin_ids: list[str] | None = Field(default=None, alias="enabledPluginIds")
     material_refs: list[str] | None = Field(default=None, alias="materialRefs")
+    attachment_ids: list[str] | None = Field(default=None, alias="attachmentIds")
     client_request_id: str | None = Field(default=None, alias="clientRequestId", max_length=200)
 
 
@@ -70,6 +73,7 @@ class MissionRunCreateRequest(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
     enabled_plugin_ids: list[str] | None = Field(default=None, alias="enabledPluginIds")
     material_refs: list[str] | None = Field(default=None, alias="materialRefs")
+    attachment_ids: list[str] | None = Field(default=None, alias="attachmentIds")
     client_request_id: str = Field(alias="clientRequestId", min_length=1, max_length=200)
     source_run_id: str = Field(alias="sourceRunId", min_length=1)
     rerun_reason: str = Field(alias="rerunReason", min_length=1, max_length=80)
@@ -264,7 +268,8 @@ def _state(run: RuntimeRunRecord) -> dict[str, Any]:
 
 
 _HISTORY_INPUT_KEYS = (
-    "taskName", "taskGoal", "userIntent", "materialText", "materialIds", "materialRefs", "constraints",
+    "taskName", "taskGoal", "userIntent", "materialText", "materialIds", "materialRefs",
+    "attachmentIds", "inputAttachments", "constraints",
     "expectedArtifacts", "planningMode", "planningDiversity", "planningSeed", "webSearchEnabled",
     "capabilityProfile",
     "thinkingMode", "pluginData", "contractText", "contractType", "legalReviewGoal",
@@ -598,6 +603,7 @@ def create_router(
     def prepare_execution_input(
         payload: dict[str, Any],
         material_refs: list[str] | None,
+        attachment_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Resolve actor ownership and sealed materials for a Mission or Run command."""
 
@@ -606,6 +612,58 @@ def create_router(
             *(material_refs or []),
             *(execution_input.get("materialRefs") or []),
         ]))
+        requested_attachments = list(dict.fromkeys([
+            *(attachment_ids or []),
+            *(execution_input.get("attachmentIds") or []),
+        ]))
+        if requested_attachments:
+            attachment_service = getattr(runtime, "attachment_service", None)
+            if attachment_service is None:
+                raise AttachmentError(
+                    "UPLOAD_FAILED", "attachment service is unavailable", status_code=503
+                )
+            actor = current_trusted_user()
+            owner_user_id = actor.user_id if actor is not None else "internal"
+            attachments = [
+                attachment_service.get(item, owner_user_id=owner_user_id)
+                for item in requested_attachments
+            ]
+            failed = [item for item in attachments if item.status is InputAttachmentStatus.FAILED]
+            if failed:
+                raise AttachmentError(
+                    "PARSING_FAILED", "one or more attachments failed parsing", status_code=422
+                )
+            not_ready = [
+                item.attachment_id for item in attachments
+                if item.status is not InputAttachmentStatus.READY or not item.extracted_content_ref
+            ]
+            if not_ready:
+                raise AttachmentError(
+                    "ATTACHMENT_NOT_READY", "attachment is not ready", status_code=409
+                )
+            if attachment_service.limits.max_total_bytes is not None and sum(item.size_bytes for item in attachments) > attachment_service.limits.max_total_bytes:
+                raise AttachmentError(
+                    "ATTACHMENT_CONTEXT_TOO_LARGE",
+                    "total attachment size exceeds the configured Mission limit",
+                    status_code=413,
+                )
+            refs.extend(str(item.extracted_content_ref) for item in attachments)
+            execution_input["attachmentIds"] = requested_attachments
+            execution_input["inputAttachments"] = [
+                {
+                    "attachmentId": item.attachment_id,
+                    "filename": item.original_filename,
+                    "mimeType": item.mime_type,
+                    "extension": item.extension,
+                    "sizeBytes": item.size_bytes,
+                    "sha256": item.sha256,
+                    "status": item.status.value,
+                    "materialRef": item.extracted_content_ref,
+                    "characterCount": item.character_count,
+                    "parser": item.parser,
+                }
+                for item in attachments
+            ]
         inline_material = execution_input.pop("materialText", None)
         if isinstance(inline_material, str) and inline_material:
             actor = current_trusted_user()
@@ -642,6 +700,74 @@ def create_router(
             media_type=request.media_type,
         )
         return manifest.model_dump(by_alias=True, mode="json")
+
+    def attachment_projection(attachment: Any) -> dict[str, Any]:
+        projected = attachment.model_dump(
+            by_alias=True,
+            mode="json",
+            exclude={"owner_user_id", "owner_tenant_id", "storage_key"},
+        )
+        projected["filename"] = attachment.original_filename
+        if attachment.status is InputAttachmentStatus.FAILED:
+            projected["errorCode"] = "PARSING_FAILED"
+        return projected
+
+    @router.post("/attachments", status_code=status.HTTP_201_CREATED)
+    async def upload_attachment(file: UploadFile = File(...)):
+        service = getattr(runtime, "attachment_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail={"code": "UPLOAD_FAILED", "message": "attachment service is unavailable"})
+        actor = current_trusted_user()
+        owner_user_id = actor.user_id if actor is not None else "internal"
+        try:
+            content = await file.read(
+                service.limits.max_file_bytes + 1
+                if service.limits.max_file_bytes is not None else -1
+            )
+            attachment = service.upload(
+                content=content,
+                filename=file.filename or "",
+                mime_type=file.content_type,
+                owner_user_id=owner_user_id,
+                owner_tenant_id=(actor.tenant_id if actor is not None else None),
+            )
+            return attachment_projection(attachment)
+        except AttachmentError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        finally:
+            await file.close()
+
+    @router.get("/attachments/{attachment_id}")
+    async def get_attachment(attachment_id: str):
+        service = getattr(runtime, "attachment_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail={"code": "UPLOAD_FAILED", "message": "attachment service is unavailable"})
+        actor = current_trusted_user()
+        try:
+            attachment = service.get(
+                attachment_id,
+                owner_user_id=(actor.user_id if actor is not None else "internal"),
+            )
+            return attachment_projection(attachment)
+        except AttachmentError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @router.delete("/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_attachment(attachment_id: str):
+        service = getattr(runtime, "attachment_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail={"code": "UPLOAD_FAILED", "message": "attachment service is unavailable"})
+        actor = current_trusted_user()
+        try:
+            service.delete(
+                attachment_id,
+                owner_user_id=(actor.user_id if actor is not None else "internal"),
+            )
+        except AttachmentError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
 
     @router.get("/materials/{manifest_id}")
     async def get_material(manifest_id: str):
@@ -1119,6 +1245,16 @@ def create_router(
                     [*historical_summaries, runtime_summary],
                     key=lambda item: (item.created_at, item.run_id),
                 ),
+                inputAttachments=[
+                    item.model_dump(
+                        by_alias=True,
+                        mode="json",
+                        exclude={"owner_user_id", "owner_tenant_id", "storage_key"},
+                    )
+                    for item in identity_repositories.input_attachments.list_for_mission(
+                        mission_id
+                    )
+                ],
                 diagnostics=[WorkspaceDiagnostic(
                     code="PLANNING_PROJECTION_PENDING",
                     message="Run exists in the execution runtime; its identity graph is not available yet.",
@@ -1384,7 +1520,9 @@ def create_router(
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
                 return project(existing)
         try:
-            mission_input = prepare_execution_input(request.input, request.material_refs)
+            mission_input = prepare_execution_input(
+                request.input, request.material_refs, request.attachment_ids
+            )
             task = runtime.create_mission(
                 title=request.title,
                 domain=request.domain,
@@ -1406,6 +1544,11 @@ def create_router(
             )
             await coordinator.submit(run.run_id)
             return project(runtime.get_status(run.run_id))
+        except AttachmentError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
         except (KeyError, ValueError) as exc:
             logger.exception(
                 "mission_start_rejected",
@@ -1754,7 +1897,9 @@ def create_router(
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
                 return project(existing)
         try:
-            run_input = prepare_execution_input(request.input, request.material_refs)
+            run_input = prepare_execution_input(
+                request.input, request.material_refs, request.attachment_ids
+            )
             _, run = runtime.prepare_run(
                 mission_id,
                 workflow_id=request.workflow_id or source_run.workflow_id,

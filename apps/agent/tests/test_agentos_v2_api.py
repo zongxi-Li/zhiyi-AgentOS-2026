@@ -15,12 +15,21 @@ from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context
 from components.executor import InMemoryExecutionValueStore
+from components.content import SQLiteContentManifestStore
+from components.attachments import (
+    AttachmentLimits,
+    DocumentTextExtractorRegistry,
+    InputAttachmentService,
+    LocalAttachmentStorage,
+    PlainTextExtractor,
+)
 from components.planner import TaskDecompositionError
 from components.resource.auth import build_resource_signature
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.content import ContentKind
+from contracts.attachments import InputAttachmentStatus
 from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
 from contracts.planning import PlannedTask
 from contracts.runtime_events import RuntimeEvent
@@ -51,6 +60,97 @@ class _ApiAgent(BaseAgent):
 
     async def run(self, context):
         return AgentOutput(output={"report": _SECRET}, summary="safe report summary")
+
+
+class _ContractPlanningLLM:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def generate_json(self, prompt: str, schema: dict, **_kwargs) -> dict:
+        self.prompts.append(prompt)
+        if "primaryGoal" in (schema.get("properties") or {}):
+            return {
+                "primaryGoal": "审查软件合同并生成风险报告",
+                "keyConstraints": [],
+                "requiredCapabilities": ["task_understanding", "analysis", "artifact_generation"],
+                "expectedArtifacts": [],
+                "verificationRequirements": [],
+                "estimatedComplexity": "medium",
+            }
+        return {
+            "tasks": [
+                {
+                    "key": "extract-contract-terms", "title": "提取合同核心条款",
+                    "objective": "从用户上传的软件合同提取金额、付款、交付、验收和知识产权条款",
+                    "capabilityId": "task_understanding", "acceptanceCriteria": ["覆盖五类核心条款"],
+                    "sourceRefs": [], "decompositionRationale": "先理解输入材料", "logicalRole": "source_analysis",
+                },
+                {
+                    "key": "analyze-contract-risks", "title": "分析双方风险与冲突",
+                    "objective": "分析甲乙双方风险、条款冲突并给出高中低评级",
+                    "capabilityId": "analysis", "acceptanceCriteria": ["双方风险均有评级"],
+                    "sourceRefs": ["extract-contract-terms"], "decompositionRationale": "基于条款形成风险结论", "logicalRole": "analysis",
+                },
+                {
+                    "key": "generate-contract-report", "title": "生成最终合同审查报告",
+                    "objective": "综合核心条款、风险评级、冲突和修改建议形成最终报告",
+                    "capabilityId": "artifact_generation", "acceptanceCriteria": ["生成可交付报告"],
+                    "sourceRefs": ["analyze-contract-risks"], "decompositionRationale": "汇总最终交付物", "logicalRole": "final_synthesis",
+                },
+            ],
+            "relations": [
+                {"sourceKey": "extract-contract-terms", "targetKey": "analyze-contract-risks", "relationType": "depends_on"},
+                {"sourceKey": "analyze-contract-risks", "targetKey": "generate-contract-report", "relationType": "depends_on"},
+            ],
+        }
+
+
+class _ContractE2EAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__(AgentProfile(
+            agentName="api-agent",
+            domain="general",
+            capabilities=["task_understanding", "analysis", "artifact_generation"],
+        ))
+        self.seen_attachment_ids: list[str] = []
+        self.seen_contract_text = False
+
+    async def run(self, context):
+        attachment_context = context.task.input.get("attachmentContext") or {}
+        documents = attachment_context.get("documents") or []
+        self.seen_attachment_ids = [item["attachmentId"] for item in documents]
+        self.seen_contract_text = any("800000" in item.get("content", "") for item in documents)
+        capability = context.capability_descriptor.capability_id
+        if capability == "task_understanding":
+            return AgentOutput(output={
+                "task_summary": "合同金额 800000 元，签约后 30%，验收后 70%",
+                "constraints": [],
+            }, summary="核心条款已提取")
+        if capability == "analysis":
+            return AgentOutput(output={
+                "analysis": {
+                    "findings": ["默示验收期较短", "知识产权共同所有边界不清"],
+                    "assumptions": [], "gaps": [],
+                }
+            }, summary="双方风险与冲突已分析")
+        attachment_ids = list(context.task.input.get("attachmentIds") or [])
+        return AgentOutput(output={
+            "deliverable": {
+                "title": "软件合同审查报告",
+                "executiveSummary": "合同存在默示验收和知识产权边界风险。",
+                "sections": [{"title": "风险", "content": "建议延长异议期并细化权利范围。", "sourceFields": ["contract.txt"]}],
+                "calculations": [], "assumptions": [], "openQuestions": [],
+                "sourceRefs": attachment_ids,
+            },
+            "final_answer": "已生成合同审查报告。",
+            "verification": {"status": "passed", "checks": [], "unresolvedGaps": []},
+            "artifact": {
+                "artifactId": "contract-review", "artifactKey": "final", "type": "run_deliverable",
+                "title": "软件合同审查报告", "mediaType": "text/markdown",
+                "content": "# 软件合同审查报告\n\n金额 800000 元。高风险：知识产权边界不清。",
+                "structuredData": {"sourceAttachmentIds": attachment_ids},
+            },
+        }, summary="最终合同审查报告已生成")
 
 
 class _GatedApiAgent(BaseAgent):
@@ -99,13 +199,16 @@ def _runtime(tmp_path, *, with_identity: bool = False, agent: BaseAgent | None =
         )
     )
     identity_lifecycle = None
+    content_manifest_store = None
     if with_identity:
         identity_service = AcgIdentityLifecycleService(
             SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
         )
+        content_manifest_store = SQLiteContentManifestStore(tmp_path / "api-content.sqlite3")
         identity_lifecycle = IdentityProjectionBridge(
             identity_service,
             identity_service.repositories,
+            content_manifest_store,
         )
     return ExecutionRuntime(
         agent_registry=agents,
@@ -113,8 +216,25 @@ def _runtime(tmp_path, *, with_identity: bool = False, agent: BaseAgent | None =
         workflow_store=MemoryWorkflowStore(),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "api-checkpoints.sqlite3"),
         execution_value_store=InMemoryExecutionValueStore(),
+        content_manifest_store=content_manifest_store,
         identity_lifecycle=identity_lifecycle,
     )
+
+
+def _attach_input_service(runtime: ExecutionRuntime, tmp_path, *, max_file_bytes: int = 1024) -> None:
+    service = InputAttachmentService(
+        repository=runtime.identity_lifecycle.repositories.input_attachments,
+        storage=LocalAttachmentStorage(tmp_path / "attachments"),
+        extractors=DocumentTextExtractorRegistry((PlainTextExtractor(),)),
+        content_store=runtime.content_manifest_store,
+        limits=AttachmentLimits(
+            max_file_bytes=max_file_bytes,
+            max_total_bytes=max_file_bytes * 2,
+            max_context_characters=4096,
+        ),
+    )
+    runtime.attachment_service = service
+    runtime.attachment_context_builder = service.context_builder
 
 
 async def test_v2_run_state_is_reference_only_and_output_requires_owned_reference(tmp_path) -> None:
@@ -970,6 +1090,225 @@ async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts
             )
             assert conflict.status_code == 409
             assert conflict.json() == {"detail": "clientRequestId conflict"}
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_attachment_api_upload_get_delete_and_limits(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    _attach_input_service(runtime, tmp_path, max_file_bytes=16)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        uploaded = await client.post(
+            "/agentos/v2/attachments",
+            files={"file": ("contract.txt", b"payment is 30 percent", "text/plain")},
+        )
+        assert uploaded.status_code == 413
+        unsupported = await client.post(
+            "/agentos/v2/attachments",
+            files={"file": ("payload.exe", b"MZ", "application/octet-stream")},
+        )
+        assert unsupported.status_code == 422
+        assert unsupported.json()["detail"]["code"] == "UNSUPPORTED_FILE_TYPE"
+
+    runtime.attachment_service.limits = AttachmentLimits(
+        max_file_bytes=1024,
+        max_total_bytes=2048,
+        max_context_characters=4096,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        uploaded = await client.post(
+            "/agentos/v2/attachments",
+            files={"file": ("contract.txt", b"payment is 30 percent", "text/plain")},
+        )
+        assert uploaded.status_code == 201
+        body = uploaded.json()
+        assert body["status"] == "READY"
+        assert body["filename"] == "contract.txt"
+        assert "storageKey" not in body
+        detail = await client.get(f'/agentos/v2/attachments/{body["attachmentId"]}')
+        assert detail.status_code == 200
+        deleted = await client.delete(f'/agentos/v2/attachments/{body["attachmentId"]}')
+        assert deleted.status_code == 204
+        assert (await client.get(f'/agentos/v2/attachments/{body["attachmentId"]}')).status_code == 404
+
+
+async def test_mission_and_run_snapshot_own_ready_attachment_references(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    _attach_input_service(runtime, tmp_path)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            ids = []
+            for name, content in (("contract.txt", b"amount 800000"), ("terms.md", b"acceptance after 7 days")):
+                response = await client.post(
+                    "/agentos/v2/attachments",
+                    files={"file": (name, content, "text/plain")},
+                )
+                assert response.status_code == 201
+                ids.append(response.json()["attachmentId"])
+            created = await client.post(
+                "/agentos/v2/missions",
+                json={"title": "Review contract", "workflowId": "api-workflow", "attachmentIds": ids},
+            )
+            assert created.status_code == 202
+            mission_id = created.json()["missionId"]
+            run_id = created.json()["runId"]
+            repositories = runtime.identity_lifecycle.repositories
+            assert [item.attachment_id for item in repositories.input_attachments.list_for_mission(mission_id)] == ids
+            for _ in range(100):
+                if repositories.input_attachments.list_for_run(run_id):
+                    break
+                await asyncio.sleep(0.05)
+            assert [item.attachment_id for item in repositories.input_attachments.list_for_run(run_id)] == ids
+            run = runtime.get_status(run_id)
+            assert run.input["attachmentIds"] == ids
+            assert len(run.input["materialRefs"]) == 2
+            assert "amount 800000" not in json.dumps(run.input)
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_mission_fails_closed_for_missing_or_failed_attachment(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    _attach_input_service(runtime, tmp_path)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            missing = await client.post(
+                "/agentos/v2/missions",
+                json={"title": "Missing", "workflowId": "api-workflow", "attachmentIds": ["att_missing"]},
+            )
+            assert missing.status_code == 404
+            assert missing.json()["detail"]["code"] == "ATTACHMENT_NOT_FOUND"
+            parsing = await client.post(
+                "/agentos/v2/attachments",
+                files={"file": ("parsing.txt", b"still parsing", "text/plain")},
+            )
+            parsing_id = parsing.json()["attachmentId"]
+            runtime.identity_lifecycle.repositories.input_attachments.update_status(
+                parsing_id, InputAttachmentStatus.PARSING
+            )
+            not_ready = await client.post(
+                "/agentos/v2/missions",
+                json={"title": "Parsing", "workflowId": "api-workflow", "attachmentIds": [parsing_id]},
+            )
+            assert not_ready.status_code == 409
+            assert not_ready.json()["detail"]["code"] == "ATTACHMENT_NOT_READY"
+            failed = await client.post(
+                "/agentos/v2/attachments",
+                files={"file": ("broken.txt", b"text\x00binary", "text/plain")},
+            )
+            assert failed.status_code == 201
+            assert failed.json()["status"] == "FAILED"
+            rejected = await client.post(
+                "/agentos/v2/missions",
+                json={
+                    "title": "Failed parse",
+                    "workflowId": "api-workflow",
+                    "attachmentIds": [failed.json()["attachmentId"]],
+                },
+            )
+            assert rejected.status_code == 422
+            assert rejected.json()["detail"]["code"] == "PARSING_FAILED"
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_contract_txt_attachment_runs_through_planner_acg_runtime_and_deliverable(tmp_path) -> None:
+    agent = _ContractE2EAgent()
+    planner_llm = _ContractPlanningLLM()
+    runtime = _runtime(tmp_path, with_identity=True, agent=agent)
+    _attach_input_service(runtime, tmp_path, max_file_bytes=64 * 1024)
+    runtime.set_intent_llm(planner_llm)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    contract = """甲方：星河科技
+乙方：知弈软件工作室
+
+合同金额：800000 元。
+
+付款：
+签约后支付 30%，验收后支付 70%。
+
+交付：
+合同签订后 60 日内完成。
+
+验收：
+甲方收到成果后 7 日内未提出书面异议，
+视为验收通过。
+
+知识产权：
+项目成果由甲乙双方共同所有。
+"""
+    user_task = """请审查上传的软件合同。
+
+要求：
+1. 提取核心条款；
+2. 分析甲方风险；
+3. 分析乙方风险；
+4. 检查条款冲突；
+5. 给出高/中/低风险评级；
+6. 给出修改建议；
+7. 生成最终合同审查报告。"""
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            uploaded = await client.post(
+                "/agentos/v2/attachments",
+                files={"file": ("contract.txt", contract.encode("utf-8"), "text/plain")},
+            )
+            assert uploaded.status_code == 201
+            attachment_id = uploaded.json()["attachmentId"]
+            created = await client.post(
+                "/agentos/v2/missions",
+                json={
+                    "title": "合同审查 E2E",
+                    "workflowId": "api-workflow",
+                    "attachmentIds": [attachment_id],
+                    "input": {
+                        "userIntent": user_task,
+                        "planningMode": "dynamic",
+                        "capabilityProfile": "standard",
+                    },
+                },
+            )
+            assert created.status_code == 202
+            run_id = created.json()["runId"]
+            for _ in range(200):
+                run = runtime.get_status(run_id)
+                if run.status.value in {"completed", "failed", "cancelled"}:
+                    break
+                await asyncio.sleep(0.05)
+            assert run.status.value == "completed", run.error
+
+        assert any("800000" in prompt and "contract.txt" in prompt for prompt in planner_llm.prompts)
+        task_plan = run.execution_state["taskPlan"]
+        assert [node["key"] for node in task_plan["nodes"]] == [
+            "extract-contract-terms", "analyze-contract-risks", "generate-contract-report"
+        ]
+        assert run.execution_state["graphId"]
+        assert run.execution_state["compiledACGPackage"]["packageId"]
+        assert agent.seen_contract_text is True
+        assert agent.seen_attachment_ids == [attachment_id]
+
+        repositories = runtime.identity_lifecycle.repositories
+        assert [item.attachment_id for item in repositories.input_attachments.list_for_run(run_id)] == [attachment_id]
+        deliverable_binding = next(
+            item for item in repositories.run_artifact_bindings.list_for_run(run_id)
+            if item.artifact_key == "final"
+        )
+        deliverable = repositories.artifacts.get(deliverable_binding.artifact_id)
+        assert deliverable is not None and deliverable.artifact_type == "run_deliverable"
+        assert deliverable.metadata["sourceAttachmentIds"] == [attachment_id]
+        manifest = runtime.content_manifest_store.get_manifest(deliverable.content_ref)
+        assert runtime.content_manifest_store.assemble(manifest.manifest_id).decode("utf-8").startswith("# 软件合同审查报告")
     finally:
         await coordinator.shutdown()
 

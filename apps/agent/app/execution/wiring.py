@@ -17,6 +17,15 @@ from components.evolution.service import EvolutionService
 from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
 from components.content import SQLiteContentManifestStore
+from components.attachments import (
+    AttachmentLimits,
+    DocumentTextExtractorRegistry,
+    DocxTextExtractor,
+    InputAttachmentService,
+    LocalAttachmentStorage,
+    PdfTextExtractor,
+    PlainTextExtractor,
+)
 from components.resource.service import ResourceService
 from components.resource.health import ResourceHealthMonitor
 from components.resource.health_store import SQLiteResourceHealthStore
@@ -278,6 +287,28 @@ def build_default_runtime(
         identity_service.repositories,
         content_manifest_store,
     )
+    attachment_limits = AttachmentLimits(
+        max_file_bytes=int(env["AGENTOS_ATTACHMENT_MAX_FILE_BYTES"]) if env.get("AGENTOS_ATTACHMENT_MAX_FILE_BYTES") else None,
+        max_total_bytes=int(env["AGENTOS_ATTACHMENT_MAX_TOTAL_BYTES"]) if env.get("AGENTOS_ATTACHMENT_MAX_TOTAL_BYTES") else None,
+        max_context_characters=int(env.get("AGENTOS_ATTACHMENT_MAX_CONTEXT_CHARACTERS") or 120_000),
+    )
+    attachment_service = InputAttachmentService(
+        repository=identity_service.repositories.input_attachments,
+        storage=LocalAttachmentStorage(
+            Path(str(env.get("AGENTOS_ATTACHMENT_STORAGE_DIR") or workflow_path.parent / "attachments"))
+        ),
+        extractors=DocumentTextExtractorRegistry((
+            PlainTextExtractor(),
+            PdfTextExtractor(max_pages=int(env.get("AGENTOS_ATTACHMENT_PDF_MAX_PAGES") or 500)),
+            DocxTextExtractor(
+                max_uncompressed_bytes=int(
+                    env.get("AGENTOS_ATTACHMENT_DOCX_MAX_UNCOMPRESSED_BYTES") or 50 * 1024 * 1024
+                )
+            ),
+        )),
+        content_store=content_manifest_store,
+        limits=attachment_limits,
+    )
     runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
@@ -298,6 +329,8 @@ def build_default_runtime(
         identity_lifecycle=identity_adapter,
         require_planner_identity=True,
     )
+    runtime.attachment_service = attachment_service
+    runtime.attachment_context_builder = attachment_service.context_builder
     reconciliation = IdentityProjectionReconciler(
         identity_adapter
     ).reconcile_workflow_store(runtime.workflow_store)
