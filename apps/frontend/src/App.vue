@@ -1291,12 +1291,20 @@ let disposeUiZoom: (() => void) | null = null
 // 桌面端 F11 全屏切换接管；Web 构建经 @fullscreen-hotkey 别名拿到空实现。
 let disposeFullscreenHotkey: (() => void) | null = null
 
+// 拖拽落到页面里无拖放承接的区域时，阻止 WebView2/浏览器默认的"导航到所拖文件"。
+// 各拖拽区（如新建工程附件）在自己的 dragover/drop 里 preventDefault 不受影响。
+const guardNativeFileDrop = (event: DragEvent): void => {
+  if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
+}
+
 onMounted(() => {
   window.addEventListener('global-error', handleGlobalError as EventListener)
   window.addEventListener('history-refresh', handleHistoryRefresh)
   window.addEventListener('acg-runs-refresh', handleHistoryRefresh)
   window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleAgentHistoryRoleSync)
   window.addEventListener('conversation-workspace-change', handleConversationWorkspaceChange)
+  window.addEventListener('dragover', guardNativeFileDrop)
+  window.addEventListener('drop', guardNativeFileDrop)
   document.addEventListener('mousedown', handleSidebarActionMenuOutside)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
   if (chatNavOpen.value) void loadRecentConversations()
@@ -1319,6 +1327,8 @@ onUnmounted(() => {
   window.removeEventListener('acg-runs-refresh', handleHistoryRefresh)
   window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleAgentHistoryRoleSync)
   window.removeEventListener('conversation-workspace-change', handleConversationWorkspaceChange)
+  window.removeEventListener('dragover', guardNativeFileDrop)
+  window.removeEventListener('drop', guardNativeFileDrop)
   document.removeEventListener('mousedown', handleSidebarActionMenuOutside)
   mobileMediaQuery.removeEventListener('change', handleViewportChange)
 })

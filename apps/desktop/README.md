@@ -216,13 +216,19 @@ Set-Location C:\Users\LZX\Desktop\kinlin_ai
 
 该请求需要带有效认证信息，并且云端部署时要保证头像文件不会因容器重建而丢失。
 
+### 从桌面拖拽文件到附件不生效
+
+`tauri.conf.json` 里主窗口配置了 `"dragDropEnabled": false`，这是刻意设置：Tauri 的原生拖放接管在 Windows 上会吞掉 WebView2 的 HTML5 拖放事件，只有关闭它，前端拖拽区（如新建工程附件）才能收到拖放的文件。不要改回 `true`，否则拖拽添加附件会失效，其他功能不受影响。
+
+同理，F11 全屏由前端（`App.vue` 挂载的 `@fullscreen-hotkey`）调用 Tauri 窗口接口实现，无需额外快捷键插件。
+
 ## 十、发布检查清单
 
 - [ ] 更新桌面端版本号；
 - [ ] 确认 `frontend/.env.desktop` 指向正确的环境；
 - [ ] 执行前端构建和桌面构建；
 - [ ] 在干净的 Windows 环境安装测试；
-- [ ] 验证登录、对话、SSE、WebSocket、头像和文件上传；
+- [ ] 验证登录、对话、SSE、WebSocket、头像、文件上传（含拖拽添加附件）和 F11 全屏；
 - [ ] 验证云端 CORS、HTTPS 和权限策略；
 - [ ] 检查安装包中没有密钥和本地开发配置；
 - [ ] 保存安装包校验和，并通过可信渠道分发。
