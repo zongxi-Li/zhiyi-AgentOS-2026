@@ -8,6 +8,10 @@
 
 **Tech Stack:** Python 3.11, FastAPI, Pydantic 2, SQLite, Redis Lua coordinator, pytest.
 
+### 资源器实现说明
+
+资源器由 Node、Agent 和调度器组成：Node 表示实际机器或服务节点，保存算力、模型、显存、隐私和心跳状态；Agent 表示可执行的能力角色，声明能力以及允许使用的节点。调度器把步骤要求、Agent 约束和 Node 状态联合筛选，选出 `agentId + nodeId`，再通过 Redis/CAS 租约占用容量；远程节点通过签名心跳更新状态，旧 Resource 接口仅作为兼容投影。
+
 ---
 
 ### Task 1: Persistent Node and Agent Stores
