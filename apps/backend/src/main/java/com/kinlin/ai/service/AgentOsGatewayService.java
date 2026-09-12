@@ -9,6 +9,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -146,6 +149,36 @@ public class AgentOsGatewayService {
                 : properties.getTimeoutMs();
     }
 
+    public Map<String, Object> postMultipart(String path, MultipartFile file) {
+        if (!properties.isEnabled()) {
+            return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
+                    "AgentOS gateway is disabled.");
+        }
+        try {
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            MediaType contentType;
+            try {
+                contentType = MediaType.parseMediaType(
+                        file.getContentType() == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : file.getContentType()
+                );
+            } catch (IllegalArgumentException ignored) {
+                contentType = MediaType.APPLICATION_OCTET_STREAM;
+            }
+            builder.part("file", file.getResource())
+                    .filename(file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename())
+                    .contentType(contentType);
+            return webClient.post().uri(path)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(BodyInserters.fromMultipartData(builder.build()))
+                    .exchangeToMono(response -> mapResponse(response.statusCode().value(), response.bodyToMono(String.class)))
+                    .timeout(Duration.ofMillis(properties.getProgressTimeoutMs()))
+                    .onErrorResume(failure -> Mono.just(unavailable(path, failure)))
+                    .block();
+        } catch (Exception failure) {
+            return unavailable(path, failure);
+        }
+    }
+
     private int getTimeoutMs(String path) {
         String pathWithoutQuery = path == null ? "" : path.split("\\?", 2)[0];
         return "/ai/agentos/v2/missions".equals(pathWithoutQuery)
@@ -161,6 +194,15 @@ public class AgentOsGatewayService {
                 return parsed;
             }
             if (upstreamStatus >= 400 && upstreamStatus < 500) {
+                Map<String, Object> parsed = parseObject(body);
+                Object detail = parsed.get("detail");
+                if (detail instanceof Map<?, ?> values) {
+                    Object nestedCode = values.get("code");
+                    Object nestedMessage = values.get("message");
+                    if (nestedCode instanceof String code && nestedMessage instanceof String message) {
+                        return error(upstreamStatus, code, sanitize(message));
+                    }
+                }
                 return error(upstreamStatus, "AGENTOS_REQUEST_REJECTED", safeMessage(body, upstreamStatus));
             }
             return error(HttpStatus.BAD_GATEWAY.value(), "AGENTOS_UPSTREAM_ERROR",
@@ -192,6 +234,11 @@ public class AgentOsGatewayService {
             }
         }
         return "AgentOS request was rejected (HTTP " + status + ").";
+    }
+
+    private String sanitize(String value) {
+        String sanitized = value.replaceAll("[\\r\\n\\t]", " ").trim();
+        return sanitized.substring(0, Math.min(sanitized.length(), 300));
     }
 
     private Map<String, Object> parseObject(String body) {

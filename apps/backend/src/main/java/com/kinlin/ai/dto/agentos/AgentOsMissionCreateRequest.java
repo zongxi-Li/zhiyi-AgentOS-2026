@@ -18,6 +18,7 @@ public record AgentOsMissionCreateRequest(
         String priority,
         List<String> enabledPluginIds,
         List<String> materialRefs,
+        List<String> attachmentIds,
         @Size(max = 200) String clientRequestId
 ) {
     public AgentOsMissionCreateRequest {
@@ -29,5 +30,6 @@ public record AgentOsMissionCreateRequest(
         priority = priority == null ? "normal" : priority;
         enabledPluginIds = enabledPluginIds == null ? null : List.copyOf(enabledPluginIds);
         materialRefs = materialRefs == null ? null : List.copyOf(materialRefs);
+        attachmentIds = attachmentIds == null ? null : List.copyOf(attachmentIds);
     }
 }

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.util.UriUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -307,6 +308,23 @@ public class AgentOsGatewayController {
     @PostMapping("/runs/{runId}/cancel")
     public ResponseEntity<Map<String, Object>> cancelRun(@PathVariable String runId) {
         return response(gateway.post(runPath(runId) + "/cancel", Map.of()));
+    }
+
+    @PostMapping(value = "/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> uploadAttachment(
+            @RequestParam("file") MultipartFile file
+    ) {
+        return response(gateway.postMultipart(UPSTREAM_ROOT + "/attachments", file));
+    }
+
+    @GetMapping("/attachments/{attachmentId}")
+    public ResponseEntity<Map<String, Object>> getAttachment(@PathVariable String attachmentId) {
+        return response(gateway.get(UPSTREAM_ROOT + "/attachments/" + segment(attachmentId)));
+    }
+
+    @DeleteMapping("/attachments/{attachmentId}")
+    public ResponseEntity<Map<String, Object>> deleteAttachment(@PathVariable String attachmentId) {
+        return response(gateway.delete(UPSTREAM_ROOT + "/attachments/" + segment(attachmentId)));
     }
 
     @PostMapping("/runs/{runId}/steps/{stepId}/retry")

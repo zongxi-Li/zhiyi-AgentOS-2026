@@ -13,6 +13,7 @@ public record AgentOsMissionRunCreateRequest(
         Map<String, Object> input,
         List<String> enabledPluginIds,
         List<String> materialRefs,
+        List<String> attachmentIds,
         @NotBlank @Size(max = 200) String clientRequestId,
         @NotBlank String sourceRunId,
         @NotBlank @Size(max = 80) String rerunReason
@@ -22,5 +23,6 @@ public record AgentOsMissionRunCreateRequest(
         input = input == null ? Map.of() : Map.copyOf(input);
         enabledPluginIds = enabledPluginIds == null ? null : List.copyOf(enabledPluginIds);
         materialRefs = materialRefs == null ? null : List.copyOf(materialRefs);
+        attachmentIds = attachmentIds == null ? null : List.copyOf(attachmentIds);
     }
 }
