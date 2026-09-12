@@ -1944,7 +1944,13 @@ def create_router(
 
     @router.get("/runs/{run_id}/memory-events")
     async def get_memory_events(run_id: str):
-        run = load_run(run_id)
+        # 该接口被前端秒级轮询；运行快照为数十 MB JSON，走缓存快路径避免
+        # 每次轮询都全量反序列化（与 load_run 同样的鉴权与 404 语义）。
+        try:
+            run = runtime.get_status_cached(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        _require_access(run)
         items = []
         for event in run.trace:
             payload = event.payload if isinstance(event.payload, dict) else {}

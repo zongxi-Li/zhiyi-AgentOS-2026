@@ -7,6 +7,8 @@ import json
 import hashlib
 import os
 import sqlite3
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -36,6 +38,8 @@ class SQLiteWorkflowStore(WorkflowStore):
         self.db_path = Path(db_path)
         self.busy_timeout_ms = int(os.getenv("AGENTOS_SQLITE_BUSY_TIMEOUT_MS", "5000"))
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._hydrate_cache: OrderedDict[str, tuple[bytes, RuntimeRunRecord]] = OrderedDict()
+        self._hydrate_cache_lock = threading.Lock()
         self._init_schema()
 
     def save_mission(self, task: RuntimeMissionRecord) -> None:
@@ -255,6 +259,35 @@ class SQLiteWorkflowStore(WorkflowStore):
         if row is None:
             raise KeyError(f"workflow run not found: {run_id}")
         return RuntimeRunRecord.model_validate(json.loads(row["payload"]))
+
+    def get_run_cached(self, run_id: str) -> RuntimeRunRecord:
+        """``get_run`` 的只读快路径：payload 摘要未变化时复用上次水合结果。
+
+        单个运行快照可达数十 MB，``json.loads`` + ``model_validate`` 一次上百毫秒，
+        而 memory-events 等读接口被前端秒级轮询。以 payload 摘要为键，数据一变
+        即失效，不会读到陈旧数据。返回的记录对象被多个调用方共享，调用方不得
+        修改；需要变更的路径请继续使用 ``get_run``。
+        """
+        row = self._fetch_one("SELECT payload FROM runs WHERE run_id = ?", (run_id,))
+        if row is None:
+            raise KeyError(f"workflow run not found: {run_id}")
+        payload = row["payload"]
+        digest = hashlib.blake2b(
+            payload.encode("utf-8") if isinstance(payload, str) else bytes(payload),
+            digest_size=16,
+        ).digest()
+        with self._hydrate_cache_lock:
+            entry = self._hydrate_cache.get(run_id)
+            if entry is not None and entry[0] == digest:
+                self._hydrate_cache.move_to_end(run_id)
+                return entry[1]
+        record = RuntimeRunRecord.model_validate(json.loads(payload))
+        with self._hydrate_cache_lock:
+            self._hydrate_cache[run_id] = (digest, record)
+            self._hydrate_cache.move_to_end(run_id)
+            while len(self._hydrate_cache) > 8:
+                self._hydrate_cache.popitem(last=False)
+        return record
 
     def list_missions(
         self,
