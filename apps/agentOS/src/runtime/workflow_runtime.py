@@ -3454,6 +3454,13 @@ class ExecutionRuntime:
         """读取指定运行的最新状态投影；不存在时由存储层抛出 ``KeyError``。"""
         return self.workflow_store.get_run(run_id)
 
+    def get_status_cached(self, run_id: str) -> RuntimeRunRecord:
+        """``get_status`` 的只读快路径；存储层支持时走内容寻址缓存。"""
+        get_run_cached = getattr(self.workflow_store, "get_run_cached", None)
+        if get_run_cached is None:
+            return self.workflow_store.get_run(run_id)
+        return get_run_cached(run_id)
+
     async def update_run_lifecycle(
         self,
         run_id: str,
