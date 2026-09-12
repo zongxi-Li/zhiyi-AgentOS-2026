@@ -148,6 +148,7 @@ def test_node_runner_persists_bodies_as_sealed_manifests_and_returns_references(
     try:
         runner = object.__new__(ACGNodeRunner)
         runner.content_manifest_store = content
+        runner.task = SimpleNamespace(input={"attachmentIds": ["att_contract", "att_contract"]})
         normalized = runner._persist_artifact_manifest(
             run_id="run_0123456789ab",
             step_id="equipment-node",
@@ -170,6 +171,7 @@ def test_node_runner_persists_bodies_as_sealed_manifests_and_returns_references(
         descriptors = runner._safe_artifact_descriptors(normalized)
         assert {item["artifactKey"] for item in descriptors} == {"assumptions"}
         assert all("content" not in item for item in descriptors)
+        assert descriptors[0]["metadata"]["sourceAttachmentIds"] == ["att_contract"]
         manifest_id = descriptors[0]["manifestId"]
         manifest = content.get_manifest(manifest_id)
         assert manifest.kind is ContentKind.ARTIFACT
@@ -378,4 +380,4 @@ def test_v2_schema_migrates_legacy_semantic_key_only_when_unambiguous(tmp_path):
             ).fetchone()
             version = conn.execute("PRAGMA user_version").fetchone()[0]
     assert row[0] == "equipment_staff_plan"
-    assert version == 2
+    assert version == 3

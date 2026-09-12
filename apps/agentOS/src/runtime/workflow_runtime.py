@@ -332,6 +332,10 @@ class ExecutionRuntime:
         self.content_manifest_store = content_manifest_store or SQLiteContentManifestStore(
             os.getenv("AGENTOS_CONTENT_MANIFEST_DB", "data/content_manifests.sqlite3")
         )
+        # Composition installs this optional resolver. Persisted Mission/Run
+        # inputs keep stable refs; bounded text is added only to model-bound copies.
+        self.attachment_context_builder = None
+        self.attachment_service = None
         self.orphan_cleaner = ExecutionOrphanCleaner(value_store=self.execution_value_store)
         self.memory_store = memory_store or SQLiteMemoryStore(
             db_path=os.getenv("AGENTOS_EXECUTION_MEMORY_DB", "data/execution_memory.sqlite3")
@@ -2076,8 +2080,14 @@ class ExecutionRuntime:
             if cache_key not in shared_model_runtimes:
                 shared_model_runtimes[cache_key] = self._model_runtime_from_binding(binding)
             step_model_runtimes[step_id] = shared_model_runtimes[cache_key]
+        resolved_task = task.model_copy(deep=True)
+        resolved_task.input = (
+            self.attachment_context_builder.enrich(dict(run.input))
+            if self.attachment_context_builder is not None
+            else dict(run.input)
+        )
         return ACGNodeRunner(
-            task=task,
+            task=resolved_task,
             run=run,
             workflow=workflow,
             steps=steps,
@@ -2974,7 +2984,11 @@ class ExecutionRuntime:
                     planning_seed=run.planning_seed,
                     capability_catalog_revision=run.capability_catalog_revision,
                     required_capabilities=workflow.required_capabilities,
-                    task_input=dict(run.input),
+                    task_input=(
+                        self.attachment_context_builder.enrich(dict(run.input))
+                        if self.attachment_context_builder is not None
+                        else dict(run.input)
+                    ),
                     existing_semantic_tasks=existing_semantic_tasks,
                     capability_profile=str(run.input.get("capabilityProfile") or "auto"),
                     run_id=run.run_id,

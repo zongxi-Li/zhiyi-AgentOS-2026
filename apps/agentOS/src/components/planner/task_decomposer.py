@@ -376,6 +376,7 @@ class TaskDecomposer:
             strategy=strategy,
             reason="model decomposition disabled or unavailable",
             existing_semantic_tasks=existing_semantic_tasks,
+            task_input=task_input,
         )
 
     def _decompose_staged(
@@ -880,7 +881,7 @@ class TaskDecomposer:
             ],
             "materials": {
                 key: value
-                for key in ("materials", "sourceMaterials", "materialText", "contractText")
+                for key in ("materials", "sourceMaterials", "attachmentContext", "materialText", "contractText")
                 if (value := (task_input or {}).get(key)) not in (None, "", [], {})
             },
         }
@@ -1324,6 +1325,7 @@ class TaskDecomposer:
         strategy: str,
         reason: str,
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
+        task_input: Mapping[str, Any] | None = None,
     ) -> TaskPlan:
         capabilities = list(dict.fromkeys(profile.required_capabilities))
         nodes: list[PlannedTask] = []
@@ -1360,6 +1362,23 @@ class TaskDecomposer:
                 metadata={"plannerStrategy": strategy, "degraded": True, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))
         keys = {node.capability_requirements[0]: node.key for node in nodes}
+        material_refs = tuple(
+            str(item) for item in ((task_input or {}).get("materialRefs") or []) if str(item)
+        )
+        if material_refs and nodes:
+            preferred = next(
+                (
+                    index for index, node in enumerate(nodes)
+                    if node.capability_requirements[0] in {
+                        "information_extraction", "task_understanding", "analysis", "evidence_analysis"
+                    }
+                ),
+                0,
+            )
+            nodes[preferred] = nodes[preferred].model_copy(update={
+                "workset": WorksetSpec(sourceManifestRefs=material_refs),
+                "source_refs": tuple(dict.fromkeys((*nodes[preferred].source_refs, *material_refs))),
+            })
         relations = tuple(
             TaskPlanRelation(sourceKey=keys[dependency], targetKey=keys[capability], relationType=SemanticTaskRelationType.DEPENDS_ON)
             for capability in capabilities

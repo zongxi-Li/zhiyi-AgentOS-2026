@@ -12,7 +12,7 @@ from typing import Iterator
 from .schema import SCHEMA_SQL
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 class SQLiteV2Storage:

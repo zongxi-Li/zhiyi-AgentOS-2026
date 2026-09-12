@@ -990,6 +990,16 @@ class ACGNodeRunner:
                 continue
             artifact = canonicalize_artifact_identity(raw_artifact, logical_role)
             artifact.setdefault("artifactKey", "primary")
+            task = getattr(self, "task", None)
+            task_input = getattr(task, "input", {})
+            source_attachment_ids = [
+                str(item) for item in (task_input.get("attachmentIds") or []) if str(item)
+            ]
+            if source_attachment_ids:
+                artifact["metadata"] = {
+                    **(artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}),
+                    "sourceAttachmentIds": list(dict.fromkeys(source_attachment_ids)),
+                }
             manifest_id = artifact.get("manifestId")
             checksum = artifact.get("checksum")
             content = artifact.get("content")

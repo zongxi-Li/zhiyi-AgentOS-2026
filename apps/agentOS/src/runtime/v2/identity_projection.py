@@ -123,6 +123,7 @@ class IdentityProjectionBridge:
         if existing is not None:
             if existing.goal != self._task_goal(task):
                 raise IdentityConflictError("missionId already belongs to another Mission goal")
+            self._bind_mission_attachments(task)
             return
         owner = str(task.input.get("authenticatedUserId") or "system:agentos")
         self.lifecycle_service.create_mission(
@@ -146,6 +147,16 @@ class IdentityProjectionBridge:
                 ),
             },
         )
+        self._bind_mission_attachments(task)
+
+    def _bind_mission_attachments(self, task: Any) -> None:
+        repository = getattr(self.repositories, "input_attachments", None)
+        task_input = getattr(task, "input", {})
+        attachment_ids = [
+            str(item) for item in (task_input.get("attachmentIds") or []) if str(item)
+        ]
+        if repository is not None and attachment_ids:
+            repository.bind_mission(task.mission_id, attachment_ids)
 
     def new_run_id(self, mission_id: str) -> str:
         """为新执行分配随后由 Execution Runtime 全链路复用的 runId。"""
@@ -274,6 +285,7 @@ class IdentityProjectionBridge:
                 raise IdentityConflictError(
                     "runId already identifies another execution definition"
                 )
+            self._bind_run_attachments(run)
             return
         execution_state = getattr(run, "execution_state", {})
         lineage = {
@@ -303,6 +315,16 @@ class IdentityProjectionBridge:
                 **lineage,
             },
         )
+        self._bind_run_attachments(run)
+
+    def _bind_run_attachments(self, run: Any) -> None:
+        repository = getattr(self.repositories, "input_attachments", None)
+        run_input = getattr(run, "input", {})
+        attachment_ids = [
+            str(item) for item in (run_input.get("attachmentIds") or []) if str(item)
+        ]
+        if repository is not None and attachment_ids:
+            repository.bind_run(run.run_id, attachment_ids)
 
     def _resolve_run_task_plan_snapshot(self, task_plan: TaskPlan) -> TaskPlan:
         """Allocate a new snapshot version only when a new Run changes plan content.

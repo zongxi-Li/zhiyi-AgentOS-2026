@@ -130,6 +130,7 @@ class MissionWorkspaceProjection(DomainModel):
     runs: list[WorkspaceRunSummary] = Field(default_factory=list)
     entries: list[WorkspaceEntry] = Field(default_factory=list)
     graph_nodes: list[WorkspaceGraphNode] = Field(default_factory=list, alias="graphNodes")
+    input_attachments: list[dict[str, Any]] = Field(default_factory=list, alias="inputAttachments")
     diagnostics: list[WorkspaceDiagnostic] = Field(default_factory=list)
 
 
@@ -162,6 +163,14 @@ class MissionWorkspaceProjector:
             for item in all_runs
         ]
         entries = self._folders()
+        attachment_repository = getattr(self.repositories, "input_attachments", None)
+        input_attachments = (
+            attachment_repository.list_for_run(selected_run.run_id)
+            if attachment_repository is not None and selected_run is not None
+            else attachment_repository.list_for_mission(mission_id)
+            if attachment_repository is not None
+            else []
+        )
         graph_nodes: list[WorkspaceGraphNode] = []
         plan = None
         active_graph: dict[str, Any] | None = None
@@ -184,7 +193,7 @@ class MissionWorkspaceProjector:
             group="overview",
             parent_entry_id="folder:overview",
             display_order=1,
-            content=self._mission_document(mission, selected_run, plan, tasks),
+            content=self._mission_document(mission, selected_run, plan, tasks, input_attachments),
         ))
         if selected_run is not None:
             artifact_entries = self._artifact_entries(
@@ -225,6 +234,14 @@ class MissionWorkspaceProjector:
             runs=summaries,
             entries=entries,
             graph_nodes=graph_nodes,
+            input_attachments=[
+                item.model_dump(
+                    by_alias=True,
+                    mode="json",
+                    exclude={"owner_user_id", "owner_tenant_id", "storage_key"},
+                )
+                for item in input_attachments
+            ],
             diagnostics=diagnostics,
         )
 
@@ -692,6 +709,7 @@ class MissionWorkspaceProjector:
         run: WorkflowRun | None,
         plan: Any | None,
         tasks: list[SemanticTask],
+        input_attachments: list[Any],
     ) -> str:
         lines = [f"# {mission.goal}"]
         if mission.description:
@@ -711,6 +729,15 @@ class MissionWorkspaceProjector:
             lines.append(f"- Status: `{run.status.value}`")
             if run.finished_at is not None:
                 lines.append(f"- Completed: `{run.finished_at.isoformat()}`")
+        lines.extend(["", "## Input attachments"])
+        if input_attachments:
+            for attachment in input_attachments:
+                lines.append(
+                    f"- **{attachment.original_filename}** (`{attachment.attachment_id}`) "
+                    f"- {attachment.status.value}, {attachment.size_bytes} bytes, `{attachment.sha256}`"
+                )
+        else:
+            lines.append("No input attachments.")
         nodes = list(plan.nodes) if plan is not None else []
         if nodes:
             lines.extend(["", "## Planned steps"])

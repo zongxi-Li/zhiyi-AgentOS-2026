@@ -14,6 +14,36 @@ CREATE TABLE IF NOT EXISTS missions (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS input_attachments (
+    attachment_id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL,
+    owner_tenant_id TEXT,
+    original_filename TEXT NOT NULL,
+    storage_key TEXT NOT NULL UNIQUE,
+    mime_type TEXT NOT NULL,
+    extension TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    status TEXT NOT NULL CHECK (status IN ('UPLOADED', 'PARSING', 'READY', 'FAILED')),
+    extracted_content_ref TEXT,
+    character_count INTEGER NOT NULL DEFAULT 0 CHECK (character_count >= 0),
+    parser TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    parse_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mission_input_attachments (
+    mission_id TEXT NOT NULL,
+    attachment_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (mission_id, attachment_id),
+    FOREIGN KEY (mission_id) REFERENCES missions(mission_id) ON DELETE RESTRICT,
+    FOREIGN KEY (attachment_id) REFERENCES input_attachments(attachment_id) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS semantic_tasks (
     task_id TEXT PRIMARY KEY,
     mission_id TEXT NOT NULL,
@@ -94,6 +124,17 @@ CREATE TABLE IF NOT EXISTS workflow_runs_v2 (
     FOREIGN KEY (mission_id) REFERENCES missions(mission_id) ON DELETE RESTRICT,
     FOREIGN KEY (blueprint_id, mission_id)
         REFERENCES acg_blueprints(blueprint_id, mission_id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS run_input_attachments (
+    run_id TEXT NOT NULL,
+    attachment_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, attachment_id),
+    UNIQUE (run_id, ordinal),
+    FOREIGN KEY (run_id) REFERENCES workflow_runs_v2(run_id) ON DELETE RESTRICT,
+    FOREIGN KEY (attachment_id) REFERENCES input_attachments(attachment_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS attempts (
@@ -242,6 +283,12 @@ CREATE TABLE IF NOT EXISTS lifecycle_inbox (
 );
 
 CREATE INDEX IF NOT EXISTS idx_semantic_tasks_mission ON semantic_tasks(mission_id);
+CREATE INDEX IF NOT EXISTS idx_input_attachments_owner
+    ON input_attachments(owner_user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mission_input_attachments_attachment
+    ON mission_input_attachments(attachment_id, mission_id);
+CREATE INDEX IF NOT EXISTS idx_run_input_attachments_attachment
+    ON run_input_attachments(attachment_id, run_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_semantic_tasks_mission_key
     ON semantic_tasks(mission_id, semantic_key)
     WHERE semantic_key IS NOT NULL;

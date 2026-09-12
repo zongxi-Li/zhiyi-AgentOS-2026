@@ -366,7 +366,7 @@ class IntentParser:
             "constraints": payload.get("constraints") or [],
             "expectedArtifacts": payload.get("expectedArtifacts") or [],
         }
-        for key in ("materials", "sourceMaterials", "materialRefs", "materialText", "contractText"):
+        for key in ("materials", "sourceMaterials", "materialRefs", "attachmentContext", "materialText", "contractText"):
             value = payload.get(key)
             if value not in (None, "", [], {}):
                 contract[key] = value

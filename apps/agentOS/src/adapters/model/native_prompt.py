@@ -132,6 +132,7 @@ class NativeCapabilityPromptBuilder:
             ("constraints", "constraints"),
             ("expectedArtifacts", "expectedArtifacts"),
             ("sourceMaterials", "sourceMaterials"),
+            ("attachmentContext", "attachments"),
             ("pluginData", "pluginData"),
         ):
             value = task_input.get(source_key)

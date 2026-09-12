@@ -21,6 +21,7 @@ from contracts.identity import (
     validate_logical_key,
 )
 from contracts.planning import TaskPlan, PlannedTask, TaskPlanRelation
+from contracts.attachments import InputAttachment, InputAttachmentStatus
 from domain.models import (
     AcgBlueprint,
     Attempt,
@@ -74,6 +75,160 @@ class _SQLiteRepository:
                 conn.execute(sql, params)
         except sqlite3.IntegrityError as exc:
             raise IdentityConflictError(f"cannot persist {entity}: {exc}") from exc
+
+
+class SQLiteInputAttachmentRepository(_SQLiteRepository):
+    """Identity and Mission/Run reference authority for uploaded inputs."""
+
+    def add(self, attachment: InputAttachment) -> InputAttachment:
+        self._insert(
+            """INSERT INTO input_attachments
+            (attachment_id, owner_user_id, owner_tenant_id, original_filename,
+             storage_key, mime_type, extension, size_bytes, sha256, status,
+             extracted_content_ref, character_count, parser, metadata_json,
+             parse_error, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                attachment.attachment_id, attachment.owner_user_id,
+                attachment.owner_tenant_id, attachment.original_filename,
+                attachment.storage_key, attachment.mime_type, attachment.extension,
+                attachment.size_bytes, attachment.sha256, attachment.status.value,
+                attachment.extracted_content_ref, attachment.character_count,
+                attachment.parser, _json(attachment.metadata), attachment.parse_error,
+                _iso(attachment.created_at), _iso(attachment.updated_at),
+            ),
+            entity="InputAttachment",
+        )
+        return self.get_required(attachment.attachment_id)
+
+    def get(self, attachment_id: str) -> InputAttachment | None:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                "SELECT * FROM input_attachments WHERE attachment_id = ?", (attachment_id,)
+            ).fetchone()
+        return self._attachment(row) if row is not None else None
+
+    def get_required(self, attachment_id: str) -> InputAttachment:
+        attachment = self.get(attachment_id)
+        if attachment is None:
+            raise EntityNotFoundError(f"InputAttachment not found: {attachment_id}")
+        return attachment
+
+    def update_status(self, attachment_id: str, status: InputAttachmentStatus) -> None:
+        with self.storage.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE input_attachments SET status = ?, updated_at = ? WHERE attachment_id = ?",
+                (status.value, _iso(_now()), attachment_id),
+            )
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError(f"InputAttachment not found: {attachment_id}")
+
+    def mark_ready(self, attachment_id: str, *, extracted_content_ref: str,
+                   character_count: int, parser: str, metadata: dict[str, Any]) -> None:
+        with self.storage.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE input_attachments SET status = 'READY', extracted_content_ref = ?,
+                character_count = ?, parser = ?, metadata_json = ?, parse_error = NULL,
+                updated_at = ? WHERE attachment_id = ?""",
+                (extracted_content_ref, character_count, parser, _json(metadata),
+                 _iso(_now()), attachment_id),
+            )
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError(f"InputAttachment not found: {attachment_id}")
+
+    def mark_failed(self, attachment_id: str, parse_error: str) -> None:
+        with self.storage.transaction() as conn:
+            conn.execute(
+                """UPDATE input_attachments SET status = 'FAILED', parse_error = ?,
+                updated_at = ? WHERE attachment_id = ?""",
+                (parse_error[:1000], _iso(_now()), attachment_id),
+            )
+
+    def bind_mission(self, mission_id: str, attachment_ids: Sequence[str]) -> None:
+        requested = list(dict.fromkeys(attachment_ids))
+        with self.storage.transaction() as conn:
+            current = [str(row["attachment_id"]) for row in conn.execute(
+                "SELECT attachment_id FROM mission_input_attachments WHERE mission_id = ? ORDER BY ordinal",
+                (mission_id,),
+            ).fetchall()]
+            if current and current != requested:
+                raise IdentityConflictError("Mission input attachment references changed unexpectedly")
+            for ordinal, attachment_id in enumerate(requested):
+                conn.execute(
+                    """INSERT OR IGNORE INTO mission_input_attachments
+                    (mission_id, attachment_id, ordinal, created_at) VALUES (?, ?, ?, ?)""",
+                    (mission_id, attachment_id, ordinal, _iso(_now())),
+                )
+
+    def bind_run(self, run_id: str, attachment_ids: Sequence[str]) -> None:
+        requested = list(dict.fromkeys(attachment_ids))
+        with self.storage.transaction() as conn:
+            current = [str(row["attachment_id"]) for row in conn.execute(
+                "SELECT attachment_id FROM run_input_attachments WHERE run_id = ? ORDER BY ordinal",
+                (run_id,),
+            ).fetchall()]
+            if current and current != requested:
+                raise IdentityConflictError("Run input attachment snapshot is immutable")
+            for ordinal, attachment_id in enumerate(requested):
+                conn.execute(
+                    """INSERT OR IGNORE INTO run_input_attachments
+                    (run_id, attachment_id, ordinal, created_at) VALUES (?, ?, ?, ?)""",
+                    (run_id, attachment_id, ordinal, _iso(_now())),
+                )
+
+    def list_for_mission(self, mission_id: str) -> list[InputAttachment]:
+        return self._list_join(
+            """SELECT a.* FROM mission_input_attachments b JOIN input_attachments a
+            ON a.attachment_id = b.attachment_id WHERE b.mission_id = ?
+            ORDER BY b.ordinal""", mission_id)
+
+    def list_for_run(self, run_id: str) -> list[InputAttachment]:
+        return self._list_join(
+            """SELECT a.* FROM run_input_attachments b JOIN input_attachments a
+            ON a.attachment_id = b.attachment_id WHERE b.run_id = ? ORDER BY b.ordinal""",
+            run_id)
+
+    def _list_join(self, sql: str, identity: str) -> list[InputAttachment]:
+        with self.storage.read() as conn:
+            return [self._attachment(row) for row in conn.execute(sql, (identity,)).fetchall()]
+
+    def total_unbound_bytes(self, owner_user_id: str) -> int:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                """SELECT COALESCE(SUM(a.size_bytes), 0) AS total FROM input_attachments a
+                WHERE a.owner_user_id = ?
+                AND NOT EXISTS (SELECT 1 FROM mission_input_attachments m WHERE m.attachment_id = a.attachment_id)
+                AND NOT EXISTS (SELECT 1 FROM run_input_attachments r WHERE r.attachment_id = a.attachment_id)""",
+                (owner_user_id,),
+            ).fetchone()
+        return int(row["total"])
+
+    def is_referenced(self, attachment_id: str) -> bool:
+        with self.storage.read() as conn:
+            row = conn.execute(
+                """SELECT EXISTS(SELECT 1 FROM mission_input_attachments WHERE attachment_id = ?)
+                OR EXISTS(SELECT 1 FROM run_input_attachments WHERE attachment_id = ?) AS used""",
+                (attachment_id, attachment_id),
+            ).fetchone()
+        return bool(row["used"])
+
+    def delete(self, attachment_id: str) -> None:
+        with self.storage.transaction() as conn:
+            cursor = conn.execute("DELETE FROM input_attachments WHERE attachment_id = ?", (attachment_id,))
+            if cursor.rowcount != 1:
+                raise EntityNotFoundError(f"InputAttachment not found: {attachment_id}")
+
+    @staticmethod
+    def _attachment(row: sqlite3.Row) -> InputAttachment:
+        return InputAttachment(
+            attachmentId=row["attachment_id"], ownerUserId=row["owner_user_id"],
+            ownerTenantId=row["owner_tenant_id"], originalFilename=row["original_filename"],
+            storageKey=row["storage_key"], mimeType=row["mime_type"], extension=row["extension"],
+            sizeBytes=row["size_bytes"], sha256=row["sha256"], status=row["status"],
+            extractedContentRef=row["extracted_content_ref"], characterCount=row["character_count"],
+            parser=row["parser"], metadata=_load_json(row["metadata_json"], {}),
+            parseError=row["parse_error"], createdAt=row["created_at"], updatedAt=row["updated_at"],
+        )
 
 
 class SQLiteMissionRepository(_SQLiteRepository):
@@ -1179,6 +1334,7 @@ class SQLiteV2Repositories:
 
     def __init__(self, storage: SQLiteV2Storage) -> None:
         self.storage = storage
+        self.input_attachments = SQLiteInputAttachmentRepository(storage)
         self.missions = SQLiteMissionRepository(storage)
         self.semantic_tasks = SQLiteSemanticTaskRepository(storage)
         self.blueprints = SQLiteBlueprintRepository(storage)
