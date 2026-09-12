@@ -11,6 +11,8 @@ vi.mock('@/services/api/workflow', async importOriginal => {
     workflowApi: {
       ...actual.workflowApi,
       createMaterial: vi.fn(),
+      uploadAttachment: vi.fn(),
+      deleteAttachment: vi.fn(),
       startWorkflowAsync: vi.fn()
     }
   }
@@ -21,7 +23,7 @@ const workbenchLayoutStub = {
 }
 
 describe('CreateMissionView', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => vi.resetAllMocks())
 
   it('keeps the compact desktop form arrangement and restores runtime settings', async () => {
     const router = createRouter({
@@ -41,10 +43,8 @@ describe('CreateMissionView', () => {
     })
 
     expect(wrapper.find('#mission-title').exists()).toBe(true)
-    expect(wrapper.find('#mission-material').exists()).toBe(true)
+    expect(wrapper.find('#mission-files').exists()).toBe(true)
     expect(wrapper.find('#mission-goal').exists()).toBe(true)
-    expect(wrapper.find('#mission-constraints').exists()).toBe(true)
-    expect(wrapper.find('#mission-artifacts').exists()).toBe(true)
     expect(wrapper.text()).toContain('Runtime Configuration')
     expect(wrapper.text()).toContain('更多规划设置')
     expect(wrapper.find('.create-mission__submit').text()).toContain('启动任务')
@@ -171,6 +171,47 @@ describe('CreateMissionView', () => {
     expect(router.currentRoute.value.name).toBe('MissionWorkspace')
     expect(router.currentRoute.value.params.missionId).toBe('mission_new')
     expect(router.currentRoute.value.query.runId).toBe('run_new')
+    wrapper.unmount()
+  })
+
+  it('uploads files first and submits only READY attachment identities', async () => {
+    vi.mocked(workflowApi.uploadAttachment).mockResolvedValue({
+        attachmentId: 'att_contract', originalFilename: 'contract.txt', filename: 'contract.txt',
+        mimeType: 'text/plain', extension: '.txt', sizeBytes: 18, sha256: 'a'.repeat(64),
+        status: 'READY', characterCount: 18, parser: 'plain-text:utf-8-sig', metadata: {},
+        createdAt: '2026-09-12T00:00:00Z', updatedAt: '2026-09-12T00:00:00Z'
+    })
+    vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue({
+      missionId: 'mission_attachment', runId: 'run_attachment', status: 'pending'
+    } as any)
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/agentos/missions/new', name: 'CreateMission', component: CreateMissionView },
+        { path: '/agentos/acg', name: 'AcgVisualization', component: { template: '<div />' } },
+        { path: '/agentos/missions/:missionId/workspace', name: 'MissionWorkspace', component: { template: '<div />' } }
+      ]
+    })
+    await router.push({ name: 'CreateMission' })
+    await router.isReady()
+    const wrapper = mount(CreateMissionView, {
+      global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } }
+    })
+    const file = new File(['amount is 800000'], 'contract.txt', { type: 'text/plain' })
+    const input = wrapper.find('#mission-files')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [file] })
+    await input.trigger('change')
+    await vi.waitFor(() => expect(workflowApi.uploadAttachment).toHaveBeenCalledWith(file, expect.any(Object)))
+    await flushPromises()
+    await wrapper.find('#mission-title').setValue('合同审查')
+    await wrapper.find('#mission-goal').setValue('生成最终合同审查报告')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(workflowApi.startWorkflowAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ attachmentIds: ['att_contract'] }),
+      expect.any(Object)
+    )
+    expect(workflowApi.deleteAttachment).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

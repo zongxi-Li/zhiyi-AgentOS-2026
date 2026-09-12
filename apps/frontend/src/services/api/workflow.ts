@@ -42,6 +42,7 @@ import {
   type ModelCallUsage,
   type ModelCapabilitySnapshot,
   type ContentManifestSummary,
+  type InputAttachment,
   type RunMemoryEvent,
   type RunMemoryEventsResponse,
 } from './agentos'
@@ -91,9 +92,25 @@ export type {
   ModelCallUsage,
   ModelCapabilitySnapshot,
   ContentManifestSummary,
+  InputAttachment,
 }
 
 export const workflowApi = {
+  uploadAttachment(
+    file: File,
+    options: { signal?: AbortSignal; onProgress?: (percent: number) => void } = {}
+  ): Promise<InputAttachment> {
+    return agentosApi.uploadAttachment(file, options)
+  },
+
+  getAttachment(attachmentId: string): Promise<InputAttachment> {
+    return agentosApi.getAttachment(attachmentId)
+  },
+
+  deleteAttachment(attachmentId: string): Promise<void> {
+    return agentosApi.deleteAttachment(attachmentId)
+  },
+
   createMaterial(content: string, mediaType = 'text/plain'): Promise<ContentManifestSummary> {
     return agentosApi.createMaterial(content, mediaType)
   },

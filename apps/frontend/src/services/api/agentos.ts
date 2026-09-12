@@ -303,6 +303,7 @@ export interface WorkflowStartRequest {
   reviewMode?: string
   enabledPluginIds?: string[] | null
   materialRefs?: string[]
+  attachmentIds?: string[]
 }
 
 export interface ContentManifestSummary {
@@ -710,7 +711,29 @@ export interface MissionWorkspaceProjection {
   runs: WorkspaceRunSummary[]
   entries: WorkspaceEntry[]
   graphNodes: WorkspaceGraphNode[]
+  inputAttachments?: InputAttachment[]
   diagnostics: WorkspaceDiagnostic[]
+}
+
+export type InputAttachmentStatus = 'UPLOADED' | 'PARSING' | 'READY' | 'FAILED'
+
+export interface InputAttachment {
+  attachmentId: string
+  originalFilename: string
+  filename?: string
+  mimeType: string
+  extension: string
+  sizeBytes: number
+  sha256: string
+  status: InputAttachmentStatus
+  extractedContentRef?: string | null
+  characterCount: number
+  parser?: string | null
+  metadata?: Record<string, unknown>
+  parseError?: string | null
+  errorCode?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ArtifactDetail {
@@ -864,6 +887,7 @@ export interface WorkflowRerunRequest {
   input?: Record<string, any>
   enabledPluginIds?: string[] | null
   materialRefs?: string[]
+  attachmentIds?: string[]
   clientRequestId: string
   sourceRunId: string
   rerunReason: 'manual_rerun' | 'current_configuration' | 'retry_after_failure' | 'planning_variant' | 'review_rerun'
@@ -1255,6 +1279,34 @@ export const agentosApi = {
   async createMaterial(content: string, mediaType = 'text/plain'): Promise<ContentManifestSummary> {
     const response = await agentosRequest.post<ContentManifestSummary>('/materials', { content, mediaType })
     return response.data
+  },
+
+  async uploadAttachment(
+    file: File,
+    options: { signal?: AbortSignal; onProgress?: (percent: number) => void } = {}
+  ): Promise<InputAttachment> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await agentosRequest.post<InputAttachment>('/attachments', formData, {
+      signal: options.signal,
+      onUploadProgress: event => {
+        if (event.total && options.onProgress) {
+          options.onProgress(Math.min(100, Math.round(event.loaded * 100 / event.total)))
+        }
+      }
+    })
+    return response.data
+  },
+
+  async getAttachment(attachmentId: string): Promise<InputAttachment> {
+    const response = await agentosRequest.get<InputAttachment>(
+      `/attachments/${encodeURIComponent(attachmentId)}`
+    )
+    return response.data
+  },
+
+  async deleteAttachment(attachmentId: string): Promise<void> {
+    await agentosRequest.delete(`/attachments/${encodeURIComponent(attachmentId)}`)
   },
 
   async listMissions(

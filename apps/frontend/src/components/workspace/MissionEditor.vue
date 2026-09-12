@@ -16,6 +16,13 @@
       <div v-if="projection.activeRun" class="property-row"><span>active Run</span><code>{{ projection.activeRun.runId }}</code></div>
       <div v-if="projection.activeRun" class="property-row"><span>Run status</span><code>{{ projection.activeRun.status }}</code></div>
     </section>
+    <section v-if="projection.inputAttachments?.length" class="mission-editor__meta" aria-label="Run input attachments">
+      <div class="property-row"><strong>Input attachments</strong><span>{{ projection.inputAttachments.length }}</span></div>
+      <div v-for="attachment in projection.inputAttachments" :key="attachment.attachmentId" class="property-row">
+        <span>{{ attachment.originalFilename }}</span>
+        <code>{{ attachment.status }} · {{ formatBytes(attachment.sizeBytes) }}</code>
+      </div>
+    </section>
   </article>
 </template>
 
@@ -33,6 +40,12 @@ const renderedContent = computed(() => {
   const source = props.entry.content || `# ${props.projection.mission.goal}`
   return renderMarkdown(source)
 })
+
+const formatBytes = (bytes: number) => bytes < 1024
+  ? `${bytes} B`
+  : bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(1)} KB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 </script>
 
 <style scoped>

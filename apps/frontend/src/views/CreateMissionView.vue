@@ -47,15 +47,9 @@
           </section>
 
           <section class="create-section create-section--split">
-            <div>
+            <div v-if="false">
               <label for="mission-material">任务材料</label>
-              <textarea id="mission-material" v-model="draft.materialText" rows="7" placeholder="粘贴需求、背景资料、研究材料或其他任务上下文"></textarea>
-              <label class="create-file" for="mission-file">
-                <span>＋ 添加文件</span>
-                <small v-if="fileState === 'parsing'">正在解析…</small>
-                <small v-else-if="fileName">{{ fileName }}</small>
-                <input id="mission-file" type="file" accept=".pdf,.docx,.txt,.md" @change="handleFile" />
-              </label>
+              <textarea v-if="false" id="mission-material" v-model="draft.materialText" rows="7"></textarea>
             </div>
             <div>
               <label for="mission-goal">项目目标</label>
@@ -63,14 +57,29 @@
             </div>
           </section>
 
-          <section class="create-section create-section--split">
+          <section class="create-section attachment-input" aria-labelledby="attachment-input-title">
+            <div class="attachment-input__heading">
+              <div><label id="attachment-input-title">Attachments</label><small>TXT、Markdown、PDF、DOCX</small></div>
+              <label class="attachment-input__add" for="mission-files">+ Add files<input id="mission-files" type="file" accept=".pdf,.docx,.txt,.md" multiple @change="handleFiles" /></label>
+            </div>
+            <div class="attachment-input__dropzone" :class="{ 'is-dragging': attachmentDragging }" @dragenter.prevent="attachmentDragging = true" @dragover.prevent="attachmentDragging = true" @dragleave.prevent="attachmentDragging = false" @drop.prevent="handleDrop">
+              <p v-if="!attachments.length">拖拽文件到此处，或点击 Add files。文件会先上传并解析，再随 Mission 提交。</p>
+              <article v-for="item in attachments" :key="item.localId" class="attachment-row">
+                <div class="attachment-row__file"><span aria-hidden="true">▤</span><div><strong>{{ item.file.name }}</strong><small>{{ formatBytes(item.file.size) }} · {{ item.file.type || extensionOf(item.file.name) }}</small></div></div>
+                <div class="attachment-row__state" :class="`is-${item.status.toLowerCase()}`"><span>{{ item.status === 'UPLOADING' ? (item.progress > 0 ? `${item.progress}%` : '上传中…') : item.status === 'PARSING' ? '解析中…' : item.status }}</span><small v-if="item.error">{{ item.error }}</small></div>
+                <div class="attachment-row__actions"><button v-if="item.status === 'FAILED'" type="button" @click="retryAttachment(item)">重试</button><button type="button" :disabled="item.status === 'UPLOADING' || item.status === 'PARSING'" @click="removeAttachment(item)">删除</button></div>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="false" class="create-section create-section--split create-section--task-options">
             <div>
               <label for="mission-constraints">执行约束</label>
-              <textarea id="mission-constraints" v-model="constraintsText" rows="3" placeholder="使用逗号或换行分隔，例如：两周内完成、控制预算"></textarea>
+              <textarea v-if="false" id="mission-constraints" v-model="constraintsText" rows="3"></textarea>
             </div>
             <div>
               <label for="mission-artifacts">预期交付物</label>
-              <textarea id="mission-artifacts" v-model="expectedArtifactsText" rows="3" placeholder="使用逗号或换行分隔，例如：实施方案、风险清单"></textarea>
+              <textarea v-if="false" id="mission-artifacts" v-model="expectedArtifactsText" rows="3"></textarea>
             </div>
           </section>
 
@@ -168,7 +177,7 @@
             <!-- <span class="create-mission__footer-hint">创建 Mission 后立即启动首个 Run</span> -->
             <div class="create-mission__footer-actions">
               <button class="create-mission__cancel" type="button" @click="goBack">取消</button>
-              <button class="create-mission__submit" type="submit" :disabled="submitting || fileState === 'parsing'" :aria-busy="submitting">
+              <button class="create-mission__submit" type="submit" :disabled="submitting || attachmentsPending" :aria-busy="submitting">
                 <span>{{ submitting ? '正在启动…' : '启动任务' }}</span>
                 <span aria-hidden="true">→</span>
               </button>
@@ -182,14 +191,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import defaultAcgPromptMarkdown from '../assets/prompts/ACG 提示词.md?raw'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import PluginExtensionHost from '@/features/acg/PluginExtensionHost.vue'
 import { workflowApi } from '@/services/api/workflow'
-import { fileApi } from '@/services/api/file'
+import type { InputAttachment } from '@/services/api/agentos'
 import { buildWorkbenchStartRequest, createNativeWorkbenchDraft, type WorkbenchDraft } from '@/features/acg/workbench'
 import { pluginUiExtensions } from '@/plugins'
 import { parseAcgPromptTasks, type AcgPromptTask } from '@/utils/acgPromptLibrary'
@@ -209,8 +218,11 @@ const router = useRouter()
 const draft = ref<WorkbenchDraft>(createNativeWorkbenchDraft())
 const submitting = ref(false)
 const errorMessage = ref('')
-const fileState = ref<'idle' | 'parsing'>('idle')
-const fileName = ref('')
+type AttachmentDraft = { localId: string; file: File; status: 'UPLOADING' | 'PARSING' | 'READY' | 'FAILED'; progress: number; attachment?: InputAttachment; error?: string }
+const attachments = ref<AttachmentDraft[]>([])
+const attachmentDragging = ref(false)
+const attachmentsCommitted = ref(false)
+const attachmentsPending = computed(() => attachments.value.some(item => item.status !== 'READY'))
 const debugTraceEnabled = ref(false)
 const provenanceEnabled = ref(true)
 let controller: AbortController | null = null
@@ -396,7 +408,6 @@ const applySelectedPromptTask = () => {
   draft.value.constraints = [...task.constraints]
   draft.value.expectedArtifacts = [...task.expectedArtifacts]
   draft.value.materialIds = []
-  fileName.value = ''
   errorMessage.value = ''
 }
 
@@ -427,30 +438,42 @@ const clearPlugin = () => {
   draft.value.reviewMode = 'auto'
 }
 
-const handleFile = async (event: Event) => {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  fileState.value = 'parsing'
-  errorMessage.value = ''
+const createClientRequestId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+const extensionOf = (filename: string) => filename.includes('.') ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : 'file'
+const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+const uploadAttachment = async (item: AttachmentDraft) => {
+  item.status = 'UPLOADING'; item.progress = 0; item.error = undefined
   try {
-    const result = await fileApi.extractDocumentText(file)
-    const text = (result.text || result.content || '').trim()
-    if (!text) throw new Error('文件中没有可提取的文字')
-    draft.value.materialText = text
-    fileName.value = file.name
+    item.attachment = await workflowApi.uploadAttachment(item.file, { onProgress: value => { item.progress = value; if (value >= 100) item.status = 'PARSING' } })
+    item.status = item.attachment.status === 'READY' ? 'READY' : 'FAILED'
+    if (item.status === 'FAILED') item.error = item.attachment.parseError || '文件解析失败'
   } catch (error: any) {
-    errorMessage.value = error?.response?.data?.detail || error?.message || '文件解析失败'
-  } finally {
-    fileState.value = 'idle'
+    item.status = 'FAILED'
+    const detail = error?.response?.data?.detail
+    item.error = detail?.message || error?.response?.data?.message || error?.message || '文件上传失败'
   }
 }
-
-const createClientRequestId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+const addFiles = (files: File[]) => {
+  const accepted = new Set(['.txt', '.md', '.pdf', '.docx'])
+  for (const file of files) {
+    if (!accepted.has(extensionOf(file.name))) { errorMessage.value = `不支持的文件类型：${file.name}`; continue }
+    // 必须 reactive 包裹后入队：uploadAttachment 若拿到原生对象，status/progress 赋值
+    // 不触发响应式更新，行状态会永远停在"上传中…"并锁死提交按钮。
+    const item = reactive<AttachmentDraft>({ localId: createClientRequestId(), file, status: 'UPLOADING', progress: 0 })
+    attachments.value.push(item); void uploadAttachment(item)
+  }
+}
+const handleFiles = (event: Event) => { const input = event.currentTarget as HTMLInputElement; addFiles(Array.from(input.files || [])); input.value = '' }
+const handleDrop = (event: DragEvent) => { attachmentDragging.value = false; addFiles(Array.from(event.dataTransfer?.files || [])) }
+const retryAttachment = async (item: AttachmentDraft) => { if (item.attachment) { try { await workflowApi.deleteAttachment(item.attachment.attachmentId) } catch {} item.attachment = undefined }; await uploadAttachment(item) }
+const removeAttachment = async (item: AttachmentDraft) => { attachments.value = attachments.value.filter(candidate => candidate.localId !== item.localId); if (item.attachment) { try { await workflowApi.deleteAttachment(item.attachment.attachmentId) } catch { ElMessage.error('附件删除失败') } } }
 
 const submit = async () => {
   if (submitting.value) return
   if (!draft.value.title.trim()) { errorMessage.value = '请输入项目名称'; return }
   if (!draft.value.taskGoal.trim()) { errorMessage.value = '请输入项目目标'; return }
+  if (attachmentsPending.value) { errorMessage.value = '请等待所有附件解析完成，或移除失败的附件。'; return }
   for (const extension of draftExtensions.value) {
     const validation = extension.validateDraft?.(draft.value)
     if (validation && !validation.valid) {
@@ -464,6 +487,7 @@ const submit = async () => {
   controller = new AbortController()
   try {
     const request = buildWorkbenchStartRequest(draft.value, draftExtensions.value, createClientRequestId())
+    request.attachmentIds = attachments.value.map(item => item.attachment?.attachmentId).filter((item): item is string => Boolean(item))
     request.input = {
       ...request.input,
       taskName: draft.value.title.trim(),
@@ -476,6 +500,7 @@ const submit = async () => {
       delete request.input.materialText
     }
     const run = await workflowApi.startWorkflowAsync(request, { signal: controller.signal })
+    attachmentsCommitted.value = true
     await router.replace({ name: 'MissionWorkspace', params: { missionId: run.missionId }, query: { runId: run.runId } })
   } catch (error: any) {
     if (error?.name === 'CanceledError' || error?.name === 'AbortError') return
@@ -491,6 +516,7 @@ onBeforeUnmount(() => {
   controller?.abort()
   systemModelsRequest += 1
   window.removeEventListener(MODEL_SETTINGS_EVENT, syncModelSettings)
+  if (!attachmentsCommitted.value) for (const item of attachments.value) if (item.attachment) void workflowApi.deleteAttachment(item.attachment.attachmentId).catch(() => undefined)
 })
 </script>
 
@@ -506,7 +532,8 @@ onBeforeUnmount(() => {
 .create-mission__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .create-mission h1 { margin: 8px 0 5px; font-size: 25px; line-height: 1.2; }
 .create-mission__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-.prompt-import { display: grid; grid-template-columns: minmax(280px, 1fr) max-content; align-items: center; gap: 12px 24px; max-width: 940px; margin: 0 auto; padding: 15px 0 14px; border-bottom: 1px solid var(--border-light); }
+.prompt-import { display: none; }
+.create-section--task-options { display: none; }
 .prompt-import__lead { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .prompt-import__lead > div { min-width: 0; }
 .prompt-import__eyebrow { flex: 0 0 auto; padding-top: 3px; color: var(--primary-color); font: 9px var(--font-mono, monospace); letter-spacing: .12em; }
@@ -533,6 +560,30 @@ onBeforeUnmount(() => {
 .create-file { display: flex !important; align-items: center; gap: 10px; margin-top: 10px; color: var(--primary-color) !important; cursor: pointer; font-weight: 500 !important; }
 .create-file small { color: var(--text-muted); font-size: 10px; font-weight: 400; }
 .create-file input { display: none; }
+.attachment-input { display: grid; gap: 12px; }
+.attachment-input__heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.attachment-input__heading > div { display: grid; gap: 4px; }
+.attachment-input__heading label { margin: 0; }
+.attachment-input__heading small { color: var(--text-muted); font-size: 10px; }
+.attachment-input__add { margin: 0 !important; color: var(--primary-color) !important; cursor: pointer; font-size: 11px !important; }
+.attachment-input__add input { display: none; }
+.attachment-input__dropzone { min-height: 70px; padding: 10px 12px; border: 1px dashed var(--border-light); border-radius: 6px; background: color-mix(in srgb, var(--bg-card) 70%, transparent); transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out); }
+.attachment-input__dropzone.is-dragging { border-color: var(--primary-color); background: var(--primary-fade); }
+.attachment-input__dropzone > p { margin: 14px 0; color: var(--text-muted); font-size: 11px; text-align: center; }
+.attachment-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto) auto; align-items: center; gap: 14px; min-height: 52px; }
+.attachment-row + .attachment-row { border-top: 1px solid var(--border-light); }
+.attachment-row__file { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.attachment-row__file > span { color: var(--primary-color); font-size: 17px; }
+.attachment-row__file > div, .attachment-row__state { display: grid; gap: 3px; min-width: 0; }
+.attachment-row__file strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-row__file small, .attachment-row__state small { color: var(--text-muted); font-size: 9px; }
+.attachment-row__state { color: var(--text-secondary); font: 10px var(--font-mono, monospace); }
+.attachment-row__state.is-ready { color: var(--success, #35a66f); }
+.attachment-row__state.is-failed, .attachment-row__state.is-failed small { color: var(--danger); }
+.attachment-row__actions { display: flex; gap: 8px; }
+.attachment-row__actions button { padding: 3px 0; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; font-size: 10px; }
+.attachment-row__actions button:hover { color: var(--text-primary); }
+.attachment-row__actions button:disabled { cursor: default; opacity: .45; }
 .create-section--config { display: grid; gap: 17px; }
 .create-section__heading { padding-bottom: 3px; }
 .create-section__heading strong, .create-section__heading span { display: block; }
