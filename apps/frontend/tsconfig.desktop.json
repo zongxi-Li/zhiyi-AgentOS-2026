@@ -6,6 +6,7 @@
       "@platform": ["src/platform/desktop/adapter.ts"],
       "@window-controls": ["src/components/desktop/DesktopWindowControls.vue"],
       "@ui-zoom": ["src/platform/desktop/uiZoom.ts"],
+      "@fullscreen-hotkey": ["src/platform/desktop/fullscreenHotkey.ts"],
       "@tauri-apps/*": ["../desktop/node_modules/@tauri-apps/*"]
     }
   },
