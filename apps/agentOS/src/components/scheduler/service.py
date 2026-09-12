@@ -112,6 +112,8 @@ class SchedulerService:
                 continue
             versioned = self.resource_service.snapshot(profile.resource_id)
             lease_id = f"lease:{run_id}:{step_id}:{attempt_id}:{profile.resource_id}"
+            agent_id = _non_empty_string(requirement.preferences.get("agentId"))
+            node_id = _non_empty_string(requirement.preferences.get("nodeId"))
             lease = self.coordinator.acquire(
                 lease_id=lease_id,
                 resource_id=profile.resource_id,
@@ -119,6 +121,8 @@ class SchedulerService:
                 run_id=run_id,
                 step_id=step_id,
                 attempt_id=attempt_id,
+                agent_id=agent_id,
+                node_id=node_id,
                 slot_count=1,
                 ttl=self.lease_ttl,
                 now=current,
@@ -142,6 +146,8 @@ class SchedulerService:
                 snapshotVersion=confirmed.version,
                 metadata={
                     "score": decision.score,
+                    "agentId": agent_id,
+                    "nodeId": node_id,
                     "deploymentTier": profile.deployment_tier.value,
                     "placementReasons": [
                         f"deploymentTier={profile.deployment_tier.value}",
@@ -219,6 +225,12 @@ class SchedulerService:
 def _reverse_id(value: str) -> tuple[int, ...]:
     """Make max() use the lexicographically smallest id as the stable tie-break."""
     return tuple(-ord(character) for character in value)
+
+
+def _non_empty_string(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 __all__ = ["SchedulerService"]

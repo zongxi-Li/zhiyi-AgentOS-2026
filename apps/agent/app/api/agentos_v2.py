@@ -20,13 +20,22 @@ from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
 from components.planner import ACGPlanningError, TaskDecompositionError
 from components.resource.auth import (
+    NodeRequestAuthenticator,
     ResourceRequestAuthenticator,
     ResourceRequestExpired,
     ResourceRequestInvalid,
     ResourceRequestNotFound,
     ResourceRequestReplay,
 )
-from contracts.resource import NodeProfile, NodeSnapshot, ResourceProfile, ResourceSnapshot
+from contracts.resource import (
+    ComputeCapacity,
+    NodeProfile,
+    NodeSnapshot,
+    ResourceHealthStatus,
+    ResourceProfile,
+    ResourceSnapshot,
+    ResourceType,
+)
 from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
 from runtime import ExecutionRuntime
@@ -101,6 +110,20 @@ class RemoteResourceObservationRequest(BaseModel):
     available_slots: int = Field(alias="availableSlots", ge=0)
     observation_sequence: int = Field(alias="observationSequence", ge=0)
     utilization: float = Field(ge=0.0, le=1.0)
+    latency_ms: float | None = Field(default=None, alias="latencyMs", ge=0.0)
+    observed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), alias="observedAt"
+    )
+
+
+class RemoteNodeObservationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    observation_sequence: int = Field(alias="observationSequence", ge=0)
+    cpu_utilization: float = Field(default=0.0, alias="cpuUtilization", ge=0.0, le=1.0)
+    gpu_utilization: float = Field(default=0.0, alias="gpuUtilization", ge=0.0, le=1.0)
+    available_memory_mb: int = Field(default=0, alias="availableMemoryMb", ge=0)
+    queued_tasks: int = Field(default=0, alias="queuedTasks", ge=0)
     latency_ms: float | None = Field(default=None, alias="latencyMs", ge=0.0)
     observed_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), alias="observedAt"
@@ -294,6 +317,53 @@ def _usage_number(usage: dict[str, Any], *keys: str) -> int:
         if isinstance(value, (int, float)) and value >= 0:
             return int(value)
     return 0
+
+
+def _project_node_as_legacy_resource(profile: NodeProfile, snapshot: NodeSnapshot) -> tuple[ResourceProfile, ResourceSnapshot]:
+    capabilities = list(profile.model_ids) or [profile.node_type.value]
+    resource = ResourceProfile(
+        resourceId=profile.node_id,
+        resourceType=ResourceType(profile.node_type.value),
+        deploymentTier=profile.deployment_tier,
+        capabilities=capabilities,
+        labels=profile.labels,
+        location=profile.location,
+        dataZone=profile.data_zone,
+        ownerScope=profile.owner_scope,
+        privacyLevel=profile.privacy_level,
+        executionEndpoint=profile.execution_endpoint,
+        computeCapacity=ComputeCapacity(
+            cpuCores=profile.cpu_cores,
+            memoryMb=profile.memory_mb,
+            gpuType=profile.gpu_type,
+            gpuMemoryMb=profile.gpu_memory_mb,
+        ),
+        modelIds=list(profile.model_ids),
+        enabled=profile.enabled,
+        metadata={**profile.metadata, "legacyProjection": "node"},
+        version=profile.version,
+    )
+    legacy_snapshot = ResourceSnapshot(
+        resourceId=profile.node_id,
+        observationSequence=snapshot.observation_sequence,
+        observedAt=snapshot.observed_at,
+        availableSlots=0 if snapshot.health_status.value in {"stale", "offline"} else 1,
+        utilization=max(snapshot.cpu_utilization, snapshot.gpu_utilization),
+        healthStatus=(
+            ResourceHealthStatus.OFFLINE
+            if snapshot.health_status.value in {"stale", "offline"}
+            else ResourceHealthStatus.ONLINE
+        ),
+        latencyMs=snapshot.latency_ms,
+        metrics={
+            **snapshot.metrics,
+            "cpuUtilization": snapshot.cpu_utilization,
+            "gpuUtilization": snapshot.gpu_utilization,
+            "availableMemoryMb": float(snapshot.available_memory_mb),
+            "queuedTasks": float(snapshot.queued_tasks),
+        },
+    )
+    return resource, legacy_snapshot
 
 
 def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
@@ -701,7 +771,7 @@ def create_router(
         resource registration or scheduler eligibility into an ``online`` or
         ``healthy`` claim.
         """
-        resource_service = getattr(runtime, "resource_service", None)
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
         if resource_service is None:
             raise HTTPException(status_code=503, detail="resource query source unavailable")
 
@@ -731,6 +801,36 @@ def create_router(
                     "healthSource": type(resource_service.health_monitor.store).__name__,
                 },
             })
+        seen_resource_ids = {item["profile"]["resourceId"] for item in items}
+        node_service = getattr(runtime, "node_service", None)
+        if node_service is not None:
+            for node_profile in node_service.profiles():
+                if node_profile.node_id in seen_resource_ids:
+                    continue
+                versioned = node_service.snapshot(node_profile.node_id)
+                legacy_profile, legacy_snapshot = _project_node_as_legacy_resource(
+                    node_profile,
+                    versioned.snapshot,
+                )
+                health = node_service.health(node_profile.node_id)
+                items.append({
+                    "profile": legacy_profile.model_dump(by_alias=True, mode="json"),
+                    "snapshot": legacy_snapshot.model_dump(by_alias=True, mode="json"),
+                    "snapshotVersion": versioned.version,
+                    "health": {
+                        "healthy": health.status.value not in {"stale", "offline"},
+                        "status": health.status.value,
+                        "reliability": 1.0 / (1.0 + health.consecutive_failures),
+                        "latencyMs": versioned.snapshot.latency_ms,
+                        "lastHeartbeat": (
+                            health.last_heartbeat.isoformat()
+                            if health.last_heartbeat is not None
+                            else None
+                        ),
+                        "healthSource": type(node_service.health_monitor).__name__,
+                        "legacyProjection": "node",
+                    },
+                })
         return {"items": items, "total": len(items)}
 
     @router.get("/nodes")
@@ -742,7 +842,7 @@ def create_router(
         items: list[dict[str, Any]] = []
         for profile in node_service.profiles():
             versioned = node_service.snapshot(profile.node_id)
-            health = node_service.health_monitor.health(profile.node_id)
+            health = node_service.health(profile.node_id)
             items.append({
                 "profile": profile.model_dump(by_alias=True, mode="json"),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
@@ -778,7 +878,7 @@ def create_router(
     @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_resource(request: RemoteResourceRegistrationRequest):
         """Register a remote resource and issue its one-time credential secret."""
-        resource_service = getattr(runtime, "resource_service", None)
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
         if resource_service is None:
             raise HTTPException(status_code=503, detail="resource registration source unavailable")
         profile = request.profile
@@ -819,10 +919,82 @@ def create_router(
             "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
         }
 
+    @router.post("/nodes/{node_id}/observation")
+    async def post_remote_node_observation(
+        node_id: str,
+        request: RemoteNodeObservationRequest,
+        raw_request: Request,
+        node_credential_id: str | None = Header(default=None, alias="X-Node-Credential-Id"),
+        node_timestamp: str | None = Header(default=None, alias="X-Node-Timestamp"),
+        node_nonce: str | None = Header(default=None, alias="X-Node-Nonce"),
+        node_signature: str | None = Header(default=None, alias="X-Node-Signature"),
+    ):
+        """Accept a signed remote node heartbeat and update the Node ledger."""
+        node_service = getattr(runtime, "node_service", None)
+        if node_service is None:
+            raise HTTPException(status_code=503, detail="node observation source unavailable")
+        if not all((node_credential_id, node_timestamp, node_nonce, node_signature)):
+            raise HTTPException(status_code=401, detail="node authentication headers are required")
+        try:
+            timestamp = int(node_timestamp)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=401, detail="node request timestamp is invalid") from exc
+        try:
+            NodeRequestAuthenticator(node_service).authenticate(
+                node_id=node_id,
+                credential_id=node_credential_id,
+                method=raw_request.method,
+                path=raw_request.url.path,
+                timestamp=timestamp,
+                nonce=node_nonce,
+                signature=node_signature,
+                body=await raw_request.body(),
+            )
+        except ResourceRequestNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ResourceRequestExpired as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except ResourceRequestReplay as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ResourceRequestInvalid as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        try:
+            health = node_service.observe_remote(
+                node_id,
+                observation_sequence=request.observation_sequence,
+                cpu_utilization=request.cpu_utilization,
+                gpu_utilization=request.gpu_utilization,
+                available_memory_mb=request.available_memory_mb,
+                queued_tasks=request.queued_tasks,
+                latency_ms=request.latency_ms,
+                observed_at=request.observed_at,
+            )
+            versioned = node_service.snapshot(node_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="node not found") from exc
+        except StaleResourceObservation as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "nodeId": node_id,
+            "health": {
+                "status": health.status.value,
+                "lastHeartbeat": (
+                    health.last_heartbeat.isoformat()
+                    if health.last_heartbeat is not None
+                    else None
+                ),
+                "consecutiveFailures": health.consecutive_failures,
+            },
+            "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
+            "snapshotVersion": versioned.version,
+        }
+
     @router.post("/resources/{resource_id}/credential/rotate")
     async def rotate_remote_resource_credential(resource_id: str):
         """Rotate a remote resource credential and return the new secret once."""
-        resource_service = getattr(runtime, "resource_service", None)
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
         if resource_service is None:
             raise HTTPException(status_code=503, detail="resource credential source unavailable")
         try:
@@ -855,7 +1027,7 @@ def create_router(
         resource_signature: str | None = Header(default=None, alias="X-Resource-Signature"),
     ):
         """Accept a remote node's heartbeat plus its latest schedulable snapshot."""
-        resource_service = getattr(runtime, "resource_service", None)
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
         if resource_service is None:
             raise HTTPException(status_code=503, detail="resource observation source unavailable")
         if not all((resource_credential, resource_timestamp, resource_nonce, resource_signature)):

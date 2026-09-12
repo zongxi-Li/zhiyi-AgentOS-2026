@@ -21,7 +21,16 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.content import ContentKind
-from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
+from contracts.resource import (
+    DeploymentTier,
+    NodeProfile,
+    NodeSnapshot,
+    ResourceEndpoint,
+    ResourceHealthStatus,
+    ResourceProfile,
+    ResourceSnapshot,
+    ResourceType,
+)
 from contracts.planning import PlannedTask
 from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import (
@@ -515,7 +524,7 @@ async def test_v2_graph_provenance_and_checkpoint_are_separate_safe_resources(tm
 
 async def test_v2_resources_projects_authoritative_profile_and_unknown_health(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    runtime.resource_service.register(
+    runtime.legacy_resource_service.register(
         ResourceProfile(
             resourceId="resource-api",
             resourceType=ResourceType.AGENT,
@@ -550,7 +559,7 @@ async def test_v2_resources_projects_authoritative_profile_and_unknown_health(tm
 
 async def test_v2_remote_resource_observation_updates_health_and_capacity(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    runtime.resource_service.register(
+    runtime.legacy_resource_service.register(
         ResourceProfile(
             resourceId="edge-observe",
             resourceType=ResourceType.WORKER,
@@ -569,7 +578,7 @@ async def test_v2_remote_resource_observation_updates_health_and_capacity(tmp_pa
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
 
-    credential = runtime.resource_service.issue_credential("edge-observe")
+    credential = runtime.legacy_resource_service.issue_credential("edge-observe")
     body = json.dumps({
         "availableSlots": 2,
         "observationSequence": 2,
@@ -634,6 +643,142 @@ async def test_v2_remote_resource_observation_updates_health_and_capacity(tmp_pa
 
     assert stale.status_code == 409
     assert "stale observation" in stale.json()["detail"]
+
+
+async def test_v2_remote_node_observation_requires_signature_and_strict_sequence(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    issued = runtime.node_service.register_remote(
+        NodeProfile(
+            nodeId="edge-node-observe",
+            deploymentTier=DeploymentTier.EDGE,
+            ownerScope="tenant-a",
+            gpuMemoryMb=24576,
+            modelIds=["vision-large"],
+            executionEndpoint=ResourceEndpoint(
+                protocol="https",
+                address="https://edge-node-observe.example.test/execute",
+            ),
+        ),
+        NodeSnapshot(nodeId="edge-node-observe", observationSequence=0),
+    )
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    path = "/agentos/v2/nodes/edge-node-observe/observation"
+    body = json.dumps({
+        "observationSequence": 1,
+        "cpuUtilization": 0.25,
+        "gpuUtilization": 0.5,
+        "availableMemoryMb": 16384,
+        "queuedTasks": 1,
+        "latencyMs": 18,
+        "observedAt": "2026-09-11T00:00:00Z",
+    }, separators=(",", ":")).encode()
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    nonce = "node-observation-1"
+    headers = {
+        "content-type": "application/json",
+        "X-Node-Credential-Id": issued.credential_id,
+        "X-Node-Timestamp": str(timestamp),
+        "X-Node-Nonce": nonce,
+        "X-Node-Signature": build_resource_signature(
+            issued.secret,
+            method="POST",
+            path=path,
+            timestamp=timestamp,
+            nonce=nonce,
+            body=body,
+        ),
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.post(path, content=body, headers={"content-type": "application/json"})
+        accepted = await client.post(path, content=body, headers=headers)
+        replay = await client.post(path, content=body, headers=headers)
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["nodeId"] == "edge-node-observe"
+    assert accepted.json()["snapshot"]["observationSequence"] == 1
+    assert accepted.json()["snapshot"]["availableMemoryMb"] == 16384
+    assert accepted.json()["health"]["status"] in {"online", "busy"}
+    assert replay.status_code == 409
+
+    same_sequence_body = json.dumps({
+        "observationSequence": 1,
+        "cpuUtilization": 0.2,
+        "gpuUtilization": 0.2,
+        "availableMemoryMb": 20000,
+        "queuedTasks": 0,
+    }, separators=(",", ":")).encode()
+    same_timestamp = int(datetime.now(timezone.utc).timestamp())
+    same_nonce = "node-observation-2"
+    same_headers = {
+        "content-type": "application/json",
+        "X-Node-Credential-Id": issued.credential_id,
+        "X-Node-Timestamp": str(same_timestamp),
+        "X-Node-Nonce": same_nonce,
+        "X-Node-Signature": build_resource_signature(
+            issued.secret,
+            method="POST",
+            path=path,
+            timestamp=same_timestamp,
+            nonce=same_nonce,
+            body=same_sequence_body,
+        ),
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        same_sequence = await client.post(path, content=same_sequence_body, headers=same_headers)
+        wrong_credential = await client.post(path, content=same_sequence_body, headers={
+            "content-type": "application/json",
+            "X-Node-Credential-Id": "wrong",
+            "X-Node-Timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            "X-Node-Nonce": "node-observation-wrong",
+            "X-Node-Signature": "0" * 64,
+        })
+
+    assert same_sequence.status_code == 409
+    assert "stale observation" in same_sequence.json()["detail"]
+    assert wrong_credential.status_code == 401
+
+
+async def test_v2_resources_projects_registered_nodes_for_legacy_clients(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.node_service.register_remote(
+        NodeProfile(
+            nodeId="legacy-visible-node",
+            deploymentTier=DeploymentTier.EDGE,
+            ownerScope="tenant-a",
+            modelIds=["vision-large"],
+            gpuMemoryMb=24576,
+            executionEndpoint=ResourceEndpoint(
+                protocol="https",
+                address="https://legacy-visible-node.example.test/execute",
+            ),
+        ),
+        NodeSnapshot(
+            nodeId="legacy-visible-node",
+            observationSequence=1,
+            availableMemoryMb=16384,
+            latencyMs=17,
+        ),
+    )
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/agentos/v2/resources")
+
+    assert response.status_code == 200
+    projected = next(
+        item for item in response.json()["items"]
+        if item["profile"]["resourceId"] == "legacy-visible-node"
+    )
+    assert projected["profile"]["resourceType"] == "worker"
+    assert projected["profile"]["deploymentTier"] == "edge"
+    assert projected["profile"]["modelIds"] == ["vision-large"]
+    assert projected["profile"]["computeCapacity"]["gpuMemoryMb"] == 24576
+    assert projected["snapshot"]["availableSlots"] == 1
+    assert projected["snapshot"]["latencyMs"] == 17
 
 
 def _operator_context():
@@ -705,7 +850,7 @@ async def test_v2_remote_resource_registration_requires_operator_and_returns_one
 
 async def test_v2_remote_observation_requires_resource_signature_and_rejects_replay(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    runtime.resource_service.register(
+    runtime.legacy_resource_service.register(
         ResourceProfile(
             resourceId="edge-signed-api",
             resourceType=ResourceType.WORKER,
@@ -716,7 +861,7 @@ async def test_v2_remote_observation_requires_resource_signature_and_rejects_rep
         ),
         ResourceSnapshot(resourceId="edge-signed-api", availableSlots=1, utilization=0.0),
     )
-    credential = runtime.resource_service.issue_credential("edge-signed-api")
+    credential = runtime.legacy_resource_service.issue_credential("edge-signed-api")
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
     path = "/agentos/v2/resources/edge-signed-api/observation"
@@ -751,7 +896,7 @@ async def test_v2_remote_observation_requires_resource_signature_and_rejects_rep
 
 async def test_v2_remote_observation_rejects_expired_and_wrong_credentials(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    runtime.resource_service.register(
+    runtime.legacy_resource_service.register(
         ResourceProfile(
             resourceId="edge-auth-api",
             resourceType=ResourceType.WORKER,
@@ -762,7 +907,7 @@ async def test_v2_remote_observation_rejects_expired_and_wrong_credentials(tmp_p
         ),
         ResourceSnapshot(resourceId="edge-auth-api", availableSlots=1, utilization=0.0),
     )
-    credential = runtime.resource_service.issue_credential("edge-auth-api")
+    credential = runtime.legacy_resource_service.issue_credential("edge-auth-api")
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
     path = "/agentos/v2/resources/edge-auth-api/observation"
@@ -834,7 +979,7 @@ async def test_v2_remote_resource_auth_distinguishes_unknown_resource_and_owner_
 
 async def test_v2_remote_resource_credential_rotation_is_scoped_atomic_and_invalidates_old_secret(tmp_path) -> None:
     runtime = _runtime(tmp_path)
-    runtime.resource_service.register(
+    runtime.legacy_resource_service.register(
         ResourceProfile(
             resourceId="edge-rotation",
             resourceType=ResourceType.WORKER,
@@ -845,9 +990,9 @@ async def test_v2_remote_resource_credential_rotation_is_scoped_atomic_and_inval
         ),
         ResourceSnapshot(resourceId="edge-rotation", availableSlots=1, utilization=0.0),
     )
-    previous = runtime.resource_service.issue_credential("edge-rotation")
-    before_profile = runtime.resource_service.profile("edge-rotation")
-    before_snapshot = runtime.resource_service.snapshot("edge-rotation")
+    previous = runtime.legacy_resource_service.issue_credential("edge-rotation")
+    before_profile = runtime.legacy_resource_service.profile("edge-rotation")
+    before_snapshot = runtime.legacy_resource_service.snapshot("edge-rotation")
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
     path = "/agentos/v2/resources/edge-rotation/credential/rotate"
@@ -934,8 +1079,8 @@ async def test_v2_remote_resource_credential_rotation_is_scoped_atomic_and_inval
 
     assert old_observation.status_code == 401
     assert new_observation.status_code == 200
-    assert runtime.resource_service.profile("edge-rotation") == before_profile
-    after_snapshot = runtime.resource_service.snapshot("edge-rotation")
+    assert runtime.legacy_resource_service.profile("edge-rotation") == before_profile
+    after_snapshot = runtime.legacy_resource_service.snapshot("edge-rotation")
     assert after_snapshot.version == before_snapshot.version + 1
     assert after_snapshot.snapshot.observation_sequence == 1
     item = next(item for item in projection.json()["items"] if item["profile"]["resourceId"] == "edge-rotation")

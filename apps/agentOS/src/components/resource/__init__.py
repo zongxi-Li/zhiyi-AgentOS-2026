@@ -8,6 +8,7 @@ from .health_store import (
     SQLiteResourceHealthStore,
 )
 from .auth import (
+    NodeRequestAuthenticator,
     ResourceRequestAuthenticator,
     ResourceRequestExpired,
     ResourceRequestInvalid,
@@ -27,10 +28,10 @@ from .models import (
 )
 from .agent_directory import AgentDirectory
 from .agent_service import AgentService
-from .agent_store import AgentStore, InMemoryAgentStore
+from .agent_store import AgentStore, InMemoryAgentStore, SQLiteAgentStore
 from .node_health import NodeHealthMonitor, infer_load_status
 from .node_service import NodeService
-from .node_store import InMemoryNodeStore, NodeStore
+from .node_store import InMemoryNodeStore, NodeStore, SQLiteNodeStore
 from .service import IssuedResourceCredential, ResourceService
 from .store import (
     InMemoryResourceStore,
@@ -53,6 +54,7 @@ __all__ = [
     "ResourceHealthState",
     "ResourceHealthStore",
     "SQLiteResourceHealthStore",
+    "NodeRequestAuthenticator",
     "ResourceRequestAuthenticator",
     "ResourceRequestExpired",
     "ResourceRequestInvalid",
@@ -70,7 +72,9 @@ __all__ = [
     "AgentService",
     "AgentStore",
     "InMemoryAgentStore",
+    "SQLiteAgentStore",
     "InMemoryNodeStore",
+    "SQLiteNodeStore",
     "NodeHealth",
     "NodeHealthMonitor",
     "NodeService",

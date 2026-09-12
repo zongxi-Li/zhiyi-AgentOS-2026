@@ -247,6 +247,7 @@ __all__ = [
     "ResourceExecutionError",
     "ResourceCredentialProvider",
     "build_resource_execution_adapter",
+    "build_node_execution_adapter",
     "build_remote_execution_payload",
     "normalize_execution_endpoint",
 ]

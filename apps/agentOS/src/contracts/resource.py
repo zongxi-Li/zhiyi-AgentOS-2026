@@ -162,6 +162,8 @@ class ResourceLease(BaseModel):
 
     lease_id: StrictStr = Field(alias="leaseId", min_length=1, description="租约唯一标识。")
     resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="被租用资源标识。")
+    agent_id: StrictStr | None = Field(default=None, alias="agentId", description="新账本中被租用的 Agent。")
+    node_id: StrictStr | None = Field(default=None, alias="nodeId", description="新账本中承载执行的 Node。")
     owner_id: StrictStr | None = Field(default=None, alias="ownerId", description="获得使用权的任务或执行标识。")
     run_id: StrictStr | None = Field(default=None, alias="runId")
     step_id: StrictStr | None = Field(default=None, alias="stepId")
@@ -258,6 +260,7 @@ class NodeProfile(BaseModel):
     gpu_memory_mb: int = Field(default=0, ge=0, alias="gpuMemoryMb")
     memory_mb: int = Field(default=0, ge=0, alias="memoryMb")
     max_model_params: StrictStr | None = Field(default=None, alias="maxModelParams", description="能承载的最大模型参数量。")
+    model_ids: list[StrictStr] = Field(default_factory=list, alias="modelIds", description="节点可承载或直连的模型。")
     privacy_level: StrictStr = Field(default="internal", alias="privacyLevel")
     data_zone: StrictStr | None = Field(default=None, alias="dataZone", description="所属隐私区域。")
     cost_per_unit: float = Field(default=0.0, ge=0.0, alias="costPerUnit", description="单位时间成本。")
