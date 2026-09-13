@@ -9,13 +9,24 @@ from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
 from components.content import SQLiteContentManifestStore
 from components.resource.store import SQLiteResourceStore
+from components.resource.agent_store import SQLiteAgentStore
 from components.resource.health_store import SQLiteResourceHealthStore
+from components.resource.node_store import SQLiteNodeStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
+from components.scheduler.two_layer_service import TwoLayerSchedulerService
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from runtime import ExecutionRuntime
-from contracts.resource import DeploymentTier, ResourceEndpoint, ResourceProfile, ResourceSnapshot, ResourceType
+from contracts.resource import (
+    DeploymentTier,
+    NodeProfile,
+    NodeSnapshot,
+    ResourceEndpoint,
+    ResourceProfile,
+    ResourceSnapshot,
+    ResourceType,
+)
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 from app.execution.wiring import (
@@ -81,6 +92,8 @@ def _environment(root: Path) -> dict[str, str]:
         "AGENTOS_PROVENANCE_DB": str(root / "provenance.sqlite3"),
         "AGENTOS_AUDIT_DB": str(root / "audit_decisions.sqlite3"),
         "AGENTOS_RESOURCE_DB": str(root / "resources.sqlite3"),
+        "AGENTOS_NODE_DB": str(root / "nodes.sqlite3"),
+        "AGENTOS_AGENT_DB": str(root / "agents.sqlite3"),
         "AGENTOS_RESOURCE_HEALTH_DB": str(root / "resource_health.sqlite3"),
         "AGENTOS_EVOLUTION_DB": str(root / "evolution.sqlite3"),
     }
@@ -105,8 +118,10 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         assert isinstance(runtime.memory_store, SQLiteMemoryStore)
         assert isinstance(runtime.provenance_store, SQLiteProvenanceStore)
         assert isinstance(runtime.decision_store, SQLiteDecisionStore)
-        assert isinstance(runtime.resource_service.store, SQLiteResourceStore)
-        assert isinstance(runtime.resource_service.health_monitor.store, SQLiteResourceHealthStore)
+        assert isinstance(runtime.node_service.store, SQLiteNodeStore)
+        assert isinstance(runtime.agent_service.store, SQLiteAgentStore)
+        assert isinstance(runtime.scheduler_service, TwoLayerSchedulerService)
+        assert runtime.resource_service is None
         assert isinstance(runtime.evolution_service.store, SQLiteEvolutionStore)
         assert runtime.tool_runtime is tools
         assert isinstance(runtime._model_runtime, GuardedModelRuntime)
@@ -115,6 +130,10 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         assert runtime.require_planner_identity is True
         assert runtime.identity_lifecycle is not None
         assert runtime.agent_registry.all()
+        assert runtime.agent_service.profiles()
+        assert {
+            profile.agent_id for profile in runtime.agent_service.profiles()
+        }.issuperset({runtime.agent_registry.agent_id(agent) for agent in runtime.agent_registry.all()})
         assert runtime.workflow_registry.all()
         assert {manifest.pack_id for manifest in runtime.plugin_manifests} == {
             "education",
@@ -127,7 +146,7 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         close_runtime(runtime)
 
 
-def test_application_resource_store_persists_remote_credentials(tmp_path: Path) -> None:
+def test_application_node_store_persists_remote_credentials(tmp_path: Path) -> None:
     environment = _environment(tmp_path)
     runtime = build_default_runtime(
         environment=environment,
@@ -136,28 +155,24 @@ def test_application_resource_store_persists_remote_credentials(tmp_path: Path) 
         intent_llm=_InjectedIntentLLM(),
     )
     try:
-        profile = ResourceProfile(
-            resourceId="wired-edge",
-            resourceType=ResourceType.WORKER,
-            deploymentTier=DeploymentTier.EDGE,
-            capabilities=["vision.infer"],
-            ownerScope="tenant-a",
-            executionEndpoint=ResourceEndpoint(
-                protocol="https",
-                address="https://wired-edge.example.test/execute",
+        issued = runtime.node_service.register_remote(
+            NodeProfile(
+                nodeId="wired-node",
+                deploymentTier=DeploymentTier.EDGE,
+                ownerScope="tenant-a",
+                executionEndpoint=ResourceEndpoint(
+                    protocol="https",
+                    address="https://wired-node.example.test/execute",
+                ),
             ),
+            NodeSnapshot(nodeId="wired-node"),
         )
-        runtime.resource_service.register(
-            profile,
-            ResourceSnapshot(resourceId="wired-edge", availableSlots=1, utilization=0.0),
-        )
-        issued = runtime.resource_service.issue_credential("wired-edge")
     finally:
         close_runtime(runtime)
 
-    reopened = SQLiteResourceStore(environment["AGENTOS_RESOURCE_DB"])
+    reopened = SQLiteNodeStore(environment["AGENTOS_NODE_DB"])
     try:
-        assert reopened.get_credential("wired-edge").credential_id == issued.credential_id
+        assert reopened.get_credential("wired-node").credential_id == issued.credential_id
     finally:
         reopened.close()
 
@@ -199,8 +214,8 @@ def test_application_wires_an_injected_redis_lease_coordinator(tmp_path: Path) -
         coordination_client=client,
     )
     try:
-        assert isinstance(runtime.scheduler_service.coordinator, RedisLeaseCoordinator)
-        assert runtime.scheduler_service.coordinator.client is client
+        assert isinstance(runtime.legacy_scheduler_service.coordinator, RedisLeaseCoordinator)
+        assert runtime.legacy_scheduler_service.coordinator.client is client
     finally:
         close_runtime(runtime)
     assert client.closed is True

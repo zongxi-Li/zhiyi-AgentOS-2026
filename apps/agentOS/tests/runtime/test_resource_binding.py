@@ -9,8 +9,20 @@ import pytest
 
 from components.mission_manager.store import WorkflowRegistry
 from components.executor.graph import ACGSuperstepError
+from components.resource.agent_directory import AgentDirectory
+from components.resource.agent_service import AgentService
+from components.resource.node_service import NodeService
 from components.resource.service import ResourceService
-from contracts.resource import DeploymentTier, ResourceEndpoint, ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
+from contracts.resource import (
+    DeploymentTier,
+    NodeProfile,
+    NodeSnapshot,
+    ResourceEndpoint,
+    ResourceHealthStatus,
+    ResourceProfile,
+    ResourceSnapshot,
+    ResourceType,
+)
 from components.scheduler.models import (
     SchedulerAllocationTimeout,
     SchedulerNoEligibleResource,
@@ -95,6 +107,39 @@ def test_prepare_run_freezes_resource_bindings() -> None:
                     "compatibilitySource": False,
             },
         }
+    }
+
+
+def test_prepare_run_freezes_node_agent_binding_from_new_ledgers() -> None:
+    calls: list[str] = []
+    runtime, _ = _runtime(calls)
+    runtime.agent_service = AgentService()
+    AgentDirectory(runtime.agent_service).register_agent(runtime.agent_registry.all()[0].profile)
+    runtime.node_service = NodeService()
+    runtime.node_service.register(
+        NodeProfile(
+            nodeId="edge-node-1",
+            deploymentTier=DeploymentTier.EDGE,
+            modelIds=[],
+            gpuMemoryMb=4096,
+            privacyLevel="internal",
+        ),
+        NodeSnapshot(nodeId="edge-node-1", availableMemoryMb=8192),
+    )
+    runtime.node_service.heartbeat("edge-node-1")
+    task = runtime.create_mission("resource", workflow_id="resource-run")
+
+    _, run = runtime.prepare_run(task.mission_id)
+
+    assert run.execution_state["nodeAgentBindings"]["analyse"] == {
+        "agentId": "agent-primary",
+        "nodeId": "edge-node-1",
+        "resourceId": "edge-node-1",
+    }
+    assert run.execution_state["bindingRequirements"]["analyse"]["preferences"] == {
+        "resourceId": "agent-primary",
+        "agentId": "agent-primary",
+        "nodeId": "edge-node-1",
     }
 
 
@@ -186,6 +231,82 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatc
     assert adapter is not None
     assert built == [("edge-01", resources)]
     assert runtime.resource_execution_adapters["edge-01"] is adapter
+
+
+def test_runtime_lazily_builds_remote_adapter_from_registered_node(monkeypatch) -> None:
+    nodes = NodeService()
+    nodes.register_remote(
+        NodeProfile(
+            nodeId="edge-node-01",
+            deploymentTier=DeploymentTier.EDGE,
+            ownerScope="team-a",
+            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-node-01:9000"),
+        ),
+        NodeSnapshot(nodeId="edge-node-01"),
+    )
+    built: list[tuple[str, object]] = []
+
+    class _Adapter:
+        async def run(self, context):
+            return AgentOutput(output={"result": "edge"})
+
+    def factory(node, *, credential_provider, **kwargs):
+        built.append((node.node_id, credential_provider))
+        return _Adapter()
+
+    monkeypatch.setattr("runtime.workflow_runtime.build_node_execution_adapter", factory)
+    runtime = ExecutionRuntime(
+        agent_registry=AgentRegistry(),
+        workflow_registry=WorkflowRegistry(),
+        workflow_store=MemoryWorkflowStore(),
+        node_service=nodes,
+    )
+
+    adapter = runtime._node_execution_adapter("edge-node-01")
+
+    assert adapter is not None
+    assert built == [("edge-node-01", nodes)]
+    assert runtime.resource_execution_adapters["edge-node-01"] is adapter
+
+
+def test_acg_execution_uses_node_adapter_from_node_agent_binding(monkeypatch) -> None:
+    class _NodeAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, context):
+            self.calls += 1
+            return AgentOutput(output={"result": "node"}, summary="node complete")
+
+    local_calls: list[str] = []
+    runtime, _ = _runtime(local_calls)
+    runtime.node_service.register_remote(
+        NodeProfile(
+            nodeId="edge-node-01",
+            deploymentTier=DeploymentTier.EDGE,
+            ownerScope="team-a",
+            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-node-01:9000"),
+        ),
+        NodeSnapshot(nodeId="edge-node-01"),
+    )
+    runtime.node_service.heartbeat("edge-node-01")
+    adapter = _NodeAdapter()
+    monkeypatch.setattr(
+        runtime,
+        "_node_execution_adapter",
+        lambda node_id: adapter if node_id == "edge-node-01" else None,
+    )
+
+    task = runtime.create_mission("resource", workflow_id="resource-run")
+    _, run = runtime.prepare_run(task.mission_id)
+    completed = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    assert adapter.calls == 1
+    assert local_calls == []
+    assert completed.status.value == "completed"
+    assert completed.execution_state["nodeAgentBindings"]["analyse"]["nodeId"] == "edge-node-01"
+    assert completed.execution_state["schedulingDecisions"][0]["lease"]["agentId"] == "agent-primary"
+    assert completed.execution_state["schedulingDecisions"][0]["lease"]["nodeId"] == "edge-node-01"
 
 
 def test_acg_execution_uses_remote_adapter_after_remote_binding() -> None:
@@ -360,7 +481,7 @@ def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> Non
 
     assert calls == ["agent-primary"]
     assert completed.execution_state["schedulingDecisions"][0]["lease"]["status"] == "released"
-    assert runtime.scheduler_service.coordinator.active_slots("agent-primary") == 0
+    assert runtime.legacy_scheduler_service.coordinator.active_slots("agent-primary") == 0
 
 
 def test_long_run_refreshes_local_agent_heartbeat_before_later_step() -> None:
@@ -428,7 +549,7 @@ def test_capacity_queue_has_a_bounded_failure_outcome() -> None:
     runtime.scheduler_wait_timeout = 0.02
     task = runtime.create_mission("resource", workflow_id="resource-run")
     _, run = runtime.prepare_run(task.mission_id)
-    held = runtime.scheduler_service.coordinator.acquire(
+    held = runtime.legacy_scheduler_service.coordinator.acquire(
         lease_id="lease-held",
         resource_id="agent-primary",
         capacity=1,

@@ -126,3 +126,65 @@ class ResourceRequestAuthenticator:
         ):
             raise ResourceRequestReplay("resource request nonce was already used")
         return record
+
+
+class NodeRequestAuthenticator:
+    """Verify signed requests for the Node ledger using the same HMAC contract."""
+
+    def __init__(
+        self,
+        node_service,
+        *,
+        clock_skew: timedelta = timedelta(minutes=5),
+    ) -> None:
+        if clock_skew <= timedelta(0):
+            raise ValueError("clock skew must be positive")
+        self.node_service = node_service
+        self.clock_skew = clock_skew
+
+    def authenticate(
+        self,
+        *,
+        node_id: str,
+        credential_id: str,
+        method: str,
+        path: str,
+        timestamp: int,
+        nonce: str,
+        signature: str,
+        body: bytes,
+        now: datetime | None = None,
+    ) -> ResourceCredentialRecord:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        try:
+            record = self.node_service.credential(node_id)
+        except KeyError as error:
+            raise ResourceRequestNotFound("node not found") from error
+        if record.credential_id != credential_id:
+            raise ResourceRequestInvalid("node credential is invalid")
+
+        try:
+            signed_at = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError) as error:
+            raise ResourceRequestExpired("node request timestamp is invalid") from error
+        if abs((current - signed_at).total_seconds()) > self.clock_skew.total_seconds():
+            raise ResourceRequestExpired("node request timestamp is expired")
+
+        expected = hmac.new(
+            self.node_service.credential_hmac_key(node_id, credential_id),
+            _canonical_request(
+                method=method,
+                path=path,
+                timestamp=timestamp,
+                nonce=nonce,
+                body=body,
+            ),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise ResourceRequestInvalid("node signature is invalid")
+
+        expires_at = signed_at + self.clock_skew
+        if not self.node_service.consume_nonce(node_id, nonce, expires_at, now=current):
+            raise ResourceRequestReplay("node request nonce was already used")
+        return record

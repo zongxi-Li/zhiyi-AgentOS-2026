@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+from pathlib import Path
+import sqlite3
 from threading import RLock
 from typing import Protocol
 
@@ -186,3 +189,274 @@ class InMemoryNodeStore:
     @staticmethod
     def _copy(value: VersionedNodeSnapshot) -> VersionedNodeSnapshot:
         return VersionedNodeSnapshot(snapshot=value.snapshot.model_copy(deep=True), version=value.version)
+
+
+class SQLiteNodeStore:
+    """SQLite-backed Node registry with profile/snapshot, credentials and nonces."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS nodes (
+                node_id TEXT PRIMARY KEY,
+                profile_json TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                version INTEGER NOT NULL CHECK(version >= 1)
+            )"""
+        )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS node_credentials (
+                node_id TEXT PRIMARY KEY,
+                credential_id TEXT NOT NULL UNIQUE,
+                owner_scope TEXT NOT NULL,
+                secret_digest TEXT NOT NULL,
+                encrypted_secret TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS node_auth_nonces (
+                node_id TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY(node_id, nonce)
+            )"""
+        )
+        self._connection.commit()
+        self._lock = RLock()
+
+    @staticmethod
+    def _json(model: NodeProfile | NodeSnapshot) -> str:
+        return json.dumps(
+            model.model_dump(by_alias=True, mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _snapshot(row: tuple[object, object]) -> VersionedNodeSnapshot:
+        return VersionedNodeSnapshot(
+            snapshot=NodeSnapshot.model_validate(json.loads(str(row[0]))),
+            version=int(row[1]),
+        )
+
+    def register(self, profile: NodeProfile, snapshot: NodeSnapshot) -> VersionedNodeSnapshot:
+        if profile.node_id != snapshot.node_id:
+            raise ValueError("profile and snapshot nodeId must match")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT profile_json, snapshot_json, version FROM nodes WHERE node_id = ?",
+                (profile.node_id,),
+            ).fetchone()
+            if row is not None:
+                current_profile = NodeProfile.model_validate(json.loads(str(row[0])))
+                current_snapshot = NodeSnapshot.model_validate(json.loads(str(row[1])))
+                if current_profile == profile and current_snapshot == snapshot:
+                    return self._snapshot((row[1], row[2]))
+                raise ValueError(f"node already registered: {profile.node_id}")
+            self._connection.execute(
+                "INSERT INTO nodes(node_id, profile_json, snapshot_json, version) VALUES (?, ?, ?, 1)",
+                (profile.node_id, self._json(profile), self._json(snapshot)),
+            )
+            self._connection.commit()
+            return VersionedNodeSnapshot(snapshot=snapshot.model_copy(deep=True), version=1)
+
+    def register_remote(
+        self,
+        profile: NodeProfile,
+        snapshot: NodeSnapshot,
+        credential: ResourceCredentialRecord,
+    ) -> VersionedNodeSnapshot:
+        if profile.node_id != snapshot.node_id or profile.node_id != credential.resource_id:
+            raise ValueError("remote registration nodeId values must match")
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                existing = self._connection.execute(
+                    "SELECT 1 FROM nodes WHERE node_id = ?", (profile.node_id,)
+                ).fetchone()
+                if existing is not None:
+                    raise ValueError(f"node already registered: {profile.node_id}")
+                duplicate = self._connection.execute(
+                    "SELECT 1 FROM node_credentials WHERE credential_id = ?",
+                    (credential.credential_id,),
+                ).fetchone()
+                if duplicate is not None:
+                    raise ValueError(f"node credential already exists: {credential.credential_id}")
+                self._connection.execute(
+                    "INSERT INTO nodes(node_id, profile_json, snapshot_json, version) VALUES (?, ?, ?, 1)",
+                    (profile.node_id, self._json(profile), self._json(snapshot)),
+                )
+                self._insert_credential(credential)
+                self._connection.commit()
+                return VersionedNodeSnapshot(snapshot=snapshot.model_copy(deep=True), version=1)
+            except sqlite3.IntegrityError as error:
+                self._connection.rollback()
+                raise ValueError("remote node registration violates a storage constraint") from error
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def get_profile(self, node_id: str) -> NodeProfile:
+        row = self._connection.execute(
+            "SELECT profile_json FROM nodes WHERE node_id = ?", (node_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown node: {node_id}")
+        return NodeProfile.model_validate(json.loads(str(row[0])))
+
+    def get_snapshot(self, node_id: str) -> VersionedNodeSnapshot:
+        row = self._connection.execute(
+            "SELECT snapshot_json, version FROM nodes WHERE node_id = ?", (node_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown node: {node_id}")
+        return self._snapshot(row)
+
+    def list_profiles(self) -> list[NodeProfile]:
+        rows = self._connection.execute(
+            "SELECT profile_json FROM nodes ORDER BY node_id"
+        ).fetchall()
+        return [NodeProfile.model_validate(json.loads(str(row[0]))) for row in rows]
+
+    def update_snapshot(
+        self, snapshot: NodeSnapshot, *, expected_version: int | None = None
+    ) -> VersionedNodeSnapshot:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT snapshot_json, version FROM nodes WHERE node_id = ?",
+                (snapshot.node_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown node: {snapshot.node_id}")
+            current_snapshot = NodeSnapshot.model_validate(json.loads(str(row[0])))
+            current_version = int(row[1])
+            if expected_version is not None and expected_version != current_version:
+                raise VersionConflict(
+                    f"snapshot version conflict for {snapshot.node_id}: "
+                    f"expected {expected_version}, current {current_version}"
+                )
+            if snapshot.observation_sequence < current_snapshot.observation_sequence:
+                raise StaleResourceObservation(
+                    f"stale observation for {snapshot.node_id}: "
+                    f"received {snapshot.observation_sequence}, "
+                    f"current {current_snapshot.observation_sequence}"
+                )
+            next_version = current_version + 1
+            cursor = self._connection.execute(
+                "UPDATE nodes SET snapshot_json = ?, version = ? WHERE node_id = ? AND version = ?",
+                (self._json(snapshot), next_version, snapshot.node_id, current_version),
+            )
+            if cursor.rowcount != 1:
+                self._connection.rollback()
+                raise VersionConflict(f"snapshot version conflict for {snapshot.node_id}")
+            self._connection.commit()
+            return VersionedNodeSnapshot(snapshot=snapshot.model_copy(deep=True), version=next_version)
+
+    def save_credential(self, record: ResourceCredentialRecord) -> None:
+        with self._lock:
+            if self._connection.execute(
+                "SELECT 1 FROM nodes WHERE node_id = ?", (record.resource_id,)
+            ).fetchone() is None:
+                raise KeyError(f"unknown node: {record.resource_id}")
+            try:
+                self._insert_credential(record)
+                self._connection.commit()
+            except sqlite3.IntegrityError as error:
+                self._connection.rollback()
+                raise ValueError(f"node credential already exists: {record.resource_id}") from error
+
+    def rotate_credential(self, record: ResourceCredentialRecord) -> None:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                if self._connection.execute(
+                    "SELECT 1 FROM nodes WHERE node_id = ?", (record.resource_id,)
+                ).fetchone() is None:
+                    raise KeyError(f"unknown node: {record.resource_id}")
+                cursor = self._connection.execute(
+                    "UPDATE node_credentials SET credential_id = ?, owner_scope = ?, "
+                    "secret_digest = ?, encrypted_secret = ?, created_at = ? WHERE node_id = ?",
+                    (
+                        record.credential_id,
+                        record.owner_scope,
+                        record.secret_digest,
+                        record.encrypted_secret,
+                        record.created_at.isoformat(),
+                        record.resource_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise KeyError(f"node credential not found: {record.resource_id}")
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def get_credential(self, node_id: str) -> ResourceCredentialRecord:
+        row = self._connection.execute(
+            "SELECT credential_id, owner_scope, secret_digest, encrypted_secret, created_at "
+            "FROM node_credentials WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"node credential not found: {node_id}")
+        return ResourceCredentialRecord(
+            resource_id=node_id,
+            credential_id=str(row[0]),
+            owner_scope=str(row[1]),
+            secret_digest=str(row[2]),
+            encrypted_secret=str(row[3]),
+            created_at=datetime.fromisoformat(str(row[4])),
+        )
+
+    def consume_nonce(
+        self,
+        node_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime,
+    ) -> bool:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    "DELETE FROM node_auth_nonces WHERE expires_at <= ?",
+                    (now.isoformat(),),
+                )
+                if expires_at <= now:
+                    self._connection.commit()
+                    return False
+                self._connection.execute(
+                    "INSERT INTO node_auth_nonces(node_id, nonce, expires_at) VALUES (?, ?, ?)",
+                    (node_id, nonce, expires_at.isoformat()),
+                )
+                self._connection.commit()
+                return True
+            except sqlite3.IntegrityError:
+                self._connection.rollback()
+                return False
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def _insert_credential(self, record: ResourceCredentialRecord) -> None:
+        self._connection.execute(
+            "INSERT INTO node_credentials(node_id, credential_id, owner_scope, secret_digest, encrypted_secret, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                record.resource_id,
+                record.credential_id,
+                record.owner_scope,
+                record.secret_digest,
+                record.encrypted_secret,
+                record.created_at.isoformat(),
+            ),
+        )

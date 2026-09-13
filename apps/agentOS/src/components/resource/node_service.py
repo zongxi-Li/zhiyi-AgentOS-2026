@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import secrets
 import uuid
 
@@ -14,7 +15,7 @@ from .crypto import ResourceSecretBox
 from .models import NodeHealth, VersionedNodeSnapshot
 from .node_health import NodeHealthMonitor, infer_load_status
 from .node_store import InMemoryNodeStore, NodeStore
-from .store import ResourceCredentialRecord
+from .store import ResourceCredentialRecord, StaleResourceObservation
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,98 @@ class NodeService:
             secret=secret,
         )
 
+    def credential(self, node_id: str) -> ResourceCredentialRecord:
+        """Read node credential metadata without exposing the plaintext secret."""
+        self.store.get_profile(node_id)
+        return self.store.get_credential(node_id)
+
+    def credential_hmac_key(self, node_id: str, credential_id: str) -> bytes:
+        """Decrypt a valid node credential only for request verification."""
+        record = self.credential(node_id)
+        if record.credential_id != credential_id:
+            raise ValueError("node credential is invalid")
+        secret = self.secret_box.decrypt(record.encrypted_secret)
+        return hashlib.sha256(secret.encode("utf-8")).digest()
+
+    def current_signing_credential(self, node_id: str) -> tuple[str, str]:
+        """Return the current node credential for outbound remote execution."""
+        record = self.credential(node_id)
+        return record.credential_id, self.secret_box.decrypt(record.encrypted_secret)
+
+    def verify_credential(
+        self, node_id: str, credential_id: str, secret: str
+    ) -> ResourceCredentialRecord:
+        profile = self.store.get_profile(node_id)
+        record = self.store.get_credential(node_id)
+        expected_digest = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+        if (
+            record.credential_id != credential_id
+            or record.owner_scope != profile.owner_scope
+            or not hmac.compare_digest(record.secret_digest, expected_digest)
+        ):
+            raise ValueError("node credential is invalid")
+        return record
+
+    def consume_nonce(
+        self,
+        node_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        self.store.get_profile(node_id)
+        current = now or datetime.now(timezone.utc)
+        return self.store.consume_nonce(node_id, nonce, expires_at, now=current)
+
+    def observe_remote(
+        self,
+        node_id: str,
+        *,
+        observation_sequence: int,
+        cpu_utilization: float = 0.0,
+        gpu_utilization: float = 0.0,
+        available_memory_mb: int = 0,
+        queued_tasks: int = 0,
+        latency_ms: float | None = None,
+        observed_at: datetime | None = None,
+        success: bool = True,
+    ) -> NodeHealth:
+        """Accept a signed remote node observation and persist snapshot plus health."""
+        profile = self.store.get_profile(node_id)
+        if profile.deployment_tier is DeploymentTier.LOCAL:
+            raise ValueError("remote node observation requires a non-local node")
+        current = self.store.get_snapshot(node_id)
+        if observation_sequence <= current.snapshot.observation_sequence:
+            raise StaleResourceObservation(
+                f"stale observation for {node_id}: "
+                f"received {observation_sequence}, "
+                f"current {current.snapshot.observation_sequence}"
+            )
+        timestamp = observed_at if observed_at is not None else datetime.now(timezone.utc)
+        load = max(cpu_utilization, gpu_utilization)
+        consecutive_failures = 0 if success else current.snapshot.consecutive_failures + 1
+        snapshot = current.snapshot.model_copy(update={
+            "observation_sequence": observation_sequence,
+            "observed_at": timestamp,
+            "cpu_utilization": cpu_utilization,
+            "gpu_utilization": gpu_utilization,
+            "available_memory_mb": available_memory_mb,
+            "queued_tasks": queued_tasks,
+            "latency_ms": latency_ms,
+            "health_status": infer_load_status(queued_tasks, load),
+            "last_heartbeat": timestamp,
+            "consecutive_failures": consecutive_failures,
+        })
+        self.store.update_snapshot(snapshot, expected_version=current.version)
+        return self.health_monitor.report(
+            node_id,
+            observed_at=timestamp,
+            queued_tasks=queued_tasks,
+            utilization=load,
+            success=success,
+        )
+
     def heartbeat(
         self,
         node_id: str,
@@ -93,6 +186,7 @@ class NodeService:
         timestamp = observed_at if observed_at is not None else datetime.now(timezone.utc)
         current = self.store.get_snapshot(node_id)
         load = max(cpu_utilization, gpu_utilization)
+        consecutive_failures = 0 if success else current.snapshot.consecutive_failures + 1
         snapshot = current.snapshot.model_copy(update={
             "cpu_utilization": cpu_utilization,
             "gpu_utilization": gpu_utilization,
@@ -103,6 +197,7 @@ class NodeService:
             "last_heartbeat": timestamp,
             "observed_at": timestamp,
             "observation_sequence": current.snapshot.observation_sequence + 1,
+            "consecutive_failures": consecutive_failures,
         })
         self.store.update_snapshot(snapshot, expected_version=current.version)
         return self.health_monitor.report(
@@ -123,7 +218,26 @@ class NodeService:
         return self.store.list_profiles()
 
     def health(self, node_id: str, *, now: datetime | None = None) -> NodeHealth:
-        return self.health_monitor.health(node_id, now=now)
+        live = self.health_monitor.health(node_id, now=now)
+        if live.last_heartbeat is not None:
+            return live
+        snapshot = self.store.get_snapshot(node_id).snapshot
+        if snapshot.last_heartbeat is None:
+            return live
+        current = now if now is not None else datetime.now(timezone.utc)
+        age = current.astimezone(timezone.utc) - snapshot.last_heartbeat.astimezone(timezone.utc)
+        if age > self.health_monitor.offline_threshold:
+            status = NodeHealthStatus.OFFLINE
+        elif age > self.health_monitor.stale_threshold:
+            status = NodeHealthStatus.STALE
+        else:
+            status = snapshot.health_status
+        return NodeHealth(
+            node_id=node_id,
+            status=status,
+            last_heartbeat=snapshot.last_heartbeat,
+            consecutive_failures=snapshot.consecutive_failures,
+        )
 
     def candidates(
         self,
@@ -138,7 +252,7 @@ class NodeService:
         for profile in self.store.list_profiles():
             if not profile.enabled:
                 continue
-            health = self.health_monitor.health(profile.node_id, now=now)
+            health = self.health(profile.node_id, now=now)
             if health.status in (NodeHealthStatus.STALE, NodeHealthStatus.OFFLINE):
                 continue
             if profile.gpu_memory_mb < min_gpu_memory_mb:

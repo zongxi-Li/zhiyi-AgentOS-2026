@@ -30,9 +30,15 @@ from components.resource.service import ResourceService
 from components.resource.health import ResourceHealthMonitor
 from components.resource.health_store import SQLiteResourceHealthStore
 from components.resource.store import SQLiteResourceStore
+from components.resource.agent_service import AgentService
+from components.resource.agent_directory import AgentDirectory
+from components.resource.agent_store import SQLiteAgentStore
+from components.resource.node_service import NodeService
+from components.resource.node_store import SQLiteNodeStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
 from components.scheduler.service import SchedulerService
+from components.scheduler.two_layer_service import TwoLayerSchedulerService
 from components.mission_manager.store import WorkflowRegistry
 from runtime import ApplicationSetup, ExecutionRuntime
 from adapters.guarded_model import GuardedModelRuntime
@@ -59,6 +65,8 @@ _DEFAULT_DATABASES = {
     "AGENTOS_PROVENANCE_DB": "data/provenance.sqlite3",
     "AGENTOS_AUDIT_DB": "data/audit_decisions.sqlite3",
     "AGENTOS_RESOURCE_DB": "data/resources.sqlite3",
+    "AGENTOS_NODE_DB": "data/nodes.sqlite3",
+    "AGENTOS_AGENT_DB": "data/agents.sqlite3",
     "AGENTOS_RESOURCE_HEALTH_DB": "data/resource_health.sqlite3",
     "AGENTOS_EVOLUTION_DB": "data/evolution.sqlite3",
 }
@@ -191,6 +199,13 @@ def configure_runtime(
     return runtime
 
 
+def sync_agent_registry_to_ledger(runtime: ExecutionRuntime) -> None:
+    """Project callable application Agents into the persistent Agent ledger."""
+    directory = AgentDirectory(runtime.agent_service)
+    for agent in runtime.agent_registry.all():
+        directory.register_agent(agent.profile)
+
+
 def build_model_setup(
     runtime: ExecutionRuntime,
     *,
@@ -251,24 +266,32 @@ def build_default_runtime(
     workflow_path = _workflow_db_path(env)
     acquire_workflow_instance_lock(str(workflow_path))
 
-    resource_service = ResourceService(
-        store=SQLiteResourceStore(
-            Path(str(env.get("AGENTOS_RESOURCE_DB") or workflow_path.with_name("resources.sqlite3")))
-        ),
-        health_monitor=ResourceHealthMonitor(
-            store=SQLiteResourceHealthStore(_database_path(env, "AGENTOS_RESOURCE_HEALTH_DB"))
-        ),
+    node_service = NodeService(
+        store=SQLiteNodeStore(_database_path(env, "AGENTOS_NODE_DB")),
         credential_key=resource_credential_key,
+    )
+    agent_service = AgentService(
+        store=SQLiteAgentStore(_database_path(env, "AGENTOS_AGENT_DB")),
     )
     coordination_url = str(env.get("AGENTOS_COORDINATION_REDIS_URL") or "").strip()
     scheduler_service = None
+    legacy_scheduler_service = None
     if coordination_client is not None or coordination_url:
         coordinator = RedisLeaseCoordinator(
             coordination_client or _build_coordination_client(env)
         )
-        scheduler_service = SchedulerService(
-            resource_service=resource_service,
+        scheduler_service = TwoLayerSchedulerService(
+            node_service=node_service,
+            agent_service=agent_service,
             coordinator=coordinator,
+        )
+        legacy_scheduler_service = SchedulerService(
+            coordinator=coordinator,
+        )
+    else:
+        scheduler_service = TwoLayerSchedulerService(
+            node_service=node_service,
+            agent_service=agent_service,
         )
     identity_service = AcgIdentityLifecycleService.from_sqlite(
         Path(str(
@@ -317,8 +340,10 @@ def build_default_runtime(
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
         content_manifest_store=content_manifest_store,
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
-        resource_service=resource_service,
+        node_service=node_service,
+        agent_service=agent_service,
         scheduler_service=scheduler_service,
+        legacy_scheduler_service=legacy_scheduler_service,
         evolution_service=EvolutionService(
             store=SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB")),
             proposal_threshold=1,
@@ -341,20 +366,26 @@ def build_default_runtime(
         workflow_registry=runtime.workflow_registry,
         capability_catalog=runtime.capability_catalog,
     )
+    sync_agent_registry_to_ledger(runtime)
     return configure_runtime(runtime, intent_llm=intent_llm, model_runtime=model_runtime)
 
 
 def close_runtime(runtime: ExecutionRuntime) -> None:
     """Close resources created by this composition root without changing workflow state."""
+    legacy_resource_service = getattr(runtime, "legacy_resource_service", None)
+    legacy_scheduler_service = getattr(runtime, "legacy_scheduler_service", None)
     resources = (
         runtime.workflow_store,
         runtime.checkpoint_store,
         runtime.execution_value_store,
         runtime.content_manifest_store,
         runtime.memory_store,
-        runtime.resource_service.store,
-        runtime.resource_service.health_monitor.store,
-        runtime.scheduler_service.coordinator,
+        getattr(legacy_resource_service, "store", None),
+        getattr(getattr(legacy_resource_service, "health_monitor", None), "store", None),
+        runtime.node_service.store,
+        runtime.agent_service.store,
+        getattr(legacy_scheduler_service, "coordinator", None),
+        getattr(runtime.scheduler_service, "coordinator", None),
         runtime.evolution_service.store,
         runtime.provenance_store,
         runtime.decision_store,
@@ -384,4 +415,5 @@ __all__ = [
     "build_model_setup",
     "close_runtime",
     "configure_runtime",
+    "sync_agent_registry_to_ledger",
 ]

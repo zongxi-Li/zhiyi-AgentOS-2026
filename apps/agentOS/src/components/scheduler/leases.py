@@ -42,14 +42,13 @@ return 1
 """
 
 _RELEASE_LEASE_LUA = r"""
-local resource_id = redis.call('HGET', KEYS[2], ARGV[1])
+local slot_key = redis.call('HGET', KEYS[2], ARGV[1])
 local existed = redis.call('DEL', KEYS[1])
-if not resource_id then
+if not slot_key then
   return existed
 end
-local resource_key = ARGV[2] .. ':resource:' .. resource_id
-redis.call('ZREM', resource_key .. ':leases', ARGV[1])
-redis.call('HDEL', resource_key .. ':slots', ARGV[1])
+redis.call('ZREM', slot_key .. ':leases', ARGV[1])
+redis.call('HDEL', slot_key .. ':slots', ARGV[1])
 redis.call('HDEL', KEYS[2], ARGV[1])
 return 1
 """
@@ -79,6 +78,8 @@ class LeaseCoordinator(Protocol):
         run_id: str,
         step_id: str,
         attempt_id: str,
+        agent_id: str | None = None,
+        node_id: str | None = None,
         slot_count: int,
         ttl: timedelta,
         now: datetime,
@@ -103,6 +104,8 @@ class InMemoryLeaseCoordinator:
         run_id: str,
         step_id: str,
         attempt_id: str,
+        agent_id: str | None = None,
+        node_id: str | None = None,
         slot_count: int = 1,
         ttl: timedelta = timedelta(seconds=60),
         now: datetime | None = None,
@@ -117,16 +120,23 @@ class InMemoryLeaseCoordinator:
             existing = self._leases.get(lease_id)
             if existing is not None:
                 return existing.model_copy(deep=True)
+            slot_key = self._slot_key(resource_id, agent_id=agent_id, node_id=node_id)
             active = sum(
                 lease.slot_count
                 for lease in self._leases.values()
-                if lease.resource_id == resource_id and lease.status == "active"
+                if self._slot_key(
+                    lease.resource_id,
+                    agent_id=lease.agent_id,
+                    node_id=lease.node_id,
+                ) == slot_key and lease.status == "active"
             )
             if active + slot_count > capacity:
                 return None
             lease = ResourceLease(
                 leaseId=lease_id,
                 resourceId=resource_id,
+                agentId=agent_id,
+                nodeId=node_id,
                 ownerId=attempt_id,
                 runId=run_id,
                 stepId=step_id,
@@ -146,20 +156,43 @@ class InMemoryLeaseCoordinator:
             self._leases[lease_id] = lease.model_copy(update={"status": "released"})
             return True
 
-    def active_slots(self, resource_id: str, *, now: datetime | None = None) -> int:
+    def active_slots(
+        self,
+        resource_id: str,
+        *,
+        agent_id: str | None = None,
+        node_id: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
         current = now or datetime.now(timezone.utc)
+        slot_key = self._slot_key(resource_id, agent_id=agent_id, node_id=node_id)
         with self._lock:
             self._expire(current)
             return sum(
                 lease.slot_count
                 for lease in self._leases.values()
-                if lease.resource_id == resource_id and lease.status == "active"
+                if self._slot_key(
+                    lease.resource_id,
+                    agent_id=lease.agent_id,
+                    node_id=lease.node_id,
+                ) == slot_key and lease.status == "active"
             )
 
     def _expire(self, now: datetime) -> None:
         for lease_id, lease in tuple(self._leases.items()):
             if lease.status == "active" and lease.expires_at <= now:
                 self._leases[lease_id] = lease.model_copy(update={"status": "expired"})
+
+    def _slot_key(
+        self,
+        resource_id: str,
+        *,
+        agent_id: str | None = None,
+        node_id: str | None = None,
+    ) -> str:
+        if agent_id and node_id:
+            return f"pair:{agent_id}:{node_id}"
+        return f"resource:{resource_id}"
 
 
 class RedisLeaseCoordinator:
@@ -185,6 +218,8 @@ class RedisLeaseCoordinator:
         run_id: str,
         step_id: str,
         attempt_id: str,
+        agent_id: str | None = None,
+        node_id: str | None = None,
         slot_count: int = 1,
         ttl: timedelta = timedelta(seconds=60),
         now: datetime | None = None,
@@ -198,6 +233,8 @@ class RedisLeaseCoordinator:
         lease = ResourceLease(
             leaseId=lease_id,
             resourceId=resource_id,
+            agentId=agent_id,
+            nodeId=node_id,
             ownerId=attempt_id,
             runId=run_id,
             stepId=step_id,
@@ -207,7 +244,7 @@ class RedisLeaseCoordinator:
             expiresAt=current + ttl,
         )
         lease_key = self._lease_key(lease_id)
-        resource_key = self._resource_key(resource_id)
+        slot_key = self._slot_key(resource_id, agent_id=agent_id, node_id=node_id)
         try:
             result = int(
                 self.client.eval(
@@ -215,10 +252,10 @@ class RedisLeaseCoordinator:
                     4,
                     lease_key,
                     self._index_key,
-                    f"{resource_key}:leases",
-                    f"{resource_key}:slots",
+                    f"{slot_key}:leases",
+                    f"{slot_key}:slots",
                     lease_id,
-                    resource_id,
+                    slot_key,
                     capacity,
                     slot_count,
                     self._epoch_ms(current),
@@ -255,16 +292,23 @@ class RedisLeaseCoordinator:
         except Exception as exc:
             raise SchedulerUnavailable("SCHEDULER_UNAVAILABLE: Redis lease release failed") from exc
 
-    def active_slots(self, resource_id: str, *, now: datetime | None = None) -> int:
+    def active_slots(
+        self,
+        resource_id: str,
+        *,
+        agent_id: str | None = None,
+        node_id: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
         current = now or datetime.now(timezone.utc)
-        resource_key = self._resource_key(resource_id)
+        slot_key = self._slot_key(resource_id, agent_id=agent_id, node_id=node_id)
         try:
             return int(
                 self.client.eval(
                     _ACTIVE_SLOTS_LUA,
                     3,
-                    f"{resource_key}:leases",
-                    f"{resource_key}:slots",
+                    f"{slot_key}:leases",
+                    f"{slot_key}:slots",
                     self._index_key,
                     self._epoch_ms(current),
                 )
@@ -284,7 +328,15 @@ class RedisLeaseCoordinator:
     def _lease_key(self, lease_id: str) -> str:
         return f"{self.key_prefix}:lease:{lease_id}"
 
-    def _resource_key(self, resource_id: str) -> str:
+    def _slot_key(
+        self,
+        resource_id: str,
+        *,
+        agent_id: str | None = None,
+        node_id: str | None = None,
+    ) -> str:
+        if agent_id and node_id:
+            return f"{self.key_prefix}:pair:{agent_id}:{node_id}"
         return f"{self.key_prefix}:resource:{resource_id}"
 
     @staticmethod
