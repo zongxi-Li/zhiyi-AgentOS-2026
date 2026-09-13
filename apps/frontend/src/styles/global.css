@@ -293,14 +293,15 @@ html, body, #app {
   box-shadow: var(--shadow-sm);
 }
 
-.el-button--primary {
+/* .composer-send（ChatView 发送按钮）自带完整中性样式，不参与全局主色强制 */
+.el-button--primary:not(.composer-send) {
   background: var(--primary-color) !important;
   border-color: var(--primary-color) !important;
   color: #fff !important;
   box-shadow: none;
 }
 
-.el-button--primary:hover {
+.el-button--primary:not(.composer-send):hover {
   background: var(--primary-hover) !important;
   border-color: var(--primary-hover) !important;
   transform: translateY(-1px);

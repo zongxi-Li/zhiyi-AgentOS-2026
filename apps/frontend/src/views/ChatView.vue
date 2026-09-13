@@ -5468,29 +5468,38 @@ const handleHeroLogoPointerUp = () => {
   background: color-mix(in srgb, var(--primary-color) 18%, transparent);
 }
 
+/* 按钮配色取自首页花环：白花 #E2E1DA / 松果褐 #482E19 */
 .composer-send.el-button {
   width: 38px;
   height: 38px;
   border-color: transparent;
-  background: color-mix(in srgb, var(--text-primary) 13%, var(--bg-panel));
-  color: var(--text-primary);
+  background: #E2E1DA;
+  color: #482E19;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
 }
 
 .composer-send.el-button:hover,
 .composer-send.el-button:focus-visible {
   border-color: transparent;
-  background: color-mix(in srgb, var(--text-primary) 21%, var(--bg-panel));
-  color: var(--text-primary);
+  background: #EFEEE6;
+  color: #482E19;
 }
 
 .composer-send.el-button:active {
-  background: color-mix(in srgb, var(--text-primary) 27%, var(--bg-panel));
+  background: #D6D4C9;
 }
 
 .composer-send.el-button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--text-primary) 34%, transparent);
+  outline: 2px solid rgba(226, 225, 218, 0.42);
   outline-offset: 2px;
+}
+
+/* 放在 hover 之后：同优先级下靠源顺序压过 hover，避免禁用态悬停变亮 */
+.composer-send.el-button:disabled {
+  border-color: transparent;
+  background: color-mix(in srgb, #E2E1DA 14%, var(--bg-panel));
+  color: rgba(226, 225, 218, 0.38);
+  box-shadow: none;
 }
 
 @media (max-width: 900px) {

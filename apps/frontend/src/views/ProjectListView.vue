@@ -594,8 +594,9 @@ onBeforeUnmount(() => {
 .project-list__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .project-list h1 { margin: 8px 0 5px; font-size: 25px; line-height: 1.2; }
 .project-list__header p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-.project-list__create, .project-list__state button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--primary-color); border-radius: 7px; padding: 10px 15px; color: #fff; background: var(--primary-color); cursor: pointer; font-size: 12px; }
-.project-list__create:hover, .project-list__state button:hover { filter: brightness(.96); }
+/* 按钮配色取自首页花环：白花 #E2E1DA / 松果褐 #482E19 */
+.project-list__create, .project-list__state button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 7px; padding: 10px 15px; color: #482E19; background: #E2E1DA; cursor: pointer; font-size: 12px; }
+.project-list__create:hover, .project-list__state button:hover, .project-list__create:focus-visible, .project-list__state button:focus-visible { background: #EFEEE6; }
 .project-list__toolbar, .project-list__rows, .project-list__state { max-width: 1040px; width: 100%; margin: 0 auto; }
 .project-list__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .project-list__search { display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: min(460px, 100%); min-height: 38px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 9px; color: var(--text-muted); background: color-mix(in srgb, var(--surface-subtle) 82%, transparent); transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out); }
