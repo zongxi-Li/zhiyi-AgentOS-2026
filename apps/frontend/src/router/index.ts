@@ -180,7 +180,7 @@ const routes: RouteRecordRaw[] = [
     name: 'CreateMission',
     component: () => import('@/views/CreateMissionView.vue'),
     meta: {
-      title: '新建工程',
+      title: '新建任务',
       requiresAuth: true
     }
   },

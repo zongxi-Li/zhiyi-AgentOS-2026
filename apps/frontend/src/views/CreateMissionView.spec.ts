@@ -25,7 +25,7 @@ const workbenchLayoutStub = {
 describe('CreateMissionView', () => {
   afterEach(() => vi.resetAllMocks())
 
-  it('keeps the compact desktop form arrangement and restores runtime settings', async () => {
+  it('renders the mission launcher arrangement and restores runtime settings', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -45,11 +45,12 @@ describe('CreateMissionView', () => {
     expect(wrapper.find('#mission-title').exists()).toBe(true)
     expect(wrapper.find('#mission-files').exists()).toBe(true)
     expect(wrapper.find('#mission-goal').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Runtime Configuration')
-    expect(wrapper.text()).toContain('更多规划设置')
-    expect(wrapper.find('.create-mission__submit').text()).toContain('启动任务')
+    expect(wrapper.text()).toContain('Execution')
+    expect(wrapper.text()).toContain('Advanced Runtime Settings')
+    expect(wrapper.find('.create-mission__submit').text()).toContain('创建并运行')
     expect(wrapper.find('.create-mission__back').text()).toContain('返回项目')
-    expect(wrapper.find('.create-mission__scroll-region').attributes('role')).toBe('region')
+    expect(wrapper.find('.create-mission__workspace').exists()).toBe(true)
+    expect(wrapper.find('.launch-bar').exists()).toBe(true)
     const promptSelect = wrapper.find('select[aria-label="ACG 提示词任务"]')
     expect(promptSelect.exists()).toBe(true)
     const taskOptions = promptSelect.findAll('option')
@@ -57,6 +58,34 @@ describe('CreateMissionView', () => {
     await promptSelect.setValue(taskOptions[1].attributes('value'))
     expect((wrapper.find('#mission-title').element as HTMLInputElement).value).not.toBe('')
     expect((wrapper.find('#mission-goal').element as HTMLTextAreaElement).value).not.toBe('')
+    wrapper.unmount()
+  })
+
+  it('derives a launch summary and keeps Create & Run disabled until the brief is ready', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/agentos/missions/new', name: 'CreateMission', component: CreateMissionView },
+        { path: '/agentos/acg', name: 'AcgVisualization', component: { template: '<div />' } }
+      ]
+    })
+    await router.push({ name: 'CreateMission' })
+    await router.isReady()
+    const wrapper = mount(CreateMissionView, {
+      global: {
+        plugins: [router],
+        stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true }
+      }
+    })
+
+    expect(wrapper.find('.context-empty').exists()).toBe(true)
+    expect(wrapper.find('.execution-config').attributes('open')).toBeUndefined()
+    expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.execution-overview__content').text()).toContain('Dynamic · Native Core · Auto Execute')
+
+    await wrapper.find('#mission-title').setValue('任务启动器测试')
+    await wrapper.find('#mission-goal').setValue('验证 Mission brief 可以启动 Run')
+    expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -203,6 +232,8 @@ describe('CreateMissionView', () => {
     await input.trigger('change')
     await vi.waitFor(() => expect(workflowApi.uploadAttachment).toHaveBeenCalledWith(file, expect.any(Object)))
     await flushPromises()
+    expect(wrapper.text()).toContain('TXT · 16 B')
+    expect(wrapper.text()).toContain('✓ 已就绪')
     await wrapper.find('#mission-title').setValue('合同审查')
     await wrapper.find('#mission-goal').setValue('生成最终合同审查报告')
     await wrapper.find('form').trigger('submit')

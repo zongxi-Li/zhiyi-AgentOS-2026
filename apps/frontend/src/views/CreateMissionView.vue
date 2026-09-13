@@ -2,17 +2,17 @@
   <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.create-mission.layout.v1">
     <template #main>
       <main class="create-mission" aria-label="Create Mission">
-        <div class="create-mission__topbar">
-          <button class="create-mission__back" type="button" @click="goBack">
-            <span class="create-mission__back-icon" aria-hidden="true">←</span>
-            <span>返回项目</span>
-          </button>
-        </div>
-        <div class="create-mission__scroll-region" role="region" aria-label="新建工程内容">
-          <header class="create-mission__header">
-            <span class="create-mission__eyebrow">CREATE MISSION</span>
-            <h1>新建工程</h1>
-            <p>创建一个长期稳定的 Mission，并立即启动首个 Run。</p>
+        <div class="create-mission__workspace">
+          <header class="create-mission__topbar">
+            <button class="create-mission__back" type="button" @click="goBack">
+              <span class="create-mission__back-icon" aria-hidden="true">←</span>
+              <span>返回项目</span>
+            </button>
+            <div class="create-mission__topbar-title">
+              <span class="create-mission__eyebrow">CREATE MISSION</span>
+              <h1>新建任务</h1>
+            </div>
+            <span class="create-mission__topbar-mode">MISSION COMPOSER</span>
           </header>
 
           <section class="prompt-import" aria-labelledby="prompt-import-title">
@@ -41,62 +41,84 @@
           </section>
 
           <form class="create-mission__form" @submit.prevent="submit">
-          <section class="create-section">
-            <label for="mission-title">项目名称</label>
-            <input id="mission-title" v-model="draft.title" class="create-mission__title" type="text" placeholder="例如：IC-200 智能装配生产线实施方案" autocomplete="off" />
-          </section>
-
-          <section class="create-section create-section--split">
-            <div v-if="false">
-              <label for="mission-material">任务材料</label>
-              <textarea v-if="false" id="mission-material" v-model="draft.materialText" rows="7"></textarea>
+          <div class="create-mission__workspace-body">
+          <section class="mission-pane" aria-labelledby="mission-section-title">
+            <div class="workspace-pane__heading">
+              <span class="workspace-pane__eyebrow">MISSION</span>
+              <h2 id="mission-section-title">Mission</h2>
             </div>
-            <div>
-              <label for="mission-goal">项目目标</label>
-              <textarea id="mission-goal" v-model="draft.taskGoal" rows="7" placeholder="描述目标、范围和成功标准"></textarea>
-            </div>
-          </section>
-
-          <section class="create-section attachment-input" aria-labelledby="attachment-input-title">
-            <div class="attachment-input__heading">
-              <div><label id="attachment-input-title">Attachments</label><small>TXT、Markdown、PDF、DOCX</small></div>
-              <label class="attachment-input__add" for="mission-files">+ Add files<input id="mission-files" type="file" accept=".pdf,.docx,.txt,.md" multiple @change="handleFiles" /></label>
-            </div>
-            <div class="attachment-input__dropzone" :class="{ 'is-dragging': attachmentDragging }" @dragenter.prevent="attachmentDragging = true" @dragover.prevent="attachmentDragging = true" @dragleave.prevent="attachmentDragging = false" @drop.prevent="handleDrop">
-              <p v-if="!attachments.length">拖拽文件到此处，或点击 Add files。文件会先上传并解析，再随 Mission 提交。</p>
-              <article v-for="item in attachments" :key="item.localId" class="attachment-row">
-                <div class="attachment-row__file"><span aria-hidden="true">▤</span><div><strong>{{ item.file.name }}</strong><small>{{ formatBytes(item.file.size) }} · {{ item.file.type || extensionOf(item.file.name) }}</small></div></div>
-                <div class="attachment-row__state" :class="`is-${item.status.toLowerCase()}`"><span>{{ item.status === 'UPLOADING' ? (item.progress > 0 ? `${item.progress}%` : '上传中…') : item.status === 'PARSING' ? '解析中…' : item.status }}</span><small v-if="item.error">{{ item.error }}</small></div>
-                <div class="attachment-row__actions"><button v-if="item.status === 'FAILED'" type="button" @click="retryAttachment(item)">重试</button><button type="button" :disabled="item.status === 'UPLOADING' || item.status === 'PARSING'" @click="removeAttachment(item)">删除</button></div>
-              </article>
-            </div>
-          </section>
-
-          <section v-if="false" class="create-section create-section--split create-section--task-options">
-            <div>
-              <label for="mission-constraints">执行约束</label>
-              <textarea v-if="false" id="mission-constraints" v-model="constraintsText" rows="3"></textarea>
-            </div>
-            <div>
-              <label for="mission-artifacts">预期交付物</label>
-              <textarea v-if="false" id="mission-artifacts" v-model="expectedArtifactsText" rows="3"></textarea>
-            </div>
-          </section>
-
-          <section class="create-section create-section--config">
-            <div class="create-section__heading">
-              <div><strong>Runtime Configuration</strong><span>能力包与本次 Run 的规划、审核策略</span></div>
-            </div>
-            <div class="config-line config-line--top">
-              <span class="config-line__label">Capabilities</span>
-              <div class="config-options">
-                <button class="config-option" :class="{ 'is-selected': !draft.enabledPluginIds.length }" type="button" @click="clearPlugin">Native Core <b>✓</b></button>
-                <button v-for="plugin in plugins" :key="plugin.pluginId" class="config-option" :class="{ 'is-selected': draft.enabledPluginIds.includes(plugin.pluginId) }" type="button" @click="togglePlugin(plugin.pluginId)">{{ plugin.displayName }} <b>{{ draft.enabledPluginIds.includes(plugin.pluginId) ? '✓' : '○' }}</b></button>
+            <div class="mission-pane__scroll">
+              <div class="mission-fields">
+                <label class="field-block field-block--name" for="mission-title">
+                  <span>Name</span>
+                  <input id="mission-title" v-model="draft.title" class="create-mission__title" type="text" autocomplete="off" />
+                </label>
+                <label class="field-block field-block--brief" for="mission-goal">
+                  <div class="field-block__header"><span>Objective</span><em>MISSION BRIEF</em></div>
+                  <textarea id="mission-goal" v-model="draft.taskGoal" rows="8" placeholder="描述需要完成什么、关键约束以及最终希望得到什么结果。"></textarea>
+                </label>
               </div>
             </div>
-            <div class="config-line">
-              <span class="config-line__label">Planning</span>
-              <div class="planning-choice">
+          </section>
+
+          <aside class="create-mission__right-column" aria-label="Mission context and execution">
+            <section class="context-panel" aria-labelledby="attachment-input-title">
+              <div class="workspace-pane__heading workspace-pane__heading--row">
+                <div>
+                  <span class="workspace-pane__eyebrow">CONTEXT</span>
+                  <h2 id="attachment-input-title">Context</h2>
+                </div>
+                <div class="context-panel__meta"><strong>{{ contextSummary }}</strong><label class="panel-action" for="mission-files">+ 添加上下文<input id="mission-files" type="file" accept=".pdf,.docx,.txt,.md" multiple @change="handleFiles" /></label></div>
+              </div>
+              <div class="context-panel__body">
+                <div class="attachment-input__dropzone" :class="{ 'is-dragging': attachmentDragging }" role="region" aria-label="Context 文件区域" @dragenter.prevent="attachmentDragging = true" @dragover.prevent="attachmentDragging = true" @dragleave.prevent="attachmentDragging = false" @drop.prevent="handleDrop">
+                  <div v-if="!attachments.length" class="context-empty">
+                    <span class="context-empty__eyebrow">CONTEXT / READY TO ADD</span>
+                    <p>为这次 Mission 提供 AgentOS 可以读取的参考材料。</p>
+                    <div class="context-empty__actions"><label class="context-empty__action" for="mission-files">添加文件</label><span>支持 TXT、Markdown、PDF、DOCX · 也可直接拖入</span></div>
+                  </div>
+                  <article v-for="item in attachments" :key="item.localId" class="attachment-row">
+                    <div class="attachment-row__file"><span class="attachment-row__file-mark" aria-hidden="true">▤</span><div><strong :title="item.file.name">{{ item.file.name }}</strong><small>{{ fileFormat(item.file.name) }} · {{ formatBytes(item.file.size) }}</small></div></div>
+                    <div class="attachment-row__state" :class="`is-${item.status.toLowerCase()}`">
+                      <span>{{ attachmentStatusLabel(item) }}</span>
+                      <div v-if="item.status === 'UPLOADING'" class="attachment-row__progress" aria-hidden="true"><span :style="{ width: `${Math.max(0, item.progress)}%` }"></span></div>
+                      <small v-if="item.error">{{ item.error }}</small>
+                    </div>
+                    <div class="attachment-row__actions"><button v-if="item.status === 'FAILED'" type="button" @click="retryAttachment(item)">重试</button><button class="attachment-row__remove" type="button" :disabled="item.status === 'UPLOADING' || item.status === 'PARSING'" :aria-label="`移除 ${item.file.name}`" @click="removeAttachment(item)">×</button></div>
+                  </article>
+                </div>
+              </div>
+            </section>
+
+            <section class="execution-panel" aria-labelledby="execution-section-title">
+              <div class="workspace-pane__heading">
+                  <span class="workspace-pane__eyebrow">EXECUTION</span>
+                  <h2 id="execution-section-title">Execution</h2>
+                </div>
+            <div class="execution-overview">
+              <div class="execution-overview__content">
+                <span class="execution-overview__eyebrow">CURRENT STRATEGY</span>
+                <strong>{{ planningModeSummary }} · {{ capabilitySummary }} · {{ executionControlSummary }}</strong>
+                <small>{{ contextSummary }} · {{ advancedSettingsSummary }}</small>
+              </div>
+              <details class="execution-config">
+                <summary><span>调整策略</span></summary>
+                <div class="execution-config__body">
+            <div class="execution-settings">
+              <div class="config-line config-line--top">
+                <div class="config-line__label"><strong>Capabilities</strong><small>基础能力始终启用，可选择一个能力包。</small></div>
+                <div class="capability-choice">
+                  <div class="capability-baseline"><span class="capability-baseline__mark">✓</span><div><strong>Native Core</strong><small>基础运行能力 · 始终启用</small></div></div>
+                  <span class="config-sub-label">Additional capability pack</span>
+                  <div class="config-options" role="radiogroup" aria-label="附加能力包">
+                    <button class="config-option" :class="{ 'is-selected': !draft.enabledPluginIds.length }" type="button" role="radio" :aria-checked="!draft.enabledPluginIds.length" @click="clearPlugin">不添加</button>
+                    <button v-for="plugin in plugins" :key="plugin.pluginId" class="config-option" :class="{ 'is-selected': draft.enabledPluginIds.includes(plugin.pluginId) }" type="button" role="radio" :aria-checked="draft.enabledPluginIds.includes(plugin.pluginId)" @click="togglePlugin(plugin.pluginId)">{{ plugin.displayName }}</button>
+                  </div>
+                </div>
+              </div>
+              <div class="config-line">
+                <div class="config-line__label"><strong>Planning</strong><small>决定 TaskPlan 如何被生成。</small></div>
+                <div class="planning-choice">
                 <div class="config-options" role="radiogroup" aria-label="规划方式">
                   <button class="config-option" :class="{ 'is-selected': draft.planningMode === 'dynamic' }" type="button" role="radio" :aria-checked="draft.planningMode === 'dynamic'" @click="draft.planningMode = 'dynamic'">Dynamic</button>
                   <button class="config-option" :class="{ 'is-selected': draft.planningMode === 'template_preferred' }" type="button" role="radio" :aria-checked="draft.planningMode === 'template_preferred'" @click="draft.planningMode = 'template_preferred'">Template preferred</button>
@@ -105,16 +127,20 @@
               </div>
             </div>
             <div class="config-line">
-              <span class="config-line__label">Review</span>
-              <div class="config-options">
-                <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'auto' }" type="button" @click="draft.reviewMode = 'auto'">Auto</button>
-                <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'human_in_loop' }" type="button" @click="draft.reviewMode = 'human_in_loop'">Human review</button>
+              <div class="config-line__label"><strong>Execution Control</strong><small>控制高风险步骤是否进入审核节点。</small></div>
+              <div class="execution-control-choice">
+                <div class="config-options" role="radiogroup" aria-label="执行控制">
+                  <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'auto' }" type="button" role="radio" :aria-checked="draft.reviewMode === 'auto'" @click="draft.reviewMode = 'auto'">自动执行</button>
+                  <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'human_in_loop' }" type="button" role="radio" :aria-checked="draft.reviewMode === 'human_in_loop'" @click="draft.reviewMode = 'human_in_loop'">人工审核</button>
+                </div>
+                <p class="planning-choice__hint"><strong>{{ executionControlLabel }}</strong><span>{{ executionControlDescription }}</span></p>
               </div>
+            </div>
             </div>
 
             <details class="advanced-config" @toggle="syncAdvancedConfigState">
               <summary>
-                <span><strong>更多规划设置</strong><small>{{ advancedSettingsSummary }}</small></span>
+                <span><strong>Advanced Runtime Settings</strong><small>{{ advancedSettingsSummary }}</small></span>
                 <span class="advanced-config__hint">{{ advancedConfigOpen ? '收起' : '展开' }}</span>
               </summary>
               <div class="advanced-config__body">
@@ -169,22 +195,31 @@
               </div>
             </details>
 
-            <PluginExtensionHost :extensions="draftExtensions" :draft="draft" @update:plugin-data="draft.pluginData = $event" />
-          </section>
-
-          <p v-if="errorMessage" class="create-mission__error" role="alert">{{ errorMessage }}</p>
-          <footer class="create-mission__footer">
-            <!-- <span class="create-mission__footer-hint">创建 Mission 后立即启动首个 Run</span> -->
-            <div class="create-mission__footer-actions">
-              <button class="create-mission__cancel" type="button" @click="goBack">取消</button>
-              <button class="create-mission__submit" type="submit" :disabled="submitting || attachmentsPending" :aria-busy="submitting">
-                <span>{{ submitting ? '正在启动…' : '启动任务' }}</span>
-                <span aria-hidden="true">→</span>
-              </button>
+              <PluginExtensionHost :extensions="draftExtensions" :draft="draft" @update:plugin-data="draft.pluginData = $event" />
+                </div>
+              </details>
             </div>
-            </footer>
-          </form>
+          </section>
+        </aside>
+      </div>
+      <footer class="launch-bar">
+        <div class="launch-bar__summary">
+          <span class="launch-bar__eyebrow">LAUNCH PREVIEW</span>
+          <strong>{{ planningModeSummary }} · {{ capabilitySummary }} · {{ contextSummary }} · {{ executionControlSummary }}</strong>
+          <span v-if="runSummaryIssues.length" class="launch-bar__notice" role="status">{{ runSummaryIssues.join(' · ') }}</span>
+          <span v-else class="launch-bar__ready">Ready to run</span>
+          <p v-if="errorMessage" class="create-mission__error" role="alert">{{ errorMessage }}</p>
         </div>
+        <div class="launch-bar__actions">
+          <button class="create-mission__cancel" type="button" @click="goBack">取消</button>
+          <button class="create-mission__submit" type="submit" :disabled="!isReadyToRun" :aria-busy="submitting">
+            <span>{{ submitting ? '正在创建 Run…' : '创建并运行' }}</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </footer>
+      </form>
+    </div>
       </main>
     </template>
   </WorkbenchLayout>
@@ -285,6 +320,44 @@ const advancedSettingsSummary = computed(() => [
 ].join(' · '))
 const plugins = computed(() => pluginUiExtensions.all())
 const draftExtensions = computed(() => pluginUiExtensions.resolve(draft.value.enabledPluginIds))
+const planningModeSummary = computed(() => draft.value.planningMode === 'dynamic' ? 'Dynamic' : 'Template preferred')
+const executionControlLabel = computed(() => draft.value.reviewMode === 'auto' ? '自动执行' : '人工审核')
+const executionControlSummary = computed(() => draft.value.reviewMode === 'auto' ? 'Auto Execute' : 'Human Review')
+const executionControlDescription = computed(() => draft.value.reviewMode === 'auto'
+  ? '运行过程中继续自动处理，不要求人工审核。'
+  : '高风险步骤完成后暂停，等待人工审核。')
+const capabilitySummary = computed(() => {
+  const selected = draft.value.enabledPluginIds
+    .map(pluginId => plugins.value.find(plugin => plugin.pluginId === pluginId)?.displayName)
+    .filter((name): name is string => Boolean(name))
+  return selected.length ? `Native Core · ${selected.join(' · ')}` : 'Native Core'
+})
+const contextSummary = computed(() => {
+  if (!attachments.value.length) return 'No context files'
+  const readyCount = attachments.value.filter(item => item.status === 'READY').length
+  return readyCount === attachments.value.length
+    ? `${readyCount} ${readyCount === 1 ? 'file' : 'files'} ready`
+    : `${readyCount}/${attachments.value.length} files ready`
+})
+const extensionValidationMessage = computed(() => {
+  for (const extension of draftExtensions.value) {
+    const validation = extension.validateDraft?.(draft.value)
+    if (validation && !validation.valid) return validation.message || `${extension.displayName} 配置不完整`
+  }
+  return ''
+})
+const runSummaryIssues = computed(() => {
+  const issues: string[] = []
+  if (!draft.value.title.trim()) issues.push('填写 Mission 名称')
+  if (!draft.value.taskGoal.trim()) issues.push('补充 Objective')
+  const processingCount = attachments.value.filter(item => item.status === 'UPLOADING' || item.status === 'PARSING').length
+  const failedCount = attachments.value.filter(item => item.status === 'FAILED').length
+  if (processingCount) issues.push(`${processingCount} 个 Context 文件仍在处理中`)
+  if (failedCount) issues.push(`${failedCount} 个 Context 文件失败，请重试或移除`)
+  if (extensionValidationMessage.value) issues.push(extensionValidationMessage.value)
+  return issues
+})
+const isReadyToRun = computed(() => !submitting.value && runSummaryIssues.value.length === 0)
 const constraintsText = computed({
   get: () => draft.value.constraints.join('，'),
   set: value => { draft.value.constraints = value.split(/[,，\n]/).map(item => item.trim()).filter(Boolean) }
@@ -442,6 +515,13 @@ const createClientRequestId = () => typeof crypto.randomUUID === 'function' ? cr
 
 const extensionOf = (filename: string) => filename.includes('.') ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : 'file'
 const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+const fileFormat = (filename: string) => extensionOf(filename).replace('.', '').toUpperCase()
+const attachmentStatusLabel = (item: AttachmentDraft) => {
+  if (item.status === 'UPLOADING') return item.progress > 0 ? `正在上传 ${item.progress}%` : '正在上传'
+  if (item.status === 'PARSING') return '正在解析…'
+  if (item.status === 'READY') return '✓ 已就绪'
+  return '失败'
+}
 const uploadAttachment = async (item: AttachmentDraft) => {
   item.status = 'UPLOADING'; item.progress = 0; item.error = undefined
   try {
@@ -471,8 +551,8 @@ const removeAttachment = async (item: AttachmentDraft) => { attachments.value = 
 
 const submit = async () => {
   if (submitting.value) return
-  if (!draft.value.title.trim()) { errorMessage.value = '请输入项目名称'; return }
-  if (!draft.value.taskGoal.trim()) { errorMessage.value = '请输入项目目标'; return }
+  if (!draft.value.title.trim()) { errorMessage.value = '请输入 Mission 名称'; return }
+  if (!draft.value.taskGoal.trim()) { errorMessage.value = '请输入 Objective'; return }
   if (attachmentsPending.value) { errorMessage.value = '请等待所有附件解析完成，或移除失败的附件。'; return }
   for (const extension of draftExtensions.value) {
     const validation = extension.validateDraft?.(draft.value)
@@ -646,5 +726,221 @@ onBeforeUnmount(() => {
   .create-mission__footer { align-items: flex-start; flex-direction: column; gap: 12px; }
   .create-mission__footer-actions { width: 100%; }
   .create-mission__cancel, .create-mission__submit { flex: 1; }
+}
+.create-mission__topbar { padding: 16px max(22px, calc((100vw - 1120px) / 2)) 4px; }
+.create-mission__scroll-region { padding: 0 max(22px, calc((100vw - 1120px) / 2)) 40px; }
+.create-mission__back { min-height: 28px; color: var(--text-muted); font-size: 12px; }
+.create-mission__header, .create-mission__form { max-width: 980px; }
+.create-mission__header { padding: 22px 0 30px; border-bottom: 0; }
+.create-mission__eyebrow { color: var(--primary-color); font-size: 10px; letter-spacing: .16em; }
+.create-mission h1 { margin: 8px 0 6px; font-size: 28px; line-height: 1.15; }
+.create-mission__header p { font-size: 12px; }
+.create-section { padding: 30px 0; border-bottom: 0; }
+.create-section--context, .create-section--config, .run-summary { border-top: 1px solid color-mix(in srgb, var(--border-light) 62%, transparent); }
+.section-heading { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 22px; }
+.section-heading--with-action { justify-content: space-between; gap: 24px; }
+.section-heading__main { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.section-heading__index { flex: 0 0 auto; padding-top: 2px; color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
+.section-heading h2 { margin: 0; color: var(--text-primary); font-family: var(--font-sans); font-size: 13px; font-weight: 650; letter-spacing: .01em; }
+.section-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.mission-fields { display: grid; gap: 20px; }
+.field-block { display: grid !important; gap: 9px; margin: 0 !important; color: var(--text-primary); }
+.field-block > span { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.field-block > small { margin-top: -3px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.create-section input[type='text'], .create-section input[type='number'], .create-section textarea, .advanced-field select, .advanced-field input { border-color: color-mix(in srgb, var(--border-light) 82%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--bg-card) 76%, var(--bg-app)); }
+.create-section input[type='text'] { height: 40px; padding: 0 11px; }
+.create-section textarea { min-height: 138px; padding: 11px; resize: vertical; line-height: 1.65; }
+.create-section input:focus, .create-section textarea:focus, .advanced-field select:focus, .advanced-field input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px var(--primary-fade); }
+.attachment-input { display: block; }
+.attachment-input__heading { display: block; }
+.attachment-input__heading > div { display: block; }
+.attachment-input__heading label { margin: 0; }
+.attachment-input__add { flex: 0 0 auto; margin: 1px 0 0 !important; color: var(--primary-color) !important; cursor: pointer; font-size: 11px !important; font-weight: 600 !important; white-space: nowrap; }
+.attachment-input__add:hover { color: var(--primary-hover) !important; }
+.attachment-input__add input { display: none; }
+.attachment-input__dropzone { min-height: 78px; padding: 8px 14px; border-color: color-mix(in srgb, var(--border-light) 76%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--bg-input) 72%, transparent); }
+.attachment-input__dropzone.is-dragging { border-color: var(--primary-color); background: var(--primary-fade); }
+.attachment-input__dropzone > p { margin: 17px 0; color: var(--text-muted); font-size: 11px; }
+.attachment-row { grid-template-columns: minmax(0, 1fr) minmax(158px, auto) 34px; gap: 18px; min-height: 56px; }
+.attachment-row + .attachment-row { border-top-color: color-mix(in srgb, var(--border-light) 54%, transparent); }
+.attachment-row__file { gap: 10px; }
+.attachment-row__file-mark { color: var(--primary-color); font-size: 15px; }
+.attachment-row__file strong { font-size: 11px; font-weight: 600; }
+.attachment-row__file small, .attachment-row__state small { font-size: 10px; }
+.attachment-row__state { justify-items: start; min-width: 0; color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
+.attachment-row__state.is-ready { color: var(--success, #35a66f); }
+.attachment-row__state.is-failed, .attachment-row__state.is-failed small { color: var(--danger); }
+.attachment-row__progress { width: 100%; height: 3px; overflow: hidden; background: color-mix(in srgb, var(--border-light) 70%, transparent); }
+.attachment-row__progress span { display: block; height: 100%; background: var(--primary-color); transition: width 160ms var(--ease-out); }
+.attachment-row__actions { justify-content: flex-end; gap: 8px; }
+.attachment-row__actions button { min-width: 24px; padding: 3px 0; font-size: 10px; }
+.attachment-row__remove { color: var(--text-muted); font-size: 18px !important; line-height: 1; opacity: .08; transition: opacity 160ms var(--ease-out), color 160ms var(--ease-out); }
+.attachment-row:hover .attachment-row__remove, .attachment-row__remove:focus-visible { opacity: 1; }
+.attachment-row__remove:hover { color: var(--text-primary); }
+.create-section--config { display: block; }
+.execution-settings { display: grid; gap: 22px; }
+.config-line { grid-template-columns: 190px minmax(0, 1fr); align-items: start; gap: 22px; min-height: 34px; }
+.config-line__label { display: grid; gap: 4px; color: var(--text-primary); font-size: 11px; }
+.config-line__label strong { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.config-line__label small, .config-sub-label { color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.capability-choice, .planning-choice, .execution-control-choice { display: grid; gap: 10px; min-width: 0; }
+.capability-baseline { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.capability-baseline__mark { color: var(--success); font-size: 12px; }
+.capability-baseline div { display: grid; gap: 2px; }
+.capability-baseline strong { color: var(--text-primary); font-size: 11px; font-weight: 600; }
+.capability-baseline small { color: var(--text-muted); font-size: 10px; }
+.config-sub-label { margin-top: 2px; }
+.config-options { gap: 7px; }
+.config-option { min-height: 32px; padding: 6px 10px; border-color: var(--border-light); border-radius: 4px; color: var(--text-secondary); font-size: 11px; }
+.config-option:hover { border-color: var(--border-hover); color: var(--text-primary); background: color-mix(in srgb, var(--bg-card) 64%, transparent); }
+.config-option.is-selected { border-color: var(--primary-line); color: var(--primary-color); background: var(--primary-fade); }
+.config-option b { display: none; }
+.planning-choice__hint { gap: 3px; margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.planning-choice__hint strong { color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.advanced-config { margin-top: 26px; border-top-color: color-mix(in srgb, var(--border-light) 62%, transparent); }
+.advanced-config summary { padding: 16px 0 4px; }
+.advanced-config summary strong { font-size: 12px; font-weight: 600; }
+.advanced-config summary small, .advanced-config__hint { font-size: 10px; }
+.advanced-config__body { gap: 18px; padding: 10px 0 2px; }
+.advanced-config__presets { grid-template-columns: 190px minmax(0, 1fr); gap: 22px; }
+.advanced-config__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 20px; padding-left: 212px; }
+.advanced-field, .advanced-toggle { gap: 7px; }
+.advanced-field > span, .advanced-toggle strong { font-size: 11px; }
+.advanced-field select, .advanced-field input { height: 34px; }
+.run-summary { padding-bottom: 8px; }
+.run-summary__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin: 0; }
+.run-summary__grid > div { min-width: 0; }
+.run-summary__grid dt { margin-bottom: 5px; color: var(--text-muted); font-size: 10px; }
+.run-summary__grid dd { overflow: hidden; color: var(--text-primary); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.run-summary__notice { margin-top: 18px; padding-left: 12px; border-left: 2px solid var(--warning); color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.run-summary__notice strong { color: var(--warning); font-weight: 600; }
+.run-summary__notice ul { margin: 4px 0 0 16px; }
+.create-mission__error { margin: 18px 0 0; font-size: 11px; }
+.create-mission__footer { margin-top: 24px; padding: 20px 0 8px; border-top: 1px solid color-mix(in srgb, var(--border-light) 62%, transparent); }
+.create-mission__footer-hint { color: var(--text-muted); font-size: 11px; }
+.create-mission__footer-actions { gap: 9px; }
+.create-mission__cancel, .create-mission__submit { height: 38px; border-radius: 4px; font-size: 12px; }
+.create-mission__submit { min-width: 132px; box-shadow: none; transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out); }
+.create-mission__submit:hover:not(:disabled) { box-shadow: none; transform: none; }
+.create-mission__submit:disabled { cursor: not-allowed; opacity: .42; }
+.create-mission button:focus-visible, .create-mission input:focus-visible, .create-mission textarea:focus-visible, .create-mission select:focus-visible, .create-mission summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .create-mission__topbar { padding: 14px 18px 4px; }
+  .create-mission__scroll-region { padding: 0 18px 28px; }
+  .create-mission__header { padding: 22px 0 26px; }
+  .create-mission h1 { font-size: 26px; }
+  .section-heading--with-action { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .attachment-input__add { margin-left: 28px !important; }
+  .config-line, .advanced-config__presets { grid-template-columns: 1fr; gap: 9px; }
+  .advanced-config__grid { grid-template-columns: 1fr; padding-left: 0; }
+  .run-summary__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .create-mission__footer { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .create-mission__footer-actions { width: 100%; }
+  .create-mission__cancel, .create-mission__submit { flex: 1; }
+}
+@media (max-width: 520px) {
+  .attachment-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .attachment-row__state { grid-column: 1; grid-row: 2; }
+  .attachment-row__actions { grid-column: 2; grid-row: 1 / span 2; }
+  .run-summary__grid { grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+}
+.field-block--name input { border-width: 0 0 1px !important; border-radius: 0; border-color: color-mix(in srgb, var(--border-light) 72%, transparent) !important; background: transparent !important; padding-right: 0; padding-left: 0; }
+.field-block--name input:focus { border-color: var(--border-focus) !important; box-shadow: none !important; }
+.field-block--brief { gap: 8px; padding: 14px 0 0 16px; border-left: 2px solid color-mix(in srgb, var(--primary-color) 58%, transparent); }
+.field-block__header { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+.field-block__header > span { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.field-block__header em { color: var(--text-muted); font: 9px var(--font-mono, monospace); font-style: normal; letter-spacing: .1em; }
+.field-block--brief textarea { min-height: 118px; padding: 4px 0 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; }
+.field-block--brief textarea:focus { border: 0 !important; box-shadow: none !important; }
+.attachment-input__dropzone { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.attachment-input__dropzone.is-dragging { border: 0; background: transparent; box-shadow: inset 2px 0 0 var(--primary-color); }
+.context-empty { display: grid; gap: 8px; padding: 20px 0 17px; border-top: 1px solid color-mix(in srgb, var(--border-light) 56%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--border-light) 56%, transparent); }
+.context-empty__eyebrow { color: var(--text-muted); font: 9px var(--font-mono, monospace); letter-spacing: .12em; }
+.context-empty p { margin: 0; color: var(--text-secondary); font-size: 11px; }
+.context-empty__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--text-muted); font-size: 10px; }
+.context-empty__action { margin: 0 !important; padding: 0 0 2px; border-bottom: 1px solid color-mix(in srgb, var(--primary-color) 58%, transparent); color: var(--primary-color) !important; cursor: pointer; font-size: 11px !important; font-weight: 600 !important; }
+.context-empty__action:hover { color: var(--primary-hover) !important; }
+.execution-overview { display: grid; gap: 18px; }
+.execution-overview__content { display: grid; gap: 5px; padding: 2px 0 2px; }
+.execution-overview__eyebrow { color: var(--text-muted); font: 9px var(--font-mono, monospace); letter-spacing: .12em; }
+.execution-overview__content strong { overflow: hidden; color: var(--text-primary); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.execution-overview__content small { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.execution-config { border-top: 1px solid color-mix(in srgb, var(--border-light) 54%, transparent); }
+.execution-config summary { display: flex; align-items: center; gap: 10px; padding: 12px 0 6px; color: var(--text-secondary); cursor: pointer; list-style: none; }
+.execution-config summary::-webkit-details-marker { display: none; }
+.execution-config summary::after { margin-left: auto; content: '⌄'; color: var(--text-muted); font-size: 14px; transform: translateY(-1px); transition: transform 160ms var(--ease-out); }
+.execution-config[open] summary::after { transform: rotate(180deg) translateY(-1px); }
+.execution-config summary span { color: var(--text-primary); font-size: 11px; font-weight: 600; }
+.execution-config summary small { color: var(--text-muted); font-size: 10px; }
+.execution-config__body { display: grid; gap: 24px; padding: 14px 0 2px; }
+.execution-config__body > .extension-host { padding-top: 2px; }
+.create-mission { display: block; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.create-mission__workspace { display: grid; grid-template-rows: 54px minmax(0, 1fr); width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.create-mission__topbar { display: grid; grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 1fr); align-items: center; gap: 18px; height: 54px; padding: 0 clamp(18px, 3vw, 42px); border-bottom: 1px solid color-mix(in srgb, var(--border-light) 65%, transparent); background: var(--bg-app); }
+.create-mission__back { justify-self: start; min-height: 28px; }
+.create-mission__topbar-title { display: grid; justify-items: center; gap: 3px; }
+.create-mission__topbar-title h1 { margin: 0; color: var(--text-primary); font-family: var(--font-sans); font-size: 13px; font-weight: 600; line-height: 1.15; letter-spacing: .01em; }
+.create-mission__topbar-mode { justify-self: end; color: var(--text-muted); font: 9px var(--font-mono, monospace); letter-spacing: .12em; }
+.create-mission__form { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; max-width: none; margin: 0; }
+.create-mission__workspace-body { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, .85fr); min-height: 0; overflow: hidden; }
+.mission-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; padding: clamp(24px, 4vh, 48px) clamp(24px, 5vw, 76px); border-right: 1px solid color-mix(in srgb, var(--border-light) 55%, transparent); }
+.create-mission__right-column { display: grid; grid-template-rows: minmax(210px, 1fr) minmax(250px, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
+.context-panel, .execution-panel { min-width: 0; min-height: 0; padding: clamp(20px, 3vh, 32px) clamp(20px, 3vw, 38px); }
+.context-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); border-bottom: 1px solid color-mix(in srgb, var(--border-light) 55%, transparent); overflow: hidden; }
+.execution-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.workspace-pane__heading { min-width: 0; margin-bottom: 26px; }
+.workspace-pane__heading--row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.workspace-pane__eyebrow { display: block; margin-bottom: 7px; color: var(--primary-color); font: 9px var(--font-mono, monospace); letter-spacing: .14em; }
+.workspace-pane__heading h2 { margin: 0; color: var(--text-primary); font-family: var(--font-sans); font-size: 15px; font-weight: 600; line-height: 1.2; }
+.workspace-pane__heading p { max-width: 420px; margin: 7px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.mission-pane__scroll { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 18px; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
+.mission-fields { display: grid; gap: clamp(28px, 5vh, 54px); max-width: 720px; }
+.field-block--name input { height: 42px; font-size: 14px; }
+.field-block--name input:focus-visible { outline: 0; outline-offset: 0; }
+.field-block--brief { min-height: 0; }
+.field-block--brief textarea { height: clamp(180px, 31vh, 290px); min-height: 150px; max-height: 48vh; resize: vertical; overflow-y: auto; font-size: 13px; line-height: 1.75; }
+.field-block--brief small { max-width: 640px; }
+.context-panel__meta { display: grid; justify-items: end; gap: 9px; min-width: 0; }
+.context-panel__meta > strong { color: var(--text-secondary); font: 10px var(--font-mono, monospace); white-space: nowrap; }
+.panel-action { margin: 0 !important; color: var(--primary-color) !important; cursor: pointer; font-size: 11px !important; font-weight: 600 !important; white-space: nowrap; }
+.panel-action input { display: none; }
+.context-panel__body { min-height: 0; overflow: hidden; }
+.context-panel .attachment-input__dropzone { height: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 8px; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
+.context-panel .context-empty { min-height: 150px; align-content: center; }
+.context-panel .attachment-row { grid-template-columns: minmax(0, 1fr) minmax(126px, auto) 26px; }
+.execution-panel .workspace-pane__heading { margin-bottom: 18px; }
+.execution-panel .execution-overview { min-height: 0; overflow-y: auto; padding-right: 8px; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
+.execution-overview__content strong { white-space: normal; }
+.execution-config__body { min-height: 0; }
+.execution-config[open] .execution-config__body { max-height: min(430px, 55vh); overflow-y: auto; padding-right: 8px; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
+.execution-panel .config-line { grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr); gap: 14px; }
+.execution-panel .advanced-config__presets { grid-template-columns: minmax(130px, .7fr) minmax(0, 1.3fr); gap: 14px; }
+.execution-panel .advanced-config__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-left: 0; }
+.launch-bar { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 72px; padding: 12px clamp(18px, 3vw, 42px); border-top: 1px solid color-mix(in srgb, var(--border-light) 68%, transparent); background: color-mix(in srgb, var(--bg-app) 94%, var(--bg-sidebar)); }
+.launch-bar__summary { display: grid; gap: 3px; min-width: 0; }
+.launch-bar__eyebrow { color: var(--text-muted); font: 9px var(--font-mono, monospace); letter-spacing: .13em; }
+.launch-bar__summary strong { overflow: hidden; color: var(--text-primary); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.launch-bar__ready { color: var(--success); font-size: 10px; }
+.launch-bar__notice { overflow: hidden; color: var(--warning); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.launch-bar__actions { display: flex; flex: 0 0 auto; gap: 9px; }
+.launch-bar .create-mission__footer-hint { display: none; }
+.launch-bar .create-mission__submit { min-width: 132px; }
+.launch-bar .create-mission__error { margin: 3px 0 0; font-size: 10px; }
+@media (max-width: 900px) {
+  .create-mission__workspace-body { grid-template-columns: 1fr; grid-template-rows: minmax(360px, .9fr) minmax(430px, 1.1fr); overflow-y: auto; overflow-x: hidden; }
+  .mission-pane { min-height: 360px; border-right: 0; border-bottom: 1px solid color-mix(in srgb, var(--border-light) 55%, transparent); }
+  .create-mission__right-column { grid-template-rows: minmax(260px, .8fr) minmax(340px, 1.2fr); min-height: 600px; }
+}
+@media (max-width: 620px) {
+  .create-mission__topbar { grid-template-columns: auto 1fr; padding: 0 16px; }
+  .create-mission__topbar-title { justify-items: start; }
+  .create-mission__topbar-mode { display: none; }
+  .mission-pane { padding: 22px 20px; }
+  .context-panel, .execution-panel { padding: 22px 20px; }
+  .workspace-pane__heading--row { gap: 12px; }
+  .context-panel__meta { justify-items: start; }
+  .launch-bar { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px 16px; }
+  .launch-bar__actions { width: 100%; }
+  .launch-bar__actions button { flex: 1; }
 }
 </style>
