@@ -2119,3 +2119,15 @@ html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-
 .role-view .add-icon { font-size: 16px !important; }
 .role-view .add-text { font-size: 12px !important; }
 .role-view .add-hint { font-size: 10px !important; }
+
+/* KaTeX 块级公式：长公式横向滚动，不撑破气泡/卡片 */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+.math-render-error {
+  color: #f56c6c;
+  word-break: break-all;
+}

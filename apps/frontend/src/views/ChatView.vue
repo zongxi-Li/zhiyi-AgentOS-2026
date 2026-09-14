@@ -492,6 +492,23 @@
                   <el-icon><Share /></el-icon>
                   <span>ACG</span>
                 </button>
+                <el-tooltip v-if="contextUsage.visible" placement="top" :show-after="200">
+                  <template #content>
+                    <div class="context-usage-tip">
+                      <div>上下文窗口</div>
+                      <div>{{ contextUsage.percent }}% 已用</div>
+                      <div>已用 {{ contextUsage.usedLabel }}，共 {{ contextUsage.windowLabel }}</div>
+                    </div>
+                  </template>
+                  <button
+                    class="context-usage"
+                    :class="contextUsage.level"
+                    type="button"
+                    title="上下文窗口用量"
+                  >
+                    {{ contextUsage.percent }}%
+                  </button>
+                </el-tooltip>
               </div>
               <div class="right-actions">
                 <span v-if="inputText.length" class="word-count" :class="{ warning: inputText.length > 500 }">
@@ -1789,6 +1806,30 @@ const composerModeLabel = computed(() => {
   return isAgentMode.value ? '通用 Agent' : '通用 Chat'
 })
 
+const formatContextTokens = (value: number): string => {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`
+  return String(value)
+}
+
+const contextUsage = computed(() => {
+  const used = chatStore.contextUsedTokens
+  const windowTokens = chatStore.contextWindowTokens
+  if (typeof used !== 'number' || typeof windowTokens !== 'number' || windowTokens <= 0) {
+    return { visible: false, percent: 0, level: 'normal', usedLabel: '', windowLabel: '' }
+  }
+  const ratio = Math.min(1, used / windowTokens)
+  const percent = Math.round(ratio * 100)
+  const level = ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warning' : 'normal'
+  return {
+    visible: true,
+    percent,
+    level,
+    usedLabel: formatContextTokens(used),
+    windowLabel: formatContextTokens(windowTokens)
+  }
+})
+
 const latestLawyerMessage = computed(() => {
   return [...chatStore.messages]
     .reverse()
@@ -3079,6 +3120,8 @@ onMounted(async () => {
 
   selectedRoleId.value = roleStore.currentRole?.id || null
   chatStore.setRole(roleStore.currentRole?.id || null)
+
+  void chatStore.fetchContextWindows()
 
   bindMessagesScroll()
 })
@@ -4634,6 +4677,41 @@ const handleHeroLogoPointerUp = () => {
 
 .word-count.warning {
   color: #f59e0b;
+}
+
+.context-usage {
+  min-height: 22px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: default;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.context-usage.normal {
+  color: var(--text-secondary);
+}
+
+.context-usage.warning {
+  color: #f59e0b;
+  border-color: color-mix(in srgb, #f59e0b 45%, transparent);
+}
+
+.context-usage.danger {
+  color: #ef4444;
+  border-color: color-mix(in srgb, #ef4444 45%, transparent);
+}
+
+.context-usage-tip {
+  text-align: center;
+  line-height: 1.6;
 }
 
 .agent-panel {

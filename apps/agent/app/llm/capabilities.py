@@ -13,6 +13,13 @@ DEEPSEEK_LEGACY_MODELS = {
 }
 GLM_5_3_FLASH_REASONING_EFFORTS = ("low", "high", "max")
 
+# Official context windows (tokens) from docs.bigmodel.cn. Only models with a
+# published figure are listed; unknown GLM models stay None so the UI can say
+# "上限未声明" instead of inventing a ceiling.
+GLM_CONTEXT_WINDOWS = {
+    "glm-5.3-flash": 1_048_576,
+}
+
 _THINKING_MODE_ALIASES = {
     "": ThinkingMode.DISABLED,
     "off": ThinkingMode.DISABLED,
@@ -117,6 +124,7 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
             # Individual operations request smaller budgets and the provider
             # adapter clamps them to this declared maximum.
             max_output_tokens=65_536,
+            context_window_tokens=GLM_CONTEXT_WINDOWS.get(normalized_model),
         )
 
     if normalized_model.startswith("deepseek-v4") or "api.deepseek.com" in normalized_url:
@@ -283,6 +291,7 @@ __all__ = [
     "DEEPSEEK_DEFAULT_MODEL",
     "DEEPSEEK_LEGACY_MODELS",
     "GLM_5_3_FLASH_REASONING_EFFORTS",
+    "GLM_CONTEXT_WINDOWS",
     "NormalizedModelRequest",
     "adapt_chat_completion_parameters",
     "normalize_deepseek_model",

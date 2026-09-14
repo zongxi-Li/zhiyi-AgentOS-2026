@@ -54,6 +54,10 @@ function createChatStoreMock() {
     isLoadingConversation: false,
     contextId: null as string | null,
     currentRoleId: null as string | null,
+    contextUsedTokens: null as number | null,
+    contextWindowTokens: null as number | null,
+    contextModel: null as string | null,
+    contextModels: {} as Record<string, number>,
     workflowBindings: bindings,
     upgradeToWorkflow: vi.fn(),
     startAgentRun: vi.fn(),
@@ -69,6 +73,7 @@ function createChatStoreMock() {
       chatStoreMock.contextId = null
     }),
     setRole: vi.fn(),
+    fetchContextWindows: vi.fn(async () => {}),
     sendLawyerMessage: vi.fn(),
     sendTeacherMessage: vi.fn(),
     sendProgrammerMessage: vi.fn(),

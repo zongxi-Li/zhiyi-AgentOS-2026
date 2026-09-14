@@ -1,3 +1,5 @@
+import { extractMath } from './math'
+
 const escapeHtml = (raw: string) => raw
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -14,7 +16,6 @@ const renderInline = (raw: string) => {
     if (!isSafeUrl(safeUrl)) return label
     return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`
   })
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>')
   text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>')
   text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>')
@@ -49,7 +50,14 @@ export const renderMarkdown = (raw: string): string => {
     return token
   })
 
-  const lines = stripped.split(/\r?\n/)
+  const inlineCodes: string[] = []
+  const withInlineCode = stripped.replace(/`([^`\n]+)`/g, (_match, code) => {
+    inlineCodes.push(`<code>${escapeHtml(String(code))}</code>`)
+    return `@@INLINE_CODE_${inlineCodes.length - 1}@@`
+  })
+
+  const mathPass = extractMath(withInlineCode)
+  const lines = mathPass.text.split(/\r?\n/)
   const output: string[] = []
   let listType: 'ul' | 'ol' | null = null
 
@@ -140,8 +148,14 @@ export const renderMarkdown = (raw: string): string => {
 
   closeList()
   let html = output.join('\n')
+  html = mathPass.restore(html)
+  // 依次恢复公式、行内代码、围栏代码块：后恢复的内容不经过先前的 replace 扫描，
+  // 字面量占位符不会被误替换；用函数替换避免 KaTeX 输出里的 $ 序列被解释。
+  inlineCodes.forEach((block, index) => {
+    html = html.replace(`@@INLINE_CODE_${index}@@`, () => block)
+  })
   codeBlocks.forEach((block, index) => {
-    html = html.replace(`@@CODE_BLOCK_${index}@@`, block)
+    html = html.replace(`@@CODE_BLOCK_${index}@@`, () => block)
   })
   return html
 }

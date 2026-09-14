@@ -22,7 +22,7 @@ from openai import AsyncOpenAI
 
 from app.ai_engine.model_runtime import resolve_system_runtime_config, validate_runtime_config
 from app.config import settings
-from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request
+from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request, provider_model_capabilities
 from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
 from app.tools.catalog import ReadOnlyToolCatalog
 from app.tools.contracts import (
@@ -570,7 +570,13 @@ class AgentsToolRuntime:
                 event=ChatStreamEventType.USAGE,
                 request_id=request_id,
                 sequence=sequence,
-                data={**usage, **metadata},
+                data={
+                    **usage,
+                    **metadata,
+                    "contextWindowTokens": provider_model_capabilities(
+                        model, base_url
+                    ).context_window_tokens,
+                },
             )
             sequence += 1
             yield ChatStreamEvent(

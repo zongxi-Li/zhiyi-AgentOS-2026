@@ -108,7 +108,17 @@ async def list_system_runtime_models() -> Dict[str, object]:
 
     if default_model not in models:
         models.insert(0, default_model)
-    return {"models": models, "default_model": default_model, "provider": provider}
+    context_windows = {
+        name: window
+        for name in models
+        if (window := provider_model_capabilities(name, base_url).context_window_tokens)
+    }
+    return {
+        "models": models,
+        "default_model": default_model,
+        "provider": provider,
+        "context_windows": context_windows,
+    }
 
 
 def validate_runtime_config(model: str, base_url: str, api_key: str) -> None:
@@ -392,6 +402,9 @@ async def stream_with_runtime_model(
                 {"reasoningPhaseMs": int((time.perf_counter() - reasoning_started_at) * 1000)},
             )
         latency_ms = int((time.perf_counter() - started) * 1000)
+        context_window_tokens = provider_model_capabilities(
+            normalized.effective_model, base_url
+        ).context_window_tokens
         yield event(
             ChatStreamEventType.USAGE,
             {
@@ -399,6 +412,7 @@ async def stream_with_runtime_model(
                 "reasoningTokens": usage["reasoning_tokens"],
                 "outputTokens": usage["output_tokens"],
                 "totalTokens": usage["total_tokens"],
+                "contextWindowTokens": context_window_tokens,
                 "latencyMs": latency_ms,
                 "requestedModel": normalized.requested_model,
                 "effectiveModel": normalized.effective_model,

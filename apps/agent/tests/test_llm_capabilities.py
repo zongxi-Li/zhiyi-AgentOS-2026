@@ -96,6 +96,18 @@ def test_glm_5_3_flash_always_thinks_and_maps_disabled_to_low_effort():
     }
 
 
+def test_glm_5_3_flash_publishes_official_context_window():
+    capabilities = provider_model_capabilities(
+        "glm-5.3-flash", "https://open.bigmodel.cn/api/coding/paas/v4"
+    )
+    assert capabilities.context_window_tokens == 1_048_576
+
+    unknown = provider_model_capabilities(
+        "glm-unknown-model", "https://open.bigmodel.cn/api/paas/v4"
+    )
+    assert unknown.context_window_tokens is None
+
+
 def test_glm_5_3_flash_preserves_each_official_reasoning_effort():
     for effort in ("low", "high", "max"):
         adapted = adapt_chat_completion_parameters(

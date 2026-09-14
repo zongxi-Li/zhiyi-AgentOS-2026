@@ -203,6 +203,48 @@ export const useChatStore = defineStore('chat', () => {
   const programmerSessionId = ref<string | null>(null)
   const writerSessionId = ref<string | null>(null)
   const currentRoleId = ref<string | null>(null)
+  // Context window usage for the composer indicator: tokens consumed by the
+  // latest exchange (input + output ≈ what the next request will carry) and
+  // the resolved model context window.
+  const contextUsedTokens = ref<number | null>(null)
+  const contextWindowTokens = ref<number | null>(null)
+  const contextModel = ref<string | null>(null)
+  const contextModels = ref<Record<string, number>>({})
+
+  const applyContextUsage = (used: number | null, model?: string | null, windowTokens?: number | null) => {
+    if (model) contextModel.value = model
+    if (typeof windowTokens === 'number' && windowTokens > 0) {
+      contextWindowTokens.value = windowTokens
+      if (model) contextModels.value = { ...contextModels.value, [model]: windowTokens }
+    } else if (model && contextModels.value[model]) {
+      contextWindowTokens.value = contextModels.value[model]
+    }
+    contextUsedTokens.value = typeof used === 'number' && used >= 0 ? used : null
+  }
+
+  const fetchContextWindows = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(apiUrl('/ai/chat/models'), {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      })
+      if (!response.ok) return
+      const data = await response.json() as { context_windows?: Record<string, unknown> }
+      const windows = data?.context_windows && typeof data.context_windows === 'object'
+        ? Object.fromEntries(
+            Object.entries(data.context_windows)
+              .filter(([, value]) => typeof value === 'number' && (value as number) > 0)
+          )
+        : {}
+      if (!Object.keys(windows).length) return
+      contextModels.value = { ...contextModels.value, ...windows } as Record<string, number>
+      if (!contextWindowTokens.value && contextModel.value && windows[contextModel.value]) {
+        contextWindowTokens.value = windows[contextModel.value] as number
+      }
+    } catch {
+      // The indicator simply stays hidden when the catalog is unavailable.
+    }
+  }
 
   const pushUserMessage = (text: string, fileUrl?: string) => {
     const userMessage: Message = {
@@ -512,6 +554,18 @@ export const useChatStore = defineStore('chat', () => {
           message.requestedThinkingMode = data.requestedThinkingMode || message.requestedThinkingMode
           message.effectiveThinkingMode = data.effectiveThinkingMode || message.effectiveThinkingMode
           message.effectiveReasoningEffort = data.effectiveReasoningEffort || message.effectiveReasoningEffort
+          {
+            const usedInput = message.inputTokens
+            const usedOutput = message.outputTokens
+            const contextUsed = typeof usedInput === 'number'
+              ? usedInput + (typeof usedOutput === 'number' ? usedOutput : 0)
+              : (typeof message.tokensUsed === 'number' ? message.tokensUsed : null)
+            applyContextUsage(
+              contextUsed,
+              message.modelInfo || null,
+              data.contextWindowTokens ?? data.context_window_tokens
+            )
+          }
           break
         case 'done':
           if (typeof data.contextId === 'string' && data.contextId) contextId.value = data.contextId
@@ -872,6 +926,8 @@ export const useChatStore = defineStore('chat', () => {
     teacherSessionId.value = null
     programmerSessionId.value = null
     writerSessionId.value = null
+    contextUsedTokens.value = null
+    contextWindowTokens.value = null
   }
 
   const setRole = (roleId: string | null) => {
@@ -909,6 +965,22 @@ export const useChatStore = defineStore('chat', () => {
       }))
 
       contextId.value = targetContextId
+
+      const lastWithUsage = [...messages.value]
+        .reverse()
+        .find(msg => msg.role === 'assistant' && (
+          typeof msg.inputTokens === 'number' ||
+          typeof msg.outputTokens === 'number' ||
+          typeof msg.tokensUsed === 'number'
+        ))
+      if (lastWithUsage) {
+        const used = typeof lastWithUsage.inputTokens === 'number'
+          ? lastWithUsage.inputTokens + (typeof lastWithUsage.outputTokens === 'number' ? lastWithUsage.outputTokens : 0)
+          : (lastWithUsage.tokensUsed ?? null)
+        applyContextUsage(used, lastWithUsage.modelInfo || null)
+      } else {
+        contextUsedTokens.value = null
+      }
     } catch (error: any) {
       console.error('加载对话历史失败:', error)
       messages.value = []
@@ -924,6 +996,8 @@ export const useChatStore = defineStore('chat', () => {
       loadHistory(id)
     } else {
       messages.value = []
+      contextUsedTokens.value = null
+      contextWindowTokens.value = null
     }
   }
 
@@ -953,6 +1027,8 @@ export const useChatStore = defineStore('chat', () => {
     teacherSessionId.value = null
     programmerSessionId.value = null
     writerSessionId.value = null
+    contextUsedTokens.value = null
+    contextWindowTokens.value = null
   }
 
   return {
@@ -967,6 +1043,11 @@ export const useChatStore = defineStore('chat', () => {
     programmerSessionId,
     writerSessionId,
     currentRoleId,
+    contextUsedTokens,
+    contextWindowTokens,
+    contextModel,
+    contextModels,
+    fetchContextWindows,
     sendMessage,
     sendLawyerMessage,
     sendLawyerMessageStream,
