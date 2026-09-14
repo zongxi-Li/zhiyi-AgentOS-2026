@@ -370,7 +370,7 @@ def test_planner_progress_does_not_publish_partial_run_identity_event(monkeypatc
     try:
         # Keep the Execution Runtime outbox observable so this test isolates
         # event admission from identity-side consumption.
-        monkeypatch.setattr(runtime, "_flush_identity_outbox", lambda: None)
+        monkeypatch.setattr(runtime, "_flush_identity_outbox", lambda **_: None)
 
         _, run = runtime.prepare_run(task.mission_id)
         events = [
