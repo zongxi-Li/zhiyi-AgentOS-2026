@@ -101,6 +101,7 @@ class TopologyCompilationAudit:
     selected_concrete_bindings: tuple[TopologyEdge, ...]
     terminal_edges: tuple[TopologyEdge, ...]
     binding_audit: CapabilityBindingAudit
+    normalized_loop_relations: tuple[TaskPlanRelation, ...] = ()
 
 
 @dataclass(frozen=True)

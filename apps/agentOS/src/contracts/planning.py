@@ -107,6 +107,10 @@ class PlannedTask(BaseModel):
     source_refs: tuple[str, ...] = Field(default_factory=tuple, alias="sourceRefs")
     decomposition_rationale: str = Field(default="", alias="decompositionRationale")
     logical_role: str = Field(default="task", alias="logicalRole")
+    produced_artifacts: tuple[str, ...] = Field(
+        default_factory=tuple,
+        alias="producedArtifacts",
+    )
     workset: WorksetSpec | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -131,6 +135,10 @@ class TaskPlan(BaseModel):
     control_policies: tuple[VerificationLoopPolicy, ...] = Field(
         default_factory=tuple, alias="controlPolicies"
     )
+    expected_artifacts: tuple[str, ...] = Field(
+        default_factory=tuple,
+        alias="expectedArtifacts",
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -153,6 +161,36 @@ class TaskPlan(BaseModel):
             }
             if not referenced <= known:
                 raise ValueError("TaskPlan control policy references an unknown semantic key")
+        expected_artifacts = {
+            str(item).strip()
+            for item in self.expected_artifacts
+            if str(item).strip()
+        }
+        if expected_artifacts:
+            producers = {
+                node.key
+                for node in self.nodes
+                if expected_artifacts <= {
+                    str(item).strip()
+                    for item in node.produced_artifacts
+                    if str(item).strip()
+                }
+            }
+            if not producers:
+                raise ValueError(
+                    "TaskPlan expectedArtifacts has no declared producer: "
+                    + ", ".join(sorted(expected_artifacts))
+                )
+            outgoing = {
+                relation.source_key
+                for relation in self.relations
+                if relation.relation_type == SemanticTaskRelationType.DEPENDS_ON
+            }
+            if not any(key not in outgoing for key in producers):
+                raise ValueError(
+                    "TaskPlan expectedArtifacts producer is not terminal: "
+                    + ", ".join(sorted(expected_artifacts))
+                )
         unresolved = {node.key: node.parent_key for node in self.nodes}
         resolved: set[str] = set()
         while unresolved:

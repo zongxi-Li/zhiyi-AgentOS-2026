@@ -19,6 +19,7 @@ def validate_task_plan_for_execution(
     nodes: Sequence[PlannedTask],
     relations: Sequence[TaskPlanRelation] = (),
     control_policies: Sequence[VerificationLoopPolicy] = (),
+    expected_artifacts: Sequence[str] = (),
     relation_origin: EdgeOrigin,
     plan_version: int = 1,
     metadata: Mapping[str, Any] | None = None,
@@ -55,6 +56,7 @@ def validate_task_plan_for_execution(
         nodes=tuple(nodes),
         relations=result.task_plan_relations,
         controlPolicies=result.control_policies,
+        expectedArtifacts=tuple(expected_artifacts),
         metadata=dict(metadata or {}),
     )
 

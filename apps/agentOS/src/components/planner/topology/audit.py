@@ -12,7 +12,7 @@ from .errors import TopologyCompileError
 from .model import TopologyCompileResult
 
 
-TOPOLOGY_COMPILER_VERSION = "task-plan-topology-v5b"
+TOPOLOGY_COMPILER_VERSION = "task-plan-topology-v5c"
 
 
 def catalog_fingerprint(catalog: CapabilityCatalog) -> str:
@@ -65,6 +65,10 @@ def successful_topology_audit(
         "capabilityCoverageMode": capability_coverage_mode,
         "taskCount": len(nodes),
         "semanticEdgeCount": len(result.task_plan_relations),
+        "normalizedLoopRelations": [
+            item.model_dump(by_alias=True, mode="json")
+            for item in result.audit.normalized_loop_relations
+        ],
         "topologyFingerprint": _fingerprint(topology_payload),
         "capabilityRequirements": [
             {
