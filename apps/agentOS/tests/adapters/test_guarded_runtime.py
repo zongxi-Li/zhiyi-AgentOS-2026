@@ -121,6 +121,119 @@ class _FlakyStreamingModel:
         )
 
 
+class _IncompleteThenCompletedStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.attempt_ids: list[str] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **kwargs):
+        self.calls += 1
+        attempt_id = str(kwargs["attempt_id"])
+        self.attempt_ids.append(attempt_id)
+        if self.calls == 1:
+            yield RuntimeEvent(
+                eventType="model.output.delta",
+                runId="run-1",
+                nodeId="node-1",
+                attemptId=attempt_id,
+                sequence=1,
+                payload={"delta": "partial"},
+            )
+            raise StructuredGenerationError(
+                "MODEL_STREAM_INCOMPLETE",
+                "model provider stream failed",
+                audit={
+                    "streamDiagnostics": {
+                        "streamStarted": True,
+                        "firstTokenObserved": True,
+                        "outputDeltaObserved": True,
+                        "deltaCount": 1,
+                        "completionObserved": False,
+                        "streamTerminationReason": "eof_before_completion",
+                        "elapsedMs": 42,
+                    }
+                },
+            )
+        yield RuntimeEvent(
+            eventType="model.completed",
+            runId="run-1",
+            nodeId="node-1",
+            attemptId=attempt_id,
+            sequence=1,
+            payload={
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                "finishReason": "stop",
+            },
+        )
+
+
+class _AlwaysIncompleteStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **_kwargs):
+        self.calls += 1
+        raise StructuredGenerationError(
+            "MODEL_STREAM_INCOMPLETE",
+            "model provider stream failed",
+            audit={
+                "streamDiagnostics": {
+                    "streamStarted": True,
+                    "firstTokenObserved": False,
+                    "outputDeltaObserved": False,
+                    "deltaCount": 0,
+                    "completionObserved": False,
+                    "streamTerminationReason": "eof_before_first_token",
+                    "elapsedMs": 5,
+                }
+            },
+        )
+        if False:
+            yield RuntimeEvent(eventType="model.completed", runId="run-1", sequence=1)
+
+
+class _PermanentFailureStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **_kwargs):
+        self.calls += 1
+        raise StructuredGenerationError("MODEL_AUTH_INVALID", "provider authentication failed")
+        if False:
+            yield RuntimeEvent(eventType="model.completed", runId="run-1", sequence=1)
+
+
+class _CompletedStreamingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def is_available(self) -> bool:
+        return True
+
+    async def stream_generate_json(self, **kwargs):
+        self.calls += 1
+        yield RuntimeEvent(
+            eventType="model.completed",
+            runId="run-1",
+            nodeId="node-1",
+            attemptId=kwargs["attempt_id"],
+            sequence=1,
+            payload={
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                "finishReason": "stop",
+            },
+        )
+
+
 class _RateLimitedStreamingModel:
     def __init__(self) -> None:
         self.calls = 0
@@ -202,6 +315,82 @@ def test_guarded_model_stream_retries_provider_rate_limit() -> None:
     assert delegate.calls == 2
     assert events[-1].event_type == "model.completed"
     assert events[-1].attempt_id.startswith("attempt-1:retry:")
+
+
+def test_guarded_model_stream_retries_incomplete_stream_from_scratch() -> None:
+    delegate = _IncompleteThenCompletedStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, retries=1)
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            run_id="run-1", node_id="node-1", attempt_id="attempt-1",
+        )]
+
+    events = asyncio.run(collect())
+
+    assert delegate.calls == 2
+    assert delegate.attempt_ids[0] == "attempt-1"
+    assert delegate.attempt_ids[1].startswith("attempt-1:retry:")
+    failure = next(event for event in events if event.event_type == "model.stream.failure")
+    assert failure.payload["errorCode"] == "MODEL_STREAM_INCOMPLETE"
+    assert failure.payload["streamTerminationReason"] == "eof_before_completion"
+    assert events[-1].event_type == "model.completed"
+    assert events[-1].payload["usage"]["total_tokens"] == 14
+    assert events[-1].payload["finishReason"] == "stop"
+
+
+def test_guarded_model_stream_stops_at_retry_limit_for_incomplete_stream() -> None:
+    delegate = _AlwaysIncompleteStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, retries=2)
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            run_id="run-1", node_id="node-1", attempt_id="attempt-1",
+        )]
+
+    with pytest.raises(StructuredGenerationError) as captured:
+        asyncio.run(collect())
+
+    assert delegate.calls == 3
+    assert captured.value.code == "MODEL_STREAM_INCOMPLETE"
+
+
+def test_guarded_model_stream_does_not_retry_permanent_provider_error() -> None:
+    delegate = _PermanentFailureStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, retries=2)
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            run_id="run-1", node_id="node-1", attempt_id="attempt-1",
+        )]
+
+    with pytest.raises(StructuredGenerationError) as captured:
+        asyncio.run(collect())
+
+    assert delegate.calls == 1
+    assert captured.value.code == "MODEL_AUTH_INVALID"
+
+
+def test_guarded_model_stream_success_preserves_usage_and_finish_reason() -> None:
+    delegate = _CompletedStreamingModel()
+    runtime = GuardedModelRuntime(delegate=delegate, retries=1)
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            run_id="run-1", node_id="node-1", attempt_id="attempt-1",
+        )]
+
+    events = asyncio.run(collect())
+
+    assert delegate.calls == 1
+    completed = events[-1]
+    assert completed.event_type == "model.completed"
+    assert completed.payload["usage"] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 4,
+        "total_tokens": 14,
+    }
+    assert completed.payload["finishReason"] == "stop"
 
 
 def test_guarded_model_stream_holds_concurrency_slot_until_stream_finishes() -> None:

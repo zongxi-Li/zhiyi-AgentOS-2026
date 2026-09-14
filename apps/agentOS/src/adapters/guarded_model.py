@@ -22,8 +22,41 @@ from contracts.runtime_events import RuntimeEvent
 
 _Result = TypeVar("_Result")
 _RETRYABLE_CODES = frozenset(
-    {"MODEL_TIMEOUT", "MODEL_RATE_LIMITED", "MODEL_TEMPORARY_UNAVAILABLE"}
+    {
+        "MODEL_TIMEOUT",
+        "MODEL_RATE_LIMITED",
+        "MODEL_TEMPORARY_UNAVAILABLE",
+        # A provider stream can terminate after emitting a partial response
+        # without producing its terminal finish chunk. Retry the model call,
+        # not the node or planner graph.
+        "MODEL_STREAM_INCOMPLETE",
+    }
 )
+
+_STREAM_DIAGNOSTIC_KEYS = frozenset(
+    {
+        "streamStarted",
+        "firstTokenObserved",
+        "outputDeltaObserved",
+        "deltaCount",
+        "completionObserved",
+        "streamTerminationReason",
+        "elapsedMs",
+    }
+)
+
+
+def _safe_stream_diagnostics(error: StructuredGenerationError) -> dict[str, object]:
+    audit = getattr(error, "audit", None)
+    diagnostics = audit.get("streamDiagnostics") if isinstance(audit, dict) else None
+    if not isinstance(diagnostics, dict):
+        return {}
+    return {
+        key: value
+        for key, value in diagnostics.items()
+        if key in _STREAM_DIAGNOSTIC_KEYS
+        and isinstance(value, (bool, int, float, str))
+    }
 
 
 class _CallGate:
@@ -189,6 +222,20 @@ class GuardedModelRuntime:
                     "MODEL_IDLE_TIMEOUT",
                     "MODEL_TOTAL_TIMEOUT",
                 }
+                diagnostics = _safe_stream_diagnostics(exc)
+                if diagnostics:
+                    yield RuntimeEvent(
+                        eventType="model.stream.failure",
+                        runId=str(kwargs.get("run_id") or "unknown"),
+                        nodeId=kwargs.get("node_id"),
+                        attemptId=attempt_id,
+                        sequence=0,
+                        payload={
+                            **diagnostics,
+                            "errorCode": exc.code,
+                            "retryCount": attempt - 1,
+                        },
+                    )
                 if exc.code not in retryable_codes or attempt > self.retries:
                     raise
                 if self.retry_delay_seconds:

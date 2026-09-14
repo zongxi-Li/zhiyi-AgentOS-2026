@@ -57,17 +57,6 @@ def _requested_reasoning_effort(context: AgentRunContext) -> str | None:
     return value or None
 
 
-def _output_budget_for(capability: str) -> int:
-    if capability in {
-        "solution_design", "comparative_analysis", "verification",
-        "artifact_generation", "industrial_safety_analysis",
-        "industrial_acceptance_validation", "industrial_visualization",
-    }:
-        return 65_536
-    if capability in {"information_extraction", "information_retrieval"}:
-        return 16_384
-    return 32_768
-
 # Backward-compatible export derived from the native Catalog contribution.
 NATIVE_CAPABILITIES = NATIVE_CAPABILITY_IDS
 
@@ -322,9 +311,8 @@ class NativeGeneralAgent(BaseAgent):
         thinking_mode = str(context.task.input.get("thinkingMode") or "disabled")
         output_thinking_mode = thinking_mode
         timeout_seconds = 600.0 if capability == "artifact_generation" else 300.0
-        # 默认由精确模型 API/适配器决定单次输出能力。Harness 不用 capability 名称
-        # 猜测 4096/8192，也不通过人为缩短内容获得表面上的合同成功。
-        max_output_tokens = _output_budget_for(capability)
+        # 输出预算不做人为上限：调用不携带 max_tokens，思考与 JSON 共用模型端点
+        # 的完整输出能力；截断由 finish_reason=length 检测并进入恢复梯子。
         invocations: list[dict[str, Any]] = []
         base_prompt_version = prompt_version_for_capability(capability)
         # Parsing repair and contract repair address different failure classes.
@@ -340,13 +328,15 @@ class NativeGeneralAgent(BaseAgent):
                 streamer = streamer if callable(getattr(runtime.delegate, "stream_generate_json", None)) else None
             if callable(streamer):
                 streamed_data = None
+                stream_completed_payload: dict[str, Any] = {}
                 async for runtime_event in streamer(
                     prompt=prompt, schema=generation_schema, run_id=context.run.run_id,
                     node_id=context.step.step_id,
                     attempt_id=context.attempt_id or context.commit_id or context.step.step_id,
                     ttft_timeout=min(30.0, timeout_seconds), idle_timeout=min(60.0, timeout_seconds),
                     total_timeout=timeout_seconds, thinking_mode=thinking_mode,
-                    max_output_tokens=max_output_tokens, prompt_version=base_prompt_version,
+                    reasoning_effort=_requested_reasoning_effort(context),
+                    prompt_version=base_prompt_version,
                     commit_id=context.commit_id,
                 ):
                     event_record = runtime_event.model_dump(by_alias=True, mode="json")
@@ -355,13 +345,25 @@ class NativeGeneralAgent(BaseAgent):
                     runtime_events.append(event_record)
                     await runtime_event_broker.publish(context.run.run_id, runtime_event)
                     if runtime_event.event_type == "model.completed":
+                        stream_completed_payload = dict(runtime_event.payload)
                         streamed_data = runtime_event.payload.get("data")
                 if not isinstance(streamed_data, dict):
                     raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "stream completed without JSON result")
                 generated = StructuredGenerationResult(
                     data=streamed_data,
-                    provider=str(runtime_events[0].get("payload", {}).get("provider") or "stream"),
-                    model=str(runtime_events[0].get("payload", {}).get("model") or "stream"),
+                    provider=str(
+                        stream_completed_payload.get("provider")
+                        or runtime_events[0].get("payload", {}).get("provider")
+                        or "stream"
+                    ),
+                    model=str(
+                        stream_completed_payload.get("model")
+                        or runtime_events[0].get("payload", {}).get("model")
+                        or "stream"
+                    ),
+                    latencyMs=int(stream_completed_payload.get("latencyMs") or 0),
+                    usage=dict(stream_completed_payload.get("usage") or {}),
+                    finishReason=stream_completed_payload.get("finishReason"),
                     promptVersion=base_prompt_version,
                 )
             else:
@@ -376,7 +378,6 @@ class NativeGeneralAgent(BaseAgent):
                 thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
-                max_output_tokens=max_output_tokens,
                 prompt_version=base_prompt_version,
                 commit_id=context.commit_id,
                 )
@@ -436,8 +437,7 @@ class NativeGeneralAgent(BaseAgent):
                     thinking_mode=output_thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
-                    max_output_tokens=max_output_tokens,
-                    prompt_version=(
+                        prompt_version=(
                         f"{base_prompt_version}.thinking-finalization1"
                     ),
                     commit_id=context.commit_id,
@@ -457,7 +457,6 @@ class NativeGeneralAgent(BaseAgent):
                     thinking_mode=output_thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
-                    max_output_tokens=max_output_tokens,
                     prompt_version=f"{base_prompt_version}.json-repair1",
                     commit_id=context.commit_id,
                 )
@@ -506,8 +505,7 @@ class NativeGeneralAgent(BaseAgent):
                 thinking_mode=output_thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
-                max_output_tokens=max_output_tokens,
-                prompt_version=f"{base_prompt_version}.repair1",
+                    prompt_version=f"{base_prompt_version}.repair1",
                 commit_id=context.commit_id,
             )
             invocations.append(repaired.audit_record())
@@ -586,7 +584,7 @@ class NativeGeneralAgent(BaseAgent):
             ),
             schema=subtask_schema, thinking_mode=thinking_mode,
             reasoning_effort=_requested_reasoning_effort(context),
-            timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+            timeout_seconds=timeout_seconds,
             prompt_version=f"{prompt_version}.capacity-split1",
             commit_id=f"{context.commit_id or 'capability'}:split:{depth}",
         )
@@ -607,7 +605,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=subtask_schema, thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+                timeout_seconds=timeout_seconds,
                 prompt_version=f"{prompt_version}.capacity-split-retry1",
                 commit_id=f"{context.commit_id or 'capability'}:split:{depth}:retry",
             )
@@ -637,7 +635,7 @@ class NativeGeneralAgent(BaseAgent):
                 generated = await runtime.generate_json(
                     prompt=subprompt, schema=output_schema, thinking_mode=thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
-                    timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+                    timeout_seconds=timeout_seconds,
                     prompt_version=f"{prompt_version}.capacity-part1",
                     commit_id=f"{context.commit_id or 'capability'}:part:{depth}:{index}",
                 )
@@ -675,7 +673,7 @@ class NativeGeneralAgent(BaseAgent):
                     merged = await runtime.generate_json(
                         prompt=merge_prompt, schema=output_schema, thinking_mode=thinking_mode,
                         reasoning_effort=_requested_reasoning_effort(context),
-                        timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+                        timeout_seconds=timeout_seconds,
                         prompt_version=f"{prompt_version}.capacity-reduce1",
                         commit_id=(
                             f"{context.commit_id or 'capability'}:reduce:"
@@ -743,7 +741,7 @@ class NativeGeneralAgent(BaseAgent):
             ),
             schema=outline_schema, thinking_mode=thinking_mode,
             reasoning_effort=_requested_reasoning_effort(context),
-            timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+            timeout_seconds=timeout_seconds,
             prompt_version=f"{prompt_version}.capacity-outline1",
             commit_id=f"{context.commit_id or 'artifact'}:outline",
         )
@@ -799,7 +797,7 @@ class NativeGeneralAgent(BaseAgent):
             ),
             schema=verification_schema, thinking_mode=thinking_mode,
             reasoning_effort=_requested_reasoning_effort(context),
-            timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+            timeout_seconds=timeout_seconds,
             prompt_version=f"{prompt_version}.capacity-verification1",
             commit_id=f"{context.commit_id or 'artifact'}:verification",
         )
@@ -842,7 +840,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=section_schema, thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+                timeout_seconds=timeout_seconds,
                 prompt_version=f"{prompt_version}.section1",
                 commit_id=f"{context.commit_id or 'artifact'}:section:{path}",
             )
@@ -881,7 +879,7 @@ class NativeGeneralAgent(BaseAgent):
                 ),
                 schema=subsection_schema, thinking_mode=thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds, max_output_tokens=_output_budget_for(context.step.capability or ""),
+                timeout_seconds=timeout_seconds,
                 prompt_version=f"{prompt_version}.section-split1",
                 commit_id=f"{context.commit_id or 'artifact'}:section:{path}:split",
             )

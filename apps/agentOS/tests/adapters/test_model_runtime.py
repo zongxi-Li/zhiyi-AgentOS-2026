@@ -105,6 +105,8 @@ def test_registered_runtime_converts_native_generation_to_capability_request() -
     assert result.data == {"answer": "ok"}
     assert result.provider == "openai_compatible"
     assert result.model == "local-chat"
+    assert result.usage == {"completion_tokens": 2}
+    assert result.audit_record()["usage"] == {"completion_tokens": 2}
     assert result.prompt_version == "test.v1"
     assert provider.requests[0].model == "local-chat"
     assert provider.requests[0].response_schema == {
@@ -291,3 +293,29 @@ def test_catalog_declared_budget_is_sent_when_caller_unspecified() -> None:
     )
     assert result.effective_output_tokens == 384000
     assert result.effective_reason == "catalog_default"
+
+
+def test_registered_runtime_forwards_validated_reasoning_effort_option() -> None:
+    """调用方显式给出的 reasoning_effort 必须进入统一请求选项。
+
+    历史缺陷：桥接层 ``del reasoning_effort`` 把前端档位静默丢弃，
+    Mission 全链路的思考档位成为摆设。非法值仍原样忽略，不注入任意供应商参数。
+    """
+    provider = _Provider()
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"
+    )
+
+    asyncio.run(runtime.generate_json(
+        prompt="json", schema={"type": "object"}, reasoning_effort="high",
+    ))
+    asyncio.run(runtime.generate_json(
+        prompt="json", schema={"type": "object"}, reasoning_effort="yolo",
+    ))
+    asyncio.run(runtime.generate_json(prompt="json", schema={"type": "object"}))
+
+    assert provider.requests[0].options == {"reasoning_effort": "high"}
+    assert provider.requests[1].options == {}
+    assert provider.requests[2].options == {}

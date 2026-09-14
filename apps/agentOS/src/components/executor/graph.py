@@ -507,6 +507,7 @@ class ACGExecutionGraph:
                         "promptTemplateHash", "usage", "finishReason", "capability",
                         "outputPolicy", "requestedOutputTokens", "effectiveOutputTokens",
                         "effectiveReason", "outputExhausted", "partIndex", "callChainId",
+                        "streamDiagnostics",
                     }
                     failure_invocations = (
                         [{key: value for key, value in raw_audit.items() if key in safe_audit_keys}]

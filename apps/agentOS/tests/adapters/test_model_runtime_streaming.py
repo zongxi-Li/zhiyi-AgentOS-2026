@@ -140,3 +140,83 @@ def test_registered_model_runtime_accepts_fenced_streamed_json() -> None:
 
     completed = next(event for event in asyncio.run(collect()) if event.event_type == "model.completed")
     assert completed.payload["data"] == {"answer": "ok"}
+
+
+def test_registered_model_runtime_projects_stream_usage_finish_reason_and_latency() -> None:
+    class _UsageAdapter(_ClosingStreamingAdapter):
+        def astream(self, request: ModelInvocationRequest):
+            async def iterator():
+                await asyncio.sleep(0.01)
+                yield ModelStreamEvent(
+                    requestId=request.request_id,
+                    eventType="delta",
+                    delta='{"answer":"ok"}',
+                    provider="fixture",
+                    model="fixture-model",
+                )
+                yield ModelStreamEvent(
+                    requestId=request.request_id,
+                    eventType="completed",
+                    provider="fixture",
+                    model="fixture-model",
+                    metadata={
+                        "finishReason": "stop",
+                        "usage": {
+                            "prompt_tokens": 12,
+                            "completion_tokens": 3,
+                            "total_tokens": 15,
+                        },
+                    },
+                )
+            return iterator()
+
+    registry = ModelCompatibilityRegistry()
+    registry.register(_UsageAdapter())
+    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model")
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            prompt="private prompt", schema={"type": "object"}, run_id="run-usage",
+        )]
+
+    completed = next(event for event in asyncio.run(collect()) if event.event_type == "model.completed")
+    assert completed.payload["usage"] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 3,
+        "total_tokens": 15,
+    }
+
+
+def test_registered_model_runtime_forwards_reasoning_effort_on_stream() -> None:
+    """流式桥接同样必须把显式 reasoning_effort 写入统一请求选项。"""
+
+    captured: list[ModelInvocationRequest] = []
+
+    class _CapturingAdapter(_ClosingStreamingAdapter):
+        def astream(self, request: ModelInvocationRequest):
+            captured.append(request)
+
+            async def iterator():
+                yield ModelStreamEvent(
+                    requestId=request.request_id, eventType="delta",
+                    delta='{"answer":"ok"}', provider="fixture", model="fixture-model",
+                )
+                yield ModelStreamEvent(
+                    requestId=request.request_id, eventType="completed",
+                    provider="fixture", model="fixture-model",
+                )
+            return iterator()
+
+    registry = ModelCompatibilityRegistry()
+    registry.register(_CapturingAdapter())
+    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model")
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            prompt="private prompt", schema={"type": "object"}, run_id="run-effort",
+            reasoning_effort="max",
+        )]
+
+    asyncio.run(collect())
+
+    assert captured and captured[0].options.get("reasoning_effort") == "max"

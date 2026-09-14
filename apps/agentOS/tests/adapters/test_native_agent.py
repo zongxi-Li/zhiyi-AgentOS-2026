@@ -12,6 +12,7 @@ from adapters.model.native import NativeGeneralAgent
 from components.content import ContentWorksetSession, SQLiteContentManifestStore
 from components.communicator.contracts import ContextPack
 from contracts.content import ContentKind, WorksetSpec
+from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents import AgentRunContext
 from support.acg.models import build_default_capability_catalog
@@ -41,6 +42,49 @@ class _SearchTool:
 class _GlmModel:
     def describe_model(self):
         return SimpleNamespace(provider="openai-compatible", model="glm-5.3-flash")
+
+
+class _StreamingUsageModel:
+    def __init__(self) -> None:
+        self.stream_kwargs: list[dict] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    def stream_generate_json(self, **kwargs):
+        self.stream_kwargs.append(dict(kwargs))
+
+        async def iterator():
+            yield RuntimeEvent(
+                eventType="model.started",
+                runId="run-stream-usage",
+                sequence=1,
+                payload={"provider": "glm", "model": "glm-5.3-flash"},
+            )
+            yield RuntimeEvent(
+                eventType="model.completed",
+                runId="run-stream-usage",
+                sequence=2,
+                payload={
+                    "data": {
+                        "task_summary": "answer",
+                        "constraints": [],
+                        "success_criteria": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "provider": "glm",
+                    "model": "glm-5.3-flash",
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 3,
+                        "total_tokens": 15,
+                    },
+                    "finishReason": "stop",
+                    "latencyMs": 17,
+                },
+            )
+        return iterator()
 
 
 class _OversizedTextArrayModel:
@@ -228,6 +272,89 @@ def test_native_retrieval_forwards_snake_case_commit_id() -> None:
     assert tool.commit_id == "commit:run-1:retrieve:0"
 
 
+def test_native_agent_preserves_stream_usage_and_latency_in_model_invocation_audit() -> None:
+    agent = NativeGeneralAgent()
+    descriptor = build_default_capability_catalog().get("task_understanding")
+    task = RuntimeMissionRecord(missionId="task-stream-usage", title="understand")
+    run = RuntimeRunRecord(
+        missionId=task.mission_id,
+        workflowId="native",
+        domain="general",
+        runtimeEngine="acg",
+    )
+    context = AgentRunContext(
+        task=task,
+        run=run,
+        workflow=WorkflowDefinition(
+            workflowId="native", name="native", domain="general", runtimeEngine="acg"
+        ),
+        step=WorkflowStep(
+            stepId="understand-stream-usage",
+            name="understand",
+            agentName=agent.profile.agent_name,
+            capability="task_understanding",
+        ),
+        memory=[],
+        contextPack=ContextPack(runId=run.run_id, stepId="understand-stream-usage"),
+        modelRuntime=_StreamingUsageModel(),
+        capabilityDescriptor=descriptor,
+        commitId="commit:stream-usage",
+    )
+
+    result = asyncio.run(agent.run(context))
+
+    assert result.model_invocations[0]["usage"] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 3,
+        "total_tokens": 15,
+    }
+    assert result.model_invocations[0]["latencyMs"] == 17
+    assert result.model_invocations[0]["finishReason"] == "stop"
+
+
+def test_native_agent_streams_reasoning_effort_to_model_runtime() -> None:
+    """流式执行路径必须把任务声明的 reasoning_effort 一并传给模型运行时。
+
+    历史缺陷：只有非流式回退路径携带该参数，生产流式路径把它丢在调用点。
+    """
+    agent = NativeGeneralAgent()
+    descriptor = build_default_capability_catalog().get("task_understanding")
+    model = _StreamingUsageModel()
+    task = RuntimeMissionRecord(
+        missionId="task-stream-effort", title="understand",
+        input={"reasoningEffort": "max"},
+    )
+    run = RuntimeRunRecord(
+        missionId=task.mission_id,
+        workflowId="native",
+        domain="general",
+        runtimeEngine="acg",
+    )
+    context = AgentRunContext(
+        task=task,
+        run=run,
+        workflow=WorkflowDefinition(
+            workflowId="native", name="native", domain="general", runtimeEngine="acg"
+        ),
+        step=WorkflowStep(
+            stepId="understand-stream-effort",
+            name="understand",
+            agentName=agent.profile.agent_name,
+            capability="task_understanding",
+        ),
+        memory=[],
+        contextPack=ContextPack(runId=run.run_id, stepId="understand-stream-effort"),
+        modelRuntime=model,
+        capabilityDescriptor=descriptor,
+        commitId="commit:stream-effort",
+    )
+
+    asyncio.run(agent.run(context))
+
+    assert model.stream_kwargs, "streaming path was not used"
+    assert model.stream_kwargs[0]["reasoning_effort"] == "max"
+
+
 def test_native_retrieval_forwards_model_provider_to_web_tools() -> None:
     agent = NativeGeneralAgent()
     tool = _SearchTool()
@@ -395,7 +522,8 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
     result = asyncio.run(agent.run(context))
 
     assert len(model.calls) == 5
-    assert all(call["max_output_tokens"] == 65_536 for call in model.calls)
+    # 输出预算不再人为设上限：节点调用不携带 max_output_tokens，输出能力由模型端点决定。
+    assert all("max_output_tokens" not in call for call in model.calls)
     assert len(result.output["deliverable"]["sections"]) == 2
     assert "## 第1章" in result.output["final_answer"]
     assert "完整内容 2" in result.output["artifact"]["content"]

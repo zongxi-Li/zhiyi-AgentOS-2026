@@ -23,6 +23,19 @@ from contracts.capability import (
 from contracts.runtime_events import RuntimeEvent
 
 
+# 允许透传的思考档位：GLM 5.3 low/high/max 与 OpenAI 系 low/medium/high 的并集。
+_REASONING_EFFORT_VALUES = frozenset({"low", "medium", "high", "max"})
+
+
+def _validated_reasoning_effort(value: Any) -> str | None:
+    """只放行受支持的档位，防止任务输入把任意键值注入供应商请求体。"""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _REASONING_EFFORT_VALUES:
+            return normalized
+    return None
+
+
 class RegisteredModelRuntime:
     """按已冻结的提供商和模型名解析统一适配器的无 SDK 生成运行时。
 
@@ -91,7 +104,10 @@ class RegisteredModelRuntime:
         commit_id: str | None = None,
     ) -> StructuredGenerationResult:
         """把原生 JSON 生成请求转换为统一模型调用，并返回安全审计投影。"""
-        del thinking_mode, reasoning_effort
+        # thinking_mode 的供应商映射发生在适配器层；本桥接只转发显式声明的
+        # reasoning_effort（OpenAI 兼容参数），是否外发由适配器按提供方裁决。
+        del thinking_mode
+        reasoning_effort = _validated_reasoning_effort(reasoning_effort)
         if timeout_seconds <= 0:
             raise StructuredGenerationError(
                 "MODEL_TIMEOUT_INVALID",
@@ -171,6 +187,8 @@ class RegisteredModelRuntime:
                 policy = ModelOutputPolicy.CATALOG_DEFAULT
                 effective_tokens = capability.max_output_tokens
                 effective_reason = "catalog_default"
+            if reasoning_effort:
+                options["reasoning_effort"] = reasoning_effort
             request = ModelInvocationRequest(
                 requestId=request_id,
                 model=self.model,
@@ -290,7 +308,8 @@ class RegisteredModelRuntime:
         emit_output_deltas: bool = True,
     ):
         """Consume a provider stream while keeping structured output private when requested."""
-        del thinking_mode, reasoning_effort, prompt_version
+        del thinking_mode, prompt_version
+        reasoning_effort = _validated_reasoning_effort(reasoning_effort)
         if min(ttft_timeout, idle_timeout, total_timeout) <= 0:
             raise StructuredGenerationError("MODEL_TIMEOUT_INVALID", "stream timeouts must be positive")
         try:
@@ -314,6 +333,8 @@ class RegisteredModelRuntime:
             options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
         elif capability.max_output_tokens is not None:
             options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
+        if reasoning_effort:
+            options["reasoning_effort"] = reasoning_effort
         request_id = commit_id or f"model:{uuid4().hex}"
         request = ModelInvocationRequest(
             requestId=request_id,
@@ -333,6 +354,8 @@ class RegisteredModelRuntime:
         public_activity_pending = False
         buffer: list[str] = []
         finish_reason: str | None = None
+        stream_usage: dict[str, Any] = {}
+        stream_diagnostics: dict[str, Any] = {}
         iterator = streamer(request)
 
         def emit(kind: str, payload: dict[str, Any] | None = None) -> RuntimeEvent:
@@ -380,11 +403,29 @@ class RegisteredModelRuntime:
                     code = "MODEL_TTFT_TIMEOUT" if not first else "MODEL_IDLE_TIMEOUT"
                     raise StructuredGenerationError(code, "model stream activity deadline exceeded", retryable=True) from exc
                 except ModelInvocationError as exc:
+                    audit = {
+                        "provider": self.provider,
+                        "model": self.model,
+                        "usage": dict(getattr(exc, "usage", {}) or {}),
+                        "finishReason": (getattr(exc, "metadata", {}) or {}).get("finishReason"),
+                    }
+                    raw_diagnostics = (getattr(exc, "metadata", {}) or {}).get("streamDiagnostics")
+                    if isinstance(raw_diagnostics, dict):
+                        stream_diagnostics = {
+                            key: value
+                            for key, value in raw_diagnostics.items()
+                            if key in {
+                                "streamStarted", "firstTokenObserved", "outputDeltaObserved",
+                                "deltaCount", "completionObserved", "streamTerminationReason", "elapsedMs",
+                            }
+                            and isinstance(value, (bool, int, float, str))
+                        }
+                        audit["streamDiagnostics"] = dict(stream_diagnostics)
                     raise StructuredGenerationError(
                         exc.code,
                         "model provider stream failed",
                         retryable=exc.code in self._FAILOVER_CODES,
-                        audit={"provider": self.provider, "model": self.model},
+                        audit=audit,
                     ) from exc
                 now = self._clock()
                 if item.event_type == "activity":
@@ -413,6 +454,12 @@ class RegisteredModelRuntime:
                 elif item.event_type == "completed":
                     raw_finish_reason = item.metadata.get("finishReason")
                     finish_reason = str(raw_finish_reason or "") or None
+                    raw_usage = item.metadata.get("usage")
+                    if isinstance(raw_usage, dict):
+                        stream_usage = dict(raw_usage)
+                    raw_diagnostics = item.metadata.get("streamDiagnostics")
+                    if isinstance(raw_diagnostics, dict):
+                        stream_diagnostics = dict(raw_diagnostics)
                     completed = True
                     break
         except asyncio.CancelledError:
@@ -444,7 +491,16 @@ class RegisteredModelRuntime:
             data = decode_json_object("".join(buffer))
         except ModelInvocationError as exc:
             raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "streamed model output is not valid JSON") from exc
-        yield emit("model.completed", {"receivedLength": sum(map(len, buffer)), "data": data})
+        yield emit("model.completed", {
+            "receivedLength": sum(map(len, buffer)),
+            "data": data,
+            "provider": self.provider,
+            "model": self.model,
+            "usage": dict(stream_usage),
+            "finishReason": finish_reason,
+            "latencyMs": round((self._clock() - started) * 1000),
+            "streamDiagnostics": dict(stream_diagnostics),
+        })
 
 
 async def _wait_for(awaitable: Awaitable[Any], timeout: float) -> Any:

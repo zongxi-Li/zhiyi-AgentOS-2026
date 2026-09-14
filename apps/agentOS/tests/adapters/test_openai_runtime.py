@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -190,6 +191,104 @@ def test_openai_compatible_runtime_projects_stream_deltas() -> None:
     ]
 
 
+def test_openai_compatible_runtime_reports_safe_incomplete_stream_diagnostics() -> None:
+    class _IncompleteStreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {"choices": [{"delta": {"content": "partial"}}]}
+
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.incomplete",
+            kind=CapabilityKind.MODEL,
+            displayName="Incomplete stream model",
+            provider="glm",
+            capabilities=["local-chat"],
+        ),
+        transport=_IncompleteStreamTransport(),
+    )
+
+    async def collect():
+        return [event async for event in runtime.astream(
+            ModelInvocationRequest(requestId="stream-incomplete", model="local-chat")
+        )]
+
+    with pytest.raises(ModelInvocationError) as captured:
+        asyncio.run(collect())
+
+    assert captured.value.code == "MODEL_STREAM_INCOMPLETE"
+    diagnostics = captured.value.metadata["streamDiagnostics"]
+    assert diagnostics == {
+        "streamStarted": True,
+        "firstTokenObserved": True,
+        "outputDeltaObserved": True,
+        "deltaCount": 1,
+        "completionObserved": False,
+        "streamTerminationReason": "eof_before_completion",
+        "elapsedMs": diagnostics["elapsedMs"],
+    }
+    assert "partial" not in repr(diagnostics)
+
+
+def test_openai_compatible_runtime_logs_only_stream_usage_shape(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _UsageStreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {
+                "id": "chatcmpl-test",
+                "choices": [{"delta": {"content": '{"answer":"ok"}'}, "finish_reason": "stop"}],
+            }
+            yield {
+                "id": "chatcmpl-test",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 3,
+                    "total_tokens": 15,
+                },
+            }
+
+    monkeypatch.setenv("AGENTOS_PROVIDER_USAGE_DIAGNOSTICS", "1")
+    caplog.set_level(logging.INFO)
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.stream-usage",
+            kind=CapabilityKind.MODEL,
+            displayName="Stream usage model",
+            provider="glm",
+            capabilities=["glm-test"],
+        ),
+        transport=_UsageStreamTransport(),
+    )
+
+    async def collect():
+        return [
+            event
+            async for event in runtime.astream(
+                ModelInvocationRequest(requestId="stream-usage", model="glm-test")
+            )
+        ]
+
+    events = asyncio.run(collect())
+    completed = next(event for event in events if event.event_type == "completed")
+    assert completed.metadata["finishReason"] == "stop"
+    assert completed.metadata["usage"] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 3,
+        "total_tokens": 15,
+    }
+    assert completed.metadata["streamDiagnostics"]["completionObserved"] is True
+    diagnostic = "\n".join(record.getMessage() for record in caplog.records)
+    assert "provider_usage_diagnostic" in diagnostic
+    assert "response_mode=stream" in diagnostic
+    assert "usage_present=True" in diagnostic
+    assert "usage_type=dict" in diagnostic
+    assert "usage_keys=['completion_tokens', 'prompt_tokens', 'total_tokens']" in diagnostic
+    assert "prompt=" not in diagnostic
+    assert "response正文" not in diagnostic
+    assert "12" not in diagnostic
+
+
 def test_glm_runtime_uses_supported_json_mode_and_keeps_reasoning_private() -> None:
     class _GlmStreamTransport:
         def __init__(self) -> None:
@@ -224,6 +323,54 @@ def test_glm_runtime_uses_supported_json_mode_and_keeps_reasoning_private() -> N
     assert transport.payload["messages"][1:] == []
     assert [event.event_type for event in events] == ["activity", "delta", "completed"]
     assert "private chain" not in repr(events)
+
+
+def test_glm_runtime_honors_reasoning_effort_and_enables_thinking() -> None:
+    """显式 reasoning_effort 必须原样送达 GLM 并打开思考，而不是被静默关闭。"""
+    transport = _JsonTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.glm", kind=CapabilityKind.MODEL,
+            displayName="GLM", provider="glm", capabilities=["glm-test"],
+        ),
+        transport=transport,
+    )
+
+    asyncio.run(runtime.invoke(ModelInvocationRequest(
+        requestId="glm-effort", model="glm-test",
+        responseSchema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        options={"reasoning_effort": "max", "max_tokens": 4096},
+    )))
+
+    assert transport.payload["reasoning_effort"] == "max"
+    assert transport.payload["thinking"] == {"type": "enabled"}
+    assert transport.payload["response_format"] == {"type": "json_object"}
+    assert transport.payload["max_tokens"] == 4096
+    assert transport.payload["messages"][0]["role"] == "system"
+
+
+def test_non_glm_runtime_strips_reasoning_effort_option() -> None:
+    """非 GLM 端点不外发 reasoning_effort，保持既有 wire format。"""
+    transport = _JsonTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.local",
+            kind=CapabilityKind.MODEL,
+            displayName="Local compatible model",
+            provider="openai_compatible",
+            capabilities=["local-chat"],
+        ),
+        transport=transport,
+    )
+
+    asyncio.run(runtime.invoke(ModelInvocationRequest(
+        requestId="effort-strip", model="local-chat",
+        responseSchema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        options={"reasoning_effort": "high"},
+    )))
+
+    assert "reasoning_effort" not in transport.payload
+    assert transport.payload["response_format"]["type"] == "json_schema"
 
 
 def test_openai_compatible_runtime_projects_stream_tool_calls() -> None:

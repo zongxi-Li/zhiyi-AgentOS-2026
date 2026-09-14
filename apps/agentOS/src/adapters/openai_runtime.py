@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from collections.abc import Mapping
+from time import monotonic
 from typing import Any, AsyncIterator, Protocol
 
 from adapters.http_transport import HttpTransportError
@@ -18,6 +21,60 @@ from contracts.capability import (
     ModelInvocationResponse,
     ModelStreamEvent,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _usage_diagnostics_enabled() -> bool:
+    configured = os.getenv("AGENTOS_PROVIDER_USAGE_DIAGNOSTICS")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_mapping_keys(value: object) -> list[str]:
+    if not isinstance(value, Mapping):
+        return []
+    return sorted(str(key) for key in value.keys())[:64]
+
+
+def _log_provider_usage_shape(
+    *,
+    provider: str,
+    model: str,
+    response_mode: str,
+    response: object,
+    finish_reason_present: bool,
+    stream_options_present: bool = False,
+    stream_options_include_usage: bool = False,
+    stream_usage_present: bool | None = None,
+) -> None:
+    """Log only provider response shape; never log prompt, output, or values."""
+    if not _usage_diagnostics_enabled():
+        return
+    top_level_keys = _safe_mapping_keys(response)
+    usage_present = isinstance(response, Mapping) and "usage" in response
+    usage_value = response.get("usage") if isinstance(response, Mapping) else None
+    logger.info(
+        "provider_usage_diagnostic provider=%s model=%s response_mode=%s "
+        "provider_response_type=%s top_level_keys=%s usage_present=%s "
+        "usage_type=%s usage_keys=%s stream_usage_present=%s "
+        "finish_reason_present=%s stream_options_present=%s "
+        "stream_options_include_usage=%s",
+        provider,
+        model,
+        response_mode,
+        type(response).__name__,
+        top_level_keys,
+        usage_present,
+        type(usage_value).__name__ if usage_present else None,
+        _safe_mapping_keys(usage_value),
+        stream_usage_present,
+        finish_reason_present,
+        stream_options_present,
+        stream_options_include_usage,
+    )
 
 
 class JsonTransport(Protocol):
@@ -201,11 +258,49 @@ class OpenAICompatibleRuntime:
             raise ModelInvocationError("MODEL_STREAM_UNSUPPORTED", "transport does not support streaming")
         payload = self._build_payload(request, model)
         payload["stream"] = True
+        stream_usage_present = False
+        stream_usage_type: str | None = None
+        stream_usage_keys: list[str] = []
+        stream_usage: dict[str, Any] = {}
+        last_chunk: Mapping[str, Any] | None = None
+        stream_started = False
+        first_token_observed = False
+        output_delta_observed = False
+        delta_count = 0
+        completion_observed = False
+        stream_started_at = monotonic()
+
+        def stream_diagnostics(reason: str) -> dict[str, Any]:
+            return {
+                "streamStarted": stream_started,
+                "firstTokenObserved": first_token_observed,
+                "outputDeltaObserved": output_delta_observed,
+                "deltaCount": delta_count,
+                "completionObserved": completion_observed,
+                "streamTerminationReason": reason,
+                "elapsedMs": max(0, round((monotonic() - stream_started_at) * 1000)),
+            }
+
+        stream_options = payload.get("stream_options")
+        stream_options_include_usage = (
+            isinstance(stream_options, Mapping)
+            and stream_options.get("include_usage") is True
+        )
         completed = False
+        finish_reason: str | None = None
         try:
+            stream_started = True
             async for chunk in streamer(path=self._PATH, payload=payload, idempotency_key=request.commit_id):
                 if not isinstance(chunk, Mapping):
                     raise ModelInvocationError("MODEL_RESPONSE_INVALID", "stream chunk is not an object")
+                last_chunk = chunk
+                if "usage" in chunk:
+                    stream_usage_present = True
+                    raw_usage = chunk.get("usage")
+                    stream_usage_type = type(raw_usage).__name__
+                    stream_usage_keys = _safe_mapping_keys(raw_usage)
+                    if isinstance(raw_usage, Mapping):
+                        stream_usage = dict(raw_usage)
                 choices = chunk.get("choices")
                 if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
                     continue
@@ -218,6 +313,9 @@ class OpenAICompatibleRuntime:
                     # liveness so long thinking is not misclassified as TTFT.
                     yield ModelStreamEvent(requestId=request.request_id, eventType="activity", provider=self._manifest.provider, model=model)
                 if isinstance(delta, str) and delta:
+                    first_token_observed = True
+                    output_delta_observed = True
+                    delta_count += 1
                     yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta=delta, provider=self._manifest.provider, model=model)
                 if isinstance(delta_data, Mapping):
                     tool_calls = delta_data.get("tool_calls")
@@ -244,22 +342,71 @@ class OpenAICompatibleRuntime:
                             )
                 if isinstance(choice.get("finish_reason"), str):
                     completed = True
-                    yield ModelStreamEvent(
-                        requestId=request.request_id,
-                        eventType="completed",
-                        provider=self._manifest.provider,
-                        model=model,
-                        metadata={"finishReason": choice["finish_reason"]},
-                    )
-                    return
+                    completion_observed = True
+                    finish_reason = choice["finish_reason"]
+                    # Some OpenAI-compatible providers send usage in a final
+                    # choices=[] chunk after the finish chunk. Keep consuming
+                    # the stream so the shape diagnostic can observe it.
+                    continue
         except HttpTransportError as exc:
-            raise ModelInvocationError(exc.code, "OpenAI compatible provider stream failed") from exc
-        except ModelInvocationError:
-            raise
+            raise ModelInvocationError(
+                exc.code,
+                "OpenAI compatible provider stream failed",
+                metadata={"streamDiagnostics": stream_diagnostics("provider_transport_error")},
+            ) from exc
+        except ModelInvocationError as exc:
+            metadata = dict(exc.metadata)
+            metadata.setdefault("streamDiagnostics", stream_diagnostics("provider_error"))
+            raise ModelInvocationError(
+                exc.code,
+                str(exc),
+                usage=exc.usage,
+                metadata=metadata,
+            ) from exc
         except Exception as exc:
-            raise ModelInvocationError("MODEL_PROVIDER_FAILED", "OpenAI compatible provider stream failed") from exc
+            raise ModelInvocationError(
+                "MODEL_PROVIDER_FAILED",
+                "OpenAI compatible provider stream failed",
+                metadata={"streamDiagnostics": stream_diagnostics("provider_exception")},
+            ) from exc
+        _log_provider_usage_shape(
+            provider=self._manifest.provider,
+            model=model,
+            response=last_chunk or {},
+            response_mode="stream",
+            finish_reason_present=finish_reason is not None,
+            stream_options_present=isinstance(stream_options, Mapping),
+            stream_options_include_usage=stream_options_include_usage,
+            stream_usage_present=stream_usage_present,
+        )
+        if _usage_diagnostics_enabled():
+            logger.info(
+                "provider_usage_diagnostic_stream_detail provider=%s model=%s "
+                "usage_type=%s usage_keys=%s",
+                self._manifest.provider,
+                model,
+                stream_usage_type,
+                stream_usage_keys,
+            )
         if not completed:
-            raise ModelInvocationError("MODEL_STREAM_INCOMPLETE", "provider stream ended without completion")
+            raise ModelInvocationError(
+                "MODEL_STREAM_INCOMPLETE",
+                "provider stream ended without completion",
+                metadata={"streamDiagnostics": stream_diagnostics("eof_before_completion")},
+            )
+        metadata: dict[str, Any] = {}
+        if finish_reason is not None:
+            metadata["finishReason"] = finish_reason
+        if stream_usage:
+            metadata["usage"] = dict(stream_usage)
+        metadata["streamDiagnostics"] = stream_diagnostics("completed")
+        yield ModelStreamEvent(
+            requestId=request.request_id,
+            eventType="completed",
+            provider=self._manifest.provider,
+            model=model,
+            metadata=metadata,
+        )
 
     def _build_payload(
         self,
@@ -277,13 +424,21 @@ class OpenAICompatibleRuntime:
         payload["model"] = model
         payload["messages"] = [dict(message) for message in request.messages]
         if request.response_schema is not None:
-            if self._manifest.provider.strip().lower() in {"glm", "zhipu"}:
-                # GLM 5-family models enable long-form thinking by default. For
-                # schema-constrained calls that private reasoning competes with
-                # the JSON answer for the same output budget and can exhaust the
-                # response before the object closes. Keep these calls direct;
-                # the planner already performs explicit validation and repair.
-                payload["thinking"] = {"type": "disabled"}
+            # reasoning_effort 只对 GLM 端点外发（当前唯一声明该档位的提供方），
+            # 其余端点剥离该选项，避免未知参数破坏严格兼容端点的 wire format。
+            reasoning_effort = payload.pop("reasoning_effort", None)
+            glm_provider = self._manifest.provider.strip().lower() in {"glm", "zhipu"}
+            if glm_provider:
+                if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                    # 显式档位意味着用户选择让思考参与本次输出；此时关闭思考
+                    # 会静默吞掉档位语义，等价于档位永远无效。
+                    payload["reasoning_effort"] = reasoning_effort.strip()
+                    payload["thinking"] = {"type": "enabled"}
+                else:
+                    # 无显式档位时保持直出：GLM 5 系默认长思考，私有推理与
+                    # JSON 答案争夺同一输出预算，可能在对象闭合前耗尽响应；
+                    # 规划器已提供显式校验与修复兜底。
+                    payload["thinking"] = {"type": "disabled"}
                 payload["response_format"] = {"type": "json_object"}
                 payload["messages"] = [
                     {
@@ -327,6 +482,13 @@ class OpenAICompatibleRuntime:
         usage = response.get("usage")
         finish_reason = choice.get("finish_reason")
         safe_usage = dict(usage) if isinstance(usage, Mapping) else {}
+        _log_provider_usage_shape(
+            provider=self._manifest.provider,
+            model=model,
+            response_mode="non_stream",
+            response=response,
+            finish_reason_present=isinstance(finish_reason, str),
+        )
         safe_metadata = {"finishReason": finish_reason} if isinstance(finish_reason, str) else {}
         if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
             raise ModelInvocationError(
