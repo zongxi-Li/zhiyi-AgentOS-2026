@@ -7,6 +7,7 @@ from components.planner.acg_semantic_validator import (
     ACGSemanticPreservationError, validate_acg_semantic_preservation,
 )
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
+from components.planner.topology.compiler import TaskPlanTopologyCompiler
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
 from support.acg.models import (
     ACGBlueprint, CapabilityCatalog, ControlNode, ControlType, EdgeType,
@@ -90,6 +91,41 @@ def test_verification_loop_remains_control_topology_not_semantic_back_edge() -> 
     blueprint = _build(plan)
     validate_acg_semantic_preservation(plan, blueprint)
     assert ("D", "A") not in {(item.source_key, item.target_key) for item in plan.relations}
+    assert any(
+        isinstance(node, ControlNode) and node.control_type is ControlType.LOOP
+        for node in blueprint.nodes
+    )
+
+
+def test_model_retry_back_edge_compiles_to_acyclic_dependencies_and_loop_control() -> None:
+    policy = VerificationLoopPolicy(
+        bodyEntryKey="A", bodyExitKey="D", conditionSourceKey="D"
+    )
+    catalog = _catalog()
+    result = TaskPlanTopologyCompiler(catalog).compile(
+        nodes=[_task("A"), _task("D")],
+        raw_relations=[
+            TaskPlanRelation(sourceKey="A", targetKey="D", relationType="depends_on"),
+            TaskPlanRelation(sourceKey="D", targetKey="A", relationType="depends_on"),
+        ],
+        control_policies=(policy,),
+    )
+    plan = TaskPlan(
+        missionId="mission_0123456789ab",
+        nodes=(_task("A"), _task("D")),
+        relations=result.task_plan_relations,
+        controlPolicies=result.control_policies,
+    )
+    blueprint = _build(plan)
+
+    validate_acg_semantic_preservation(plan, blueprint)
+    by_key = {step.metadata["taskPlanKey"]: step.node_id for step in blueprint.step_nodes()}
+    dependency_pairs = {
+        (edge.source_id, edge.target_id)
+        for edge in blueprint.edges_of_type(EdgeType.DEPENDENCY)
+        if edge.source_id in by_key.values() and edge.target_id in by_key.values()
+    }
+    assert dependency_pairs == {(by_key["A"], by_key["D"])}
     assert any(
         isinstance(node, ControlNode) and node.control_type is ControlType.LOOP
         for node in blueprint.nodes

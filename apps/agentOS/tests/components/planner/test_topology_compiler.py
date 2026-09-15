@@ -90,6 +90,31 @@ def test_verification_loop_is_not_projected_as_static_back_edge() -> None:
     assert ("verify", "draft") not in pairs
 
 
+def test_model_verification_retry_back_edge_is_normalized_to_loop_policy() -> None:
+    policy = VerificationLoopPolicy(
+        bodyEntryKey="draft", bodyExitKey="verify", conditionSourceKey="verify"
+    )
+    result = TaskPlanTopologyCompiler(_catalog()).compile(
+        nodes=[_task("draft", "cap_c"), _task("verify", "verification")],
+        raw_relations=[
+            TaskPlanRelation(sourceKey="draft", targetKey="verify", relationType="depends_on"),
+            TaskPlanRelation(sourceKey="verify", targetKey="draft", relationType="depends_on"),
+        ],
+        control_policies=(policy,),
+    )
+
+    dependency_pairs = {
+        (edge.source_key, edge.target_key)
+        for edge in result.candidate.edges
+        if edge.relation_type == "depends_on"
+    }
+    assert dependency_pairs == {("draft", "verify")}
+    assert result.control_policies == (policy,)
+    assert result.audit.normalized_loop_relations == (
+        TaskPlanRelation(sourceKey="verify", targetKey="draft", relationType="depends_on"),
+    )
+
+
 def test_real_storage_planning_cycle_preserves_catalog_and_model_provenance() -> None:
     catalog = CapabilityCatalog([
         PlanningCapabilityDescriptor(capabilityId="process_decomposition", displayName="Process"),

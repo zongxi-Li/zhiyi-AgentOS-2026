@@ -73,9 +73,28 @@ class TaskPlanTopologyCompiler:
         }
         edges: list[TopologyEdge] = []
         seen: set[tuple[str, str, str]] = set()
+        normalized_loop_relations: list[TaskPlanRelation] = []
+        loop_back_edges = {
+            (policy.body_exit_key, policy.body_entry_key)
+            for policy in control_policies
+        }
         for index, relation in enumerate(raw_relations):
             source_cap = capabilities.get(relation.source_key)
             target_cap = capabilities.get(relation.target_key)
+            # A model may redundantly encode the retry branch as a reverse
+            # dependency.  The retry branch is already represented by the
+            # VerificationLoopPolicy and must not become a static edge in the
+            # TaskPlan DAG.  Normalize this only for the repairable model
+            # proposal path; fixed template/fallback/patch relations remain
+            # fail-closed and are validated as declared.
+            if (
+                relation_origin is EdgeOrigin.MODEL
+                and relation_mutation_policy is EdgeMutationPolicy.REPAIRABLE
+                and relation.relation_type == SemanticTaskRelationType.DEPENDS_ON
+                and (relation.source_key, relation.target_key) in loop_back_edges
+            ):
+                normalized_loop_relations.append(relation)
+                continue
             if (normalize_reversed_requirements
                     and relation.relation_type == SemanticTaskRelationType.DEPENDS_ON
                     and source_cap and target_cap
@@ -178,6 +197,7 @@ class TaskPlanTopologyCompiler:
             selected_concrete_bindings=binding_audit.selected_bindings,
             terminal_edges=tuple(edge for edge in edges if edge.origin is EdgeOrigin.TERMINAL_CONNECTOR),
             binding_audit=binding_audit,
+            normalized_loop_relations=tuple(normalized_loop_relations),
         )
         return TopologyCompileResult(
             candidate, tuple(edge.to_relation() for edge in edges), control_policies, audit
