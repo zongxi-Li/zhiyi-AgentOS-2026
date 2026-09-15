@@ -630,7 +630,6 @@ def apply_task_plan_patch(
         nodes=tuple(normalized_nodes),
         relations=relations,
         control_policies=current.control_policies,
-        expected_artifacts=current.expected_artifacts,
         relation_origin=EdgeOrigin.PLAN_PATCH,
         producer_kind="patch",
         catalog_source=(catalog_source or (

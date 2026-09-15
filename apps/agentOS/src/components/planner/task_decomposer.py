@@ -19,7 +19,6 @@ from contracts.planning import (
 )
 from contracts.artifacts import (
     FINAL_SYNTHESIS_LOGICAL_ROLE,
-    FINAL_SYNTHESIS_ROLES,
     canonicalize_final_synthesis_nodes,
 )
 from components.planner.topology import (
@@ -426,6 +425,7 @@ class TaskDecomposer:
                 stage="outline",
                 prompt=outline_prompt,
                 schema=outline_schema,
+                max_tokens=16_384,
                 reasoning_effort=reasoning_effort,
                 prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
                 call_key="outline",
@@ -445,6 +445,7 @@ class TaskDecomposer:
                         + f"Previous invalid outline JSON: {json.dumps(outline_result, ensure_ascii=False, default=str)}"
                     ),
                     schema=outline_schema,
+                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline.repair1",
                     call_key="outline.repair",
@@ -485,6 +486,7 @@ class TaskDecomposer:
                         stage="detail",
                         prompt=detail_prompt,
                         schema=detail_schema,
+                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
                         call_key=f"detail:{detail_index}",
@@ -499,6 +501,7 @@ class TaskDecomposer:
                         stage="detail.repair",
                         prompt=detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
                         schema=detail_schema,
+                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
                         call_key=f"detail:{detail_index}.repair",
@@ -520,6 +523,7 @@ class TaskDecomposer:
                             + f"Previous invalid detail JSON: {json.dumps(detail_result, ensure_ascii=False, default=str)}"
                         ),
                         schema=detail_schema,
+                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
                         call_key=f"detail:{detail_index}.repair",
@@ -562,6 +566,7 @@ class TaskDecomposer:
                     stage="relations",
                     prompt=relation_prompt,
                     schema=relation_schema,
+                    max_tokens=16_384,
                     reasoning_effort=reasoning_effort,
                     prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
                     call_key="relations",
@@ -621,6 +626,7 @@ class TaskDecomposer:
                             + "remove or replace model relations. Express feedback with add_verification_loop."
                         ),
                         schema=REPAIR_PATCH_SCHEMA,
+                        max_tokens=16_384,
                         reasoning_effort=reasoning_effort,
                         prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1",
                         call_key="relations.cycle-repair",
@@ -1007,11 +1013,6 @@ class TaskDecomposer:
                 sourceRefs=tuple(str(value) for value in item.get("sourceRefs", []) if str(value)),
                 decompositionRationale=str(item.get("decompositionRationale") or ""),
                 logicalRole=str(item.get("logicalRole") or "task"),
-                producedArtifacts=tuple(
-                    str(value).strip()
-                    for value in item.get("producedArtifacts", [])
-                    if str(value).strip()
-                ),
                 workset=self._normalize_workset_spec(item.get("workset")),
                 metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))
@@ -1050,12 +1051,6 @@ class TaskDecomposer:
                 for item in payload.get("relations", [])
             ]
         nodes = canonicalize_final_synthesis_nodes(nodes, raw_relations)
-        nodes = self._ensure_expected_artifact_producer(
-            nodes=nodes,
-            relations=raw_relations,
-            profile=profile,
-            strategy=strategy,
-        )
         control_policies = tuple(
             VerificationLoopPolicy.model_validate({
                 **item,
@@ -1106,7 +1101,6 @@ class TaskDecomposer:
             nodes=tuple(nodes),
             relations=compile_result.task_plan_relations,
             controlPolicies=compile_result.control_policies,
-            expectedArtifacts=tuple(profile.expected_artifacts),
             metadata={
                 "strategy": strategy,
                 "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -1245,89 +1239,6 @@ class TaskDecomposer:
                 raise TaskDecompositionError("task constraint must be an object or non-empty string")
         return normalized
 
-    def _ensure_expected_artifact_producer(
-        self,
-        *,
-        nodes: list[PlannedTask],
-        relations: list[TaskPlanRelation],
-        profile: TaskSemanticProfile,
-        strategy: str,
-    ) -> list[PlannedTask]:
-        """Keep the Mission deliverable contract explicit in the semantic plan.
-
-        ``artifact_generation`` is the existing terminal completion capability.
-        This helper only makes that existing mechanism cover a declared
-        deliverable when the model omitted the producer; it does not inspect or
-        rewrite domain answers.
-        """
-        expected = tuple(
-            str(item).strip() for item in profile.expected_artifacts if str(item).strip()
-        )
-        if not expected:
-            return nodes
-
-        artifact_nodes = [
-            node for node in nodes
-            if node.capability_requirements
-            and node.capability_requirements[0] == "artifact_generation"
-        ]
-        outgoing = {
-            relation.source_key
-            for relation in relations
-            if relation.relation_type == SemanticTaskRelationType.DEPENDS_ON
-        }
-        terminal_artifact_nodes = [
-            node for node in artifact_nodes if node.key not in outgoing
-        ]
-        if not terminal_artifact_nodes:
-            descriptor = self.capability_catalog.get("artifact_generation")
-            used_keys = {node.key for node in nodes}
-            key = "required:artifact_generation:final"
-            suffix = 2
-            while key in used_keys:
-                key = f"required:artifact_generation:final:{suffix}"
-                suffix += 1
-            nodes.append(PlannedTask(
-                key=key,
-                title=descriptor.display_name,
-                objective=(
-                    "Synthesize every declared Mission deliverable into the final output."
-                ),
-                capabilityRequirements=("artifact_generation",),
-                acceptanceCriteria=(
-                    "Every declared Mission deliverable is present in the final output.",
-                ),
-                sourceRefs=tuple(
-                    f"artifact:{index}" for index, _ in enumerate(expected, start=1)
-                ),
-                producedArtifacts=expected,
-                decompositionRationale=(
-                    "Existing terminal completion mechanism materialized the missing "
-                    "declared deliverable producer."
-                ),
-                logicalRole=FINAL_SYNTHESIS_LOGICAL_ROLE,
-                metadata={
-                    "plannerStrategy": strategy,
-                    "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
-                },
-            ))
-            terminal_artifact_nodes = [nodes[-1]]
-
-        final_key = terminal_artifact_nodes[-1].key
-        return [
-            node.model_copy(update={
-                "logical_role": FINAL_SYNTHESIS_LOGICAL_ROLE,
-                "produced_artifacts": expected,
-            })
-            if node.key == final_key
-            else node.model_copy(update={"logical_role": "supporting_artifact"})
-            if node.capability_requirements
-            and node.capability_requirements[0] == "artifact_generation"
-            and node.logical_role in {FINAL_SYNTHESIS_LOGICAL_ROLE, *FINAL_SYNTHESIS_ROLES}
-            else node
-            for node in nodes
-        ]
-
     def _complete_missing_capability_tasks(
         self,
         nodes: list[PlannedTask],
@@ -1341,11 +1252,8 @@ class TaskDecomposer:
         # profile lists only the requested leaf capabilities.  Materialize the
         # catalog's full required-dependency closure here so the subsequent
         # topology pass never has to invent a domain-specific fallback.
-        requested_capabilities = list(profile.required_capabilities)
-        if profile.expected_artifacts and "artifact_generation" not in requested_capabilities:
-            requested_capabilities.append("artifact_generation")
         required_capabilities = self.capability_catalog.expand_dependencies(
-            requested_capabilities
+            profile.required_capabilities
         )
         for capability in required_capabilities:
             if capability in present:
@@ -1370,17 +1278,8 @@ class TaskDecomposer:
                     if descriptor.prompt_profile.quality_criteria
                     else "The capability output satisfies its declared contract.",
                 ),
-                producedArtifacts=(
-                    tuple(profile.expected_artifacts)
-                    if capability == "artifact_generation"
-                    else ()
-                ),
                 decompositionRationale="Capability catalog required this missing prerequisite.",
-                logicalRole=(
-                    FINAL_SYNTHESIS_LOGICAL_ROLE
-                    if capability == "artifact_generation"
-                    else "prerequisite"
-                ),
+                logicalRole="prerequisite",
                 metadata={
                     "plannerStrategy": strategy,
                     "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -1391,16 +1290,7 @@ class TaskDecomposer:
 
     @staticmethod
     def _validate_coverage(plan: TaskPlan, profile: TaskSemanticProfile) -> None:
-        searchable_plan = plan.model_dump(by_alias=True)
-        # The contract itself and the explicit producer declaration are not
-        # evidence that a planner task covered the requested source registry
-        # item.  Keep coverage-repair behavior independent from the new
-        # terminal-deliverable invariant.
-        searchable_plan.pop("expectedArtifacts", None)
-        for node in searchable_plan.get("nodes", []):
-            if isinstance(node, dict):
-                node.pop("producedArtifacts", None)
-        searchable = json.dumps(searchable_plan, ensure_ascii=False).lower()
+        searchable = json.dumps(plan.model_dump(by_alias=True), ensure_ascii=False).lower()
         cited_refs = {
             str(ref).strip().lower()
             for node in plan.nodes
@@ -1438,8 +1328,6 @@ class TaskDecomposer:
         task_input: Mapping[str, Any] | None = None,
     ) -> TaskPlan:
         capabilities = list(dict.fromkeys(profile.required_capabilities))
-        if profile.expected_artifacts and "artifact_generation" not in capabilities:
-            capabilities.append("artifact_generation")
         nodes: list[PlannedTask] = []
         selected = set(capabilities)
         used_keys: set[str] = set()
@@ -1465,11 +1353,6 @@ class TaskDecomposer:
                     else "Output satisfies the declared capability contract.",
                 ),
                 sourceRefs=tuple(profile.expected_artifacts),
-                producedArtifacts=(
-                    tuple(profile.expected_artifacts)
-                    if capability == "artifact_generation"
-                    else ()
-                ),
                 decompositionRationale="Explicit degraded deterministic plan after v2 decomposition failure.",
                 logicalRole=(
                     FINAL_SYNTHESIS_LOGICAL_ROLE
@@ -1510,7 +1393,6 @@ class TaskDecomposer:
             mission_id=mission_id,
             nodes=nodes,
             relations=relations,
-            expected_artifacts=tuple(profile.expected_artifacts),
             relation_origin=EdgeOrigin.FALLBACK_GENERATED,
             producer_kind="fallback",
             audit_sink=lambda audit: self.last_audit.__setitem__("topologyCompilation", audit),

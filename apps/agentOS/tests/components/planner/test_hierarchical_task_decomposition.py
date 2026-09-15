@@ -252,8 +252,7 @@ def test_full_profile_uses_outline_detail_and_relation_units() -> None:
         f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
         f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
     ]
-    # 输出预算不再人为设上限：规划调用不携带 max_tokens，输出能力由模型端点决定。
-    assert all("max_tokens" not in call for call in llm.calls)
+    assert all(call["max_tokens"] == 16_384 for call in llm.calls)
     drafts = [item for item in progress if item.get("eventType") == "planner.draft.updated"]
     assert [item["stage"] for item in drafts] == ["outline", "detail", "relations"]
     assert drafts[0]["nodes"][0]["status"] == "outlined"
@@ -694,11 +693,7 @@ def test_coverage_gap_uses_focused_source_ref_assignment_repair() -> None:
     assert llm.calls[1]["schema"]["properties"]["assignments"]["minItems"] == 2
     assert plan.nodes[0].source_refs == ("artifact:3", "artifact:1", "artifact:2")
     assert plan.nodes[0].objective == initial["tasks"][0]["objective"]
-    assert any(
-        node.capability_requirements == ("artifact_generation",)
-        and node.logical_role == "final_synthesis"
-        for node in plan.nodes
-    )
+    assert plan.relations == ()
 
 
 def test_focused_coverage_repair_rejects_incomplete_assignments() -> None:
@@ -888,64 +883,3 @@ def test_terminal_semantic_results_are_connected_to_final_artifact() -> None:
     assert ("branch-a", "deliver") in edges
     assert ("branch-b", "deliver") in edges
     assert next(node for node in plan.nodes if node.key == "deliver").logical_role == "final_synthesis"
-
-
-def test_expected_artifact_omission_is_completed_before_acg_build() -> None:
-    catalog = build_default_capability_catalog()
-    payload = {
-        "tasks": [{
-            "key": "understand",
-            "title": "Understand",
-            "objective": "Understand the mission material and answer boundary",
-            "capabilityId": "task_understanding",
-            "acceptanceCriteria": ["The answer boundary is explicit"],
-            "sourceRefs": ["artifact:1"],
-        }],
-        "relations": [],
-    }
-    profile = TaskSemanticProfile(
-        primaryGoal="Answer the mission question",
-        expectedArtifacts=["final_answer"],
-        requiredCapabilities=["task_understanding"],
-    )
-    plan = TaskDecomposer(catalog, _PlanLLM(payload)).decompose(
-        mission_id="mission_0123456789ab",
-        profile=profile,
-        strategy="dynamic_generation",
-        task_input={"expectedArtifacts": ["final_answer"]},
-        use_llm=True,
-    )
-
-    producer = next(
-        node for node in plan.nodes
-        if node.capability_requirements == ("artifact_generation",)
-    )
-    assert plan.expected_artifacts == ("final_answer",)
-    assert producer.logical_role == "final_synthesis"
-    assert producer.produced_artifacts == ("final_answer",)
-    assert producer.key not in {
-        relation.source_key
-        for relation in plan.relations
-        if relation.relation_type.value == "depends_on"
-    }
-
-    network = CollaborationNetwork(bindings=[
-        CapabilityBinding(
-            capability=node.capability_requirements[0],
-            agent_name="native_general_agent",
-            score=1.0,
-        )
-        for node in plan.nodes
-    ])
-    blueprint = ACGBuilder(catalog).build(
-        mission_id=plan.mission_id,
-        profile=profile,
-        network=network,
-        task_plan=plan,
-    )
-    terminal = next(
-        step for step in blueprint.step_nodes()
-        if step.metadata["taskPlanKey"] == producer.key
-    )
-    assert terminal.metadata["producesArtifact"] is True
-    assert "final_answer" in terminal.output_spec["properties"]

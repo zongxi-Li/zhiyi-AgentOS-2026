@@ -90,7 +90,6 @@ class ACGBuilder:
                 "domainHint": profile.domain_hint,
                 "entropyBudget": profile.entropy_budget,
                 "estimatedEntropy": network.estimated_entropy,
-                "expectedArtifacts": list(task_plan.expected_artifacts),
             },
         )
         if variant is not None:
@@ -261,8 +260,6 @@ class ACGBuilder:
                     },
                     "routerScore": binding.score,
                     "taskPlanKey": task.key,
-                    "expectedArtifacts": list(task_plan.expected_artifacts),
-                    "producedArtifacts": list(task.produced_artifacts),
                     "decompositionRationale": task.decomposition_rationale,
                     "workset": (
                         task.workset.model_dump(by_alias=True, mode="json")
