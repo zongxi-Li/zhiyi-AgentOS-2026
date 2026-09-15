@@ -1,6 +1,15 @@
 <template>
-  <aside class="runtime-inspector" aria-label="Selection Inspector">
-    <InspectorFrame v-if="inspectorContribution || inspectorSections.length" :title="inspectorTitle" :historical="historical">
+  <aside class="runtime-inspector" aria-label="Workspace Secondary Sidebar">
+    <SecondarySidebar
+      v-if="secondarySidebarViews.length"
+      :registry="registry"
+      :context="inspectorContext"
+      :title="inspectorTitle"
+      :historical="historical"
+      :component-props="baseProps"
+      @locate-graph="emit('locateGraph')"
+    />
+    <InspectorFrame v-else-if="inspectorContribution || inspectorSections.length" :title="inspectorTitle" :historical="historical">
       <div v-if="inspectorSummary" class="runtime-inspector__summary">
         <div class="runtime-inspector__summary-line">
           <span v-if="inspectorSummary.role" class="runtime-inspector__role">{{ inspectorSummary.role }}</span>
@@ -39,6 +48,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
+import SecondarySidebar from '@/components/workbench/SecondarySidebar.vue'
 import type { WorkbenchContext, WorkbenchInspectorContext } from '@/workbench/types'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import { safeStructuredOutput } from '@/workbench/runtime/runDocument'
@@ -107,6 +117,7 @@ const inspectorContext = computed(() => ({
 
 const inspectorContribution = computed(() => props.registry.resolveInspector(inspectorContext.value))
 const inspectorSections = computed(() => props.registry.resolveInspectorSections(inspectorContext.value))
+const secondarySidebarViews = computed(() => props.registry.resolveSecondarySidebarViews(inspectorContext.value))
 const inspectorTitle = computed(() => (
   props.selectedSymbol?.title
   || props.graphNode?.name

@@ -1873,6 +1873,8 @@ onUnmounted(() => {
   min-height: 0;
   flex: 1 1 auto;
   display: grid;
+  /* 行高按内容计：容器高度不足时溢出滚动，而不是把行轨道压扁叠在一起 */
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 6px;
   padding: 2px 2px 8px;

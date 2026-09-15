@@ -159,6 +159,7 @@ output/playwright/
 
 # 额外的资源
 apps/agentOS/references
+.agentos-data/
 
 # 重组前旧路径的本地构建产物（仅本机残留，防止源代码管理面板噪音）
 frontend/.vite/
