@@ -496,7 +496,7 @@ class ExecutionRuntime:
         if self.identity_lifecycle is not None and task.recommended_workflow:
             recommended = self.workflow_registry.get(task.recommended_workflow)
             if recommended.effective_runtime_engine == "acg":
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
         return task
 
     async def start(
@@ -571,7 +571,7 @@ class ExecutionRuntime:
             # A task may have been created against a legacy/default workflow and
             # explicitly rebound to ACG only when the run is prepared.
             self.workflow_store.save_mission(task)
-            self._flush_identity_outbox(repair_missing=False)
+            self._flush_identity_outbox()
         run_input = dict(task.input)
         if input_override is not None:
             run_input.update(input_override)
@@ -669,7 +669,7 @@ class ExecutionRuntime:
             and is_acg
             and not defer_acg_planning
         ):
-            self._flush_identity_outbox(repair_missing=False)
+            self._flush_identity_outbox()
         logger.info(
             "run_prepared",
             extra={
@@ -1004,7 +1004,7 @@ class ExecutionRuntime:
             if reuse_source_run:
                 self.mission_manager.mark_retrying(source.mission_id)
             if self.identity_lifecycle is not None:
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
             return retry
 
     @staticmethod
@@ -1121,7 +1121,7 @@ class ExecutionRuntime:
                 return latest
             self.workflow_store.save_run(run)
         if self.identity_lifecycle is not None:
-            self._flush_identity_outbox(repair_missing=False)
+            self._flush_identity_outbox()
         return run
 
     async def execute_prepared_run(self, run_id: str) -> RuntimeRunRecord:
@@ -1331,7 +1331,7 @@ class ExecutionRuntime:
             self.workflow_store.save_run(run)
             self._publish_run_terminal_event(run, "run.completed")
             if self.identity_lifecycle is not None:
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
             return run
         except ExecutionRunCancelled:
             # 节点执行体在调度边界感知到取消；与主循环 break 走同一条收敛路径。
@@ -1403,7 +1403,7 @@ class ExecutionRuntime:
                 error_message=self._safe_error_message(exc),
             )
             if self.identity_lifecycle is not None:
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
             raise
 
     @staticmethod
@@ -1758,7 +1758,7 @@ class ExecutionRuntime:
             )
             base_events = self._reuse_persisted_lifecycle_events(base_events)
             self.workflow_store.save_run_with_events(run, base_events)
-            self._flush_identity_outbox(repair_missing=False)
+            self._flush_identity_outbox()
             try:
                 execution_started = monotonic()
                 result = await runner(step_id, state)
@@ -1769,7 +1769,7 @@ class ExecutionRuntime:
                      "stepExecutionId": step_execution_id,
                      "result": self._safe_lifecycle_result(result)},
                 )])
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
                 return result
             except ExecutionRunCancelled:
                 execution_outcome = "cancelled"
@@ -1779,7 +1779,7 @@ class ExecutionRuntime:
                     {"runId": run.run_id, "attemptId": attempt_id,
                      "stepExecutionId": step_execution_id, "reason": reason},
                 )])
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
                 raise
             except asyncio.CancelledError:
                 execution_outcome = "cancelled"
@@ -1789,7 +1789,7 @@ class ExecutionRuntime:
                     {"runId": run.run_id, "attemptId": attempt_id,
                      "stepExecutionId": step_execution_id, "reason": reason},
                 )])
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
                 raise
             except Exception as exc:
                 from contracts.runtime_events import RuntimeEvent
@@ -1825,7 +1825,7 @@ class ExecutionRuntime:
                     {"runId": run.run_id, "attemptId": attempt_id,
                      "stepExecutionId": step_execution_id, "reason": self._safe_error_message(exc)},
                 )])
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
                 raise
             finally:
                 finished = monotonic()
@@ -1919,12 +1919,7 @@ class ExecutionRuntime:
                 safe["artifacts"] = descriptors
         return safe
 
-    def _flush_identity_outbox(
-        self,
-        *,
-        raise_on_failure: bool = True,
-        repair_missing: bool = True,
-    ) -> None:
+    def _flush_identity_outbox(self, *, raise_on_failure: bool = True) -> None:
         if self.identity_lifecycle is None:
             return
         from runtime.v2.reconciliation import IdentityProjectionReconciler
@@ -1932,7 +1927,6 @@ class ExecutionRuntime:
         report = IdentityProjectionReconciler(self.identity_lifecycle).reconcile_workflow_store(
             self.workflow_store,
             limit=200,
-            repair_missing=repair_missing,
         )
         if report.failures and raise_on_failure:
             raise RuntimeError("identity inbox consumption failed: " + "; ".join(report.failures))
@@ -3611,7 +3605,7 @@ class ExecutionRuntime:
             self.identity_lifecycle is not None
             and self._normalize_runtime_engine(run.runtime_engine) == "acg"
         ):
-            self._flush_identity_outbox(repair_missing=False)
+            self._flush_identity_outbox()
         return run
 
     @staticmethod
@@ -4212,7 +4206,7 @@ class ExecutionRuntime:
                     },
                 },
             )
-            self._flush_identity_outbox(repair_missing=False)
+            self._flush_identity_outbox()
             return GraphPatchResult(
                 applied=True,
                 graphVersion=outcome.blueprint.version,
@@ -4514,7 +4508,7 @@ class ExecutionRuntime:
                 self.identity_lifecycle is not None
                 and self._normalize_runtime_engine(run.runtime_engine) == "acg"
             ):
-                self._flush_identity_outbox(repair_missing=False)
+                self._flush_identity_outbox()
             self._publish_run_terminal_event(run, "run.cancelled")
             return run
 

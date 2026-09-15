@@ -48,15 +48,7 @@ class IdentityProjectionReconciler:
         workflow_store: Any,
         *,
         limit: int = 200,
-        repair_missing: bool = True,
     ) -> IdentityReconciliationReport:
-        """Replay pending events and optionally repair missing projections.
-
-        The full Mission/Run scan is a startup/recovery operation. Runtime hot
-        paths already persist lifecycle events atomically, so scanning every
-        historical aggregate for each new Run only adds latency without adding
-        consistency guarantees.
-        """
         report = IdentityReconciliationReport()
         projection_stats = self.adapter.repositories.projection_events.stats()
         replay = self.adapter.replay_unapplied(
@@ -68,8 +60,6 @@ class IdentityProjectionReconciler:
                 f"{replay['failed']} lifecycle projection events could not be replayed"
             )
         self._consume_execution_outbox(workflow_store, report, limit=limit)
-        if not repair_missing:
-            return self._finish_report(workflow_store, report)
         page = 1
         while True:
             task_page = workflow_store.list_missions(page=page, page_size=max(1, limit))
@@ -143,13 +133,6 @@ class IdentityProjectionReconciler:
                 self._audit_run(run)
             except Exception as exc:
                 report.failures.append(f"{run.run_id}: {exc}")
-        return self._finish_report(workflow_store, report)
-
-    def _finish_report(
-        self,
-        workflow_store: Any,
-        report: IdentityReconciliationReport,
-    ) -> IdentityReconciliationReport:
         inbox_stats = self.adapter.repositories.inbox_events.stats()
         projection_stats = self.adapter.repositories.projection_events.stats()
         outbox_stats = (
