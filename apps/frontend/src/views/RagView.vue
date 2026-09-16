@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Upload, UploadFilled } from '@element-plus/icons-vue'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
@@ -128,10 +128,13 @@ import KnowledgeDocumentsPanel, {
   type KnowledgeDocument,
 } from '@/components/knowledge/KnowledgeDocumentsPanel.vue'
 import RagQuery from '@/components/RagQuery.vue'
-import KnowledgeGraphVisualization from '@/components/KnowledgeGraphVisualization.vue'
 import { ragApi } from '@/services/api/rag'
 import { useRoleStore } from '@/stores/role'
 import { resolveKnowledgeRoleId } from '@/utils/knowledgeRole'
+
+const KnowledgeGraphVisualization = defineAsyncComponent(
+  () => import('@/components/KnowledgeGraphVisualization.vue')
+)
 
 type RagTab = 'query' | 'graph' | 'docs'
 

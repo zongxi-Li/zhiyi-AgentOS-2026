@@ -3,7 +3,7 @@ import { initUiZoomControl } from '@/composables/useUiZoom'
 
 /**
  * 桌面缩放桥：档位落到 Tauri webview 原生缩放（等效浏览器整页缩放）。
- * 不用 CSS zoom 的原因：canvas 类可视化（vis-network/three.js）在 CSS zoom 下
+ * 不用 CSS zoom 的原因：canvas 类可视化在 CSS zoom 下
  * 会出现位图模糊与命中坐标偏移，原生缩放由合成器处理，无此问题。
  * 需要 capability：core:webview:allow-set-webview-zoom。
  */

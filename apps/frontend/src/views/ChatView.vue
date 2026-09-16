@@ -2852,19 +2852,32 @@ const handleFileSelected = async (file: any) => {
   }
 }
 
-const scrollToBottom = () => {
+let pendingScrollFrame: number | null = null
+
+const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
   if (!messagesRef.value) return
-  nextTick(() => {
-    messagesRef.value?.scrollTo({
-      top: messagesRef.value.scrollHeight,
-      behavior: 'smooth'
+
+  if (pendingScrollFrame !== null) {
+    window.cancelAnimationFrame(pendingScrollFrame)
+  }
+
+  pendingScrollFrame = window.requestAnimationFrame(() => {
+    pendingScrollFrame = null
+    void nextTick(() => {
+      const messagesElement = messagesRef.value
+      if (!messagesElement) return
+
+      messagesElement.scrollTo({
+        top: messagesElement.scrollHeight,
+        behavior
+      })
     })
   })
 }
 
 const handleScrollToBottom = () => {
   pendingMessageCount.value = 0
-  scrollToBottom()
+  scrollToBottom('smooth')
 }
 
 watch(
@@ -3137,6 +3150,8 @@ onUnmounted(() => {
   stopContextPanelResize()
   if (heroLogoMotion.frame !== null) window.cancelAnimationFrame(heroLogoMotion.frame)
   heroLogoMotion.frame = null
+  if (pendingScrollFrame !== null) window.cancelAnimationFrame(pendingScrollFrame)
+  pendingScrollFrame = null
   workflowProgressState.reset()
   invalidateWorkflowResultRequest()
   if (messagesRef.value) {

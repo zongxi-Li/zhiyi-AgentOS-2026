@@ -24,7 +24,6 @@
     "mermaid": "^11.12.1",
     "pinia": "^2.1.7",
     "socket.io-client": "^4.6.1",
-    "three": "^0.158.0",
     "unplugin-auto-import": "^21.1.0",
     "unplugin-vue-components": "^32.1.0",
     "vis-data": "^8.0.3",
@@ -34,7 +33,6 @@
     "vue-router": "^4.2.5"
   },
   "devDependencies": {
-    "@types/three": "^0.158.0",
     "@vitejs/plugin-vue": "^4.5.0",
     "@vue/test-utils": "^2.4.11",
     "jsdom": "^25.0.1",

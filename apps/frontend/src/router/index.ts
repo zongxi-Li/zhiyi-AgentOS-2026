@@ -2,9 +2,7 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
-import LoginView from '@/views/LoginView.vue'
-import SettingsView from '@/views/SettingsView.vue'
-import UserView from '@/views/UserView.vue'
+import LandingView from '@/views/LandingView.vue'
 
 const normalizeRedirect = (redirect?: string) => {
   if (!redirect) return '/chat'
@@ -30,7 +28,9 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'Landing',
-    component: () => import('@/views/LandingView.vue'),
+    // The landing page is the public first screen; load it with the router so
+    // the initial navigation does not wait on a large cold dynamic import.
+    component: LandingView,
     meta: {
       title: '首页',
       requiresAuth: false
@@ -39,7 +39,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'Login',
-    component: LoginView,
+    component: () => import('@/views/LoginView.vue'),
     // Web presents auth embedded on the landing page; the desktop shell keeps
     // the standalone login surface with its own title-bar chrome.
     beforeEnter: to => (isDesktop()
@@ -53,7 +53,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/user',
     name: 'User',
-    component: UserView,
+    component: () => import('@/views/UserView.vue'),
     meta: {
       title: '用户中心',
       requiresAuth: true
@@ -109,7 +109,7 @@ const routes: RouteRecordRaw[] = [
     name: 'Settings',
     // Settings is the main route used to recover identity and client state.
     // It should remain available even when a deployed lazy chunk is stale.
-    component: SettingsView,
+    component: () => import('@/views/SettingsView.vue'),
     meta: {
       title: '设置',
       requiresAuth: true
@@ -132,7 +132,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/federated-learning',
     name: 'FederatedLearning',
-    redirect: to => ({ path: '/agentos/resources', query: { ...to.query } })
+    redirect: to => ({ path: '/agentos/resources', query: { ...to.query, tab: 'federated' } })
   },
   {
     path: '/federated-agent-workbench',
