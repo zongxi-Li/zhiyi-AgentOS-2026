@@ -104,6 +104,7 @@ declare module 'vue' {
     InspectorSection: typeof import('./src/components/workbench/InspectorSection.vue')['default']
     IntentProfileArtifact: typeof import('./src/components/workspace/IntentProfileArtifact.vue')['default']
     JurisdictionCard: typeof import('./src/components/agent/JurisdictionCard.vue')['default']
+    KnowledgeDocumentsPanel: typeof import('./src/components/knowledge/KnowledgeDocumentsPanel.vue')['default']
     KnowledgeGraphView: typeof import('./src/components/KnowledgeGraphView.vue')['default']
     KnowledgeGraphVisualization: typeof import('./src/components/KnowledgeGraphVisualization.vue')['default']
     LawyerSkillPanel: typeof import('./src/components/agent/LawyerSkillPanel.vue')['default']

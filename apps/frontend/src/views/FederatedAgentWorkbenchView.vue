@@ -1467,8 +1467,7 @@ button {
   flex: 0 0 auto;
 }
 
-.section-head h3,
-.section-head compact h3 {
+.section-head h3 {
   margin: 0;
 }
 

@@ -42,7 +42,7 @@ describe('CreateMissionView', () => {
       }
     })
 
-    expect(wrapper.find('#mission-title').exists()).toBe(true)
+    expect(wrapper.find('#mission-title').exists()).toBe(false)
     expect(wrapper.find('#mission-files').exists()).toBe(true)
     expect(wrapper.find('#mission-goal').exists()).toBe(true)
     expect(wrapper.text()).toContain('Execution')
@@ -51,13 +51,6 @@ describe('CreateMissionView', () => {
     expect(wrapper.find('.create-mission__back').text()).toContain('返回项目')
     expect(wrapper.find('.create-mission__workspace').exists()).toBe(true)
     expect(wrapper.find('.launch-bar').exists()).toBe(true)
-    const promptSelect = wrapper.find('select[aria-label="ACG 提示词任务"]')
-    expect(promptSelect.exists()).toBe(true)
-    const taskOptions = promptSelect.findAll('option')
-    expect(taskOptions.length).toBeGreaterThan(1)
-    await promptSelect.setValue(taskOptions[1].attributes('value'))
-    expect((wrapper.find('#mission-title').element as HTMLInputElement).value).not.toBe('')
-    expect((wrapper.find('#mission-goal').element as HTMLTextAreaElement).value).not.toBe('')
     wrapper.unmount()
   })
 
@@ -83,7 +76,6 @@ describe('CreateMissionView', () => {
     expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeDefined()
     expect(wrapper.find('.execution-overview__content').text()).toContain('Dynamic · Native Core · Auto Execute')
 
-    await wrapper.find('#mission-title').setValue('任务启动器测试')
     await wrapper.find('#mission-goal').setValue('验证 Mission brief 可以启动 Run')
     expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
@@ -173,7 +165,6 @@ describe('CreateMissionView', () => {
       }
     })
 
-    await wrapper.find('#mission-title').setValue('新建工程')
     await wrapper.find('#mission-goal').setValue('输出可验收的实施方案')
     await wrapper.findAll('.config-option').find(button => button.text().includes('Template preferred'))?.trigger('click')
     await wrapper.find('select[aria-label="Planning diversity"]').setValue('exploratory')
@@ -183,14 +174,13 @@ describe('CreateMissionView', () => {
 
     expect(workflowApi.startWorkflowAsync).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: '新建工程',
+        title: '输出可验收的实施方案',
         input: expect.objectContaining({
           taskGoal: '输出可验收的实施方案',
           planningMode: 'template_preferred',
           planningDiversity: 'exploratory',
           planningSeed: 42,
           usePlanner: true,
-          taskName: '新建工程',
           debugTrace: false,
           lowEntropyOptions: ['trace_provenance']
         })
@@ -234,7 +224,6 @@ describe('CreateMissionView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('TXT · 16 B')
     expect(wrapper.text()).toContain('✓ 已就绪')
-    await wrapper.find('#mission-title').setValue('合同审查')
     await wrapper.find('#mission-goal').setValue('生成最终合同审查报告')
     await wrapper.find('form').trigger('submit')
     await flushPromises()

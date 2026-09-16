@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -38,6 +39,21 @@ AGENTOS_ROOT = PROJECT_ROOT / "apps" / "agentOS"
 AGENT_APP_ROOT = PROJECT_ROOT / "apps" / "agent"
 TEST_TEMP_ROOT = PROJECT_ROOT / ".tmp-tests"
 TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Sweep leftovers from crashed sessions. Entries newer than a day may belong
+# to a concurrently running pytest session and must not be touched.
+_STALE_TEST_TEMP_SECONDS = 24 * 3600
+_now = time.time()
+for _entry in TEST_TEMP_ROOT.iterdir():
+    try:
+        if _now - _entry.stat().st_mtime < _STALE_TEST_TEMP_SECONDS:
+            continue
+        if _entry.is_dir():
+            shutil.rmtree(_entry, ignore_errors=True)
+        else:
+            _entry.unlink(missing_ok=True)
+    except OSError:
+        continue
 
 # AgentOS creates its global Chroma client while test modules are imported.
 # Isolate that client before collection so tests never open the tracked database.

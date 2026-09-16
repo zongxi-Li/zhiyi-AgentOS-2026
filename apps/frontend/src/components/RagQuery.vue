@@ -1,44 +1,46 @@
-<!-- RAG 查询组件 — 基于知识库的智能检索输入界面，含文本域、可配置 Top-K 和提交按钮 -->
+<!-- RAG 查询组件：知识库智能检索输入与结果展示。 -->
 <template>
   <div class="rag-query-container">
     <div class="query-card">
-      <div class="card-header">
+      <header class="card-header">
         <div class="header-left">
-          <el-icon class="header-icon"><Search /></el-icon>
+          <el-icon class="header-icon" aria-hidden="true"><Search /></el-icon>
           <span class="header-title">智能检索</span>
         </div>
         <div class="header-settings">
-          <span class="settings-label">Top K:</span>
-          <el-input-number 
-            v-model="topK" 
-            :min="1" 
-            :max="10" 
+          <span class="settings-label">Top K</span>
+          <el-input-number
+            v-model="topK"
+            :min="1"
+            :max="10"
             size="small"
             controls-position="right"
             class="k-input"
           />
         </div>
-      </div>
-      
+      </header>
+
       <div class="query-body">
         <div class="input-area">
           <textarea
             v-model="queryText"
-            placeholder="请输入您的问题，AI 将基于知识库为您解答..."
             class="query-textarea"
-            @keydown.enter.prevent.ctrl="handleQuery"
+            placeholder="请输入您的问题，AI 将基于知识库为您解答..."
             rows="4"
+            @keydown.enter.prevent.ctrl="handleQuery"
           ></textarea>
         </div>
+
         <div class="input-footer">
           <span class="hint-text">Ctrl + Enter 发送</span>
           <button
             class="submit-button"
-            @click="handleQuery"
+            type="button"
             :disabled="loading"
+            @click="handleQuery"
           >
-            <el-icon v-if="!loading" class="submit-icon"><ArrowRight /></el-icon>
-            <el-icon v-else class="submit-icon loading"><Loading /></el-icon>
+            <el-icon v-if="!loading" class="submit-icon" aria-hidden="true"><ArrowRight /></el-icon>
+            <el-icon v-else class="submit-icon loading" aria-hidden="true"><Loading /></el-icon>
             <span>查询</span>
           </button>
         </div>
@@ -52,66 +54,66 @@
           @refresh="loadRecommendations"
           @select="applyRecommendation"
         />
-      </div>
 
-      <transition name="fade-slide">
-        <div v-if="result" class="result-area">
-          <div class="result-header">
-            <div class="result-title-wrapper">
-              <div class="title-indicator"></div>
-              <span class="result-title">AI 回答</span>
+        <transition name="fade-slide">
+          <div v-if="result" class="result-area">
+            <div class="result-header">
+              <div class="result-title-wrapper">
+                <span class="title-indicator" aria-hidden="true"></span>
+                <span class="result-title">AI 回答</span>
+              </div>
+              <div v-if="result.confidence" class="confidence-badge">
+                <span class="confidence-label">置信度</span>
+                <span class="confidence-value">
+                  {{ Math.round(result.confidence * 100) }}%
+                </span>
+              </div>
             </div>
-            <div class="confidence-badge" v-if="result.confidence">
-              <span class="confidence-label">置信度</span>
-              <div class="confidence-value">{{ Math.round(result.confidence * 100) }}%</div>
+
+            <div class="answer-box">
+              <div class="answer-content">{{ result.answer }}</div>
             </div>
-          </div>
-          
-          <div class="answer-box">
-            <div class="answer-content">{{ result.answer }}</div>
-          </div>
-          
-          <div v-if="result.sources && result.sources.length > 0" class="sources-section">
-            <div class="sources-header">
-              <el-icon class="sources-icon"><Link /></el-icon>
-              <span class="sources-title">参考来源</span>
-            </div>
-            <div class="sources-list">
-              <div 
-                v-for="(source, index) in result.sources" 
-                :key="index"
-                class="source-item"
-              >
-                <div class="source-number">{{ index + 1 }}</div>
-                <div class="source-text">{{ source.title || source.url || '未知来源' }}</div>
+
+            <div v-if="result.sources?.length" class="sources-section">
+              <div class="sources-header">
+                <el-icon class="sources-icon" aria-hidden="true"><Link /></el-icon>
+                <span class="sources-title">参考来源</span>
+              </div>
+              <div class="sources-list">
+                <div
+                  v-for="(source, index) in result.sources"
+                  :key="index"
+                  class="source-item"
+                >
+                  <span class="source-number">{{ index + 1 }}</span>
+                  <span class="source-text">{{ source.title || source.url || '未知来源' }}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </transition>
+        </transition>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, ArrowRight, Link, Loading } from '@element-plus/icons-vue'
+import { ArrowRight, Link, Loading, Search } from '@element-plus/icons-vue'
 import RecommendationPanel from '@/components/RecommendationPanel.vue'
-import { ragApi } from '@/services/api/rag'
 import { recommendationApi, type RecommendationItem } from '@/services/api/recommendation'
+import { ragApi } from '@/services/api/rag'
+import { useDebounce } from '@/composables/useDebounce'
 import { useRoleStore } from '@/stores/role'
 import { resolveKnowledgeRoleId } from '@/utils/knowledgeRole'
-import { useDebounce } from '@/composables/useDebounce'
 
-const emit = defineEmits<{
-  refresh: []
-}>()
+type RagResult = Awaited<ReturnType<typeof ragApi.query>>
 
 const queryText = ref('')
 const topK = ref(5)
 const loading = ref(false)
-const result = ref<any>(null)
+const result = ref<RagResult | null>(null)
 const recommendations = ref<RecommendationItem[]>([])
 const recommendationLoading = ref(false)
 
@@ -126,14 +128,18 @@ const handleQuery = async () => {
   }
 
   loading.value = true
-  result.value = null // Clear previous result for animation
-  
+  result.value = null
+
   try {
-    // 传递当前角色ID，确保只查询该角色的知识库
-    result.value = await ragApi.query(queryText.value, topK.value, undefined, currentRoleId.value)
+    result.value = await ragApi.query(
+      queryText.value,
+      topK.value,
+      undefined,
+      currentRoleId.value,
+    )
     ElMessage.success('查询成功')
   } catch (error: any) {
-    ElMessage.error('查询失败: ' + (error.message || '未知错误'))
+    ElMessage.error(`查询失败：${error.message || '未知错误'}`)
   } finally {
     loading.value = false
   }
@@ -141,6 +147,7 @@ const handleQuery = async () => {
 
 const loadRecommendations = async () => {
   recommendationLoading.value = true
+
   try {
     recommendations.value = await recommendationApi.getContextualRecommendations({
       roleName: roleStore.currentRole?.name,
@@ -148,7 +155,7 @@ const loadRecommendations = async () => {
       scene: 'query',
       currentInput: queryText.value,
       currentOutput: result.value?.answer,
-      conversationHistory: queryText.value.trim() ? [queryText.value.trim()] : []
+      conversationHistory: queryText.value.trim() ? [queryText.value.trim()] : [],
     })
   } catch (error) {
     console.warn('加载 RAG 推荐失败', error)
@@ -167,7 +174,6 @@ watch(
   () => {
     void loadRecommendations()
   },
-  { immediate: false }
 )
 
 onMounted(() => {
@@ -175,354 +181,76 @@ onMounted(() => {
 })
 </script>
 
-<style scoped lang="scss">
+<style scoped>
 .rag-query-container {
-  height: 100%;
-}
-
-.query-card {
-  background: var(--surface-solid);
-  border: 1px solid var(--border-light);
-  border-radius: 20px;
-  overflow: hidden;
   display: flex;
-  flex-direction: column;
-}
-
-.card-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--border-light);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.header-icon {
-  font-size: 20px;
-  color: var(--primary-color);
-}
-
-.header-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.header-settings {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.settings-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-weight: 400;
-}
-
-.k-input {
-  width: 100px;
-}
-
-.query-body {
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.input-area {
-  position: relative;
-}
-
-.query-textarea {
   width: 100%;
-  min-height: 120px;
-  padding: 16px;
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  background: var(--bg-input);
-  font-size: 15px;
-  font-family: inherit;
-  color: var(--text-primary);
-  line-height: 1.6;
-  resize: none;
-  outline: none;
-  transition: all 0.2s ease;
+  height: 100%;
+  min-height: 0;
 }
 
-.query-textarea:focus {
-  background: var(--surface-solid);
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--primary-fade);
-}
-
-.query-textarea::placeholder {
-  color: var(--text-disabled);
-}
-
-.input-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.hint-text {
-  font-size: 12px;
-  color: var(--text-disabled);
-  font-weight: 400;
-}
-
-.submit-button {
-  height: 36px;
-  padding: 0 20px;
-  background: var(--primary-color);
-  border: none;
-  border-radius: 10px;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.2s ease;
-  font-family: inherit;
-}
-
-.submit-button:hover:not(:disabled) {
-  background: var(--primary-hover);
-  transform: translateY(-1px);
-}
-
-.submit-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.submit-icon {
-  font-size: 16px;
-}
-
-.submit-icon.loading {
-  animation: rotate 1s linear infinite;
-}
-
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.result-area {
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border-light);
-}
-
-.result-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.result-title-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.title-indicator {
-  width: 3px;
-  height: 18px;
-  background: var(--primary-color);
-  border-radius: 2px;
-}
-
-.result-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.confidence-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-}
-
-.confidence-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 400;
-}
-
-.confidence-value {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--primary-color);
-  letter-spacing: -0.01em;
-}
-
-.answer-box {
-  background: var(--bg-input);
-  border-radius: 12px;
-  padding: 20px;
-  border: 1px solid var(--border-light);
-  margin-bottom: 24px;
-}
-
-.answer-content {
-  line-height: 1.8;
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.sources-section {
-  margin-top: 24px;
-}
-
-.sources-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.sources-icon {
-  font-size: 16px;
-  color: var(--primary-color);
-}
-
-.sources-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.sources-list {
+.query-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.source-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-input);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid var(--border-light);
-  border-radius: 10px;
-  transition: all 0.2s ease;
-}
-
-.source-item:hover {
-  background: var(--surface-solid);
-  border-color: var(--border-hover);
-}
-
-.source-number {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: var(--primary-fade);
-  color: var(--primary-color);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.source-text {
-  flex: 1;
-  font-size: 13px;
+  border-radius: var(--radius-panel);
   color: var(--text-primary);
-  line-height: 1.5;
-  word-break: break-word;
-  font-weight: 400;
-}
-
-/* 过渡动画 */
-.fade-slide-enter-active,
-.fade-slide-leave-active {
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.fade-slide-enter-from,
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateY(20px);
-}
-
-/* Compact workbench treatment shared with ACG panels. */
-.query-card { height: 100%; border-radius: 8px; box-shadow: none; }
-.card-header { min-height: 42px; padding: 8px 10px; }
-.header-left { gap: 7px; }
-.header-icon { font-size: 15px; }
-.header-title { font-size: 13px; }
-.header-settings { gap: 6px; }
-.settings-label { font-size: 11px; }
-.k-input { width: 82px; }
-.query-body { padding: 12px; gap: 10px; }
-.query-textarea { min-height: 92px; padding: 12px; border-radius: 7px; font-size: 13px; line-height: 1.55; }
-.query-textarea:focus { box-shadow: 0 0 0 2px var(--primary-fade); }
-.submit-button { height: 30px; padding: 0 12px; border-radius: 6px; font-size: 12px; }
-.hint-text { font-size: 10px; }
-.result-area { margin-top: 14px; padding-top: 14px; }
-.result-header { margin-bottom: 10px; }
-.result-title { font-size: 13px; }
-.answer-box { margin-bottom: 14px; padding: 12px; border-radius: 7px; }
-.answer-content { font-size: 13px; line-height: 1.65; }
-
-/* Keep query controls aligned with the compact Workbench surface language. */
-.query-card {
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  background: var(--surface-raised);
   box-shadow: var(--shadow-sm);
 }
 
 .card-header {
-  min-height: 42px;
-  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.header-left,
+.header-settings,
+.input-footer,
+.result-header,
+.result-title-wrapper,
+.sources-header {
+  display: flex;
+  align-items: center;
 }
 
 .header-left {
-  gap: 7px;
+  gap: 8px;
+  min-width: 0;
 }
 
-.header-icon {
-  font-size: 15px;
+.header-icon,
+.sources-icon {
+  flex: 0 0 auto;
+  color: var(--primary-color);
+  font-size: 17px;
 }
 
-.header-title {
-  font-size: 13px;
+.header-title,
+.result-title,
+.sources-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .header-settings {
-  gap: 6px;
+  gap: 8px;
 }
 
-.settings-label {
+.settings-label,
+.hint-text,
+.confidence-label {
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -531,74 +259,234 @@ onMounted(() => {
 }
 
 .query-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
-  padding: 12px;
-  gap: 10px;
+  gap: 14px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.input-area {
+  flex: 0 0 auto;
 }
 
 .query-textarea {
-  min-height: 112px;
+  display: block;
+  width: 100%;
+  min-height: 150px;
   padding: 12px;
-  border-radius: 7px;
+  resize: vertical;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-card);
+  outline: none;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  font: inherit;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.6;
+  transition:
+    border-color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out),
+    background-color 160ms var(--ease-out);
+}
+
+.query-textarea:focus {
+  border-color: var(--border-focus);
+  outline: none;
+  background: var(--surface-solid);
+  box-shadow: 0 0 0 3px var(--primary-fade);
+}
+
+.query-textarea::placeholder {
+  color: var(--text-muted);
 }
 
 .input-footer {
-  min-height: 30px;
-}
-
-.hint-text {
-  font-size: 10px;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
 }
 
 .submit-button {
-  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 72px;
+  height: 32px;
   padding: 0 12px;
-  border-radius: 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--on-primary);
+  background: var(--primary-color);
+  cursor: pointer;
+  font: inherit;
   font-size: 12px;
+  transition: background-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+
+.submit-button:hover:not(:disabled),
+.submit-button:focus-visible {
+  outline: none;
+  background: var(--primary-hover);
+}
+
+.submit-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.submit-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .submit-icon {
   font-size: 14px;
 }
 
+.submit-icon.loading {
+  animation: rag-query-spin 900ms linear infinite;
+}
+
 .result-area {
-  margin-top: 14px;
-  padding: 14px 12px 12px;
+  margin-top: 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
 }
 
 .result-header {
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
-.result-title {
-  font-size: 13px;
+.result-title-wrapper {
+  gap: 7px;
+}
+
+.title-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-fade);
+}
+
+.confidence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.confidence-value {
+  color: var(--primary-color);
+  font: 12px var(--font-mono, monospace);
 }
 
 .answer-box {
-  margin-bottom: 14px;
   padding: 12px;
-  border-radius: 7px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-card);
+  background: var(--bg-input);
 }
 
 .answer-content {
+  color: var(--text-regular);
   font-size: 13px;
-  line-height: 1.65;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 768px) {
-  .query-body {
-    padding: 10px;
+.sources-section {
+  margin-top: 14px;
+}
+
+.sources-header {
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.sources-list {
+  display: grid;
+  gap: 6px;
+}
+
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+}
+
+.source-number {
+  display: grid;
+  flex: 0 0 20px;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--primary-color);
+  background: var(--primary-fade);
+  font: 10px var(--font-mono, monospace);
+}
+
+.source-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+@keyframes rag-query-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 700px) {
+  .card-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .query-textarea {
-    min-height: 128px;
+  .header-settings {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .query-body {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-slide-enter-active,
+  .fade-slide-leave-active,
+  .submit-icon.loading,
+  .submit-button {
+    transition: none;
+    animation: none;
   }
 }
 </style>
-
-
-
-
-

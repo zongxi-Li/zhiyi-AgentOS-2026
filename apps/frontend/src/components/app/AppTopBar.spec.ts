@@ -56,6 +56,76 @@ describe('AppTopBar', () => {
     expect(wrapper.get('input').element).toHaveProperty('value', '')
   })
 
+  it('focuses the command center with Ctrl/Cmd+K', async () => {
+    const { wrapper } = await mountTopBar()
+    const input = wrapper.get('input').element as HTMLInputElement
+    const focusSpy = vi.spyOn(input, 'focus')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'k',
+      code: 'KeyK',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    }))
+    await flushPromises()
+
+    expect(focusSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('toggles the command menu closed on the second Ctrl/Cmd+K', async () => {
+    const { wrapper } = await mountTopBar()
+    const input = wrapper.get('input')
+    const blurSpy = vi.spyOn(input.element, 'blur')
+
+    await input.trigger('focus')
+    await input.setValue('资源')
+    expect(wrapper.find('.app-command-menu').exists()).toBe(true)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'k',
+      code: 'KeyK',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    }))
+    await flushPromises()
+
+    expect(blurSpy).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.app-command-menu').exists()).toBe(false)
+    expect(input.element).toHaveProperty('value', '')
+  })
+
+  it('filters navigation commands and navigates with Enter', async () => {
+    const { wrapper } = await mountTopBar()
+    const input = wrapper.get('input')
+
+    await input.trigger('focus')
+    await input.setValue('资源')
+
+    const option = wrapper.get('[role="option"]')
+    expect(option.text()).toContain('资源中心')
+
+    await input.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('navigate')).toEqual([['/agentos/resources']])
+    expect(input.element).toHaveProperty('value', '')
+  })
+
+  it('keeps command results clickable while the input loses focus', async () => {
+    const { wrapper } = await mountTopBar()
+    const input = wrapper.get('input')
+
+    await input.trigger('focus')
+    await input.setValue('运行')
+    const option = wrapper.get('[role="option"]')
+
+    await option.trigger('mousedown')
+    await option.trigger('click')
+
+    expect(wrapper.emitted('navigate')).toEqual([['/history?tab=acg']])
+  })
+
   it('uses the logo as the single navigation toggle', async () => {
     const { wrapper } = await mountTopBar({ navigationState: 'collapsed' })
 

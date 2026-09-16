@@ -1646,10 +1646,8 @@ html[data-color-scheme='codex-dark'] .el-overlay {
 }
 
 /* Page-level gallery polish for existing views */
-.history-view,
 .role-view,
 .user-view,
-.settings-view,
 .create-role-view,
 .info-view {
   background: transparent !important;
@@ -1659,24 +1657,11 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   overflow: hidden !important;
 }
 
-.history-view,
-.rag-view,
 .role-view {
   padding: 0 !important;
   gap: 0 !important;
 }
 
-.rag-view {
-  background: transparent !important;
-  color: var(--text-primary) !important;
-  font-family: var(--font-sans) !important;
-  min-height: 100% !important;
-  height: auto !important;
-  overflow: visible !important;
-}
-
-.history-view .page-header,
-.rag-view .page-header,
 .role-view .page-header {
   position: relative !important;
   top: auto !important;
@@ -1688,21 +1673,15 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   backdrop-filter: var(--backdrop-blur);
 }
 
-.history-view .page-content,
-.rag-view .page-content,
 .role-view .page-content {
   padding: var(--page-padding-y) var(--page-padding-x) !important;
   background: transparent !important;
 }
 
-.history-view .content-inner,
-.rag-view .content-inner,
 .role-view .content-inner {
   max-width: var(--page-content-max-width) !important;
 }
 
-.history-view .header-icon-wrapper,
-.rag-view .header-icon-wrapper,
 .role-view .header-icon-wrapper {
   width: 42px !important;
   height: 42px !important;
@@ -1713,62 +1692,41 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   box-shadow: var(--shadow-sm) !important;
 }
 
-.history-view .header-icon,
-.rag-view .header-icon,
 .role-view .header-icon {
   color: var(--primary-color) !important;
   font-size: 22px !important;
 }
 
-.history-view .page-title,
-.rag-view .page-title,
 .role-view .page-title {
   font-size: 22px !important;
   font-weight: 650 !important;
   letter-spacing: 0 !important;
 }
 
-.history-view .tabs-nav,
-.rag-view .tabs-nav,
 .role-view .tabs-nav {
   margin-bottom: var(--space-lg) !important;
   border-bottom: 1px solid var(--border-light) !important;
   gap: 6px !important;
 }
 
-.history-view .tab-button,
-.rag-view .tab-button,
-.role-view .tab-button,
-.settings-view .tab-btn {
+.role-view .tab-button {
   border-radius: 8px !important;
   color: var(--text-secondary) !important;
   transition: var(--transition) !important;
 }
 
-.history-view .tab-button:hover,
-.rag-view .tab-button:hover,
-.role-view .tab-button:hover,
-.settings-view .tab-btn:hover {
+.role-view .tab-button:hover {
   background: var(--bg-input) !important;
   color: var(--primary-color) !important;
 }
 
-.history-view .tab-button.active,
-.rag-view .tab-button.active,
-.role-view .tab-button.active,
-.settings-view .tab-btn.active {
+.role-view .tab-button.active {
   background: var(--primary-fade) !important;
   color: var(--primary-color) !important;
 }
 
-.history-view .search-box,
-.history-view .action-button,
 .role-view .create-button,
 .role-view .add-role-card,
-.rag-view .docs-card,
-.rag-view .upload-button,
-.rag-view .doc-item,
-.settings-view .glass-panel,
 .info-view .info-card,
 .info-view .info-item {
   border: 1px solid var(--border-light) !important;
@@ -1777,16 +1735,12 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   box-shadow: var(--shadow-sm) !important;
 }
 
-.history-view .action-button,
-.role-view .create-button,
-.rag-view .upload-button {
+.role-view .create-button {
   color: var(--text-primary) !important;
   transition: var(--transition) !important;
 }
 
-.history-view .action-button:hover,
-.role-view .create-button:hover,
-.rag-view .upload-button:hover {
+.role-view .create-button:hover {
   border-color: var(--border-hover) !important;
   color: var(--primary-color) !important;
   transform: translateY(-1px);
@@ -1796,15 +1750,12 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   margin-bottom: var(--space-3xl) !important;
 }
 
-.role-view .section-title,
-.history-view .section-title,
-.rag-view .title-text {
+.role-view .section-title {
   font-weight: 650 !important;
   letter-spacing: 0 !important;
 }
 
 .user-view,
-.settings-view,
 .create-role-view,
 .info-view {
   padding: 0 !important;
@@ -1818,23 +1769,6 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   margin: 0 auto !important;
 }
 
-.settings-view {
-  width: 100% !important;
-  max-width: none !important;
-  margin: 0 !important;
-  padding: 12px !important;
-  box-sizing: border-box !important;
-}
-
-.settings-view .page-header,
-.settings-view .tabs-bar,
-.settings-view .content-panel,
-.settings-view .footer-bar {
-  width: min(100%, 1280px) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-
 .user-view .profile-header-card,
 .user-view .stat-card,
 .user-view .content-card,
@@ -1843,10 +1777,7 @@ html[data-color-scheme='codex-dark'] .el-overlay {
 .create-role-view .form-content,
 .create-role-view .style-card,
 .create-role-view .config-card,
-.create-role-view .creation-summary,
-.settings-view .tabs-bar,
-.settings-view .content-panel,
-.settings-view .footer-bar {
+.create-role-view .creation-summary {
   border: 1px solid var(--border-light) !important;
   border-radius: 8px !important;
   background: color-mix(in srgb, var(--bg-card) 86%, transparent) !important;
@@ -1978,23 +1909,13 @@ html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-
   border-color: var(--border-color);
 }
 
-/* Compact page toolbar shared by Knowledge and History workspaces. */
-.rag-view,
-.history-view,
+/* Compact page toolbar for the Role workspace. */
 .role-view {
   box-sizing: border-box !important;
   padding: 12px !important;
   gap: 12px !important;
 }
 
-.rag-view {
-  height: 100% !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
-}
-
-.rag-view .workspace-page-header,
-.history-view .workspace-page-header,
 .role-view .workspace-page-header {
   box-sizing: border-box !important;
   min-height: 50px !important;
@@ -2005,8 +1926,6 @@ html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-
   box-shadow: var(--shadow-sm) !important;
 }
 
-.rag-view .workspace-page-header__icon,
-.history-view .workspace-page-header__icon,
 .role-view .workspace-page-header__icon {
   width: 28px !important;
   height: 28px !important;
@@ -2016,14 +1935,10 @@ html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-
   box-shadow: none !important;
 }
 
-.rag-view .workspace-page-header__icon .header-icon,
-.history-view .workspace-page-header__icon .header-icon,
 .role-view .workspace-page-header__icon .header-icon {
   font-size: 15px !important;
 }
 
-.rag-view .workspace-page-header .page-title,
-.history-view .workspace-page-header .page-title,
 .role-view .workspace-page-header .page-title {
   margin: 0 !important;
   font-size: 18px !important;
@@ -2031,28 +1946,17 @@ html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-
   line-height: 1.2 !important;
 }
 
-.rag-view .workspace-page-header .page-subtitle,
-.history-view .workspace-page-header .page-subtitle,
 .role-view .workspace-page-header .page-subtitle {
   display: none !important;
 }
 
-.rag-view .page-content,
-.history-view .page-content,
 .role-view .page-content {
   padding: 0 !important;
 }
 
-.rag-view .content-inner,
-.history-view .content-inner,
 .role-view .content-inner {
   width: 100% !important;
   max-width: none !important;
-}
-
-.rag-view .tabs-nav,
-.history-view .tabs-nav {
-  margin-bottom: 8px !important;
 }
 
 .role-view .create-button {

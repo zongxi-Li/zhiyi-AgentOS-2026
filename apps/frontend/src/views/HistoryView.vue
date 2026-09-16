@@ -333,8 +333,7 @@ const clearAll = async () => {
 
 @media (max-width: 768px) {
   .history-view { padding-right: 14px; padding-left: 14px; }
-  .history-actions { justify-content: flex-start; }
-  .history-actions { flex-wrap: wrap; }
+  .history-actions { justify-content: flex-start; flex-wrap: wrap; }
   .history-search { flex: 1 1 190px; width: auto; }
   .history-tabs { overflow-x: auto; }
   .history-tabs button { flex: 0 0 auto; }

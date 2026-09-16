@@ -72,14 +72,6 @@ export default defineConfig(({ mode }) => {
             isDesktop ? 'src/platform/desktop/uiZoom.ts' : 'src/platform/web/uiZoomStub.ts'
           )
         },
-        // 桌面端 F11 全屏切换的初始化入口；Web 构建换空占位，保证永不解析 @tauri-apps/api/window。
-        {
-          find: '@fullscreen-hotkey',
-          replacement: resolve(
-            __dirname,
-            isDesktop ? 'src/platform/desktop/fullscreenHotkey.ts' : 'src/platform/web/fullscreenHotkeyStub.ts'
-          )
-        },
         ...(isDesktop ? [
           { find: '@tauri-apps/api', replacement: resolve(desktopNodeModules, '@tauri-apps/api') },
           { find: '@tauri-apps/plugin-dialog', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-dialog') },

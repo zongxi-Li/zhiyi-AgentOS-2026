@@ -11,7 +11,6 @@ import time
 from uuid import uuid4
 from app.services.aiservice import AIService
 from app.config import settings
-from app.ai_engine.kylin_sdk.client import KylinAIClient
 from app.ai_engine.model_runtime import (
     apply_reasoning_instruction,
     list_system_runtime_models,
@@ -25,7 +24,6 @@ router = APIRouter()
 
 # 依赖注入AI服务
 ai_service = AIService()
-stream_client = KylinAIClient()
 logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):

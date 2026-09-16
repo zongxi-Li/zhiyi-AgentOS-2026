@@ -500,7 +500,6 @@ import {
 } from '@/utils/acgHistoryFilter'
 import { isDesktop } from '@/platform'
 import { initUiZoom } from '@ui-zoom'
-import { initFullscreenHotkey } from '@fullscreen-hotkey'
 import ZoomIndicator from '@/components/desktop/ZoomIndicator.vue'
 
 const route = useRoute()
@@ -1288,8 +1287,6 @@ const handleLogout = async () => {
 
 // 桌面端 VSCode 式 Ctrl+滚轮缩放接管；Web 构建经 @ui-zoom 别名拿到空实现。
 let disposeUiZoom: (() => void) | null = null
-// 桌面端 F11 全屏切换接管；Web 构建经 @fullscreen-hotkey 别名拿到空实现。
-let disposeFullscreenHotkey: (() => void) | null = null
 
 // 拖拽落到页面里无拖放承接的区域时，阻止 WebView2/浏览器默认的"导航到所拖文件"。
 // 各拖拽区（如新建工程附件）在自己的 dragover/drop 里 preventDefault 不受影响。
@@ -1311,14 +1308,11 @@ onMounted(() => {
   if (localStorage.getItem('userId')) void userStore.loadCurrentUser()
   void workflowRunsStore.bootstrap()
   disposeUiZoom = initUiZoom()
-  disposeFullscreenHotkey = initFullscreenHotkey()
 })
 
 onUnmounted(() => {
   disposeUiZoom?.()
   disposeUiZoom = null
-  disposeFullscreenHotkey?.()
-  disposeFullscreenHotkey = null
   conversationLoadController?.abort()
   stopSidebarResize()
   stopChatPanelResize()

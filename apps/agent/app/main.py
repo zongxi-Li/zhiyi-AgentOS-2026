@@ -15,7 +15,6 @@ import logging
 from fastapi.exceptions import RequestValidationError
 from app.api import chat, tts, agentos_v2
 from app.paths import APP_DATA_DIR
-from app.services.aiservice import AIService
 from app.integrations.model_adapter import configure_model_adapter
 from app.integrations.tool_adapter import configure_tool_adapter
 from app.execution import (
@@ -104,9 +103,6 @@ app.add_middleware(TraceIdMiddleware)
 # 注册异常处理器
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
-
-# 初始化AI服务
-ai_service = AIService()
 
 # 注册路由
 app.include_router(chat.router, prefix="/ai", tags=["AI"])
