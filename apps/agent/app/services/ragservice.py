@@ -130,7 +130,7 @@ class RAGService:
         """
         从文件数据中提取文本
         
-        优先级：高级文档处理器 > 增强文档处理器 > 基础实现
+        优先级：高级文档处理器 > 基础实现
         已集成easydoc、mineru、pdfplumber等文档处理工具支持
         """
         try:
@@ -164,24 +164,7 @@ class RAGService:
                 else:
                     logger.warning(f"高级文档处理器提取失败: {result.get('error')}")
             except ImportError:
-                logger.debug("高级文档处理器不可用，尝试增强文档处理器")
-            
-            # 回退到增强文档处理器
-            try:
-                from app.services.documentprocessorenhanced import enhanced_document_processor
-                
-                result = enhanced_document_processor.extract_text(
-                    file_data=file_data,
-                    filename=filename,
-                    use_enhanced=True
-                )
-                
-                if result.get("success"):
-                    return result.get("text", "")
-                else:
-                    logger.warning(f"增强文档处理器提取失败: {result.get('error')}")
-            except ImportError:
-                logger.debug("增强文档处理器不可用，使用基础实现")
+                logger.debug("高级文档处理器不可用，使用基础实现")
             
             # 最终回退到基础实现
             try:

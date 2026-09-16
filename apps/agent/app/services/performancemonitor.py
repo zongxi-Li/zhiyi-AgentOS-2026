@@ -208,6 +208,10 @@ class PerformanceOptimizer:
     
     def __init__(self, monitor: PerformanceMonitor):
         self.monitor = monitor
+        self.performance_metrics = defaultdict(list)
+        self.optimization_suggestions = []
+        self.cache_hits = 0
+        self.cache_misses = 0
     
     def analyze_and_suggest(self) -> Dict:
         """分析性能并给出优化建议"""
@@ -259,8 +263,166 @@ class PerformanceOptimizer:
             "timestamp": datetime.now().isoformat()
         }
 
+    def optimize_system_performance(self) -> Dict:
+        optimizations = []
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
 
-# 全局性能监控器实例
+        if cpu_percent > 80:
+            optimizations.append({
+                "type": "cpu",
+                "issue": "CPU usage is high",
+                "suggestion": "Reduce concurrent tasks or optimize compute-heavy work",
+                "priority": "high",
+            })
+        if memory.percent > 85:
+            optimizations.append({
+                "type": "memory",
+                "issue": "Memory usage is high",
+                "suggestion": "Clear caches or optimize data structures",
+                "priority": "high",
+            })
+
+        return {
+            "system_resources": {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory.percent,
+                "memory_available": memory.available,
+            },
+            "optimizations": optimizations,
+            "suggestions": self._generate_optimization_suggestions(),
+            "cache_efficiency": self._calculate_cache_efficiency(),
+        }
+
+    def optimize_multimodal_processing(self, processing_tasks: List[Dict]) -> Dict:
+        prioritized_tasks = sorted(
+            processing_tasks,
+            key=lambda task: task.get("priority", 5),
+            reverse=True,
+        )
+        max_parallel = min(len(prioritized_tasks), psutil.cpu_count())
+        batched_tasks = self._batch_similar_tasks(prioritized_tasks)
+        return {
+            "optimized_tasks": prioritized_tasks,
+            "max_parallel": max_parallel,
+            "batched_groups": len(batched_tasks),
+            "estimated_time_reduction": 0.3,
+        }
+
+    def optimize_concurrent_processing(self, concurrent_limit: int = 10) -> Dict:
+        cpu_count = psutil.cpu_count()
+        memory_gb = psutil.virtual_memory().total / (1024**3)
+        optimal_concurrent = min(
+            concurrent_limit,
+            cpu_count * 2,
+            int(memory_gb * 2),
+        )
+        return {
+            "optimal_concurrent": optimal_concurrent,
+            "current_limit": concurrent_limit,
+            "system_resources": {
+                "cpu_count": cpu_count,
+                "memory_gb": round(memory_gb, 2),
+            },
+            "recommendation": "optimal" if optimal_concurrent == concurrent_limit else "adjust",
+        }
+
+    def optimize_voice_processing(self, audio_data: bytes, sample_rate: int = 16000) -> Dict:
+        if sample_rate > 16000:
+            optimized_sample_rate = 16000
+            optimization_applied = "downsampling"
+        else:
+            optimized_sample_rate = sample_rate
+            optimization_applied = "none"
+
+        duration = len(audio_data) / (sample_rate * 2)
+        if duration > 10.0:
+            segment_size = int(10.0 * sample_rate * 2)
+            segments = len(audio_data) // segment_size
+            optimization_applied = f"segmentation ({segments} segments)"
+        else:
+            segments = 1
+
+        return {
+            "original_sample_rate": sample_rate,
+            "optimized_sample_rate": optimized_sample_rate,
+            "duration": duration,
+            "segments": segments,
+            "optimization_applied": optimization_applied,
+            "estimated_speedup": 1.2 if optimization_applied != "none" else 1.0,
+        }
+
+    def optimize_generation_quality(
+        self,
+        generation_type: str,
+        quality_level: str = "balanced",
+    ) -> Dict:
+        quality_configs = {
+            "text": {
+                "speed": {"max_tokens": 200, "temperature": 0.7, "top_p": 0.9},
+                "balanced": {"max_tokens": 500, "temperature": 0.8, "top_p": 0.95},
+                "quality": {"max_tokens": 1000, "temperature": 0.9, "top_p": 0.99},
+            },
+            "image": {
+                "speed": {"resolution": "512x512", "steps": 20},
+                "balanced": {"resolution": "1024x1024", "steps": 50},
+                "quality": {"resolution": "2048x2048", "steps": 100},
+            },
+            "video": {
+                "speed": {"duration": 5, "fps": 24},
+                "balanced": {"duration": 10, "fps": 30},
+                "quality": {"duration": 15, "fps": 60},
+            },
+        }
+        return {
+            "generation_type": generation_type,
+            "quality_level": quality_level,
+            "config": quality_configs.get(generation_type, {}).get(quality_level, {}),
+            "estimated_time": self._estimate_generation_time(generation_type, quality_level),
+        }
+
+    def _batch_similar_tasks(self, tasks: List[Dict]) -> List[List[Dict]]:
+        batches = []
+        current_batch = []
+        current_type = None
+        for task in tasks:
+            task_type = task.get("type", "unknown")
+            if task_type == current_type and len(current_batch) < 5:
+                current_batch.append(task)
+            else:
+                if current_batch:
+                    batches.append(current_batch)
+                current_batch = [task]
+                current_type = task_type
+        if current_batch:
+            batches.append(current_batch)
+        return batches
+
+    def _generate_optimization_suggestions(self) -> List[str]:
+        suggestions = []
+        if self._calculate_cache_efficiency() < 0.5:
+            suggestions.append("Cache hit rate is low; review cache sizing and strategy")
+        if self.performance_metrics:
+            metrics = self.performance_metrics.get("all", [])
+            avg_latency = sum(item.get("latency", 0) for item in metrics) / max(len(metrics), 1)
+            if avg_latency > 1.0:
+                suggestions.append("Average latency is high; review algorithms or concurrency")
+        return suggestions
+
+    def _calculate_cache_efficiency(self) -> float:
+        total = self.cache_hits + self.cache_misses
+        return self.cache_hits / total if total else 0.0
+
+    def _estimate_generation_time(self, generation_type: str, quality_level: str) -> float:
+        base_times = {
+            "text": {"speed": 1.0, "balanced": 2.0, "quality": 5.0},
+            "image": {"speed": 5.0, "balanced": 15.0, "quality": 30.0},
+            "video": {"speed": 30.0, "balanced": 60.0, "quality": 120.0},
+        }
+        return base_times.get(generation_type, {}).get(quality_level, 2.0)
+
+
+# 全局性能监控器与优化器实例
 performance_monitor = PerformanceMonitor()
 performance_optimizer = PerformanceOptimizer(performance_monitor)
 
