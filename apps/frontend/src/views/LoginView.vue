@@ -8,10 +8,6 @@
           <strong>AgentOS</strong>
         </span>
       </a>
-      <button class="auth-back" data-testid="auth-back-to-landing" type="button" @click="handleBrandClick">
-        <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
-        <span>返回介绍页</span>
-      </button>
       <button
         class="auth-theme-toggle"
         data-testid="auth-theme-toggle"
@@ -23,7 +19,6 @@
         <el-icon aria-hidden="true"><Sunny v-if="isDarkTheme" /><Moon v-else /></el-icon>
         <span>{{ isDarkTheme ? '黑暗' : '明亮' }}</span>
       </button>
-      <span class="auth-topbar__note">More Agents <i aria-hidden="true">·</i> More Possibilities</span>
       <DesktopWindowControls v-if="desktopShell" />
     </header>
 
@@ -98,14 +93,14 @@
       </section>
     </div>
 
-    <footer v-if="!props.embedded" class="auth-footer"><span>© 2025 知弈 AgentOS</span><span>智能协作 · 共创未来</span></footer>
+    <footer v-if="!props.embedded" class="auth-footer"><span>© 2026 知弈 AgentOS</span><span>智能协作 · 共创未来</span></footer>
   </main>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ChatDotRound, Connection, Lock, Message, Moon, OfficeBuilding, Sunny, User } from '@element-plus/icons-vue'
+import { ChatDotRound, Connection, Lock, Message, Moon, OfficeBuilding, Sunny, User } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { authApi } from '@/services/api/auth'
@@ -268,12 +263,8 @@ const handleRegister = async () => {
 .auth-brand strong { color: #23477d; font-family: var(--font-sans); font-size: .93em; font-weight: 650; letter-spacing: -.045em; }
 .auth-brand__logo { width: 36px; height: 36px; display: block; }
 .auth-brand__logo img { width: 100%; height: 100%; display: block; object-fit: contain; }
-.auth-back { display: inline-flex; align-items: center; gap: 6px; margin-left: 26px; padding: 8px 0; border: 0; color: #557cae; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; transition: color 180ms ease, transform 180ms ease; }
-.auth-back:hover { color: var(--auth-ink); transform: translateX(-2px); }
 .auth-theme-toggle { min-height: 34px; margin-left: 18px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(36, 143, 240, .2); border-radius: 999px; color: #557cae; background: rgba(255, 255, 255, .28); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease; }
 .auth-theme-toggle:hover { border-color: rgba(36, 143, 240, .5); color: var(--auth-ink); background: rgba(255, 255, 255, .62); transform: translateY(-1px); }
-.auth-topbar__note { color: #7b96bd; font-size: 11px; letter-spacing: .11em; }
-.auth-topbar__note i { padding: 0 10px; color: var(--auth-blue); font-style: normal; }
 .auth-layout { width: min(100% - 96px, 1420px); min-height: calc(100vh - 130px); min-height: calc(100dvh - 130px); margin: 0 auto; display: grid; grid-template-columns: minmax(360px, 1fr) minmax(420px, 520px); align-items: center; gap: clamp(70px, 11vw, 190px); padding-bottom: 44px; box-sizing: border-box; }
 .auth-intro { margin-top: -5vh; }
 .auth-eyebrow { margin: 0 0 22px; color: #6c8fbe; font-size: 11px; font-weight: 700; letter-spacing: .25em; }
@@ -318,17 +309,16 @@ const handleRegister = async () => {
 .auth-switch button { padding: 4px; font-weight: 700; }
 .auth-legal { margin: 19px 0 0; color: #a1b2c9; font-size: 10px; line-height: 1.6; text-align: center; }
 .auth-footer { width: min(100% - 96px, 1920px); margin: -2px auto 0; padding-bottom: 20px; display: flex; justify-content: space-between; color: #6f8bae; font-size: 10px; letter-spacing: .05em; }
-.auth-brand:focus-visible, .auth-back:focus-visible, .auth-theme-toggle:focus-visible, .text-action:focus-visible, .auth-switch button:focus-visible, .auth-providers button:focus-visible, .auth-submit:focus-visible { outline: 3px solid rgba(36,143,240,.42); outline-offset: 3px; }
+.auth-brand:focus-visible, .auth-theme-toggle:focus-visible, .text-action:focus-visible, .auth-switch button:focus-visible, .auth-providers button:focus-visible, .auth-submit:focus-visible { outline: 3px solid rgba(36,143,240,.42); outline-offset: 3px; }
 @media (max-width: 940px) { .auth-layout { width: min(100% - 56px, 680px); display: block; padding-top: 7vh; } .auth-intro { display: none; } .auth-card { max-width: 520px; margin: 0 auto; } }
-@media (max-width: 560px) { .auth-view { overflow-y: auto; } .auth-topbar { width: calc(100% - 40px); min-height: 72px; } .auth-brand { font-size: 18px; } .auth-brand__logo { width: 32px; height: 32px; } .auth-back { margin-left: auto; } .auth-back span, .auth-theme-toggle span { display: none; } .auth-theme-toggle { margin-left: 8px; padding: 0 9px; } .auth-topbar__note { display: none; } .auth-layout { width: calc(100% - 32px); min-height: auto; padding-top: 4vh; padding-bottom: 28px; } .auth-card { padding: 28px 22px 24px; border-radius: 20px; } .auth-card__heading h2 { font-size: 27px; } .auth-footer { width: calc(100% - 32px); padding-bottom: 16px; font-size: 9px; } }
+@media (max-width: 560px) { .auth-view { overflow-y: auto; } .auth-topbar { width: calc(100% - 40px); min-height: 72px; } .auth-brand { font-size: 18px; } .auth-brand__logo { width: 32px; height: 32px; } .auth-theme-toggle span { display: none; } .auth-theme-toggle { margin-left: 8px; padding: 0 9px; } .auth-layout { width: calc(100% - 32px); min-height: auto; padding-top: 4vh; padding-bottom: 28px; } .auth-card { padding: 28px 22px 24px; border-radius: 20px; } .auth-card__heading h2 { font-size: 27px; } .auth-footer { width: calc(100% - 32px); padding-bottom: 16px; font-size: 9px; } }
 @media (prefers-reduced-motion: reduce) { .auth-form :deep(.el-input__wrapper), .auth-submit, .auth-providers button { transition: none; } }
 
 /* Tauri 隐藏了原生标题栏，桌面 shell 下由登录页顶栏兼任窗口拖拽区，
    右上角承载窗口控制按钮（纯 Web 版不渲染桌面 shell）。 */
 .auth-view.is-desktop-shell { overflow-y: auto; scrollbar-gutter: stable; }
 .auth-view.is-desktop-shell .auth-topbar { width: 100%; min-height: 52px; padding-left: 18px; box-sizing: border-box; }
-.auth-view.is-desktop-shell .auth-topbar__note { margin-left: auto; margin-right: 24px; }
-.auth-view.is-desktop-shell :deep(.desktop-window-controls) { flex: 0 0 auto; height: 52px; align-self: center; }
+.auth-view.is-desktop-shell :deep(.desktop-window-controls) { flex: 0 0 auto; height: 52px; align-self: center; margin-left: auto; }
 
 /* Desktop windows can be as small as 1100x700. Keep the registration form,
    providers and legal copy available in one viewport while retaining scrolling
@@ -421,12 +411,8 @@ const handleRegister = async () => {
       linear-gradient(90deg, rgba(3, 7, 15, .94) 0%, rgba(3, 10, 22, .76) 44%, rgba(3, 7, 15, .48) 100%),
       linear-gradient(180deg, rgba(1, 4, 10, .16), rgba(1, 4, 10, .72));
   }
-  .auth-topbar__note { color: rgba(204, 222, 247, .68); }
-  .auth-topbar__note i { color: var(--auth-blue); }
   .auth-brand { color: #f1f6ff; }
   .auth-brand strong { color: color-mix(in srgb, var(--auth-accent) 42%, #f1f6ff); }
-  .auth-back { color: #a8bfdc; }
-  .auth-back:hover { color: #f1f6ff; }
   .auth-theme-toggle { border-color: rgba(109, 189, 255, .3); color: #b7cbe4; background: rgba(9, 24, 46, .48); }
   .auth-theme-toggle:hover { border-color: rgba(109, 189, 255, .68); color: #f1f6ff; background: rgba(18, 44, 77, .76); }
   .auth-intro h1 { color: #f1f6ff; }

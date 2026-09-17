@@ -87,8 +87,8 @@ describe('LoginView', () => {
   it('returns to the landing section that opened the login page', async () => {
     const { router, wrapper } = await mountLogin('/login?from=%2F%23ecosystem')
 
-    expect(wrapper.get('[data-testid="auth-back-to-landing"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="auth-back-to-landing"]').trigger('click')
+    expect(wrapper.get('.auth-brand').exists()).toBe(true)
+    await wrapper.get('.auth-brand').trigger('click')
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/')
