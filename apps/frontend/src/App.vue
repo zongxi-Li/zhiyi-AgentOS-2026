@@ -584,8 +584,9 @@ const sidebarResizing = ref(false)
 const isAcgRoute = computed(() => isAcgPath(route.path))
 const secondaryNavOpen = computed(() => chatNavOpen.value)
 const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value)
-const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? 60 + chatPanelWidth.value : (sidebarCollapsed.value ? 60 : sidebarWidth.value)}px`)
-const primarySidebarWidth = computed(() => `${mainSidebarCompact.value ? 60 : sidebarWidth.value}px`)
+const COLLAPSED_SIDEBAR_WIDTH = 48
+const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? COLLAPSED_SIDEBAR_WIDTH + chatPanelWidth.value : (sidebarCollapsed.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value)}px`)
+const primarySidebarWidth = computed(() => `${mainSidebarCompact.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value}px`)
 let sidebarResizeStartX = 0
 let sidebarResizeStartWidth = SIDEBAR_DEFAULT_WIDTH
 let chatPanelResizeStartX = 0
@@ -1677,22 +1678,31 @@ onUnmounted(() => {
 }
 
 .chat-nav-trigger:hover {
-  border-color: var(--border-light);
-  background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
   color: var(--text-primary);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 82%, transparent);
+  box-shadow: none;
 }
 
 .chat-nav-group.active > .chat-nav-trigger {
-  border-color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 14%, var(--sidebar-bg));
-  color: var(--primary-color);
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-primary);
   font-weight: 500;
   box-shadow: none;
 }
 
+/* VS Code 简约选中态：左缘细竖条指示，无底色无描边 */
 .chat-nav-group.active > .chat-nav-trigger::before {
-  content: none;
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -8px;
+  width: 2px;
+  height: 18px;
+  border-radius: 1px;
+  background: var(--text-primary);
+  transform: translateY(-50%);
 }
 
 .chat-nav-trigger:focus-visible {
@@ -1705,11 +1715,18 @@ onUnmounted(() => {
   padding: 0;
 }
 
+.app-sidebar.collapsed .chat-nav-group.active > .chat-nav-trigger::before {
+  left: -6px;
+}
+
 .app-sidebar.collapsed .chat-nav-trigger > .el-icon:first-child {
   margin-right: 0;
 }
 
 .app-sidebar.collapsed .acg-nav-logo {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
   transform: none;
 }
 
@@ -2209,7 +2226,7 @@ onUnmounted(() => {
   transform: translateX(var(--sidebar-collapsed-menu-icon-offset));
 }
 
-/* Apple 风格选中态：单层半透明表面，不叠加独立指示条 */
+/* 简约选中态：图标/文字提亮，选中指示条见 .is-active::before */
 .sidebar-menu :deep(.el-menu-item) {
   height: 44px;
   margin: 0 0 2px;
@@ -2239,22 +2256,35 @@ onUnmounted(() => {
 }
 
 .sidebar-menu :deep(.el-menu-item:hover) {
-  border-color: var(--border-light);
-  background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
-  color: var(--text-primary);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface-solid) 82%, transparent);
-}
-
-.sidebar-menu :deep(.el-menu-item.is-active) {
-  border-color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 14%, var(--sidebar-bg));
-  color: var(--primary-color);
-  font-weight: 500;
+  border-color: transparent;
+  /* global.css 对 el-menu-item hover/active 有 ！important 强制（蓝底蓝字），此处同级覆盖回简约样式 */
+  background-color: color-mix(in srgb, var(--text-primary) 4%, transparent) !important;
+  color: var(--text-primary) !important;
   box-shadow: none;
 }
 
+.sidebar-menu :deep(.el-menu-item.is-active) {
+  border-color: transparent;
+  background-color: transparent !important;
+  color: var(--text-primary) !important;
+  box-shadow: none;
+}
+
+/* VS Code 简约选中态：左缘细竖条指示，无底色无描边 */
 .sidebar-menu :deep(.el-menu-item.is-active::before) {
-  content: none;
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -8px;
+  width: 2px;
+  height: 18px;
+  border-radius: 1px;
+  background: var(--text-primary);
+  transform: translateY(-50%);
+}
+
+.app-sidebar.collapsed .sidebar-menu :deep(.el-menu-item.is-active::before) {
+  left: -6px;
 }
 
 .sidebar-menu :deep(.el-menu-item:focus-visible) {

@@ -271,13 +271,13 @@ onBeforeUnmount(() => {
 .app-topbar {
   position: relative;
   z-index: 20;
-  flex: 0 0 42px;
+  flex: 0 0 36px;
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 42px;
+  height: 36px;
   padding: 0 8px;
   color: var(--app-topbar-text);
   background: var(--app-topbar-bg);
@@ -310,12 +310,12 @@ onBeforeUnmount(() => {
 
 .app-topbar__brand {
   position: relative;
-  flex: 0 0 34px;
+  flex: 0 0 28px;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 2px;
-  border-radius: 10px;
+  border-radius: 8px;
   text-align: left;
 }
 
@@ -332,21 +332,21 @@ onBeforeUnmount(() => {
 .app-topbar__logo {
   position: relative;
   display: grid;
-  flex: 0 0 28px;
+  flex: 0 0 24px;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   overflow: visible;
   background: var(--app-topbar-logo-bg);
   border: 1px solid var(--app-topbar-border);
-  border-radius: 8px;
+  border-radius: 7px;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--app-topbar-text) 8%, transparent), 0 0 0 1px color-mix(in srgb, var(--app-topbar-text) 18%, transparent) inset;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .app-topbar__logo img {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   object-fit: contain;
 }
 
@@ -416,8 +416,8 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   color: var(--app-topbar-muted);
   font-size: 15px;
@@ -452,11 +452,11 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   align-items: center;
-  width: clamp(300px, 34vw, 520px);
-  height: 32px;
+  width: clamp(200px, 24vw, 360px);
+  height: 26px;
   flex: 0 1 auto;
   min-width: 0;
-  padding: 0 9px;
+  padding: 0 8px;
   color: var(--app-topbar-text);
   background: var(--app-topbar-input-bg);
   border: 1px solid var(--app-topbar-input-border);
@@ -477,8 +477,8 @@ onBeforeUnmount(() => {
 
 .app-command-center__icon {
   flex: 0 0 auto;
-  margin-right: 7px;
-  font-size: 15px;
+  margin-right: 6px;
+  font-size: 14px;
 }
 
 .app-command-center input {
@@ -500,8 +500,8 @@ onBeforeUnmount(() => {
 
 .app-command-center kbd {
   flex: 0 0 auto;
-  min-width: 32px;
-  padding: 3px 6px;
+  min-width: 28px;
+  padding: 2px 5px;
   color: var(--app-topbar-muted);
   font-family: var(--font-mono);
   font-size: 9px;
@@ -631,7 +631,7 @@ onBeforeUnmount(() => {
   }
 
   .app-command-center {
-    width: min(calc(100vw - 210px), 420px);
+    width: min(calc(100vw - 210px), 320px);
   }
 }
 
@@ -659,7 +659,7 @@ onBeforeUnmount(() => {
 
 /* Screenshot refinement: keep the top chrome quiet and precise. */
 .app-topbar__menu-links button {
-  height: 30px;
+  height: 26px;
   border-radius: 6px;
 }
 

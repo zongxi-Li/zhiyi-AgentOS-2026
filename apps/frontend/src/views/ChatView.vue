@@ -384,16 +384,6 @@
                   </Transition>
                 </div>
                 <PermissionSelector v-if="isAgentMode" />
-                <div
-                  v-else
-                  class="composer-agent-mode composer-agent-mode--static"
-                  :class="{ 'composer-agent-mode--permission': isAgentMode }"
-                  :aria-label="isAgentMode ? '访问权限' : '通用对话模式'"
-                  :title="isAgentMode ? '当前 Agent 访问权限' : '通用对话模式'"
-                >
-                  <el-icon class="composer-agent-mode__icon"><component :is="composerModeIcon" /></el-icon>
-                  {{ composerModeLabel }}
-                </div>
                 <button
                   v-if="isAgentMode"
                   class="composer-acg-toggle"
@@ -585,7 +575,6 @@ import {
   Cpu,
   DArrowLeft,
   DArrowRight,
-  Key,
   Loading,
   Microphone,
   Plus,
@@ -1253,7 +1242,6 @@ const handleChatReviewConflict = async () => {
 
 const isAgentMode = computed(() => workspaceMode.value === 'agent')
 const agentIcon = computed(() => Cpu)
-const composerModeIcon = computed(() => isAgentMode.value ? Key : Cpu)
 const heroGreeting = computed(() => {
   const hour = new Date().getHours()
   if (hour < 5) return '夜深了，把任务交给 Agent 值守吧'
@@ -1263,8 +1251,6 @@ const heroGreeting = computed(() => {
   if (hour < 18) return '下午好，继续推进手头的事'
   return '晚上好，适合深度工作的时段'
 })
-
-const composerModeLabel = computed(() => isAgentMode.value ? '访问权限' : '通用 Chat')
 const formatContextTokens = (value: number): string => {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`
@@ -3263,39 +3249,6 @@ const handleHeroLogoPointerUp = () => {
 .composer-icon-action.active {
   background: var(--primary-fade);
   color: var(--primary-color);
-}
-
-.composer-agent-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 4px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: default;
-  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
-}
-
-
-
-
-.composer-agent-mode__icon {
-  color: var(--text-muted);
-}
-
-.composer-agent-mode--permission {
-  border-color: color-mix(in srgb, var(--accent-color) 34%, transparent);
-  background: var(--accent-fade);
-  color: var(--accent-color);
-}
-
-.composer-agent-mode--permission .composer-agent-mode__icon {
-  color: var(--accent-color);
 }
 
 .composer-acg-toggle {

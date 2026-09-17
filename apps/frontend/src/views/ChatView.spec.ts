@@ -231,7 +231,8 @@ describe('ChatView ACG progress integration', () => {
     await flushPromises()
 
     expect(wrapper.find('.hero-greeting').exists()).toBe(true)
-    expect(wrapper.get('.composer-agent-mode').text()).toContain('通用 Chat')
+    // Chat 模式已移除「通用 Chat」静态徽标，仅 Agent 模式保留权限选择器
+    expect(wrapper.find('.composer-agent-mode').exists()).toBe(false)
     wrapper.unmount()
   })
 
