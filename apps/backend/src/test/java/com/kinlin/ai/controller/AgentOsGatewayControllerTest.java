@@ -323,6 +323,19 @@ class AgentOsGatewayControllerTest {
         assertEquals("successor_run", ((Map<?, ?>) gateway.lastPostBody).get("mode"));
     }
 
+    @Test
+    void traceForwardsWorkspaceViewAndKeepsDefaultFullExport() throws Exception {
+        String path = "/ai/agentos/v2/runs/run_001/trace";
+        gateway.getResponses.put(path, response(200, Map.of("eventCount", 50000)));
+        gateway.getResponses.put(path + "?view=workspace", response(200, Map.of("eventCount", 50000)));
+        mockMvc.perform(get("/api/agentos/v2/runs/run_001/trace").param("view", "workspace"))
+                .andExpect(status().isOk());
+        assertEquals(path + "?view=workspace", gateway.lastGetPath);
+        mockMvc.perform(get("/api/agentos/v2/runs/run_001/trace"))
+                .andExpect(status().isOk());
+        assertEquals(path, gateway.lastGetPath);
+    }
+
     private static Map<String, Object> response(int status, Map<String, Object> body) {
         Map<String, Object> result = new LinkedHashMap<>(body);
         result.put(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY, status);

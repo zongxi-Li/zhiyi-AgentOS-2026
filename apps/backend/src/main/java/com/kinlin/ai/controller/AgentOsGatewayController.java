@@ -273,8 +273,13 @@ public class AgentOsGatewayController {
     }
 
     @GetMapping("/runs/{runId}/trace")
-    public ResponseEntity<Map<String, Object>> getTrace(@PathVariable String runId) {
-        return response(gateway.get(runPath(runId) + "/trace"));
+    public ResponseEntity<Map<String, Object>> getTrace(
+            @PathVariable String runId,
+            @RequestParam(required = false) String view
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("view", view);
+        return response(gateway.get(query(runPath(runId) + "/trace", params)));
     }
 
     @GetMapping("/runs/{runId}/memory-events")
