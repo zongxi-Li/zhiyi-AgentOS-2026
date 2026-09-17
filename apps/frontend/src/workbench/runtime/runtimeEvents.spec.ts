@@ -62,7 +62,11 @@ describe('RunRuntimeStore streaming projection', () => {
     store.apply({ ...event(5, 'planner.model.output.delta', '', '', ''), payload: { stage: 'outline', callKey: 'outline', delta: '{"tasks":' } })
     store.apply({ ...event(6, 'planner.model.output.delta', '', '', ''), payload: { stage: 'outline', callKey: 'outline', delta: '[]}' } })
     store.apply({ ...event(7, 'planner.profile.resolved', '', '', ''), payload: { requiredCapabilityCount: 3, expectedArtifactCount: 2 } })
-    store.apply({ ...event(8, 'planner.plan.parsed', '', '', ''), payload: { taskCount: 5, dependencyCount: 4 } })
+    store.apply({ ...event(8, 'planner.plan.parsed', '', '', ''), payload: {
+      taskCount: 5, dependencyCount: 4,
+      nodes: [{ key: 'understand', title: 'Understand', objective: 'Establish scope', capabilityRequirements: ['analysis'], acceptanceCriteria: ['approved'] }],
+      relations: [{ sourceKey: 'understand', targetKey: 'deliver', relationType: 'depends_on' }]
+    } })
     store.apply({ ...event(9, 'planner.graph.compiled', '', '', ''), payload: { nodeCount: 6, edgeCount: 7 } })
     store.apply({ ...event(10, 'planner.draft.updated', '', '', ''), payload: {
       stage: 'detail',
@@ -79,6 +83,8 @@ describe('RunRuntimeStore streaming projection', () => {
     expect(store.planning.chunkCount).toBe(2)
     expect(store.planning.profile?.requiredCapabilityCount).toBe(3)
     expect(store.planning.plan?.taskCount).toBe(5)
+    expect(store.planning.plan?.nodes[0].objective).toBe('Establish scope')
+    expect(store.planning.plan?.relations[0].targetKey).toBe('deliver')
     expect(store.planning.graph?.edgeCount).toBe(7)
     expect(store.planning.draft.nodes[0]?.rationale).toBe('Establish scope')
     expect(store.planning.draft.edges).toHaveLength(1)

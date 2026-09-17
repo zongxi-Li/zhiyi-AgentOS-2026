@@ -317,7 +317,17 @@ describe('RunProgressEditor', () => {
   })
 
   it('renders the remaining planning stages as dedicated artifacts', async () => {
-    const wrapper = mountEditor()
+    const runtimeStore = new RunRuntimeStore('run_1')
+    runtimeStore.apply({ ...runtimeEvent(1, 'planner.started') })
+    runtimeStore.apply({ ...runtimeEvent(2, 'planner.plan.parsed'), payload: {
+      taskCount: 2, dependencyCount: 1,
+      nodes: [
+        { key: 'research', title: 'Research', objective: 'Collect evidence', capabilityRequirements: ['analysis'], acceptanceCriteria: ['Sources verified'] },
+        { key: 'report', title: 'Report', objective: 'Write report', capabilityRequirements: ['artifact_generation'], acceptanceCriteria: ['Report delivered'] }
+      ],
+      relations: [{ sourceKey: 'research', targetKey: 'report', relationType: 'depends_on' }]
+    } })
+    const wrapper = mountEditor({ runtimeStore })
 
     await wrapper.get('[data-symbol-type="planner"] .run-symbol__main').trigger('click')
     const taskPlan = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Task Plan'))!
@@ -329,10 +339,14 @@ describe('RunProgressEditor', () => {
     const detail = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Detail'))!
     await detail.find('.run-symbol__main').trigger('click')
     expect(wrapper.get('[data-testid="planning-detail-artifact"]').text()).toContain('任务细化')
+    expect(wrapper.get('[data-testid="planning-detail-artifact"]').text()).toContain('Collect evidence')
+    expect(wrapper.get('[data-testid="planning-detail-artifact"]').text()).toContain('Sources verified')
 
     const relations = wrapper.findAll('[data-symbol-type="stage"]').find(item => item.text().includes('Relations'))!
     await relations.find('.run-symbol__main').trigger('click')
     expect(wrapper.get('[data-testid="planning-relations-artifact"]').text()).toContain('依赖关系')
+    expect(wrapper.get('[data-testid="planning-relations-artifact"]').text()).toContain('Research')
+    expect(wrapper.get('[data-testid="planning-relations-artifact"]').text()).toContain('Report')
   })
 
   it('shows the latest planner phase note while planning is still running', () => {

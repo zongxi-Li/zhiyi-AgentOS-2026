@@ -13,8 +13,23 @@
     </header>
 
     <section class="planning-stage-artifact__objective" aria-labelledby="planning-stage-objective-title">
-      <div class="planning-stage-artifact__section-label" id="planning-stage-objective-title">OBJECTIVE</div>
-      <p>{{ missionGoal }}</p>
+      <div class="planning-stage-artifact__section-label" id="planning-stage-objective-title">{{ contentLabel }}</div>
+      <p v-if="viewKey === 'task-plan'">{{ missionGoal }}</p>
+      <div v-else-if="viewKey === 'detail'" class="planning-stage-artifact__task-list">
+        <article v-for="task in tasks" :key="task.key" class="planning-stage-artifact__task">
+          <div><strong>{{ task.title }}</strong><code>{{ task.key }}</code></div>
+          <p>{{ task.objective || '暂无任务目标' }}</p>
+          <small v-if="task.capabilityRequirements.length">能力：{{ task.capabilityRequirements.join('、') }}</small>
+          <small v-if="task.acceptanceCriteria.length">验收：{{ task.acceptanceCriteria.join('；') }}</small>
+        </article>
+        <p v-if="!tasks.length" class="planning-stage-artifact__empty">当前 Run 未返回任务细化数据。</p>
+      </div>
+      <div v-else class="planning-stage-artifact__relation-list">
+        <div v-for="(relation, index) in relations" :key="`${relation.sourceKey}:${relation.targetKey}:${index}`" class="planning-stage-artifact__relation">
+          <span>{{ taskTitle(relation.sourceKey) }}</span><b>→</b><span>{{ taskTitle(relation.targetKey) }}</span><small>{{ relation.relationType }}</small>
+        </div>
+        <p v-if="!relations.length" class="planning-stage-artifact__empty">当前 Run 未返回依赖关系数据。</p>
+      </div>
     </section>
 
     <section class="planning-stage-artifact__facts" aria-labelledby="planning-stage-facts-title">
@@ -60,7 +75,21 @@ const props = defineProps<{
   missionGoal: string
   runId: string | null
   viewKey: PlanningStageKey
+  plan?: Record<string, any> | null
 }>()
+
+type PlanTask = { key: string; title: string; objective: string; capabilityRequirements: string[]; acceptanceCriteria: string[] }
+type PlanRelation = { sourceKey: string; targetKey: string; relationType: string }
+const tasks = computed<PlanTask[]>(() => (Array.isArray(props.plan?.nodes) ? props.plan.nodes : []).map((item: any) => ({
+  key: String(item?.key || ''), title: String(item?.title || item?.key || ''), objective: String(item?.objective || ''),
+  capabilityRequirements: Array.isArray(item?.capabilityRequirements) ? item.capabilityRequirements.map(String) : [],
+  acceptanceCriteria: Array.isArray(item?.acceptanceCriteria) ? item.acceptanceCriteria.map(String) : []
+})).filter((item: PlanTask) => item.key))
+const relations = computed<PlanRelation[]>(() => (Array.isArray(props.plan?.relations) ? props.plan.relations : []).map((item: any) => ({
+  sourceKey: String(item?.sourceKey || ''), targetKey: String(item?.targetKey || ''), relationType: String(item?.relationType || 'depends_on')
+})).filter((item: PlanRelation) => item.sourceKey && item.targetKey))
+const taskTitle = (key: string) => tasks.value.find(item => item.key === key)?.title || key
+const contentLabel = computed(() => props.viewKey === 'task-plan' ? 'MISSION OBJECTIVE' : props.viewKey === 'detail' ? 'TASK DETAILS' : 'DEPENDENCY GRAPH')
 
 const stageInfo = computed(() => ({
   'task-plan': {
@@ -122,6 +151,16 @@ const metrics = computed(() => props.viewKey === 'task-plan'
 .planning-stage-artifact__status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .planning-stage-artifact__objective { margin-top: 22px; padding: 15px 16px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
 .planning-stage-artifact__objective p { margin-top: 9px; color: var(--wb-text); font-size: 14px; line-height: 1.65; }
+.planning-stage-artifact__task-list, .planning-stage-artifact__relation-list { display: grid; gap: 8px; margin-top: 10px; }
+.planning-stage-artifact__task { padding: 11px 12px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-2); }
+.planning-stage-artifact__task > div { display: flex; justify-content: space-between; gap: 12px; }
+.planning-stage-artifact__task strong { font-size: 13px; }
+.planning-stage-artifact__task code, .planning-stage-artifact__task small { color: var(--wb-text-muted); font: 10px/1.5 var(--font-mono, monospace); }
+.planning-stage-artifact__task small { display: block; margin-top: 5px; }
+.planning-stage-artifact__relation { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-2); font-size: 12px; }
+.planning-stage-artifact__relation b { color: var(--wb-accent); }
+.planning-stage-artifact__relation small { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
+.planning-stage-artifact__empty { color: var(--wb-text-muted) !important; }
 .planning-stage-artifact__facts { margin-top: 24px; }
 .planning-stage-artifact__section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .planning-stage-artifact__section-heading > span { color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); }

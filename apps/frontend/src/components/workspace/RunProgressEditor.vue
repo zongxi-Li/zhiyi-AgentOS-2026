@@ -107,6 +107,7 @@
                   :mission-goal="goalSource"
                   :run-id="resolvedRunId"
                   :view-key="planningStageViewKey(column.detail) || 'detail'"
+                  :plan="runtimeStore?.planning.plan || null"
                 />
               </div>
               <div v-else-if="column.detail" class="run-progress__detail">
