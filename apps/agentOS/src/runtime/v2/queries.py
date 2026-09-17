@@ -266,6 +266,16 @@ class IdentityQueryService:
                 blueprintHash=metadata.get("compiledPackageBlueprintHash"),
             )
 
+        raw_context_refs = projection.get("contextRefs")
+        context_refs = (
+            {
+                str(step_id): context_ref
+                for step_id, context_ref in raw_context_refs.items()
+                if isinstance(context_ref, str) and context_ref
+            }
+            if isinstance(raw_context_refs, dict)
+            else {}
+        )
         node_executions = []
         communication_refs: list[str] = []
         memory_refs: list[str] = []
@@ -317,6 +327,7 @@ class IdentityQueryService:
             ),
             nodeExecutions=node_executions,
             controlFrames=list(projection.get("controlFrames") or []),
+            contextRefs=context_refs,
             communicationRefs=list(dict.fromkeys(communication_refs)),
             memoryRefs=list(dict.fromkeys(memory_refs)),
             evidenceRefs=list(dict.fromkeys(evidence_refs)),

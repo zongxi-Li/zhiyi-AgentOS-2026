@@ -97,6 +97,7 @@ class RunOperationalState(DomainModel):
         default_factory=list, alias="nodeExecutions"
     )
     control_frames: list[dict] = Field(default_factory=list, alias="controlFrames")
+    context_refs: dict[str, str] = Field(default_factory=dict, alias="contextRefs")
     communication_refs: list[str] = Field(
         default_factory=list, alias="communicationRefs"
     )
