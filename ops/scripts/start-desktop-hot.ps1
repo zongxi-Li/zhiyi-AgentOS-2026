@@ -56,6 +56,7 @@ if ($occupiedPort) {
 }
 
 Set-Location $desktopDir
+Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
 Write-Host '正在启动知弈 AgentOS 热更新桌面版...' -ForegroundColor Cyan
 Write-Host '修改 frontend 源码后，Vite 会自动更新桌面窗口。关闭桌面窗口即可结束本次开发运行。' -ForegroundColor Gray
 

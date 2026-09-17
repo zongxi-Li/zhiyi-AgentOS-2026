@@ -315,13 +315,57 @@ const clearAll = async () => {
 .history-content :deep(.item-preview),
 .history-content :deep(.item-meta) { color: var(--wb-text-secondary); }
 
-.history-content :deep(.loading-state),
 .history-content :deep(.empty-state) {
   min-height: 280px;
   border: 1px dashed var(--wb-border);
   border-radius: var(--wb-radius-section);
   background: color-mix(in srgb, var(--wb-surface-section) 72%, transparent);
 }
+
+.history-content :deep(.loading-state) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+
+.history-content :deep(.skeleton-item) {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 76px;
+  padding: 16px 18px;
+  box-sizing: border-box;
+  border: 1px solid var(--wb-border-soft);
+  border-radius: var(--wb-radius-section);
+  background: color-mix(in srgb, var(--wb-surface-section) 60%, transparent);
+}
+
+.history-content :deep(.skeleton-avatar),
+.history-content :deep(.skeleton-icon),
+.history-content :deep(.skeleton-line) {
+  background: #111111;
+  animation: none;
+}
+
+.history-content :deep(.skeleton-avatar),
+.history-content :deep(.skeleton-icon) {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.history-content :deep(.skeleton-content) { min-width: 0; gap: 10px; }
+.history-content :deep(.skeleton-title) { width: min(34%, 260px); height: 10px; border-radius: 5px; }
+.history-content :deep(.skeleton-text) { width: min(58%, 460px); height: 7px; border-radius: 4px; }
+.history-content :deep(.skeleton-item:nth-child(2) .skeleton-title) { width: min(27%, 205px); }
+.history-content :deep(.skeleton-item:nth-child(2) .skeleton-text) { width: min(45%, 350px); }
+.history-content :deep(.skeleton-item:nth-child(3) .skeleton-title) { width: min(39%, 300px); }
+.history-content :deep(.skeleton-item:nth-child(3) .skeleton-text) { width: min(51%, 400px); }
+
 
 .history-content :deep(.empty-state .empty-icon) {
   border: 1px solid color-mix(in srgb, var(--wb-accent) 24%, var(--wb-border-soft));

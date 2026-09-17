@@ -56,7 +56,7 @@
                   :aria-current="isAcgRoute ? 'page' : undefined"
                   @click="handleAcgNavToggle"
                 >
-                  <img class="acg-nav-logo" src="/acglogo.png" alt="" aria-hidden="true" />
+                  <img class="acg-nav-logo" src="/acglogo.webp" alt="" aria-hidden="true" />
                   <span v-if="!mainSidebarCompact" class="chat-nav-label">ACG 动态群体智能引擎</span>
                 </button>
               </div>
@@ -325,7 +325,7 @@
                 <span>{{ $t('nav.chat') }}</span>
               </el-menu-item>
               <el-menu-item index="/agentos/acg">
-                <img class="acg-nav-logo" src="/acglogo.png" alt="" aria-hidden="true" />
+                <img class="acg-nav-logo" src="/acglogo.webp" alt="" aria-hidden="true" />
                 <span>ACG 动态群体智能引擎</span>
               </el-menu-item>
 

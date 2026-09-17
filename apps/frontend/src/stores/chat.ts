@@ -6,86 +6,6 @@ import { workflowApi, type AsyncWorkflowStartResponse } from '@/services/api/wor
 import { chatApi, type ChatRequest } from '@/services/api/chat'
 import { loadModelSettings, toModelRequestSettings, type ModelSettings } from '@/config/modelSettings'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
-import {
-  agentLawyerApi,
-  type AgentRoutingInfo,
-  type AgentTraceStep,
-  type FederatedInfo
-} from '@/services/api/agentLawyer'
-import {
-  agentTeacherApi,
-  type StudentDiagnosisResult,
-  type LessonPlanResult,
-  type HomeworkGradingResult,
-  type ErrorQuestionPushResult
-} from '@/services/api/agentTeacher'
-import {
-  agentProgrammerApi,
-  type RequirementAnalysisResult,
-  type CodebaseSemanticSearchResult,
-  type CodeGenerationResult,
-  type DiagramGenerationResult
-} from '@/services/api/agentProgrammer'
-import {
-  agentWriterApi,
-  type InspirationExpandResult,
-  type OutlineGenerateResult,
-  type ContentWriteResult,
-  type CharacterRelationResult
-} from '@/services/api/agentWriter'
-
-export interface EvidenceAnalysisResult {
-  evidence_items: Array<{ name: string; type: string; strength: string; notes: string }>
-  missing_evidence: string[]
-  overall_assessment: string
-  legal_basis: string[]
-}
-
-export interface LimitationCalcResult {
-  limitation_period?: string
-  start_date?: string
-  deadline?: string
-  expiry_date?: string
-  is_expired?: boolean
-  days_remaining?: number
-  interruption_events?: string[]
-  interruption_hints?: string[]
-  legal_basis?: string[] | string
-  status?: string
-  suggestion?: string
-  limitation_years?: number
-}
-
-export interface JurisdictionResult {
-  courts?: Array<{ name: string; basis: string }>
-  recommended_courts?: Array<{ court: string; reason: string; priority?: string }>
-  recommendation?: string
-  legal_basis?: string[] | string
-}
-
-export interface HearingOutlineResult {
-  outline_markdown?: string
-  outline?: string
-  agenda?: string[]
-  question_points?: string[]
-  risk_focus?: string[]
-}
-
-const parseTraceObservation = (
-  trace: AgentTraceStep[] | undefined,
-  action: string | string[]
-) => {
-  if (!trace?.length) return undefined
-  const actionList = Array.isArray(action) ? action : [action]
-  const target = [...trace].reverse().find(item => actionList.includes(item.action))
-  if (!target?.observation) return undefined
-  try {
-    const parsed = JSON.parse(target.observation)
-    return parsed && typeof parsed === 'object' ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
 
 export interface Message {
   id: number | string
@@ -113,27 +33,9 @@ export interface Message {
   latencyMs?: number
   executionSummary?: Array<{ stage: string; status: string; description: string; durationMs?: number }>
   skillsUsed?: string[]
-  trace?: AgentTraceStep[]
-  federated?: FederatedInfo
-  riskLevel?: string
-  evidenceAnalysis?: EvidenceAnalysisResult
-  limitationCalc?: LimitationCalcResult
-  jurisdiction?: JurisdictionResult
-  hearingOutline?: HearingOutlineResult
-  studentDiagnosis?: StudentDiagnosisResult
-  lessonPlan?: LessonPlanResult
-  homeworkGrading?: HomeworkGradingResult
-  errorQuestionPush?: ErrorQuestionPushResult
-  requirementAnalysis?: RequirementAnalysisResult
-  codebaseSemanticSearch?: CodebaseSemanticSearchResult
-  codeGeneration?: CodeGenerationResult
-  diagramGeneration?: DiagramGenerationResult
-  inspirationExpand?: InspirationExpandResult
-  outlineGenerate?: OutlineGenerateResult
-  contentWrite?: ContentWriteResult
-  characterRelationMap?: CharacterRelationResult
-  agentMode?: 'default' | 'lawyer' | 'teacher' | 'programmer' | 'writer'
-  routing?: AgentRoutingInfo
+  trace?: Array<Record<string, unknown>>
+
+  agentMode?: 'default'
   acgTaskId?: string
   workflowRunId?: string
   workflowMissionId?: string
@@ -162,8 +64,6 @@ export interface ChatWorkflowStartResult {
   response: AsyncWorkflowStartResponse
   binding: ChatWorkflowBinding
 }
-
-type AgentMode = NonNullable<Message['agentMode']>
 
 export const useChatStore = defineStore('chat', () => {
   const WORKFLOW_BINDINGS_KEY = 'chat.workflow_bindings.v1'
@@ -198,10 +98,6 @@ export const useChatStore = defineStore('chat', () => {
   const workflowRunsStore = useWorkflowRunsStore()
   let activeStreamController: AbortController | null = null
   const contextId = ref<string | null>(null)
-  const lawyerSessionId = ref<string | null>(null)
-  const teacherSessionId = ref<string | null>(null)
-  const programmerSessionId = ref<string | null>(null)
-  const writerSessionId = ref<string | null>(null)
   const currentRoleId = ref<string | null>(null)
   // Context window usage for the composer indicator: tokens consumed by the
   // latest exchange (input + output ≈ what the next request will carry) and
@@ -371,68 +267,11 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  const sendLawyerMessage = async (text: string) => {
-    if (!text.trim() || loading.value) return
-
-    pushUserMessage(text)
-
-    loading.value = true
-    try {
-      const response = await agentLawyerApi.chat({
-        text,
-        sessionId: lawyerSessionId.value || undefined
-      })
-
-      lawyerSessionId.value = response.sessionId || lawyerSessionId.value
-      const traceEvidence = parseTraceObservation(response.trace, 'evidence_analysis')
-      const traceLimitation = parseTraceObservation(response.trace, 'limitation_calculation')
-      const traceJurisdiction = parseTraceObservation(response.trace, 'jurisdiction_determination')
-      const traceHearing = parseTraceObservation(response.trace, 'hearing_outline_generation')
-
-      const assistantMessage: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: response.answer || '',
-        createdAt: new Date(),
-        modelInfo: (response.acgTaskId || response.workflowRunId) ? 'AgentOS Workflow' : undefined,
-        skillsUsed: response.skillsUsed || [],
-        trace: response.trace || [],
-        routing: response.routing,
-        acgTaskId: response.acgTaskId || response.workflowRunId,
-        workflowRunId: response.acgTaskId || response.workflowRunId,
-        workflowId: response.workflowId,
-        workflowStatus: response.workflowStatus,
-        runtimeEngine: response.runtimeEngine,
-        implementationId: response.implementationId,
-        federated: response.federated || {},
-        riskLevel: response.riskLevel,
-        evidenceAnalysis: response.evidenceAnalysis || response.evidence_analysis || traceEvidence,
-        limitationCalc: response.limitationCalc || response.limitation_calculation || traceLimitation,
-        jurisdiction: response.jurisdiction || response.jurisdiction_determination || traceJurisdiction,
-        hearingOutline: response.hearingOutline || response.hearing_outline_generation || traceHearing,
-        agentMode: 'lawyer'
-      }
-      messages.value.push(assistantMessage)
-      emitHistoryRefresh()
-
-      return response
-    } finally {
-      loading.value = false
-    }
-  }
-
   // ---- 流式发送（SSE）----
-  const streamModelInfo: Record<AgentMode, string> = {
-    default: 'AI (streaming)',
-    lawyer: 'Lawyer Agent (streaming)',
-    teacher: 'Teacher Agent (streaming)',
-    programmer: 'Programmer Agent (streaming)',
-    writer: 'Writer Agent (streaming)'
-  }
 
   const sendMessageStream = async (
     text: string,
-    agentMode: AgentMode = 'default',
+    agentMode: 'default' = 'default',
     runtimeSettings: ModelSettings = loadModelSettings(),
     workspaceMode: 'agent' | 'chat' = 'chat'
   ) => {
@@ -450,7 +289,7 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       createdAt: new Date(),
       modelInfo: runtimeSettings.provider === 'system'
-        ? streamModelInfo[agentMode]
+        ? 'AI (streaming)'
         : runtimeSettings.selectedModel,
       thinkingState: runtimeSettings.thinkingMode === 'disabled' ? undefined : 'thinking',
       requestedThinkingMode: runtimeSettings.thinkingMode,
@@ -674,158 +513,6 @@ export const useChatStore = defineStore('chat', () => {
     activeStreamController?.abort()
   }
 
-  const sendLawyerMessageStream = async (text: string) => sendMessageStream(text, 'lawyer')
-
-  const sendTeacherMessage = async (text: string) => {
-    if (!text.trim() || loading.value) return
-
-    pushUserMessage(text)
-
-    loading.value = true
-    try {
-      const response = await agentTeacherApi.chat({
-        text,
-        sessionId: teacherSessionId.value || undefined
-      })
-
-      teacherSessionId.value = response.sessionId || teacherSessionId.value
-      const traceDiagnosis = parseTraceObservation(response.trace, ['student_diagnosis'])
-      const traceLessonPlan = parseTraceObservation(response.trace, ['lesson_plan_generation', 'lesson_plan'])
-      const traceGrading = parseTraceObservation(response.trace, ['homework_grading', 'grading'])
-      const tracePush = parseTraceObservation(response.trace, ['error_analysis_question_push', 'error_attribution'])
-
-      const assistantMessage: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: response.answer || '',
-        createdAt: new Date(),
-        modelInfo: (response.acgTaskId || response.workflowRunId) ? 'AgentOS Workflow' : undefined,
-        skillsUsed: response.skillsUsed || [],
-        trace: response.trace || [],
-        routing: response.routing,
-        acgTaskId: response.acgTaskId || response.workflowRunId,
-        workflowRunId: response.acgTaskId || response.workflowRunId,
-        workflowId: response.workflowId,
-        workflowStatus: response.workflowStatus,
-        runtimeEngine: response.runtimeEngine,
-        implementationId: response.implementationId,
-        federated: response.federated || {},
-        riskLevel: response.riskLevel,
-        studentDiagnosis: response.studentDiagnosis || response.student_diagnosis || traceDiagnosis,
-        lessonPlan: response.lessonPlan || response.lesson_plan_generation || traceLessonPlan,
-        homeworkGrading: response.homeworkGrading || response.homework_grading || traceGrading,
-        errorQuestionPush: response.errorQuestionPush || response.error_analysis_question_push || tracePush,
-        agentMode: 'teacher'
-      }
-      messages.value.push(assistantMessage)
-      emitHistoryRefresh()
-
-      return response
-    } finally {
-      loading.value = false
-    }
-  }
-
-  const sendProgrammerMessage = async (text: string) => {
-    if (!text.trim() || loading.value) return
-
-    pushUserMessage(text)
-
-    loading.value = true
-    try {
-      const response = await agentProgrammerApi.chat({
-        text,
-        sessionId: programmerSessionId.value || undefined
-      })
-
-      programmerSessionId.value = response.sessionId || programmerSessionId.value
-      const traceRequirement = parseTraceObservation(response.trace, 'requirement_analysis')
-      const traceSearch = parseTraceObservation(response.trace, 'codebase_semantic_search')
-      const traceCodeGeneration = parseTraceObservation(response.trace, 'code_generation')
-      const traceDiagram = parseTraceObservation(response.trace, 'diagram_generation')
-
-      const assistantMessage: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: response.answer || '',
-        createdAt: new Date(),
-        modelInfo: (response.acgTaskId || response.workflowRunId) ? 'AgentOS Workflow' : undefined,
-        skillsUsed: response.skillsUsed || [],
-        trace: response.trace || [],
-        routing: response.routing,
-        acgTaskId: response.acgTaskId || response.workflowRunId,
-        workflowRunId: response.acgTaskId || response.workflowRunId,
-        workflowId: response.workflowId,
-        workflowStatus: response.workflowStatus,
-        runtimeEngine: response.runtimeEngine,
-        implementationId: response.implementationId,
-        federated: response.federated || {},
-        riskLevel: response.riskLevel,
-        requirementAnalysis: response.requirementAnalysis || response.requirement_analysis || traceRequirement,
-        codebaseSemanticSearch: response.codebaseSemanticSearch || response.codebase_semantic_search || traceSearch,
-        codeGeneration: response.codeGeneration || response.code_generation || traceCodeGeneration,
-        diagramGeneration: response.diagramGeneration || response.diagram_generation || traceDiagram,
-        agentMode: 'programmer'
-      }
-      messages.value.push(assistantMessage)
-      emitHistoryRefresh()
-
-      return response
-    } finally {
-      loading.value = false
-    }
-  }
-
-  const sendWriterMessage = async (text: string) => {
-    if (!text.trim() || loading.value) return
-
-    pushUserMessage(text)
-
-    loading.value = true
-    try {
-      const response = await agentWriterApi.chat({
-        text,
-        sessionId: writerSessionId.value || undefined
-      })
-
-      writerSessionId.value = response.sessionId || writerSessionId.value
-      const traceInspiration = parseTraceObservation(response.trace, 'inspiration_expand')
-      const traceOutline = parseTraceObservation(response.trace, 'outline_generate')
-      const traceContent = parseTraceObservation(response.trace, 'content_write')
-      const traceRelation = parseTraceObservation(response.trace, 'character_relation_map')
-
-      const assistantMessage: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: response.answer || '',
-        createdAt: new Date(),
-        modelInfo: (response.acgTaskId || response.workflowRunId) ? 'AgentOS Workflow' : undefined,
-        skillsUsed: response.skillsUsed || [],
-        trace: response.trace || [],
-        routing: response.routing,
-        acgTaskId: response.acgTaskId || response.workflowRunId,
-        workflowRunId: response.acgTaskId || response.workflowRunId,
-        workflowId: response.workflowId,
-        workflowStatus: response.workflowStatus,
-        runtimeEngine: response.runtimeEngine,
-        implementationId: response.implementationId,
-        federated: response.federated || {},
-        riskLevel: response.riskLevel,
-        inspirationExpand: response.inspirationExpand || response.inspiration_expand || traceInspiration,
-        outlineGenerate: response.outlineGenerate || response.outline_generate || traceOutline,
-        contentWrite: response.contentWrite || response.content_write || traceContent,
-        characterRelationMap: response.characterRelationMap || response.character_relation_map || traceRelation,
-        agentMode: 'writer'
-      }
-      messages.value.push(assistantMessage)
-      emitHistoryRefresh()
-
-      return response
-    } finally {
-      loading.value = false
-    }
-  }
-
   interface ConversationWorkflowOptions {
     domain?: string
     intent?: string
@@ -922,10 +609,6 @@ export const useChatStore = defineStore('chat', () => {
     }
     messages.value = []
     contextId.value = null
-    lawyerSessionId.value = null
-    teacherSessionId.value = null
-    programmerSessionId.value = null
-    writerSessionId.value = null
     contextUsedTokens.value = null
     contextWindowTokens.value = null
   }
@@ -1023,10 +706,6 @@ export const useChatStore = defineStore('chat', () => {
   const clearMessages = () => {
     messages.value = []
     contextId.value = null
-    lawyerSessionId.value = null
-    teacherSessionId.value = null
-    programmerSessionId.value = null
-    writerSessionId.value = null
     contextUsedTokens.value = null
     contextWindowTokens.value = null
   }
@@ -1038,10 +717,6 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingConversation,
     workflowBindings,
     contextId,
-    lawyerSessionId,
-    teacherSessionId,
-    programmerSessionId,
-    writerSessionId,
     currentRoleId,
     contextUsedTokens,
     contextWindowTokens,
@@ -1049,13 +724,8 @@ export const useChatStore = defineStore('chat', () => {
     contextModels,
     fetchContextWindows,
     sendMessage,
-    sendLawyerMessage,
-    sendLawyerMessageStream,
     sendMessageStream,
     cancelMessageStream,
-    sendTeacherMessage,
-    sendProgrammerMessage,
-    sendWriterMessage,
     upgradeToWorkflow,
     startAgentRun,
     addWorkflowBinding,

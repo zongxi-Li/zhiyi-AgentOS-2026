@@ -43,14 +43,17 @@ describe('LandingView', () => {
     })
     await router.push(initialPath)
     await router.isReady()
-    return { router, wrapper: mount(LandingView, {
+    const wrapper = mount(LandingView, {
       global: {
         plugins: [router, createPinia()],
         stubs: {
           'el-icon': { template: '<span><slot /></span>' }
         }
       }
-    }) }
+    })
+    await vi.dynamicImportSettled()
+    await flushPromises()
+    return { router, wrapper }
   }
 
   it('switches the hero visual slot to embedded auth from the primary CTA', async () => {

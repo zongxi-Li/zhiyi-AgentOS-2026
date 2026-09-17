@@ -312,7 +312,7 @@ const updateProfile = async () => {
   if (!userStore.currentUser?.id) return ElMessage.error('用户信息不存在，请重新登录')
   try {
     await userApi.updateUser(userStore.currentUser.id, { username: userInfo.value.username, email: userInfo.value.email })
-    await userStore.loadCurrentUser(); editing.value = false; ElMessage.success('个人信息已更新')
+    await userStore.loadCurrentUser({ force: true }); editing.value = false; ElMessage.success('个人信息已更新')
   } catch (error: any) { ElMessage.error('更新失败: ' + (error.message || '未知错误')) }
 }
 const changePassword = async () => {

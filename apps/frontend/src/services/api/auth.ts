@@ -14,9 +14,27 @@ export interface LoginResponse {
   success?: boolean
 }
 
+export interface TokenVerification {
+  valid: boolean
+  userId?: string
+  username?: string
+}
+
+const VERIFICATION_TTL_MS = 30000
+let verificationCache: { token: string; result: TokenVerification; expiresAt: number } | null = null
+let pendingVerification: { token: string; promise: Promise<TokenVerification> } | null = null
+let verificationGeneration = 0
+
+const clearVerification = () => {
+  verificationGeneration += 1
+  verificationCache = null
+  pendingVerification = null
+}
+
 export const authApi = {
   // 登录
   async login(loginRequest: LoginRequest): Promise<LoginResponse & { success?: boolean }> {
+    clearVerification()
     const response = await request.post<LoginResponse & { success?: boolean }>('/auth/login', loginRequest)
     return response.data
   },
@@ -28,22 +46,37 @@ export const authApi = {
   },
 
   // 验证Token
-  async verifyToken(): Promise<{ valid: boolean; userId?: string; username?: string }> {
+  async verifyToken(force = false): Promise<TokenVerification> {
     const token = localStorage.getItem('token')
     if (!token) {
+      clearVerification()
       return { valid: false }
     }
+    if (!force && verificationCache?.token === token && verificationCache.expiresAt > Date.now()) {
+      return verificationCache.result
+    }
+    if (pendingVerification?.token === token) return pendingVerification.promise
 
-    try {
-      const response = await request.get<{ valid: boolean; userId?: string; username?: string }>('/auth/verify')
+    const generation = ++verificationGeneration
+    verificationCache = null
+    const promise = request.get<TokenVerification>('/auth/verify', {
+      timeout: 5000,
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(response => {
+      if (generation === verificationGeneration && localStorage.getItem('token') === token && response.data.valid) {
+        verificationCache = { token, result: response.data, expiresAt: Date.now() + VERIFICATION_TTL_MS }
+      }
       return response.data
-    } catch {
-      return { valid: false }
-    }
+    }).finally(() => {
+      if (pendingVerification?.promise === promise) pendingVerification = null
+    })
+    pendingVerification = { token, promise }
+    return promise
   },
 
   // 退出登录
   async logout(): Promise<{ success: boolean; message?: string }> {
+    clearVerification()
     try {
       // 清除本地存储的token
       localStorage.removeItem('token')

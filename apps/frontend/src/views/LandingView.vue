@@ -5,7 +5,7 @@
 
     <header class="landing-header" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
       <a class="landing-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="goHome">
-        <span class="landing-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
+        <span class="landing-brand__logo"><img src="/logo.webp" alt="" aria-hidden="true" /></span>
         <span>知弈 <strong>AgentOS</strong></span>
       </a>
 
@@ -141,14 +141,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowRight, Moon, Sunny } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 import { useTheme } from '@/composables/useTheme'
-import GlassConstellation from '@/components/landing/GlassConstellation.vue'
-import LoginView from '@/views/LoginView.vue'
+const GlassConstellation = defineAsyncComponent(() => import('@/components/landing/GlassConstellation.vue').then(module => module.default))
+const LoginView = defineAsyncComponent(() => import('@/views/LoginView.vue').then(module => module.default))
 
 const router = useRouter()
 const route = useRoute()
@@ -267,7 +267,7 @@ const goToLogin = () => openAuth()
   height: 100dvh;
   overflow: hidden;
   color: var(--ink);
-  background: #dcecff url('/bg.png') center / cover no-repeat;
+  background: #dcecff url('/bg.webp') center / cover no-repeat;
   isolation: isolate;
 }
 
@@ -383,7 +383,7 @@ const goToLogin = () => openAuth()
   --cyan: #39c4f1;
   --purple: #9b78ff;
   color-scheme: dark;
-  background: #050914 url('/darkbg.png') center / cover no-repeat;
+  background: #050914 url('/darkbg.webp') center / cover no-repeat;
 
   &::before {
     background: linear-gradient(112deg, rgba(3, 7, 15, .94) 0%, rgba(3, 10, 22, .78) 40%, rgba(3, 7, 15, .42) 100%);

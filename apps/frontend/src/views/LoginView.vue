@@ -2,7 +2,7 @@
     <main class="auth-view" :class="{ 'is-desktop-shell': desktopShell, 'is-register': activeTab === 'register', 'is-embedded': props.embedded, 'is-theme-dark': isDarkTheme }">
     <header v-if="!props.embedded" class="auth-topbar" v-bind="dragRegionProps" aria-label="应用窗口标题栏">
       <a class="auth-brand" href="/" aria-label="知弈 AgentOS 首页" @click.prevent="handleBrandClick">
-        <span class="auth-brand__logo"><img src="/logo.png" alt="" aria-hidden="true" /></span>
+        <span class="auth-brand__logo"><img src="/logo.webp" alt="" aria-hidden="true" /></span>
         <span class="auth-brand__wordmark">
           <span class="auth-brand__name">知弈</span>
           <strong>AgentOS</strong>
@@ -42,7 +42,7 @@
 
       <section class="auth-card" data-testid="auth-card" aria-labelledby="auth-card-title">
         <button v-if="props.embedded" class="auth-card__close" data-testid="auth-dialog-close" type="button" aria-label="返回首页" @click="emit('back')">×</button>
-        <div class="auth-card__mark" aria-hidden="true"><img src="/logo.png" alt="" /></div>
+        <div class="auth-card__mark" aria-hidden="true"><img src="/logo.webp" alt="" /></div>
         <div class="auth-card__heading">
           <p class="auth-card__eyebrow"><span aria-hidden="true"></span>{{ activeTab === 'login' ? 'WORKSPACE ACCESS' : 'NEW WORKSPACE' }}</p>
           <h2 id="auth-card-title">{{ activeTab === 'login' ? '登录知弈 AgentOS' : '创建知弈 AgentOS 账号' }}</h2>
@@ -257,7 +257,7 @@ const handleRegister = async () => {
   overflow-y: auto;
   scrollbar-gutter: stable;
   color: var(--auth-ink);
-  background: #dcecff url('/bg.png') center / cover fixed no-repeat;
+  background: #dcecff url('/bg.webp') center / cover fixed no-repeat;
 }
 .auth-view::before { content: ''; position: fixed; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(246,251,255,.9) 0%, rgba(246,251,255,.6) 37%, rgba(236,246,255,.08) 77%), linear-gradient(180deg, rgba(255,255,255,.25), transparent 50%); }
 .auth-topbar, .auth-layout, .auth-footer { position: relative; z-index: 1; }
@@ -402,7 +402,7 @@ const handleRegister = async () => {
 }
 
 /* Shared dark login scene for web and desktop. The landing page and workbench
-   keep their own visual systems; only the auth surface follows darkbg.png. */
+   keep their own visual systems; only the auth surface follows darkbg.webp. */
 .auth-view.is-theme-dark {
   --auth-ink: #f1f6ff;
   --auth-muted: #a6b8d0;
@@ -413,7 +413,7 @@ const handleRegister = async () => {
   --auth-line: color-mix(in srgb, var(--auth-accent) 30%, transparent);
   --auth-field: rgba(3, 10, 21, .76);
   color-scheme: dark;
-  background: #050914 url('/darkbg.png') center / cover fixed no-repeat;
+  background: #050914 url('/darkbg.webp') center / cover fixed no-repeat;
 
   &::before {
     background:

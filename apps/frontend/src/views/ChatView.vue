@@ -4,7 +4,6 @@
     <div
       class="chat-main"
       :class="[
-        chatMainClass,
         {
           'has-agent-results': isAgentMode,
           'agent-panel-collapsed': isAgentMode && agentPanelCollapsed,
@@ -162,7 +161,7 @@
                   </filter>
                 </defs>
               </svg>
-              <img class="hero-watermark" src="/logo.png" alt="" />
+              <img class="hero-watermark" src="/logo.webp" alt="" />
             </div>
             <h2 class="hero-greeting">{{ heroGreeting }}</h2>
           </div>
@@ -184,43 +183,26 @@
                 <span>{{ workflowResultError }}</span>
                 <button type="button" @click="retryWorkflowHistoryDetail">补充加载</button>
               </div>
-              <div v-if="showLawyerHistoryFeedback" class="lawyer-history-conversation">
-                <MessageBubble
-                  :message="{
-                    id: `history-user-${activeWorkflowRun.runId}`,
-                    role: 'user',
-                    content: workflowHistoryInput,
-                    createdAt: workflowHistoryMessageTime
-                  }"
-                />
-                <ContractReviewReportMessage
-                  :deliverables="workflowHistoryStepOutputs"
-                  :report="lawyerHistoryReply"
-                  :risks="activeContractReviewArtifacts.risks"
-                />
-              </div>
-              <template v-else>
-                <article class="workflow-history-request">
-                  <header>
-                    <div>
-                      <span class="workflow-history-eyebrow">历史任务输入</span>
-                      <h3>{{ workflowHistoryTitle }}</h3>
-                    </div>
-                    <div class="workflow-history-identity">
-                      <span>{{ activeWorkflowRun.workflowId }}</span>
-                      <code>{{ activeWorkflowRun.runId }}</code>
-                    </div>
-                  </header>
-                  <pre>{{ workflowHistoryInput }}</pre>
-                </article>
+              <article class="workflow-history-request">
+                <header>
+                  <div>
+                    <span class="workflow-history-eyebrow">历史任务输入</span>
+                    <h3>{{ workflowHistoryTitle }}</h3>
+                  </div>
+                  <div class="workflow-history-identity">
+                    <span>{{ activeWorkflowRun.workflowId }}</span>
+                    <code>{{ activeWorkflowRun.runId }}</code>
+                  </div>
+                </header>
+                <pre>{{ workflowHistoryInput }}</pre>
+              </article>
 
-                <GenericArtifactPanel
-                  :step-outputs="workflowHistoryStepOutputs"
-                  :final-artifacts="workflowHistoryFinalArtifacts"
-                  :final-report="workflowHistoryFinalReport"
-                  :status="activeWorkflowStatus"
-                />
-              </template>
+              <GenericArtifactPanel
+                :step-outputs="workflowHistoryStepOutputs"
+                :final-artifacts="workflowHistoryFinalArtifacts"
+                :final-report="workflowHistoryFinalReport"
+                :status="activeWorkflowStatus"
+              />
             </template>
           </section>
 
@@ -258,67 +240,14 @@
         </div>
 
         <div ref="composerRef" class="composer" :style="{ bottom: composerDockOffset }">
-          <div
-            v-if="(isSubmittingWorkflow || activeWorkflowRunId) && !isGeneralAgentMode"
-            class="chat-workflow-progress"
-          >
-            <div
-              v-if="isLawyerMode"
-              class="lawyer-workflow-progress"
-              :class="[activeWorkflowStatus, { collapsed: lawyerWorkflowProgressCollapsed }]"
-            >
-              <template v-if="!lawyerWorkflowProgressCollapsed">
-                <WorkflowProgressBar
-                  id="lawyer-workflow-progress-detail"
-                  :progress="workflowProgressState.progress.value"
-                  :loading="isSubmittingWorkflow || workflowProgressState.isLoading.value"
-                  :sync-error="workflowProgressState.syncError.value"
-                  variant="compact"
-                />
-                <button
-                  type="button"
-                  class="lawyer-workflow-progress__toggle"
-                  aria-label="折叠 ACG 执行状态"
-                  aria-expanded="true"
-                  aria-controls="lawyer-workflow-progress-detail"
-                  title="折叠执行状态"
-                  @click="lawyerWorkflowProgressCollapsed = true"
-                >
-                  <el-icon><ArrowUp /></el-icon>
-                </button>
-              </template>
-              <button
-                v-else
-                type="button"
-                class="lawyer-workflow-progress__collapsed-row"
-                aria-label="展开 ACG 执行状态"
-                aria-expanded="false"
-                aria-controls="lawyer-workflow-progress-detail"
-                @click="lawyerWorkflowProgressCollapsed = false"
-              >
-                <span class="lawyer-workflow-progress__identity">
-                  <span class="lawyer-workflow-progress__dot" aria-hidden="true"></span>
-                  <strong>ACG 执行状态</strong>
-                  <span>{{ activeWorkflowStatusLabel }}</span>
-                </span>
-                <span class="lawyer-workflow-progress__expand">
-                  <span v-if="workflowProgressState.progress.value?.percent != null">
-                    {{ workflowProgressState.progress.value.percent }}%
-                  </span>
-                  <span>展开</span>
-                  <el-icon><ArrowUp /></el-icon>
-                </span>
-              </button>
-            </div>
+          <div v-if="isSubmittingWorkflow || activeWorkflowRunId" class="chat-workflow-progress">
             <WorkflowProgressBar
-              v-else
               :progress="workflowProgressState.progress.value"
               :loading="isSubmittingWorkflow || workflowProgressState.isLoading.value"
               :sync-error="workflowProgressState.syncError.value"
               variant="compact"
             />
             <AgentOsRunSummaryCard
-              v-if="!isLawyerMode"
               :progress="workflowProgressState.progress.value"
               :run="activeWorkflowRun"
               :view="activeAcgView"
@@ -342,7 +271,7 @@
           />
 
           <div
-            v-if="activeWorkflowRunId && !isGeneralAgentMode"
+            v-if="activeWorkflowRunId && !isAgentMode"
             class="workflow-run-strip"
             :class="activeWorkflowStatus"
           >
@@ -362,20 +291,6 @@
                 <el-icon><DArrowRight /></el-icon>
               </button>
             </div>
-          </div>
-
-          <div v-if="isTeacherMode" class="composer-shelf">
-            <button class="composer-shelf-action" type="button" @click="openTeacherUploadDialog">
-              <el-icon><UploadFilled /></el-icon>
-              <span>上传作业</span>
-            </button>
-            <input
-              ref="teacherUploadInputRef"
-              class="hidden-file-input"
-              type="file"
-              accept=".png,.jpg,.jpeg,.pdf,.txt,.doc,.docx"
-              @change="handleTeacherFileUpload"
-            />
           </div>
 
           <div v-if="showHeroMode" class="composer-missions">
@@ -468,18 +383,17 @@
                     </div>
                   </Transition>
                 </div>
-                <button
-                  class="composer-agent-mode"
-                  type="button"
-                  aria-haspopup="dialog"
-                  :aria-expanded="roleTemplateDialogOpen"
-                  title="切换角色与模板"
-                  @click="openRoleTemplateDialog"
+                <PermissionSelector v-if="isAgentMode" />
+                <div
+                  v-else
+                  class="composer-agent-mode composer-agent-mode--static"
+                  :class="{ 'composer-agent-mode--permission': isAgentMode }"
+                  :aria-label="isAgentMode ? '访问权限' : '通用对话模式'"
+                  :title="isAgentMode ? '当前 Agent 访问权限' : '通用对话模式'"
                 >
-                  <el-icon class="composer-agent-mode__icon"><component :is="agentIcon" /></el-icon>
+                  <el-icon class="composer-agent-mode__icon"><component :is="composerModeIcon" /></el-icon>
                   {{ composerModeLabel }}
-                  <el-icon class="composer-agent-mode__chevron"><ArrowDownBold /></el-icon>
-                </button>
+                </div>
                 <button
                   v-if="isAgentMode"
                   class="composer-acg-toggle"
@@ -511,6 +425,7 @@
                 </el-tooltip>
               </div>
               <div class="right-actions">
+                <ModelRuntimeControls composer />
                 <span v-if="inputText.length" class="word-count" :class="{ warning: inputText.length > 500 }">
                   {{ inputText.length }} 字
                 </span>
@@ -638,7 +553,6 @@
 
           <div ref="agentPanelContentRef" v-show="!agentPanelCollapsed" class="agent-panel-content">
             <AcgRunInspector
-              v-if="isGeneralAgentMode"
               :run-id="activeWorkflowRunId"
               :status="activeWorkflowStatus"
               :status-label="activeWorkflowStatusLabel"
@@ -650,349 +564,10 @@
               @open-acg="openActiveWorkflowOperations"
               @open-console="openActiveWorkflowConsole"
             />
-            <LawyerSkillPanel
-              v-else-if="isLawyerMode"
-              :skills-used="latestLawyerMeta.skillsUsed"
-              :trace="latestLawyerMeta.trace"
-              :federated="latestLawyerMeta.federated"
-              :risk-level="latestLawyerMeta.riskLevel"
-              :result-count="availableLawyerResultPanels.length"
-              @open-federated-console="openFederatedConsole"
-              @optimize-federated="handleFederatedOptimize"
-            >
-          <template #results>
-            <div v-if="!availableLawyerResultPanels.length" class="results-empty">
-              <el-icon class="empty-icon"><Notebook /></el-icon>
-              <span>暂无技能调用结果</span>
-              <span class="results-empty-hint">发送消息后，这里会整理 Agent 的结构化结果</span>
-            </div>
-            <el-collapse v-else v-model="activeLawyerResultPanels">
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('evidence')"
-                title="证据分析结果"
-                name="evidence"
-              >
-                <EvidenceAnalysisCard :data="latestLawyerSkillResults.evidenceAnalysis" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('limitation')"
-                title="诉讼时效结果"
-                name="limitation"
-              >
-                <LimitationTimeline :data="latestLawyerSkillResults.limitationCalc" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('jurisdiction')"
-                title="管辖法院建议"
-                name="jurisdiction"
-              >
-                <JurisdictionCard :data="latestLawyerSkillResults.jurisdiction" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('hearing')"
-                title="庭审提纲"
-                name="hearing"
-              >
-                <HearingOutlineViewer :data="latestLawyerSkillResults.hearingOutline" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('contractRisks')"
-                title="合同风险识别"
-                name="contractRisks"
-              >
-                <ContractRiskPanel :risks="activeContractReviewArtifacts.risks" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('contractEvidence')"
-                title="法律依据链"
-                name="contractEvidence"
-              >
-                <ContractEvidencePanel :evidences="activeContractReviewArtifacts.evidences" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableLawyerResultPanels.includes('contractReport')"
-                title="合同审查报告"
-                name="contractReport"
-              >
-                <ContractReportPreview :report-markdown="activeContractReviewArtifacts.reportMarkdown" />
-              </el-collapse-item>
-            </el-collapse>
-          </template>
-        </LawyerSkillPanel>
-
-        <TeacherSkillPanel
-          v-else-if="isTeacherMode"
-          :skills-used="latestTeacherMeta.skillsUsed"
-          :trace="latestTeacherMeta.trace"
-          :federated="latestTeacherMeta.federated"
-          :result-count="availableTeacherResultPanels.length"
-          @open-federated-console="openFederatedConsole"
-          @optimize-federated="handleFederatedOptimize"
-        >
-          <template #results>
-            <div v-if="!availableTeacherResultPanels.length" class="results-empty">
-              <el-icon class="empty-icon"><Reading /></el-icon>
-              <span>暂无技能调用结果</span>
-              <span class="results-empty-hint">发送消息后，这里会整理 Agent 的结构化结果</span>
-            </div>
-            <el-collapse v-else v-model="activeTeacherResultPanels">
-              <el-collapse-item
-                v-if="availableTeacherResultPanels.includes('diagnosis')"
-                title="学情诊断"
-                name="diagnosis"
-              >
-                <DiagnosisRadar :data="latestTeacherSkillResults.studentDiagnosis" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableTeacherResultPanels.includes('lessonPlan')"
-                title="个性化教案"
-                name="lessonPlan"
-              >
-                <LessonPlanViewer :data="latestTeacherSkillResults.lessonPlan" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableTeacherResultPanels.includes('grading')"
-                title="作业批改"
-                name="grading"
-              >
-                <GradingResultCard :data="latestTeacherSkillResults.homeworkGrading" />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableTeacherResultPanels.includes('questionPush')"
-                title="错题归因与推题"
-                name="questionPush"
-              >
-                <QuestionPushList :data="latestTeacherSkillResults.errorQuestionPush" />
-              </el-collapse-item>
-            </el-collapse>
-          </template>
-        </TeacherSkillPanel>
-
-        <ProgrammerSkillPanel
-          v-else-if="isProgrammerMode"
-          :skills-used="latestProgrammerMeta.skillsUsed"
-          :trace="latestProgrammerMeta.trace"
-          :federated="latestProgrammerMeta.federated"
-          :result-count="availableProgrammerResultPanels.length"
-          @open-federated-console="openFederatedConsole"
-          @optimize-federated="handleFederatedOptimize"
-        >
-          <template #results>
-            <div v-if="!availableProgrammerResultPanels.length" class="results-empty">
-              <el-icon class="empty-icon"><Cpu /></el-icon>
-              <span>暂无技能调用结果</span>
-              <span class="results-empty-hint">发送消息后，这里会整理 Agent 的结构化结果</span>
-            </div>
-            <el-collapse v-else v-model="activeProgrammerResultPanels">
-              <el-collapse-item
-                v-if="availableProgrammerResultPanels.includes('requirement')"
-                title="需求分析"
-                name="requirement"
-              >
-                <div class="programmer-block">
-                  <div class="programmer-grid two-cols">
-                    <div class="programmer-card">
-                      <div class="card-title">功能需求</div>
-                      <ul>
-                        <li v-for="(item, idx) in (latestProgrammerSkillResults.requirementAnalysis?.functional_requirements || [])" :key="`fr-${idx}`">
-                          {{ item }}
-                        </li>
-                      </ul>
-                    </div>
-                    <div class="programmer-card">
-                      <div class="card-title">边界条件</div>
-                      <ul>
-                        <li v-for="(item, idx) in (latestProgrammerSkillResults.requirementAnalysis?.boundary_conditions || [])" :key="`bc-${idx}`">
-                          {{ item }}
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                  <div class="programmer-grid two-cols">
-                    <div class="programmer-card">
-                      <div class="card-title">输入</div>
-                      <ul>
-                        <li v-for="(item, idx) in (latestProgrammerSkillResults.requirementAnalysis?.inputs || [])" :key="`in-${idx}`">{{ item }}</li>
-                      </ul>
-                    </div>
-                    <div class="programmer-card">
-                      <div class="card-title">输出</div>
-                      <ul>
-                        <li v-for="(item, idx) in (latestProgrammerSkillResults.requirementAnalysis?.outputs || [])" :key="`out-${idx}`">{{ item }}</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableProgrammerResultPanels.includes('search')"
-                title="代码库语义检索"
-                name="search"
-              >
-                <div class="programmer-block">
-                  <div class="programmer-meta">
-                    命中 {{ latestProgrammerSkillResults.searchHits.length }} 条 · 向量检索
-                    {{ latestProgrammerSkillResults.codebaseSemanticSearch?.index_status?.vector_enabled ? '已启用' : '未启用（关键词降级）' }}
-                  </div>
-                  <div class="programmer-search-list">
-                    <div
-                      v-for="(hit, idx) in latestProgrammerSkillResults.searchHits"
-                      :key="`hit-${idx}`"
-                      class="search-item"
-                    >
-                      <div class="search-head">
-                        <span class="path">{{ hit.file_path || 'unknown file' }}</span>
-                        <span class="score">score: {{ Number(hit.score || 0).toFixed(3) }}</span>
-                      </div>
-                      <pre>{{ hit.content }}</pre>
-                    </div>
-                  </div>
-                </div>
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableProgrammerResultPanels.includes('code')"
-                title="代码生成"
-                name="code"
-              >
-                <div class="programmer-block">
-                  <div class="programmer-meta">{{ latestProgrammerSkillResults.codeGeneration?.explanation || '暂无说明' }}</div>
-                  <pre class="code-block">{{ latestProgrammerSkillResults.generatedCode || '// 暂无代码输出' }}</pre>
-                  <div v-if="latestProgrammerSkillResults.suggestedTests.length" class="programmer-card">
-                    <div class="card-title">建议测试点</div>
-                    <ul>
-                      <li v-for="(item, idx) in latestProgrammerSkillResults.suggestedTests" :key="`test-${idx}`">{{ item }}</li>
-                    </ul>
-                  </div>
-                </div>
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableProgrammerResultPanels.includes('diagram')"
-                title="Mermaid 图表"
-                name="diagram"
-              >
-                <DiagramViewer :data="latestProgrammerSkillResults.diagramData" />
-              </el-collapse-item>
-            </el-collapse>
-          </template>
-        </ProgrammerSkillPanel>
-
-        <WriterSkillPanel
-          v-else-if="isWriterMode"
-          :skills-used="latestWriterMeta.skillsUsed"
-          :trace="latestWriterMeta.trace"
-          :federated="latestWriterMeta.federated"
-          :result-count="availableWriterResultPanels.length"
-          @open-federated-console="openFederatedConsole"
-          @optimize-federated="handleFederatedOptimize"
-        >
-          <template #results>
-            <div v-if="!availableWriterResultPanels.length" class="results-empty">
-              <el-icon class="empty-icon"><EditPen /></el-icon>
-              <span>暂无技能调用结果</span>
-              <span class="results-empty-hint">发送消息后，这里会整理 Agent 的结构化结果</span>
-            </div>
-            <el-collapse v-else v-model="activeWriterResultPanels">
-              <el-collapse-item
-                v-if="availableWriterResultPanels.includes('inspiration')"
-                title="创意树思维导图"
-                name="inspiration"
-              >
-                <MindMapViewer
-                  title="创意树"
-                  :creative-tree="latestWriterSkillResults.creativeTree"
-                />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableWriterResultPanels.includes('outline')"
-                title="章节大纲思维导图"
-                name="outline"
-              >
-                <MindMapViewer
-                  title="章节大纲"
-                  :outline-markdown="latestWriterSkillResults.outlineMarkdown"
-                />
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableWriterResultPanels.includes('content')"
-                title="正文撰写"
-                name="content"
-              >
-                <div class="writer-content-preview">
-                  {{ latestWriterSkillResults.content || '暂无正文内容' }}
-                </div>
-              </el-collapse-item>
-
-              <el-collapse-item
-                v-if="availableWriterResultPanels.includes('relation')"
-                title="人物关系图"
-                name="relation"
-              >
-                <RelationGraph :data="latestWriterSkillResults.characterRelationMap" />
-              </el-collapse-item>
-            </el-collapse>
-          </template>
-        </WriterSkillPanel>
           </div>
       </aside>
       </Transition>
     </div>
-
-    <RoleTemplateSwitchDialog
-      :open="roleTemplateDialogOpen"
-      :current-role-name="currentRole?.name"
-      :current-template-key="selectedChatTemplateKey"
-      @close="roleTemplateDialogOpen = false"
-      @confirm="applyRoleTemplateSelection"
-    />
-
-    <el-drawer v-model="showRoleDrawer" direction="rtl" :size="320" :with-header="false">
-      <div class="drawer-head">
-        <h3>角色列表</h3>
-        <el-button text @click="showRoleDrawer = false"><el-icon><Close /></el-icon></el-button>
-      </div>
-      <div class="role-list">
-        <div
-          class="role-item"
-          :class="{ active: !currentRole && !selectedRoleId }"
-          @click="selectGeneralMode"
-        >
-          <el-avatar :size="36">通</el-avatar>
-          <div class="role-text">
-            <div class="name">通用模式</div>
-            <div class="desc">不绑定角色，按任务智能路由</div>
-          </div>
-          <el-icon v-if="!currentRole && !selectedRoleId"><Check /></el-icon>
-        </div>
-        <div
-          v-for="role in roles"
-          :key="role.id"
-          class="role-item"
-          :class="{ active: roleStore.currentRole?.id === role.id || selectedRoleId === role.id }"
-          @click="selectRole(role)"
-        >
-          <el-avatar :size="36" :src="role.avatar">{{ role.name?.charAt(0) }}</el-avatar>
-          <div class="role-text">
-            <div class="name">{{ role.name }}</div>
-            <div class="desc">{{ role.description || 'AI Assistant' }}</div>
-          </div>
-          <el-icon v-if="roleStore.currentRole?.id === role.id || selectedRoleId === role.id"><Check /></el-icon>
-        </div>
-      </div>
-    </el-drawer>
 
     <FileManager v-model="showFileManager" @fileSelected="handleFileSelected" />
   </div>
@@ -1006,54 +581,29 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowDownBold,
   ArrowUp,
-  Check,
   Clock,
-  Close,
   Cpu,
   DArrowLeft,
   DArrowRight,
-  EditPen,
+  Key,
   Loading,
   Microphone,
-  Notebook,
   Plus,
-  Reading,
-  ScaleToOriginal,
   Share,
-  School,
   UploadFilled
 } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import MessageBubble from '@/components/MessageBubble.vue'
 import ModelRuntimeControls from '@/components/ModelRuntimeControls.vue'
-import FileManager from '@/components/FileManager.vue'
-import LawyerSkillPanel from '@/components/agent/LawyerSkillPanel.vue'
-import TeacherSkillPanel from '@/components/agent/TeacherSkillPanel.vue'
-import ProgrammerSkillPanel from '@/components/agent/ProgrammerSkillPanel.vue'
-import WriterSkillPanel from '@/components/agent/WriterSkillPanel.vue'
-import EvidenceAnalysisCard from '@/components/agent/EvidenceAnalysisCard.vue'
-import LimitationTimeline from '@/components/agent/LimitationTimeline.vue'
-import JurisdictionCard from '@/components/agent/JurisdictionCard.vue'
-import HearingOutlineViewer from '@/components/agent/HearingOutlineViewer.vue'
-import DiagnosisRadar from '@/components/agent/DiagnosisRadar.vue'
-import LessonPlanViewer from '@/components/agent/LessonPlanViewer.vue'
-import GradingResultCard from '@/components/agent/GradingResultCard.vue'
-import QuestionPushList from '@/components/agent/QuestionPushList.vue'
-const DiagramViewer = defineAsyncComponent(() => import('@/components/agent/DiagramViewer.vue'))
-const MindMapViewer = defineAsyncComponent(() => import('@/components/agent/MindMapViewer.vue'))
-const RelationGraph = defineAsyncComponent(() => import('@/components/agent/RelationGraph.vue'))
-import RoleTemplateSwitchDialog from '@/components/RoleTemplateSwitchDialog.vue'
+import PermissionSelector from '@/components/PermissionSelector.vue'
+const FileManager = defineAsyncComponent(() => import('@/components/FileManager.vue').then(module => module.default))
 const AcgTopologyGraph = defineAsyncComponent(() => import('@/components/agentos/AcgTopologyGraph.vue'))
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
+const WorkflowReviewPanel = defineAsyncComponent(() => import('@/components/agentos/WorkflowReviewPanel.vue').then(module => module.default))
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
-import RuntimeAuditTimeline from '@/components/agentos/RuntimeAuditTimeline.vue'
-import AcgRunInspector from '@/components/agentos/AcgRunInspector.vue'
-import ContractReviewReportMessage from '@/components/agentos/ContractReviewReportMessage.vue'
-import ContractRiskPanel from '@/components/agentos/ContractRiskPanel.vue'
-import ContractEvidencePanel from '@/components/agentos/ContractEvidencePanel.vue'
-import ContractReportPreview from '@/components/agentos/ContractReportPreview.vue'
-import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
+const RuntimeAuditTimeline = defineAsyncComponent(() => import('@/components/agentos/RuntimeAuditTimeline.vue').then(module => module.default))
+const AcgRunInspector = defineAsyncComponent(() => import('@/components/agentos/AcgRunInspector.vue').then(module => module.default))
+const GenericArtifactPanel = defineAsyncComponent(() => import('@/features/acg/GenericArtifactPanel.vue').then(module => module.default))
 import {
   agentosApi,
   type AcgDeliverable,
@@ -1064,25 +614,18 @@ import {
 import type { WorkflowProgress } from '@/services/api/workflow'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
-import { agentTeacherApi } from '@/services/api/agentTeacher'
-import { federatedModelApi } from '@/services/api/federatedModel'
-import { fileApi } from '@/services/api/file'
 import { useChatStore, type ChatWorkflowBinding } from '@/stores/chat'
-import { useRoleStore } from '@/stores/role'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
-import { extractContractReviewArtifacts } from '@/utils/agentos/contractReviewArtifactExtractor'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
 import { ACG_HISTORY_SOURCES, acgHistoryRoleDomain, loadAcgHistoryRole } from '@/utils/acgHistoryFilter'
 import { loadModelSettings } from '@/config/modelSettings'
-import { roleTemplateGroups, type RoleId } from '@/config/agentWorkbench'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
-const roleStore = useRoleStore()
 const chatStore = useChatStore()
 const createClientRequestId = (): string => {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
@@ -1107,13 +650,8 @@ const workspaceMode = ref<WorkspaceMode>(
 )
 const workspaceModeSwitching = ref(false)
 
-const selectedRoleId = ref<string | null>(null)
 const inputText = ref('')
 const loading = ref(false)
-const showRoleDrawer = ref(false)
-const roleTemplateDialogOpen = ref(false)
-const CHAT_TEMPLATE_KEY = 'chat.active_template_key'
-const selectedChatTemplateKey = ref(localStorage.getItem(CHAT_TEMPLATE_KEY) || '')
 const showFileManager = ref(false)
 const isRecording = ref(false)
 const messagesRef = ref<HTMLElement | null>(null)
@@ -1123,18 +661,9 @@ const heroLogoFieldRef = ref<HTMLElement | null>(null)
 const heroLogoTurbulenceRef = ref<SVGFETurbulenceElement | null>(null)
 const heroLogoDisplacementRef = ref<SVGFEDisplacementMapElement | null>(null)
 const heroLogoPressed = ref(false)
-const teacherUploadInputRef = ref<HTMLInputElement | null>(null)
-const showAssistTools = ref(false)
 const isNearBottom = ref(true)
 const pendingMessageCount = ref(0)
-const federatedOptimizing = ref(false)
-const activeLawyerResultPanels = ref<string[]>([])
-const activeTeacherResultPanels = ref<string[]>([])
-const activeProgrammerResultPanels = ref<string[]>([])
-const activeWriterResultPanels = ref<string[]>([])
-const ASSIST_TOOL_VISIBLE_KEY = 'chat.composer_templates_visible'
 const AGENT_PANEL_COLLAPSED_KEY = 'chat.agent_panel_collapsed'
-const LAWYER_WORKFLOW_PROGRESS_COLLAPSED_KEY = 'chat.lawyer_workflow_progress_collapsed'
 const AGENT_PANEL_WIDTH_KEY = 'chat.agent_panel_width'
 const AGENT_PANEL_DEFAULT_WIDTH = 340
 const AGENT_PANEL_MIN_WIDTH = 280
@@ -1149,9 +678,6 @@ const CONTEXT_PANEL_DEFAULT_HEIGHT = 250
 const CONTEXT_PANEL_MIN_HEIGHT = 170
 const CONTEXT_PANEL_MAX_HEIGHT = 420
 const agentPanelCollapsed = ref(localStorage.getItem(AGENT_PANEL_COLLAPSED_KEY) === '1')
-const lawyerWorkflowProgressCollapsed = ref(
-  localStorage.getItem(LAWYER_WORKFLOW_PROGRESS_COLLAPSED_KEY) === '1'
-)
 const storedAgentPanelWidth = Number(localStorage.getItem(AGENT_PANEL_WIDTH_KEY))
 const agentPanelWidth = ref(
   Number.isFinite(storedAgentPanelWidth) && storedAgentPanelWidth >= AGENT_PANEL_MIN_WIDTH && storedAgentPanelWidth <= AGENT_PANEL_MAX_WIDTH
@@ -1205,7 +731,6 @@ const showWorkflowHistoryDetail = computed(() => (
     chatStore.messages.length === 0
     || (
       isAgentMode.value
-      && isLawyerMode.value
       && (
         workflowProgressState.progress.value?.phase === 'completed'
         || workflowProgressState.progress.value?.status === 'completed'
@@ -1726,67 +1251,9 @@ const handleChatReviewConflict = async () => {
   if (activeWorkflowRunId.value) await loadActiveAcgView(activeWorkflowRunId.value)
 }
 
-const roles = computed(() => roleStore.roles)
-const currentRole = computed(() => roleStore.currentRole)
-const inferredWorkflowRoleId = computed<RoleId | null>(() => {
-  const workflowId = (activeWorkflowRun.value?.workflowId || '').toLowerCase()
-  const domain = (activeWorkflowRun.value?.domain || '').toLowerCase()
-  if (domain === 'legal' || workflowId.includes('legal') || workflowId.includes('lawyer')) return 'lawyer'
-  if (domain === 'education' || workflowId.includes('education') || workflowId.includes('teacher')) return 'teacher'
-  if (domain === 'programming' || workflowId.includes('programmer') || workflowId.includes('code')) return 'programmer'
-  if (domain === 'writing' || workflowId.includes('writer') || workflowId.includes('writing')) return 'writer'
-  return null
-})
-
-const isLawyerMode = computed(() => {
-  const name = (currentRole.value?.name || '').toLowerCase()
-  return name.includes('律师') || name.includes('lawyer') || name.includes('法律')
-    || (!currentRole.value && inferredWorkflowRoleId.value === 'lawyer')
-})
-
-const showLawyerHistoryFeedback = computed(() => inferredWorkflowRoleId.value === 'lawyer')
-
-const isTeacherMode = computed(() => {
-  const name = (currentRole.value?.name || '').toLowerCase()
-  return name.includes('教师') || name.includes('teacher') || name.includes('教学')
-    || (!currentRole.value && inferredWorkflowRoleId.value === 'teacher')
-})
-
-const isProgrammerMode = computed(() => {
-  const name = (currentRole.value?.name || '').toLowerCase()
-  return name.includes('程序') || name.includes('programmer') || name.includes('开发')
-    || (!currentRole.value && inferredWorkflowRoleId.value === 'programmer')
-})
-
-const isWriterMode = computed(() => {
-  const name = (currentRole.value?.name || '').toLowerCase()
-  return name.includes('作家') || name.includes('writer') || name.includes('写作')
-    || (!currentRole.value && inferredWorkflowRoleId.value === 'writer')
-})
-
 const isAgentMode = computed(() => workspaceMode.value === 'agent')
-const isGeneralAgentMode = computed(() => isAgentMode.value
-  && !isLawyerMode.value
-  && !isTeacherMode.value
-  && !isProgrammerMode.value
-  && !isWriterMode.value)
-
-const chatMainClass = computed(() => {
-  if (isLawyerMode.value) return 'lawyer'
-  if (isTeacherMode.value) return 'teacher'
-  if (isProgrammerMode.value) return 'programmer'
-  if (isWriterMode.value) return 'writer'
-  return ''
-})
-
-const agentIcon = computed(() => {
-  if (isLawyerMode.value) return ScaleToOriginal
-  if (isTeacherMode.value) return School
-  if (isProgrammerMode.value) return Cpu
-  if (isWriterMode.value) return EditPen
-  return Cpu
-})
-
+const agentIcon = computed(() => Cpu)
+const composerModeIcon = computed(() => isAgentMode.value ? Key : Cpu)
 const heroGreeting = computed(() => {
   const hour = new Date().getHours()
   if (hour < 5) return '夜深了，把任务交给 Agent 值守吧'
@@ -1797,15 +1264,7 @@ const heroGreeting = computed(() => {
   return '晚上好，适合深度工作的时段'
 })
 
-const composerModeLabel = computed(() => {
-  if (currentRole.value?.name) return `${currentRole.value.name} 模式`
-  if (isLawyerMode.value) return '律师模式'
-  if (isTeacherMode.value) return '教师模式'
-  if (isProgrammerMode.value) return '程序员模式'
-  if (isWriterMode.value) return '作家模式'
-  return isAgentMode.value ? '通用 Agent' : '通用 Chat'
-})
-
+const composerModeLabel = computed(() => isAgentMode.value ? '访问权限' : '通用 Chat')
 const formatContextTokens = (value: number): string => {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`
@@ -1830,260 +1289,18 @@ const contextUsage = computed(() => {
   }
 })
 
-const latestLawyerMessage = computed(() => {
-  return [...chatStore.messages]
-    .reverse()
-    .find(msg => msg.role === 'assistant' && msg.agentMode === 'lawyer')
-})
-
-const latestTeacherMessage = computed(() => {
-  return [...chatStore.messages]
-    .reverse()
-    .find(msg => msg.role === 'assistant' && msg.agentMode === 'teacher')
-})
-
-const latestProgrammerMessage = computed(() => {
-  return [...chatStore.messages]
-    .reverse()
-    .find(msg => msg.role === 'assistant' && msg.agentMode === 'programmer')
-})
-
-const latestWriterMessage = computed(() => {
-  return [...chatStore.messages]
-    .reverse()
-    .find(msg => msg.role === 'assistant' && msg.agentMode === 'writer')
-})
-
-const activeContractReviewArtifacts = computed(() => extractContractReviewArtifacts(workflowHistoryStepOutputs.value))
-const workflowHistoryMessageTime = computed(() => {
-  const raw = activeWorkflowRun.value?.updatedAt || activeWorkflowRun.value?.createdAt
-  const value = raw ? new Date(raw) : new Date()
-  return Number.isNaN(value.getTime()) ? new Date() : value
-})
-const lawyerHistoryReply = computed(() => {
-  const report = historyText(activeContractReviewArtifacts.value.reportMarkdown)
-    || historyText(workflowHistoryFinalArtifacts.value.find(item => historyText(item.content))?.content)
-    || historyText(workflowHistoryFinalReport.value)
-  if (report) return report
-
-  const { risks, evidences, revisionSuggestions } = activeContractReviewArtifacts.value
-  const lines = ['# 合同审查意见']
-  if (risks.length) {
-    lines.push('', '## 风险识别')
-    risks.forEach((risk, index) => {
-      const level = ({ high: '高风险', medium: '中风险', low: '低风险' } as Record<string, string>)[
-        String(risk.level || '').toLowerCase()
-      ] || '未分级'
-      lines.push('', `${index + 1}. **${level}｜${historyText(risk.title) || historyText(risk.id) || '合同风险'}**`)
-      if (historyText(risk.reason)) lines.push(`   - 原因：${historyText(risk.reason)}`)
-      if (historyText(risk.consequence)) lines.push(`   - 影响：${historyText(risk.consequence)}`)
-      if (historyText(risk.suggestion)) lines.push(`   - 建议：${historyText(risk.suggestion)}`)
-    })
-  }
-  if (evidences.length) {
-    lines.push('', '## 法律依据')
-    evidences.forEach(item => {
-      const source = historyText(item.sourceName) || historyText(item.title) || historyText(item.sourceType) || '依据'
-      const content = historyText(item.citationText) || historyText(item.content)
-      lines.push(`- **${source}**${content ? `：${content}` : ''}`)
-    })
-  }
-  if (revisionSuggestions.length) {
-    lines.push('', '## 修改建议')
-    revisionSuggestions.forEach(item => {
-      const suggestion = typeof item === 'string'
-        ? item
-        : historyText(item.suggestion) || historyText(item.content) || historyText(item.description)
-      if (suggestion) lines.push(`- ${suggestion}`)
-    })
-  }
-  if (lines.length === 1) lines.push('', '律师审查任务已完成，暂未保存可展示的报告正文。')
-  return lines.join('\n')
-})
-const activeLawyerWorkflowSteps = computed(() => (activeWorkflowRun.value?.steps || [])
-  .filter(step => ['completed', 'waiting_review', 'running'].includes(step.status)))
-const activeLawyerWorkflowRiskLevel = computed(() => {
-  const levels = activeContractReviewArtifacts.value.risks.map(item => (item.level || '').toLowerCase())
-  if (levels.includes('high')) return 'high'
-  if (levels.includes('medium')) return 'medium'
-  if (levels.includes('low')) return 'low'
-  return ''
-})
-
-const latestLawyerMeta = computed(() => {
-  const lastAssistant = latestLawyerMessage.value
-  const fallbackSteps = activeLawyerWorkflowSteps.value
-  const hasCurrentRunSteps = fallbackSteps.length > 0
-  return {
-    // The active Run is the source of truth while it is available. A chat
-    // message can be written before late runtime nodes, such as report generation,
-    // have completed.
-    skillsUsed: hasCurrentRunSteps
-      ? fallbackSteps.map(step => step.stepId)
-      : lastAssistant?.skillsUsed || [],
-    trace: hasCurrentRunSteps
-      ? fallbackSteps.map((step, index) => ({
-        step: index + 1,
-        thought: step.agentName || step.stepId,
-        action: step.stepId,
-        observation: step.status
-      }))
-      : lastAssistant?.trace || [],
-    federated: lastAssistant?.federated || {},
-    riskLevel: lastAssistant?.riskLevel || activeLawyerWorkflowRiskLevel.value
-  }
-})
-
-const latestTeacherMeta = computed(() => {
-  const lastAssistant = latestTeacherMessage.value
-  return {
-    skillsUsed: lastAssistant?.skillsUsed || [],
-    trace: lastAssistant?.trace || [],
-    federated: lastAssistant?.federated || {}
-  }
-})
-
-const latestProgrammerMeta = computed(() => {
-  const lastAssistant = latestProgrammerMessage.value
-  return {
-    skillsUsed: lastAssistant?.skillsUsed || [],
-    trace: lastAssistant?.trace || [],
-    federated: lastAssistant?.federated || {}
-  }
-})
-
-const latestWriterMeta = computed(() => {
-  const lastAssistant = latestWriterMessage.value
-  return {
-    skillsUsed: lastAssistant?.skillsUsed || [],
-    trace: lastAssistant?.trace || [],
-    federated: lastAssistant?.federated || {}
-  }
-})
-
-const latestLawyerSkillResults = computed(() => {
-  const lastAssistant = latestLawyerMessage.value
-  return {
-    evidenceAnalysis: lastAssistant?.evidenceAnalysis,
-    limitationCalc: lastAssistant?.limitationCalc,
-    jurisdiction: lastAssistant?.jurisdiction,
-    hearingOutline: lastAssistant?.hearingOutline
-  }
-})
-
-const latestTeacherSkillResults = computed(() => {
-  const lastAssistant = latestTeacherMessage.value
-  return {
-    studentDiagnosis: lastAssistant?.studentDiagnosis,
-    lessonPlan: lastAssistant?.lessonPlan,
-    homeworkGrading: lastAssistant?.homeworkGrading,
-    errorQuestionPush: lastAssistant?.errorQuestionPush
-  }
-})
-
-const latestProgrammerSkillResults = computed(() => {
-  const lastAssistant = latestProgrammerMessage.value
-  const searchPayload = lastAssistant?.codebaseSemanticSearch
-  const codeGenerationPayload = lastAssistant?.codeGeneration
-  const diagramPayload = lastAssistant?.diagramGeneration
-  const generationMermaidCode = codeGenerationPayload?.mermaid_code
-  const diagramMermaidCode = diagramPayload?.mermaid_code
-  const searchHits = Array.isArray(searchPayload?.hits) ? searchPayload?.hits : []
-  const suggestedTests = Array.isArray(codeGenerationPayload?.suggested_tests) ? codeGenerationPayload?.suggested_tests : []
-
-  const diagramData = diagramPayload?.mermaid_code
-    ? diagramPayload
-    : (generationMermaidCode
-      ? {
-        title: 'Generated Diagram',
-        diagram_type: 'flowchart',
-        mermaid_code: generationMermaidCode
-      }
-      : undefined)
-
-  return {
-    requirementAnalysis: lastAssistant?.requirementAnalysis,
-    codebaseSemanticSearch: searchPayload,
-    codeGeneration: codeGenerationPayload,
-    diagramGeneration: diagramPayload,
-    generatedCode: codeGenerationPayload?.code || '',
-    suggestedTests,
-    searchHits,
-    diagramData,
-    diagramCode: diagramMermaidCode || generationMermaidCode || ''
-  }
-})
-
-const latestWriterSkillResults = computed(() => {
-  const lastAssistant = latestWriterMessage.value
-  return {
-    creativeTree: lastAssistant?.inspirationExpand?.creative_tree || lastAssistant?.inspirationExpand?.creativeTree,
-    outlineMarkdown: lastAssistant?.outlineGenerate?.outline_markdown || lastAssistant?.outlineGenerate?.outlineMarkdown,
-    content: lastAssistant?.contentWrite?.content,
-    characterRelationMap: lastAssistant?.characterRelationMap
-  }
-})
-
-const availableLawyerResultPanels = computed(() => {
-  const skillSet = new Set(latestLawyerMeta.value.skillsUsed || [])
-  const panels: string[] = []
-  if (latestLawyerSkillResults.value.evidenceAnalysis || skillSet.has('evidence_analysis')) panels.push('evidence')
-  if (latestLawyerSkillResults.value.limitationCalc || skillSet.has('limitation_calculation')) panels.push('limitation')
-  if (latestLawyerSkillResults.value.jurisdiction || skillSet.has('jurisdiction_determination')) panels.push('jurisdiction')
-  if (latestLawyerSkillResults.value.hearingOutline || skillSet.has('hearing_outline_generation')) panels.push('hearing')
-  if (activeContractReviewArtifacts.value.risks.length || skillSet.has('risk_detect')) panels.push('contractRisks')
-  if (activeContractReviewArtifacts.value.evidences.length || skillSet.has('legal_evidence_match')) panels.push('contractEvidence')
-  if (activeContractReviewArtifacts.value.reportMarkdown || skillSet.has('report_generate')) panels.push('contractReport')
-  return panels
-})
-
-const availableTeacherResultPanels = computed(() => {
-  const skillSet = new Set(latestTeacherMeta.value.skillsUsed || [])
-  const panels: string[] = []
-  if (latestTeacherSkillResults.value.studentDiagnosis || skillSet.has('student_diagnosis')) panels.push('diagnosis')
-  if (latestTeacherSkillResults.value.lessonPlan || skillSet.has('lesson_plan_generation') || skillSet.has('lesson_plan')) panels.push('lessonPlan')
-  if (latestTeacherSkillResults.value.homeworkGrading || skillSet.has('homework_grading') || skillSet.has('grading')) panels.push('grading')
-  if (latestTeacherSkillResults.value.errorQuestionPush || skillSet.has('error_analysis_question_push') || skillSet.has('error_attribution')) panels.push('questionPush')
-  return panels
-})
-
-const availableProgrammerResultPanels = computed(() => {
-  const skillSet = new Set(latestProgrammerMeta.value.skillsUsed || [])
-  const panels: string[] = []
-  if (latestProgrammerSkillResults.value.requirementAnalysis || skillSet.has('requirement_analysis')) panels.push('requirement')
-  if (latestProgrammerSkillResults.value.searchHits.length || skillSet.has('codebase_semantic_search')) panels.push('search')
-  if (latestProgrammerSkillResults.value.generatedCode || skillSet.has('code_generation')) panels.push('code')
-  if (latestProgrammerSkillResults.value.diagramCode || skillSet.has('diagram_generation')) panels.push('diagram')
-  return panels
-})
-
-const availableWriterResultPanels = computed(() => {
-  const skillSet = new Set(latestWriterMeta.value.skillsUsed || [])
-  const panels: string[] = []
-  if (latestWriterSkillResults.value.creativeTree || skillSet.has('inspiration_expand')) panels.push('inspiration')
-  if (latestWriterSkillResults.value.outlineMarkdown || skillSet.has('outline_generate')) panels.push('outline')
-  if (latestWriterSkillResults.value.content || skillSet.has('content_write')) panels.push('content')
-  if (latestWriterSkillResults.value.characterRelationMap || skillSet.has('character_relation_map')) panels.push('relation')
-  return panels
-})
-
-// 右侧工作台：仅当当前模式有技能调用结果时才显示
-const hasAgentResults = computed(() => {
-  if (isLawyerMode.value) return availableLawyerResultPanels.value.length > 0
-  if (isTeacherMode.value) return availableTeacherResultPanels.value.length > 0
-  if (isProgrammerMode.value) return availableProgrammerResultPanels.value.length > 0
-  if (isWriterMode.value) return availableWriterResultPanels.value.length > 0
-  return false
-})
+const latestAssistantMessage = computed(() => [...chatStore.messages]
+  .reverse()
+  .find(message => message.role === 'assistant'))
 
 const hasAgentActivity = computed(() => {
-  if (isGeneralAgentMode.value && hasActiveWorkflow.value) return true
-  if (hasAgentResults.value) return true
-  if (isLawyerMode.value) return latestLawyerMeta.value.skillsUsed.length > 0 || latestLawyerMeta.value.trace.length > 0
-  if (isTeacherMode.value) return latestTeacherMeta.value.skillsUsed.length > 0 || latestTeacherMeta.value.trace.length > 0
-  if (isProgrammerMode.value) return latestProgrammerMeta.value.skillsUsed.length > 0 || latestProgrammerMeta.value.trace.length > 0
-  if (isWriterMode.value) return latestWriterMeta.value.skillsUsed.length > 0 || latestWriterMeta.value.trace.length > 0
-  return false
+  const assistant = latestAssistantMessage.value
+  return isAgentMode.value && (
+    hasActiveWorkflow.value
+    || Boolean(assistant?.skillsUsed?.length)
+    || Boolean(assistant?.trace?.length)
+    || Boolean(assistant?.executionSummary?.length)
+  )
 })
 
 const showScrollToBottom = computed(() => !isNearBottom.value && chatStore.messages.length > 0)
@@ -2103,207 +1320,7 @@ const isWorkflowUpgradeDisabled = computed(() =>
   || !inputText.value.trim()
 )
 
-const currentTemplates = computed(() => {
-  const roleName = currentRole.value?.name || ''
-  const lower = roleName.toLowerCase()
-
-  if (roleName.includes('律师') || lower.includes('lawyer')) {
-    return ['合同纠纷咨询', '劳动仲裁流程', '法律风险评估', '文书草稿生成']
-  }
-  if (roleName.includes('教师') || lower.includes('teacher')) {
-    return ['制定学习计划', '错题归因推题', '生成课堂互动脚本', '学情报告总结']
-  }
-  if (roleName.includes('程序') || lower.includes('developer') || lower.includes('programmer')) {
-    return ['帮我做需求技术规格分析', '检索代码库中登录相关函数', '根据规格生成后端接口代码', '生成用户登录流程 Mermaid 图']
-  }
-  if (roleName.includes('作家') || lower.includes('writer')) {
-    return ['灵感拓展并生成创意树', '生成章节大纲思维导图', '按鲁迅体写第一章', '分析角色并生成人物关系图']
-  }
-  return ['日常问答', '帮我做个计划', '总结这段内容', '给我几个建议']
-})
-
-const getLawyerRole = () => {
-  return roles.value.find(role => {
-    const roleName = (role.name || '').toLowerCase()
-    return roleName.includes('律师') || roleName.includes('法律') || roleName.includes('lawyer')
-  })
-}
-
-const getTeacherRole = () => {
-  return roles.value.find(role => {
-    const roleName = (role.name || '').toLowerCase()
-    return roleName.includes('教师') || roleName.includes('教学') || roleName.includes('teacher')
-  })
-}
-
-const getProgrammerRole = () => {
-  return roles.value.find(role => {
-    const roleName = (role.name || '').toLowerCase()
-    return roleName.includes('程序') || roleName.includes('开发') || roleName.includes('programmer')
-  })
-}
-
-const getWriterRole = () => {
-  return roles.value.find(role => {
-    const roleName = (role.name || '').toLowerCase()
-    return roleName.includes('作家') || roleName.includes('写作') || roleName.includes('writer')
-  })
-}
-
-const switchRoleWithoutReset = async (role: any) => {
-  selectedRoleId.value = role.id
-  await roleStore.setCurrentRole(role)
-  chatStore.setRole(role.id)
-}
-
-const activateLawyerAgent = async () => {
-  if (isLawyerMode.value) {
-    ElMessage.info('当前已在律师模式')
-    return
-  }
-
-  const lawyerRole = getLawyerRole()
-  if (!lawyerRole) {
-    ElMessage.warning('未找到律师角色，请先在角色管理中启用律师角色')
-    showRoleDrawer.value = true
-    return
-  }
-  await switchRoleWithoutReset(lawyerRole)
-  ElMessage.success('已切换到律师 Agent')
-}
-
-const activateTeacherAgent = async () => {
-  if (isTeacherMode.value) {
-    ElMessage.info('当前已在教师模式')
-    return
-  }
-
-  const teacherRole = getTeacherRole()
-  if (!teacherRole) {
-    ElMessage.warning('未找到教师角色，请先在角色管理中启用教师角色')
-    showRoleDrawer.value = true
-    return
-  }
-  await switchRoleWithoutReset(teacherRole)
-  ElMessage.success('已切换到教师 Agent')
-}
-
-const activateProgrammerAgent = async () => {
-  if (isProgrammerMode.value) {
-    ElMessage.info('当前已在程序员模式')
-    return
-  }
-
-  const programmerRole = getProgrammerRole()
-  if (!programmerRole) {
-    ElMessage.warning('未找到程序员角色，请先在角色管理中启用程序员角色')
-    showRoleDrawer.value = true
-    return
-  }
-  await switchRoleWithoutReset(programmerRole)
-  ElMessage.success('已切换到程序员 Agent')
-}
-
-const activateWriterAgent = async () => {
-  if (isWriterMode.value) {
-    ElMessage.info('当前已在作家模式')
-    return
-  }
-
-  const writerRole = getWriterRole()
-  if (!writerRole) {
-    ElMessage.warning('未找到作家角色，请先在角色管理中启用作家角色')
-    showRoleDrawer.value = true
-    return
-  }
-  await switchRoleWithoutReset(writerRole)
-  ElMessage.success('已切换到作家 Agent')
-}
-
-const toggleLawyerMode = async () => {
-  if (isLawyerMode.value) {
-    ElMessage.info('当前已在律师模式')
-    return
-  }
-  await activateLawyerAgent()
-}
-
-const toggleTeacherMode = async () => {
-  if (isTeacherMode.value) {
-    ElMessage.info('当前已在教师模式')
-    return
-  }
-  await activateTeacherAgent()
-}
-
-const toggleProgrammerMode = async () => {
-  if (isProgrammerMode.value) {
-    ElMessage.info('当前已在程序员模式')
-    return
-  }
-  await activateProgrammerAgent()
-}
-
-const toggleWriterMode = async () => {
-  if (isWriterMode.value) {
-    ElMessage.info('当前已在作家模式')
-    return
-  }
-  await activateWriterAgent()
-}
-
-const openFederatedConsole = () => {
-  router.push('/agentos/resources?tab=federated')
-}
-
-const handleFederatedOptimize = async () => {
-  if (federatedOptimizing.value) return
-  federatedOptimizing.value = true
-  try {
-    const result = await federatedModelApi.optimizeModel('advanced', 'federated', 'quality', 1)
-    if (result?.success) {
-      ElMessage.success('联邦优化已触发')
-      return
-    }
-    ElMessage.warning('联邦优化请求未成功')
-  } catch (error: any) {
-    ElMessage.error(error?.message || '联邦优化触发失败')
-  } finally {
-    federatedOptimizing.value = false
-  }
-}
-
-const toggleAssistTools = () => {
-  showAssistTools.value = !showAssistTools.value
-}
-
-const useTemplate = (text: string) => {
-  if (!text) return
-  inputText.value = text
-  nextTick(() => {
-    const textarea = document.querySelector('.composer textarea') as HTMLTextAreaElement | null
-    if (textarea) {
-      textarea.focus()
-      textarea.setSelectionRange(text.length, text.length)
-    }
-  })
-}
-
-const autoSegment = () => {
-  if (inputText.value.length <= 500) return
-  const segments = inputText.value.match(/.{1,500}/g) || []
-  inputText.value = segments.join('\n\n---\n\n')
-  ElMessage.success(t('chat.autoSegment'))
-}
-
-const hasCurrentWorkspaceContext = () => Boolean(
-  chatStore.messages.length
-  || activeWorkflowRunId.value
-  || chatStore.contextId
-  || (typeof route.query.contextId === 'string' && route.query.contextId.trim())
-)
-
-const resetWorkspaceForRoleSwitch = async () => {
+const resetWorkspace = async () => {
   const previousConversationId = currentConversationId.value
   sessionStorage.removeItem(workflowSubmissionStorageKey(previousConversationId))
   chatStore.clearMessages()
@@ -2328,71 +1345,7 @@ const resetWorkspaceForRoleSwitch = async () => {
 }
 
 const handleNewAgentTask = () => {
-  void resetWorkspaceForRoleSwitch()
-}
-
-const prepareRoleSwitch = async (targetLabel: string): Promise<boolean> => {
-  if (!hasCurrentWorkspaceContext()) return true
-  const createLabel = isAgentMode.value ? '新建一个 Agent 任务' : '新建一段对话'
-  const currentLabel = isAgentMode.value ? '当前 Agent 任务' : '当前对话'
-  try {
-    await ElMessageBox.confirm(
-      `切换到${targetLabel}将${createLabel}；${currentLabel}会保留在记录中。是否继续？`,
-      '切换角色与模板',
-      {
-        confirmButtonText: '新建并切换',
-        cancelButtonText: '留在当前任务',
-        type: 'warning'
-      }
-    )
-    await resetWorkspaceForRoleSwitch()
-    return true
-  } catch {
-    return false
-  }
-}
-
-const selectRole = async (role: any): Promise<boolean> => {
-  if (role.id === currentRole.value?.id) {
-    showRoleDrawer.value = false
-    return true
-  }
-  if (!await prepareRoleSwitch(`角色“${role.name}”`)) return false
-
-  selectedRoleId.value = role.id
-  await roleStore.setCurrentRole(role)
-  chatStore.setRole(role.id)
-  showRoleDrawer.value = false
-  ElMessage.success(`已切换到角色: ${role.name}`)
-  return true
-}
-
-const selectGeneralMode = async (): Promise<boolean> => {
-  if (!currentRole.value && !selectedRoleId.value) {
-    showRoleDrawer.value = false
-    return true
-  }
-  if (!await prepareRoleSwitch('通用模式')) return false
-
-  selectedRoleId.value = null
-  roleStore.clearCurrentRole()
-  chatStore.setRole(null)
-  selectedChatTemplateKey.value = 'general-auto'
-  localStorage.setItem(CHAT_TEMPLATE_KEY, 'general-auto')
-  showRoleDrawer.value = false
-  ElMessage.success('已切换到通用模式')
-  return true
-}
-
-const roleNameAliases: Record<RoleId, string[]> = {
-  lawyer: ['律师', '法律', 'lawyer'],
-  teacher: ['教师', '教学', 'teacher'],
-  programmer: ['程序', '开发', 'programmer', 'developer'],
-  writer: ['作家', '写作', 'writer']
-}
-
-const openRoleTemplateDialog = () => {
-  roleTemplateDialogOpen.value = true
+  void resetWorkspace()
 }
 
 const missionAnchorRef = ref<HTMLElement | null>(null)
@@ -2446,6 +1399,13 @@ const openComposerFileManager = () => {
   handleControl('folder')
 }
 
+const autoSegment = () => {
+  if (inputText.value.length <= 500) return
+  const segments = inputText.value.match(/.{1,500}/g) || []
+  inputText.value = segments.join('\n\n---\n\n')
+  ElMessage.success(t('chat.autoSegment'))
+}
+
 const missionRunState = (run: WorkflowRunSummary) => {
   if (run.status === 'completed' || run.phase === 'completed') return '已完成'
   if (run.status === 'failed' || run.phase === 'failed') return '执行失败'
@@ -2487,54 +1447,6 @@ const handleMissionOutsideClick = (event: MouseEvent) => {
   }
 }
 
-const findRuntimeRole = (roleId: RoleId) => {
-  const aliases = roleNameAliases[roleId]
-  return roles.value.find(role => {
-    const name = (role.name || '').toLowerCase()
-    return aliases.some(alias => name.includes(alias))
-  })
-}
-
-const applyRoleTemplateSelection = async (selection: { roleId: RoleId | 'general'; templateKey: string }) => {
-  const templateChanged = selection.templateKey !== selectedChatTemplateKey.value
-  if (selection.roleId === 'general') {
-    roleTemplateDialogOpen.value = false
-    const alreadyGeneral = !currentRole.value && !selectedRoleId.value
-    const switched = alreadyGeneral && templateChanged
-      ? await prepareRoleSwitch('通用模式的新模板')
-      : await selectGeneralMode()
-    if (switched) {
-      selectedChatTemplateKey.value = selection.templateKey
-      localStorage.setItem(CHAT_TEMPLATE_KEY, selection.templateKey)
-    }
-    return
-  }
-
-  const targetRole = findRuntimeRole(selection.roleId)
-  const template = roleTemplateGroups
-    .find(role => role.id === selection.roleId)
-    ?.templates.find(item => item.key === selection.templateKey)
-
-  if (!targetRole) {
-    ElMessage.warning('该角色尚未启用，请先在角色管理中启用后再切换')
-    return
-  }
-
-  roleTemplateDialogOpen.value = false
-  if (targetRole.id !== currentRole.value?.id) {
-    const switched = await selectRole(targetRole)
-    if (!switched) return
-  } else if (templateChanged) {
-    const switched = await prepareRoleSwitch(`“${targetRole.name} / ${template?.name || '新模板'}”`)
-    if (!switched) return
-  } else {
-    ElMessage.success(`已选择 ${targetRole.name}${template ? ` / ${template.name}` : ''}`)
-  }
-
-  selectedChatTemplateKey.value = selection.templateKey
-  localStorage.setItem(CHAT_TEMPLATE_KEY, selection.templateKey)
-}
-
 const animateComposerToConversation = async (startRect: DOMRect) => {
   await nextTick()
   const composer = composerRef.value
@@ -2571,43 +1483,18 @@ const sendAgentWorkspaceMessage = async () => {
   if (!userText) return
 
   loading.value = true
-  inputText.value = ''
   const composerStartRect = chatStore.messages.length === 0
     ? composerRef.value?.getBoundingClientRect()
     : undefined
 
   try {
-    let response: any
-    if (isLawyerMode.value) {
-      response = await chatStore.sendLawyerMessage(userText)
-    } else if (isTeacherMode.value) {
-      response = await chatStore.sendTeacherMessage(userText)
-    } else if (isProgrammerMode.value) {
-      response = await chatStore.sendProgrammerMessage(userText)
-    } else if (isWriterMode.value) {
-      response = await chatStore.sendWriterMessage(userText)
-    } else {
-      loading.value = false
-      inputText.value = userText
-      await upgradeChatToWorkflow()
-      return
-    }
-
+    inputText.value = userText
+    await upgradeChatToWorkflow()
     if (composerStartRect) await animateComposerToConversation(composerStartRect)
-    const acgTaskId = response?.acgTaskId || response?.workflowRunId
-    if (acgTaskId) {
-      const binding = chatStore.getLatestWorkflowBinding(currentConversationId.value)
-      await activateWorkflowRun(
-        acgTaskId,
-        binding?.runId === acgTaskId ? binding : null,
-        false
-      )
-      ElMessage.success(`专业任务已进入 ACG：${acgTaskId}`)
-    }
     scrollToBottom()
   } catch (error: any) {
     inputText.value = userText
-    if (!wasErrorUserNotified(error)) ElMessage.error(error?.message || '发送消息失败')
+    if (!wasErrorUserNotified(error)) ElMessage.error(error?.message || 'Send failed')
   } finally {
     loading.value = false
   }
@@ -2630,16 +1517,7 @@ const sendMessage = async () => {
     : undefined
 
   try {
-    const agentMode = isLawyerMode.value
-      ? 'lawyer'
-      : isTeacherMode.value
-        ? 'teacher'
-        : isProgrammerMode.value
-          ? 'programmer'
-          : isWriterMode.value
-            ? 'writer'
-            : 'default'
-    const sendPromise = chatStore.sendMessageStream(userText, agentMode, loadModelSettings(), workspaceMode.value)
+    const sendPromise = chatStore.sendMessageStream(userText, 'default', loadModelSettings(), workspaceMode.value)
     if (composerStartRect) {
       await animateComposerToConversation(composerStartRect)
     }
@@ -2725,10 +1603,9 @@ const upgradeChatToWorkflow = async () => {
   try {
     const startWorkflow = isAgentMode.value ? chatStore.startAgentRun : chatStore.upgradeToWorkflow
     const result = await startWorkflow(userText, {
-      domain: isLawyerMode.value ? 'legal' : 'general',
-      intent: isLawyerMode.value ? 'case_analysis' : 'general',
-      workflowId: isLawyerMode.value ? 'legal_case_analysis_v1' : undefined,
-      reviewMode: isLawyerMode.value ? 'human_in_loop' : 'auto',
+      domain: 'general',
+      intent: 'general',
+      reviewMode: 'auto',
       conversationId,
       clientRequestId
     })
@@ -2780,38 +1657,6 @@ const handleKeydown = (event: KeyboardEvent) => {
   sendMessage()
 }
 
-const openTeacherUploadDialog = () => {
-  if (!teacherUploadInputRef.value) return
-  teacherUploadInputRef.value.value = ''
-  teacherUploadInputRef.value.click()
-}
-
-const handleTeacherFileUpload = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-
-  loading.value = true
-  try {
-    // Reuse FileManager upload backend.
-    await fileApi.uploadFile(file, 'teacher').catch(() => undefined)
-
-    const ocr = await agentTeacherApi.extractOcrText(file)
-    if (!ocr.text) {
-      ElMessage.warning('未识别到文本，请更换更清晰的文件后重试')
-      return
-    }
-
-    const injected = `\n\n[OCR识别文本 - ${file.name}]\n${ocr.text}`
-    inputText.value = `${inputText.value}${injected}`.trim()
-    ElMessage.success('OCR 识别完成，已注入输入框')
-  } catch (error: any) {
-    ElMessage.error(error.message || '上传或 OCR 处理失败')
-  } finally {
-    loading.value = false
-  }
-}
-
 const handleControl = (type: string) => {
   if (type === 'folder' || type === 'image') {
     showFileManager.value = true
@@ -2822,12 +1667,6 @@ const handleFileSelected = async (file: any) => {
   const fileUrl = file?.path ? `/api/files/download/${file.path}` : (file?.url || file?.fileUrl)
   if (!fileUrl) {
     ElMessage.warning('文件地址无效，无法发送')
-    return
-  }
-
-  if (isTeacherMode.value) {
-    showFileManager.value = false
-    ElMessage.info('教师模式建议使用“上传作业”按钮自动 OCR 注入文本')
     return
   }
 
@@ -2941,38 +1780,6 @@ watch(
   { flush: 'post' }
 )
 
-watch(
-  availableLawyerResultPanels,
-  panels => {
-    activeLawyerResultPanels.value = [...panels]
-  },
-  { immediate: true }
-)
-
-watch(
-  availableTeacherResultPanels,
-  panels => {
-    activeTeacherResultPanels.value = [...panels]
-  },
-  { immediate: true }
-)
-
-watch(
-  availableProgrammerResultPanels,
-  panels => {
-    activeProgrammerResultPanels.value = [...panels]
-  },
-  { immediate: true }
-)
-
-watch(
-  availableWriterResultPanels,
-  panels => {
-    activeWriterResultPanels.value = [...panels]
-  },
-  { immediate: true }
-)
-
 const checkScrollState = () => {
   if (!messagesRef.value) return
   const { scrollTop, scrollHeight, clientHeight } = messagesRef.value
@@ -3001,34 +1808,11 @@ watch(
   { immediate: true }
 )
 
-watch(
-  () => roleStore.currentRole,
-  newRole => {
-    selectedRoleId.value = newRole?.id || null
-    chatStore.setRole(newRole?.id || null)
-  },
-  { immediate: true }
-)
-
-watch(showAssistTools, visible => {
-  localStorage.setItem(ASSIST_TOOL_VISIBLE_KEY, visible ? '1' : '0')
-})
-
-watch(agentPanelCollapsed, collapsed => {
-  localStorage.setItem(AGENT_PANEL_COLLAPSED_KEY, collapsed ? '1' : '0')
-})
-
-watch(lawyerWorkflowProgressCollapsed, collapsed => {
-  localStorage.setItem(LAWYER_WORKFLOW_PROGRESS_COLLAPSED_KEY, collapsed ? '1' : '0')
-})
-
 const restoreWorkflowForConversation = async () => {
   const conversationId = currentConversationId.value
   const binding = chatStore.getActiveWorkflowBinding(conversationId)
     || chatStore.getLatestWorkflowBinding(conversationId)
   const routeRunId = typeof route.query.runId === 'string' ? route.query.runId.trim() : ''
-  // A run selected from Agent history is explicit navigation state. It must win over
-  // conversation-local bindings, especially while clearMessages() changes contextId.
   const runId = routeRunId || binding?.runId || ''
 
   if (runId && runId === activeWorkflowRunId.value && workflowProgressState.runId.value === runId) return
@@ -3090,7 +1874,7 @@ watch(hasAgentActivity, active => {
 })
 
 watch(
-  [isGeneralAgentMode, activeWorkflowRunId],
+  [isAgentMode, activeWorkflowRunId],
   async ([generalMode], previous) => {
     if (!generalMode) return
     const previousRunId = previous?.[1]
@@ -3111,7 +1895,6 @@ onMounted(async () => {
     setWorkflowPanelOpen(false)
     agentPanelCollapsed.value = true
   }
-  await roleStore.loadRoles()
   workflowPanelHeight.value = clampWorkflowPanelHeight(workflowPanelHeight.value)
 
   if (composerRef.value) {
@@ -3126,13 +1909,6 @@ onMounted(async () => {
     agentPanelCollapsed.value = true
   }
 
-  const assistToolVisible = localStorage.getItem(ASSIST_TOOL_VISIBLE_KEY)
-  if (assistToolVisible === '1') {
-    showAssistTools.value = true
-  }
-
-  selectedRoleId.value = roleStore.currentRole?.id || null
-  chatStore.setRole(roleStore.currentRole?.id || null)
 
   void chatStore.fetchContextWindows()
 
@@ -3921,12 +2697,6 @@ const handleHeroLogoPointerUp = () => {
   font-size: 12px;
 }
 
-.lawyer-history-conversation {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 26px;
-}
 
 .workflow-history-request {
   overflow: hidden;
@@ -4052,117 +2822,6 @@ const handleHeroLogoPointerUp = () => {
   width: 50%;
   margin: 0 auto 7px;
 }
-
-.lawyer-workflow-progress {
-  position: relative;
-  min-width: 0;
-}
-
-.lawyer-workflow-progress :deep(.workflow-progress__header) {
-  padding-right: 28px;
-}
-
-.lawyer-workflow-progress__toggle {
-  position: absolute;
-  z-index: 2;
-  top: 6px;
-  right: 7px;
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 160ms ease, background-color 160ms ease, transform 160ms ease;
-}
-
-.lawyer-workflow-progress__toggle:hover,
-.lawyer-workflow-progress__toggle:focus-visible {
-  background: var(--primary-fade);
-  color: var(--primary-color);
-  outline: none;
-}
-
-.lawyer-workflow-progress__toggle:active {
-  transform: translateY(1px);
-}
-
-.lawyer-workflow-progress__collapsed-row {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 10px 7px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-  transition: border-color 160ms ease, background-color 160ms ease;
-}
-
-.lawyer-workflow-progress__collapsed-row:hover,
-.lawyer-workflow-progress__collapsed-row:focus-visible {
-  border-color: var(--border-hover);
-  background: color-mix(in srgb, var(--primary-fade) 34%, var(--bg-card));
-  outline: none;
-}
-
-.lawyer-workflow-progress__identity,
-.lawyer-workflow-progress__expand {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-}
-
-.lawyer-workflow-progress__identity strong {
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.lawyer-workflow-progress__dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--primary-fade);
-}
-
-.lawyer-workflow-progress.completed .lawyer-workflow-progress__dot {
-  background: var(--success);
-  box-shadow: 0 0 0 3px var(--success-fade);
-}
-
-.lawyer-workflow-progress.waiting_review .lawyer-workflow-progress__dot,
-.lawyer-workflow-progress.retrying .lawyer-workflow-progress__dot {
-  background: var(--warning);
-  box-shadow: 0 0 0 3px var(--warning-fade);
-}
-
-.lawyer-workflow-progress.failed .lawyer-workflow-progress__dot,
-.lawyer-workflow-progress.cancelled .lawyer-workflow-progress__dot {
-  background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-fade);
-}
-
-.lawyer-workflow-progress__expand {
-  flex: 0 0 auto;
-  color: var(--primary-color);
-  font-weight: 650;
-}
-
 .chat-workflow-error {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--border-light));
@@ -4618,28 +3277,25 @@ const handleHeroLogoPointerUp = () => {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
-  cursor: pointer;
+  cursor: default;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
 }
 
-.composer-agent-mode:hover {
-  border-color: color-mix(in srgb, var(--primary-color) 26%, var(--border-light));
-  background: color-mix(in srgb, var(--primary-color) 9%, transparent);
-}
 
-.composer-agent-mode:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--primary-color) 58%, transparent);
-  outline-offset: 2px;
-}
 
-.composer-agent-mode__chevron {
-  font-size: 9px;
-  color: var(--text-muted);
-  opacity: 0.9;
-}
 
 .composer-agent-mode__icon {
   color: var(--text-muted);
+}
+
+.composer-agent-mode--permission {
+  border-color: color-mix(in srgb, var(--accent-color) 34%, transparent);
+  background: var(--accent-fade);
+  color: var(--accent-color);
+}
+
+.composer-agent-mode--permission .composer-agent-mode__icon {
+  color: var(--accent-color);
 }
 
 .composer-acg-toggle {
@@ -4731,7 +3387,6 @@ const handleHeroLogoPointerUp = () => {
 
 .agent-panel {
   position: relative;
-  --agent-panel-accent: var(--primary-color);
   background: var(--bg-sidebar);
   min-height: 0;
   display: flex;
@@ -4864,360 +3519,6 @@ const handleHeroLogoPointerUp = () => {
   color: var(--primary-color);
   font-size: 17px;
 }
-
-.chat-main.lawyer .agent-panel {
-  --agent-panel-accent: #496b8f;
-  border-left-color: rgba(73, 107, 143, 0.22);
-}
-
-.chat-main.teacher .agent-panel {
-  --agent-panel-accent: #3d7656;
-  border-left-color: rgba(61, 118, 86, 0.22);
-}
-
-.chat-main.programmer .agent-panel {
-  --agent-panel-accent: #6f668f;
-  border-left-color: rgba(111, 102, 143, 0.22);
-}
-
-.chat-main.writer .agent-panel {
-  --agent-panel-accent: #9a7432;
-  border-left-color: rgba(154, 116, 50, 0.22);
-}
-
-.results-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
-  padding: 52px 18px 24px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.results-empty .empty-icon {
-  width: 34px;
-  height: 34px;
-  padding: 8px;
-  border-radius: 9px;
-  background: var(--bg-panel);
-  color: var(--agent-panel-accent);
-  font-size: 18px;
-  opacity: 1;
-}
-
-.results-empty-hint {
-  max-width: 230px;
-  color: var(--text-disabled);
-  font-size: 11px;
-  line-height: 1.55;
-  text-align: center;
-  text-wrap: pretty;
-}
-
-.agent-panel-content :deep(.skill-panel) {
-  height: 100%;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.agent-panel-content :deep(.lawyer-panel),
-.agent-panel-content :deep(.teacher-panel),
-.agent-panel-content :deep(.programmer-panel),
-.agent-panel-content :deep(.writer-panel) {
-  border-top: 0;
-}
-
-.agent-panel-content :deep(.panel-header) {
-  min-height: 64px;
-  padding: 10px 46px 10px 14px;
-  gap: 8px;
-  background: transparent;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.agent-panel-content :deep(.header-left) {
-  min-width: 0;
-  gap: 9px;
-}
-
-.agent-panel-content :deep(.agent-avatar) {
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--primary-fade);
-  color: var(--agent-panel-accent);
-  box-shadow: none;
-  font-size: 15px;
-}
-
-.agent-panel-content :deep(.header-text) {
-  min-width: 0;
-  gap: 1px;
-}
-
-.agent-panel-content :deep(.panel-header h3) {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-panel-content :deep(.header-sub) {
-  overflow: hidden;
-  color: var(--text-disabled);
-  font-size: 10px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-panel-content :deep(.header-badges) {
-  flex: 0 0 auto;
-}
-
-.agent-panel-content :deep(.skill-pill),
-.agent-panel-content :deep(.risk-pill) {
-  padding: 3px 7px;
-  border: 0;
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-  font-size: 10px;
-  box-shadow: none;
-}
-
-.agent-panel-content :deep(.pill-dot) {
-  width: 5px;
-  height: 5px;
-  background: var(--agent-panel-accent);
-  animation: none;
-}
-
-.agent-panel-content :deep(.panel-tabs) {
-  height: 32px;
-  min-height: 32px;
-  padding: 0 8px;
-  background: transparent;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.agent-panel-content :deep(.tab-btn) {
-  gap: 4px;
-  height: 32px !important;
-  min-height: 32px !important;
-  max-height: 32px !important;
-  box-sizing: border-box;
-  padding: 0 6px !important;
-  border-bottom-width: 1px;
-  background: transparent;
-  color: var(--text-disabled);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.agent-panel-content :deep(.tab-btn:hover) {
-  background: transparent;
-  color: var(--text-primary);
-}
-
-.agent-panel-content :deep(.tab-btn.active) {
-  background: transparent;
-  color: var(--text-primary);
-  border-bottom-color: var(--agent-panel-accent);
-}
-
-.agent-panel-content :deep(.tab-icon) {
-  display: none;
-}
-
-.agent-panel-content :deep(.tab-badge),
-.agent-panel-content :deep(.tab-btn.active .tab-badge) {
-  min-width: 13px;
-  height: 13px;
-  padding: 0 3px;
-  line-height: 13px;
-  background: var(--bg-panel);
-  color: var(--text-secondary);
-  font-size: 8px;
-}
-
-.agent-panel-content :deep(.empty) {
-  justify-content: flex-start;
-  min-height: 0;
-  padding: 48px 18px 24px;
-  color: var(--text-secondary);
-}
-
-.agent-panel-content :deep(.empty-illustration) {
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--bg-panel);
-  color: var(--agent-panel-accent);
-  box-shadow: none;
-  font-size: 18px;
-}
-
-.agent-panel-content :deep(.empty-hint) {
-  max-width: 230px;
-  color: var(--text-disabled);
-  font-size: 11px;
-  line-height: 1.55;
-  text-wrap: pretty;
-}
-
-.writer-content-preview {
-  border: 1px solid rgba(154, 116, 50, 0.18);
-  background: rgba(154, 116, 50, 0.05);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #67491c;
-  white-space: pre-wrap;
-}
-
-.programmer-block {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.programmer-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.programmer-grid.two-cols {
-  grid-template-columns: 1fr 1fr;
-}
-
-.programmer-card {
-  border: 1px solid rgba(111, 102, 143, 0.16);
-  background: rgba(111, 102, 143, 0.05);
-  border-radius: 8px;
-  padding: 10px;
-}
-
-.programmer-card .card-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent-color);
-  margin-bottom: 6px;
-}
-
-.programmer-card ul {
-  margin: 0;
-  padding-left: 16px;
-  font-size: 13px;
-  color: var(--text-regular);
-  line-height: 1.5;
-}
-
-.programmer-meta {
-  font-size: 12px;
-  color: var(--text-regular);
-}
-
-.programmer-search-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.search-item {
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  background: var(--bg-card);
-  padding: 8px 10px;
-}
-
-.search-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.search-head .path {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary-color);
-  word-break: break-all;
-}
-
-.search-head .score {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.search-item pre,
-.code-block {
-  margin: 0;
-  border-radius: 8px;
-  background: #1f2428;
-  color: #e8ece8;
-  padding: 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow: auto;
-}
-
-.drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.role-list {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.role-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  padding: 10px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.role-item:hover {
-  border-color: var(--primary-color);
-  background: var(--primary-fade);
-}
-
-.role-item.active {
-  border-color: var(--primary-color);
-  background: var(--primary-fade);
-}
-
-.role-text .name {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.role-text .desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-
 @media (max-width: 900px) {
   .workflow-run-strip,
   .chat-workflow-progress,
@@ -5320,9 +3621,6 @@ const handleHeroLogoPointerUp = () => {
     display: none;
   }
 
-  .programmer-grid.two-cols {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Screenshot refinement: quieter surfaces, clearer focus, and a lighter hero rhythm. */
@@ -5524,25 +3822,9 @@ const handleHeroLogoPointerUp = () => {
   justify-content: space-between;
 }
 
-.composer-agent-mode:hover {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--primary-color) 9%, transparent);
-}
 
-.composer-agent-mode:hover,
-.composer-agent-mode[aria-expanded='true'] {
-  color: var(--text-primary);
-}
 
-.composer-agent-mode:hover .composer-agent-mode__icon,
-.composer-agent-mode[aria-expanded='true'] .composer-agent-mode__icon {
-  color: var(--primary-color);
-}
 
-.composer-agent-mode:hover .composer-agent-mode__chevron,
-.composer-agent-mode[aria-expanded='true'] .composer-agent-mode__chevron {
-  color: var(--text-secondary);
-}
 
 .mission-chip {
   height: 28px;

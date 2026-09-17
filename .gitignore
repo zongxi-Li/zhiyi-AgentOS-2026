@@ -132,6 +132,7 @@ Recommend/agent/models/
 .secrets/
 backups/
 .tmp-*
+output/frontend-startup-*.md
 artifacts/infra-rfc-v1.1/runtime/
 artifacts/windows/
 

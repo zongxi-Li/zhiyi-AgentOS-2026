@@ -15,7 +15,7 @@
         @click="emit('menu')"
       >
         <span class="app-topbar__logo" aria-hidden="true">
-          <img src="/logo.png" alt="" />
+          <img src="/logo.webp" alt="" />
         </span>
       </button>
     </div>

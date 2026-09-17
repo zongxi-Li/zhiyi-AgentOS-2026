@@ -2,7 +2,6 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
-import LandingView from '@/views/LandingView.vue'
 
 const normalizeRedirect = (redirect?: string) => {
   if (!redirect) return '/chat'
@@ -28,9 +27,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'Landing',
-    // The landing page is the public first screen; load it with the router so
-    // the initial navigation does not wait on a large cold dynamic import.
-    component: LandingView,
+    component: () => import('@/views/LandingView.vue'),
     meta: {
       title: '首页',
       requiresAuth: false
@@ -329,8 +326,8 @@ router.beforeEach(async (to, _from, next) => {
         return
       }
       clearAuthState()
-    } catch {
-      clearAuthState()
+    } catch (error) {
+      if (isAuthorizationFailure(error)) clearAuthState()
     }
   }
 

@@ -1,5 +1,15 @@
 <template>
-  <div class="model-runtime-controls" :class="{ compact }" aria-label="模型运行设置">
+  <el-popover v-if="composer" placement="top-end" trigger="click" :width="340" popper-class="composer-model-popover">
+    <template #reference>
+      <button class="composer-model-trigger" type="button" aria-label="选择模型" aria-haspopup="dialog" :title="settings.selectedModel">
+        <span class="composer-model-name">{{ settings.selectedModel }}</span>
+        <el-icon><ArrowDown /></el-icon>
+      </button>
+    </template>
+    <div class="composer-model-heading">模型设置</div>
+    <ModelRuntimeControls compact />
+  </el-popover>
+  <div v-else class="model-runtime-controls" :class="{ compact }" aria-label="模型运行设置">
     <el-select
       :model-value="settings.provider"
       class="provider-select"
@@ -51,7 +61,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Connection, Cpu, Opportunity } from '@element-plus/icons-vue'
+import { ArrowDown, Connection, Cpu, Opportunity } from '@element-plus/icons-vue'
 import { apiUrl } from '@/platform'
 import {
   MODEL_SETTINGS_EVENT,
@@ -69,7 +79,7 @@ import {
   type ThinkingMode
 } from '@/config/modelSettings'
 
-withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+const props = withDefaults(defineProps<{ compact?: boolean; composer?: boolean }>(), { compact: false, composer: false })
 
 const settings = ref(loadModelSettings())
 const modelsLoading = ref(false)
@@ -172,12 +182,34 @@ async function loadSystemModels(preferServerDefault = false): Promise<void> {
 
 onMounted(() => {
   window.addEventListener(MODEL_SETTINGS_EVENT, syncSettings)
-  void loadSystemModels(true)
+  if (!props.composer) void loadSystemModels()
 })
 onUnmounted(() => window.removeEventListener(MODEL_SETTINGS_EVENT, syncSettings))
 </script>
 
 <style scoped>
+.composer-model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 210px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.composer-model-trigger:hover { background: color-mix(in srgb, var(--text-primary) 7%, transparent); color: var(--text-primary); }
+.composer-model-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.composer-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-model-trigger .el-icon { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
+.composer-model-heading { margin: 0 0 12px; color: var(--text-secondary); font-size: 13px; font-weight: 600; }
+@media (max-width: 620px) { .composer-model-trigger { max-width: 120px; font-size: 11px; padding-inline: 4px; } }
 .model-runtime-controls {
   display: inline-flex;
   align-items: center;
@@ -255,4 +287,15 @@ onUnmounted(() => window.removeEventListener(MODEL_SETTINGS_EVENT, syncSettings)
     flex: 0 0 92px;
   }
 }
+</style>
+
+<style>
+.composer-model-popover.el-popover.el-popper {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .25);
+}
+.composer-model-popover.el-popper .el-popper__arrow::before { background: var(--bg-card); border-color: var(--border-color); }
 </style>

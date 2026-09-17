@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { authApi } from '@/services/api/auth'
 import router from './index'
 
+vi.mock('@/views/LandingView.vue', () => ({ default: { template: '<main>Landing</main>' } }))
+vi.mock('@/views/ChatView.vue', () => ({ default: { template: '<main>Chat</main>' } }))
+vi.mock('@/views/HistoryView.vue', () => ({ default: { template: '<main>History</main>' } }))
+vi.mock('@/views/ResourceCenterView.vue', () => ({ default: { template: '<main>Resources</main>' } }))
+
 vi.mock('@/services/api/auth', () => ({
   authApi: {
     verifyToken: vi.fn()
@@ -81,6 +86,15 @@ describe('authentication outage handling', () => {
     expect(router.currentRoute.value.path).toBe('/')
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('userId')).toBeNull()
+  })
+
+  it('keeps the session when embedded authentication verification has a network outage', async () => {
+    localStorage.setItem('token', 'still-valid-token')
+    localStorage.setItem('userId', 'user-1')
+    vi.mocked(authApi.verifyToken).mockRejectedValue(new Error('Network Error'))
+    await router.push('/?auth=1&redirect=%2Fchat')
+    expect(localStorage.getItem('token')).toBe('still-valid-token')
+    expect(localStorage.getItem('userId')).toBe('user-1')
   })
 })
 

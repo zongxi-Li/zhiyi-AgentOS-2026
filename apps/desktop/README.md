@@ -5,7 +5,7 @@
 ## 一、当前部署结论
 
 - 桌面程序本身运行在用户的 Windows 电脑上，不是在云端运行。
-- 当前默认配置连接本机 Gateway：`http://127.0.0.1:8080`。
+- 当前默认配置连接本机 Gateway：`http://127.0.0.1:9050`。
 - 桌面端不负责启动或管理 Backend、AgentOS、Docker、Python、Java、PostgreSQL 和 Redis。
 - 当前没有自动更新服务，发布新版本需要重新构建并手动安装安装包。
 - 后端可以部署在云端，但桌面程序仍然运行在本地；只需要把 API 地址改为公网 HTTPS Gateway。
@@ -23,7 +23,7 @@ Tauri 2 原生桌面壳
       |
       +-- HTTP / SSE / WebSocket
       v
-Gateway（默认：127.0.0.1:8080）
+Gateway（默认：127.0.0.1:9050）
       |
       v
 Backend / AgentOS / WKN Runtime
@@ -60,6 +60,14 @@ npm ci
 
 ## 五、本地开发
 
+日常体验构建后的前端，可从项目根目录运行：
+
+```powershell
+.\ops\scripts\start-desktop-built.ps1 -Build
+```
+
+此入口构建 release 桌面程序并加载本地 `frontend/dist`，不启动 Vite；后端 Gateway 仍需在 9050 运行。后续直接运行同一脚本可复用构建产物，源码更新后再加 `-Build`。下述热更新入口继续用于开发。
+
 ### 1. 启动本地后端环境
 
 在第一个 PowerShell 窗口执行：
@@ -69,7 +77,7 @@ Set-Location C:\Users\LZX\Desktop\kinlin_ai
 .\ops\scripts\infra\windows\up.ps1 -DebugPorts
 ```
 
-确认 Gateway 已监听 `127.0.0.1:8080`。
+确认 Gateway 已监听 `127.0.0.1:9050`。
 
 ### 2. 启动桌面开发模式
 
@@ -159,7 +167,7 @@ desktop\package.json
 将：
 
 ```dotenv
-VITE_API_BASE_URL=http://127.0.0.1:8080
+VITE_API_BASE_URL=http://127.0.0.1:9050
 ```
 
 改为类似：
@@ -206,7 +214,7 @@ Set-Location C:\Users\LZX\Desktop\kinlin_ai
 .\ops\scripts\infra\windows\status.ps1
 ```
 
-桌面默认请求地址是宿主机的 `127.0.0.1:8080`；不要填写 Backend 容器内部地址。
+桌面默认请求地址是宿主机的 `127.0.0.1:9050`；不要填写 Backend 容器内部地址。
 
 ### 头像无法显示
 

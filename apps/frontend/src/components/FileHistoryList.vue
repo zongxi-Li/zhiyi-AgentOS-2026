@@ -446,9 +446,9 @@ watch(() => props.searchKeyword, () => {
     width: 48px;
     height: 48px;
     border-radius: 12px;
-    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background: #111111;
     background-size: 200% 100%;
-    animation: skeleton-loading 1.5s ease-in-out infinite;
+    animation: none;
     flex-shrink: 0;
   }
   
@@ -461,9 +461,9 @@ watch(() => props.searchKeyword, () => {
     .skeleton-line {
       height: 16px;
       border-radius: 4px;
-      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      background: #111111;
       background-size: 200% 100%;
-      animation: skeleton-loading 1.5s ease-in-out infinite;
+      animation: none;
     }
     
     .skeleton-title {

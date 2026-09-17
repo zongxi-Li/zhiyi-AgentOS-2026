@@ -23,7 +23,8 @@ export default defineConfig(({ mode }) => {
   const desktopNodeModules = resolve(__dirname, '../desktop/node_modules')
   const BACKEND_PROXY_TARGET =
     env.DEV_BACKEND_PROXY_TARGET ||
-    'http://localhost:8080'
+    'http://127.0.0.1:9050'
+  const proxyThroughHostGateway = isDesktop && BACKEND_PROXY_TARGET === 'http://127.0.0.1:9050'
 
   return {
     plugins: [
@@ -99,8 +100,8 @@ export default defineConfig(({ mode }) => {
       strictPort: isDesktop,
       // Windows 宿主目录 bind mount 进容器后不产生 inotify 事件，chokidar 常规监听
       // 会静默失效：源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
-      // 轮询是 Dev 形态下保证"改完代码容器内可见"的唯一可靠通道。
-      watch: { usePolling: true, interval: 500 },
+      // 容器开发保留轮询；宿主桌面开发使用原生监听，避免持续扫描文件。
+      watch: { usePolling: env.CHOKIDAR_USEPOLLING === 'true' || !isDesktop, interval: 1000 },
       proxy: {
         '/api': {
           target: BACKEND_PROXY_TARGET,
@@ -111,6 +112,12 @@ export default defineConfig(({ mode }) => {
           // 对于有/api前缀的控制器（如digital-human），保留前缀
           // 对于没有/api前缀的控制器（如auth、chat），去掉前缀
           rewrite: (path) => {
+            // The desktop hot-reload server forwards to the host Gateway,
+            // whose own frontend proxy expects the /api prefix. Docker's
+            // frontend server forwards directly to Backend and still needs
+            // the legacy prefix removal below.
+            if (proxyThroughHostGateway) return path
+
             // 这些路径已经有/api前缀，保留
             const keepApiPrefix = [
               '/api/digital-human',

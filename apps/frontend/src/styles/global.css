@@ -400,6 +400,18 @@ html[data-color-scheme='codex-dark'] .el-popper__arrow::before {
   border-color: var(--border-light) !important;
 }
 
+/* Element Plus Tooltip uses .el-popper.is-dark rather than .el-popover. */
+html[data-color-scheme='codex-dark'] .el-popper.is-dark {
+  color: var(--text-primary) !important;
+  background: var(--bg-card) !important;
+  border-color: var(--border-light) !important;
+}
+
+html[data-color-scheme='codex-dark'] .el-popper.is-dark > .el-popper__arrow::before {
+  background: var(--bg-card) !important;
+  border-color: var(--border-light) !important;
+}
+
 html[data-color-scheme='codex-dark'] .el-select-dropdown__item,
 html[data-color-scheme='codex-dark'] .el-dropdown-menu__item {
   color: var(--text-regular);
@@ -1399,190 +1411,6 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   line-height: 1.65;
 }
 
-/* Agent Skill Panels - shared minimal override */
-.skill-panel {
-  --agent-tone: var(--primary-color);
-  --agent-tone-bg: var(--primary-fade);
-  background: color-mix(in srgb, var(--bg-card) 88%, transparent) !important;
-  border: 1px solid var(--border-light) !important;
-  border-radius: 8px !important;
-  box-shadow: var(--shadow-sm) !important;
-}
-
-.skill-panel.lawyer-panel {
-  --agent-tone: var(--info);
-  --agent-tone-bg: rgba(73, 107, 143, 0.09);
-}
-
-.skill-panel.teacher-panel {
-  --agent-tone: var(--success);
-  --agent-tone-bg: rgba(61, 118, 86, 0.09);
-}
-
-.skill-panel.programmer-panel {
-  --agent-tone: var(--accent-color);
-  --agent-tone-bg: rgba(111, 102, 143, 0.09);
-}
-
-.skill-panel.writer-panel {
-  --agent-tone: var(--warning);
-  --agent-tone-bg: rgba(154, 116, 50, 0.09);
-}
-
-.skill-panel .panel-header {
-  background: rgba(251, 252, 250, 0.92) !important;
-  border-bottom: 1px solid var(--border-light) !important;
-}
-
-.skill-panel .agent-avatar {
-  background: var(--surface-solid) !important;
-  border: 1px solid var(--border-light) !important;
-  color: var(--agent-tone) !important;
-  border-radius: 8px !important;
-  box-shadow: var(--shadow-sm) !important;
-}
-
-.skill-panel .header-sub,
-.skill-panel .sub-title {
-  color: var(--agent-tone) !important;
-  letter-spacing: 0 !important;
-}
-
-.skill-panel .risk-pill,
-.skill-panel .skill-pill,
-.skill-panel .tab-badge,
-.skill-panel .status-pill {
-  background: var(--agent-tone-bg) !important;
-  border-color: var(--border-light) !important;
-  color: var(--agent-tone) !important;
-}
-
-.skill-panel .pill-dot {
-  background: var(--agent-tone) !important;
-}
-
-.skill-panel .panel-tabs {
-  background: var(--surface-solid) !important;
-  align-items: stretch !important;
-}
-
-.skill-panel .tab-btn {
-  min-height: 44px !important;
-  padding: 8px 10px !important;
-  box-sizing: border-box !important;
-  transition: var(--transition) !important;
-  align-self: stretch !important;
-  flex-wrap: nowrap !important;
-}
-
-.skill-panel .tab-btn:hover,
-.skill-panel .tab-btn.active {
-  background: var(--agent-tone-bg) !important;
-  border-bottom-color: var(--agent-tone) !important;
-  color: var(--agent-tone) !important;
-}
-
-.skill-panel .tab-btn.active .tab-badge {
-  background: var(--agent-tone) !important;
-  color: #fff !important;
-}
-
-.skill-panel .tab-label,
-.skill-panel .tab-badge {
-  display: inline-flex !important;
-  align-items: center !important;
-  line-height: 1 !important;
-}
-
-.skill-panel .tab-icon {
-  flex: 0 0 auto !important;
-  line-height: 1 !important;
-}
-
-.skill-panel .tab-badge {
-  flex-shrink: 0 !important;
-}
-
-.skill-panel .federated-btn {
-  background: var(--surface-solid) !important;
-  border: 1px solid var(--border-light) !important;
-  border-radius: 8px !important;
-  color: var(--agent-tone) !important;
-  transition: var(--transition) !important;
-}
-
-.skill-panel .federated-btn:hover:not(:disabled) {
-  background: var(--agent-tone-bg) !important;
-  border-color: var(--border-hover) !important;
-}
-
-.skill-panel .federated-btn.ghost {
-  color: var(--text-secondary) !important;
-}
-
-.skill-panel .status-pill.on {
-  background: rgba(61, 118, 86, 0.12) !important;
-  color: var(--success) !important;
-}
-
-.skill-panel .status-pill.off {
-  background: var(--bg-input) !important;
-  color: var(--text-secondary) !important;
-}
-
-.skill-panel .status-pill.idle {
-  background: rgba(154, 116, 50, 0.12) !important;
-  color: var(--warning) !important;
-}
-
-.skill-panel .skill-item,
-.skill-panel .skill-item.blue,
-.skill-panel .skill-item.sky,
-.skill-panel .skill-item.indigo,
-.skill-panel .skill-item.cyan,
-.skill-panel .skill-item.slate,
-.skill-panel .skill-item.emerald,
-.skill-panel .skill-item.amber,
-.skill-panel .skill-item.teal,
-.skill-panel .skill-item.violet,
-.skill-panel .skill-item.rose,
-.skill-panel .skill-item.orange,
-.skill-panel .skill-item.warm {
-  background: var(--agent-tone-bg) !important;
-  border-color: var(--border-light) !important;
-  border-radius: 8px !important;
-  color: var(--agent-tone) !important;
-  box-shadow: none !important;
-}
-
-.skill-panel .skill-icon,
-.skill-panel .tab-icon {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  color: currentColor !important;
-}
-
-.skill-panel .empty-illustration {
-  width: 52px;
-  height: 52px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 6px !important;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  background: var(--surface-solid);
-  color: var(--agent-tone);
-  box-shadow: var(--shadow-sm);
-  font-size: 24px;
-  opacity: 1 !important;
-}
-
-.skill-panel .empty-hint {
-  color: var(--text-disabled) !important;
-}
-
 .agent-panel .card {
   border: 1px solid var(--border-light) !important;
   border-radius: 8px !important;
@@ -1839,74 +1667,10 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   border-color: var(--primary-line) !important;
 }
 
-/* Codex dark: keep the legacy role workbenches on the same layered palette. */
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel {
-  background: var(--bg-card) !important;
-  border-color: var(--border-color) !important;
-  box-shadow: none !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .panel-header {
-  background: linear-gradient(135deg, var(--bg-panel), var(--bg-card)) !important;
-  border-bottom-color: var(--border-color) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .panel-tabs {
-  background: var(--bg-input) !important;
-  border-bottom-color: var(--border-color) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .tab-btn:hover,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .tab-btn.active {
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .tab-badge,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .skill-pill,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .risk-pill,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .status-pill,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .federated-btn {
-  background: color-mix(in srgb, var(--color-primary) 14%, var(--bg-panel)) !important;
-  border-color: color-mix(in srgb, var(--color-primary) 32%, var(--border-color)) !important;
-  color: var(--text-regular) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .federated-btn.ghost {
-  background: var(--bg-input) !important;
-  border-color: var(--border-color) !important;
-  color: var(--text-regular) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .skill-item {
-  background: linear-gradient(135deg, var(--bg-panel), var(--bg-input)) !important;
-  border-color: var(--border-color) !important;
-  color: var(--text-regular) !important;
-  box-shadow: none !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .skill-item:hover {
-  border-color: var(--border-focus) !important;
-  box-shadow: var(--shadow-sm) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .tab-content::-webkit-scrollbar-thumb {
-  background: var(--border-color) !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .agent-avatar,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .empty-illustration,
 html[data-color-scheme='codex-dark'] .agent-panel .card {
   background: var(--bg-panel) !important;
   border-color: var(--border-color) !important;
   box-shadow: none !important;
-}
-
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-collapse,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-collapse-item__header,
-html[data-color-scheme='codex-dark'] .agent-panel .skill-panel .results-tab .el-collapse-item__wrap {
-  background: transparent;
-  color: var(--text-regular);
-  border-color: var(--border-color);
 }
 
 /* Compact page toolbar for the Role workspace. */
