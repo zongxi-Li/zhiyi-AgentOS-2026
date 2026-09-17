@@ -125,6 +125,37 @@ class PlanResult:
 
 
 class PlanningEngine:
+    @staticmethod
+    def _plan_progress_payload(task_plan: TaskPlan) -> dict[str, Any]:
+        """Return the bounded semantic TaskPlan projection exposed to the UI."""
+        return {
+            "stage": "planning",
+            "status": "plan_parsed",
+            "taskCount": len(task_plan.nodes),
+            "dependencyCount": len(task_plan.relations),
+            "nodes": [
+                {
+                    "key": node.key,
+                    "parentKey": node.parent_key,
+                    "title": node.title,
+                    "objective": node.objective,
+                    "capabilityRequirements": list(node.capability_requirements),
+                    "acceptanceCriteria": list(node.acceptance_criteria),
+                    "producedArtifacts": list(node.produced_artifacts),
+                    "logicalRole": node.logical_role,
+                }
+                for node in task_plan.nodes[:100]
+            ],
+            "relations": [
+                {
+                    "sourceKey": relation.source_key,
+                    "targetKey": relation.target_key,
+                    "relationType": relation.relation_type.value,
+                }
+                for relation in task_plan.relations[:300]
+            ],
+        }
+
     """认知规划引擎。"""
 
     def __init__(
@@ -253,12 +284,7 @@ class PlanningEngine:
                     self.semantic_planner.last_topology_audit
                 )
                 if progress_callback:
-                    progress_callback({
-                        "stage": "planning",
-                        "status": "plan_parsed",
-                        "taskCount": len(task_plan.nodes),
-                        "dependencyCount": len(task_plan.relations),
-                    })
+                    progress_callback(self._plan_progress_payload(task_plan))
                 blueprint = built.blueprint
                 blueprint.objective = profile.primary_goal or blueprint.objective
                 return PlanResult(
@@ -327,12 +353,7 @@ class PlanningEngine:
             }
         })
         if progress_callback:
-            progress_callback({
-                "stage": "planning",
-                "status": "plan_parsed",
-                "taskCount": len(task_plan.nodes),
-                "dependencyCount": len(task_plan.relations),
-            })
+            progress_callback(self._plan_progress_payload(task_plan))
         variant_set = self.variant_generator.generate(
             profile=profile,
             domain=domain,

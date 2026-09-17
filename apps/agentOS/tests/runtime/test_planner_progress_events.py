@@ -81,6 +81,10 @@ def test_planner_path_emits_fact_event_chain_with_true_counts() -> None:
     assert parsed["category"] == "planner"
     assert parsed["taskCount"] == len(task_plan["nodes"])
     assert parsed["dependencyCount"] == len(task_plan["relations"])
+    assert parsed["nodes"]
+    assert parsed["nodes"][0]["key"] == task_plan["nodes"][0]["key"]
+    assert "objective" in parsed["nodes"][0]
+    assert parsed["relations"] == task_plan["relations"]
 
     # graph_compiled 计数取自编译产物，而不是编译输入蓝图。
     compiled = next(event for event in events if event.get("kind") == "graph_compiled")
@@ -192,6 +196,34 @@ def test_planner_event_payload_whitelist_drops_unsafe_fields() -> None:
     assert "reasoning" not in payload
     assert "modelOutput" not in payload
     assert "SECRET" not in repr(payload)
+
+
+def test_plan_parsed_projects_only_safe_task_plan_fields() -> None:
+    runtime = _runtime()
+    task = runtime.create_mission("plan projection", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
+
+    runtime._append_planner_event(run, {
+        "status": "plan_parsed", "taskCount": 1, "dependencyCount": 1,
+        "nodes": [{
+            "key": "design", "title": "Design", "objective": "Create the design",
+            "capabilityRequirements": ["analysis"], "acceptanceCriteria": ["reviewed"],
+            "producedArtifacts": ["report"], "logicalRole": "task",
+            "prompt": "SECRET", "agentName": "SECRET",
+        }],
+        "relations": [{
+            "sourceKey": "design", "targetKey": "review", "relationType": "depends_on",
+            "reasoning": "SECRET",
+        }],
+    })
+
+    parsed = _planner_events(runtime, run.run_id)[-1]
+    assert parsed["nodes"][0]["objective"] == "Create the design"
+    assert parsed["nodes"][0]["capabilityRequirements"] == ["analysis"]
+    assert parsed["relations"][0] == {
+        "sourceKey": "design", "targetKey": "review", "relationType": "depends_on",
+    }
+    assert "SECRET" not in repr(parsed)
 
 
 def test_planner_failed_trace_accepts_only_structured_topology_audit() -> None:

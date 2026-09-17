@@ -2958,6 +2958,32 @@ class ExecutionRuntime:
                 for item in list(event.get("edges") or [])[:300]
                 if isinstance(item, Mapping)
             ]
+        if planner_event_type == "planner.plan.parsed" or event.get("status") == "plan_parsed":
+            payload["nodes"] = [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key in {"key", "parentKey", "title", "objective", "logicalRole"}
+                    and (value is None or isinstance(value, str))
+                } | {
+                    key: [str(nested)[:500] for nested in value[:50]]
+                    for key, value in item.items()
+                    if key in {"capabilityRequirements", "acceptanceCriteria", "producedArtifacts"}
+                    and isinstance(value, list)
+                }
+                for item in list(event.get("nodes") or [])[:100]
+                if isinstance(item, Mapping)
+            ]
+            payload["relations"] = [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key in {"sourceKey", "targetKey", "relationType"}
+                    and isinstance(value, str)
+                }
+                for item in list(event.get("relations") or [])[:300]
+                if isinstance(item, Mapping)
+            ]
         if planner_event_type not in {
             "planner.started", "planner.stage.started", "planner.stage.retry",
             "planner.model.started", "planner.model.first_token",
