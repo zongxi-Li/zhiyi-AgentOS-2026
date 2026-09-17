@@ -4,6 +4,7 @@ import {
   type ProvenanceProduction,
   type ResourceFailoverObservation,
   type ResourceObservation,
+  type RunContextPackSummary,
   type RunOperationalState,
   type RuntimeInteraction,
   type RunProvenanceProjection,
@@ -74,6 +75,7 @@ export interface RuntimeAuditObservation {
   evidenceCount: number
   contractViolationCount: number
   recoveryCount: number
+  reviewCount: number | null
 }
 
 export interface RuntimeProvenanceObservation {
@@ -121,6 +123,7 @@ export interface RuntimeObservation {
   patchRefs: string[]
   lowEntropy: RuntimeLowEntropyObservation
   resourceObservation: ResourceObservation | null
+  contextPacks: RunContextPackSummary[] | null
   unavailableSources: string[]
 }
 
@@ -533,13 +536,15 @@ const normalizeProblems = (
 
 const normalizeAudit = (
   provenance: RuntimeProvenanceObservation,
-  traces: RuntimeTraceObservation[]
+  traces: RuntimeTraceObservation[],
+  reviewCount: number | null
 ): RuntimeAuditObservation => ({
   provenanceStatus: provenance.integrityStatus,
   provenanceRecordCount: provenance.productions.length + provenance.consumptions.length + provenance.interactions.length,
   evidenceCount: provenance.productions.reduce((count, production) => count + (production.evidenceRefs?.length || 0), 0),
   contractViolationCount: traces.filter(event => event.eventType === 'contract_violation').length,
-  recoveryCount: traces.filter(event => ['run_recovered', 'run_degraded'].includes(event.eventType)).length
+  recoveryCount: traces.filter(event => ['run_recovered', 'run_degraded'].includes(event.eventType)).length,
+  reviewCount
 })
 
 type LowEntropyMetricRecord = {
@@ -616,7 +621,8 @@ export const emptyRuntimeObservation = (runId: string, diagnostics: readonly Wor
     provenanceRecordCount: 0,
     evidenceCount: 0,
     contractViolationCount: 0,
-    recoveryCount: 0
+    recoveryCount: 0,
+    reviewCount: null
   },
   provenance: {
     schemaVersion: null,
@@ -645,7 +651,8 @@ export const emptyRuntimeObservation = (runId: string, diagnostics: readonly Wor
     integrityStatus: null
   },
   resourceObservation: null,
-  unavailableSources: ['run', 'trace', 'provenance', 'resource']
+  contextPacks: null,
+  unavailableSources: ['run', 'trace', 'provenance', 'resource', 'context']
 })
 
 export const readRuntimeObservation = async (
@@ -659,12 +666,16 @@ export const readRuntimeObservation = async (
     agentosApi.getWorkflowTrace(runId, { ...options, view: 'workspace' }),
     agentosApi.getRunProvenance(runId, options),
     executionTreeRequest,
-    loadResourceObservation(runId, options, executionTreeRequest)
+    loadResourceObservation(runId, options, executionTreeRequest),
+    agentosApi.listWorkflowReviews(runId, options),
+    agentosApi.listRunContextPacks(runId, options)
   ])
   const run = results[0].status === 'fulfilled' ? results[0].value : null
   const trace = results[1].status === 'fulfilled' ? results[1].value : null
   const rawProvenance = results[2].status === 'fulfilled' ? results[2].value : null
   const executionTree = results[3].status === 'fulfilled' ? results[3].value : null
+  const reviews = results[5].status === 'fulfilled' ? results[5].value : null
+  const contextPacks = results[6].status === 'fulfilled' ? results[6].value.items : null
   const provenance = normalizeProvenance(rawProvenance)
   const traces = normalizeTrace(trace)
   const resourceObservationBase = results[4].status === 'fulfilled' ? results[4].value : null
@@ -676,7 +687,9 @@ export const readRuntimeObservation = async (
     results[1].status === 'rejected' ? 'trace' : null,
     results[2].status === 'rejected' ? 'provenance' : null,
     results[3].status === 'rejected' ? 'operational' : null,
-    results[4].status === 'rejected' ? 'resource' : null
+    results[4].status === 'rejected' ? 'resource' : null,
+    results[5].status === 'rejected' ? 'review' : null,
+    results[6].status === 'rejected' ? 'context' : null
   ].filter((value): value is string => Boolean(value))
   const recoveryTrace = traces.filter(event => RECOVERY_TRACE_TYPES.has(event.eventType))
   const contractViolations = traces.filter(event => event.eventType === 'contract_violation')
@@ -689,7 +702,7 @@ export const readRuntimeObservation = async (
     communication: [...provenanceCommunication(provenance), ...traceCommunication(traces)],
     toolCalls: normalizeToolCalls(traces),
     problems: normalizeProblems(traces, diagnostics),
-    audit: normalizeAudit(provenance, traces),
+    audit: normalizeAudit(provenance, traces, reviews?.items.length ?? null),
     provenance,
     operational: executionTree?.operational || null,
     recoveryTrace,
@@ -698,6 +711,7 @@ export const readRuntimeObservation = async (
     patchRefs: run?.executionState?.graphPatchRefs || [],
     lowEntropy: normalizeLowEntropy(provenance, traces),
     resourceObservation,
+    contextPacks,
     unavailableSources
   }
 }

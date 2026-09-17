@@ -89,7 +89,8 @@ const runtimeObservation = (runId: string): RuntimeObservation => ({
     provenanceRecordCount: 0,
     evidenceCount: 0,
     contractViolationCount: 0,
-    recoveryCount: 0
+    recoveryCount: 0,
+    reviewCount: null
   },
   provenance: {
     schemaVersion: null,
@@ -118,6 +119,7 @@ const runtimeObservation = (runId: string): RuntimeObservation => ({
     integrityStatus: null
   },
   resourceObservation: null,
+  contextPacks: null,
   unavailableSources: []
 })
 

@@ -33,7 +33,8 @@ const observation = (traces: RuntimeTraceObservation[]): RuntimeObservation => (
     provenanceRecordCount: 0,
     evidenceCount: 0,
     contractViolationCount: 0,
-    recoveryCount: 0
+    recoveryCount: 0,
+    reviewCount: null
   },
   provenance: { schemaVersion: null, integrityStatus: null, productions: [], consumptions: [], interactions: [] },
   operational: null,
@@ -47,6 +48,7 @@ const observation = (traces: RuntimeTraceObservation[]): RuntimeObservation => (
     degradationCount: 0, interactionCount: 0, contractViolationCount: 0, integrityStatus: null
   },
   resourceObservation: null,
+  contextPacks: null,
   unavailableSources: []
 })
 

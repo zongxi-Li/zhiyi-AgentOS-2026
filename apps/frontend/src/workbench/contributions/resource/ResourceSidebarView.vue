@@ -20,8 +20,8 @@
       </div>
       <InspectorPropertyList :rows="[
         { label: 'bound attempts', value: resourceObservation?.bindings.length ?? '未观测' },
-        { label: 'calls', value: '未观测' },
-        { label: 'tokens', value: '未观测' },
+        { label: 'calls', value: resourceUsage?.usage.callCount ?? '未观测' },
+        { label: 'tokens', value: formatTokens(resourceUsage?.usage.totalTokens) },
         { label: 'source', value: resourceObservation?.source || '未观测' }
       ]" />
       <div v-if="boundResources.length" class="resource-list">
@@ -39,14 +39,15 @@
           {{ event.failedResources.map(item => item.resourceId).join('、') }} → {{ event.retryStepIds.join('、') || '原步骤' }}
         </span>
       </div>
-      <p v-else class="sidebar-empty">{{ resourceObservation ? '当前 Run 没有可证明的资源绑定。' : '未观测到 Resource。' }}</p>
+      <p v-if="!boundResources.length" class="sidebar-empty">{{ resourceObservation ? '当前 Run 没有可证明的资源绑定。' : '未观测到 Resource。' }}</p>
     </InspectorSection>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ResourceBindingObservation, ResourceObservation } from '@/services/api/agentos'
+import { workflowApi, type RunResourceUsage } from '@/services/api/workflow'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import type { WorkbenchInspectorContext } from '@/workbench/types'
@@ -56,6 +57,36 @@ const props = defineProps<{
   context: WorkbenchInspectorContext
   resourceObservation: ResourceObservation | null
 }>()
+
+const resourceUsage = ref<RunResourceUsage | null>(null)
+let usageRequestGeneration = 0
+let usageController: AbortController | null = null
+
+const loadResourceUsage = async (runId: string | null) => {
+  const generation = ++usageRequestGeneration
+  usageController?.abort()
+  const controller = runId ? new AbortController() : null
+  usageController = controller
+  resourceUsage.value = null
+  if (!runId || !controller) return
+
+  try {
+    const usage = await workflowApi.getRunResourceUsage(runId, { signal: controller.signal })
+    if (generation === usageRequestGeneration) resourceUsage.value = usage
+  } catch {
+    if (generation === usageRequestGeneration) resourceUsage.value = null
+  }
+}
+
+watch(() => props.context.runId, runId => void loadResourceUsage(runId), { immediate: true })
+onBeforeUnmount(() => {
+  usageRequestGeneration += 1
+  usageController?.abort()
+})
+
+const formatTokens = (value: number | null | undefined) => (
+  value == null ? '未观测' : value.toLocaleString('zh-CN')
+)
 
 const selectedBinding = computed<ResourceBindingObservation | null>(() => {
   const observation = props.resourceObservation

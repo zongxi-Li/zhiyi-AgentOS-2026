@@ -36,8 +36,9 @@
       </template>
     </InspectorSection>
 
-    <InspectorSection title="上下文数据" badge="未观测">
-      <p class="sidebar-empty">未观测到 Context Pack、Memory 或 token context。</p>
+    <InspectorSection title="上下文数据" :badge="contextPacks ? `${contextPacks.length} packs` : '未观测'">
+      <p v-if="!contextPacks" class="sidebar-empty">未观测到 Context Pack 数据。</p>
+      <OperationalRecords v-else title="Context Pack" :items="contextPacks" />
     </InspectorSection>
   </div>
 </template>
@@ -56,6 +57,7 @@ const props = defineProps<{
 const dependencyKeys = computed(() => props.context.entry?.dependencyKeys || [])
 const hasStepSnapshot = computed(() => Boolean(props.context.entry?.objective || dependencyKeys.value.length))
 const operational = computed(() => props.runtimeObservation?.operational || null)
+const contextPacks = computed(() => props.runtimeObservation?.contextPacks || null)
 const controlRecordCount = computed(() => {
   const value = operational.value
   return value

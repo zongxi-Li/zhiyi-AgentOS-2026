@@ -554,6 +554,7 @@ export interface RunOperationalState {
   lineage: RunLineage
   nodeExecutions: NodeExecutionRecord[]
   controlFrames: Array<Record<string, unknown>>
+  contextRefs?: Record<string, string>
   communicationRefs: string[]
   memoryRefs: string[]
   evidenceRefs: string[]
@@ -562,6 +563,32 @@ export interface RunOperationalState {
   consensusResults: Record<string, Record<string, unknown>>
   debateSessions: Record<string, Record<string, unknown>>
   recoveryOutcome?: Record<string, unknown> | null
+}
+
+export interface RunContextPackSummary {
+  [key: string]: unknown
+  stepId: string
+  contextRef: string
+  available: boolean
+  objective?: string
+  stepGoal?: string
+  sourceStepIds?: string[]
+  evidenceRefs?: string[]
+  missingFields?: string[]
+  contractStatus?: string
+  tokensDelivered?: number
+  tokensAvailable?: number
+  savingRatio?: number
+  fieldCount?: number
+  sourceCount?: number
+  dataKeys?: string[]
+  sourceDataKeys?: string[]
+}
+
+export interface RunContextPacksResponse {
+  runId: string
+  items: RunContextPackSummary[]
+  total: number
 }
 
 export interface IdentityBlueprint {
@@ -1535,6 +1562,13 @@ export const agentosApi = {
 
   async getExecutionTree(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunExecutionTree> {
     const response = await agentosRequest.get<RunExecutionTree>(`${runPath(runId)}/execution-tree`, {
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async listRunContextPacks(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunContextPacksResponse> {
+    const response = await agentosRequest.get<RunContextPacksResponse>(`${runPath(runId)}/context-packs`, {
       signal: options.signal
     })
     return response.data

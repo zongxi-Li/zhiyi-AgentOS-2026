@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi } from '@/services/api/agentos'
 import { RuntimeObservationAdapter, projectModelOutput, readRuntimeObservation, type RuntimeTraceObservation } from './observation'
 
@@ -44,6 +44,19 @@ const provenance = (runId: string) => ({ runId, events: [], productions: [], con
 const resourceResponse = { items: [], total: 0 }
 
 describe('RuntimeObservationAdapter', () => {
+  beforeEach(() => {
+    vi.spyOn(agentosApi, 'listWorkflowReviews').mockImplementation(async runId => ({
+      runId,
+      items: [],
+      total: 0
+    }) as any)
+    vi.spyOn(agentosApi, 'listRunContextPacks').mockImplementation(async runId => ({
+      runId,
+      items: [],
+      total: 0
+    }))
+  })
+
   afterEach(() => vi.restoreAllMocks())
 
   it('normalizes trace-backed panels without inventing tool duration', async () => {
@@ -81,6 +94,29 @@ describe('RuntimeObservationAdapter', () => {
       integrityStatus: 'verified',
       productions: [{ eventId: 'production_1', producerStepId: 'step_1', evidenceRefs: ['trace_1', 'artifact_1'] }]
     } as any)
+    vi.mocked(agentosApi.listWorkflowReviews).mockResolvedValue({ runId: 'run_1', items: [{}], total: 1 } as any)
+    vi.mocked(agentosApi.listRunContextPacks).mockResolvedValue({
+      runId: 'run_1',
+      items: [{
+        stepId: 'step_1',
+        contextRef: 'context:run_1:step_1:hash',
+        available: true,
+        objective: 'objective',
+        stepGoal: 'goal',
+        sourceStepIds: ['source_1'],
+        evidenceRefs: ['evidence_1'],
+        missingFields: [],
+        contractStatus: 'valid',
+        tokensDelivered: 12,
+        tokensAvailable: 20,
+        savingRatio: 0.4,
+        fieldCount: 2,
+        sourceCount: 1,
+        dataKeys: ['summary'],
+        sourceDataKeys: ['source_1']
+      }],
+      total: 1
+    })
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
     vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
 
@@ -100,7 +136,8 @@ describe('RuntimeObservationAdapter', () => {
       provenanceRecordCount: 1,
       evidenceCount: 2,
       contractViolationCount: 1,
-      recoveryCount: 1
+      recoveryCount: 1,
+      reviewCount: 1
     })
     expect(result.lowEntropy).toMatchObject({
       observed: false,
@@ -117,6 +154,12 @@ describe('RuntimeObservationAdapter', () => {
       failedResources: [{ stepId: 'step_1', resourceId: 'edge-01', error: 'edge down' }],
       retryStepIds: ['step_1']
     }])
+    expect(result.contextPacks).toHaveLength(1)
+    expect(result.contextPacks?.[0]).toMatchObject({
+      stepId: 'step_1',
+      contextRef: 'context:run_1:step_1:hash',
+      tokensDelivered: 12
+    })
   })
 
   it('restores low-entropy metrics from real provenance records', async () => {

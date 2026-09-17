@@ -6,7 +6,7 @@
         { label: 'evidence', value: audit?.evidenceCount ?? '未观测' },
         { label: 'contract', value: audit ? audit.contractViolationCount : '未观测' },
         { label: 'recovery', value: audit ? audit.recoveryCount : '未观测' },
-        { label: 'review', value: '未观测' }
+        { label: 'review', value: audit?.reviewCount ?? '未观测' }
       ]" />
       <p v-if="!audit && !runtimeObservation" class="sidebar-empty">未观测到审计或 Provenance 数据。</p>
     </InspectorSection>

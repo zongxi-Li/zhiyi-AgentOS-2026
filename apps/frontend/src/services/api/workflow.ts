@@ -13,6 +13,8 @@ import {
   type AcgStepState,
   type RunExecutionTree,
   type RunOperationalState,
+  type RunContextPackSummary,
+  type RunContextPacksResponse,
   type NodeExecutionRecord,
   type NodeExecutionPhase,
   type IdentityProjectionHealth,
@@ -61,6 +63,8 @@ export type {
   AcgStepState,
   RunExecutionTree,
   RunOperationalState,
+  RunContextPackSummary,
+  RunContextPacksResponse,
   NodeExecutionRecord,
   NodeExecutionPhase,
   IdentityProjectionHealth,
@@ -191,6 +195,10 @@ export const workflowApi = {
 
   getExecutionTree(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunExecutionTree> {
     return agentosApi.getExecutionTree(runId, options)
+  },
+
+  listRunContextPacks(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunContextPacksResponse> {
+    return agentosApi.listRunContextPacks(runId, options)
   },
 
   getIdentityHealth(options: { signal?: AbortSignal } = {}): Promise<IdentityProjectionHealth> {
