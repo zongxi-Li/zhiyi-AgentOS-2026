@@ -161,7 +161,7 @@ class TraceStore:
 
         self._task_events.pop(task_id, None)
 
-    def export_json(self, run: RuntimeRunRecord) -> Dict[str, Any]:
+    def export_json(self, run: RuntimeRunRecord, *, workspace: bool = False) -> Dict[str, Any]:
         """把运行 Trace 导出为仅含 JSON 兼容值的可移植字典。
 
         事件经 :meth:`events` 排序后序列化，返回值可供 API、审计或报告使用；
@@ -175,7 +175,15 @@ class TraceStore:
             "domain": run.domain,
             "status": run.status.value,
             "eventCount": len(run.trace),
-            "events": [event.model_dump(by_alias=True, mode="json") for event in self.events(run)],
+            "events": [
+                event.model_dump(by_alias=True, mode="json")
+                for event in self.events(run)
+                if not (
+                    workspace
+                    and event.event_type.value == "runtime_event_classified"
+                    and event.payload.get("runtimeEvent") in {"model.output.delta", "model.activity"}
+                )
+            ],
         }
 
     def export_markdown(self, run: RuntimeRunRecord) -> str:

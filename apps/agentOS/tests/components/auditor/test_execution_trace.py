@@ -6,6 +6,22 @@ from components.auditor.governance.trace import TraceStore
 from contracts.workflow import TraceEventType, RuntimeRunRecord
 
 
+def test_workspace_trace_keeps_lifecycle_and_full_export_preserves_stream() -> None:
+    store = TraceStore()
+    run = RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")
+    for name in ["model.output.delta", "model.activity", "model.completed", "model.stream.failure"]:
+        event = store.build_event(
+            run, event_type=TraceEventType("runtime_event_classified"),
+            observation=name, payload={"runtimeEvent": name},
+        )
+        store.append_batch(run, [event])
+    compact = store.export_json(run, workspace=True)
+    assert compact["eventCount"] == 4
+    assert [event["observation"] for event in compact["events"]] == ["model.completed", "model.stream.failure"]
+    assert len(store.export_json(run)["events"]) == 4
+    assert len(run.trace) == 4
+
+
 def test_persisted_degraded_run_event_remains_readable() -> None:
     assert TraceEventType("run_degraded") is TraceEventType.RUN_DEGRADED
 
