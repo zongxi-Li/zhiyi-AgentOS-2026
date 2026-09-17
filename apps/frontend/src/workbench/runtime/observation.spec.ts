@@ -250,6 +250,30 @@ describe('RuntimeObservationAdapter', () => {
     expect(getWorkflowTrace).toHaveBeenCalledWith('run_2', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     adapter.stop()
   })
+
+  it('keeps an in-flight observation across a same-Run projection refresh', async () => {
+    const pending = deferred<ReturnType<typeof trace>>()
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run('run_1') as any)
+    const request = vi.spyOn(agentosApi, 'getWorkflowTrace').mockReturnValue(pending.promise as any)
+    vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue(provenance('run_1') as any)
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
+    vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
+    const firstUpdate = vi.fn()
+    const nextUpdate = vi.fn()
+    const adapter = new RuntimeObservationAdapter()
+    adapter.start('run_1', { onUpdate: firstUpdate })
+    const signal = request.mock.calls[0][1]?.signal
+    adapter.start('run_1', { onUpdate: nextUpdate })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(signal?.aborted).toBe(false)
+    expect(request.mock.calls[0][1]?.view).toBe('workspace')
+    pending.resolve(trace('run_1'))
+    await vi.waitFor(() => expect(nextUpdate).toHaveBeenCalledTimes(1))
+    expect(firstUpdate).not.toHaveBeenCalled()
+    adapter.start('run_1', { onUpdate: nextUpdate })
+    expect(request).toHaveBeenCalledTimes(1)
+    adapter.stop()
+  })
 })
 
 const traceEvent = (eventId: string, payload: Record<string, any>): RuntimeTraceObservation => ({

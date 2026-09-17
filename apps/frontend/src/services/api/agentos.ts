@@ -1441,11 +1441,13 @@ export const agentosApi = {
     // Sealed artifacts already expose a verified streaming assembly endpoint.
     // Reading that stream avoids one JSON request per fragment page and keeps
     // large documents from being copied into several intermediate arrays.
-    const [detail, blob] = await Promise.all([
-      this.getArtifactDetail(runId, contentRef, options),
-      this.downloadArtifact(runId, contentRef, options)
-    ])
-    return { ...detail, content: await readBlobText(blob) }
+    const blob = await this.downloadArtifact(runId, contentRef, options)
+    return {
+      manifestId: contentRef,
+      mediaType: blob.type || 'application/octet-stream',
+      byteLength: blob.size,
+      content: await readBlobText(blob)
+    }
   },
 
   async downloadArtifact(
@@ -1569,8 +1571,8 @@ export const agentosApi = {
     return response.data
   },
 
-  async getWorkflowTrace(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowTraceExport> {
-    const response = await agentosRequest.get<WorkflowTraceExport>(`${runPath(runId)}/trace`, { signal: options.signal })
+  async getWorkflowTrace(runId: string, options: { signal?: AbortSignal; view?: 'workspace' } = {}): Promise<WorkflowTraceExport> {
+    const response = await agentosRequest.get<WorkflowTraceExport>(`${runPath(runId)}/trace`, { signal: options.signal, params: { view: options.view } })
     return response.data
   },
 

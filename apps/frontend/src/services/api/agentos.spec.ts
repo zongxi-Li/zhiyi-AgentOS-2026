@@ -434,15 +434,15 @@ describe('AgentOS v2 application API', () => {
 
   it('reads sealed Artifact content through the streaming assembly endpoint', async () => {
     const get = vi.spyOn(agentosRequest, 'get')
-      .mockResolvedValueOnce({ data: { manifestId: 'manifest_1', mediaType: 'text/plain' } } as never)
-      .mockResolvedValueOnce({ data: new Blob(['first second']) } as never)
+      .mockResolvedValueOnce({ data: new Blob(['first second'], { type: 'text/plain' }) } as never)
 
     await expect(agentosApi.getArtifactContent('run_1', 'manifest_1')).resolves.toMatchObject({
-      manifestId: 'manifest_1', content: 'first second'
+      manifestId: 'manifest_1', mediaType: 'text/plain', byteLength: 12, content: 'first second'
     })
     expect(get).toHaveBeenCalledWith('/runs/run_1/artifacts/manifest_1/download', expect.objectContaining({
       responseType: 'blob'
     }))
+    expect(get).toHaveBeenCalledTimes(1)
   })
 
   it('uses the existing Artifact download endpoint rather than a second content store', async () => {

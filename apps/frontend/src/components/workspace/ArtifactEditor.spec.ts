@@ -42,6 +42,19 @@ describe('ArtifactEditor', () => {
     expect(wrapper.find('.markdown-body').exists()).toBe(false)
   })
 
+  it('keeps loaded content when the projection replaces an unchanged entry', async () => {
+    const request = vi.spyOn(agentosApi, 'getArtifactContent').mockResolvedValue({ mediaType: 'text/markdown', content: '# Ready', manifestId: 'manifest_1' })
+    const wrapper = mountEditor()
+    await flushPromises()
+    await wrapper.setProps({ entry: entry() })
+    await flushPromises()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.markdown-body').text()).toContain('Ready')
+    await wrapper.setProps({ entry: entry({ contentRef: 'manifest_2', artifactId: 'artifact_2' }) })
+    await flushPromises()
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
   it('normalizes media types with parameters before choosing a readable renderer', async () => {
     vi.spyOn(agentosApi, 'getArtifactContent').mockResolvedValue({ mediaType: 'text/markdown; charset=utf-8', content: '# Read me', manifestId: 'manifest_1' })
     const wrapper = mountEditor({ mediaType: 'text/markdown; charset=utf-8' })

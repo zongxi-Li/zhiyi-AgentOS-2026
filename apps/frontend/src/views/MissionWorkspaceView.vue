@@ -52,6 +52,7 @@
           @open-artifact="openEntry"
           @open-entry="openEntry"
           @cancel-run="cancelActiveRun"
+          @content-ready="finishForegroundContent"
         />
         <section v-else class="workspace-main-state" role="status">
           <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
@@ -184,6 +185,13 @@ const artifactChoices = ref<WorkspaceEntry[]>([])
 const entryCache = ref<Record<string, WorkspaceEntry>>({})
 let controller: AbortController | null = null
 const runtimeObservationAdapter = new RuntimeObservationAdapter()
+let pendingObservation: { runId: string; start: () => void } | null = null
+const finishForegroundContent = (runId: string | null) => {
+  if (!pendingObservation || pendingObservation.runId !== runId) return
+  const pending = pendingObservation
+  pendingObservation = null
+  if (selectedRunId.value === runId) pending.start()
+}
 
 const workspaceProjectionRetryDelays = [
   250, 500, 1000, 2000, 3000,
@@ -495,7 +503,10 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   )
   const preserveRenderedWorkspace = Boolean(projection.value && !runSelectionChanged)
   controller?.abort()
-  if (!preserveRenderedWorkspace) runtimeObservationAdapter.stop()
+  if (!preserveRenderedWorkspace) {
+    pendingObservation = null
+    runtimeObservationAdapter.stop()
+  }
   stopProjectionRefresh()
   controller = new AbortController()
   const requestController = controller
@@ -520,15 +531,22 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
     }
     if (nextRunId) {
       if (runtimeObservation.value?.runId !== nextRunId) runtimeObservation.value = null
-      runtimeObservationAdapter.start(nextRunId, {
+      const startObservation = () => runtimeObservationAdapter.start(nextRunId, {
         historical: Boolean(currentRunId.value && currentRunId.value !== nextRunId),
         diagnostics: nextProjection.diagnostics,
         onUpdate: observation => {
-          if (controller === requestController && !requestController.signal.aborted) {
+          if (selectedRunId.value === observation.runId) {
             runtimeObservation.value = observation
           }
         }
       })
+      // Give the foreground document the first read slot. Inspector/Trace
+      // requests start when its read finishes, including failures.
+      const opened = activeOpened.value
+      if (!runtimeObservation.value && opened?.available && opened.entry.kind === 'artifact'
+        && (opened.entry.contentRef || opened.entry.artifactId)) {
+        pendingObservation = { runId: nextRunId, start: startObservation }
+      } else startObservation()
     }
     // 降级投影等待 identity 注册：活跃 Run 期间周期重拉，直到 PLANNING_PROJECTION_PENDING 消失。
     if (projectionActive(nextProjection)) scheduleProjectionRefresh()
@@ -795,7 +813,11 @@ const locateGraph = (entry: WorkspaceEntry) => {
 }
 
 void loadWorkspace()
+watch(activeEditorId, () => {
+  if (activeOpened.value?.entry.kind !== 'artifact') finishForegroundContent(selectedRunId.value)
+})
 onBeforeUnmount(() => {
+  pendingObservation = null
   controller?.abort()
   runtimeObservationAdapter.stop()
   stopProjectionRefresh()

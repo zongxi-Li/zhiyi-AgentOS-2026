@@ -656,7 +656,7 @@ export const readRuntimeObservation = async (
   const executionTreeRequest = agentosApi.getExecutionTree(runId, options)
   const results = await Promise.allSettled([
     agentosApi.getWorkflowRun(runId, options),
-    agentosApi.getWorkflowTrace(runId, options),
+    agentosApi.getWorkflowTrace(runId, { ...options, view: 'workspace' }),
     agentosApi.getRunProvenance(runId, options),
     executionTreeRequest,
     loadResourceObservation(runId, options, executionTreeRequest)
@@ -703,12 +703,22 @@ export const readRuntimeObservation = async (
 }
 
 export class RuntimeObservationAdapter {
+  private runId: string | null = null
+  private options: RuntimeObservationAdapterOptions | null = null
   private generation = 0
   private controller: AbortController | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
 
   start(runId: string, options: RuntimeObservationAdapterOptions): void {
+    // Projection refreshes update diagnostics/callbacks without cancelling the
+    // independent observation request or fetching a terminal Run again.
+    if (this.runId === runId && this.options?.historical === options.historical) {
+      this.options = options
+      return
+    }
     this.stop()
+    this.runId = runId
+    this.options = options
     const generation = ++this.generation
     const interval = options.pollIntervalMs ?? 2000
     const refresh = async () => {
@@ -717,10 +727,10 @@ export class RuntimeObservationAdapter {
       const controller = new AbortController()
       this.controller = controller
       try {
-        const observation = await readRuntimeObservation(runId, options.diagnostics || [], { signal: controller.signal })
+        const observation = await readRuntimeObservation(runId, this.options?.diagnostics || [], { signal: controller.signal })
         if (generation !== this.generation || controller.signal.aborted) return
-        options.onUpdate(observation)
-        if (!options.historical && ACTIVE_RUN_STATUSES.has(observation.runStatus || '')) {
+        this.options?.onUpdate(observation)
+        if (!this.options?.historical && ACTIVE_RUN_STATUSES.has(observation.runStatus || '')) {
           this.timer = setTimeout(() => { void refresh() }, interval)
         }
       } finally {
@@ -731,6 +741,8 @@ export class RuntimeObservationAdapter {
   }
 
   stop(): void {
+    this.runId = null
+    this.options = null
     this.generation += 1
     this.controller?.abort()
     this.controller = null

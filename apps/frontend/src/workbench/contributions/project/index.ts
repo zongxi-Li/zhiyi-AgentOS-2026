@@ -1,8 +1,7 @@
 import { FolderOpened } from '@element-plus/icons-vue'
-import GraphEditor from '@/components/workspace/GraphEditor.vue'
+import { defineAsyncComponent } from 'vue'
 import ArtifactEditor from '@/components/workspace/ArtifactEditor.vue'
 import MissionEditor from '@/components/workspace/MissionEditor.vue'
-import RunProgressEditor from '@/components/workspace/RunProgressEditor.vue'
 import TaskEditor from '@/components/workspace/TaskEditor.vue'
 import WorkspaceExplorer from '@/components/workspace/WorkspaceExplorer.vue'
 import ProblemsPanel from '@/components/workbench/ProblemsPanel.vue'
@@ -18,6 +17,9 @@ import ProjectTaskResultInspector from './ProjectTaskResultInspector.vue'
 import ProjectRunSidebarView from './ProjectRunSidebarView.vue'
 import RunSelectionInspector from './RunSelectionInspector.vue'
 import type { WorkbenchContribution } from '@/workbench/types'
+
+const GraphEditor = Object.assign(defineAsyncComponent(() => import('@/components/workspace/GraphEditor.vue')), { name: 'GraphEditor' })
+const RunProgressEditor = Object.assign(defineAsyncComponent(() => import('@/components/workspace/RunProgressEditor.vue')), { name: 'RunProgressEditor' })
 
 export const projectContribution: WorkbenchContribution = {
   id: 'project',

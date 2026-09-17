@@ -46,7 +46,7 @@ const props = defineProps<{
   available: boolean
 }>()
 
-const emit = defineEmits<{ locateGraph: [] }>()
+const emit = defineEmits<{ locateGraph: []; contentReady: [runId: string | null] }>()
 
 const content = ref<ArtifactContentResponse | null>(null)
 const loading = ref(false)
@@ -107,7 +107,10 @@ const loadContent = async () => {
     if (fallback) content.value = fallback
     else errorMessage.value = '无法读取当前 Run 的 sealed ContentManifest。'
   } finally {
-    if (controller === requestController && !requestController.signal.aborted) loading.value = false
+    if (controller === requestController && !requestController.signal.aborted) {
+      loading.value = false
+      emit('contentReady', props.runId)
+    }
   }
 }
 
@@ -130,7 +133,7 @@ const openExternal = async () => {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }
 
-watch(() => [props.entry.entryId, props.runId, props.available, contentRef.value], loadContent, { immediate: true })
+watch([() => props.entry.entryId, () => props.runId, () => props.available, contentRef], loadContent, { immediate: true })
 onBeforeUnmount(() => controller?.abort())
 </script>
 

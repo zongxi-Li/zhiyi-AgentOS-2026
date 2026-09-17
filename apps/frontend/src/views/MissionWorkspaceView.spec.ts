@@ -27,9 +27,11 @@ const graphEditorStub = {
   template: '<div class="graph-editor-stub" :data-focus-node-id="focusNodeId || undefined"><button class="graph-select" @click="$emit(\'selectSemanticTask\', \'capacity\')">select</button><button class="graph-open" @click="$emit(\'openSemanticTask\', \'capacity\')">open</button></div>'
 }
 
+let notifyArtifactReady = true
 const artifactEditorStub = {
-  props: ['entry', 'available'],
-  emits: ['locateGraph'],
+  props: ['entry', 'available', 'runId'],
+  emits: ['locateGraph', 'contentReady'],
+  mounted(this: any) { if (notifyArtifactReady) this.$emit('contentReady', this.runId) },
   template: '<div class="artifact-editor-stub"><span>{{ entry.name }}</span><span>{{ available ? "available" : "Not available in this Run" }}</span><button class="artifact-locate" :disabled="!available || entry.identityQuality === \'legacy\'" @click="$emit(\'locateGraph\')">locate</button></div>'
 }
 
@@ -143,6 +145,7 @@ const mountWorkspace = async (
 
 describe('MissionWorkspaceView', () => {
   afterEach(() => {
+    notifyArtifactReady = true
     layoutStubState = { ...defaultLayoutStubState }
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -178,6 +181,21 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.find('.progress-editor-stub').exists()).toBe(true)
     expect(wrapper.find('.editor-group__toolbar').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('最终答案')
+  })
+
+  it('reads the foreground deliverable before starting runtime observations', async () => {
+    notifyArtifactReady = false
+    const completed = projection({
+      activeRun: { runId: 'run_2', status: 'succeeded', createdAt: '2026-08-28T00:02:00Z', isActive: true },
+      entries: [{ entryId: 'artifact:final', kind: 'artifact', name: 'final.md', group: 'output', displayOrder: 0,
+        artifactKey: 'final', artifactType: 'run_deliverable', artifactId: 'artifact_final', contentRef: 'manifest_final', identityQuality: 'canonical', runId: 'run_2' }]
+    })
+    const { wrapper } = await mountWorkspace(completed)
+    expect(agentosApi.getWorkflowTrace).not.toHaveBeenCalled()
+    wrapper.findComponent(artifactEditorStub).vm.$emit('contentReady', 'run_2')
+    await flushPromises()
+    expect(agentosApi.getWorkflowTrace).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it('opens a canonical Run deliverable by default for a completed Run', async () => {

@@ -74,6 +74,7 @@
         @open-artifact="emit('openArtifact', $event)"
         @open-entry="emit('openEntry', $event)"
         @cancel-run="emit('cancelRun')"
+        @content-ready="emit('contentReady', $event)"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
     </section>
@@ -114,6 +115,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   activate: [entryId: string]
+  contentReady: [runId: string | null]
   close: [entryId: string]
   selectSemanticTask: [semanticTaskKey: string | null]
   selectSymbol: [symbol: RunDocumentSymbol]
@@ -164,10 +166,11 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
 .editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
 .editor-tabs__actions { display: flex; flex: 0 0 38px; align-items: stretch; min-width: 38px; border-left: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
-.editor-tab { display: flex; align-items: stretch; width: 220px; min-width: 180px; flex: 0 1 220px; box-sizing: border-box; border-top: 2px solid transparent; border-radius: 7px 7px 0 0; transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out); }
-.editor-tab.is-active { border-top-color: var(--wb-accent); background: color-mix(in srgb, var(--wb-surface-2) 82%, var(--wb-accent)); }
+.editor-tab { display: flex; align-items: center; min-width: 120px; max-width: 240px; flex: 0 0 auto; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
+.editor-tab:hover { background: var(--wb-hover); }
+.editor-tab.is-active { background: var(--wb-surface-shell); }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
-.editor-tab__main { display: flex; flex: 1 1 auto; align-items: center; gap: 7px; min-width: 0; width: 0; max-width: none; padding: 0 5px 0 11px; font-size: 11px; }
+.editor-tab__main { display: flex; flex: 1 1 auto; align-items: center; align-self: stretch; gap: 7px; min-width: 0; padding: 0 8px 0 12px; text-align: left; font-size: 11px; }
 .editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--wb-text); }
 .editor-tab__main:focus-visible, .editor-tab__close:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-tab__kind { display: inline-flex; align-items: center; justify-content: center; width: 15px; min-width: 15px; color: var(--wb-accent); font: 12px var(--font-mono, monospace); }
@@ -177,9 +180,9 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-tab__status.is-failed { color: var(--wb-danger); }
 .editor-tab__name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-tab__missing { color: var(--wb-warning); font: 9px var(--font-mono, monospace); }
-.editor-tab__close { width: 28px; min-width: 28px; flex: 0 0 28px; color: var(--wb-text-muted); font-size: 15px; opacity: 0; transition: opacity 140ms var(--ease-out), color 140ms var(--ease-out), background-color 140ms var(--ease-out); }
+.editor-tab__close { display: grid; place-items: center; width: 20px; height: 20px; min-width: 20px; flex: 0 0 20px; margin-right: 8px; padding: 0; border-radius: 3px; color: var(--wb-text-secondary); font-size: 15px; opacity: 0; }
 .editor-tab:hover .editor-tab__close, .editor-tab.is-active .editor-tab__close, .editor-tab__close:focus-visible { opacity: 1; }
-.editor-tab__close:hover { color: var(--wb-danger); background: var(--wb-hover); }
+.editor-tab__close:hover { color: var(--wb-text); background: var(--wb-hover); }
 .editor-tabs__empty { align-self: center; padding: 0 14px; color: var(--wb-text-muted); font-size: 11px; }
 .editor-tabs__scroll::-webkit-scrollbar { height: 4px; }
 .editor-tabs__scroll::-webkit-scrollbar-thumb { background: var(--wb-border-strong); }
