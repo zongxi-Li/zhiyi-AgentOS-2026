@@ -103,6 +103,7 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
 
         runtime = SimpleNamespace(
             identity_lifecycle=bridge,
+            workflow_store=SimpleNamespace(list_run_overviews=lambda **_kwargs: SimpleNamespace(items=[], total=0)),
             content_manifest_store=content,
             get_status=lambda run_id: SimpleNamespace(
                 run_id=run_id,
@@ -168,7 +169,7 @@ async def test_workspace_api_projects_runtime_shell_while_identity_run_is_pendin
             identity_lifecycle=bridge,
             content_manifest_store=content,
             workflow_store=SimpleNamespace(
-                list_runs=lambda **_kwargs: SimpleNamespace(items=[runtime_run], total=1),
+                list_run_overviews=lambda **_kwargs: SimpleNamespace(items=[runtime_run], total=1, page_size=100),
             ),
             get_status=lambda run_id: runtime_run if run_id == runtime_run.run_id else (_ for _ in ()).throw(KeyError(run_id)),
         )
@@ -228,6 +229,7 @@ async def test_workspace_api_prefers_terminal_runtime_status_over_stale_identity
         )
         runtime = SimpleNamespace(
             identity_lifecycle=bridge,
+            workflow_store=SimpleNamespace(list_run_overviews=lambda **_kwargs: SimpleNamespace(items=[], total=0)),
             content_manifest_store=content,
             get_status=lambda run_id: runtime_run if run_id == run.run_id else (_ for _ in ()).throw(KeyError(run_id)),
         )

@@ -608,9 +608,10 @@ def create_router(
         require_mission_owner_access(run.mission_id)
         return query, run
 
-    def load_run(run_id: str) -> RuntimeRunRecord:
+    def load_run(run_id: str, *, readonly: bool = False) -> RuntimeRunRecord:
         try:
-            run = runtime.get_status(run_id)
+            read = getattr(runtime, "get_status_cached", runtime.get_status) if readonly else runtime.get_status
+            run = read(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
         _require_access(run)
@@ -642,7 +643,7 @@ def create_router(
         if manifest.owner_type == "user" and actor is not None and manifest.owner_id != actor.user_id:
             raise HTTPException(status_code=404, detail="content manifest not found")
         if manifest.owner_type == "run":
-            load_run(manifest.owner_id)
+            load_run(manifest.owner_id, readonly=True)
         return manifest
 
     def project_identity_artifact(detail: Any) -> dict[str, Any]:
@@ -1300,13 +1301,13 @@ def create_router(
             RunStatus.SUPERSEDED,
         }
 
-        def list_runtime_runs() -> list[RuntimeRunRecord]:
+        def list_runtime_runs() -> list[Any]:
             """Load every visible Run so Workspace and Project use one Run set."""
-            items: list[RuntimeRunRecord] = []
+            items: list[Any] = []
             page = 1
             page_size = 100
             while True:
-                result = runtime.workflow_store.list_runs(
+                result = runtime.workflow_store.list_run_overviews(
                     mission_id=mission_id,
                     owner_user_id=(actor.user_id if actor else None),
                     owner_tenant_id=(actor.tenant_id if actor else None),
@@ -1318,10 +1319,17 @@ def create_router(
                     return items
                 page += 1
 
-        def runtime_run_summary(item: RuntimeRunRecord, *, is_active: bool) -> WorkspaceRunSummary:
+        def runtime_run_summary(item: Any, *, is_active: bool) -> WorkspaceRunSummary:
             raw_status = getattr(item.status, "value", item.status)
             status = runtime_status_map.get(str(raw_status), RunStatus.PENDING)
-            execution_state = item.execution_state if isinstance(item.execution_state, dict) else {}
+            execution_state = getattr(item, "execution_state", {})
+            execution_state = execution_state if isinstance(execution_state, dict) else {}
+            # Identity already carries lineage for materialized runs. Only
+            # deferred runs without an Identity row need their runtime body.
+            if not execution_state and identity_repositories.runs.get(item.run_id) is None:
+                source = getattr(runtime, "get_status_cached", runtime.get_status)(item.run_id)
+                state = getattr(source, "execution_state", {})
+                execution_state = state if isinstance(state, dict) else {}
             completed_at = (
                 item.updated_at
                 if status in terminal_run_statuses
@@ -1330,15 +1338,15 @@ def create_router(
             return WorkspaceRunSummary(
                 runId=item.run_id,
                 status=status,
-                parentRunId=execution_state.get("parentRunId"),
-                sourceRunId=execution_state.get("sourceRunId"),
+                parentRunId=getattr(item, "parent_run_id", None) or execution_state.get("parentRunId"),
+                sourceRunId=getattr(item, "source_run_id", None) or execution_state.get("sourceRunId"),
                 createdAt=item.created_at,
                 completedAt=completed_at,
                 isActive=is_active,
             )
 
         if not run_id:
-            runtime_runs = runtime.workflow_store.list_runs(
+            runtime_runs = runtime.workflow_store.list_run_overviews(
                 mission_id=mission_id,
                 mission_record_state=MissionRecordState.ACTIVE,
                 owner_user_id=(actor.user_id if actor else None),
@@ -1357,7 +1365,7 @@ def create_router(
             if not run_id:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
             try:
-                runtime_run = runtime.get_status(run_id)
+                runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
             except KeyError:
                 raise HTTPException(status_code=404, detail="workspace source not found") from exc
             _require_access(runtime_run)
@@ -1502,7 +1510,7 @@ def create_router(
         # formal Artifact or embedding the potentially large output body.
         if run_id:
             try:
-                runtime_run = runtime.get_status(run_id)
+                runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
             except KeyError:
                 runtime_run = None
             if runtime_run is not None and runtime_run.mission_id == mission_id:
@@ -1810,7 +1818,7 @@ def create_router(
 
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str):
-        return project(load_run(run_id))
+        return project(load_run(run_id, readonly=True))
 
     @router.get("/runs/{run_id}/history-config")
     async def get_history_config(run_id: str):
@@ -2011,7 +2019,7 @@ def create_router(
 
     @router.get("/runs/{run_id}/artifacts/{manifest_id}")
     async def get_artifact(run_id: str, manifest_id: str):
-        load_run(run_id)
+        load_run(run_id, readonly=True)
         if identity_repositories is not None:
             identity_run = identity_repositories.runs.get(run_id)
             if identity_run is not None:
@@ -2159,9 +2167,9 @@ def create_router(
         return {"runId": run_id, "items": items}
 
     @router.get("/runs/{run_id}/trace")
-    async def get_trace(run_id: str):
-        run = load_run(run_id)
-        exported = runtime.trace_store.export_json(run)
+    def get_trace(run_id: str, view: str | None = Query(default=None, pattern="^workspace$")):
+        run = load_run(run_id, readonly=True)
+        exported = runtime.trace_store.export_json(run, workspace=True) if view == "workspace" else runtime.trace_store.export_json(run)
         exported["events"] = [_redact(item) for item in exported.get("events", [])]
         return exported
 
@@ -2197,7 +2205,7 @@ def create_router(
 
     @router.get("/runs/{run_id}/provenance")
     async def get_provenance(run_id: str):
-        run = load_run(run_id)
+        run = load_run(run_id, readonly=True)
         ledger = runtime.provenance_store.load_ledger(run_id=run.run_id, mission_id=run.mission_id)
         events = ledger.trace_events()
         legacy = run.provenance if isinstance(run.provenance, dict) else {}
