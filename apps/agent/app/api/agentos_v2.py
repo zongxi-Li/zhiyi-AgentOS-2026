@@ -324,6 +324,53 @@ def _usage_number(usage: dict[str, Any], *keys: str) -> int:
     return 0
 
 
+def _context_pack_summary(step_id: str, context_ref: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Project ContextPack metadata without returning the model input body."""
+    if not isinstance(payload, dict):
+        return {
+            "stepId": step_id,
+            "contextRef": context_ref,
+            "available": False,
+        }
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    source_data = payload.get("sourceData") if isinstance(payload.get("sourceData"), dict) else {}
+
+    def string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value[:100] if isinstance(item, str)]
+
+    def bounded_string(value: Any) -> str:
+        return str(value or "")[:500]
+
+    def non_negative_int(value: Any) -> int:
+        return int(value) if isinstance(value, (int, float)) and value >= 0 else 0
+
+    saving_ratio = payload.get("savingRatio")
+    if not isinstance(saving_ratio, (int, float)):
+        saving_ratio = 0.0
+
+    return {
+        "stepId": step_id,
+        "contextRef": context_ref,
+        "available": True,
+        "objective": bounded_string(payload.get("objective")),
+        "stepGoal": bounded_string(payload.get("stepGoal")),
+        "sourceStepIds": string_list(payload.get("sourceStepIds")),
+        "evidenceRefs": string_list(payload.get("evidenceRefs")),
+        "missingFields": string_list(payload.get("missingFields")),
+        "contractStatus": bounded_string(payload.get("contractStatus") or "unknown"),
+        "tokensDelivered": non_negative_int(payload.get("tokensDelivered")),
+        "tokensAvailable": non_negative_int(payload.get("tokensAvailable")),
+        "savingRatio": float(saving_ratio),
+        "fieldCount": len(data),
+        "sourceCount": len(source_data),
+        "dataKeys": [str(key) for key in list(data)[:100]],
+        "sourceDataKeys": [str(key) for key in list(source_data)[:100]],
+    }
+
+
 def _project_node_as_legacy_resource(profile: NodeProfile, snapshot: NodeSnapshot) -> tuple[ResourceProfile, ResourceSnapshot]:
     capabilities = list(profile.model_ids) or [profile.node_type.value]
     resource = ResourceProfile(
@@ -1997,6 +2044,42 @@ def create_router(
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="output not found") from exc
         return {"runId": run_id, "outputRef": output_ref, "content": content}
+
+    @router.get("/runs/{run_id}/context-packs")
+    async def list_context_packs(run_id: str):
+        # ContextPack bodies live in the run-scoped execution value store. Read
+        # only the references belonging to this run, then return bounded
+        # metadata so the Inspector can explain the context flow without
+        # exposing the complete model input body.
+        identity_run = (
+            identity_repositories.runs.get(run_id)
+            if identity_repositories is not None
+            else None
+        )
+        if identity_run is not None:
+            require_mission_owner_access(identity_run.mission_id)
+            metadata = dict(identity_run.metadata or {})
+            projection = dict(metadata.get("executionProjection") or {})
+            raw_refs = projection.get("contextRefs") or {}
+        else:
+            run = load_run(run_id, readonly=True)
+            raw_refs = _state(run).get("contextRefs") or {}
+
+        refs = raw_refs if isinstance(raw_refs, dict) else {}
+        items: list[dict[str, Any]] = []
+        for step_id, context_ref in refs.items():
+            if not isinstance(context_ref, str) or not context_ref:
+                continue
+            try:
+                payload = runtime.execution_value_store.get_context_pack(
+                    run_id=run_id,
+                    context_ref=context_ref,
+                )
+            except (KeyError, ValueError):
+                payload = None
+            items.append(_context_pack_summary(str(step_id), context_ref, payload))
+
+        return {"runId": run_id, "items": items, "total": len(items)}
 
     @router.get("/runs/{run_id}/artifacts")
     async def list_artifacts(run_id: str):

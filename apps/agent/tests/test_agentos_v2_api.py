@@ -254,6 +254,25 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         input={"contractText": "PRIVATE-TASK-INPUT"},
     )
     run = await runtime.start(task.mission_id, workflow_id="api-workflow")
+    context_ref = runtime.execution_value_store.put_context_pack(
+        run_id=run.run_id,
+        step_id="step_1",
+        payload={
+            "runId": run.run_id,
+            "stepId": "step_1",
+            "objective": "PRIVATE-TASK-INPUT",
+            "stepGoal": "PRIVATE-STEP-GOAL",
+            "data": {"private": "PRIVATE-CONTEXT-BODY"},
+            "sourceData": {"source_1": {"private": "PRIVATE-SOURCE-BODY"}},
+            "sourceStepIds": ["source_1"],
+            "evidenceRefs": ["evidence_1"],
+            "tokensDelivered": 12,
+            "tokensAvailable": 20,
+            "savingRatio": 0.4,
+            "contractStatus": "valid",
+        },
+    )
+    run.execution_state["contextRefs"] = {"step_1": context_ref}
     runtime.trace_store.append(
         run,
         TraceEventType.RUNTIME_EVENT_CLASSIFIED,
@@ -281,6 +300,31 @@ async def test_v2_run_state_is_reference_only_and_output_requires_owned_referenc
         assert output.status_code == 200
         assert output.json()["content"] == {"report": _SECRET}
         assert (await client.get(f"/agentos/v2/runs/{run.run_id}/outputs/output:other:step:hash")).status_code == 404
+
+        context = await client.get(f"/agentos/v2/runs/{run.run_id}/context-packs")
+        assert context.status_code == 200
+        context_body = context.json()
+        assert context_body["total"] == 1
+        assert context_body["items"][0] == {
+            "stepId": "step_1",
+            "contextRef": context_ref,
+            "available": True,
+            "objective": "PRIVATE-TASK-INPUT",
+            "stepGoal": "PRIVATE-STEP-GOAL",
+            "sourceStepIds": ["source_1"],
+            "evidenceRefs": ["evidence_1"],
+            "missingFields": [],
+            "contractStatus": "valid",
+            "tokensDelivered": 12,
+            "tokensAvailable": 20,
+            "savingRatio": 0.4,
+            "fieldCount": 1,
+            "sourceCount": 1,
+            "dataKeys": ["private"],
+            "sourceDataKeys": ["source_1"],
+        }
+        assert "PRIVATE-CONTEXT-BODY" not in context.text
+        assert "PRIVATE-SOURCE-BODY" not in context.text
 
         trace = await client.get(f"/agentos/v2/runs/{run.run_id}/trace")
         assert trace.status_code == 200
