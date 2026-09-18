@@ -108,6 +108,8 @@
                   :run-id="resolvedRunId"
                   :view-key="planningStageViewKey(column.detail) || 'detail'"
                   :plan="runtimeStore?.planning.plan || null"
+                  :fallback-nodes="graphNodes"
+                  :fallback-edges="projection.activeGraph?.edges || []"
                 />
               </div>
               <div v-else-if="column.detail" class="run-progress__detail">

@@ -76,16 +76,20 @@ const props = defineProps<{
   runId: string | null
   viewKey: PlanningStageKey
   plan?: Record<string, any> | null
+  fallbackNodes?: Array<{ acgNodeId: string; name: string; semanticTaskKey?: string | null }>
+  fallbackEdges?: Array<{ sourceId: string; targetId: string; edgeType?: string }>
 }>()
 
 type PlanTask = { key: string; title: string; objective: string; capabilityRequirements: string[]; acceptanceCriteria: string[] }
 type PlanRelation = { sourceKey: string; targetKey: string; relationType: string }
-const tasks = computed<PlanTask[]>(() => (Array.isArray(props.plan?.nodes) ? props.plan.nodes : []).map((item: any) => ({
-  key: String(item?.key || ''), title: String(item?.title || item?.key || ''), objective: String(item?.objective || ''),
+const tasks = computed<PlanTask[]>(() => (Array.isArray(props.plan?.nodes) ? props.plan.nodes : (props.fallbackNodes || [])).map((item: any) => ({
+  key: String(item?.key || item?.semanticTaskKey || item?.acgNodeId || ''), title: String(item?.title || item?.name || item?.key || item?.acgNodeId || ''), objective: String(item?.objective || item?.goal || item?.description || ''),
   capabilityRequirements: Array.isArray(item?.capabilityRequirements) ? item.capabilityRequirements.map(String) : [],
   acceptanceCriteria: Array.isArray(item?.acceptanceCriteria) ? item.acceptanceCriteria.map(String) : []
 })).filter((item: PlanTask) => item.key))
-const relations = computed<PlanRelation[]>(() => (Array.isArray(props.plan?.relations) ? props.plan.relations : []).map((item: any) => ({
+const relations = computed<PlanRelation[]>(() => (Array.isArray(props.plan?.relations) ? props.plan.relations : (props.fallbackEdges || []).map(edge => ({
+  sourceKey: edge.sourceId, targetKey: edge.targetId, relationType: edge.edgeType || 'dependency'
+}))).map((item: any) => ({
   sourceKey: String(item?.sourceKey || ''), targetKey: String(item?.targetKey || ''), relationType: String(item?.relationType || 'depends_on')
 })).filter((item: PlanRelation) => item.sourceKey && item.targetKey))
 const taskTitle = (key: string) => tasks.value.find(item => item.key === key)?.title || key
