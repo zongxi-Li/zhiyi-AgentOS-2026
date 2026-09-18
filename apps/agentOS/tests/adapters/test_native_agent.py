@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -353,6 +354,11 @@ def test_native_agent_streams_reasoning_effort_to_model_runtime() -> None:
 
     assert model.stream_kwargs, "streaming path was not used"
     assert model.stream_kwargs[0]["reasoning_effort"] == "max"
+    assert "system_prompt" in model.stream_kwargs[0]
+    assert "You are an execution agent" in model.stream_kwargs[0]["system_prompt"]
+    assert model.stream_kwargs[0]["prompt_metadata"]["preset"] == "executor"
+    assert model.stream_kwargs[0]["prompt_metadata"]["promptTemplateHash"]
+    assert json.loads(model.stream_kwargs[0]["prompt"])["requestType"] == "ExecutionRequest"
 
 
 def test_native_retrieval_forwards_model_provider_to_web_tools() -> None:
@@ -421,6 +427,8 @@ def test_native_agent_losslessly_bounds_provider_text_arrays() -> None:
 
     assert model.calls == 1
     assert model.kwargs[0]["reasoning_effort"] == "high"
+    assert "You are an execution agent" in model.kwargs[0]["system_prompt"]
+    assert model.kwargs[0]["prompt_metadata"]["preset"] == "executor"
     assert len(result.output["assumptions"]) == 20
     assert "\n".join(result.output["assumptions"]) == "\n".join(
         f"假设 {index}" for index in range(20)
@@ -604,6 +612,8 @@ def test_invalid_json_repair_does_not_consume_contract_repair() -> None:
     assert len(model.calls) == 3
     assert model.calls[1]["prompt_version"].endswith(".json-repair1")
     assert model.calls[2]["prompt_version"].endswith(".repair1")
+    assert model.calls[0]["prompt_metadata"] == model.calls[1]["prompt_metadata"]
+    assert model.calls[1]["prompt_metadata"] == model.calls[2]["prompt_metadata"]
     assert result.output["solution_design"]["phases"][0]["name"] == "pilot"
     assert len(result.model_invocations) == 2
 

@@ -29,7 +29,8 @@ def test_native_v3_prompt_preserves_planned_task_semantics_without_expression_ca
     assert "Calculate candidate A lifecycle cost" in prompt
     assert "Formula, inputs, units and assumptions are present" in prompt
     assert "budget cap" in prompt and "cost table" in prompt
-    assert '"factClasses"' in prompt
+    assert '"requestType":"ExecutionRequest"' in prompt
+    assert '"trustClass":"runtime_authoritative"' in prompt
     assert "at most 8" not in prompt
     assert "under 400" not in prompt
-    assert "Do not omit supported content" in prompt
+    assert "Prompt version" not in prompt

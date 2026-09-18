@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import re
 from copy import deepcopy
 from collections.abc import Mapping
 from typing import Any, Callable
+from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
 
 from contracts.planning import (
     PlannedTask,
@@ -230,10 +230,10 @@ class TaskDecomposer:
     ) -> TaskPlan:
         self.last_audit = {
             "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
-            "promptTemplateHash": hashlib.sha256(
-                (TASK_DECOMPOSITION_PROMPT_VERSION + json.dumps(_SCHEMA, sort_keys=True)).encode("utf-8")
-            ).hexdigest(),
-            "modelVersion": str(getattr(self.llm, "model", None) or getattr(self.llm, "version", None) or "unreported"),
+            **planner_prompt_metadata(),
+            "schemaHash": schema_hash(_SCHEMA),
+            "modelId": str(getattr(self.llm, "model", None) or "unreported"),
+            "modelVersion": str(getattr(self.llm, "version", None) or "unreported"),
             "mode": "model" if use_llm and self.llm is not None else "deterministic",
         }
         if use_llm and self.llm is not None:
@@ -829,7 +829,9 @@ class TaskDecomposer:
         if not isinstance(result, dict):
             return
         if result.get("model"):
-            self.last_audit["modelVersion"] = str(result["model"])
+            self.last_audit["modelId"] = str(result["model"])
+        if result.get("modelVersion"):
+            self.last_audit["modelVersion"] = str(result["modelVersion"])
         if result.get("provider"):
             self.last_audit["provider"] = str(result["provider"])
 
@@ -879,59 +881,14 @@ class TaskDecomposer:
                 if (value := (task_input or {}).get(key)) not in (None, "", [], {})
             },
         }
-        budget_lo, budget_hi = PLANNING_BUDGETS[level]
-        identity_guidance = (
-            "This Mission already has a canonical semantic task key catalog. "
-            "Reuse an existing key when it represents the same logical step, even when "
-            "the objective, constraints, inputs or planning metadata changed. "
-            "Create a new key only when the logical step itself is new. Existing keys are "
-            f"{json.dumps(list(existing_semantic_tasks), ensure_ascii=False)}.\n"
-            if existing_semantic_tasks else
-            "Choose each key as a descriptive, Mission-scoped logical identity. Do not use "
-            "ordinal-only keys such as task-1 or step-2, and do not derive a key from a "
-            "title/objective/constraints hash.\n"
-        )
-        return (
-            f"Prompt version: {TASK_DECOMPOSITION_PROMPT_VERSION}\n"
-            "Create an executable, acyclic, domain-neutral TaskPlan and return JSON only.\n"
-            f"Complexity assessment: {profile.complexity_assessment.model_dump() if profile.complexity_assessment else level.value}.\n"
-            f"Planning budget: complexity band {level.value} should decompose into approximately "
-            f"{int(budget_lo)}-{int(budget_hi)} tasks (inclusive). Treat the budget as a semantic "
-            "coverage target: do not pad or split tasks merely to satisfy it, and do not merge "
-            "genuinely separable deliverables just to stay under it.\n"
-            "Choose the task count from semantic coverage, verifiable deliverables, useful "
-            "dependencies, parallel work and aggregation needs, steered by that planning budget. "
-            "Material chunks are Workset units inside a logical task, not reasons to "
-            "manufacture one business task per chunk.\n"
-            "Every task must have one business-specific objective, one primary capabilityId, explicit acceptance criteria, "
-            "sourceRefs and a decomposition rationale. Do not write objectives such as 'Complete cost analysis'.\n"
-            "A task key is a stable logical identity across Runs, not a semantic-content version. "
-            "Planning content belongs to the Run-specific TaskPlan snapshot.\n"
-            + identity_guidance
-            + "The same capabilityId may be instantiated by multiple tasks when goals, alternatives or stages differ. "
-            "Use depends_on relations as the authoritative execution topology and keep it acyclic.\n"
-            "For every depends_on relation, sourceKey is the prerequisite or producer executed first, "
-            "and targetKey is the dependent or consumer executed afterward. "
-            "Example: if extraction depends on understanding, use "
-            "{\"sourceKey\":\"understand\",\"targetKey\":\"extract\",\"relationType\":\"depends_on\"}; "
-            "the reverse edge from extract to understand is forbidden.\n"
-            "Capability catalog dependsOn entries are hard prerequisites that the system will enforce after generation. "
-            "Never create a reverse path from a dependent task back to one of its prerequisite tasks. "
-            "optionalDependencies are advisory and must not be added when they create a cycle.\n"
-            "For complex work with solution refinement and verification, declare a "
-            "verification_loop in controlPolicies instead of creating a dependency cycle. "
-            "The condition source must expose verification.status, maxRevisions must be 2, "
-            "and onExhausted must be human_review.\n"
-            "Cover every hard constraint and expected artifact; do not invent facts or domain capabilities.\n"
-            "When source material is represented by materialRefs, attach a WorksetSpec to the "
-            "logical task that scans it. Consume pages by cursor; do not copy all fragments into "
-            "one ContextPack and do not create one semantic task per storage fragment.\n"
-            "For coverage, copy stable sourceRegistry ref values into task.sourceRefs. Do not prove coverage "
-            "by repeating or paraphrasing source text. Every sourceRegistry ref must be cited by a task.\n"
-            f"Mission requirements: {json.dumps(contract, ensure_ascii=False, default=str)}\n"
-            f"Semantic profile: {profile.model_dump_json(by_alias=True)}\n"
-            f"Capability catalog: {json.dumps(catalog, ensure_ascii=False)}\n"
-        )
+        return serialize_planning_request({
+            "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
+            "operation": "task_decomposition",
+            "planningRequest": contract,
+            "semanticProfile": profile.model_dump(by_alias=True, mode="json"),
+            "capabilityCatalog": catalog,
+            "existingSemanticTasks": list(existing_semantic_tasks),
+        })
 
     @staticmethod
     def _budget_metadata(profile: TaskSemanticProfile, node_count: int) -> dict[str, Any]:

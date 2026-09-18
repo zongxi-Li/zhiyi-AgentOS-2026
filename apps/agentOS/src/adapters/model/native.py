@@ -9,6 +9,7 @@ from copy import deepcopy
 from typing import Any
 
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
+from adapters.prompt_runtime import compose_execution_prompt
 from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from contracts.communication import (
     ContextContractError,
@@ -25,7 +26,7 @@ from adapters.model.native_prompt import (
     NativeCapabilityPromptBuilder,
     prompt_version_for_capability,
 )
-from support.acg.models import NATIVE_CAPABILITY_IDS
+from support.acg.models import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
 from components.communicator.contracts import ContextPack, input_revision
 from runtime.live_events import runtime_event_broker
 
@@ -86,6 +87,7 @@ class NativeGeneralAgent(BaseAgent):
             )
         )
         self.prompt_builder = NativeCapabilityPromptBuilder()
+        self.capability_catalog = build_default_capability_catalog()
 
     @staticmethod
     def _search_provider(context: AgentRunContext) -> str | None:
@@ -290,12 +292,15 @@ class NativeGeneralAgent(BaseAgent):
         pack = context.context_pack
         source_data = getattr(pack, "source_data", {}) if pack is not None else {}
         evidence_refs = list(getattr(pack, "evidence_refs", []) or []) if pack is not None else []
-        prompt_method = (
-            self.prompt_builder.build_artifact
-            if capability == "artifact_generation"
-            else self.prompt_builder.build
+        memory_records = [
+            item.model_dump(by_alias=True, mode="json")
+            if hasattr(item, "model_dump") else item
+            for item in (context.memory or [])
+        ]
+        allowed_tools = sorted(
+            str(item) for item in getattr(context.tool_runtime, "allowed_tools", ()) if str(item)
         )
-        prompt = prompt_method(
+        prompt_envelope = self.prompt_builder.build_envelope(
             capability_descriptor=descriptor,
             step_goal=context.step.goal or context.step.name,
             acceptance_criteria=list(context.step.acceptance_criteria),
@@ -307,7 +312,16 @@ class NativeGeneralAgent(BaseAgent):
             source_data=dict(source_data) if isinstance(source_data, dict) else {},
             evidence_refs=evidence_refs,
             output_schema=generation_schema,
+            memory=memory_records,
+            allowed_tools=allowed_tools,
+            tool_observations=(
+                [{"kind": "deterministic_calculation", "content": item} for item in calculated]
+                if capability == "industrial_capacity_analysis" else []
+            ),
         )
+        prompt = prompt_envelope.user_prompt
+        system_prompt = prompt_envelope.system_prompt
+        prompt_metadata = prompt_envelope.audit_metadata()
         thinking_mode = str(context.task.input.get("thinkingMode") or "disabled")
         output_thinking_mode = thinking_mode
         timeout_seconds = 600.0 if capability == "artifact_generation" else 300.0
@@ -331,6 +345,8 @@ class NativeGeneralAgent(BaseAgent):
                 stream_completed_payload: dict[str, Any] = {}
                 async for runtime_event in streamer(
                     prompt=prompt, schema=generation_schema, run_id=context.run.run_id,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                     node_id=context.step.step_id,
                     attempt_id=context.attempt_id or context.commit_id or context.step.step_id,
                     ttft_timeout=min(30.0, timeout_seconds), idle_timeout=min(60.0, timeout_seconds),
@@ -365,6 +381,23 @@ class NativeGeneralAgent(BaseAgent):
                     usage=dict(stream_completed_payload.get("usage") or {}),
                     finishReason=stream_completed_payload.get("finishReason"),
                     promptVersion=base_prompt_version,
+                    promptTemplateHash=str(stream_completed_payload.get("promptTemplateHash") or ""),
+                    promptInstanceHash=str(stream_completed_payload.get("promptInstanceHash") or ""),
+                    stablePrefixHash=str(stream_completed_payload.get("stablePrefixHash") or ""),
+                    schemaHash=str(stream_completed_payload.get("schemaHash") or ""),
+                    kernelVersion=stream_completed_payload.get("kernelVersion"),
+                    preset=stream_completed_payload.get("preset"),
+                    presetVersion=stream_completed_payload.get("presetVersion"),
+                    capabilityId=stream_completed_payload.get("capabilityId"),
+                    capabilityPolicyVersion=stream_completed_payload.get("capabilityPolicyVersion"),
+                    requestProtocolVersion=stream_completed_payload.get("requestProtocolVersion"),
+                    outputProtocolVersion=stream_completed_payload.get("outputProtocolVersion"),
+                    promptRendererVersion=stream_completed_payload.get("promptRendererVersion"),
+                    requestType=stream_completed_payload.get("requestType"),
+                    providerFamily=stream_completed_payload.get("providerFamily"),
+                    modelVersion=stream_completed_payload.get("modelVersion"),
+                    streaming=True,
+                    trustSummary=dict(stream_completed_payload.get("trustSummary") or {}),
                 )
             else:
                 if getattr(runtime, "production_stream_required", False):
@@ -373,13 +406,15 @@ class NativeGeneralAgent(BaseAgent):
                         "Native ACG production execution requires a streaming model binding.",
                     )
                 generated = await runtime.generate_json(
-                prompt=prompt,
-                schema=generation_schema,
-                thinking_mode=thinking_mode,
-                reasoning_effort=_requested_reasoning_effort(context),
-                timeout_seconds=timeout_seconds,
-                prompt_version=base_prompt_version,
-                commit_id=context.commit_id,
+                    prompt=prompt,
+                    schema=generation_schema,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
+                    thinking_mode=thinking_mode,
+                    reasoning_effort=_requested_reasoning_effort(context),
+                    timeout_seconds=timeout_seconds,
+                    prompt_version=base_prompt_version,
+                    commit_id=context.commit_id,
                 )
         except StructuredGenerationError as exc:
             thinking_enabled = thinking_mode.strip().lower() not in {
@@ -398,6 +433,8 @@ class NativeGeneralAgent(BaseAgent):
                     timeout_seconds=timeout_seconds,
                     prompt_version=base_prompt_version,
                     exhausted_audit=exc.audit,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                 )
                 invocations.extend(recovery_invocations)
             elif exc.code == "MODEL_OUTPUT_EXHAUSTED" and not _workset_recovery_bounded(context):
@@ -407,6 +444,8 @@ class NativeGeneralAgent(BaseAgent):
                         output_schema=generation_schema, thinking_mode=output_thinking_mode,
                         timeout_seconds=timeout_seconds, prompt_version=base_prompt_version,
                         exhausted_audit=exc.audit,
+                        system_prompt=system_prompt,
+                        prompt_metadata=prompt_metadata,
                     )
                     invocations.extend(recovery_invocations)
                 except StructuredGenerationError as split_exc:
@@ -423,6 +462,8 @@ class NativeGeneralAgent(BaseAgent):
                             thinking_mode=output_thinking_mode, timeout_seconds=timeout_seconds,
                             prompt_version=f"{base_prompt_version}.sectioned-fallback",
                             exhausted_audit=(exc.audit if isinstance(exc.audit, dict) else None),
+                            system_prompt=system_prompt,
+                            prompt_metadata=prompt_metadata,
                         )
                         invocations.extend(section_invocations)
                     except StructuredGenerationError:
@@ -434,10 +475,12 @@ class NativeGeneralAgent(BaseAgent):
                 generated = await runtime.generate_json(
                     prompt=prompt,
                     schema=generation_schema,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                     thinking_mode=output_thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
-                        prompt_version=(
+                    prompt_version=(
                         f"{base_prompt_version}.thinking-finalization1"
                     ),
                     commit_id=context.commit_id,
@@ -454,6 +497,8 @@ class NativeGeneralAgent(BaseAgent):
                         validation_error=str(exc),
                     ),
                     schema=generation_schema,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                     thinking_mode=output_thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
@@ -502,10 +547,12 @@ class NativeGeneralAgent(BaseAgent):
                     validation_error=str(exc),
                 ),
                 schema=generation_schema,
+                system_prompt=system_prompt,
+                prompt_metadata=prompt_metadata,
                 thinking_mode=output_thinking_mode,
                 reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
-                    prompt_version=f"{base_prompt_version}.repair1",
+                prompt_version=f"{base_prompt_version}.repair1",
                 commit_id=context.commit_id,
             )
             invocations.append(repaired.audit_record())
@@ -541,6 +588,7 @@ class NativeGeneralAgent(BaseAgent):
         self, *, context: AgentRunContext, runtime: Any, original_prompt: str,
         output_schema: dict[str, Any], thinking_mode: str, timeout_seconds: float,
         prompt_version: str, exhausted_audit: dict[str, Any] | None,
+        system_prompt: str = "", prompt_metadata: dict[str, Any] | None = None,
         depth: int = 0,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Decompose an exhausted semantic unit, execute children, then pairwise reduce."""
@@ -576,13 +624,13 @@ class NativeGeneralAgent(BaseAgent):
             if isinstance(exhausted_audit, dict) and exhausted_audit else []
         )
         plan = await runtime.generate_json(
-            prompt=(
-                f"{original_prompt}\nThe current semantic unit exceeded one response. Start a new "
-                "planning operation and decompose it into smaller non-overlapping, independently "
-                "complete sub-units whose union preserves the entire goal, constraints, evidence "
-                "and acceptance criteria. Decide the useful subtask count. Return plan JSON only."
+            prompt=self.prompt_builder.build_runtime_operation(
+                original_prompt=original_prompt, operation="capacity_split",
+                data={"depth": depth, "preserve": ["goal", "constraints", "evidence", "acceptanceCriteria"]},
             ),
             schema=subtask_schema, thinking_mode=thinking_mode,
+            system_prompt=system_prompt,
+            prompt_metadata=prompt_metadata,
             reasoning_effort=_requested_reasoning_effort(context),
             timeout_seconds=timeout_seconds,
             prompt_version=f"{prompt_version}.capacity-split1",
@@ -595,15 +643,13 @@ class NativeGeneralAgent(BaseAgent):
             # 纠偏重试：明确要求至少一个子任务；模型找不到切分点时允许以单元素
             # 透传作为最低合法形态。二次仍为空才上报无进展（并携带完整尝试审计）。
             corrective_plan = await runtime.generate_json(
-                prompt=(
-                    f"{original_prompt}\nThe current semantic unit exceeded one response. Start a new "
-                    "planning operation and decompose it into smaller non-overlapping, independently "
-                    "complete sub-units whose union preserves the entire goal. Your previous response "
-                    "contained an EMPTY subtask list, which is invalid. Return AT LEAST ONE sub-task; "
-                    "if decomposition is impossible, return exactly one sub-task covering the whole unit. "
-                    "Return plan JSON only."
+                prompt=self.prompt_builder.build_runtime_operation(
+                    original_prompt=original_prompt, operation="capacity_split_repair",
+                    data={"depth": depth, "validationError": "subtasks must contain at least one item"},
                 ),
                 schema=subtask_schema, thinking_mode=thinking_mode,
+                system_prompt=system_prompt,
+                prompt_metadata=prompt_metadata,
                 reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
                 prompt_version=f"{prompt_version}.capacity-split-retry1",
@@ -626,14 +672,15 @@ class NativeGeneralAgent(BaseAgent):
         invocations.extend(split_attempts[1:])
         partials: list[dict[str, Any]] = []
         for index, subtask in enumerate(subtasks):
-            subprompt = (
-                f"{original_prompt}\nExecute only this independently complete sub-unit. Preserve "
-                "all supported details in its scope and return the original output schema.\n"
-                f"SUBTASK={json.dumps(subtask, ensure_ascii=False)}"
+            subprompt = self.prompt_builder.build_runtime_operation(
+                original_prompt=original_prompt, operation="execute_subtask",
+                data={"subtask": subtask},
             )
             try:
                 generated = await runtime.generate_json(
                     prompt=subprompt, schema=output_schema, thinking_mode=thinking_mode,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                     reasoning_effort=_requested_reasoning_effort(context),
                     timeout_seconds=timeout_seconds,
                     prompt_version=f"{prompt_version}.capacity-part1",
@@ -649,6 +696,8 @@ class NativeGeneralAgent(BaseAgent):
                     output_schema=output_schema, thinking_mode=thinking_mode,
                     timeout_seconds=timeout_seconds, prompt_version=prompt_version,
                     exhausted_audit=exc.audit, depth=depth + 1,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                 )
                 partials.append(partial)
                 invocations.extend(audits)
@@ -662,16 +711,15 @@ class NativeGeneralAgent(BaseAgent):
                 if len(pair) == 1:
                     reduced.append(pair[0])
                     continue
-                merge_prompt = (
-                    f"{original_prompt}\nMerge these two complete partial results without losing "
-                    "supported facts, calculations, constraints, evidence, assumptions or gaps. "
-                    "Deduplicate only semantically identical content. Return the original schema.\n"
-                    f"LEFT={json.dumps(pair[0], ensure_ascii=False)}\n"
-                    f"RIGHT={json.dumps(pair[1], ensure_ascii=False)}"
+                merge_prompt = self.prompt_builder.build_runtime_operation(
+                    original_prompt=original_prompt, operation="merge_partial_results",
+                    data={"left": pair[0], "right": pair[1]},
                 )
                 try:
                     merged = await runtime.generate_json(
                         prompt=merge_prompt, schema=output_schema, thinking_mode=thinking_mode,
+                        system_prompt=system_prompt,
+                        prompt_metadata=prompt_metadata,
                         reasoning_effort=_requested_reasoning_effort(context),
                         timeout_seconds=timeout_seconds,
                         prompt_version=f"{prompt_version}.capacity-reduce1",
@@ -690,6 +738,8 @@ class NativeGeneralAgent(BaseAgent):
                         output_schema=output_schema, thinking_mode=thinking_mode,
                         timeout_seconds=timeout_seconds, prompt_version=prompt_version,
                         exhausted_audit=exc.audit, depth=depth + 1,
+                        system_prompt=system_prompt,
+                        prompt_metadata=prompt_metadata,
                     )
                     reduced.append(merged_data)
                     invocations.extend(audits)
@@ -701,6 +751,7 @@ class NativeGeneralAgent(BaseAgent):
         self, *, context: AgentRunContext, runtime: Any, original_prompt: str,
         thinking_mode: str, timeout_seconds: float, prompt_version: str,
         exhausted_audit: dict[str, Any] | None,
+        system_prompt: str, prompt_metadata: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Replace a truncated monolithic artifact with outline -> sections -> assembly."""
         text_list = {"type": "array", "items": {"type": "string"}}
@@ -733,13 +784,13 @@ class NativeGeneralAgent(BaseAgent):
             if isinstance(exhausted_audit, dict) and exhausted_audit else []
         )
         outline = await runtime.generate_json(
-            prompt=(
-                f"{original_prompt}\nThe complete artifact exceeded one response. Start a new "
-                "semantic operation and design only a lossless chapter outline. Decide chapter "
-                "count and granularity from mission coverage and usefulness. Do not write chapter "
-                "prose yet. Return outline JSON only."
+            prompt=self.prompt_builder.build_runtime_operation(
+                original_prompt=original_prompt, operation="artifact_outline",
+                data={"reason": "output_capacity_exhausted"},
             ),
             schema=outline_schema, thinking_mode=thinking_mode,
+            system_prompt=system_prompt,
+            prompt_metadata=prompt_metadata,
             reasoning_effort=_requested_reasoning_effort(context),
             timeout_seconds=timeout_seconds,
             prompt_version=f"{prompt_version}.capacity-outline1",
@@ -754,6 +805,8 @@ class NativeGeneralAgent(BaseAgent):
                 section=dict(section), thinking_mode=thinking_mode,
                 timeout_seconds=timeout_seconds, prompt_version=prompt_version,
                 path=str(index),
+                system_prompt=system_prompt,
+                prompt_metadata=prompt_metadata,
             )
             sections.extend(generated)
             invocations.extend(audits)
@@ -778,24 +831,21 @@ class NativeGeneralAgent(BaseAgent):
             },
             "required": ["status", "checks", "unresolvedGaps"],
         }
+        verification_envelope = compose_execution_prompt(
+            descriptor=self.capability_catalog.get("verification"),
+            execution_request={},
+        )
         verification = await runtime.generate_json(
-            prompt=(
-                f"{original_prompt}\nVerify the assembled chapter index against every acceptance "
-                "criterion, constraint, evidence requirement and expected artifact. A check without "
-                "evidence cannot pass. Return verification JSON only.\n"
-                "ASSEMBLED_CHAPTER_INDEX="
-                + json.dumps(
-                    [
-                        {
-                            "title": item.get("title"),
-                            "sourceFields": item.get("sourceFields") or [],
-                        }
-                        for item in sections
-                    ],
-                    ensure_ascii=False,
-                )
+            prompt=self.prompt_builder.build_runtime_operation(
+                original_prompt=original_prompt, operation="verify_artifact_assembly",
+                data={"assembledChapterIndex": [
+                    {"title": item.get("title"), "sourceFields": item.get("sourceFields") or []}
+                    for item in sections
+                ]},
             ),
             schema=verification_schema, thinking_mode=thinking_mode,
+            system_prompt=verification_envelope.system_prompt,
+            prompt_metadata=verification_envelope.audit_metadata(),
             reasoning_effort=_requested_reasoning_effort(context),
             timeout_seconds=timeout_seconds,
             prompt_version=f"{prompt_version}.capacity-verification1",
@@ -820,6 +870,7 @@ class NativeGeneralAgent(BaseAgent):
         self, *, context: AgentRunContext, runtime: Any, original_prompt: str,
         section: dict[str, Any], thinking_mode: str, timeout_seconds: float,
         prompt_version: str, path: str, depth: int = 0,
+        system_prompt: str = "", prompt_metadata: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Generate one complete section; recursively split only after output exhaustion."""
         text_list = {"type": "array", "items": {"type": "string"}}
@@ -833,12 +884,13 @@ class NativeGeneralAgent(BaseAgent):
         }
         try:
             generated = await runtime.generate_json(
-                prompt=(
-                    f"{original_prompt}\nGenerate this one complete artifact chapter. Preserve all "
-                    "supported detail assigned to it; do not summarize merely to reduce length. "
-                    f"Return section JSON only.\nSECTION={json.dumps(section, ensure_ascii=False)}"
+                prompt=self.prompt_builder.build_runtime_operation(
+                    original_prompt=original_prompt, operation="generate_artifact_section",
+                    data={"section": section},
                 ),
                 schema=section_schema, thinking_mode=thinking_mode,
+                system_prompt=system_prompt,
+                prompt_metadata=prompt_metadata,
                 reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
                 prompt_version=f"{prompt_version}.section1",
@@ -872,12 +924,13 @@ class NativeGeneralAgent(BaseAgent):
                 "required": ["sections"],
             }
             split = await runtime.generate_json(
-                prompt=(
-                    f"{original_prompt}\nThe declared section exceeded one response. Decompose it "
-                    "into smaller non-overlapping subsections whose union preserves its complete "
-                    f"goal and sources. Return subsection outline JSON only.\nSECTION={json.dumps(section, ensure_ascii=False)}"
+                prompt=self.prompt_builder.build_runtime_operation(
+                    original_prompt=original_prompt, operation="split_artifact_section",
+                    data={"section": section},
                 ),
                 schema=subsection_schema, thinking_mode=thinking_mode,
+                system_prompt=system_prompt,
+                prompt_metadata=prompt_metadata,
                 reasoning_effort=_requested_reasoning_effort(context),
                 timeout_seconds=timeout_seconds,
                 prompt_version=f"{prompt_version}.section-split1",
@@ -897,6 +950,8 @@ class NativeGeneralAgent(BaseAgent):
                     section=dict(child), thinking_mode=thinking_mode,
                     timeout_seconds=timeout_seconds, prompt_version=prompt_version,
                     path=f"{path}.{index}", depth=depth + 1,
+                    system_prompt=system_prompt,
+                    prompt_metadata=prompt_metadata,
                 )
                 results.extend(child_results)
                 audits.extend(child_audits)

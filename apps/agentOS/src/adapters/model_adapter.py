@@ -51,6 +51,22 @@ class StructuredGenerationResult(BaseModel):
     latency_ms: int = Field(default=0, alias="latencyMs", ge=0)
     prompt_version: str = Field(default="native-capability.v3", alias="promptVersion")
     prompt_template_hash: str = Field(default="", alias="promptTemplateHash")
+    prompt_instance_hash: str = Field(default="", alias="promptInstanceHash")
+    stable_prefix_hash: str = Field(default="", alias="stablePrefixHash")
+    schema_hash: str = Field(default="", alias="schemaHash")
+    kernel_version: str | None = Field(default=None, alias="kernelVersion")
+    preset: str | None = None
+    preset_version: str | None = Field(default=None, alias="presetVersion")
+    capability_id: str | None = Field(default=None, alias="capabilityId")
+    capability_policy_version: str | None = Field(default=None, alias="capabilityPolicyVersion")
+    request_protocol_version: str | None = Field(default=None, alias="requestProtocolVersion")
+    output_protocol_version: str | None = Field(default=None, alias="outputProtocolVersion")
+    prompt_renderer_version: str | None = Field(default=None, alias="promptRendererVersion")
+    request_type: str | None = Field(default=None, alias="requestType")
+    provider_family: str | None = Field(default=None, alias="providerFamily")
+    model_version: str | None = Field(default=None, alias="modelVersion")
+    streaming: bool = False
+    trust_summary: Dict[str, int] = Field(default_factory=dict, alias="trustSummary")
     usage: Dict[str, Any] = Field(default_factory=dict)
     finish_reason: str | None = Field(default=None, alias="finishReason")
     capability: ModelCapabilityEnvelope | None = None
@@ -77,6 +93,22 @@ class StructuredGenerationResult(BaseModel):
             "latencyMs": self.latency_ms,
             "promptVersion": self.prompt_version,
             "promptTemplateHash": self.prompt_template_hash,
+            "promptInstanceHash": self.prompt_instance_hash,
+            "stablePrefixHash": self.stable_prefix_hash,
+            "schemaHash": self.schema_hash,
+            "kernelVersion": self.kernel_version,
+            "preset": self.preset,
+            "presetVersion": self.preset_version,
+            "capabilityId": self.capability_id,
+            "capabilityPolicyVersion": self.capability_policy_version,
+            "requestProtocolVersion": self.request_protocol_version,
+            "outputProtocolVersion": self.output_protocol_version,
+            "promptRendererVersion": self.prompt_renderer_version,
+            "requestType": self.request_type,
+            "providerFamily": self.provider_family or self.provider,
+            "modelVersion": self.model_version,
+            "streaming": self.streaming,
+            "trustSummary": dict(self.trust_summary),
             "usage": dict(self.usage),
             "finishReason": self.finish_reason,
             "capability": (
@@ -118,12 +150,15 @@ class StructuredGenerationRuntime(Protocol):
         *,
         prompt: str,
         schema: Dict[str, Any],
+        system_prompt: str | None = None,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
+        prompt_metadata: Dict[str, Any] | None = None,
     ) -> StructuredGenerationResult:
         """在给定 Schema、预算和超时内生成并解析一个 JSON 结果。
 
@@ -139,6 +174,7 @@ class StructuredGenerationRuntime(Protocol):
         *,
         prompt: str,
         schema: Dict[str, Any],
+        system_prompt: str | None = None,
         run_id: str,
         node_id: str | None = None,
         attempt_id: str | None = None,
@@ -147,10 +183,12 @@ class StructuredGenerationRuntime(Protocol):
         total_timeout: float = 300.0,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         emit_output_deltas: bool = True,
+        prompt_metadata: Dict[str, Any] | None = None,
     ) -> AsyncIterator[RuntimeEvent]:
         """Stream transient model events; final JSON validation remains a later phase.
 

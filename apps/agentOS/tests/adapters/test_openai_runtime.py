@@ -14,6 +14,8 @@ from contracts.capability import (
     CapabilityManifest,
     ModelInvocationRequest,
 )
+from adapters.model.native_prompt import NativeCapabilityPromptBuilder
+from support.acg.models import build_default_capability_catalog
 
 
 class _JsonTransport:
@@ -347,6 +349,57 @@ def test_glm_runtime_honors_reasoning_effort_and_enables_thinking() -> None:
     assert transport.payload["response_format"] == {"type": "json_object"}
     assert transport.payload["max_tokens"] == 4096
     assert transport.payload["messages"][0]["role"] == "system"
+
+
+def test_glm_schema_instruction_follows_agentos_system_authority() -> None:
+    transport = _JsonTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.glm", kind=CapabilityKind.MODEL,
+            displayName="GLM", provider="glm", capabilities=["glm-test"],
+        ), transport=transport,
+    )
+    asyncio.run(runtime.invoke(ModelInvocationRequest(
+        requestId="glm-authority", model="glm-test",
+        messages=[
+            {"role": "system", "content": "AgentOS Kernel and planner policy"},
+            {"role": "user", "content": "runtime data"},
+        ], responseSchema={"type": "object"},
+    )))
+    assert [item["role"] for item in transport.payload["messages"]] == ["system", "user"]
+    assert transport.payload["messages"][0]["content"].startswith("AgentOS Kernel and planner policy")
+    assert "TRANSPORT OUTPUT CONTRACT" in transport.payload["messages"][0]["content"]
+
+
+@pytest.mark.parametrize("provider", ["openai_compatible", "glm", "zhipu"])
+def test_provider_preserves_complete_executor_authority_and_user_request(provider: str) -> None:
+    descriptor = build_default_capability_catalog().get("cost_analysis")
+    envelope = NativeCapabilityPromptBuilder().build_envelope(
+        capability_descriptor=descriptor, step_goal="Calculate cost",
+        acceptance_criteria=["Inputs and units are explicit"], source_refs=[],
+        logical_role="task", task_title="Mission", task_input={}, context_data={},
+        source_data={}, evidence_refs=[], output_schema=descriptor.output_contract,
+    )
+    transport = _JsonTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId=f"model.{provider}", kind=CapabilityKind.MODEL,
+            displayName=provider, provider=provider, capabilities=["test-model"],
+        ), transport=transport,
+    )
+    asyncio.run(runtime.invoke(ModelInvocationRequest(
+        requestId=f"authority-{provider}", model="test-model",
+        messages=[
+            {"role": "system", "content": envelope.system_prompt},
+            {"role": "user", "content": envelope.user_prompt},
+        ], responseSchema={"type": "object"},
+    )))
+    assert [item["role"] for item in transport.payload["messages"]] == ["system", "user"]
+    system = transport.payload["messages"][0]["content"]
+    assert system.startswith("You are an execution component inside Zhiyi AgentOS")
+    assert "You are an execution agent" in system
+    assert '"capabilityId":"cost_analysis"' in system
+    assert transport.payload["messages"][-1]["content"] == envelope.user_prompt
 
 
 def test_non_glm_runtime_strips_reasoning_effort_option() -> None:

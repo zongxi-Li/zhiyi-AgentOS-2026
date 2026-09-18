@@ -141,12 +141,15 @@ class GuardedModelRuntime:
         *,
         prompt: str,
         schema: dict,
+        system_prompt: str | None = None,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
+        prompt_metadata: dict | None = None,
     ) -> StructuredGenerationResult:
         """在本地保护边界内调用模型，并只暴露稳定、无正文的错误。"""
         if timeout_seconds <= 0:
@@ -156,14 +159,19 @@ class GuardedModelRuntime:
                 delegate_kwargs = {
                     "prompt": prompt,
                     "schema": schema,
+                    "system_prompt": system_prompt,
                     "thinking_mode": thinking_mode,
                     "timeout_seconds": timeout_seconds,
                     "max_output_tokens": max_output_tokens,
                     "prompt_version": prompt_version,
                     "commit_id": commit_id,
                 }
+                if prompt_metadata is not None:
+                    delegate_kwargs["prompt_metadata"] = prompt_metadata
                 if reasoning_effort is not None:
                     delegate_kwargs["reasoning_effort"] = reasoning_effort
+                if temperature is not None:
+                    delegate_kwargs["temperature"] = temperature
                 return await self._gate.call(
                     lambda: asyncio.wait_for(
                         self.delegate.generate_json(**delegate_kwargs),

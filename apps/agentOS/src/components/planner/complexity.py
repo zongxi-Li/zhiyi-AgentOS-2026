@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from threading import Thread
 from time import monotonic
 from typing import Any, Callable
+from adapters.prompt_runtime import planner_prompt_metadata, planner_system_prompt
 
 from support.acg.models import ComplexityAssessment, ComplexityLevel
 
@@ -88,6 +89,14 @@ PLANNING_MODEL_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_TIMEOUT_S
 PLANNING_TOTAL_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_TOTAL_TIMEOUT_SECONDS", "660"))
 PLANNING_RETRY_TIMEOUT_SECONDS = 180.0
 PLANNING_MAX_RETRIES = min(1, max(0, int(os.getenv("AGENTOS_LLM_PLANNING_MAX_RETRIES", "1"))))
+
+_PROMPT_AUDIT_KEYS = (
+    "promptTemplateHash", "promptInstanceHash", "stablePrefixHash", "schemaHash",
+    "kernelVersion", "preset", "presetVersion", "capabilityId",
+    "capabilityPolicyVersion", "requestProtocolVersion", "outputProtocolVersion",
+    "promptRendererVersion", "requestType", "providerFamily", "modelVersion",
+    "streaming", "trustSummary", "promptVersion",
+)
 
 
 def is_model_timeout(exc: Exception) -> bool:
@@ -176,6 +185,7 @@ def _stream_planning_call(
         data: dict[str, Any] | None = None
         provider = str(getattr(llm, "provider", "") or "")
         model = str(getattr(llm, "model", "") or "")
+        completion_audit: dict[str, Any] = {}
         stream_kwargs = {
             key: value
             for key, value in extra_kwargs.items()
@@ -224,6 +234,9 @@ def _stream_planning_call(
                     data = candidate
                 provider = str(payload.get("provider") or provider)
                 model = str(payload.get("model") or model)
+                completion_audit = {
+                    key: payload[key] for key in _PROMPT_AUDIT_KEYS if key in payload
+                }
             normalized = event_type if event_type.startswith("planner.") else f"planner.{event_type}"
             if normalized not in {
                 "planner.model.started", "planner.model.first_token",
@@ -250,6 +263,7 @@ def _stream_planning_call(
             "provider": provider,
             "model": model,
             "streamUsed": True,
+            **completion_audit,
         }
 
     return _run_async(consume)
@@ -287,6 +301,8 @@ def call_planning_model(
             raise error
         call_kwargs = dict(kwargs)
         call_kwargs["timeout_seconds"] = timeout
+        call_kwargs.setdefault("system_prompt", planner_system_prompt())
+        call_kwargs.setdefault("prompt_metadata", planner_prompt_metadata())
         attempts[logical_call_key] = attempt
         if progress_callback:
             progress_callback({
@@ -315,6 +331,12 @@ def call_planning_model(
                 result = llm.generate_json(prompt, schema, **call_kwargs)
             if isinstance(result, Mapping):
                 audit["streamUsed"] = bool(result.get("streamUsed", audit.get("streamUsed", False)))
+                invocation_audit = {
+                    key: result[key] for key in _PROMPT_AUDIT_KEYS if key in result
+                }
+                if invocation_audit:
+                    audit.update(invocation_audit)
+                    audit.setdefault("modelInvocations", []).append(invocation_audit)
             if progress_callback:
                 progress_callback({
                     "eventType": "planner.stage.completed", "kind": "stage_completed",

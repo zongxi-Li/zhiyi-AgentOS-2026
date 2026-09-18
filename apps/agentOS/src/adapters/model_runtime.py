@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
+import json
+import math
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Any
@@ -15,6 +16,7 @@ from adapters.model_adapter import (
 )
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.openai_runtime import ModelInvocationError, decode_json_object
+from adapters.prompt_runtime import canonical_hash, prompt_instance_metadata, trust_summary
 from contracts.capability import (
     ModelCapabilityEnvelope,
     ModelOutputPolicy,
@@ -96,18 +98,30 @@ class RegisteredModelRuntime:
         *,
         prompt: str,
         schema: dict[str, Any],
+        system_prompt: str | None = None,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
+        prompt_metadata: dict[str, Any] | None = None,
     ) -> StructuredGenerationResult:
         """把原生 JSON 生成请求转换为统一模型调用，并返回安全审计投影。"""
         # thinking_mode 的供应商映射发生在适配器层；本桥接只转发显式声明的
         # reasoning_effort（OpenAI 兼容参数），是否外发由适配器按提供方裁决。
         del thinking_mode
         reasoning_effort = _validated_reasoning_effort(reasoning_effort)
+        if temperature is not None and (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(float(temperature))
+            or not 0 <= float(temperature) <= 2
+        ):
+            raise StructuredGenerationError(
+                "MODEL_TEMPERATURE_INVALID", "temperature must be between 0 and 2"
+            )
         if timeout_seconds <= 0:
             raise StructuredGenerationError(
                 "MODEL_TIMEOUT_INVALID",
@@ -137,6 +151,16 @@ class RegisteredModelRuntime:
         selected_policy = ModelOutputPolicy.API_CONTROLLED
         selected_effective_tokens: int | None = None
         selected_reason = "provider_default"
+        selected_prompt_identity: dict[str, str] = {}
+        last_prompt_audit: dict[str, Any] = {}
+        messages = ([{"role": "system", "content": system_prompt}] if system_prompt else []) + [
+            {"role": "user", "content": prompt}
+        ]
+        safe_prompt_metadata = self._prompt_metadata(
+            prompt_metadata=prompt_metadata,
+            system_prompt=system_prompt,
+            prompt_version=prompt_version,
+        )
         for index, adapter in enumerate(candidates):
             # ``timeout_seconds`` 是整个模型选择动作的上限，而不是每个候选各自的
             # 上限。剩余时间在尚未尝试的候选之间均分：主实现慢超时时备实现仍有机会
@@ -189,10 +213,31 @@ class RegisteredModelRuntime:
                 effective_reason = "catalog_default"
             if reasoning_effort:
                 options["reasoning_effort"] = reasoning_effort
+            if temperature is not None:
+                options["temperature"] = float(temperature)
+            invocation_identity = prompt_instance_metadata(
+                messages=messages,
+                response_schema=dict(schema),
+                provider_family=capability.provider or self.provider,
+                model=capability.model or self.model,
+                model_version=capability.version or self.version,
+                behavior_options=options,
+            )
+            candidate_prompt_audit = {
+                **safe_prompt_metadata,
+                **invocation_identity,
+                "promptVersion": prompt_version,
+                "requestType": self._request_type(prompt),
+                "providerFamily": capability.provider or self.provider,
+                "modelVersion": capability.version or self.version,
+                "streaming": False,
+                "trustSummary": trust_summary(prompt),
+            }
+            last_prompt_audit = candidate_prompt_audit
             request = ModelInvocationRequest(
                 requestId=request_id,
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 responseSchema=dict(schema),
                 options=options,
                 commitId=commit_id,
@@ -206,6 +251,7 @@ class RegisteredModelRuntime:
                 selected_policy = policy
                 selected_effective_tokens = effective_tokens
                 selected_reason = effective_reason
+                selected_prompt_identity = invocation_identity
                 break
             except asyncio.TimeoutError as exc:
                 last_error = exc
@@ -214,6 +260,7 @@ class RegisteredModelRuntime:
                 raise StructuredGenerationError(
                     "MODEL_TIMEOUT",
                     "model invocation timed out",
+                    audit=candidate_prompt_audit,
                 ) from exc
             except ModelInvocationError as exc:
                 last_error = exc
@@ -226,6 +273,7 @@ class RegisteredModelRuntime:
                     # 只会重复失败并放大费用。
                     retryable=exc.code in self._FAILOVER_CODES,
                     audit={
+                        **candidate_prompt_audit,
                         "provider": capability.provider,
                         "model": capability.model,
                         "usage": dict(getattr(exc, "usage", {}) or {}),
@@ -242,13 +290,19 @@ class RegisteredModelRuntime:
                 raise StructuredGenerationError(
                     "MODEL_PROVIDER_FAILED",
                     "model provider invocation failed",
+                    audit=candidate_prompt_audit,
                 ) from exc
         if response is None:
             if isinstance(last_error, ModelInvocationError):
-                raise StructuredGenerationError(last_error.code, str(last_error)) from last_error
+                raise StructuredGenerationError(
+                    last_error.code,
+                    str(last_error),
+                    audit=last_prompt_audit,
+                ) from last_error
             raise StructuredGenerationError(
                 "MODEL_PROVIDER_FAILED",
                 "model provider invocation failed",
+                audit=last_prompt_audit,
             )
         finish_reason = str(response.metadata.get("finishReason") or "") or None
         output_exhausted = finish_reason in {"length", "max_tokens", "max_output_tokens"}
@@ -258,6 +312,14 @@ class RegisteredModelRuntime:
                 "model provider exhausted its output capacity before completing the response",
                 retryable=False,
                 audit={
+                    **safe_prompt_metadata,
+                    **selected_prompt_identity,
+                    "promptVersion": prompt_version,
+                    "requestType": self._request_type(prompt),
+                    "providerFamily": selected_capability.provider or self.provider,
+                    "modelVersion": selected_capability.version or self.version,
+                    "streaming": False,
+                    "trustSummary": trust_summary(prompt),
                     "provider": selected_capability.provider,
                     "model": selected_capability.model,
                     "usage": dict(response.usage),
@@ -278,7 +340,23 @@ class RegisteredModelRuntime:
             model=response.model,
             latencyMs=round((self._clock() - started) * 1000),
             promptVersion=prompt_version,
-            promptTemplateHash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            promptTemplateHash=safe_prompt_metadata["promptTemplateHash"],
+            promptInstanceHash=selected_prompt_identity["promptInstanceHash"],
+            stablePrefixHash=safe_prompt_metadata["stablePrefixHash"],
+            schemaHash=selected_prompt_identity["schemaHash"],
+            kernelVersion=safe_prompt_metadata.get("kernelVersion"),
+            preset=safe_prompt_metadata.get("preset"),
+            presetVersion=safe_prompt_metadata.get("presetVersion"),
+            capabilityId=safe_prompt_metadata.get("capabilityId"),
+            capabilityPolicyVersion=safe_prompt_metadata.get("capabilityPolicyVersion"),
+            requestProtocolVersion=safe_prompt_metadata.get("requestProtocolVersion"),
+            outputProtocolVersion=safe_prompt_metadata.get("outputProtocolVersion"),
+            promptRendererVersion=safe_prompt_metadata.get("promptRendererVersion"),
+            requestType=self._request_type(prompt),
+            providerFamily=(selected_capability.provider or self.provider),
+            modelVersion=(selected_capability.version or self.version),
+            streaming=False,
+            trustSummary=trust_summary(prompt),
             usage=dict(response.usage),
             finishReason=finish_reason,
             capability=selected_capability,
@@ -294,6 +372,7 @@ class RegisteredModelRuntime:
         *,
         prompt: str,
         schema: dict[str, Any],
+        system_prompt: str | None = None,
         run_id: str,
         node_id: str | None = None,
         attempt_id: str | None = None,
@@ -302,14 +381,25 @@ class RegisteredModelRuntime:
         total_timeout: float = 300.0,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         emit_output_deltas: bool = True,
+        prompt_metadata: dict[str, Any] | None = None,
     ):
         """Consume a provider stream while keeping structured output private when requested."""
-        del thinking_mode, prompt_version
+        del thinking_mode
         reasoning_effort = _validated_reasoning_effort(reasoning_effort)
+        if temperature is not None and (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(float(temperature))
+            or not 0 <= float(temperature) <= 2
+        ):
+            raise StructuredGenerationError(
+                "MODEL_TEMPERATURE_INVALID", "temperature must be between 0 and 2"
+            )
         if min(ttft_timeout, idle_timeout, total_timeout) <= 0:
             raise StructuredGenerationError("MODEL_TIMEOUT_INVALID", "stream timeouts must be positive")
         try:
@@ -335,11 +425,39 @@ class RegisteredModelRuntime:
             options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
         if reasoning_effort:
             options["reasoning_effort"] = reasoning_effort
+        if temperature is not None:
+            options["temperature"] = float(temperature)
         request_id = commit_id or f"model:{uuid4().hex}"
+        messages = ([{"role": "system", "content": system_prompt}] if system_prompt else []) + [
+            {"role": "user", "content": prompt}
+        ]
+        safe_prompt_metadata = self._prompt_metadata(
+            prompt_metadata=prompt_metadata,
+            system_prompt=system_prompt,
+            prompt_version=prompt_version,
+        )
+        invocation_identity = prompt_instance_metadata(
+            messages=messages,
+            response_schema=dict(schema),
+            provider_family=capability.provider or self.provider,
+            model=capability.model or self.model,
+            model_version=capability.version or self.version,
+            behavior_options=options,
+        )
+        safe_audit = {
+            **safe_prompt_metadata,
+            **invocation_identity,
+            "promptVersion": prompt_version,
+            "requestType": self._request_type(prompt),
+            "providerFamily": capability.provider or self.provider,
+            "modelVersion": capability.version or self.version,
+            "streaming": True,
+            "trustSummary": trust_summary(prompt),
+        }
         request = ModelInvocationRequest(
             requestId=request_id,
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             responseSchema=dict(schema),
             options=options,
             commitId=commit_id,
@@ -383,6 +501,7 @@ class RegisteredModelRuntime:
             "provider": self.provider,
             "model": self.model,
             "streamingCapability": True,
+            **safe_audit,
         })
         completed = False
         try:
@@ -467,13 +586,19 @@ class RegisteredModelRuntime:
             if callable(close):
                 await close()
             raise
-        except Exception:
+        except Exception as exc:
             close = getattr(iterator, "aclose", None)
             if callable(close):
                 await close()
+            if isinstance(exc, StructuredGenerationError):
+                exc.audit = {**safe_audit, **exc.audit}
             raise
         if not first:
-            raise StructuredGenerationError("MODEL_TTFT_TIMEOUT", "model stream completed without output")
+            raise StructuredGenerationError(
+                "MODEL_TTFT_TIMEOUT",
+                "model stream completed without output",
+                audit=safe_audit,
+            )
         if not completed:
             # A provider adapter normally emits completed; treating a clean end
             # as parseable keeps compatible fake streams useful without relaxing
@@ -484,13 +609,18 @@ class RegisteredModelRuntime:
                 "MODEL_OUTPUT_EXHAUSTED",
                 "model provider exhausted its output capacity before completing the response",
                 retryable=False,
+                audit=safe_audit,
             )
         if public_activity_pending:
             yield emit("model.activity", activity_payload(0.0))
         try:
             data = decode_json_object("".join(buffer))
         except ModelInvocationError as exc:
-            raise StructuredGenerationError("MODEL_OUTPUT_INVALID_JSON", "streamed model output is not valid JSON") from exc
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_INVALID_JSON",
+                "streamed model output is not valid JSON",
+                audit=safe_audit,
+            ) from exc
         yield emit("model.completed", {
             "receivedLength": sum(map(len, buffer)),
             "data": data,
@@ -500,7 +630,48 @@ class RegisteredModelRuntime:
             "finishReason": finish_reason,
             "latencyMs": round((self._clock() - started) * 1000),
             "streamDiagnostics": dict(stream_diagnostics),
+            **safe_audit,
         })
+
+    @staticmethod
+    def _prompt_metadata(
+        *,
+        prompt_metadata: dict[str, Any] | None,
+        system_prompt: str | None,
+        prompt_version: str,
+    ) -> dict[str, Any]:
+        allowed = {
+            "promptTemplateHash", "stablePrefixHash", "kernelVersion", "preset",
+            "presetVersion", "capabilityId", "capabilityPolicyVersion",
+            "requestProtocolVersion", "outputProtocolVersion", "promptRendererVersion",
+        }
+        metadata = {
+            key: value for key, value in dict(prompt_metadata or {}).items() if key in allowed
+        }
+        if "stablePrefixHash" not in metadata:
+            metadata["stablePrefixHash"] = canonical_hash(
+                ([{"role": "system", "content": system_prompt}] if system_prompt else [])
+            )
+        if "promptTemplateHash" not in metadata:
+            metadata["promptTemplateHash"] = canonical_hash({
+                "legacyPromptVersion": prompt_version,
+                "systemPrompt": system_prompt or "",
+            })
+        return metadata
+
+    @staticmethod
+    def _request_type(prompt: str) -> str | None:
+        try:
+            payload = json.loads(prompt)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        request_type = payload.get("requestType")
+        if not isinstance(request_type, str):
+            nested = payload.get("executionRequest")
+            request_type = nested.get("requestType") if isinstance(nested, dict) else None
+        return request_type if isinstance(request_type, str) and request_type else None
 
 
 async def _wait_for(awaitable: Awaitable[Any], timeout: float) -> Any:

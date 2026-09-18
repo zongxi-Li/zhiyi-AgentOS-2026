@@ -1739,6 +1739,31 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
         "verification": "Verify acceptance criteria against evidence; never pass a criterion without supporting evidence.",
         "artifact_generation": "Synthesize verified outputs into the requested artifacts while preserving gaps and source references.",
     }
+    policy_overrides = {
+        "task_understanding": ["Separate the explicit mission, constraints, success criteria, assumptions and open questions."],
+        "information_extraction": ["Map every extracted item to supplied source content and preserve conflicting values."],
+        "information_retrieval": ["Retrieve only through runtime-authorized tools and preserve source identity and retrieval gaps."],
+        "requirement_analysis": ["Make each requirement testable and trace it to a stakeholder need or mission constraint."],
+        "process_decomposition": ["Define steps with inputs, outputs, ownership, dependencies and quality gates without inventing execution."],
+        "resource_planning": ["State capacity basis, units, utilization assumptions, bottlenecks and missing resource inputs."],
+        "architecture_design": ["Define component boundaries, interfaces, data ownership, dependency direction, failure boundaries and trade-offs; mark unsupported components as assumptions."],
+        "analysis": ["Keep findings within the bounded question and distinguish observations, derivations and unresolved gaps."],
+        "evidence_analysis": ["Map each claim to evidence, assess source quality, conflicts, coverage and unresolved contradictions."],
+        "comparative_analysis": ["Apply the same criteria and evidence standard to every alternative and disclose missing data before ranking."],
+        "cost_analysis": ["For every cost state the calculation basis, formula, inputs, units, assumptions, result and source; missing prices or rates remain unknown."],
+        "risk_analysis": ["For every risk distinguish cause, trigger, impact, likelihood basis, mitigation, residual risk and evidence; never fabricate probabilities."],
+        "solution_design": ["Trace the design to requirements, constraints, interfaces, resources, risks and a verification path; add no out-of-scope features."],
+        "verification": ["Evaluate the candidate without repairing it; a passed criterion requires supporting evidence independent of the candidate's own assertion."],
+        "artifact_generation": ["Let expected artifacts and the output contract determine structure; synthesize supported content without inventing universal report sections."],
+    }
+    evidence_overrides = {
+        "evidence_analysis": "Assess claim-to-evidence coverage, source quality and conflicts; source existence alone does not prove a claim.",
+        "comparative_analysis": "Use equivalent evidence standards for every alternative and expose missing-data asymmetry.",
+        "cost_analysis": "Cite the source of each input or label it as an assumption or missing input.",
+        "risk_analysis": "Cite the basis for likelihood and impact; otherwise keep them qualitative or unknown.",
+        "verification": "A passed result requires evidence for every passed check; candidate self-attestation is insufficient.",
+        "artifact_generation": "Preserve source and upstream artifact references and distinguish verified evidence from agent-generated conclusions.",
+    }
     return tuple(
         descriptor.model_copy(update={
             "description": purposes[descriptor.capability_id],
@@ -1752,6 +1777,7 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
                 executionPrinciples=[
                     "Use only mission facts, allowlisted context and tool-returned evidence.",
                     "Separate known facts, derivations, assumptions and unknowns.",
+                    *policy_overrides[descriptor.capability_id],
                 ],
                 qualityCriteria=[
                     "The output directly satisfies the planned task goal and every acceptance criterion.",
@@ -1767,9 +1793,10 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
                     else []
                 ),
                 evidencePolicy=(
-                    "A passed result requires a non-empty evidence reference for every check."
-                    if descriptor.capability_id == "verification"
-                    else "Use only supplied or tool-returned evidence and cite it when making a factual claim."
+                    evidence_overrides.get(
+                        descriptor.capability_id,
+                        "Use only supplied or tool-returned evidence and cite it when making a factual claim.",
+                    )
                 ),
             ),
         })

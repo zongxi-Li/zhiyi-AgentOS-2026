@@ -130,6 +130,6 @@ def test_empty_split_gets_corrective_retry_before_no_progress() -> None:
 
     output, _audits = recovered
     assert output.get("summary"), f"expected recovered output, got {output!r}"
-    assert any("AT LEAST ONE" in prompt for prompt in runtime.prompts), (
-        "corrective retry instruction was never issued"
+    assert any('"operation":"capacity_split_repair"' in prompt for prompt in runtime.prompts), (
+        "structured corrective retry operation was never issued"
     )

@@ -5,6 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from adapters.prompt_runtime import (
+    PromptEnvelope,
+    TrustClass,
+    compose_execution_prompt,
+    trust_envelope,
+)
+
 
 NATIVE_CAPABILITY_PROMPT_VERSION = "native-capability.v3"
 VERIFICATION_PROMPT_VERSION = "verification.v2"
@@ -42,63 +49,90 @@ class NativeCapabilityPromptBuilder:
         evidence_refs: list[str],
         output_schema: dict[str, Any],
     ) -> str:
-        """构造一次能力执行的完整提示词。
+        """Compatibility projection returning only ExecutionRequest user data."""
+        return self.build_envelope(
+            capability_descriptor=capability_descriptor,
+            step_goal=step_goal,
+            acceptance_criteria=acceptance_criteria,
+            source_refs=source_refs,
+            logical_role=logical_role,
+            task_title=task_title,
+            task_input=task_input,
+            context_data=context_data,
+            source_data=source_data,
+            evidence_refs=evidence_refs,
+            output_schema=output_schema,
+        ).user_prompt
 
-        输入包含能力描述、任务事实、白名单上下文、证据引用及输出 JSON
-        Schema；返回要求模型仅依据这些事实输出合同 JSON 的字符串。该方法
-        不验证 Schema，也不清洗调用者提供的业务数据。
-        """
+    def build_envelope(
+        self,
+        *,
+        capability_descriptor,
+        step_goal: str,
+        acceptance_criteria: list[str],
+        source_refs: list[str],
+        logical_role: str,
+        task_title: str,
+        task_input: dict[str, Any],
+        context_data: dict[str, Any],
+        source_data: dict[str, Any],
+        evidence_refs: list[str],
+        output_schema: dict[str, Any],
+        memory: Any = None,
+        allowed_tools: list[str] | None = None,
+        tool_observations: list[dict[str, Any]] | None = None,
+    ) -> PromptEnvelope:
+        """Compose trusted execution policy separately from structured runtime data."""
         descriptor = capability_descriptor.model_dump(
             by_alias=True,
             mode="json",
             exclude={"aliases", "domain_hints", "plugin_id", "plugin_version"},
         )
         request = {
-            "systemBoundary": {
-                "allowedFacts": "mission contract, allowlisted context, memory/evidence and tool results",
-                "forbidden": ["fabricated facts", "fabricated evidence", "unreported assumptions"],
-                "factClasses": ["known", "derived", "assumed", "unknown"],
-            },
-            "mission": self._canonical_task(task_title, task_input),
-            "plannedTask": {
+            "requestType": "ExecutionRequest",
+            "mission": trust_envelope(
+                TrustClass.RUNTIME_AUTHORITATIVE,
+                self._canonical_task_scope(task_title, task_input),
+            ),
+            "plannedTask": trust_envelope(TrustClass.RUNTIME_AUTHORITATIVE, {
                 "goal": step_goal,
                 "logicalRole": logical_role,
                 "acceptanceCriteria": acceptance_criteria,
                 "sourceRefs": source_refs,
-            },
-            "capabilityProfile": descriptor,
+            }),
+            "capability": trust_envelope(TrustClass.RUNTIME_AUTHORITATIVE, {
+                "capabilityId": descriptor["capabilityId"],
+                "purpose": descriptor.get("promptProfile", {}).get("purpose", ""),
+                "allowedTools": list(allowed_tools or []),
+            }),
             "contextPack": {
-                "upstreamData": context_data,
-                "sourceData": source_data,
-                "evidenceRefs": evidence_refs,
+                "upstreamOutputs": trust_envelope(TrustClass.AGENT_GENERATED, context_data),
+                "sourceData": trust_envelope(TrustClass.EXTERNAL_UNTRUSTED, {
+                    "taskSources": self._task_source_data(task_input),
+                    "contextSources": source_data,
+                }),
+                "memory": trust_envelope(TrustClass.AGENT_GENERATED, memory or []),
+                "evidenceRefs": trust_envelope(TrustClass.VERIFIED_EVIDENCE, evidence_refs),
+                "toolObservations": trust_envelope(
+                    TrustClass.VERIFIED_EVIDENCE,
+                    list(tool_observations or []),
+                    runtimeVerifiedOrigin=True,
+                    contentAuthority="data_not_instruction",
+                ),
             },
-            "outputSchema": output_schema,
-            "completionChecklist": [
-                "Every acceptance criterion is addressed.",
-                "Every factual claim is known, derived, assumed or unknown.",
-                "Every numeric conclusion includes formula, inputs, units, result and assumptions.",
-                "A verification result is not passed without evidence for every passed check.",
-                "Unresolved gaps remain explicit.",
-            ],
+            "outputContract": trust_envelope(
+                TrustClass.RUNTIME_AUTHORITATIVE,
+                {"schema": output_schema},
+            ),
         }
-        payload = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
-        return (
-            f"Prompt version: {prompt_version_for_capability(capability_descriptor.capability_id)}. "
-            "Execute exactly one declared capability for an AgentOS workflow. "
-            "Use only the supplied task and upstream facts. Do not invent measurements, "
-            "prices, dates, sources, or completed actions. Separate known facts from "
-            "assumptions and open questions. Show formulas and assumptions for numeric "
-            "estimates. Let the mission, acceptance criteria, constraints, evidence coverage, "
-            "and usefulness determine the number and depth of items. Do not omit supported "
-            "content merely to shorten the response. Preserve the task "
-            "language. Return one JSON object that matches "
-            "outputSchema exactly, without markdown fences or commentary.\n"
-            f"RUNTIME_REQUEST={payload}"
+        return compose_execution_prompt(
+            descriptor=capability_descriptor,
+            execution_request=request,
         )
 
     @staticmethod
-    def _canonical_task(task_title: str, task_input: dict[str, Any]) -> dict[str, Any]:
-        """Keep semantic task facts once and exclude runtime/security metadata."""
+    def _canonical_task_scope(task_title: str, task_input: dict[str, Any]) -> dict[str, Any]:
+        """Keep runtime task scope separate from user or externally supplied material."""
 
         def text(value: Any) -> str:
             return str(value or "").strip()
@@ -115,30 +149,32 @@ class NativeCapabilityPromptBuilder:
             ),
             "",
         )
-        seen = {objective}
-        materials: list[str] = []
-        for key in ("materialText", "contractText"):
-            value = text(task_input.get(key))
-            if value and value not in seen:
-                materials.append(value)
-                seen.add(value)
-
         canonical: dict[str, Any] = {"objective": objective}
         if text(task_title) and text(task_title) != objective:
             canonical["title"] = text(task_title)
-        if materials:
-            canonical["materials"] = materials
         for source_key, target_key in (
             ("constraints", "constraints"),
             ("expectedArtifacts", "expectedArtifacts"),
-            ("sourceMaterials", "sourceMaterials"),
-            ("attachmentContext", "attachments"),
-            ("pluginData", "pluginData"),
         ):
             value = task_input.get(source_key)
             if value:
                 canonical[target_key] = value
         return canonical
+
+    @staticmethod
+    def _task_source_data(task_input: dict[str, Any]) -> dict[str, Any]:
+        """Collect task-carried source content without granting it control authority."""
+        return {
+            key: task_input[key]
+            for key in (
+                "materialText",
+                "contractText",
+                "sourceMaterials",
+                "attachmentContext",
+                "pluginData",
+            )
+            if task_input.get(key) not in (None, "", [], {})
+        }
 
     def build_repair(
         self,
@@ -152,12 +188,10 @@ class NativeCapabilityPromptBuilder:
         ``original_prompt`` 保留原始事实边界，``invalid_data`` 与错误信息帮助
         模型定向修正；返回值仍只是一段提示词，实际重试次数由调用方限制。
         """
-        invalid = json.dumps(invalid_data, ensure_ascii=False, separators=(",", ":"))
-        return (
-            f"{original_prompt}\n"
-            "The previous JSON failed contract validation. Correct it once, preserving "
-            "supported facts and returning only the corrected JSON object.\n"
-            f"VALIDATION_ERROR={validation_error}\nPREVIOUS_JSON={invalid}"
+        return self.build_runtime_operation(
+            original_prompt=original_prompt,
+            operation="contract_repair",
+            data={"validationError": validation_error, "previousJson": invalid_data},
         )
 
     def build_json_repair(
@@ -171,13 +205,31 @@ class NativeCapabilityPromptBuilder:
         输入是原提示词和解析错误，输出要求保留已支持内容并返回完整 JSON。此方法
         不尝试解析或修复数据，以免在适配器层伪造模型输出。
         """
-        return (
-            f"{original_prompt}\n"
-            f"Prompt version: {JSON_REPAIR_PROMPT_VERSION}. "
-            "The previous response was invalid JSON. Repair structure only: preserve every "
-            "supported semantic item, close every string/array/object, and return one complete "
-            "JSON object. Do not shorten, summarize, or delete content to make validation pass.\n"
-            f"PARSE_ERROR={validation_error}"
+        return self.build_runtime_operation(
+            original_prompt=original_prompt,
+            operation="json_repair",
+            data={"promptVersion": JSON_REPAIR_PROMPT_VERSION, "parseError": validation_error},
+        )
+
+    @staticmethod
+    def build_runtime_operation(
+        *, original_prompt: str, operation: str, data: dict[str, Any]
+    ) -> str:
+        try:
+            execution_request = json.loads(original_prompt)
+        except (TypeError, json.JSONDecodeError):
+            execution_request = {"legacyRequest": original_prompt}
+        return json.dumps(
+            {
+                "executionRequest": execution_request,
+                "runtimeOperation": trust_envelope(
+                    TrustClass.RUNTIME_AUTHORITATIVE,
+                    {"operation": operation, **data},
+                ),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
         )
 
     def build_artifact(self, **kwargs) -> str:
@@ -186,31 +238,7 @@ class NativeCapabilityPromptBuilder:
         ``kwargs`` 必须满足 :meth:`build` 的关键字参数约定；返回字符串要求
         产物覆盖固定章节并显式保留事实来源和未决问题，不执行生成或校验。
         """
-        return (
-            self.build(**kwargs)
-            + "\nFINAL_COMPOSITION_RULES="
-            + json.dumps(
-                {
-                    "consumeAllRelevantUpstreamFields": True,
-                    "coverEveryMissionConstraint": True,
-                    "coverEveryExpectedArtifact": True,
-                    "coverageAreas": [
-                        "executive summary",
-                        "requirements and acceptance",
-                        "implementation or solution",
-                        "resources and calculations",
-                        "risks and controls",
-                        "verification and unresolved gaps",
-                    ],
-                    "chapterPolicy": "model decides chapter count and granularity from useful coverage",
-                    "finalAnswer": "complete standalone Markdown deliverable",
-                    "facts": "cite sourceRefs where supplied",
-                    "unknowns": "record as openQuestions instead of inventing values",
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
+        return self.build(**kwargs)
 
 
 __all__ = [

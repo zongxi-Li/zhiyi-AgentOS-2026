@@ -440,17 +440,22 @@ class OpenAICompatibleRuntime:
                     # 规划器已提供显式校验与修复兜底。
                     payload["thinking"] = {"type": "disabled"}
                 payload["response_format"] = {"type": "json_object"}
-                payload["messages"] = [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Return exactly one JSON object that strictly validates against this JSON Schema. "
-                            "Do not omit required fields, add undeclared fields, or change required array sizes.\n"
-                            + json.dumps(request.response_schema, ensure_ascii=False, separators=(",", ":"))
-                        ),
-                    },
-                    *payload["messages"],
-                ]
+                schema_instruction = (
+                    "Return exactly one JSON object that strictly validates against this JSON Schema. "
+                    "Do not omit required fields, add undeclared fields, or change required array sizes.\n"
+                    + json.dumps(request.response_schema, ensure_ascii=False, separators=(",", ":"))
+                )
+                if payload["messages"] and payload["messages"][0].get("role") == "system":
+                    payload["messages"][0]["content"] = (
+                        str(payload["messages"][0].get("content") or "")
+                        + "\n\nTRANSPORT OUTPUT CONTRACT:\n"
+                        + schema_instruction
+                    )
+                else:
+                    payload["messages"] = [
+                        {"role": "system", "content": schema_instruction},
+                        *payload["messages"],
+                    ]
             else:
                 payload["response_format"] = {
                     "type": "json_schema",

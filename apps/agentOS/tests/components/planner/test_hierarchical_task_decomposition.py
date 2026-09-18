@@ -211,13 +211,13 @@ def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wordin
         task_input={},
     )
 
-    assert '"capabilityId": "verification"' in prompt
-    assert '"dependsOn": ["task_understanding"]' in prompt
-    assert '"capabilityId": "task_understanding"' in prompt
-    assert "Mission requirements:" in prompt
+    assert '"capabilityId":"verification"' in prompt
+    assert '"dependsOn":["task_understanding"]' in prompt
+    assert '"capabilityId":"task_understanding"' in prompt
+    assert '"planningRequest"' in prompt
     assert "Mission contract:" not in prompt
-    assert "sourceKey is the prerequisite or producer executed first" in prompt
-    assert "the reverse edge from extract to understand is forbidden" in prompt
+    from adapters.prompt_runtime import planner_system_prompt
+    assert "source is the prerequisite or producer" in planner_system_prompt()
 
 
 def test_full_profile_uses_outline_detail_and_relation_units() -> None:
@@ -638,7 +638,7 @@ def test_long_requirement_coverage_uses_stable_refs_instead_of_verbatim_copy() -
 
     assert plan.nodes[0].source_refs == ("constraint:1", "artifact:1")
     assert long_constraint not in plan.model_dump_json()
-    assert '"ref": "constraint:1"' in llm.calls[0]["prompt"]
+    assert '"ref":"constraint:1"' in llm.calls[0]["prompt"]
 
 
 def test_coverage_gap_uses_focused_source_ref_assignment_repair() -> None:

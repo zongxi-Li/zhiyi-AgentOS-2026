@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
+from adapters.model_adapter import StructuredGenerationError
+from adapters.prompt_runtime import planner_prompt_metadata
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest, ModelStreamEvent
 
 
@@ -107,12 +111,52 @@ def test_private_provider_activity_keeps_stream_alive_until_public_json_arrives(
         return [event async for event in runtime.stream_generate_json(
             prompt="private prompt", schema={"type": "object"}, run_id="run-thinking",
             ttft_timeout=0.02, idle_timeout=0.03, total_timeout=0.2,
+            prompt_metadata=planner_prompt_metadata(),
         )]
 
     events = asyncio.run(collect())
     assert any(event.event_type == "model.activity" for event in events)
     completed = next(event for event in events if event.event_type == "model.completed")
     assert completed.payload["data"] == {"answer": "ok"}
+    assert completed.payload["promptTemplateHash"]
+    assert completed.payload["promptInstanceHash"]
+    assert completed.payload["schemaHash"]
+    assert completed.payload["streaming"] is True
+    assert completed.payload["preset"] == "planner"
+
+
+def test_stream_failure_audit_keeps_prompt_identity_without_raw_prompt() -> None:
+    class _EmptyAdapter(_ClosingStreamingAdapter):
+        def astream(self, _request: ModelInvocationRequest):
+            async def iterator():
+                if False:
+                    yield
+            return iterator()
+
+    registry = ModelCompatibilityRegistry()
+    registry.register(_EmptyAdapter())
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="fixture", model="fixture-model"
+    )
+
+    async def collect() -> None:
+        async for _event in runtime.stream_generate_json(
+            prompt='{"source":"TOP SECRET"}',
+            schema={"type": "object"},
+            run_id="run-empty",
+            prompt_metadata=planner_prompt_metadata(),
+        ):
+            pass
+
+    with pytest.raises(StructuredGenerationError) as captured:
+        asyncio.run(collect())
+
+    audit = captured.value.audit
+    assert audit["promptTemplateHash"]
+    assert audit["promptInstanceHash"]
+    assert audit["schemaHash"]
+    assert audit["streaming"] is True
+    assert "TOP SECRET" not in str(audit)
 
 
 def test_registered_model_runtime_accepts_fenced_streamed_json() -> None:

@@ -820,6 +820,10 @@ class ACGNodeRunner:
         """裁剪模型调用审计字段，避免 prompt、响应正文或任意扩展载荷进入 Trace。"""
         allowed = {
             "provider", "model", "latencyMs", "promptVersion", "promptTemplateHash",
+            "promptInstanceHash", "stablePrefixHash", "schemaHash", "kernelVersion",
+            "preset", "presetVersion", "capabilityId", "capabilityPolicyVersion",
+            "requestProtocolVersion", "outputProtocolVersion", "promptRendererVersion",
+            "requestType", "providerFamily", "modelVersion", "streaming", "trustSummary",
             "usage", "finishReason", "capability", "outputPolicy",
             "requestedOutputTokens", "effectiveOutputTokens", "effectiveReason",
             "outputExhausted", "partIndex", "callChainId",

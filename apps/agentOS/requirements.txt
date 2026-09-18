@@ -2,3 +2,5 @@ pydantic==2.12.5
 langchain-core==1.4.7
 aiosqlite>=0.20
 xxhash>=3.5.0
+pytest>=8,<10
+pytest-asyncio>=1.1,<2

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Optional, Protocol
 
@@ -19,6 +18,7 @@ from .complexity import (
     call_planning_model,
     transport_error_code,
 )
+from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
 
 
 INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v2"
@@ -119,10 +119,10 @@ class IntentParser:
         """
         self.last_audit = {
             "promptVersion": INTENT_PROFILE_PROMPT_VERSION,
-            "promptTemplateHash": hashlib.sha256(
-                (INTENT_PROFILE_PROMPT_VERSION + json.dumps(_PROFILE_SCHEMA, sort_keys=True)).encode("utf-8")
-            ).hexdigest(),
-            "modelVersion": str(getattr(self.llm, "model", None) or getattr(self.llm, "version", None) or "unreported"),
+            **planner_prompt_metadata(),
+            "schemaHash": schema_hash(_PROFILE_SCHEMA),
+            "modelId": str(getattr(self.llm, "model", None) or "unreported"),
+            "modelVersion": str(getattr(self.llm, "version", None) or "unreported"),
             "mode": "model" if use_llm and self.llm is not None else "deterministic",
         }
         if use_llm and self.llm is not None:
@@ -194,7 +194,9 @@ class IntentParser:
         )
         if isinstance(result, dict):
             if result.get("model"):
-                self.last_audit["modelVersion"] = str(result["model"])
+                self.last_audit["modelId"] = str(result["model"])
+            if result.get("modelVersion"):
+                self.last_audit["modelVersion"] = str(result["modelVersion"])
             if result.get("provider"):
                 self.last_audit["provider"] = str(result["provider"])
         data = result.get("data", result) if isinstance(result, dict) else {}
@@ -250,18 +252,14 @@ class IntentParser:
             for item in self.capability_catalog.available(domain)
         )
         contract = self._planning_contract(intent, task_input)
-        return (
-            f"提示版本：{INTENT_PROFILE_PROMPT_VERSION}\n"
-            "你是任务规划的意图解析器。只返回 JSON。\n"
-            "从下列目录选择实际需要执行的稳定 capabilityId，不得创造目录外能力。\n"
-            f"可选执行能力：\n{options}\n\n"
-            "返回 primaryGoal、keyConstraints、requiredCapabilities、expectedArtifacts、"
-            "verificationRequirements、estimatedComplexity、domainHint、taskTypeHint、"
-            "implicitRequirements、riskLevel。\n"
-            "复杂度只描述约束与工作结构，不按文字长度判断；最终分级会由确定性六维评分校验。\n"
-            f"领域提示：{domain}\n任务类型提示：{task_type}\n"
-            f"任务契约：{json.dumps(contract, ensure_ascii=False, default=str)}\n"
-        )
+        return serialize_planning_request({
+            "promptVersion": INTENT_PROFILE_PROMPT_VERSION,
+            "operation": "intent_profile",
+            "domain": domain,
+            "taskType": task_type,
+            "planningRequest": contract,
+            "capabilityCatalog": [json.loads(line[2:]) for line in options.splitlines() if line.startswith("- ")],
+        })
 
     def _heuristic(
         self,

@@ -1,4 +1,4 @@
-"""Planning budget steering: band-aware prompt anchor and audited task counts.
+"""Planning parsimony and backward-compatible budget audit metadata.
 
 轻量化修复的红绿测试锚点：
 1. 分解提示词必须携带复杂度档位的任务数预算区间（替代裸定性放权）；
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from components.planner.complexity import PLANNING_BUDGETS
 from components.planner.task_decomposer import TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer
+from adapters.prompt_runtime import planner_system_prompt
 from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
 
 
@@ -52,17 +53,14 @@ def _budget(level: ComplexityLevel) -> tuple[int, int]:
     return int(lo), int(hi)
 
 
-def test_prompt_injects_band_task_count_range() -> None:
+def test_prompt_does_not_target_task_count() -> None:
     for level in (ComplexityLevel.COMPLEX, ComplexityLevel.EXTREME):
-        lo, hi = _budget(level)
         prompt = TaskDecomposer(build_default_capability_catalog(), None).build_prompt(
             profile=_profile(level),
             task_input={},
         )
-        assert f"approximately {lo}-{hi} tasks" in prompt, (
-            f"{level.value} prompt must state its planning budget range"
-        )
-        assert "planning budget" in prompt.lower()
+        assert "approximately" not in prompt
+        assert "smallest sufficient executable" in planner_system_prompt()
         assert TASK_DECOMPOSITION_PROMPT_VERSION in prompt
 
 

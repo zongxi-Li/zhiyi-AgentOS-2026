@@ -10,6 +10,7 @@ from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.model_adapter import StructuredGenerationError
 from adapters.openai_runtime import ModelInvocationError
+from adapters.prompt_runtime import planner_prompt_metadata
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -99,6 +100,7 @@ def test_registered_runtime_converts_native_generation_to_capability_request() -
             max_output_tokens=256,
             prompt_version="test.v1",
             commit_id="commit:run-1:step-1:0",
+            prompt_metadata=planner_prompt_metadata(),
         )
     )
 
@@ -108,6 +110,11 @@ def test_registered_runtime_converts_native_generation_to_capability_request() -
     assert result.usage == {"completion_tokens": 2}
     assert result.audit_record()["usage"] == {"completion_tokens": 2}
     assert result.prompt_version == "test.v1"
+    assert result.prompt_template_hash == planner_prompt_metadata()["promptTemplateHash"]
+    assert result.prompt_instance_hash
+    assert result.schema_hash
+    assert result.preset == "planner"
+    assert result.streaming is False
     assert provider.requests[0].model == "local-chat"
     assert provider.requests[0].response_schema == {
         "type": "object",
@@ -115,6 +122,64 @@ def test_registered_runtime_converts_native_generation_to_capability_request() -
     }
     assert provider.requests[0].options == {"max_tokens": 256}
     assert provider.requests[0].commit_id == "commit:run-1:step-1:0"
+
+
+def test_registered_runtime_drops_unsafe_prompt_metadata_fields() -> None:
+    provider = _Provider()
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"
+    )
+    metadata = planner_prompt_metadata()
+    metadata["fullPrompt"] = "TOP SECRET"
+    result = asyncio.run(runtime.generate_json(
+        prompt='{"requestType":"PlanningRequest"}',
+        schema={"type": "object"},
+        system_prompt="AgentOS Kernel",
+        prompt_metadata=metadata,
+    ))
+    assert "fullPrompt" not in result.audit_record()
+    assert "TOP SECRET" not in str(result.audit_record())
+
+
+def test_registered_runtime_failure_audit_keeps_identity_without_raw_prompt() -> None:
+    provider = _Provider(failure_code="MODEL_PROVIDER_REJECTED")
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"
+    )
+
+    with pytest.raises(StructuredGenerationError) as captured:
+        asyncio.run(runtime.generate_json(
+            prompt='{"requestType":"PlanningRequest","source":"TOP SECRET"}',
+            schema={"type": "object"},
+            system_prompt="AgentOS Kernel",
+            prompt_metadata=planner_prompt_metadata(),
+        ))
+
+    audit = captured.value.audit
+    assert audit["promptTemplateHash"]
+    assert audit["promptInstanceHash"]
+    assert audit["schemaHash"]
+    assert audit["streaming"] is False
+    assert "TOP SECRET" not in str(audit)
+
+
+def test_registered_runtime_preserves_explicit_system_authority() -> None:
+    provider = _Provider()
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(registry=registry, provider="openai_compatible", model="local-chat")
+    asyncio.run(runtime.generate_json(
+        prompt='{"mission":"data"}', schema={"type": "object"},
+        system_prompt="AgentOS Kernel\nPlanner policy",
+    ))
+    assert provider.requests[0].messages == [
+        {"role": "system", "content": "AgentOS Kernel\nPlanner policy"},
+        {"role": "user", "content": '{"mission":"data"}'},
+    ]
 
 
 def test_registered_runtime_omits_artificial_output_limit_by_default() -> None:
