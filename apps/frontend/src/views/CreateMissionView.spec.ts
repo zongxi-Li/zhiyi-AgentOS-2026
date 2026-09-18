@@ -72,9 +72,10 @@ describe('CreateMissionView', () => {
     })
 
     expect(wrapper.find('.context-empty').exists()).toBe(true)
-    expect(wrapper.find('.execution-config').attributes('open')).toBeUndefined()
+    expect(wrapper.find('.execution-settings').exists()).toBe(true)
+    expect(wrapper.findAll('.execution-settings .config-option').length).toBeGreaterThan(0)
     expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.execution-overview__content').text()).toContain('Dynamic · Native Core · Auto Execute')
+    expect(wrapper.find('.launch-bar__summary').text()).toContain('Dynamic · Native Core')
 
     await wrapper.find('#mission-goal').setValue('验证 Mission brief 可以启动 Run')
     expect(wrapper.find('.create-mission__submit').attributes('disabled')).toBeUndefined()

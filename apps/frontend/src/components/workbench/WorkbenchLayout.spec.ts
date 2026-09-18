@@ -113,13 +113,13 @@ describe('WorkbenchLayout', () => {
     wrapper.unmount()
   })
 
-  it('auto-hides the right pane first, restores it on widen, and never persists auto-hidden state', async () => {
+  it('keeps both panes visible as the workbench becomes compact', async () => {
     const wrapper = mountLayout()
 
     await setContainerWidth(wrapper, 1000)
-    expect(wrapper.find('.workbench-pane--right').exists()).toBe(false)
+    expect(wrapper.find('.workbench-pane--right').exists()).toBe(true)
     expect(layoutState(wrapper)).toMatchObject({
-      rightAutoHidden: true,
+      rightAutoHidden: false,
       leftAutoHidden: false
     })
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as Record<string, unknown>
@@ -128,14 +128,9 @@ describe('WorkbenchLayout', () => {
 
     await setContainerWidth(wrapper, 700)
     expect(layoutState(wrapper)).toMatchObject({
-      rightAutoHidden: true,
-      leftAutoHidden: true
-    })
-
-    await setContainerWidth(wrapper, 1000)
-    expect(layoutState(wrapper)).toMatchObject({
-      rightAutoHidden: true,
-      leftAutoHidden: false
+      rightAutoHidden: false,
+      leftAutoHidden: false,
+      rightPaneVisible: true
     })
 
     await setContainerWidth(wrapper, 1500)
@@ -180,26 +175,31 @@ describe('WorkbenchLayout', () => {
     wrapper.unmount()
   })
 
-  it('wakes an auto-hidden inspector by giving it priority over the left pane', async () => {
+  it('manually collapses and reopens the inspector without affecting the left pane', async () => {
     const wrapper = mountLayout()
 
     await setContainerWidth(wrapper, 1000)
     expect(layoutState(wrapper)).toMatchObject({
-      rightAutoHidden: true,
+      rightAutoHidden: false,
+      leftAutoHidden: false,
+       rightPaneVisible: true
+    })
+
+    await wrapper.find('.toggle-right').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.workbench-pane--right').exists()).toBe(false)
+    expect(wrapper.find('.workbench-pane--left').exists()).toBe(true)
+    expect(layoutState(wrapper)).toMatchObject({
+      rightAutoHidden: false,
       leftAutoHidden: false,
       rightPaneVisible: false
     })
 
     await wrapper.find('.toggle-right').trigger('click')
     await nextTick()
-
     expect(wrapper.find('.workbench-pane--right').exists()).toBe(true)
-    expect(wrapper.find('.workbench-pane--left').exists()).toBe(false)
-    expect(layoutState(wrapper)).toMatchObject({
-      rightAutoHidden: false,
-      leftAutoHidden: true,
-      rightPaneVisible: true
-    })
+    expect(wrapper.find('.workbench-pane--left').exists()).toBe(true)
 
     wrapper.unmount()
   })

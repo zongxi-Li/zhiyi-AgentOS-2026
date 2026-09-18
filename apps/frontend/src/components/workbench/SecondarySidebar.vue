@@ -3,9 +3,7 @@
     <header class="secondary-sidebar__header">
       <div class="secondary-sidebar__heading">
         <span>INSPECTOR</span>
-        <strong :title="title">{{ title }}</strong>
       </div>
-      <span v-if="historical" class="secondary-sidebar__badge">Historical</span>
     </header>
 
     <nav class="secondary-sidebar__tabs" aria-label="Inspector views" role="tablist">
@@ -109,11 +107,9 @@ watch(views, nextViews => {
 
 <style scoped>
 .secondary-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; color: var(--wb-text); background: var(--wb-surface-shell); }
-.secondary-sidebar__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-height: 70px; padding: 12px 16px 10px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-pane); }
+.secondary-sidebar__header { display: flex; min-height: 32px; align-items: center; padding: 0 12px; background: transparent; }
 .secondary-sidebar__heading { min-width: 0; }
-.secondary-sidebar__heading span { display: block; color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .12em; }
-.secondary-sidebar__heading strong { display: block; max-width: 240px; margin-top: 6px; overflow: hidden; font-size: 17px; font-weight: 700; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
-.secondary-sidebar__badge { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); color: var(--wb-warning); font: 10px var(--font-mono, monospace); }
+.secondary-sidebar__heading span { display: block; color: var(--wb-text-secondary); font: 12px/1 var(--font-sans, sans-serif); font-weight: 500; }
 .secondary-sidebar__tabs { display: flex; align-self: flex-start; flex: 0 1 auto; width: min(460px, calc(100% - 28px)); max-width: calc(100% - 28px); gap: 2px; min-height: 38px; margin: 8px 14px 9px; padding: 2px; border: 1px solid var(--wb-border-soft); border-radius: 9px; background: var(--wb-surface-inset); box-shadow: inset 0 1px 3px color-mix(in srgb, #000 28%, transparent), 0 1px 3px color-mix(in srgb, #000 24%, transparent); overflow-x: auto; scrollbar-width: none; }
 .secondary-sidebar__tabs::-webkit-scrollbar { display: none; }
 .secondary-sidebar__tabs button { flex: 1 0 auto; min-height: 32px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; transition: color 140ms var(--ease-out), background 140ms var(--ease-out), box-shadow 140ms var(--ease-out), transform 140ms var(--ease-out); }

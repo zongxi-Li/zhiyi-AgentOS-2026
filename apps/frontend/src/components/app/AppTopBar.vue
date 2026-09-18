@@ -1,7 +1,7 @@
 <template>
   <header
     class="app-topbar"
-    :class="{ 'is-desktop-shell': desktopShell }"
+    :class="{ 'is-desktop-shell': desktopShell, 'is-rail-collapsed': props.navigationState === 'collapsed' }"
     v-bind="dragRegionProps"
     aria-label="应用工作栏"
   >
@@ -282,6 +282,20 @@ onBeforeUnmount(() => {
   color: var(--app-topbar-text);
   background: var(--app-topbar-bg);
   border-bottom: 1px solid var(--app-topbar-border);
+}
+
+/* 角落细化：紧凑图标栏那一列上方不画下缘线，线从图标栏右缘（COLLAPSED_SIDEBAR_WIDTH=48，App.vue）开始，对齐 VS Code 标题栏。 */
+.app-topbar.is-rail-collapsed {
+  border-bottom-color: transparent;
+}
+.app-topbar.is-rail-collapsed::after {
+  content: '';
+  position: absolute;
+  left: 48px;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--app-topbar-border);
 }
 
 /* Desktop 无边框窗口：关闭按钮必须贴住窗口右缘（Fitts's Law）。 */

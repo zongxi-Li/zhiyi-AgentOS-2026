@@ -44,6 +44,7 @@
               <div class="context-panel__body">
                 <div class="attachment-input__dropzone" :class="{ 'is-dragging': attachmentDragging }" role="region" aria-label="Context 文件区域" @dragenter.prevent="attachmentDragging = true" @dragover.prevent="attachmentDragging = true" @dragleave.prevent="attachmentDragging = false" @drop.prevent="handleDrop">
                   <div v-if="!attachments.length" class="context-empty">
+                    <span class="context-empty__icon" aria-hidden="true">+</span>
                     <span class="context-empty__eyebrow">CONTEXT / READY TO ADD</span>
                     <p>为这次 Mission 提供 AgentOS 可以读取的参考材料。</p>
                     <div class="context-empty__actions"><label class="context-empty__action" for="mission-files">添加文件</label><span>支持 TXT、Markdown、PDF、DOCX · 也可直接拖入</span></div>
@@ -61,20 +62,8 @@
               </div>
             </section>
 
-            <section class="execution-panel" aria-labelledby="execution-section-title">
-              <div class="workspace-pane__heading">
-                  <span class="workspace-pane__eyebrow">EXECUTION</span>
-                  <h2 id="execution-section-title">Execution</h2>
-                </div>
+            <section class="execution-panel" aria-label="Execution settings">
             <div class="execution-overview">
-              <div class="execution-overview__content">
-                <span class="execution-overview__eyebrow">CURRENT STRATEGY</span>
-                <strong>{{ planningModeSummary }} · {{ capabilitySummary }} · {{ executionControlSummary }}</strong>
-                <small>{{ contextSummary }} · {{ advancedSettingsSummary }}</small>
-              </div>
-              <details class="execution-config" @toggle="syncExecutionConfigState">
-                <summary><span><strong>调整策略</strong><small>规划方式、能力包与执行审核</small></span><span class="execution-config__hint">{{ executionConfigOpen ? '收起' : '展开' }}</span></summary>
-                <div class="execution-config__body">
             <div class="execution-settings">
               <div class="config-line config-line--top">
                 <div class="config-line__label"><strong>Capabilities</strong><small>基础能力始终启用，可选择一个能力包。</small></div>
@@ -167,8 +156,6 @@
             </details>
 
               <PluginExtensionHost :extensions="draftExtensions" :draft="draft" @update:plugin-data="draft.pluginData = $event" />
-                </div>
-              </details>
             </div>
           </section>
         </aside>
@@ -271,7 +258,6 @@ const advancedPreset = computed<AdvancedPreset>(() => {
   return 'custom'
 })
 const advancedConfigOpen = ref(false)
-const executionConfigOpen = ref(false)
 const planningModeLabel = computed(() => draft.value.planningMode === 'dynamic' ? '动态规划' : '模板优先')
 const planningModeDescription = computed(() => draft.value.planningMode === 'dynamic'
   ? '根据任务目标动态拆解，并选择当前可用能力。'
@@ -358,11 +344,6 @@ const applyAdvancedPreset = (preset: AdvancedPreset) => {
 const syncAdvancedConfigState = (event: Event) => {
   const details = event.currentTarget as HTMLDetailsElement
   advancedConfigOpen.value = details.open
-}
-
-const syncExecutionConfigState = (event: Event) => {
-  const details = event.currentTarget as HTMLDetailsElement
-  executionConfigOpen.value = details.open
 }
 
 const syncDraftRuntimeSelection = () => {
@@ -596,7 +577,6 @@ onBeforeUnmount(() => {
 .create-mission__topbar-title { display: grid; justify-items: center; gap: 3px; min-width: 0; }
 .create-mission__eyebrow,
 .workspace-pane__eyebrow,
-.execution-overview__eyebrow,
 .launch-bar__eyebrow,
 .context-empty__eyebrow { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .14em; }
 .create-mission__topbar-title h1 { margin: 0; color: var(--text-primary); font-family: var(--font-sans); font-size: 14px; font-weight: 650; line-height: 1.2; }
@@ -604,7 +584,7 @@ onBeforeUnmount(() => {
 
 .create-mission__form { grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; }
 .create-mission__workspace-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, .62fr); min-width: 0; min-height: 0; overflow: hidden; }
-.create-mission__right-column { display: grid; grid-template-rows: minmax(230px, .8fr) minmax(330px, 1.2fr); min-width: 0; min-height: 0; overflow: hidden; }
+.create-mission__right-column { display: grid; grid-template-rows: minmax(320px, 1.05fr) minmax(300px, .95fr); min-width: 0; min-height: 0; overflow: hidden; }
 
 .mission-pane,
 .context-panel,
@@ -619,20 +599,20 @@ onBeforeUnmount(() => {
 .workspace-pane__heading--row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .workspace-pane__eyebrow { display: block; margin-bottom: 8px; }
 .workspace-pane__heading h2 { margin: 0; color: var(--text-primary); font-family: var(--font-sans); font-size: 17px; font-weight: 650; line-height: 1.2; }
-.mission-pane__scroll { min-width: 0; min-height: 0; overflow: auto; padding: 2px 18px 18px 0; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
-.mission-fields { display: grid; gap: 28px; max-width: none; padding-bottom: 12px; }
+.mission-pane__scroll { display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; overflow: auto; padding: 2px 18px 18px 0; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
+.mission-fields { display: grid; grid-template-rows: minmax(0, 1fr); gap: 28px; max-width: none; min-height: 0; padding-bottom: 12px; }
 
 .field-block { display: grid !important; gap: 9px; min-width: 0; margin: 0 !important; color: var(--text-primary); }
 .field-block__label { display: inline-flex; align-items: center; gap: 7px; color: var(--text-primary); font-size: 12px; font-weight: 650; }
 .field-block__label small { color: var(--text-muted); font-size: 10px; font-weight: 450; }
 .field-block__header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .field-block__header em { color: var(--text-muted); font: 9px var(--font-mono, monospace); font-style: normal; letter-spacing: .1em; }
-.field-block--brief { min-height: 0; padding: 0; }
+.field-block--brief { grid-template-rows: auto minmax(0, 1fr); min-height: 0; padding: 0; }
 
 #mission-goal,
 .advanced-field select,
 .advanced-field input { width: 100%; border: 1px solid var(--mission-border); border-radius: 9px; outline: 0; color: var(--text-primary); background: var(--mission-surface); font: inherit; font-size: 13px; transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), background-color 160ms var(--ease-out); }
-#mission-goal { height: clamp(280px, 34vh, 380px); min-height: 260px; padding: 16px; resize: vertical; line-height: 1.7; }
+#mission-goal { height: 100%; min-height: 320px; padding: 16px; resize: vertical; line-height: 1.7; }
 #mission-goal::placeholder { color: var(--text-muted); opacity: .9; }
 #mission-goal:hover,
 .advanced-field select:hover,
@@ -650,11 +630,13 @@ onBeforeUnmount(() => {
 .panel-action input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 .context-panel__body { min-width: 0; min-height: 0; overflow: hidden; }
-.attachment-input__dropzone { display: grid; align-content: start; width: 100%; height: 100%; min-height: 190px; overflow: auto; padding: 14px; border: 1px dashed var(--mission-border); border-radius: 10px; background: color-mix(in srgb, var(--bg-input) 62%, transparent); scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out); }
+.attachment-input__dropzone { display: grid; align-content: start; width: 100%; height: 100%; min-height: 200px; overflow: auto; padding: 16px; border: 1.5px dashed color-mix(in srgb, var(--primary-color) 42%, var(--border-hover)); border-radius: 10px; background: color-mix(in srgb, var(--primary-color) 5%, var(--mission-surface)); scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out); }
+.attachment-input__dropzone:hover { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 8%, var(--mission-surface)); }
 .attachment-input__dropzone.is-dragging { border-color: var(--primary-color); background: var(--primary-fade); }
-.context-empty { display: grid; align-content: center; gap: 10px; min-height: 158px; }
-.context-empty p { max-width: 380px; margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.65; }
-.context-empty__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.context-empty { display: grid; align-content: center; justify-items: center; gap: 12px; min-height: 170px; }
+.context-empty__icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1.5px dashed color-mix(in srgb, var(--primary-color) 55%, var(--border-hover)); border-radius: 50%; color: var(--primary-color); font-size: 20px; line-height: 1; }
+.context-empty p { max-width: 380px; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
+.context-empty__actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 10px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
 .context-empty__action { min-height: 29px; }
 .attachment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px; min-height: 62px; padding: 0 4px; }
 .attachment-row + .attachment-row { border-top: 1px solid color-mix(in srgb, var(--border-light) 65%, transparent); }
@@ -678,29 +660,8 @@ onBeforeUnmount(() => {
 .attachment-row__actions button:disabled { cursor: default; opacity: .45; }
 .attachment-row__remove { font-size: 18px !important; line-height: 1; }
 
-.execution-panel .workspace-pane__heading { margin-bottom: 20px; }
+.execution-panel { display: grid; grid-template-rows: minmax(0, 1fr); }
 .execution-overview { min-width: 0; min-height: 0; overflow: auto; padding-right: 8px; scrollbar-color: var(--scrollbar-thumb, var(--border-hover)) transparent; scrollbar-width: thin; }
-.execution-overview__content { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid var(--mission-border); border-radius: 9px; background: var(--mission-surface); }
-.execution-overview__eyebrow { color: var(--text-muted); font-size: 9px; }
-.execution-overview__content strong { color: var(--text-primary); font-size: 12px; font-weight: 650; line-height: 1.45; }
-.execution-overview__content small { color: var(--text-muted); font-size: 10px; line-height: 1.45; }
-.execution-config { margin-top: 14px; border: 1px solid var(--mission-border); border-radius: 9px; background: color-mix(in srgb, var(--bg-app) 44%, transparent); }
-.execution-config summary,
-.advanced-config summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text-primary); cursor: pointer; list-style: none; }
-.execution-config summary { min-height: 54px; padding: 10px 14px; }
-.execution-config summary::-webkit-details-marker,
-.advanced-config summary::-webkit-details-marker { display: none; }
-.execution-config summary > span:first-child,
-.advanced-config summary > span:first-child { display: grid; gap: 3px; min-width: 0; }
-.execution-config summary strong { font-size: 12px; font-weight: 650; }
-.execution-config summary small,
-.advanced-config summary small { color: var(--text-muted); font-size: 10px; }
-.execution-config__hint,
-.advanced-config__hint { flex: 0 0 auto; color: var(--text-muted); font-size: 10px; }
-.execution-config summary::after { content: '⌄'; color: var(--text-muted); font-size: 15px; transition: transform 160ms var(--ease-out); }
-.execution-config[open] summary::after { transform: rotate(180deg); }
-.execution-config[open] > summary .execution-config__hint { color: var(--primary-color); }
-.execution-config__body { display: grid; gap: 22px; min-height: 0; padding: 0 14px 14px; }
 .execution-settings { display: grid; gap: 20px; }
 .config-line { display: grid; grid-template-columns: minmax(105px, .72fr) minmax(0, 1.28fr); align-items: start; gap: 16px; min-width: 0; }
 .config-line__label { display: grid; gap: 4px; min-width: 0; color: var(--text-primary); font-size: 11px; }
@@ -723,7 +684,7 @@ onBeforeUnmount(() => {
 .planning-choice__hint { display: grid; gap: 3px; margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
 .planning-choice__hint strong { color: var(--text-secondary); font-size: 11px; font-weight: 650; }
 
-.advanced-config { border-top: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent); }
+.advanced-config { margin-top: 18px; border-top: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent); }
 .advanced-config summary { padding: 14px 0 8px; }
 .advanced-config summary strong { font-size: 11px; font-weight: 650; }
 .advanced-config__body { display: grid; gap: 16px; padding: 4px 0 2px; }
@@ -741,7 +702,7 @@ onBeforeUnmount(() => {
 .advanced-toggle span { display: grid; gap: 2px; }
 .advanced-toggle input { width: 32px; height: 18px; margin: 0; accent-color: var(--primary-color); cursor: pointer; }
 
-.launch-bar { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; min-height: 84px; padding: 12px clamp(20px, 3vw, 44px); border-top: 1px solid var(--mission-border); background: color-mix(in srgb, var(--bg-app) 92%, var(--bg-sidebar)); }
+.launch-bar { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; min-height: 56px; padding: 8px clamp(20px, 3vw, 44px); border-top: 1px solid var(--mission-border); background: color-mix(in srgb, var(--bg-app) 92%, var(--bg-sidebar)); }
 .launch-bar__summary { display: grid; gap: 3px; min-width: 0; }
 .launch-bar__eyebrow { color: var(--text-muted); font-size: 9px; }
 .launch-bar__summary strong { overflow: hidden; color: var(--text-primary); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
@@ -751,7 +712,7 @@ onBeforeUnmount(() => {
 .launch-bar__notice { color: var(--warning); }
 .launch-bar__actions { display: flex; flex: 0 0 auto; gap: 10px; }
 .create-mission__cancel,
-.create-mission__submit { min-width: 88px; min-height: 40px; padding: 0 16px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 12px; transition: border-color 160ms var(--ease-out), color 160ms var(--ease-out), background-color 160ms var(--ease-out), transform 160ms var(--ease-out); }
+.create-mission__submit { min-width: 88px; min-height: 34px; padding: 0 16px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 12px; transition: border-color 160ms var(--ease-out), color 160ms var(--ease-out), background-color 160ms var(--ease-out), transform 160ms var(--ease-out); }
 .create-mission__cancel { border: 1px solid var(--mission-border); color: var(--text-secondary); background: transparent; }
 .create-mission__cancel:hover { border-color: var(--border-hover); color: var(--text-primary); background: var(--mission-surface-raised); }
 .create-mission__submit { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-width: 146px; border: 1px solid var(--primary-color); color: var(--on-primary, #fff); background: var(--primary-color); font-weight: 700; }
@@ -767,7 +728,7 @@ onBeforeUnmount(() => {
 @media (max-width: 1020px) {
   .create-mission__workspace-body { grid-template-columns: 1fr; grid-template-rows: auto auto; overflow: auto; }
   .mission-pane { min-height: 460px; border-bottom: 1px solid var(--mission-border); }
-  .create-mission__right-column { grid-template-rows: minmax(280px, auto) minmax(420px, auto); min-height: 700px; }
+  .create-mission__right-column { grid-template-rows: minmax(320px, auto) minmax(420px, auto); min-height: 740px; }
 }
 
 @media (max-width: 640px) {

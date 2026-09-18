@@ -1386,7 +1386,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--sidebar-bg);
+  background: var(--app-topbar-bg);
   transition: width 0.22s var(--ease-out);
 }
 
@@ -1517,7 +1517,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--sidebar-bg);
+  background: var(--app-topbar-bg);
   box-shadow: 10px 0 24px rgba(16, 18, 33, 0.04);
 }
 
@@ -2609,7 +2609,7 @@ onUnmounted(() => {
 
 .primary-sidebar,
 .chat-side-panel {
-  background: var(--sidebar-bg);
+  background: var(--app-topbar-bg);
 }
 
 .chat-side-panel {
