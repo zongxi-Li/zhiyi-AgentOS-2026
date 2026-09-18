@@ -1,0 +1,63 @@
+<template>
+  <aside class="auxiliary-sidebar" :aria-label="view.title">
+    <header class="auxiliary-sidebar__header">
+      <div class="auxiliary-sidebar__heading">
+        <span>CODEX</span>
+      </div>
+    </header>
+    <div class="auxiliary-sidebar__body">
+      <component :is="view.component" v-bind="componentProps" />
+    </div>
+  </aside>
+</template>
+
+<script setup lang="ts">
+import type { AuxiliaryViewContribution } from '@/workbench/types'
+
+defineProps<{
+  view: AuxiliaryViewContribution
+  componentProps?: Record<string, unknown>
+}>()
+</script>
+
+<style scoped>
+.auxiliary-sidebar {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  color: var(--wb-text);
+  background: var(--wb-surface-shell);
+}
+.auxiliary-sidebar__header {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  padding: 0 12px;
+  background: transparent;
+}
+.auxiliary-sidebar__heading { min-width: 0; }
+.auxiliary-sidebar__heading span {
+  display: block;
+  color: var(--wb-text-secondary);
+  font: 12px/1 var(--font-sans, sans-serif);
+  font-weight: 500;
+}
+.auxiliary-sidebar__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--wb-surface-shell);
+}
+.auxiliary-sidebar__body :deep(.acg-copilot) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+</style>

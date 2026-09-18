@@ -29,18 +29,33 @@
       </div>
       <div class="editor-tabs__actions">
         <button
+          v-for="view in auxiliaryViews"
+          :key="view.id"
+          class="editor-auxiliary-trigger"
+          type="button"
+          :class="{ 'is-active': inspectorVisible && activeAuxiliaryId === view.id }"
+          :aria-pressed="inspectorVisible && activeAuxiliaryId === view.id"
+          :aria-label="inspectorVisible && activeAuxiliaryId === view.id ? `收起 ${view.title}` : `打开 ${view.title}`"
+          :title="inspectorVisible && activeAuxiliaryId === view.id ? `收起 ${view.title}` : `打开 ${view.title}`"
+          @click="emit('selectAuxiliary', view.id)"
+        >
+          <span class="editor-auxiliary-trigger__mark" aria-hidden="true">
+            <el-icon><component :is="view.icon" /></el-icon>
+          </span>
+        </button>
+        <button
           class="editor-inspector-trigger"
           type="button"
           :class="{
-            'is-active': inspectorVisible,
+            'is-active': inspectorVisible && !activeAuxiliaryId,
             'is-unavailable': inspectorAutoHidden
           }"
-          :aria-pressed="inspectorVisible"
-          :aria-label="inspectorVisible ? '收起 Inspector' : '唤醒 Inspector'"
-          :title="inspectorVisible
+          :aria-pressed="inspectorVisible && !activeAuxiliaryId"
+          :aria-label="inspectorVisible && !activeAuxiliaryId ? '收起 Inspector' : '打开 Inspector'"
+          :title="inspectorVisible && !activeAuxiliaryId
             ? '收起 Inspector'
-            : (inspectorAutoHidden ? '唤醒 Inspector（当前窗口空间不足时会自动隐藏）' : '唤醒 Inspector')"
-          @click="toggleInspector"
+            : (inspectorAutoHidden ? '打开 Inspector（当前窗口空间不足时会自动隐藏）' : '打开 Inspector')"
+          @click="emit('selectInspector')"
         >
           <span class="editor-inspector-trigger__mark" aria-hidden="true">
             <el-icon><View /></el-icon>
@@ -85,7 +100,7 @@
 import { computed } from 'vue'
 import { Expand, View } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
-import type { WorkbenchContext } from '@/workbench/types'
+import type { AuxiliaryViewContribution, WorkbenchContext } from '@/workbench/types'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
@@ -107,7 +122,8 @@ const props = defineProps<{
   workbenchContext: WorkbenchContext
   inspectorVisible: boolean
   inspectorAutoHidden: boolean
-  toggleInspector: () => void
+  auxiliaryViews?: AuxiliaryViewContribution[]
+  activeAuxiliaryId?: string | null
   sidebarHidden?: boolean
   cancelPending?: boolean
   runtimeStore?: RuntimeEventStore | null
@@ -124,6 +140,8 @@ const emit = defineEmits<{
   openArtifact: [entry: WorkspaceEntry]
   openEntry: [entry: WorkspaceEntry]
   restoreSidebar: []
+  selectInspector: []
+  selectAuxiliary: [viewId: string]
   cancelRun: []
 }>()
 
@@ -165,7 +183,7 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
 .editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
 .editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
-.editor-tabs__actions { display: flex; flex: 0 0 38px; align-items: stretch; min-width: 38px; border-left: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
+.editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 38px; background: var(--wb-surface-inset); }
 .editor-tab { display: flex; align-items: center; min-width: 120px; max-width: 240px; flex: 0 0 auto; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
 .editor-tab:hover { background: var(--wb-hover); }
 .editor-tab.is-active { background: var(--wb-surface-shell); }
@@ -220,7 +238,8 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   background: var(--wb-hover);
 }
 .editor-navigator-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
-.editor-inspector-trigger {
+.editor-inspector-trigger,
+.editor-auxiliary-trigger {
   z-index: 1;
   display: grid;
   flex: 1 1 auto;
@@ -233,7 +252,8 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   background: var(--wb-surface-inset);
   cursor: pointer;
 }
-.editor-inspector-trigger__mark {
+.editor-inspector-trigger__mark,
+.editor-auxiliary-trigger__mark {
   display: grid;
   width: 23px;
   height: 23px;
@@ -244,19 +264,23 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out), color 140ms var(--ease-out), box-shadow 140ms var(--ease-out);
 }
 .editor-inspector-trigger:hover .editor-inspector-trigger__mark,
-.editor-inspector-trigger:focus-visible .editor-inspector-trigger__mark {
+.editor-inspector-trigger:focus-visible .editor-inspector-trigger__mark,
+.editor-auxiliary-trigger:hover .editor-auxiliary-trigger__mark,
+.editor-auxiliary-trigger:focus-visible .editor-auxiliary-trigger__mark {
   border-color: color-mix(in srgb, var(--wb-accent) 24%, var(--wb-border));
   color: var(--wb-accent);
   background: var(--wb-hover);
 }
-.editor-inspector-trigger.is-active .editor-inspector-trigger__mark {
+.editor-inspector-trigger.is-active .editor-inspector-trigger__mark,
+.editor-auxiliary-trigger.is-active .editor-auxiliary-trigger__mark {
   border-color: color-mix(in srgb, var(--wb-accent) 28%, var(--wb-border));
   color: var(--wb-accent);
   background: var(--wb-active);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--wb-accent) 10%, transparent);
 }
 .editor-inspector-trigger.is-unavailable .editor-inspector-trigger__mark { opacity: .72; }
-.editor-inspector-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
+.editor-inspector-trigger:focus-visible,
+.editor-auxiliary-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-group__surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 10px 12px 12px; background: var(--wb-surface-shell); }
 .editor-group__surface--task { padding: 0; }
 .editor-group__empty { display: grid; place-items: center; height: 100%; color: var(--wb-text-muted); font-size: 12px; }

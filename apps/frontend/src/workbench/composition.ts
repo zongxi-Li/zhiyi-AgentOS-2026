@@ -2,10 +2,12 @@ import { createWorkbenchRegistry, type WorkbenchContributionRegistry } from './r
 import { projectContribution } from './contributions/project'
 import { resourceContribution } from './contributions/resource'
 import { runtimeContribution } from './contributions/runtime'
+import { copilotContribution } from './contributions/copilot'
 
 export const createNativeWorkbenchRegistry = (): WorkbenchContributionRegistry => (
   createWorkbenchRegistry()
     .register(projectContribution)
     .register(resourceContribution)
     .register(runtimeContribution)
+    .register(copilotContribution)
 )

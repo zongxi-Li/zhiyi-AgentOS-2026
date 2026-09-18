@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AcgCopilotPanel: typeof import('./src/components/workbench/AcgCopilotPanel.vue')['default']
     AcgDeliverables: typeof import('./src/components/agentos/AcgDeliverables.vue')['default']
     AcgExecutionContractBar: typeof import('./src/components/agentos/AcgExecutionContractBar.vue')['default']
     AcgHistoryPanel: typeof import('./src/components/history/AcgHistoryPanel.vue')['default']
@@ -133,6 +134,7 @@ declare module 'vue' {
     VoicePlayer: typeof import('./src/components/VoicePlayer.vue')['default']
     VoiceRecorder: typeof import('./src/components/VoiceRecorder.vue')['default']
     VoiceSettings: typeof import('./src/components/VoiceSettings.vue')['default']
+    WorkbenchAuxiliarySidebar: typeof import('./src/components/workbench/WorkbenchAuxiliarySidebar.vue')['default']
     WorkbenchBottomPanel: typeof import('./src/components/workbench/WorkbenchBottomPanel.vue')['default']
     WorkbenchContributionRenderer: typeof import('./src/components/workbench/WorkbenchContributionRenderer.vue')['default']
     WorkbenchLayout: typeof import('./src/components/workbench/WorkbenchLayout.vue')['default']

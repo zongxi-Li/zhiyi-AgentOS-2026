@@ -161,6 +161,28 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.text()).not.toContain('MISSION WORKSPACE')
   })
 
+  it('switches Inspector and ACG Copilot inside the shared right sidebar', async () => {
+    const { wrapper } = await mountWorkspace()
+
+    expect(wrapper.find('.secondary-sidebar').exists()).toBe(true)
+    expect(wrapper.find('.auxiliary-sidebar').exists()).toBe(false)
+    expect(wrapper.get('.editor-auxiliary-trigger').attributes('aria-label')).toBe('打开 ACG Copilot')
+
+    await wrapper.get('.editor-auxiliary-trigger').trigger('click')
+
+    expect(wrapper.find('.secondary-sidebar').exists()).toBe(false)
+    expect(wrapper.get('.auxiliary-sidebar').attributes('aria-label')).toBe('ACG Copilot')
+    expect(wrapper.get('.auxiliary-sidebar .acg-copilot').exists()).toBe(true)
+    expect(wrapper.get('.editor-auxiliary-trigger').attributes('aria-label')).toBe('收起 ACG Copilot')
+    expect(wrapper.get('.editor-inspector-trigger').attributes('aria-label')).toBe('打开 Inspector')
+
+    await wrapper.get('.editor-inspector-trigger').trigger('click')
+    expect(wrapper.find('.auxiliary-sidebar').exists()).toBe(false)
+    expect(wrapper.find('.secondary-sidebar').exists()).toBe(true)
+    expect(wrapper.get('.editor-inspector-trigger').attributes('aria-label')).toBe('收起 Inspector')
+    expect(wrapper.find('.auxiliary-drawer').exists()).toBe(false)
+  })
+
   it('offers a click trigger to bring back the auto-hidden left navigator', async () => {
     const restoreLeftPane = vi.fn()
     layoutStubState.leftAutoHidden = true

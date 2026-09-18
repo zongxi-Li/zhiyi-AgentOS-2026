@@ -100,4 +100,19 @@ describe('WorkbenchContributionRegistry', () => {
       'runtime.context'
     ])
   })
+
+  it('resolves auxiliary sidebar plugins in stable order', () => {
+    const registry = createWorkbenchRegistry()
+    registry.register({
+      id: 'copilot',
+      auxiliaryViews: [
+        { id: 'copilot.hidden', title: 'Hidden', order: 50, component, when: () => false },
+        { id: 'copilot.sidebar', title: 'ACG Copilot', order: 100, component, when: () => true }
+      ]
+    })
+
+    expect(registry.getAuxiliaryViews(context).map(view => view.id)).toEqual(['copilot.sidebar'])
+    expect(registry.resolveAuxiliaryView('copilot.sidebar', context)?.title).toBe('ACG Copilot')
+    expect(registry.resolveAuxiliaryView('missing', context)).toBeNull()
+  })
 })

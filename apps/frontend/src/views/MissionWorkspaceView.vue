@@ -39,10 +39,13 @@
           :runtime-store="runtimeStore"
           :inspector-visible="mainState.rightPaneVisible"
           :inspector-auto-hidden="mainState.rightAutoHidden"
-          :toggle-inspector="mainState.toggleRightPane"
+          :auxiliary-views="auxiliaryViews"
+          :active-auxiliary-id="activeAuxiliaryId"
           :sidebar-hidden="mainState.leftAutoHidden"
           :cancel-pending="cancelPending"
           @restore-sidebar="mainState.restoreLeftPane()"
+          @select-inspector="selectInspectorView(mainState)"
+          @select-auxiliary="selectAuxiliaryView($event, mainState)"
           @activate="activeEditorId = $event"
           @close="closeEditor"
           @select-semantic-task="selectSemanticTask"
@@ -62,7 +65,13 @@
       </template>
 
       <template #right>
+        <WorkbenchAuxiliarySidebar
+          v-if="activeAuxiliaryView"
+          :view="activeAuxiliaryView"
+          :component-props="auxiliaryViewProps"
+        />
         <RuntimeInspector
+          v-else
           :entry="inspectorEntry"
           :graph-node="inspectorGraphNode"
           :selected-symbol="selectedSymbol"
@@ -147,6 +156,7 @@ import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/Edi
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
+import WorkbenchAuxiliarySidebar from '@/components/workbench/WorkbenchAuxiliarySidebar.vue'
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
@@ -164,6 +174,7 @@ const projection = ref<MissionWorkspaceProjection | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const requestErrorCollapsed = ref(false)
+const activeAuxiliaryId = ref<string | null>(null)
 const rerunPending = ref(false)
 const cancelPending = ref(false)
 const selectedRunId = ref<string | null>(typeof route.query.runId === 'string' ? route.query.runId : null)
@@ -307,6 +318,46 @@ const workbenchContext = computed(() => createWorkbenchContext({
   diagnostics: projection.value?.diagnostics || [],
   runtimeObservation: runtimeObservation.value
 }))
+
+const auxiliaryViews = computed(() => registry.getAuxiliaryViews(workbenchContext.value))
+const activeAuxiliaryView = computed(() => (
+  activeAuxiliaryId.value
+    ? registry.resolveAuxiliaryView(activeAuxiliaryId.value, workbenchContext.value)
+    : null
+))
+const auxiliaryViewProps = computed(() => ({
+  entry: inspectorEntry.value,
+  graphNode: inspectorGraphNode.value,
+  graphNodes: projection.value?.graphNodes || [],
+  graph: projection.value?.activeGraph || null,
+  runId: projection.value?.activeRun?.runId || selectedRunId.value || null,
+  runStatus: projection.value?.activeRun?.status || null,
+  runtimeObservation: runtimeObservation.value,
+  historical: isHistorical.value,
+  ...(activeAuxiliaryView.value?.getProps?.(workbenchContext.value) || {})
+}))
+type RightPaneState = {
+  rightPaneVisible: boolean
+  toggleRightPane: () => void
+}
+
+const selectInspectorView = (pane: RightPaneState) => {
+  if (activeAuxiliaryId.value) {
+    activeAuxiliaryId.value = null
+    if (!pane.rightPaneVisible) pane.toggleRightPane()
+    return
+  }
+  pane.toggleRightPane()
+}
+
+const selectAuxiliaryView = (viewId: string, pane: RightPaneState) => {
+  if (activeAuxiliaryId.value === viewId) {
+    pane.toggleRightPane()
+    return
+  }
+  activeAuxiliaryId.value = viewId
+  if (!pane.rightPaneVisible) pane.toggleRightPane()
+}
 
 const sidebarContribution = computed(() => registry.getSidebarViews(workbenchContext.value)[0] || null)
 const sidebarProps = computed(() => ({

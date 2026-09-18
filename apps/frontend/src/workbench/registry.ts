@@ -7,6 +7,7 @@ import type {
   PanelContribution,
   SidebarViewContribution,
   SecondarySidebarViewContribution,
+  AuxiliaryViewContribution,
   WorkbenchContext,
   WorkbenchContribution,
   WorkbenchInspectorContext
@@ -88,6 +89,16 @@ export class WorkbenchContributionRegistry {
 
   resolveSecondarySidebarViews(context: WorkbenchInspectorContext): SecondarySidebarViewContribution[] {
     return this.getSecondarySidebarViews(context)
+  }
+
+  getAuxiliaryViews(context: WorkbenchContext): AuxiliaryViewContribution[] {
+    return contributionItems<AuxiliaryViewContribution>(this.contributions.values(), 'auxiliaryViews')
+      .filter(view => view.when(context))
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+  }
+
+  resolveAuxiliaryView(id: string, context: WorkbenchContext): AuxiliaryViewContribution | null {
+    return this.getAuxiliaryViews(context).find(view => view.id === id) || null
   }
 
   getPanels(context: WorkbenchContext): PanelContribution[] {

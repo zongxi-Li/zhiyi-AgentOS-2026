@@ -9,7 +9,7 @@ import type {
 import type { RuntimeObservation } from './runtime/observation'
 import type { RunDocumentSymbolType } from './runtime/runDocument'
 
-export type WorkbenchSlot = 'activityBar' | 'sidebarViews' | 'editors' | 'inspectors' | 'inspectorSections' | 'secondarySidebarViews' | 'panels' | 'commands'
+export type WorkbenchSlot = 'activityBar' | 'sidebarViews' | 'editors' | 'inspectors' | 'inspectorSections' | 'secondarySidebarViews' | 'auxiliaryViews' | 'panels' | 'commands'
 
 export interface WorkbenchContext {
   missionId: string
@@ -81,6 +81,16 @@ export interface SecondarySidebarViewContribution {
   getProps?: (context: WorkbenchInspectorContext) => Record<string, unknown>
 }
 
+export interface AuxiliaryViewContribution {
+  id: string
+  title: string
+  order: number
+  icon?: Component
+  component: Component
+  when: (context: WorkbenchContext) => boolean
+  getProps?: (context: WorkbenchContext) => Record<string, unknown>
+}
+
 export interface PanelContribution {
   id: string
   label: string
@@ -104,6 +114,7 @@ export interface WorkbenchContribution {
   inspectors?: readonly InspectorContribution[]
   inspectorSections?: readonly InspectorSectionContribution[]
   secondarySidebarViews?: readonly SecondarySidebarViewContribution[]
+  auxiliaryViews?: readonly AuxiliaryViewContribution[]
   panels?: readonly PanelContribution[]
   commands?: readonly CommandContribution[]
 }
