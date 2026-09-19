@@ -1,10 +1,10 @@
 <template>
   <section
     class="workbench-bottom-panel"
-    :class="{ 'is-collapsed': collapsed }"
+    :class="{ 'is-collapsed': collapsed, 'is-headerless': headerless }"
     aria-label="运行底部面板"
   >
-    <header class="workbench-bottom-panel__header">
+    <header v-if="!headerless" class="workbench-bottom-panel__header">
       <nav class="workbench-bottom-panel__tabs" role="tablist" aria-label="运行面板视图">
         <button
           v-for="tab in tabs"
@@ -17,7 +17,7 @@
           @click="activeTab = tab.id"
         >
           <span>{{ tab.label }}</span>
-          <small v-if="tab.count !== undefined">{{ tab.count }}</small>
+          <small v-if="tab.count !== undefined" :class="{ 'is-alert': tab.tone === 'failed' && tab.count > 0 }">{{ tab.count }}</small>
         </button>
       </nav>
       <div class="workbench-bottom-panel__actions">
@@ -51,19 +51,28 @@ export interface WorkbenchBottomTab {
   id: string
   label: string
   count?: number
+  /** Semantic tone for the count badge — rendered only while count > 0. */
+  tone?: 'failed'
 }
 
 const props = withDefaults(defineProps<{
-  tabs: WorkbenchBottomTab[]
+  tabs?: WorkbenchBottomTab[]
   modelValue?: boolean
   storageKey?: string
+  /** Headerless mode renders the body only; tabs/collapse are driven by WorkbenchStatusBar. */
+  headerless?: boolean
+  /** Controlled active tab for headerless mode; uncontrolled (with storageKey persistence) when omitted. */
+  activeTab?: string
 }>(), {
+  tabs: () => [],
   modelValue: false,
-  storageKey: ''
+  storageKey: '',
+  headerless: false
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  'update:activeTab': [value: string]
 }>()
 
 const readActiveTab = () => {
@@ -76,7 +85,21 @@ const readActiveTab = () => {
   }
 }
 
-const activeTab = ref(readActiveTab())
+const isControlled = computed(() => props.activeTab !== undefined)
+const internalActiveTab = ref(isControlled.value ? '' : readActiveTab())
+
+const activeTab = computed({
+  get: () => (isControlled.value ? props.activeTab || props.tabs[0]?.id || '' : internalActiveTab.value),
+  set: (value: string) => {
+    if (isControlled.value) {
+      emit('update:activeTab', value)
+      return
+    }
+    internalActiveTab.value = value
+    if (!props.storageKey || typeof window === 'undefined' || !value) return
+    try { window.localStorage.setItem(`${props.storageKey}.activeTab`, value) } catch { /* storage is optional */ }
+  }
+})
 
 const collapsed = computed({
   get: () => Boolean(props.modelValue),
@@ -84,6 +107,7 @@ const collapsed = computed({
 })
 
 watch(() => props.tabs, tabs => {
+  if (isControlled.value) return
   if (!tabs.some(tab => tab.id === activeTab.value)) activeTab.value = tabs[0]?.id || ''
 }, { deep: true })
 
@@ -152,6 +176,7 @@ watch(activeTab, value => {
 .workbench-bottom-panel__tab:hover { color: var(--wb-text); background: color-mix(in srgb, var(--wb-hover) 58%, transparent); }
 .workbench-bottom-panel__tab.active { border-bottom-color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 8%, transparent); color: var(--wb-accent); font-weight: 700; }
 .workbench-bottom-panel__tab small { color: inherit; font: 10px var(--font-mono, monospace); opacity: .64; }
+.workbench-bottom-panel__tab small.is-alert { color: var(--wb-danger); opacity: 1; font-weight: 700; }
 
 .workbench-bottom-panel__actions { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
 .workbench-bottom-panel__caption { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); letter-spacing: .06em; text-transform: uppercase; }
@@ -160,4 +185,11 @@ watch(activeTab, value => {
 .workbench-bottom-panel__body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; background: var(--wb-surface-section); }
 
 .workbench-bottom-panel.is-collapsed .workbench-bottom-panel__header { border-bottom: 0; }
+
+.workbench-bottom-panel.is-headerless {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--wb-surface-section);
+}
 </style>

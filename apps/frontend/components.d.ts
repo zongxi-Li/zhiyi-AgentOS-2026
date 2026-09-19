@@ -138,6 +138,7 @@ declare module 'vue' {
     WorkbenchBottomPanel: typeof import('./src/components/workbench/WorkbenchBottomPanel.vue')['default']
     WorkbenchContributionRenderer: typeof import('./src/components/workbench/WorkbenchContributionRenderer.vue')['default']
     WorkbenchLayout: typeof import('./src/components/workbench/WorkbenchLayout.vue')['default']
+    WorkbenchStatusBar: typeof import('./src/components/workbench/WorkbenchStatusBar.vue')['default']
     WorkbenchVerticalSplit: typeof import('./src/components/workbench/WorkbenchVerticalSplit.vue')['default']
     WorkflowProgressBar: typeof import('./src/components/agentos/WorkflowProgressBar.vue')['default']
     WorkflowReviewPanel: typeof import('./src/components/agentos/WorkflowReviewPanel.vue')['default']

@@ -135,6 +135,7 @@ export const projectContribution: WorkbenchContribution = {
       id: 'problems',
       label: 'Problems',
       component: ProblemsPanel,
+      tone: 'failed',
       count: context => context.runtimeObservation?.problems.length ?? context.diagnostics.length,
       getProps: context => ({ diagnostics: context.runtimeObservation?.problems || context.diagnostics })
     }

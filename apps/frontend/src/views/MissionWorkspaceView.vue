@@ -5,6 +5,7 @@
       :show-bottom-panel="Boolean(projection)"
       bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
       :bottom-panel-default-collapsed="false"
+      :bottom-panel-collapsed-height="0"
       storage-key="zhiyi.mission.workspace.layout.v1"
     >
       <template #left>
@@ -89,12 +90,12 @@
         />
       </template>
 
-      <template #bottom="{ collapsed, setCollapsed }">
+      <template #bottom>
         <WorkbenchBottomPanel
+          headerless
           :tabs="panelTabs"
-          :model-value="collapsed"
-          storage-key="zhiyi.mission.workspace.bottom-panel.v1"
-          @update:model-value="setCollapsed"
+          :active-tab="panelActiveTab"
+          @update:active-tab="panelActiveTab = $event"
         >
           <template #default="{ activeTab }">
             <WorkbenchContributionRenderer
@@ -104,6 +105,26 @@
             />
           </template>
         </WorkbenchBottomPanel>
+      </template>
+
+      <template v-if="projection" #status-bar="{ collapsed, setCollapsed }">
+        <WorkbenchStatusBar
+          :model-value="panelActiveTab"
+          :tabs="panelTabs"
+          :collapsed="collapsed"
+          :run-id="projection?.activeRun?.runId || selectedRunId || null"
+          :run-status="projection?.activeRun?.status || null"
+          :historical="isHistorical"
+          :runs="runPickerItems"
+          :can-rerun="canRerunSelectedRun"
+          :rerun-pending="rerunPending"
+          :rerun-disabled-reason="rerunDisabledReason"
+          :rerun-label="rerunLabel"
+          @update:model-value="selectPanelTab($event, collapsed, setCollapsed)"
+          @select-run="selectRun"
+          @rerun="rerunSelectedRun"
+          @toggle="setCollapsed(!collapsed)"
+        />
       </template>
     </WorkbenchLayout>
 
@@ -155,6 +176,7 @@ import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
+import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue'
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
 import WorkbenchAuxiliarySidebar from '@/components/workbench/WorkbenchAuxiliarySidebar.vue'
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
@@ -364,17 +386,42 @@ const sidebarProps = computed(() => ({
   projection: augmentedProjection.value,
   activeEditorId: activeEditorId.value,
   selectedSemanticTaskKey: selectedSemanticTaskKey.value,
-  selectedRunId: selectedRunId.value,
-  canRerun: canRerunSelectedRun.value,
-  rerunPending: rerunPending.value,
-  rerunDisabledReason: rerunDisabledReason.value,
-  rerunLabel: rerunLabel.value
+  selectedRunId: selectedRunId.value
 }))
+
+const runPickerItems = computed(() => (projection.value?.entries || [])
+  .filter(entry => entry.kind === 'run' && entry.runId)
+  .map(entry => ({ runId: entry.runId as string, status: entry.status || null })))
 const panelTabs = computed<WorkbenchBottomTab[]>(() => registry.getPanels(workbenchContext.value).map(panel => ({
   id: panel.id,
   label: panel.label,
-  count: panel.count?.(workbenchContext.value)
+  count: panel.count?.(workbenchContext.value),
+  tone: panel.tone
 })))
+
+const BOTTOM_PANEL_STORAGE_KEY = 'zhiyi.mission.workspace.bottom-panel.v1'
+const readPersistedPanelTab = () => {
+  if (typeof window === 'undefined') return ''
+  try {
+    const value = window.localStorage.getItem(`${BOTTOM_PANEL_STORAGE_KEY}.activeTab`)
+    return value && panelTabs.value.some(tab => tab.id === value) ? value : panelTabs.value[0]?.id || ''
+  } catch {
+    return panelTabs.value[0]?.id || ''
+  }
+}
+const panelActiveTab = ref(readPersistedPanelTab())
+watch(panelActiveTab, value => {
+  if (typeof window === 'undefined' || !value) return
+  try { window.localStorage.setItem(`${BOTTOM_PANEL_STORAGE_KEY}.activeTab`, value) } catch { /* storage is optional */ }
+})
+watch(panelTabs, tabs => {
+  if (!tabs.some(tab => tab.id === panelActiveTab.value)) panelActiveTab.value = tabs[0]?.id || ''
+})
+
+const selectPanelTab = (tabId: string, collapsed: boolean, setCollapsed: (value: boolean) => void) => {
+  panelActiveTab.value = tabId
+  if (collapsed) setCollapsed(false)
+}
 const resolvePanel = (panelId: string) => registry.resolvePanel(panelId, workbenchContext.value)
 const panelProps = (panelId: string) => resolvePanel(panelId)?.getProps?.(workbenchContext.value) || {}
 

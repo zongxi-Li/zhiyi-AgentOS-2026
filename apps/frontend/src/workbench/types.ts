@@ -96,6 +96,8 @@ export interface PanelContribution {
   label: string
   component: Component
   count?: (context: WorkbenchContext) => number | undefined
+  /** Semantic tone applied to the tab count badge while count > 0. */
+  tone?: 'failed'
   isVisible?: (context: WorkbenchContext) => boolean
   getProps?: (context: WorkbenchContext) => Record<string, unknown>
 }

@@ -29,13 +29,13 @@ const mountExplorer = (overrides: Partial<MissionWorkspaceProjection> = {}) => m
 })
 
 describe('WorkspaceExplorer', () => {
-  it('renders the four projection sections and does not render a global mission list', () => {
+  it('renders the three projection sections, without the run switcher, and no global mission list', () => {
     const wrapper = mountExplorer()
-    expect(wrapper.findAll('.workspace-tree__section')).toHaveLength(4)
+    expect(wrapper.findAll('.workspace-tree__section')).toHaveLength(3)
     expect(wrapper.text()).toContain('OVERVIEW')
     expect(wrapper.text()).toContain('STEPS')
     expect(wrapper.text()).toContain('OUTPUT')
-    expect(wrapper.text()).toContain('RUNS')
+    expect(wrapper.text()).not.toContain('RUNS')
     expect(wrapper.text()).not.toContain('所有 Mission')
   })
 
@@ -57,25 +57,10 @@ describe('WorkspaceExplorer', () => {
     expect(wrapper.emitted('open')?.at(-1)?.[0].kind).toBe('task')
   })
 
-  it('routes Run entries to selectRun and marks the current row', async () => {
+  it('keeps run entries out of the explorer tree (run switching lives in the status bar)', () => {
     const wrapper = mountExplorer()
-    const current = wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_2'))
-    expect(current?.classes()).toContain('is-current-run')
-    await current?.trigger('click')
-    expect(wrapper.emitted('selectRun')).toEqual([['run_2']])
-  })
-
-  it('enables rerun only when the selected Run is terminal', async () => {
-    const terminal = mount(WorkspaceExplorer, {
-      props: { projection: projection(), activeEditorId: null, selectedRunId: 'run_1', canRerun: true, rerunPending: false, rerunDisabledReason: '' },
-      global: { stubs: { 'el-icon': true } }
-    })
-    await terminal.find('.workspace-tree__rerun').trigger('click')
-    expect(terminal.emitted('rerun')).toHaveLength(1)
-
-    const active = mountExplorer()
-    expect(active.find<HTMLButtonElement>('.workspace-tree__rerun').element.disabled).toBe(true)
-    expect(active.find('.workspace-tree__rerun').attributes('title')).toContain('当前运行尚未结束')
+    expect(wrapper.findAll('.workspace-tree__entry').some(item => item.text().includes('run_2'))).toBe(false)
+    expect(wrapper.emitted('selectRun')).toBeUndefined()
   })
 
   it('keeps projection diagnostics out of the Explorer chrome', () => {

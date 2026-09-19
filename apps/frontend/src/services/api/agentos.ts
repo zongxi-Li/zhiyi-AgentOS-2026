@@ -727,7 +727,7 @@ export interface WorkspaceGraphNode {
 export interface WorkspaceDiagnostic {
   code: string
   message: string
-  severity: 'info' | 'warning'
+  severity: 'info' | 'warning' | 'error'
   details?: Record<string, unknown>
 }
 

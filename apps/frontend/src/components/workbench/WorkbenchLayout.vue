@@ -12,31 +12,50 @@
       '--workbench-right-width': `${effectiveRightPaneWidth}px`
     }"
   >
-    <aside v-if="leftVisible" class="workbench-pane workbench-pane--left" aria-label="项目导航">
-      <slot name="left" />
-    </aside>
+    <div class="workbench-layout__body">
+      <aside v-if="leftVisible" class="workbench-pane workbench-pane--left" aria-label="项目导航">
+        <slot name="left" />
+      </aside>
 
-    <ResizeHandle
-      v-if="showLeft && (leftPaneVisible || leftAutoHidden)"
-      side="left"
-      :value="leftPaneWidth"
-      :min="LEFT_MIN_WIDTH"
-      :max="leftMaxWidth"
-      :ariaLabel="leftAutoHidden ? '拖动或单击恢复左侧任务导航并调整宽度' : '调整左侧任务导航宽度'"
-      @resize-start="startResize('left', $event)"
-      @resize-keydown="handleResizeKeydown('left', $event)"
-      @reset="resetWidth('left')"
-      @click="leftAutoHidden && restoreLeftPane()"
-    />
+      <ResizeHandle
+        v-if="showLeft && (leftPaneVisible || leftAutoHidden)"
+        side="left"
+        :value="leftPaneWidth"
+        :min="LEFT_MIN_WIDTH"
+        :max="leftMaxWidth"
+        :ariaLabel="leftAutoHidden ? '拖动或单击恢复左侧任务导航并调整宽度' : '调整左侧任务导航宽度'"
+        @resize-start="startResize('left', $event)"
+        @resize-keydown="handleResizeKeydown('left', $event)"
+        @reset="resetWidth('left')"
+        @click="leftAutoHidden && restoreLeftPane()"
+      />
 
-    <main class="workbench-pane workbench-pane--main">
-      <WorkbenchVerticalSplit
-        v-if="showBottomPanel"
-        :storage-key="bottomPanelStorageKey"
-        :default-collapsed="bottomPanelDefaultCollapsed"
-      >
-        <template #graph>
+      <main class="workbench-pane workbench-pane--main">
+        <WorkbenchVerticalSplit
+          v-if="showBottomPanel"
+          ref="splitRef"
+          :storage-key="bottomPanelStorageKey"
+          :default-collapsed="bottomPanelDefaultCollapsed"
+          :collapsed-height="bottomPanelCollapsedHeight"
+        >
+          <template #graph>
+            <slot
+              name="main"
+              :left-auto-hidden="leftAutoHidden"
+              :restore-left-pane="restoreLeftPane"
+              :right-auto-hidden="rightAutoHidden"
+              :right-enabled="rightEnabled"
+              :right-pane-visible="rightPaneVisible"
+              :right-collapsed-by-user="rightCollapsedByUser"
+              :toggle-right-pane="toggleRightPane"
+            />
+          </template>
+          <template #bottom="bottomState">
+            <slot name="bottom" v-bind="bottomState" />
+          </template>
+        </WorkbenchVerticalSplit>
           <slot
+            v-else
             name="main"
             :left-auto-hidden="leftAutoHidden"
             :restore-left-pane="restoreLeftPane"
@@ -46,44 +65,38 @@
             :right-collapsed-by-user="rightCollapsedByUser"
             :toggle-right-pane="toggleRightPane"
           />
-        </template>
-        <template #bottom="bottomState">
-          <slot name="bottom" v-bind="bottomState" />
-        </template>
-      </WorkbenchVerticalSplit>
-        <slot
-          v-else
-          name="main"
-          :left-auto-hidden="leftAutoHidden"
-          :restore-left-pane="restoreLeftPane"
-          :right-auto-hidden="rightAutoHidden"
-          :right-enabled="rightEnabled"
-          :right-pane-visible="rightPaneVisible"
-          :right-collapsed-by-user="rightCollapsedByUser"
-          :toggle-right-pane="toggleRightPane"
-        />
-    </main>
+      </main>
 
-    <ResizeHandle
-      v-if="rightPaneVisible || rightAutoHidden"
-      side="right"
-      :value="effectiveRightPaneWidth"
-      :min="RIGHT_MIN_WIDTH"
-      :max="rightMaxForHandle"
-      :ariaLabel="rightAutoHidden ? '拖动恢复右侧运行详情并调整宽度' : '调整右侧运行详情宽度'"
-      @resize-start="startResize('right', $event)"
-      @resize-keydown="handleResizeKeydown('right', $event)"
-      @reset="resetWidth('right')"
-    />
+      <ResizeHandle
+        v-if="rightPaneVisible || rightAutoHidden"
+        side="right"
+        :value="effectiveRightPaneWidth"
+        :min="RIGHT_MIN_WIDTH"
+        :max="rightMaxForHandle"
+        :ariaLabel="rightAutoHidden ? '拖动恢复右侧运行详情并调整宽度' : '调整右侧运行详情宽度'"
+        @resize-start="startResize('right', $event)"
+        @resize-keydown="handleResizeKeydown('right', $event)"
+        @reset="resetWidth('right')"
+      />
 
-    <aside v-if="rightPaneVisible" class="workbench-pane workbench-pane--right" aria-label="ACG 运行详情">
-      <slot name="right" />
-    </aside>
+      <aside v-if="rightPaneVisible" class="workbench-pane workbench-pane--right" aria-label="ACG 运行详情">
+        <slot name="right" />
+      </aside>
+    </div>
+
+    <footer v-if="$slots['status-bar']" class="workbench-layout__status-bar">
+      <slot
+        name="status-bar"
+        :collapsed="bottomPanelCollapsed"
+        :set-collapsed="setBottomPanelCollapsed"
+        :toggle-collapsed="toggleBottomPanelCollapsed"
+      />
+    </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import ResizeHandle from './ResizeHandle.vue'
 import WorkbenchVerticalSplit from './WorkbenchVerticalSplit.vue'
 import { useWorkbenchLayout } from '@/composables/useWorkbenchLayout'
@@ -94,6 +107,8 @@ const props = withDefaults(defineProps<{
   showBottomPanel?: boolean
   bottomPanelStorageKey?: string
   bottomPanelDefaultCollapsed?: boolean
+  /** Bottom slot height while collapsed; 0 hides the panel (a status bar replaces it). */
+  bottomPanelCollapsedHeight?: number
   storageKey?: string
 }>(), {
   showLeft: true,
@@ -103,6 +118,16 @@ const props = withDefaults(defineProps<{
   bottomPanelDefaultCollapsed: false,
   storageKey: 'zhiyi.acg.workbench.layout.v1'
 })
+
+interface SplitExposed {
+  collapsed: boolean
+  setCollapsed: (value: boolean) => void
+  toggleCollapsed: () => void
+}
+const splitRef = ref<SplitExposed | null>(null)
+const bottomPanelCollapsed = computed(() => Boolean(splitRef.value?.collapsed))
+const setBottomPanelCollapsed = (value: boolean) => splitRef.value?.setCollapsed(value)
+const toggleBottomPanelCollapsed = () => splitRef.value?.toggleCollapsed()
 
 const layout = useWorkbenchLayout({
   storageKey: props.storageKey,
@@ -145,12 +170,27 @@ const rightMaxForHandle = computed(() => {
 <style scoped>
 .workbench-layout {
   display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--wb-surface-0);
+}
+
+.workbench-layout__body {
+  flex: 1 1 auto;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workbench-layout__status-bar {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .workbench-pane {

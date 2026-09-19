@@ -36,6 +36,7 @@ defineProps<{
 .problems-panel__item { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 9px 14px; border-bottom: 1px solid color-mix(in srgb, var(--wb-border) 72%, transparent); }
 .problems-panel__severity { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; color: var(--wb-surface-1); background: var(--wb-warning); font: 11px var(--font-mono, monospace); font-weight: 700; }
 .problems-panel__severity.is-info { background: var(--wb-accent); }
+.problems-panel__severity.is-error { background: var(--wb-danger); }
 .problems-panel__item strong { color: var(--wb-text); font: 10px var(--font-mono, monospace); }
 .problems-panel__item p { margin: 4px 0 0; color: var(--wb-text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
 .problems-panel__item small { display: block; margin-top: 4px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }

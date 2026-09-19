@@ -18,7 +18,7 @@ let layoutStubState = { ...defaultLayoutStubState }
 
 const workspaceLayoutStub = {
   setup: () => ({ noop: () => undefined, state: layoutStubState }),
-  template: '<div class="workspace-layout-stub"><aside><slot name="left" /></aside><main><slot name="main" :left-auto-hidden="state.leftAutoHidden" :restore-left-pane="state.restoreLeftPane" :right-auto-hidden="false" :right-enabled="true" :right-pane-visible="true" :right-collapsed-by-user="false" :toggle-right-pane="noop" /></main><aside><slot name="right" /></aside><section><slot name="bottom" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" /></section></div>'
+  template: '<div class="workspace-layout-stub"><aside><slot name="left" /></aside><main><slot name="main" :left-auto-hidden="state.leftAutoHidden" :restore-left-pane="state.restoreLeftPane" :right-auto-hidden="false" :right-enabled="true" :right-pane-visible="true" :right-collapsed-by-user="false" :toggle-right-pane="noop" /></main><aside><slot name="right" /></aside><section><slot name="bottom" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" /></section><footer><slot name="status-bar" :collapsed="false" :set-collapsed="noop" :toggle-collapsed="noop" /></footer></div>'
 }
 
 const graphEditorStub = {
@@ -401,7 +401,8 @@ describe('MissionWorkspaceView', () => {
     const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace').mockImplementation(async (_id, options) => options.runId === 'run_1' ? historical : projection())
     const { wrapper } = await mountWorkspace()
     await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('mission.md'))?.trigger('click')
-    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_1'))?.trigger('click')
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    await wrapper.findAll('.workbench-status-bar__run-item').find(item => item.text().includes('run_1'))?.trigger('click')
     await flushPromises()
     expect(getWorkspace).toHaveBeenLastCalledWith('mission_1', expect.objectContaining({ runId: 'run_1' }))
     expect(wrapper.find('.editor-tab.is-active').text()).toContain('运行进度')
@@ -412,9 +413,11 @@ describe('MissionWorkspaceView', () => {
   it('switches historical back to the current Run explicitly', async () => {
     const historical = projection({ activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }, entries: projection().entries.filter(item => item.entryId !== 'task:capacity:primary') })
     const { wrapper } = await mountWorkspace(runId => runId === 'run_1' ? historical : projection())
-    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_1'))?.trigger('click')
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    await wrapper.findAll('.workbench-status-bar__run-item').find(item => item.text().includes('run_1'))?.trigger('click')
     await flushPromises()
-    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_2'))?.trigger('click')
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    await wrapper.findAll('.workbench-status-bar__run-item').find(item => item.text().includes('run_2'))?.trigger('click')
     await flushPromises()
     expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith('mission_1', expect.objectContaining({ runId: 'run_2' }))
     expect(wrapper.text()).not.toContain('Historical / Read-only')
@@ -436,7 +439,8 @@ describe('MissionWorkspaceView', () => {
     } as any)
     const { wrapper, router } = await mountWorkspace(runId => runId === 'run_3' ? successor : source, '/agentos/missions/mission_1/workspace?runId=run_1')
 
-    await wrapper.find('.workspace-tree__rerun').trigger('click')
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    await wrapper.find('.workbench-status-bar__run-action').trigger('click')
     await flushPromises()
 
     expect(rerun).toHaveBeenCalledWith('mission_1', expect.objectContaining({
@@ -474,8 +478,9 @@ describe('MissionWorkspaceView', () => {
       '/agentos/missions/mission_1/workspace?runId=run_1'
     )
 
-    expect(wrapper.find('.workspace-tree__rerun').text()).toContain('从失败处继续')
-    await wrapper.find('.workspace-tree__rerun').trigger('click')
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    expect(wrapper.find('.workbench-status-bar__run-action').text()).toContain('从失败处继续')
+    await wrapper.find('.workbench-status-bar__run-action').trigger('click')
     await flushPromises()
 
     expect(rerun).not.toHaveBeenCalled()
@@ -570,7 +575,8 @@ describe('MissionWorkspaceView', () => {
     const historical = projection({ activeRun: { runId: 'run_1', status: 'succeeded', createdAt: '2026-08-28T00:01:00Z', isActive: true }, entries: projection().entries.filter(item => item.entryId !== 'task:capacity:primary') })
     const { wrapper } = await mountWorkspace((_runId) => _runId === 'run_1' ? historical : projection())
     await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('primary.md'))?.trigger('click')
-    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('run_1'))?.trigger('click')
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    await wrapper.findAll('.workbench-status-bar__run-item').find(item => item.text().includes('run_1'))?.trigger('click')
     await flushPromises()
     expect(wrapper.find('.editor-tab.is-active').text()).toContain('运行进度')
     await wrapper.findAll('.editor-tab').find(item => item.text().includes('primary.md'))?.find('.editor-tab__main').trigger('click')
@@ -581,15 +587,15 @@ describe('MissionWorkspaceView', () => {
   it('shows NO_ACTIVE_RUN diagnostics and falls back to mission.md', async () => {
     const empty = projection({ activeRun: null, entries: [...folders(), { entryId: 'overview:mission.md', kind: 'virtual_document', name: 'mission.md', group: 'overview', displayOrder: 1, content: '# Empty' }, ...runEntries()], diagnostics: [{ code: 'NO_ACTIVE_RUN', message: '没有 Run', severity: 'info' }] })
     const { wrapper } = await mountWorkspace(empty)
-    expect(wrapper.find('.workbench-bottom-panel__tab').text()).toContain('Problems')
-    expect(wrapper.find('.workbench-bottom-panel__tab small').text()).toBe('1')
+    expect(wrapper.find('.workbench-status-bar__tab').text()).toContain('Problems')
+    expect(wrapper.find('.workbench-status-bar__tab-count.is-alert').text()).toBe('1')
     expect(wrapper.find('.problems-panel').text()).toContain('NO_ACTIVE_RUN')
     expect(wrapper.text()).toContain('mission.md')
   })
 
   it('exposes the fixed runtime observation panels through the Workbench registry', async () => {
     const { wrapper } = await mountWorkspace()
-    expect(wrapper.findAll('.workbench-bottom-panel__tab').map(tab => tab.text())).toEqual([
+    expect(wrapper.findAll('.workbench-status-bar__tab').map(tab => tab.text())).toEqual([
       'Problems0', 'Communication0', 'Trace0', 'Events0', 'Tool Calls0'
     ])
   })

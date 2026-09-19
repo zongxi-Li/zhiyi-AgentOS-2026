@@ -27,7 +27,6 @@
               class="workspace-tree__entry"
               :class="{
                 'is-active': entry.entryId === activeEditorId,
-                'is-current-run': entry.kind === 'run' && entry.runId === selectedRunId,
                 'is-selected-symbol': entry.kind === 'task' && entry.semanticTaskKey === selectedSemanticTaskKey,
                 'is-legacy': entry.identityQuality === 'legacy',
                 'is-task': entry.kind === 'task'
@@ -49,8 +48,7 @@
                 <span class="workspace-tree__task-state-label">{{ taskStatusLabel(entry.status) }}</span>
               </span>
               <span v-if="entry.kind === 'task' && entry.artifactCount" class="workspace-tree__artifact-count">{{ entry.artifactCount }}</span>
-              <span v-if="entry.kind === 'run'" class="workspace-tree__run-state">{{ runLabel(entry.status) }}</span>
-              <span v-else-if="entry.identityQuality === 'legacy'" class="workspace-tree__legacy">legacy</span>
+              <span v-if="entry.identityQuality === 'legacy'" class="workspace-tree__legacy">legacy</span>
             </button>
             <div v-if="entry.kind === 'task' && taskChildren(entry).length" class="workspace-tree__children">
               <button
@@ -69,17 +67,6 @@
             </div>
           </template>
           <p v-if="!section.items.length" class="workspace-tree__empty">{{ section.empty }}</p>
-          <button
-            v-if="section.group === 'runs'"
-            type="button"
-            class="workspace-tree__rerun"
-            :disabled="!canRerun || rerunPending"
-            :title="rerunDisabledReason"
-            @click="emit('rerun')"
-          >
-            <span aria-hidden="true">+</span>
-            <span>{{ rerunPending ? '正在创建…' : rerunLabel }}</span>
-          </button>
         </div>
       </section>
     </nav>
@@ -103,37 +90,25 @@ const props = withDefaults(defineProps<{
   activeEditorId: string | null
   selectedSemanticTaskKey?: string | null
   selectedRunId: string | null
-  canRerun?: boolean
-  rerunPending?: boolean
-  rerunDisabledReason?: string
-  rerunLabel?: string
 }>(), {
-  canRerun: false,
-  rerunPending: false,
-  rerunDisabledReason: '当前运行尚未结束',
-  rerunLabel: '再次运行',
   selectedSemanticTaskKey: null
 })
 
 const emit = defineEmits<{
   back: []
   open: [entry: WorkspaceEntry]
-  selectRun: [runId: string]
-  rerun: []
 }>()
 
 const expandedSections = ref<Record<string, boolean>>({
   overview: true,
   steps: true,
-  output: true,
-  runs: true
+  output: true
 })
 
 const groupLabels: Record<string, { label: string; empty: string }> = {
   overview: { label: 'OVERVIEW', empty: '当前 Run 尚未生成概览文件' },
   steps: { label: 'STEPS', empty: '当前 Run 尚无逻辑步骤' },
-  output: { label: 'OUTPUT', empty: '当前 Run 尚无已证明的最终产物' },
-  runs: { label: 'RUNS', empty: 'Mission 尚无历史 Run' }
+  output: { label: 'OUTPUT', empty: '当前 Run 尚无已证明的最终产物' }
 }
 
 const sections = computed(() => Object.entries(groupLabels).map(([group, meta]) => ({
@@ -159,25 +134,12 @@ const taskChildren = (task: WorkspaceEntry) => props.projection.entries
   .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId))
 
 const handleEntryClick = (entry: WorkspaceEntry) => {
-  if (entry.kind === 'run' && entry.runId) {
-    emit('selectRun', entry.runId)
-    return
-  }
   emit('open', entry)
 }
 
 const entryIcon = (entry: WorkspaceEntry) => {
   return workspaceEntryIcon(entry.kind)
 }
-
-const runLabel = (status?: string | null) => ({
-  pending: 'pending',
-  running: 'running',
-  succeeded: 'succeeded',
-  failed: 'failed',
-  cancelled: 'cancelled',
-  superseded: 'superseded'
-}[status || ''] || status || '')
 
 const taskStatusLabel = (status?: string | null) => ({
   pending: 'pending',
@@ -224,9 +186,6 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 .workspace-explorer__back { display: inline-flex; align-items: center; gap: 5px; margin: -3px 0 9px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 11px; }
 .workspace-explorer__back:hover { color: var(--wb-accent); }
 
-.workspace-tree__rerun { display: flex; align-items: center; gap: 7px; width: calc(100% - 16px); margin: 5px 8px 3px; padding: 6px 9px; border: 1px dashed var(--wb-border); border-radius: var(--wb-radius-sm); color: var(--wb-text-muted); background: transparent; cursor: pointer; font: inherit; text-align: left; }
-.workspace-tree__rerun:hover:not(:disabled) { color: var(--wb-accent); border-color: var(--wb-accent); background: var(--wb-accent-soft); }
-.workspace-tree__rerun:disabled { cursor: not-allowed; opacity: .55; }
 
 .workspace-explorer__title-row {
   display: flex;
@@ -331,7 +290,6 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 .workspace-tree__entry:hover { border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-hover); }
 .workspace-tree__entry.is-active { border-left-color: var(--wb-accent); border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-selected); }
 .workspace-tree__entry.is-selected-symbol { color: var(--wb-text); background: color-mix(in srgb, var(--wb-selected) 58%, transparent); }
-.workspace-tree__entry.is-current-run { color: var(--wb-accent); }
 .workspace-tree__entry.is-legacy { color: var(--wb-warning); }
 .workspace-tree__entry.is-task { min-height: 32px; padding-left: 6px; }
 .workspace-tree__entry--child { min-height: 28px; padding-left: 43px; font-size: 11px; }
@@ -349,7 +307,6 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 .workspace-tree__task-state.is-failed { color: var(--wb-danger); }
 .workspace-tree__artifact-count { margin-left: 0; color: var(--wb-accent); font: 10px var(--font-mono, monospace); }
 .workspace-tree__entry--child code { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
-.workspace-tree__run-state { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 .workspace-tree__legacy { margin-left: auto; color: var(--wb-warning); font: 10px var(--font-mono, monospace); }
 .workspace-tree__empty { margin: 4px 10px 8px 31px; color: var(--wb-text-muted); font-size: 11px; line-height: 1.5; }
 

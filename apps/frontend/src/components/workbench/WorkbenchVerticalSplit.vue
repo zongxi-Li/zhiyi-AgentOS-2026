@@ -3,7 +3,7 @@
     ref="splitRef"
     class="workbench-vertical-split"
     :class="{ 'is-resizing': resizing, 'is-collapsed': collapsed }"
-    :style="{ '--workbench-bottom-panel-height': `${collapsed ? COLLAPSED_HEIGHT : panelHeight}px` }"
+    :style="{ '--workbench-bottom-panel-height': `${collapsed ? props.collapsedHeight : panelHeight}px` }"
   >
     <div class="workbench-vertical-split__graph-pane">
       <slot name="graph" />
@@ -42,7 +42,6 @@ import {
   writeWorkbenchLayoutPersistence
 } from '@/composables/useWorkbenchLayout'
 
-const COLLAPSED_HEIGHT = 34
 const HANDLE_HEIGHT = 7
 
 const props = withDefaults(defineProps<{
@@ -52,13 +51,16 @@ const props = withDefaults(defineProps<{
   maxHeightRatio?: number
   minGraphHeight?: number
   defaultCollapsed?: boolean
+  /** Bottom slot height while collapsed. 0 hides the panel entirely (a status bar replaces it). */
+  collapsedHeight?: number
 }>(), {
   storageKey: 'zhiyi.acg.workbench.layout.v1',
   defaultHeight: 260,
   minHeight: 120,
   maxHeightRatio: 0.65,
   minGraphHeight: 280,
-  defaultCollapsed: false
+  defaultCollapsed: false,
+  collapsedHeight: 34
 })
 
 const persisted = readWorkbenchLayoutPersistence(props.storageKey)
@@ -190,6 +192,13 @@ const setCollapsed = (value: boolean) => {
 
 const toggleCollapsed = () => setCollapsed(!collapsed.value)
 
+defineExpose({
+  /** Unwrapped through the exposed proxy; read via a template ref. */
+  collapsed,
+  setCollapsed,
+  toggleCollapsed
+})
+
 onMounted(() => {
   syncSplitHeight()
   if (typeof ResizeObserver !== 'undefined' && splitRef.value) {
@@ -238,6 +247,8 @@ onBeforeUnmount(() => {
   padding: 8px 0 0;
   background: var(--wb-surface-shell);
 }
+
+.workbench-vertical-split.is-collapsed .workbench-vertical-split__bottom-panel { padding: 0; }
 
 .workbench-vertical-split__bottom-panel > :deep(.workbench-bottom-panel) {
   width: 100%;
