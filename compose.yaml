@@ -120,7 +120,7 @@ services:
       DASHSCOPE_API_KEY_FILE: /run/kinlin-secrets/dashscope_api_key
       TEXT_ENGINE: ${TEXT_ENGINE:-auto}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
       DEEPSEEK_ENABLED: ${DEEPSEEK_ENABLED:-true}
       GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
       GLM_MODEL: ${GLM_MODEL:-glm-5.3-flash}

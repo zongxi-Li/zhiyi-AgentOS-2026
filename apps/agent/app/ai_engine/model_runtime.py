@@ -97,6 +97,24 @@ def resolve_system_runtime_config(model: str = "") -> tuple[str, str, str]:
     return effective_model, base_url, api_key
 
 
+_THINKING_MODE_ORDER = {"disabled": 0, "standard": 1, "deep": 2}
+
+
+def model_capability_summary(name: str, base_url: str, provider: str) -> Dict[str, object]:
+    caps = provider_model_capabilities(name, base_url, provider)
+    thinking_modes = sorted(
+        (mode.value for mode in caps.supported_thinking_modes),
+        key=lambda value: _THINKING_MODE_ORDER.get(value, 9),
+    )
+    return {
+        "thinkingModes": thinking_modes,
+        "alwaysThinking": caps.always_thinking,
+        "supportsReasoningEffort": caps.supports_reasoning_effort,
+        "reasoningEfforts": list(caps.reasoning_efforts or []),
+        "contextWindow": caps.context_window_tokens,
+    }
+
+
 async def list_system_runtime_models() -> Dict[str, object]:
     """Read the real model catalog without exposing the server API key."""
     provider, default_model, base_url, api_key = _resolve_system_provider_config()
@@ -118,16 +136,22 @@ async def list_system_runtime_models() -> Dict[str, object]:
 
     if default_model not in models:
         models.insert(0, default_model)
-    context_windows = {
-        name: window
+    capabilities = {
+        name: model_capability_summary(name, base_url, provider)
         for name in models
-        if (window := provider_model_capabilities(name, base_url).context_window_tokens)
+    }
+    context_windows = {
+        name: summary["contextWindow"]
+        for name, summary in capabilities.items()
+        if isinstance(summary.get("contextWindow"), int) and summary["contextWindow"] > 0
     }
     return {
         "models": models,
         "default_model": default_model,
         "provider": provider,
         "context_windows": context_windows,
+        # 每模型能力元数据：前端据此渲染思考档位选择器，官方上新/改名零前端改动。
+        "capabilities": capabilities,
     }
 
 

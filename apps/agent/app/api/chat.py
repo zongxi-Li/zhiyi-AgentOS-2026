@@ -14,6 +14,7 @@ from app.config import settings
 from app.ai_engine.model_runtime import (
     apply_reasoning_instruction,
     list_system_runtime_models,
+    model_capability_summary,
     resolve_system_runtime_config,
     stream_with_runtime_model,
 )
@@ -64,6 +65,18 @@ class ChatResponse(BaseModel):
 async def chat_models():
     """Return models available through the server-managed API connection."""
     return await list_system_runtime_models()
+
+
+@router.get("/chat/model-capabilities")
+async def chat_model_capabilities(model: str, base_url: str = ""):
+    """Per-model capability metadata (thinking modes / efforts) without secrets.
+
+    base_url 省略时按服务端当前激活供应商解析；自定义连接显式传入 base_url。
+    """
+    if not base_url.strip():
+        _, resolved_base_url, _ = resolve_system_runtime_config(model)
+        base_url = resolved_base_url
+    return model_capability_summary(model, base_url, "")
 
 
 @router.get("/chat/capabilities")

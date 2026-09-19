@@ -107,7 +107,7 @@ describe('CreateMissionView', () => {
     wrapper.unmount()
   })
 
-  it('renders GLM reasoning_effort choices and excludes disabled thinking', async () => {
+  it('renders reasoning_effort choices from server capability metadata', async () => {
     localStorage.setItem('kinlin.model_settings', JSON.stringify({
       provider: 'glm',
       apiKey: '',
@@ -116,6 +116,20 @@ describe('CreateMissionView', () => {
       selectedModel: 'glm-5.3-flash',
       thinkingMode: 'deep',
       reasoningEffort: 'high'
+    }))
+    // 档位选择器由服务端能力元数据驱动（/ai/chat/model-capabilities）。
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/ai/chat/model-capabilities')) {
+        return new Response(JSON.stringify({
+          thinkingModes: ['standard', 'deep'],
+          alwaysThinking: true,
+          supportsReasoningEffort: true,
+          reasoningEfforts: ['low', 'high', 'max'],
+          contextWindow: 1048576
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response('{}', { status: 200 })
     }))
     const router = createRouter({
       history: createMemoryHistory(),
@@ -132,6 +146,7 @@ describe('CreateMissionView', () => {
         stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true }
       }
     })
+    await flushPromises()
 
     const select = wrapper.find('select[aria-label="Thinking strength"]')
     expect(select.findAll('option').map(option => option.attributes('value'))).toEqual(['low', 'high', 'max'])
@@ -141,6 +156,7 @@ describe('CreateMissionView', () => {
 
     wrapper.unmount()
     localStorage.removeItem('kinlin.model_settings')
+    vi.unstubAllGlobals()
   })
 
   it('starts a Run with the configured Mission and hands it to Workspace', async () => {

@@ -87,7 +87,7 @@ def test_system_runtime_model_override_reuses_server_credentials(monkeypatch):
         "server-secret",
     )
     assert resolve_system_runtime_config() == (
-        "deepseek-v4-flash",
+        "deepseek-flash",
         "https://api.example.com/v1",
         "server-secret",
     )
@@ -110,7 +110,7 @@ def test_system_runtime_config_selects_glm_and_leaves_deepseek_selectable(monkey
 
     monkeypatch.setattr(settings, "TEXT_ENGINE", "deepseek")
     assert resolve_system_runtime_config() == (
-        "deepseek-v4-flash",
+        "deepseek-flash",
         "https://api.deepseek.com/v1",
         "deepseek-secret",
     )

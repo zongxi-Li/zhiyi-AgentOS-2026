@@ -22,7 +22,7 @@ class KylinSDKClient:
     """麒麟AI SDK客户端 - 智能选择SDK策略"""
 
     def __init__(self, api_key: str, api_endpoint: str, timeout: int = 240, qwen_api_key: Optional[str] = None, qwen_model: str = "qwen-plus",
-                 deepseek_api_key: Optional[str] = None, deepseek_model: str = "deepseek-v4-flash"):
+                 deepseek_api_key: Optional[str] = None, deepseek_model: str = "deepseek-flash"):
         """
         初始化客户端
 
@@ -676,7 +676,7 @@ class KylinAIClient:
             self._deepseek_model = settings.DEEPSEEK_MODEL
         except Exception:
             self._deepseek_api_key = ''
-            self._deepseek_model = 'deepseek-v4-flash'
+            self._deepseek_model = 'deepseek-flash'
 
         # GLM 配置由统一文本 Runtime 使用；保留旧 SDK 字段以兼容已有初始化路径。
         try:

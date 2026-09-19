@@ -30,6 +30,7 @@
       v-model="settings.selectedModel"
       class="model-select"
       :loading="modelsLoading"
+      placeholder="默认模型"
       aria-label="选择模型"
       @change="persistSettings"
     >
@@ -37,7 +38,7 @@
       <el-option
         v-for="model in availableModels"
         :key="model"
-        :label="compact ? compactModelLabel(model) : model"
+        :label="model"
         :value="model"
       />
     </el-select>
@@ -60,20 +61,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, Connection, Cpu, Opportunity } from '@element-plus/icons-vue'
 import { apiUrl } from '@/platform'
 import {
   MODEL_SETTINGS_EVENT,
-  SYSTEM_FALLBACK_MODELS,
   applyProviderPreset,
-  glmReasoningOptions,
-  isGlmAlwaysThinkingModel,
+  capabilityFromPayload,
+  fetchModelCapability,
+  isEffortKindOption,
   loadModelSettings,
   modelProviderPresets,
-  thinkingOptions,
+  reasoningOptionsFromCapability,
   saveModelSettings,
   type GlmReasoningEffort,
+  type ModelCapability,
   type ModelProviderId,
   type ModelSettings,
   type ThinkingMode
@@ -84,15 +86,22 @@ const props = withDefaults(defineProps<{ compact?: boolean; composer?: boolean }
 const settings = ref(loadModelSettings())
 const modelsLoading = ref(false)
 let systemModelsRequest = 0
-const availableModels = computed(() => settings.value.models.length ? settings.value.models : SYSTEM_FALLBACK_MODELS)
-const usesGlmReasoningEffort = computed(() => isGlmAlwaysThinkingModel(settings.value.selectedModel))
-const reasoningOptions = computed(() => usesGlmReasoningEffort.value ? glmReasoningOptions : thinkingOptions)
+const availableModels = computed(() => settings.value.models)
+const modelCapability = ref<ModelCapability | null>(null)
+const reasoningOptions = computed(() => reasoningOptionsFromCapability(modelCapability.value))
+const usesEffortOptions = computed(() => isEffortKindOption(reasoningOptions.value))
 const reasoningSelection = computed<ThinkingMode | GlmReasoningEffort>({
-  get: () => usesGlmReasoningEffort.value
-    ? settings.value.reasoningEffort || 'max'
-    : settings.value.thinkingMode,
+  get: () => {
+    if (usesEffortOptions.value) {
+      const stored = settings.value.reasoningEffort
+      const options = reasoningOptions.value.map(option => String(option.value))
+      const matched = stored && options.includes(stored) ? stored : options[options.length - 1]
+      return (matched || 'max') as GlmReasoningEffort
+    }
+    return settings.value.thinkingMode
+  },
   set: value => {
-    if (usesGlmReasoningEffort.value) {
+    if (usesEffortOptions.value) {
       const effort = value as GlmReasoningEffort
       settings.value.reasoningEffort = effort
       settings.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
@@ -109,15 +118,6 @@ const providerTitle = computed(() => {
 
 function persistSettings(): void {
   saveModelSettings(settings.value)
-}
-
-function compactModelLabel(model: string): string {
-  const labels: Record<string, string> = {
-    'deepseek-v4-flash': 'Flash',
-    'deepseek-v4-pro': 'Pro',
-    'glm-5.3-flash': 'GLM 5.3 Flash'
-  }
-  return labels[model] || model
 }
 
 function compactProviderLabel(provider: ModelProviderId): string {
@@ -156,7 +156,7 @@ async function loadSystemModels(preferServerDefault = false): Promise<void> {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined
     })
     if (!response.ok || requestId !== systemModelsRequest || settings.value.provider !== 'system') return
-    const data = await response.json() as { models?: unknown; default_model?: unknown }
+    const data = await response.json() as { models?: unknown; default_model?: unknown; capabilities?: unknown }
     const models = Array.isArray(data.models)
       ? data.models.filter((model): model is string => typeof model === 'string' && Boolean(model.trim()))
       : []
@@ -173,10 +173,41 @@ async function loadSystemModels(preferServerDefault = false): Promise<void> {
         : settings.value.selectedModel
     }
     saveModelSettings(settings.value)
+    syncCapabilityFromCatalog(data.capabilities, settings.value.selectedModel)
   } catch {
     // Keep the system-default fallback when the model catalog is unavailable.
   } finally {
     if (requestId === systemModelsRequest) modelsLoading.value = false
+  }
+}
+
+function syncCapabilityFromCatalog(catalog: unknown, model: string): void {
+  const entry = catalog && typeof catalog === 'object'
+    ? (catalog as Record<string, unknown>)[model]
+    : undefined
+  modelCapability.value = capabilityFromPayload(entry)
+}
+
+// 档位选择器随服务端能力元数据变化：system 供应商的目录响应已携带 capabilities，
+// 其余供应商（自定义 base_url）按需走 /ai/chat/model-capabilities 单查。
+watch(
+  () => [settings.value.provider, settings.value.selectedModel, settings.value.baseUrl] as const,
+  ([provider, model, baseUrl]) => {
+    if (provider === 'system') {
+      // 目录尚未拉取时不主动清空已有能力；loadSystemModels 会带目录回填。
+      if (!modelCapability.value && model) void refreshCapability(model)
+      return
+    }
+    modelCapability.value = null
+    if (model) void refreshCapability(model, baseUrl)
+  },
+  { immediate: true }
+)
+
+async function refreshCapability(model: string, baseUrl = ''): Promise<void> {
+  const capability = await fetchModelCapability(model, baseUrl)
+  if (model === settings.value.selectedModel && (settings.value.provider === 'system' || baseUrl === settings.value.baseUrl)) {
+    modelCapability.value = capability
   }
 }
 

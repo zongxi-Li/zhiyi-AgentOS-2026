@@ -110,7 +110,7 @@ def _provider_settings(provider: str) -> dict[str, object]:
         return {
             "api_key": _read_secret_setting("DEEPSEEK_API_KEY"),
             "base_url": (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip(),
-            "model": (os.getenv("DEEPSEEK_MODEL") or "deepseek-v4-flash").strip(),
+            "model": (os.getenv("DEEPSEEK_MODEL") or "deepseek-flash").strip(),
             "enabled": _enabled_setting("DEEPSEEK_ENABLED"),
         }
     if provider == "glm":

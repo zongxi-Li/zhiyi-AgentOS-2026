@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class DeepSeekAdapter:
     """DeepSeek API适配器（OpenAI兼容模式）"""
 
-    def __init__(self, api_key: str, model_name: str = "deepseek-v4-flash",
+    def __init__(self, api_key: str, model_name: str = "deepseek-flash",
                  base_url: str = "https://api.deepseek.com/v1"):
         normalized = normalize_model_request(model_name)
         self.api_key = api_key

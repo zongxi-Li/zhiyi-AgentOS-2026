@@ -29,12 +29,33 @@ def test_legacy_thinking_values_map_to_three_internal_modes():
 
 def test_deepseek_legacy_models_migrate_with_compatible_defaults():
     chat = normalize_model_request("deepseek-chat")
-    assert chat.effective_model == "deepseek-v4-flash"
+    assert chat.effective_model == "deepseek-flash"
     assert chat.effective_thinking_mode == ThinkingMode.DISABLED
 
     reasoner = normalize_model_request("deepseek-reasoner")
-    assert reasoner.effective_model == "deepseek-v4-flash"
+    assert reasoner.effective_model == "deepseek-flash"
     assert reasoner.effective_thinking_mode == ThinkingMode.STANDARD
+
+    retired = normalize_model_request("deepseek-v4-flash")
+    assert retired.effective_model == "deepseek-flash"
+
+
+def test_official_new_model_name_automatically_gets_family_capabilities():
+    """官方新名无需改代码即获得供应商族能力（映射不依赖具体型号）。"""
+    current = provider_model_capabilities("deepseek-flash", "https://api.deepseek.com/v1")
+    assert current.supports_thinking is True
+    assert current.supports_reasoning_effort is True
+    assert current.reasoning_efforts == ["high", "max"]
+    assert current.version == "DeepSeek-V4.1-Flash"
+
+    future = provider_model_capabilities("deepseek-v9-turbo", "https://api.deepseek.com/v1")
+    assert future.supports_thinking is True
+    assert future.supports_reasoning_effort is True
+    assert future.version is None  # 未收录的元数据回落空，不编造
+
+    assert provider_model_capabilities(
+        "glm-5.3-flash", "https://open.bigmodel.cn/api/paas/v4"
+    ).reasoning_efforts == ["low", "high", "max"]
 
 
 def test_deepseek_capabilities_include_tool_call_protocol_requirements():
@@ -276,7 +297,7 @@ def test_openai_provider_maps_commit_id_to_idempotency_header():
 
 def test_legacy_deepseek_adapter_uses_v4_and_preserves_non_thinking_default():
     adapter = DeepSeekAdapter(api_key="test-key", model_name="deepseek-chat")
-    assert adapter.get_model_name() == "deepseek-v4-flash"
+    assert adapter.get_model_name() == "deepseek-flash"
     parameters = adapter._adapt_parameters(
         temperature=0.7,
         max_tokens=512,

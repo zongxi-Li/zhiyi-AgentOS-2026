@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     # DeepSeek 配置（文本生成主引擎，速度快）
     DEEPSEEK_API_KEY: str = ""  # DeepSeek API密钥，从 https://platform.deepseek.com/ 获取
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"  # DeepSeek API基础URL
-    DEEPSEEK_MODEL: str = "deepseek-v4-flash"  # DeepSeek模型名称
+    DEEPSEEK_MODEL: str = "deepseek-flash"  # DeepSeek模型名称（官方 2026-09 起推荐名，旧名 v4-flash 由 legacy 表归一）
     DEEPSEEK_ENABLED: bool = True  # 是否启用DeepSeek
 
     # GLM / 智谱配置（OpenAI 兼容接口）

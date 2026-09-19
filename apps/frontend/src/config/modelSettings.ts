@@ -1,3 +1,5 @@
+import { apiUrl } from '@/platform'
+
 export type ModelProviderId = 'system' | 'qwen' | 'deepseek' | 'glm' | 'openai' | 'custom'
 export type ThinkingMode = 'disabled' | 'standard' | 'deep'
 export const GLM_REASONING_EFFORTS = ['low', 'high', 'max'] as const
@@ -33,43 +35,44 @@ export interface ModelSettings {
 
 export const MODEL_SETTINGS_KEY = 'kinlin.model_settings'
 export const MODEL_SETTINGS_EVENT = 'kinlin-model-settings-change'
-export const SYSTEM_FALLBACK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
 
+// 模型清单不在此硬编码：system 供应商由 GET /ai/chat/models 动态下发，
+// 其余供应商由用户在设置页自行填写（官方上新/改名零前端改动）。
 export const modelProviderPresets: ModelProviderPreset[] = [
   {
     id: 'system',
     name: '系统默认',
-    description: '使用服务端环境变量中已配置的模型',
+    description: '使用服务端当前激活供应商的模型目录',
     baseUrl: '',
-    models: [...SYSTEM_FALLBACK_MODELS]
+    models: []
   },
   {
     id: 'qwen',
     name: '通义千问',
     description: '阿里云百炼 OpenAI 兼容接口',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: ['qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash']
+    models: []
   },
   {
     id: 'deepseek',
     name: 'DeepSeek',
     description: 'DeepSeek 官方 OpenAI 兼容接口',
     baseUrl: 'https://api.deepseek.com/v1',
-    models: ['deepseek-v4-flash', 'deepseek-v4-pro']
+    models: []
   },
   {
     id: 'glm',
     name: 'GLM / 智谱',
     description: '智谱 AI 官方 OpenAI 兼容接口',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    models: ['glm-5.3-flash']
+    models: []
   },
   {
     id: 'openai',
     name: 'OpenAI 兼容',
     description: 'OpenAI 官方或兼容 Chat Completions 的服务',
     baseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-5.2', 'gpt-5-mini']
+    models: []
   },
   {
     id: 'custom',
@@ -86,14 +89,88 @@ export const thinkingOptions: Array<{ value: ThinkingMode; label: string; shortL
   { value: 'deep', label: '深度思考', shortLabel: '深度' }
 ]
 
-export const glmReasoningOptions: Array<{ value: GlmReasoningEffort; label: string; shortLabel: string }> = [
-  { value: 'low', label: 'low（较低思考强度）', shortLabel: 'low' },
-  { value: 'high', label: 'high（较高思考强度）', shortLabel: 'high' },
-  { value: 'max', label: 'max（最高思考强度）', shortLabel: 'max' }
-]
+// 已知档位的展示文案；未知档位直接展示原始值。
+const EFFORT_LABELS: Record<string, string> = {
+  low: 'low（较低思考强度）',
+  high: 'high（较高思考强度）',
+  max: 'max（最高思考强度）'
+}
 
-export function isGlmAlwaysThinkingModel(model: string): boolean {
-  return model.trim().toLowerCase() === 'glm-5.3-flash'
+// ---- 服务端能力元数据驱动（GET /ai/chat/models 与 /ai/chat/model-capabilities） ----
+
+export interface ModelCapability {
+  thinkingModes: ThinkingMode[]
+  alwaysThinking: boolean
+  supportsReasoningEffort: boolean
+  reasoningEfforts: string[]
+  contextWindow?: number | null
+}
+
+export interface ReasoningOption {
+  value: ThinkingMode | GlmReasoningEffort
+  label: string
+  shortLabel: string
+  kind: 'effort' | 'thinking'
+}
+
+const ALL_THINKING_MODES: ThinkingMode[] = ['disabled', 'standard', 'deep']
+
+export function capabilityFromPayload(payload: unknown): ModelCapability | null {
+  if (!payload || typeof payload !== 'object') return null
+  const raw = payload as Record<string, unknown>
+  const modes = Array.isArray(raw.thinkingModes)
+    ? raw.thinkingModes.filter((mode): mode is ThinkingMode => ALL_THINKING_MODES.includes(mode as ThinkingMode))
+    : []
+  const efforts = Array.isArray(raw.reasoningEfforts)
+    ? raw.reasoningEfforts.filter((effort): effort is string => typeof effort === 'string' && Boolean(effort.trim()))
+    : []
+  if (!modes.length && !efforts.length) return null
+  return {
+    thinkingModes: modes,
+    alwaysThinking: raw.alwaysThinking === true,
+    supportsReasoningEffort: raw.supportsReasoningEffort === true,
+    reasoningEfforts: efforts
+  }
+}
+
+export function reasoningOptionsFromCapability(capability: ModelCapability | null): ReasoningOption[] {
+  // 不可关思考的模型（如 GLM 5.3 系）语义是"档位"而非"开关"，按服务端下发的
+  // reasoningEfforts 渲染；其余按思考开关三档渲染（服务端会按供应商纠正参数）。
+  if (capability && capability.alwaysThinking && capability.reasoningEfforts.length) {
+    return capability.reasoningEfforts.map(effort => ({
+      value: effort as GlmReasoningEffort,
+      kind: 'effort' as const,
+      label: EFFORT_LABELS[effort] || effort,
+      shortLabel: effort
+    }))
+  }
+  const modes = capability?.thinkingModes?.length
+    ? capability.thinkingModes
+    : ALL_THINKING_MODES
+  return thinkingOptions
+    .filter(option => modes.includes(option.value))
+    .map(option => ({ ...option, kind: 'thinking' as const }))
+}
+
+export function isEffortKindOption(options: ReasoningOption[]): boolean {
+  return options.length > 0 && options.every(option => option.kind === 'effort')
+}
+
+export async function fetchModelCapability(model: string, baseUrl = ''): Promise<ModelCapability | null> {
+  const trimmed = model.trim()
+  if (!trimmed) return null
+  const params = new URLSearchParams({ model: trimmed })
+  if (baseUrl.trim()) params.set('base_url', baseUrl.trim())
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(apiUrl(`/ai/chat/model-capabilities?${params.toString()}`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    })
+    if (!response.ok) return null
+    return capabilityFromPayload(await response.json())
+  } catch {
+    return null
+  }
 }
 
 function migrateReasoningEffort(value: unknown): GlmReasoningEffort {
@@ -106,21 +183,11 @@ function thinkingModeForGlmEffort(effort: GlmReasoningEffort): ThinkingMode {
   return effort === 'low' ? 'standard' : 'deep'
 }
 
-const LEGACY_MODEL_ALIASES: Record<string, string> = {
-  'deepseek-chat': 'deepseek-v4-flash',
-  'deepseek-reasoner': 'deepseek-v4-flash'
-}
-
-function migrateModel(model: string): string {
-  return LEGACY_MODEL_ALIASES[model] || model
-}
-
-function migrateThinkingMode(value: unknown, legacyModel = ''): ThinkingMode {
+function migrateThinkingMode(value: unknown): ThinkingMode {
   if (value === 'disabled' || value === 'standard' || value === 'deep') return value
   if (value === 'off') return 'disabled'
   if (value === 'low' || value === 'medium') return 'standard'
   if (value === 'high' || value === 'max' || value === 'xhigh') return 'deep'
-  if (legacyModel === 'deepseek-reasoner') return 'standard'
   return 'disabled'
 }
 
@@ -129,8 +196,8 @@ export function getDefaultModelSettings(): ModelSettings {
     provider: 'system',
     apiKey: '',
     baseUrl: '',
-    models: [...SYSTEM_FALLBACK_MODELS],
-    selectedModel: SYSTEM_FALLBACK_MODELS[0],
+    models: [],
+    selectedModel: '',
     thinkingMode: 'disabled'
   }
 }
@@ -144,34 +211,29 @@ export function loadModelSettings(): ModelSettings {
     const provider = modelProviderPresets.some(item => item.id === parsed.provider)
       ? parsed.provider as ModelProviderId
       : fallback.provider
-    const storedModels = Array.isArray(parsed.models)
-      ? parsed.models
-        .filter(model => typeof model === 'string' && model.trim())
-        .map(model => migrateModel(model.trim()))
-      : fallback.models
-    const models = provider === 'system' && (
-      storedModels.length === 0 || storedModels.includes('系统默认')
-    )
-      ? [...SYSTEM_FALLBACK_MODELS]
-      : [...new Set(storedModels)]
-    const legacySelectedModel = parsed.selectedModel?.trim() || ''
-    const storedSelectedModel = migrateModel(legacySelectedModel)
-    const selectedModel = models.includes(storedSelectedModel)
-      ? storedSelectedModel
-      : models[0] || fallback.selectedModel
+    // system 供应商的清单一律以服务端目录为准，旧的本地残留（含"系统默认"占位）清空重拉。
+    const storedModels = provider === 'system'
+      ? []
+      : Array.isArray(parsed.models)
+        ? parsed.models.filter(model => typeof model === 'string' && model.trim())
+        : []
+    const models = [...new Set(storedModels)]
+    const selectedModel = parsed.selectedModel?.trim() && models.includes(parsed.selectedModel.trim())
+      ? parsed.selectedModel.trim()
+      : models[0] || ''
 
-    const reasoningEffort = isGlmAlwaysThinkingModel(selectedModel)
+    const reasoningEffort = parsed.reasoningEffort
       ? migrateReasoningEffort(parsed.reasoningEffort)
       : undefined
     return {
       ...fallback,
       ...parsed,
       provider,
-      models: models.length ? models : fallback.models,
+      models,
       selectedModel,
       thinkingMode: reasoningEffort
         ? thinkingModeForGlmEffort(reasoningEffort)
-        : migrateThinkingMode(parsed.thinkingMode ?? parsed.reasoningEffort, legacySelectedModel),
+        : migrateThinkingMode(parsed.thinkingMode ?? parsed.reasoningEffort),
       reasoningEffort
     }
   } catch {
@@ -186,7 +248,7 @@ export function saveModelSettings(settings: ModelSettings): void {
     ...(selectedModel ? [selectedModel] : [])
   ])]
   const providerConnections = { ...(settings.providerConnections || {}) }
-  const normalizedReasoningEffort = isGlmAlwaysThinkingModel(selectedModel)
+  const normalizedReasoningEffort = settings.reasoningEffort
     ? migrateReasoningEffort(settings.reasoningEffort)
     : undefined
   const normalizedThinkingMode = normalizedReasoningEffort
@@ -199,9 +261,7 @@ export function saveModelSettings(settings: ModelSettings): void {
       models,
       selectedModel,
       thinkingMode: normalizedThinkingMode,
-      ...(isGlmAlwaysThinkingModel(selectedModel)
-        ? { reasoningEffort: normalizedReasoningEffort }
-        : {})
+      ...(normalizedReasoningEffort ? { reasoningEffort: normalizedReasoningEffort } : {})
     }
   }
   const normalized: ModelSettings = {
@@ -228,7 +288,7 @@ export function applyProviderPreset(settings: ModelSettings, provider: ModelProv
       models: [...settings.models],
       selectedModel: settings.selectedModel.trim(),
       thinkingMode: settings.thinkingMode,
-      ...(isGlmAlwaysThinkingModel(settings.selectedModel)
+      ...(settings.reasoningEffort
         ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) }
         : {})
     }
@@ -238,11 +298,12 @@ export function applyProviderPreset(settings: ModelSettings, provider: ModelProv
   const selectedModel = savedConnection?.selectedModel && models.includes(savedConnection.selectedModel)
     ? savedConnection.selectedModel
     : models[0] || ''
-  const reasoningEffort = isGlmAlwaysThinkingModel(selectedModel)
-    ? migrateReasoningEffort(savedConnection?.reasoningEffort || settings.reasoningEffort)
+  const reasoningEffort = savedConnection?.reasoningEffort || settings.reasoningEffort
+  const normalizedReasoningEffort = reasoningEffort
+    ? migrateReasoningEffort(reasoningEffort)
     : undefined
-  const thinkingMode = reasoningEffort
-    ? thinkingModeForGlmEffort(reasoningEffort)
+  const thinkingMode = normalizedReasoningEffort
+    ? thinkingModeForGlmEffort(normalizedReasoningEffort)
     : savedConnection?.thinkingMode || settings.thinkingMode
   return {
     ...settings,
@@ -252,7 +313,7 @@ export function applyProviderPreset(settings: ModelSettings, provider: ModelProv
     selectedModel,
     thinkingMode,
     apiKey: savedConnection?.apiKey || '',
-    reasoningEffort,
+    reasoningEffort: normalizedReasoningEffort,
     providerConnections
   }
 }
@@ -262,9 +323,7 @@ export function toModelRequestSettings(settings: ModelSettings) {
     return {
       model: settings.selectedModel === '系统默认' ? undefined : settings.selectedModel,
       thinkingMode: settings.thinkingMode,
-      ...(isGlmAlwaysThinkingModel(settings.selectedModel)
-        ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) }
-        : {})
+      ...(settings.reasoningEffort ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) } : {})
     }
   }
   return {
@@ -272,8 +331,6 @@ export function toModelRequestSettings(settings: ModelSettings) {
     baseUrl: settings.baseUrl,
     apiKey: settings.apiKey,
     thinkingMode: settings.thinkingMode,
-    ...(isGlmAlwaysThinkingModel(settings.selectedModel)
-      ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) }
-      : {})
+    ...(settings.reasoningEffort ? { reasoningEffort: migrateReasoningEffort(settings.reasoningEffort) } : {})
   }
 }

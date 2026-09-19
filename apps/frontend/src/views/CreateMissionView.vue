@@ -114,7 +114,7 @@
                 </div>
                 <div class="advanced-config__grid">
                   <label class="advanced-field">
-                    <span>{{ usesGlmReasoningEffort ? 'reasoning_effort' : 'Thinking strength' }}<small v-if="usesGlmReasoningEffort">GLM-5.3-Flash · low / high / max</small></span>
+                    <span>{{ usesEffortOptions ? 'reasoning_effort' : 'Thinking strength' }}<small v-if="usesEffortOptions">{{ activeModel }} · {{ effortOptions.join(' / ') }}</small></span>
                     <select v-model="thinkingSelection" aria-label="Thinking strength">
                       <option v-for="option in reasoningOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                     </select>
@@ -196,11 +196,14 @@ import { pluginUiExtensions } from '@/plugins'
 import { apiUrl } from '@/platform'
 import {
   MODEL_SETTINGS_EVENT,
-  glmReasoningOptions,
-  isGlmAlwaysThinkingModel,
+  capabilityFromPayload,
+  fetchModelCapability,
+  isEffortKindOption,
   loadModelSettings,
+  reasoningOptionsFromCapability,
   thinkingOptions,
   type GlmReasoningEffort,
+  type ModelCapability,
   type ModelSettings,
   type ThinkingMode
 } from '@/config/modelSettings'
@@ -225,14 +228,21 @@ const activeModel = computed(() => (
     ? serverSystemModel.value
     : modelSettings.value.selectedModel
 ))
-const usesGlmReasoningEffort = computed(() => isGlmAlwaysThinkingModel(activeModel.value))
-const reasoningOptions = computed(() => usesGlmReasoningEffort.value ? glmReasoningOptions : thinkingOptions)
+const modelCapability = ref<ModelCapability | null>(null)
+const reasoningOptions = computed(() => reasoningOptionsFromCapability(modelCapability.value))
+const usesEffortOptions = computed(() => isEffortKindOption(reasoningOptions.value))
+const effortOptions = computed(() => reasoningOptions.value.map(option => String(option.value)))
 const thinkingSelection = computed<GlmReasoningEffort | ThinkingMode>({
-  get: () => usesGlmReasoningEffort.value
-    ? draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'
-    : draft.value.thinkingMode,
+  get: () => {
+    if (usesEffortOptions.value) {
+      const stored = draft.value.reasoningEffort || modelSettings.value.reasoningEffort
+      const matched = stored && effortOptions.value.includes(stored) ? stored : effortOptions.value[effortOptions.value.length - 1]
+      return (matched || 'max') as GlmReasoningEffort
+    }
+    return draft.value.thinkingMode
+  },
   set: value => {
-    if (usesGlmReasoningEffort.value) {
+    if (usesEffortOptions.value) {
       const effort = value as GlmReasoningEffort
       draft.value.reasoningEffort = effort
       draft.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
@@ -245,7 +255,7 @@ const thinkingSelection = computed<GlmReasoningEffort | ThinkingMode>({
 
 type AdvancedPreset = 'fast' | 'balanced' | 'deep' | 'custom'
 const advancedPreset = computed<AdvancedPreset>(() => {
-  if (usesGlmReasoningEffort.value) {
+  if (usesEffortOptions.value) {
     const effort = draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'
     if (effort === 'low' && !draft.value.webSearchEnabled && draft.value.planningDiversity === 'stable') return 'fast'
     if (effort === 'high' && draft.value.webSearchEnabled && draft.value.planningDiversity === 'balanced') return 'balanced'
@@ -263,7 +273,7 @@ const planningModeDescription = computed(() => draft.value.planningMode === 'dyn
   ? '根据任务目标动态拆解，并选择当前可用能力。'
   : '优先复用已验证模板，未命中时自动切换动态规划。')
 const advancedSettingsSummary = computed(() => [
-  usesGlmReasoningEffort.value
+  usesEffortOptions.value
     ? `GLM reasoning_effort: ${draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'}`
     : draft.value.thinkingMode === 'disabled' ? '关闭思考' : draft.value.thinkingMode === 'standard' ? '标准思考' : '深度思考',
   draft.value.webSearchEnabled ? '联网' : '仅本地',
@@ -316,8 +326,12 @@ const automaticMissionTitle = (objective: string) => {
 
 const applyAdvancedPreset = (preset: AdvancedPreset) => {
   draft.value.capabilityProfile = preset === 'fast' ? 'standard' : preset === 'deep' ? 'full' : 'auto'
-  if (usesGlmReasoningEffort.value) {
-    const effort: GlmReasoningEffort = preset === 'fast' ? 'low' : preset === 'balanced' ? 'high' : 'max'
+  if (usesEffortOptions.value) {
+    // 档位集合来自服务端能力元数据：预设值不在集合内时收敛到最近可用档。
+    const pick = (preferred: string) => effortOptions.value.includes(preferred)
+      ? preferred
+      : effortOptions.value[effortOptions.value.length - 1] || 'max'
+    const effort: GlmReasoningEffort = (preset === 'fast' ? pick('low') : preset === 'balanced' ? pick('high') : pick('max')) as GlmReasoningEffort
     draft.value.reasoningEffort = effort
     draft.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
     draft.value.webSearchEnabled = preset !== 'fast'
@@ -347,7 +361,7 @@ const syncAdvancedConfigState = (event: Event) => {
 }
 
 const syncDraftRuntimeSelection = () => {
-  if (usesGlmReasoningEffort.value) {
+  if (usesEffortOptions.value) {
     const effort = draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'
     draft.value.reasoningEffort = effort
     draft.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
@@ -365,7 +379,7 @@ const loadSystemModel = async (): Promise<void> => {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined
     })
     if (!response.ok || requestId !== systemModelsRequest || modelSettings.value.provider !== 'system') return
-    const data = await response.json() as { models?: unknown; default_model?: unknown }
+    const data = await response.json() as { models?: unknown; default_model?: unknown; capabilities?: unknown }
     const models = Array.isArray(data.models)
       ? data.models.filter((model): model is string => typeof model === 'string' && Boolean(model.trim()))
       : []
@@ -374,6 +388,10 @@ const loadSystemModel = async (): Promise<void> => {
       : models[0]
     if (defaultModel && requestId === systemModelsRequest && modelSettings.value.provider === 'system') {
       serverSystemModel.value = defaultModel
+      const entry = data.capabilities && typeof data.capabilities === 'object'
+        ? (data.capabilities as Record<string, unknown>)[defaultModel]
+        : undefined
+      modelCapability.value = capabilityFromPayload(entry)
       syncDraftRuntimeSelection()
     }
   } catch {
@@ -391,7 +409,15 @@ const syncModelSettings = (event: Event) => {
   if (modelSettings.value.provider === 'system') void loadSystemModel()
 }
 
-watch(activeModel, syncDraftRuntimeSelection, { immediate: true })
+watch(activeModel, (model, previous) => {
+  syncDraftRuntimeSelection()
+  if (model && model !== previous && modelSettings.value.provider !== 'system') {
+    // 非系统供应商：按需单查模型能力（system 由 loadSystemModel 的目录带回）。
+    void fetchModelCapability(model, modelSettings.value.baseUrl).then(capability => {
+      if (activeModel.value === model) modelCapability.value = capability
+    })
+  }
+}, { immediate: true })
 onMounted(() => {
   window.addEventListener(MODEL_SETTINGS_EVENT, syncModelSettings)
   void loadSystemModel()

@@ -6,18 +6,77 @@ from typing import Any, Dict, List, Optional
 from app.llm.contracts import ProviderModelCapabilities, ThinkingMode
 
 
-DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
 DEEPSEEK_LEGACY_MODELS = {
     "deepseek-chat": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.DISABLED),
     "deepseek-reasoner": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.STANDARD),
+    # 官方 2026-09 起推荐 deepseek-flash；旧名仍被服务端接受，此处只做归一
+    "deepseek-v4-flash": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.DISABLED),
 }
 GLM_5_3_FLASH_REASONING_EFFORTS = ("low", "high", "max")
+
+# ---- 供应商族判定（品牌级，不含模型版本名；官方上新/改名无需改代码） ----
+
+_PROVIDER_ID_ALIASES = {
+    "deepseek": "deepseek",
+    "glm": "glm",
+    "zhipu": "glm",
+    "zhipuai": "glm",
+    "qwen": "qwen",
+    "dashscope": "qwen",
+}
+_PROVIDER_OFFICIAL_DOMAINS = (
+    ("api.deepseek.com", "deepseek"),
+    ("bigmodel.cn", "glm"),
+    ("dashscope.aliyuncs.com", "qwen"),
+)
+
+
+def provider_family(provider: str = "", base_url: str = "", model: str = "") -> str:
+    """判定供应商族：显式供应商标识 > 官方域名 > 模型名品牌提示。
+
+    模型名只作为第三方中转端点的兜底提示，且只匹配品牌（deepseek/glm-/qwen），
+    不匹配任何版本号或具体型号——具体模型清单始终以供应商 /models 目录为准。
+    """
+    family = _PROVIDER_ID_ALIASES.get((provider or "").strip().lower())
+    if family:
+        return family
+    normalized_url = (base_url or "").lower()
+    for domain, domain_family in _PROVIDER_OFFICIAL_DOMAINS:
+        if domain in normalized_url:
+            return domain_family
+    normalized_model = (model or "").strip().lower()
+    if "deepseek" in normalized_model:
+        return "deepseek"
+    if "glm-" in normalized_model:
+        return "glm"
+    if "qwen" in normalized_model:
+        return "qwen"
+    return ""
+
+
+# ---- 每模型官方元数据覆盖（可选，查不到回落供应商级默认） ----
 
 # Official context windows (tokens) from docs.bigmodel.cn. Only models with a
 # published figure are listed; unknown GLM models stay None so the UI can say
 # "上限未声明" instead of inventing a ceiling.
 GLM_CONTEXT_WINDOWS = {
     "glm-5.3-flash": 1_048_576,
+}
+
+# 不可关思考等供应商目录无法表达的特例。未收录的 GLM 模型回落"可关思考"
+# 的通用语义，新模型名自动兼容。
+GLM_MODEL_OVERRIDES = {
+    "glm-5.3-flash": {
+        "always_thinking": True,
+        "reasoning_efforts": GLM_5_3_FLASH_REASONING_EFFORTS,
+    },
+}
+
+# version 展示名 / 上下文窗口 / 输出上限（仅官方域名下采信）。
+DEEPSEEK_MODEL_METADATA = {
+    "deepseek-flash": ("DeepSeek-V4.1-Flash", 1_000_000, 384_000),
+    "deepseek-v4-pro": ("DeepSeek-V4-Pro-0813", 1_000_000, 384_000),
 }
 
 _THINKING_MODE_ALIASES = {
@@ -96,12 +155,18 @@ def normalize_model_request(
     )
 
 
-def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModelCapabilities:
+def provider_model_capabilities(
+    model: str,
+    base_url: str = "",
+    provider: str = "",
+) -> ProviderModelCapabilities:
     normalized_model = normalize_deepseek_model(model).lower()
     normalized_url = (base_url or "").lower()
+    family = provider_family(provider=provider, base_url=base_url, model=model)
 
-    if normalized_model.startswith("glm-") or "bigmodel.cn" in normalized_url:
-        always_thinking = normalized_model.startswith("glm-5.3-flash")
+    if family == "glm":
+        overrides = GLM_MODEL_OVERRIDES.get(normalized_model, {})
+        always_thinking = bool(overrides.get("always_thinking", False))
         return ProviderModelCapabilities(
             supports_thinking=True,
             always_thinking=always_thinking,
@@ -115,6 +180,9 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
                 }
             ),
             supports_reasoning_effort=always_thinking,
+            reasoning_efforts=(
+                list(overrides["reasoning_efforts"]) if always_thinking and overrides.get("reasoning_efforts") else None
+            ),
             supports_tools=True,
             supports_json_object=True,
             supports_json_schema=False,
@@ -127,11 +195,12 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
             context_window_tokens=GLM_CONTEXT_WINDOWS.get(normalized_model),
         )
 
-    if normalized_model.startswith("deepseek-v4") or "api.deepseek.com" in normalized_url:
-        official_metadata = {
-            "deepseek-v4-flash": ("DeepSeek-V4-Flash-0731", 1_000_000, 384_000),
-            "deepseek-v4-pro": ("DeepSeek-V4-Pro-0813", 1_000_000, 384_000),
-        }.get(normalized_model) if "api.deepseek.com" in normalized_url else None
+    if family == "deepseek":
+        official_metadata = (
+            DEEPSEEK_MODEL_METADATA.get(normalized_model)
+            if "api.deepseek.com" in normalized_url
+            else None
+        )
         return ProviderModelCapabilities(
             supports_thinking=True,
             supported_thinking_modes={
@@ -140,6 +209,7 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
                 ThinkingMode.DEEP,
             },
             supports_reasoning_effort=True,
+            reasoning_efforts=["high", "max"],
             supports_tools=True,
             supports_tool_choice_in_thinking=False,
             requires_reasoning_content_for_tool_calls=True,
@@ -154,7 +224,7 @@ def provider_model_capabilities(model: str, base_url: str = "") -> ProviderModel
             max_output_tokens=official_metadata[2] if official_metadata else None,
         )
 
-    if "dashscope.aliyuncs.com" in normalized_url and "qwen3" in normalized_model:
+    if family == "qwen" and "qwen3" in normalized_model:
         return ProviderModelCapabilities(
             supports_thinking=True,
             supported_thinking_modes={
@@ -195,9 +265,10 @@ def adapt_chat_completion_parameters(
     base_url: str,
     thinking_mode: str | ThinkingMode | None,
     parameters: Optional[Dict[str, Any]] = None,
+    provider: str = "",
 ) -> AdaptedProviderRequest:
     mode = normalize_thinking_mode(thinking_mode)
-    capabilities = provider_model_capabilities(model, base_url)
+    capabilities = provider_model_capabilities(model, base_url, provider)
     request = dict(parameters or {})
     reasons: List[str] = []
 
@@ -215,9 +286,9 @@ def adapt_chat_completion_parameters(
         else:
             raise ValueError(f"Model {model} does not support thinking mode {mode.value}")
 
-    normalized_model = normalize_deepseek_model(model).lower()
+    family = provider_family(provider=provider, base_url=base_url, model=model)
     effective_effort: Optional[str] = None
-    if normalized_model.startswith("deepseek-v4") or "api.deepseek.com" in base_url.lower():
+    if family == "deepseek":
         extra_body = dict(request.get("extra_body") or {})
         if mode == ThinkingMode.DISABLED:
             extra_body["thinking"] = {"type": "disabled"}
@@ -236,14 +307,15 @@ def adapt_chat_completion_parameters(
             if not capabilities.supports_tool_choice_in_thinking:
                 request.pop("tool_choice", None)
         request["extra_body"] = extra_body
-    elif normalized_model.startswith("glm-") or "bigmodel.cn" in base_url.lower():
+    elif family == "glm":
         extra_body = dict(request.get("extra_body") or {})
         if capabilities.always_thinking:
+            allowed_efforts = tuple(capabilities.reasoning_efforts or GLM_5_3_FLASH_REASONING_EFFORTS)
             requested_effort = request.get("reasoning_effort")
             if requested_effort is not None:
                 requested_effort = str(requested_effort).strip().lower()
-                if requested_effort not in GLM_5_3_FLASH_REASONING_EFFORTS:
-                    allowed = ", ".join(GLM_5_3_FLASH_REASONING_EFFORTS)
+                if requested_effort not in allowed_efforts:
+                    allowed = ", ".join(allowed_efforts)
                     raise ValueError(
                         f"Model {model} only supports reasoning_effort: {allowed}"
                     )
@@ -260,7 +332,7 @@ def adapt_chat_completion_parameters(
         else:
             extra_body["thinking"] = {"type": "enabled" if mode != ThinkingMode.DISABLED else "disabled"}
         request["extra_body"] = extra_body
-    elif "dashscope.aliyuncs.com" in base_url.lower() and "qwen3" in normalized_model:
+    elif family == "qwen" and "qwen3" in normalize_deepseek_model(model).lower():
         extra_body = dict(request.get("extra_body") or {})
         if mode == ThinkingMode.DISABLED:
             extra_body["enable_thinking"] = False
@@ -271,7 +343,7 @@ def adapt_chat_completion_parameters(
             # one; DashScope/API defaults remain authoritative.
             extra_body.pop("thinking_budget", None)
         request["extra_body"] = extra_body
-    elif normalized_model.startswith(("o1", "o3", "o4", "gpt-5")):
+    elif (model or "").strip().lower().startswith(("o1", "o3", "o4", "gpt-5")):
         if mode != ThinkingMode.DISABLED:
             effective_effort = "high" if mode == ThinkingMode.DEEP else "medium"
             request["reasoning_effort"] = effective_effort
@@ -290,12 +362,15 @@ __all__ = [
     "AdaptedProviderRequest",
     "DEEPSEEK_DEFAULT_MODEL",
     "DEEPSEEK_LEGACY_MODELS",
+    "DEEPSEEK_MODEL_METADATA",
     "GLM_5_3_FLASH_REASONING_EFFORTS",
     "GLM_CONTEXT_WINDOWS",
+    "GLM_MODEL_OVERRIDES",
     "NormalizedModelRequest",
     "adapt_chat_completion_parameters",
     "normalize_deepseek_model",
     "normalize_model_request",
     "normalize_thinking_mode",
+    "provider_family",
     "provider_model_capabilities",
 ]
