@@ -13,7 +13,7 @@ import uvicorn
 import logging
 
 from fastapi.exceptions import RequestValidationError
-from app.api import chat, tts, agentos_v2
+from app.api import chat, tts, agentos_v2, llm_admin
 from app.paths import APP_DATA_DIR
 from app.integrations.model_adapter import configure_model_adapter
 from app.integrations.tool_adapter import configure_tool_adapter
@@ -107,6 +107,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 # 注册路由
 app.include_router(chat.router, prefix="/ai", tags=["AI"])
 app.include_router(tts.router, prefix="/ai", tags=["TTS"])
+app.include_router(llm_admin.router, prefix="/ai", tags=["AI"])
 app.include_router(
     agentos_v2.create_router(runtime, coordinator),
     prefix="/ai",

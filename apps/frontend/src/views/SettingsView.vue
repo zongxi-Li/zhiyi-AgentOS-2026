@@ -250,9 +250,62 @@
             </el-select>
           </el-form-item>
         </div>
-        <div v-else class="system-provider-note">
-          <el-icon><InfoFilled /></el-icon>
-          <span>继续使用服务端配置的默认模型，无需在浏览器中填写 API Key。</span>
+        <div v-else class="server-provider-panel">
+          <div class="system-provider-note">
+            <el-icon><InfoFilled /></el-icon>
+            <span>服务端供应商对新对话与新任务即时生效，无需重启；切换影响整个部署。</span>
+          </div>
+          <div class="server-profile-list" v-loading="serverProfilesLoading">
+            <div
+              v-for="profile in serverProfiles"
+              :key="profile.name"
+              class="server-profile-item"
+              :class="{ active: profile.active, unusable: !profile.usable }"
+              role="radio"
+              :aria-checked="profile.active"
+              @click="switchServerProfile(profile)"
+            >
+              <span class="provider-mark">{{ profile.name.slice(0, 1) }}</span>
+              <span class="provider-copy">
+                <strong>{{ profile.name }}</strong>
+                <small>{{ profile.provider }} · {{ profile.model }} · {{ profileHost(profile.base_url) }}</small>
+              </span>
+              <span class="server-profile-state">
+                <span v-if="serverTestResults[profile.name]" class="server-test-result" :class="{ ok: serverTestResults[profile.name].ok }">{{ serverTestResults[profile.name].text }}</span>
+                <el-tag v-if="profile.active" size="small" type="success">当前</el-tag>
+                <el-tag v-else-if="!profile.usable" size="small" type="info">缺密钥</el-tag>
+                <el-button size="small" text :disabled="serverActionBusy" @click.stop="testServerProfile(profile)">测试</el-button>
+              </span>
+            </div>
+          </div>
+          <div class="server-profile-actions">
+            <el-button size="small" @click="showAddServerProfile = !showAddServerProfile">新增供应商</el-button>
+          </div>
+          <div v-if="showAddServerProfile" class="connection-form setting-card">
+            <el-form-item label="名称" required>
+              <el-input v-model="serverProfileDraft.name" placeholder="例如 glm-payg" />
+            </el-form-item>
+            <el-form-item label="类型" required>
+              <el-select v-model="serverProfileDraft.provider" class="wide-control">
+                <el-option v-for="p in serverProviderTypes" :key="p.value" :label="p.label" :value="p.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="API 地址" required>
+              <el-input v-model="serverProfileDraft.base_url" placeholder="https://open.bigmodel.cn/api/paas/v4" />
+            </el-form-item>
+            <el-form-item label="模型" required>
+              <el-input v-model="serverProfileDraft.model" placeholder="glm-5.3-flash" />
+            </el-form-item>
+            <el-form-item label="API Key" required>
+              <el-input v-model="serverProfileDraft.api_key" type="password" show-password autocomplete="off" placeholder="留空则改用下方密钥环境变量名" />
+            </el-form-item>
+            <el-form-item label="密钥环境变量名">
+              <el-input v-model="serverProfileDraft.api_key_env" placeholder="例如 GLM_API_KEY（支持 *_FILE 密钥文件）" />
+            </el-form-item>
+            <div class="server-profile-actions">
+              <el-button size="small" type="primary" :loading="serverActionBusy" @click="addServerProfile">保存到服务端</el-button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -311,6 +364,7 @@ import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { apiUrl } from '@/platform/api'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting } from '@element-plus/icons-vue'
 import { applyFontSize, useTheme } from '@/composables/useTheme'
@@ -535,12 +589,159 @@ onMounted(() => {
   loadSettings()
   modelSettings.value = loadModelSettings()
   void userStore.loadCurrentUser()
+  if (activeTab.value === 'model') void loadServerProfiles()
 })
 
 function selectProvider(provider: ModelProviderId): void {
   modelSettings.value = applyProviderPreset(modelSettings.value, provider)
   inlineHint.value = provider === 'system' ? '已选择服务端默认模型。' : '请检查 API Key 后保存设置。'
+  if (provider === 'system' && !serverProfiles.value.length) void loadServerProfiles()
 }
+
+// ---- 服务端供应商档案（热切换，无需重启） ----
+
+interface ServerProfile {
+  name: string
+  provider: string
+  base_url: string
+  model: string
+  key_source: string
+  usable: boolean
+  active: boolean
+}
+
+const serverProfiles = ref<ServerProfile[]>([])
+const serverProfilesLoading = ref(false)
+const serverActionBusy = ref(false)
+const showAddServerProfile = ref(false)
+const serverTestResults = ref<Record<string, { ok: boolean; text: string }>>({})
+const serverProviderTypes = [
+  { value: 'glm', label: '智谱 GLM' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'qwen', label: '通义千问' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容' }
+]
+const serverProfileDraft = ref({ name: '', provider: 'openai-compatible', base_url: '', model: '', api_key: '', api_key_env: '' })
+
+function profileHost(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+async function serverFetch(path: string, init?: RequestInit): Promise<Response> {
+  const token = localStorage.getItem('token')
+  return fetch(apiUrl(path), {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers
+    }
+  })
+}
+
+async function loadServerProfiles(): Promise<void> {
+  serverProfilesLoading.value = true
+  try {
+    const response = await serverFetch('/ai/llm/profiles')
+    if (!response.ok) return
+    const data = await response.json() as { profiles?: ServerProfile[] }
+    serverProfiles.value = Array.isArray(data.profiles) ? data.profiles : []
+  } catch {
+    // 服务端不可达时保持空列表，提示交给 el-loading 消失后的空态
+  } finally {
+    serverProfilesLoading.value = false
+  }
+}
+
+async function switchServerProfile(profile: ServerProfile): Promise<void> {
+  if (profile.active || !profile.usable || serverActionBusy.value) return
+  serverActionBusy.value = true
+  try {
+    const response = await serverFetch('/ai/llm/profiles/active', {
+      method: 'POST',
+      body: JSON.stringify({ name: profile.name })
+    })
+    const data = await response.json().catch(() => ({})) as { profiles?: ServerProfile[]; detail?: string }
+    if (!response.ok) {
+      inlineHint.value = data.detail || '切换失败，请稍后再试。'
+      return
+    }
+    serverProfiles.value = Array.isArray(data.profiles) ? data.profiles : []
+    serverTestResults.value = {}
+    inlineHint.value = `已切换到 ${profile.name}，新对话与新任务立即生效。`
+  } catch {
+    inlineHint.value = '切换失败，服务端不可达。'
+  } finally {
+    serverActionBusy.value = false
+  }
+}
+
+async function testServerProfile(profile: ServerProfile): Promise<void> {
+  if (serverActionBusy.value) return
+  serverActionBusy.value = true
+  serverTestResults.value = { ...serverTestResults.value, [profile.name]: { ok: true, text: '测试中…' } }
+  try {
+    const response = await serverFetch('/ai/llm/profiles/test', {
+      method: 'POST',
+      body: JSON.stringify({ name: profile.name })
+    })
+    const data = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; latency_ms?: number | null; detail?: string }
+    if (!response.ok) {
+      serverTestResults.value = { ...serverTestResults.value, [profile.name]: { ok: false, text: data.detail || '测试失败' } }
+      return
+    }
+    serverTestResults.value = {
+      ...serverTestResults.value,
+      [profile.name]: data.ok
+        ? { ok: true, text: `连通 ${data.latency_ms ?? '?'}ms` }
+        : { ok: false, text: data.error || '连通失败' }
+    }
+  } catch {
+    serverTestResults.value = { ...serverTestResults.value, [profile.name]: { ok: false, text: '服务端不可达' } }
+  } finally {
+    serverActionBusy.value = false
+  }
+}
+
+async function addServerProfile(): Promise<void> {
+  const draft = serverProfileDraft.value
+  if (!draft.name.trim() || !draft.base_url.trim() || !draft.model.trim()) {
+    inlineHint.value = '请完整填写名称、API 地址和模型。'
+    return
+  }
+  if (!draft.api_key.trim() && !draft.api_key_env.trim()) {
+    inlineHint.value = '请填写 API Key，或指定服务端已有的密钥环境变量名。'
+    return
+  }
+  serverActionBusy.value = true
+  try {
+    const response = await serverFetch('/ai/llm/profiles', {
+      method: 'POST',
+      body: JSON.stringify({ ...draft, name: draft.name.trim() })
+    })
+    const data = await response.json().catch(() => ({})) as { profiles?: ServerProfile[]; detail?: string }
+    if (!response.ok) {
+      inlineHint.value = data.detail || '保存失败，请检查填写内容。'
+      return
+    }
+    serverProfiles.value = Array.isArray(data.profiles) ? data.profiles : []
+    serverProfileDraft.value = { name: '', provider: 'openai-compatible', base_url: '', model: '', api_key: '', api_key_env: '' }
+    showAddServerProfile.value = false
+    inlineHint.value = '供应商已保存，点击对应卡片即可切换。'
+  } catch {
+    inlineHint.value = '保存失败，服务端不可达。'
+  } finally {
+    serverActionBusy.value = false
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'model' && !serverProfiles.value.length) void loadServerProfiles()
+})
 
 function ensureSelectedModel(models: string[]): void {
   if (!models.includes(modelSettings.value.selectedModel)) {
@@ -1117,6 +1318,63 @@ function ensureSelectedModel(models: string[]): void {
   background: var(--primary-fade);
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+.server-provider-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.server-profile-list {
+  display: grid;
+  gap: 8px;
+  min-height: 64px;
+}
+
+.server-profile-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-solid);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.server-profile-item:hover,
+.server-profile-item:focus-visible {
+  border-color: var(--border-hover);
+}
+
+.server-profile-item.active {
+  border-color: var(--primary-color);
+  background: var(--primary-fade);
+}
+
+.server-profile-item.unusable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.server-profile-state {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.server-test-result { font-size: 10px; }
+.server-test-result.ok { color: var(--success-color, #3aa66a); }
+
+.server-profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .settings-footer {

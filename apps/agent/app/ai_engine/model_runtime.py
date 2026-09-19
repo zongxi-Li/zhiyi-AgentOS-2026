@@ -36,6 +36,16 @@ REASONING_INSTRUCTIONS = {
 
 def _resolve_system_provider_config(model: str = "") -> tuple[str, str, str, str]:
     """Resolve the selected system provider without exposing credentials."""
+    # 零级配置：热切换的激活供应商档案优先；不可用时回落到既有环境变量逻辑。
+    from app.llm.profiles import resolve_active_profile
+
+    profile = resolve_active_profile()
+    if profile is not None:
+        effective_model = model.strip() or profile.model
+        if profile.provider == "deepseek":
+            effective_model = normalize_deepseek_model(effective_model)
+        return profile.provider, effective_model, profile.base_url, profile.resolved_api_key()
+
     from app.config import settings
 
     provider_settings = {

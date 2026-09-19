@@ -21,6 +21,20 @@ class LLMConfig:
         except ValueError:
             timeout_seconds = 120.0
 
+        # 零级配置：热切换的激活供应商档案优先于一切环境变量；
+        # 档案缺失或不可用时回落到既有环境变量逻辑，行为不变。
+        from app.llm.profiles import resolve_active_profile
+
+        profile = resolve_active_profile()
+        if profile is not None:
+            return cls(
+                provider=profile.provider,
+                base_url=profile.base_url,
+                api_key=profile.resolved_api_key(),
+                model=profile.model,
+                timeout_seconds=timeout_seconds,
+            )
+
         # 一级配置：显式的 AGENTOS_LLM_* 始终优先。
         provider = (os.getenv("AGENTOS_LLM_PROVIDER") or "").strip().lower()
         base_url = (os.getenv("AGENTOS_LLM_BASE_URL") or "").strip()
