@@ -28,6 +28,6 @@ defineProps<{
 .property-row + .property-row { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
 .property-row dt { overflow: hidden; color: var(--wb-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .property-row dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--wb-text); text-align: left; }
-.property-row dd.is-code { color: var(--wb-text-secondary); font: 10px/1.45 var(--font-mono, monospace); }
+.property-row dd.is-code { color: var(--sem-running); font: 10px/1.45 var(--font-mono, monospace); }
 .property-row dd.is-empty { color: var(--wb-text-muted); }
 </style>

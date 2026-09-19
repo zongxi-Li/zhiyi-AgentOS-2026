@@ -257,9 +257,9 @@ const formatNumber = (value: number) => {
   background: currentColor;
 }
 
-.status-chip.success { color: var(--success); background: var(--success-fade); }
-.status-chip.warning { color: var(--warning); background: var(--warning-fade); }
-.status-chip.danger { color: var(--danger); background: var(--danger-fade); }
+.status-chip.success { color: var(--sem-success); background: var(--sem-success-fade); }
+.status-chip.warning { color: var(--sem-waiting); background: var(--sem-waiting-fade); }
+.status-chip.danger { color: var(--sem-failed); background: var(--sem-failed-fade); }
 
 .inspector-empty {
   display: flex;

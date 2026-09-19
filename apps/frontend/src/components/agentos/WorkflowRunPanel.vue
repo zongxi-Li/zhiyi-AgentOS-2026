@@ -160,26 +160,30 @@ button:disabled {
   font-weight: 700;
 }
 
-.status-pill.running,
+.status-pill.running {
+  background: var(--sem-running-fade);
+  color: var(--sem-running);
+}
+
 .status-pill.retrying {
-  background: rgba(73, 107, 143, 0.12);
-  color: var(--info);
+  background: var(--sem-retry-fade);
+  color: var(--sem-retry);
 }
 
 .status-pill.waiting_review {
-  background: rgba(154, 116, 50, 0.12);
-  color: var(--warning);
+  background: var(--sem-waiting-fade);
+  color: var(--sem-waiting);
 }
 
 .status-pill.completed {
-  background: rgba(61, 118, 86, 0.12);
-  color: var(--success);
+  background: var(--sem-success-fade);
+  color: var(--sem-success);
 }
 
 .status-pill.failed,
 .status-pill.cancelled {
-  background: rgba(178, 74, 74, 0.12);
-  color: var(--danger);
+  background: var(--sem-failed-fade);
+  color: var(--sem-failed);
 }
 
 .meta-grid,

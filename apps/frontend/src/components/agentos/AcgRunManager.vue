@@ -500,13 +500,13 @@ onUnmounted(() => {
 .acg-run-item.selected:not(.active) { background: color-mix(in srgb, var(--primary-fade) 68%, transparent); color: var(--text-primary); }
 .acg-run-item.active::before { background: var(--primary-color); }
 .acg-run-item__status { width: 13px; height: 13px; margin-top: 1px; display: inline-grid; place-items: center; border: 1px solid var(--text-disabled); border-radius: 50%; background: var(--bg-card); color: var(--text-disabled); font-size: 9px; font-weight: 800; line-height: 1; }
-.status-active .acg-run-item__status { border-color: var(--primary-color); background: var(--primary-fade); color: var(--primary-color); animation: acg-status-pulse 1.8s ease-in-out infinite; }
+.status-active .acg-run-item__status { border-color: var(--sem-running); background: var(--sem-running-fade); color: var(--sem-running); animation: acg-status-pulse 1.8s ease-in-out infinite; }
 .status-active .acg-run-item__status::after { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
-.status-review .acg-run-item__status { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--bg-card)); color: var(--warning); }
+.status-review .acg-run-item__status { border-color: var(--sem-waiting); background: var(--sem-waiting-fade); color: var(--sem-waiting); }
 .status-review .acg-run-item__status::after { content: '!'; }
-.status-failed .acg-run-item__status { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--bg-card)); color: var(--danger); }
+.status-failed .acg-run-item__status { border-color: var(--sem-failed); background: var(--sem-failed-fade); color: var(--sem-failed); }
 .status-failed .acg-run-item__status::after { content: '\00d7'; }
-.status-completed .acg-run-item__status { border-color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--bg-card)); color: var(--success); }
+.status-completed .acg-run-item__status { border-color: var(--sem-success); background: var(--sem-success-fade); color: var(--sem-success); }
 .status-completed .acg-run-item__status::after { content: '\2713'; }
 
 @keyframes acg-status-pulse {

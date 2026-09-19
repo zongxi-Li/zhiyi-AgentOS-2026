@@ -59,6 +59,7 @@ import {
   releaseRunRuntimeStore
 } from '@/workbench/runtime/runtimeEvents'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
+import { statusSemanticTone } from '@/utils/statusSemantic'
 
 const props = defineProps<{
   registry: WorkbenchContributionRegistry
@@ -131,10 +132,13 @@ const inspectorSummary = computed(() => {
   const role = props.entry?.logicalRole || null
   const key = props.graphNode?.semanticTaskKey || props.entry?.semanticTaskKey || props.selectedSymbol?.semanticTaskKey || props.selectedSymbol?.subtitle || null
   const artifactCount = props.graphNode?.artifactCount ?? props.entry?.artifactCount ?? 0
-  const statusTone = status && ['completed', 'succeeded'].includes(status) ? 'success'
-    : status && ['failed', 'cancelled'].includes(status) ? 'danger'
-      : status && ['running', 'planning', 'executing', 'pending'].includes(status) ? 'active'
-        : 'muted'
+  const tone = statusSemanticTone(status)
+  const statusTone = tone === 'success' ? 'success'
+    : tone === 'failed' ? 'danger'
+      : tone === 'running' ? 'active'
+        : tone === 'waiting' ? 'waiting'
+          : tone === 'retry' ? 'retry'
+            : 'muted'
   const statusLabel: Record<string, string> = {
     completed: '已完成',
     succeeded: '已完成',
@@ -189,6 +193,10 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__status.is-danger i { background: var(--wb-danger); }
 .runtime-inspector__status.is-active { color: var(--wb-accent); border-color: color-mix(in srgb, var(--wb-accent) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-accent) 7%, transparent); }
 .runtime-inspector__status.is-active i { background: var(--wb-accent); }
+.runtime-inspector__status.is-waiting { color: var(--wb-warning); border-color: color-mix(in srgb, var(--wb-warning) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-warning) 7%, transparent); }
+.runtime-inspector__status.is-waiting i { background: var(--wb-warning); }
+.runtime-inspector__status.is-retry { color: var(--wb-retry); border-color: color-mix(in srgb, var(--wb-retry) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-retry) 7%, transparent); }
+.runtime-inspector__status.is-retry i { background: var(--wb-retry); }
 .runtime-inspector__artifact { color: var(--wb-text-muted); }
 .runtime-inspector__key { min-width: 0; overflow: hidden; color: var(--wb-text); font: 11px/1.4 var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .runtime-output { max-height: 220px; margin: 0; overflow: auto; color: var(--wb-text-secondary); font: 10px/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }

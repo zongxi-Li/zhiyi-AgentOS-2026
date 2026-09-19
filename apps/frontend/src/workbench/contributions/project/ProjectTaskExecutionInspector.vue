@@ -33,6 +33,7 @@ import { computed, ref } from 'vue'
 import type { WorkspaceEntry } from '@/services/api/agentos'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
+import { statusSemanticTone } from '@/utils/statusSemantic'
 
 const props = defineProps<{ entry: WorkspaceEntry }>()
 const detailsExpanded = ref(false)
@@ -50,9 +51,12 @@ const statusLabel = computed(() => ({
   pending: '待执行'
 }[statusValue.value] || statusValue.value))
 const statusTone = computed(() => {
-  if (['completed', 'succeeded'].includes(statusValue.value)) return 'success'
-  if (['failed', 'cancelled'].includes(statusValue.value)) return 'danger'
-  if (['running', 'planning', 'executing'].includes(statusValue.value)) return 'active'
+  const tone = statusSemanticTone(statusValue.value)
+  if (tone === 'success') return 'success'
+  if (tone === 'failed') return 'danger'
+  if (tone === 'running') return 'active'
+  if (tone === 'waiting') return 'waiting'
+  if (tone === 'retry') return 'retry'
   return 'muted'
 })
 const runtimeStatus = computed(() => String(props.entry.metadata?.runtimeStatus || '未观测'))
@@ -66,6 +70,8 @@ const runtimeStatus = computed(() => String(props.entry.metadata?.runtimeStatus 
 .execution-summary__dot.is-success { background: var(--wb-success); }
 .execution-summary__dot.is-danger { background: var(--wb-danger); }
 .execution-summary__dot.is-active { background: var(--wb-accent); }
+.execution-summary__dot.is-waiting { background: var(--wb-warning); }
+.execution-summary__dot.is-retry { background: var(--wb-retry); }
 .execution-summary__count { display: grid; justify-items: end; gap: 2px; }
 .execution-summary__count strong { color: var(--wb-text); font: 600 18px/1 var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
 .execution-summary__count span { color: var(--wb-text-muted); font-size: 10px; }

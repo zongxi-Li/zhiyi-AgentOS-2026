@@ -75,6 +75,29 @@
   --danger-fade: color-mix(in srgb, var(--danger) 12%, transparent);
   --info-fade: color-mix(in srgb, var(--info) 12%, transparent);
 
+  /* Semantic color system — runtime states, identity, data flow.
+     Single source for status coloring across the Workbench; schemes may
+     override these in presets.ts (light themes use darkened variants).
+     Status colors are reserved for icons, badges, numbers, borders and key
+     text — never large background fills. */
+  --sem-success: #8BCB78;   /* Success / Completed */
+  --sem-running: #6EA8FE;   /* Running / Active / Identifier */
+  --sem-waiting: #D9B86C;   /* Waiting / Pending */
+  --sem-retry: #E69A62;     /* Retry / Degraded */
+  --sem-failed: #E06C75;    /* Failed / Error / Conflict */
+  --sem-artifact: #B39DDB;  /* Artifact / Canonical / Control */
+  --sem-flow: #67C5C8;      /* Context / Communication / Data Flow */
+  --sem-text-1: #D7DAE0;    /* Primary text */
+  --sem-text-2: #9AA3B2;    /* Secondary text */
+  --sem-text-3: #626B78;    /* Muted metadata */
+  --sem-success-fade: color-mix(in srgb, var(--sem-success) 12%, transparent);
+  --sem-running-fade: color-mix(in srgb, var(--sem-running) 12%, transparent);
+  --sem-waiting-fade: color-mix(in srgb, var(--sem-waiting) 12%, transparent);
+  --sem-retry-fade: color-mix(in srgb, var(--sem-retry) 14%, transparent);
+  --sem-failed-fade: color-mix(in srgb, var(--sem-failed) 12%, transparent);
+  --sem-artifact-fade: color-mix(in srgb, var(--sem-artifact) 12%, transparent);
+  --sem-flow-fade: color-mix(in srgb, var(--sem-flow) 12%, transparent);
+
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
   --font-serif: 'Noto Serif SC', 'Source Han Serif SC', 'STSong', 'SimSun', 'Songti SC', serif;
@@ -137,17 +160,20 @@
   --wb-border-strong: var(--border-hover);
   --wb-shadow-section: var(--shadow-sm);
   --wb-radius-section: 10px;
-  --wb-text: var(--text-primary);
-  --wb-text-secondary: var(--text-secondary);
-  --wb-text-muted: var(--text-muted);
+  --wb-text: var(--sem-text-1);
+  --wb-text-secondary: var(--sem-text-2);
+  --wb-text-muted: var(--sem-text-3);
   --wb-hover: color-mix(in srgb, var(--bg-input) 82%, var(--bg-card));
   --wb-selected: var(--primary-fade);
   --wb-active: var(--primary-fade);
-  --wb-accent: var(--primary-color);
-  --wb-accent-soft: var(--primary-fade);
-  --wb-success: var(--success);
-  --wb-warning: var(--warning);
-  --wb-danger: var(--danger);
+  --wb-accent: var(--sem-running);
+  --wb-accent-soft: var(--sem-running-fade);
+  --wb-success: var(--sem-success);
+  --wb-warning: var(--sem-waiting);
+  --wb-danger: var(--sem-failed);
+  --wb-retry: var(--sem-retry);
+  --wb-artifact: var(--sem-artifact);
+  --wb-flow: var(--sem-flow);
   --wb-radius-sm: 5px;
   --wb-radius-md: 7px;
   --wb-space-xs: 4px;

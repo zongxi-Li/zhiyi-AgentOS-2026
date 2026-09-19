@@ -215,10 +215,13 @@ const OperationalSummary = defineComponent({
 .record-list strong { overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--font-sans); font-size: 11px; font-weight: 700; }
 .record-list code, .record-list small { overflow-wrap: anywhere; color: var(--text-secondary); font-family: var(--font-mono); font-size: 9px; line-height: 1.45; }
 .record-list .failure { color: var(--danger); }
-.phase { padding: 2px 7px; border-radius: var(--radius-full); color: var(--primary-color); background: var(--primary-fade); font-size: 9px; }
-.phase.committed { color: var(--success); background: var(--success-fade); }
-.phase.failed, .phase.cancelled { color: var(--danger); background: var(--danger-fade); }
-.phase.waiting_review { color: var(--warning); background: var(--warning-fade); }
+.phase { padding: 2px 7px; border-radius: var(--radius-full); color: var(--sem-waiting); background: var(--sem-waiting-fade); font-size: 9px; }
+.phase.prepared { color: var(--sem-waiting); background: var(--sem-waiting-fade); }
+.phase.executed { color: var(--sem-running); background: var(--sem-running-fade); }
+.phase.audited { color: var(--sem-artifact); background: var(--sem-artifact-fade); }
+.phase.committed { color: var(--sem-success); background: var(--sem-success-fade); }
+.phase.failed, .phase.cancelled { color: var(--sem-failed); background: var(--sem-failed-fade); }
+.phase.waiting_review { color: var(--sem-waiting); background: var(--sem-waiting-fade); }
 :deep(.reference-card) { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: start; gap: 7px; padding: 9px 10px; }
 :deep(.data-card__index) { padding-top: 1px; color: var(--text-muted); font: 700 9px/1.45 var(--font-mono); }
 :deep(.reference-card code) { min-width: 0; overflow-wrap: anywhere; word-break: break-word; color: var(--text-secondary); font: 9px/1.5 var(--font-mono); }

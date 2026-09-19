@@ -145,26 +145,30 @@ p,
   font-size: 11px;
 }
 
-.running .step-top strong,
+.running .step-top strong {
+  background: var(--sem-running-fade);
+  color: var(--sem-running);
+}
+
 .retrying .step-top strong {
-  background: rgba(73, 107, 143, 0.12);
-  color: var(--info);
+  background: var(--sem-retry-fade);
+  color: var(--sem-retry);
 }
 
 .waiting_review .step-top strong {
-  background: rgba(154, 116, 50, 0.12);
-  color: var(--warning);
+  background: var(--sem-waiting-fade);
+  color: var(--sem-waiting);
 }
 
 .completed .step-top strong {
-  background: rgba(61, 118, 86, 0.12);
-  color: var(--success);
+  background: var(--sem-success-fade);
+  color: var(--sem-success);
 }
 
 .failed .step-top strong,
 .cancelled .step-top strong {
-  background: rgba(178, 74, 74, 0.12);
-  color: var(--danger);
+  background: var(--sem-failed-fade);
+  color: var(--sem-failed);
 }
 
 h4 {
@@ -180,8 +184,8 @@ h4 {
 .step-error {
   padding: 8px;
   border-radius: 6px;
-  background: rgba(178, 74, 74, 0.08);
-  color: var(--danger);
+  background: var(--sem-failed-fade);
+  color: var(--sem-failed);
   overflow-wrap: anywhere;
 }
 </style>

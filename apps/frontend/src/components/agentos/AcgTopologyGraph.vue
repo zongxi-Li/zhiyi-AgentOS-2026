@@ -361,26 +361,26 @@ const stats = computed(() => {
 
 // 节点类型 → 配色（沿用项目色板）
 const NODE_STYLE: Record<string, { background: string; border: string; shape: string }> = {
-  step: { background: '#dbe7e3', border: '#3f6b63', shape: 'box' },
-  agent: { background: '#cfe0f0', border: '#496b8f', shape: 'ellipse' },
-  skill: { background: '#e6e0f0', border: '#6b5b95', shape: 'ellipse' },
-  memory: { background: '#fcefd6', border: '#9a7432', shape: 'database' },
-  evidence: { background: '#f6dede', border: '#b24a4a', shape: 'diamond' },
-  control: { background: '#e2e8e0', border: '#727c76', shape: 'hexagon' }
+  step: { background: '#ddeafa', border: '#6EA8FE', shape: 'box' },
+  agent: { background: '#d9f0f1', border: '#67C5C8', shape: 'ellipse' },
+  skill: { background: '#e9e2f5', border: '#B39DDB', shape: 'ellipse' },
+  memory: { background: '#f6edd8', border: '#D9B86C', shape: 'database' },
+  evidence: { background: '#e0f2da', border: '#8BCB78', shape: 'diamond' },
+  control: { background: '#e9e2f5', border: '#B39DDB', shape: 'hexagon' }
 }
 
 // 边类型 → 样式
 const EDGE_STYLE: Record<string, { color: string; dashes: boolean | number[] }> = {
-  dependency: { color: '#3f6b63', dashes: false },
-  communication: { color: '#496b8f', dashes: [4, 4] },
-  control_flow: { color: '#9a7432', dashes: [2, 3] },
-  write: { color: '#9a7432', dashes: [6, 3] },
-  read: { color: '#9a7432', dashes: [6, 3] },
-  support: { color: '#b24a4a', dashes: [2, 2] },
-  execution: { color: '#727c76', dashes: false }
+  dependency: { color: '#9AA3B2', dashes: false },
+  communication: { color: '#67C5C8', dashes: [4, 4] },
+  control_flow: { color: '#B39DDB', dashes: [2, 3] },
+  write: { color: '#67C5C8', dashes: [6, 3] },
+  read: { color: '#67C5C8', dashes: [6, 3] },
+  support: { color: '#626B78', dashes: [2, 2] },
+  execution: { color: '#6EA8FE', dashes: false }
 }
 
-const edgeColor = (edgeType: AcgEdge['edgeType']) => EDGE_STYLE[edgeType]?.color || '#727c76'
+const edgeColor = (edgeType: AcgEdge['edgeType']) => EDGE_STYLE[edgeType]?.color || '#626B78'
 const edgeTypeLabel = (edgeType: AcgEdge['edgeType']) =>
   EDGE_TYPES.find(item => item.value === edgeType)?.label || edgeType
 const nodeTypeLabel = (nodeType: AcgNode['nodeType']) => ({
@@ -404,44 +404,50 @@ const cssColor = (name: string, fallback: string) =>
   getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 
 function applyThemeToGraphStyles() {
-  // The topology is a technical drawing surface. Keep its semantic palette
-  // stable and bright even when the surrounding application uses a dark theme.
-  const primary = '#716c9e'
-  const info = '#4d7fdf'
-  const warning = '#a97626'
-  const danger = '#c94e54'
-  const success = '#387a5b'
-  const textSecondary = '#6f7284'
+  // The topology is a technical drawing surface: node fills stay bright, but
+  // category, edge and status hues come from the global semantic tokens so the
+  // graph speaks the same color language as the rest of the workbench
+  // (task=blue, control/artifact=purple, agent/data-flow=cyan, memory=waiting
+  // yellow, evidence=verified green, structure=muted gray).
+  const running = cssColor('--sem-running', '#6EA8FE')
+  const success = cssColor('--sem-success', '#8BCB78')
+  const waiting = cssColor('--sem-waiting', '#D9B86C')
+  const failed = cssColor('--sem-failed', '#E06C75')
+  const artifact = cssColor('--sem-artifact', '#B39DDB')
+  const flow = cssColor('--sem-flow', '#67C5C8')
+  const textSecondary = cssColor('--sem-text-2', '#9AA3B2')
+  const textMuted = cssColor('--sem-text-3', '#626B78')
   const nodeSurface = '#fcfdfd'
   const nodeSurfaceStrong = '#f8faf9'
 
   Object.assign(NODE_STYLE, {
-    step: { background: mixGraphColor(success, nodeSurfaceStrong, 0.18), border: success, shape: 'box' },
-    agent: { background: mixGraphColor(info, nodeSurface, 0.15), border: info, shape: 'ellipse' },
-    skill: { background: mixGraphColor(primary, nodeSurface, 0.14), border: primary, shape: 'ellipse' },
-    memory: { background: mixGraphColor(warning, nodeSurfaceStrong, 0.19), border: warning, shape: 'database' },
-    evidence: { background: mixGraphColor(danger, nodeSurfaceStrong, 0.15), border: danger, shape: 'diamond' },
-    control: { background: mixGraphColor(textSecondary, nodeSurfaceStrong, 0.13), border: textSecondary, shape: 'hexagon' }
+    step: { background: mixGraphColor(running, nodeSurfaceStrong, 0.18), border: running, shape: 'box' },
+    agent: { background: mixGraphColor(flow, nodeSurface, 0.15), border: flow, shape: 'ellipse' },
+    skill: { background: mixGraphColor(artifact, nodeSurface, 0.14), border: artifact, shape: 'ellipse' },
+    memory: { background: mixGraphColor(waiting, nodeSurfaceStrong, 0.19), border: waiting, shape: 'database' },
+    evidence: { background: mixGraphColor(success, nodeSurfaceStrong, 0.15), border: success, shape: 'diamond' },
+    control: { background: mixGraphColor(artifact, nodeSurfaceStrong, 0.13), border: artifact, shape: 'hexagon' }
   })
   Object.assign(EDGE_STYLE, {
-    dependency: { color: success, dashes: false },
-    communication: { color: info, dashes: [4, 4] },
-    control_flow: { color: warning, dashes: [2, 3] },
-    write: { color: warning, dashes: [6, 3] },
-    read: { color: warning, dashes: [6, 3] },
-    support: { color: danger, dashes: [2, 2] },
-    execution: { color: textSecondary, dashes: false }
+    dependency: { color: textSecondary, dashes: false },
+    communication: { color: flow, dashes: [4, 4] },
+    control_flow: { color: artifact, dashes: [2, 3] },
+    write: { color: flow, dashes: [6, 3] },
+    read: { color: flow, dashes: [6, 3] },
+    support: { color: textMuted, dashes: [2, 2] },
+    execution: { color: running, dashes: false }
   })
 }
 
 const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<string, AcgStepState>) => {
   applyThemeToGraphStyles()
-  const done = '#387a5b'
+  const done = cssColor('--sem-success', '#8BCB78')
   const textPrimary = '#26332f'
   const textSecondary = '#66736f'
-  const info = '#4d7fdf'
-  const warning = '#a97626'
-  const danger = '#c94e54'
+  const info = cssColor('--sem-running', '#6EA8FE')
+  const warning = cssColor('--sem-waiting', '#D9B86C')
+  const retry = cssColor('--sem-retry', '#E69A62')
+  const danger = cssColor('--sem-failed', '#E06C75')
   const selectedId = selectedNodeId.value
   const relatedNodeIds = new Set<string>(selectedId ? [selectedId] : [])
   if (selectedId) {
@@ -464,13 +470,15 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
       ? done
       : status === 'running'
         ? info
-        : status === 'waiting_review' || status === 'retrying'
-          ? warning
-          : status === 'failed'
-            ? danger
-            : status === 'cancelled' || status === 'skipped_by_condition'
-              ? textSecondary
-              : ''
+        : status === 'retrying'
+          ? retry
+          : status === 'waiting_review'
+            ? warning
+            : status === 'failed'
+              ? danger
+              : status === 'cancelled' || status === 'skipped_by_condition'
+                ? textSecondary
+                : ''
     const badges = [
       visual.runtimeAdded ? '+' : '',
       visual.bindingSwitched ? '⇄' : '',
@@ -512,7 +520,7 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
               y: 0
             }
           : visual.runtimeAdded
-            ? { enabled: true, color: '#5b5bd6', size: 7, x: 0, y: 0 }
+            ? { enabled: true, color: cssColor('--sem-running', '#6EA8FE'), size: 7, x: 0, y: 0 }
             : false,
       // Step 为主干节点（大、醒目）；Agent/Memory/Evidence 为认知卫星节点（小）
       size: isEndpoint ? 32 : isStep ? 26 : 16,
@@ -1140,10 +1148,11 @@ onBeforeUnmount(() => {
   padding: 2px 5px; border: 1px solid var(--border-light); border-radius: 4px; background: var(--bg-input);
 }
 .node-status { font-weight: 700; }
-.node-status.completed { color: var(--success); }
-.node-status.running { color: var(--info); }
-.node-status.waiting_review, .node-status.retrying { color: var(--warning); }
-.node-status.failed { color: var(--danger); }
+.node-status.completed { color: var(--sem-success); }
+.node-status.running { color: var(--sem-running); }
+.node-status.waiting_review { color: var(--sem-waiting); }
+.node-status.retrying { color: var(--sem-retry); }
+.node-status.failed { color: var(--sem-failed); }
 .node-status.skipped_by_condition { color: var(--text-secondary); }
 .node-description { margin: 0 0 14px; font-size: 11px; line-height: 1.55; color: var(--text-secondary); }
 .runtime-detail-group { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; padding: 8px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-input); }
@@ -1152,11 +1161,11 @@ onBeforeUnmount(() => {
 .execution-history article { display: grid; gap: 3px; padding: 7px 0; border-top: 1px solid var(--border-light); }
 .execution-history article:first-of-type { border-top: 0; }
 .execution-history article code { overflow-wrap: anywhere; color: var(--text-secondary); font-size: 9px; }
-.execution-history article b { color: var(--primary-color); }
-.execution-history .failure { color: var(--danger); }
-.projection-pending { margin: 8px 0; padding: 7px; border-radius: 5px; background: var(--warning-fade); color: var(--warning); font-size: 10px; }
+.execution-history article b { color: var(--sem-running); }
+.execution-history .failure { color: var(--sem-failed); }
+.projection-pending { margin: 8px 0; padding: 7px; border-radius: 5px; background: var(--sem-waiting-fade); color: var(--sem-waiting); font-size: 10px; }
 .runtime-summary { max-height: 90px; margin: 8px 0; padding: 7px; overflow: auto; border-radius: 5px; background: var(--bg-input); color: var(--text-secondary); font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
-.runtime-summary.is-error { color: var(--danger); }
+.runtime-summary.is-error { color: var(--sem-failed); }
 .connection-group { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; }
 .connection-group strong { font-size: 11px; color: var(--text-primary); }
 .connection-group > span { font-size: 10px; color: var(--text-disabled); }
@@ -1188,19 +1197,20 @@ onBeforeUnmount(() => {
 .legend-label { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: .04em; }
 .legend-item { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
 .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.dot.step { background: color-mix(in srgb, var(--success) 18%, var(--bg-input)); border: 1.5px solid var(--success); }
-.dot.agent { background: color-mix(in srgb, var(--info) 15%, var(--bg-panel)); border: 1.5px solid var(--info); border-radius: 50%; }
-.dot.skill { background: color-mix(in srgb, #716c9e 14%, var(--bg-panel)); border: 1.5px solid #716c9e; border-radius: 50%; }
-.dot.memory { background: color-mix(in srgb, var(--warning) 19%, var(--bg-input)); border: 1.5px solid var(--warning); }
-.dot.evidence { background: color-mix(in srgb, var(--danger) 15%, var(--bg-input)); border: 1.5px solid var(--danger); transform: rotate(45deg); }
-.dot.control { background: color-mix(in srgb, var(--text-secondary) 13%, var(--bg-input)); border: 1.5px solid var(--text-secondary); }
+.dot.step { background: color-mix(in srgb, var(--sem-running) 18%, var(--bg-input)); border: 1.5px solid var(--sem-running); }
+.dot.agent { background: color-mix(in srgb, var(--sem-flow) 15%, var(--bg-panel)); border: 1.5px solid var(--sem-flow); border-radius: 50%; }
+.dot.skill { background: color-mix(in srgb, var(--sem-artifact) 14%, var(--bg-panel)); border: 1.5px solid var(--sem-artifact); border-radius: 50%; }
+.dot.memory { background: color-mix(in srgb, var(--sem-waiting) 19%, var(--bg-input)); border: 1.5px solid var(--sem-waiting); }
+.dot.evidence { background: color-mix(in srgb, var(--sem-success) 15%, var(--bg-input)); border: 1.5px solid var(--sem-success); transform: rotate(45deg); }
+.dot.control { background: color-mix(in srgb, var(--sem-artifact) 13%, var(--bg-input)); border: 1.5px solid var(--sem-artifact); }
 .ring { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 3px solid var(--success); }
-.ring.running { border-color: var(--info); }
-.ring.waiting { border-color: var(--warning); }
-.ring.failed { border-color: var(--danger); }
+.ring.running { border-color: var(--sem-running); }
+.ring.waiting { border-color: var(--sem-waiting); }
+.ring.failed { border-color: var(--sem-failed); }
+.ring.retrying { border-color: var(--sem-retry); }
 .badge { min-width: 15px; padding: 1px 3px; border-radius: 4px; color: #fff; font-size: 9px; line-height: 13px; text-align: center; }
-.badge.runtime { background: var(--primary-color); }
-.badge.binding { background: var(--info); }
+.badge.runtime { background: var(--sem-running); }
+.badge.binding { background: var(--sem-flow); }
 .badge.skipped { background: var(--text-muted); }
 .canvas-controls {
   position: absolute; z-index: 5; right: 14px; bottom: 14px; display: inline-flex; gap: 2px; padding: 4px;

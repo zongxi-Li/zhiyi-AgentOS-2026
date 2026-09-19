@@ -129,9 +129,8 @@ const recoveryLabel = (eventType: string) => ({
 .reference-item { min-width: 0; overflow-wrap: anywhere; padding: 5px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 9px/1.4 var(--font-mono, monospace); }
 .event-list { display: grid; gap: 8px; }
 .event-list__item { display: grid; gap: 5px; min-width: 0; padding: 8px 9px; border: 1px solid var(--wb-border-soft); border-left: 2px solid var(--wb-text-muted); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
-.event-list__item.run_recovered { border-left-color: var(--wb-success); }
-.event-list__item.run_degraded, .event-list__item.step_failed { border-left-color: var(--wb-warning); }
-.event-list__item.contract_violation { border-left-color: var(--wb-danger); }
+.event-list__item.run_recovered, .event-list__item.run_degraded { border-left-color: var(--wb-retry); }
+.event-list__item.step_failed, .event-list__item.contract_violation { border-left-color: var(--wb-danger); }
 .event-list__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .event-list__heading strong { color: var(--wb-text); font-size: 10px; }
 .event-list__heading time, .event-list__item small { color: var(--wb-text-muted); font: 9px/1.4 var(--font-mono, monospace); }

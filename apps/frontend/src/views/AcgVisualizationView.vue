@@ -2380,7 +2380,7 @@ onBeforeUnmount(() => {
 .acg-overview-thumbnail__summary strong { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--wb-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .acg-overview-thumbnail__summary > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acg-overview-thumbnail__dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--wb-muted); }
-.acg-overview-thumbnail__dot.is-running { background: var(--success); box-shadow: 0 0 0 3px var(--success-fade); }
+.acg-overview-thumbnail__dot.is-running { background: var(--sem-running); box-shadow: 0 0 0 3px var(--sem-running-fade); }
 .acg-overview-thumbnail__percent { flex: 0 0 auto; color: var(--wb-accent); font-size: 11px; font-weight: 750; }
 .acg-config-thumbnail > :deep(.main-action) { flex: 0 0 auto; min-width: 126px; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 10px; font-weight: 750; }
 .acg-runtime-thumbnail__message { min-width: 0; overflow: hidden; color: var(--wb-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

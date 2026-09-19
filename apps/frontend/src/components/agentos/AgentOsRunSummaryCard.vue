@@ -143,10 +143,11 @@ header > div { flex-wrap: wrap; gap: 4px 9px; }
 .eyebrow { color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
 header strong { color: var(--text-primary); font-size: 13px; }
 .status { flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; background: var(--bg-input); color: var(--text-secondary); font-size: 11px; font-weight: 700; }
-.status.running, .status.retrying { color: var(--info); }
-.status.waiting_review { color: var(--warning); }
-.status.completed { color: var(--success); }
-.status.failed, .status.cancelled { color: var(--danger); }
+.status.running { color: var(--sem-running); }
+.status.retrying { color: var(--sem-retry); }
+.status.waiting_review { color: var(--sem-waiting); }
+.status.completed { color: var(--sem-success); }
+.status.failed, .status.cancelled { color: var(--sem-failed); }
 .activity-note { margin: 7px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; text-wrap: pretty; }
 .activity-note.active { color: var(--primary-color); }
 .summary-grid { display: grid; min-width: 0; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
