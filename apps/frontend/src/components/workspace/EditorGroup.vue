@@ -15,7 +15,7 @@
           </span>
         </button>
         <div v-for="opened in openEntries" :key="opened.entry.entryId" class="editor-tab" :class="{ 'is-active': opened.entry.entryId === activeEditorId }">
-          <button class="editor-tab__main" type="button" role="tab" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
+          <button class="editor-tab__main" type="button" role="tab" :title="editorTitle(opened.entry)" :aria-selected="opened.entry.entryId === activeEditorId" @click="emit('activate', opened.entry.entryId)">
             <span v-if="tabStatusMark(opened.entry)" class="editor-tab__status" :class="'is-' + tabStatus(opened.entry)" aria-hidden="true">{{ tabStatusMark(opened.entry) }}</span>
             <span class="editor-tab__kind" aria-hidden="true">
               <el-icon><component :is="workspaceEntryIcon(opened.entry.kind)" /></el-icon>
@@ -182,9 +182,9 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
 .editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
-.editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
+.editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
 .editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 38px; background: var(--wb-surface-inset); }
-.editor-tab { display: flex; align-items: center; min-width: 120px; max-width: 240px; flex: 0 0 auto; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
+.editor-tab { display: flex; align-items: center; flex: 1 1 0; min-width: 100px; max-width: 300px; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
 .editor-tab:hover { background: var(--wb-hover); }
 .editor-tab.is-active { background: var(--wb-surface-shell); }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
