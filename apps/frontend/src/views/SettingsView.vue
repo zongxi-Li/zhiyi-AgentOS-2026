@@ -98,7 +98,24 @@
       </section>
 
       <section v-else-if="activeTab === 'appearance'" class="settings-section">
-        <div class="section-label">主题</div>
+        <div class="section-label theme-header-row">
+          <span>主题</span>
+          <el-select
+            v-model="settings.colorScheme"
+            class="theme-select"
+            aria-label="选择主题"
+            @change="applyTheme()"
+          >
+            <el-option v-for="theme in themeOptions" :key="theme.id" :value="theme.id" :label="theme.label">
+              <div class="theme-select-option">
+                <span class="theme-aa" :style="{ background: theme.accent }">Aa</span>
+                <span class="theme-select-name">{{ theme.label }}</span>
+                <span class="theme-select-en">{{ theme.nameEn }}</span>
+                <el-icon v-if="settings.colorScheme === theme.id" class="theme-select-check"><Check /></el-icon>
+              </div>
+            </el-option>
+          </el-select>
+        </div>
         <div class="theme-grid">
           <button
             v-for="theme in themeOptions"
@@ -108,7 +125,17 @@
             type="button"
             @click="settings.colorScheme = theme.id; applyTheme()"
           >
-            <span class="theme-preview" :style="{ '--theme-accent': theme.previewColor }">
+            <span
+              class="theme-preview"
+              :style="{
+                '--pv-bg': theme.bgApp,
+                '--pv-side': theme.bgPanel,
+                '--pv-card': theme.bgCard,
+                '--pv-fg': theme.fg,
+                '--pv-accent': theme.accent,
+                '--pv-border': theme.border
+              }"
+            >
               <i></i><i></i><i></i>
               <b></b><b></b>
             </span>
@@ -117,6 +144,20 @@
               <el-icon v-if="settings.colorScheme === theme.id"><Check /></el-icon>
             </span>
           </button>
+        </div>
+
+        <div class="section-label">主题色值</div>
+        <div class="setting-card">
+          <div v-for="row in themeDetailRows" :key="row.label" class="setting-row">
+            <div>
+              <strong>{{ row.label }}</strong>
+              <p>{{ row.desc }}</p>
+            </div>
+            <span class="color-chip">
+              <i :style="{ background: row.value }"></i>
+              <code>{{ row.value }}</code>
+            </span>
+          </div>
         </div>
 
         <div class="section-label">界面</div>
@@ -451,12 +492,34 @@ const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
   }
 ]
 
-const themeOptions = colorSchemes.slice(0, 3).map((theme, index) => ({
+const THEME_TONES: Record<string, string> = {
+  'codex-dark': 'dark',
+  'one-dark-modern': 'dark',
+  'claude-warm': 'light',
+  'blue-purple': 'light',
+  'tea-green': 'soft'
+}
+
+const themeOptions = colorSchemes.map((theme) => ({
   id: theme.id,
   label: theme.name,
-  tone: index === 0 ? 'dark' : index === 1 ? 'light' : 'soft',
-  previewColor: theme.previewColor
+  nameEn: theme.nameEn,
+  tone: THEME_TONES[theme.id] || 'light',
+  accent: theme.previewColor,
+  bgApp: theme.variables['--bg-app'],
+  bgPanel: theme.variables['--bg-sidebar'],
+  bgCard: theme.variables['--bg-card'],
+  fg: theme.variables['--text-primary'],
+  border: theme.variables['--border-light']
 }))
+
+const activeThemeOption = computed(() => themeOptions.find((theme) => theme.id === settings.value.colorScheme) || themeOptions[0])
+
+const themeDetailRows = computed(() => [
+  { label: '强调色', desc: '按钮、选中态与高亮使用的主题色。', value: activeThemeOption.value.accent },
+  { label: '背景', desc: '工作区与侧边栏的底色。', value: activeThemeOption.value.bgApp },
+  { label: '前景', desc: '正文文字颜色。', value: activeThemeOption.value.fg }
+])
 
 const defaultSettings = (): AppSettings => ({
   colorScheme: 'codex-dark',
@@ -1128,7 +1191,7 @@ function ensureSelectedModel(models: string[]): void {
 
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
 
@@ -1158,23 +1221,24 @@ function ensureSelectedModel(models: string[]): void {
 .theme-preview {
   position: relative;
   height: 116px;
-  padding: 24px 14px 12px;
+  padding: 14px 14px 12px 50px;
   display: grid;
-  grid-template-columns: 38px 1fr;
+  grid-template-columns: 1fr;
   grid-template-rows: 8px 8px 1fr;
-  gap: 8px 10px;
+  gap: 8px;
   overflow: hidden;
-  background: #242536;
+  background: var(--pv-bg, #242536);
 }
 
-.theme-preview::after {
+.theme-preview::before {
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
   bottom: 0;
-  left: 48px;
-  background: color-mix(in srgb, #ffffff 7%, transparent);
+  left: 0;
+  width: 38px;
+  background: var(--pv-side, color-mix(in srgb, #ffffff 7%, transparent));
+  border-right: 1px solid var(--pv-border, transparent);
 }
 
 .theme-preview i,
@@ -1183,23 +1247,19 @@ function ensureSelectedModel(models: string[]): void {
   z-index: 1;
   display: block;
   border-radius: 999px;
-  background: color-mix(in srgb, #ffffff 28%, transparent);
+  background: color-mix(in srgb, var(--pv-fg, #ffffff) 30%, transparent);
 }
 
-.theme-preview i:nth-child(1) { grid-row: 1 / span 3; width: 26px; height: 100%; border-radius: 4px; background: color-mix(in srgb, var(--theme-accent) 38%, transparent); }
-.theme-preview i:nth-child(2) { grid-column: 2; width: 84px; }
-.theme-preview i:nth-child(3) { grid-column: 2; width: 58px; opacity: .6; }
-.theme-preview b:nth-of-type(1) { grid-column: 2; grid-row: 3; align-self: start; height: 42px; border-radius: 7px; background: color-mix(in srgb, #ffffff 86%, transparent); }
-.theme-preview b:nth-of-type(2) { position: absolute; z-index: 2; right: 15px; bottom: 15px; width: 28px; height: 5px; background: var(--theme-accent); }
-
-.theme-light .theme-preview { background: #f4f3f0; }
-.theme-light .theme-preview::after { background: color-mix(in srgb, #ffffff 36%, transparent); }
-.theme-light .theme-preview i { background: color-mix(in srgb, #56545a 25%, transparent); }
-.theme-light .theme-preview b:nth-of-type(1) { background: #ffffff; }
-.theme-soft .theme-preview { background: #e9eafa; }
-.theme-soft .theme-preview::after { background: color-mix(in srgb, #ffffff 48%, transparent); }
-.theme-soft .theme-preview i { background: color-mix(in srgb, #33344d 24%, transparent); }
-.theme-soft .theme-preview b:nth-of-type(1) { background: #ffffff; }
+.theme-preview i:nth-child(1) { display: none; }
+.theme-preview i:nth-child(2) { width: 84px; }
+.theme-preview i:nth-child(3) { width: 58px; opacity: .6; }
+.theme-preview b:nth-of-type(1) {
+  height: 42px;
+  border-radius: 7px;
+  background: var(--pv-card, color-mix(in srgb, #ffffff 86%, transparent));
+  border: 1px solid var(--pv-border, transparent);
+}
+.theme-preview b:nth-of-type(2) { position: absolute; z-index: 2; right: 15px; bottom: 15px; width: 28px; height: 5px; background: var(--pv-accent); }
 
 .theme-option-footer {
   min-height: 42px;
@@ -1213,6 +1273,79 @@ function ensureSelectedModel(models: string[]): void {
 
 .theme-option-footer strong { color: var(--text-primary); font-weight: 600; }
 .theme-option-footer .el-icon { color: var(--primary-color); }
+
+.theme-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.theme-select {
+  width: 240px;
+}
+
+.theme-select-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.theme-aa {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.theme-select-name {
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.theme-select-en {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.theme-select-check { margin-left: auto; color: var(--primary-color); }
+
+.color-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 6px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.color-chip i {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.35);
+}
+
+.color-chip code {
+  color: var(--text-regular);
+  font-size: 11px;
+  text-transform: uppercase;
+}
 
 .section-heading {
   margin-bottom: 14px;

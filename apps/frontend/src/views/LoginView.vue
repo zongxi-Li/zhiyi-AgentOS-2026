@@ -119,7 +119,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const { currentScheme, toggleColorScheme } = useTheme()
-const isDarkTheme = computed(() => currentScheme.value === 'codex-dark')
+const isDarkTheme = computed(() => currentScheme.value === 'codex-dark' || currentScheme.value === 'one-dark-modern')
 const themeToggleLabel = computed(() => `切换到${isDarkTheme.value ? '明亮' : '黑暗'}模式`)
 
 const landingReturnTarget = () => {

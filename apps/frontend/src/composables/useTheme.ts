@@ -5,8 +5,10 @@ const currentScheme = ref<ColorSchemeId>('codex-dark')
 const CODEX_DARK_MIGRATION_KEY = 'theme.codex_dark_v1'
 const PUBLIC_LIGHT_SCHEME_KEY = 'theme.public_light_scheme'
 
+const DARK_SCHEMES: ColorSchemeId[] = ['codex-dark', 'one-dark-modern']
+
 function isColorSchemeId(value: unknown): value is ColorSchemeId {
-  return value === 'codex-dark' || value === 'claude-warm' || value === 'tea-green' || value === 'blue-purple'
+  return value === 'codex-dark' || value === 'one-dark-modern' || value === 'claude-warm' || value === 'tea-green' || value === 'blue-purple'
 }
 
 export function applyFontSize(fontSize: number): void {
@@ -29,7 +31,7 @@ function applySchemeVariables(schemeId: ColorSchemeId): void {
   }
   // Keep the semantic layer derived from the active scheme, so legacy pages can
   // consume one vocabulary instead of baking a light-only surface into CSS.
-  const isDark = scheme.id === 'codex-dark'
+  const isDark = DARK_SCHEMES.includes(scheme.id)
   const darkTopbarKeys = [
     '--app-topbar-bg',
     '--app-topbar-text',
@@ -102,7 +104,7 @@ function applySchemeVariables(schemeId: ColorSchemeId): void {
     root.style.setProperty(`--el-color-${status}-dark-2`, `color-mix(in srgb, var(--${status}) 82%, #000000)`)
   }
   root.dataset.colorScheme = scheme.id
-  root.style.colorScheme = scheme.id === 'codex-dark' ? 'dark' : 'light'
+  root.style.colorScheme = isDark ? 'dark' : 'light'
   document.body.style.backgroundImage = scheme.bodyBackground
   document.body.style.backgroundColor = scheme.variables['--bg-app']
   if (!isDark) localStorage.setItem(PUBLIC_LIGHT_SCHEME_KEY, scheme.id)

@@ -377,89 +377,142 @@ html, body, #app {
 }
 
 /* Codex Dark — shared component surfaces */
-html[data-color-scheme='codex-dark'] body {
+html[data-color-scheme='codex-dark'] body,
+html[data-color-scheme='one-dark-modern'] body {
   background-color: var(--bg-app);
 }
 
-html[data-color-scheme='codex-dark'] ::selection {
+html[data-color-scheme='codex-dark'] ::selection,
+html[data-color-scheme='one-dark-modern'] ::selection {
   color: var(--selection-text);
   background: var(--selection-bg);
 }
 
-html[data-color-scheme='codex-dark'] ::-webkit-scrollbar-thumb {
+html[data-color-scheme='codex-dark'] ::-webkit-scrollbar-thumb,
+html[data-color-scheme='one-dark-modern'] ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
 }
 
-html[data-color-scheme='codex-dark'] ::-webkit-scrollbar-thumb:hover {
+html[data-color-scheme='codex-dark'] ::-webkit-scrollbar-thumb:hover,
+html[data-color-scheme='one-dark-modern'] ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
 
 html[data-color-scheme='codex-dark'] .el-button,
+html[data-color-scheme='one-dark-modern'] .el-button,
 html[data-color-scheme='codex-dark'] .el-card,
+html[data-color-scheme='one-dark-modern'] .el-card,
 html[data-color-scheme='codex-dark'] .el-dialog,
+html[data-color-scheme='one-dark-modern'] .el-dialog,
 html[data-color-scheme='codex-dark'] .el-drawer,
+html[data-color-scheme='one-dark-modern'] .el-drawer,
 html[data-color-scheme='codex-dark'] .el-message-box,
+html[data-color-scheme='one-dark-modern'] .el-message-box,
 html[data-color-scheme='codex-dark'] .el-popover.el-popper,
+html[data-color-scheme='one-dark-modern'] .el-popover.el-popper,
 html[data-color-scheme='codex-dark'] .el-select__popper.el-popper,
-html[data-color-scheme='codex-dark'] .el-dropdown__popper.el-popper {
+html[data-color-scheme='one-dark-modern'] .el-select__popper.el-popper,
+html[data-color-scheme='codex-dark'] .el-dropdown__popper.el-popper,
+html[data-color-scheme='one-dark-modern'] .el-dropdown__popper.el-popper {
   color: var(--text-regular);
   background: var(--bg-card);
   border-color: var(--border-light);
 }
 
 html[data-color-scheme='codex-dark'] .el-input__wrapper,
+html[data-color-scheme='one-dark-modern'] .el-input__wrapper,
 html[data-color-scheme='codex-dark'] .el-textarea__inner,
-html[data-color-scheme='codex-dark'] .el-select__wrapper {
+html[data-color-scheme='one-dark-modern'] .el-textarea__inner,
+html[data-color-scheme='codex-dark'] .el-select__wrapper,
+html[data-color-scheme='one-dark-modern'] .el-select__wrapper {
   color: var(--text-primary) !important;
   background: var(--bg-input) !important;
   border-color: var(--border-light) !important;
 }
 
 html[data-color-scheme='codex-dark'] .el-input__inner,
+html[data-color-scheme='one-dark-modern'] .el-input__inner,
 html[data-color-scheme='codex-dark'] .el-textarea__inner,
-html[data-color-scheme='codex-dark'] .el-select__selected-item {
+html[data-color-scheme='one-dark-modern'] .el-textarea__inner,
+html[data-color-scheme='codex-dark'] .el-select__selected-item,
+html[data-color-scheme='one-dark-modern'] .el-select__selected-item {
   color: var(--text-primary) !important;
 }
 
-html[data-color-scheme='codex-dark'] .el-popper__arrow::before {
+html[data-color-scheme='codex-dark'] .el-popper__arrow::before,
+html[data-color-scheme='one-dark-modern'] .el-popper__arrow::before {
   background: var(--bg-card) !important;
   border-color: var(--border-light) !important;
 }
 
 /* Element Plus Tooltip uses .el-popper.is-dark rather than .el-popover. */
-html[data-color-scheme='codex-dark'] .el-popper.is-dark {
+html[data-color-scheme='codex-dark'] .el-popper.is-dark,
+html[data-color-scheme='one-dark-modern'] .el-popper.is-dark {
   color: var(--text-primary) !important;
   background: var(--bg-card) !important;
   border-color: var(--border-light) !important;
 }
 
-html[data-color-scheme='codex-dark'] .el-popper.is-dark > .el-popper__arrow::before {
+html[data-color-scheme='codex-dark'] .el-popper.is-dark > .el-popper__arrow::before,
+html[data-color-scheme='one-dark-modern'] .el-popper.is-dark > .el-popper__arrow::before {
   background: var(--bg-card) !important;
   border-color: var(--border-light) !important;
 }
 
 html[data-color-scheme='codex-dark'] .el-select-dropdown__item,
-html[data-color-scheme='codex-dark'] .el-dropdown-menu__item {
+html[data-color-scheme='one-dark-modern'] .el-select-dropdown__item,
+html[data-color-scheme='codex-dark'] .el-dropdown-menu__item,
+html[data-color-scheme='one-dark-modern'] .el-dropdown-menu__item {
   color: var(--text-regular);
 }
 
 html[data-color-scheme='codex-dark'] .el-select-dropdown__item.is-hovering,
-html[data-color-scheme='codex-dark'] .el-dropdown-menu__item:not(.is-disabled):focus {
+html[data-color-scheme='one-dark-modern'] .el-select-dropdown__item.is-hovering,
+html[data-color-scheme='codex-dark'] .el-dropdown-menu__item:not(.is-disabled):focus,
+html[data-color-scheme='one-dark-modern'] .el-dropdown-menu__item:not(.is-disabled):focus {
   color: var(--text-primary);
   background: var(--bg-panel);
 }
 
 html[data-color-scheme='codex-dark'] .el-collapse,
+html[data-color-scheme='one-dark-modern'] .el-collapse,
 html[data-color-scheme='codex-dark'] .el-collapse-item__header,
+html[data-color-scheme='one-dark-modern'] .el-collapse-item__header,
 html[data-color-scheme='codex-dark'] .el-collapse-item__wrap,
-html[data-color-scheme='codex-dark'] .el-tabs__nav-wrap::after {
+html[data-color-scheme='one-dark-modern'] .el-collapse-item__wrap,
+html[data-color-scheme='codex-dark'] .el-tabs__nav-wrap::after,
+html[data-color-scheme='one-dark-modern'] .el-tabs__nav-wrap::after {
   color: var(--text-regular);
   background: transparent;
   border-color: var(--border-light);
 }
 
-html[data-color-scheme='codex-dark'] .el-overlay {
+html[data-color-scheme='codex-dark'] .el-overlay,
+html[data-color-scheme='one-dark-modern'] .el-overlay {
   background: rgba(8, 9, 18, 0.72);
+}
+
+/* Semantic tone utilities — shared vocabulary for status coloring.
+   Usage: add `tone-<name>` to an element to set --tone/--tone-fade; the
+   element (or its scoped CSS) consumes var(--tone) for color/background/
+   border. Status colors are reserved for icons, badges, numbers, borders
+   and key text — never large surface fills. */
+.tone-success { --tone: var(--sem-success); --tone-fade: var(--sem-success-fade); }
+.tone-running { --tone: var(--sem-running); --tone-fade: var(--sem-running-fade); }
+.tone-waiting { --tone: var(--sem-waiting); --tone-fade: var(--sem-waiting-fade); }
+.tone-retry { --tone: var(--sem-retry); --tone-fade: var(--sem-retry-fade); }
+.tone-failed { --tone: var(--sem-failed); --tone-fade: var(--sem-failed-fade); }
+.tone-artifact { --tone: var(--sem-artifact); --tone-fade: var(--sem-artifact-fade); }
+.tone-flow { --tone: var(--sem-flow); --tone-fade: var(--sem-flow-fade); }
+.tone-muted { --tone: var(--wb-text-muted); --tone-fade: color-mix(in srgb, var(--wb-text-muted) 12%, transparent); }
+
+/* Workbench status bar — spans the viewport edge-to-edge when present.
+   The bar fixes itself to the bottom; the shell reserves its row so the icon
+   rail and main content stay clear of it. */
+:root { --workbench-status-bar-height: 22px; }
+
+html[data-workbench-status-bar='on'] .app-shell-body {
+  padding-bottom: var(--workbench-status-bar-height);
 }
 
 .el-input__wrapper.is-focus, .el-textarea__inner:focus {
@@ -1693,7 +1746,8 @@ html[data-color-scheme='codex-dark'] .el-overlay {
   border-color: var(--primary-line) !important;
 }
 
-html[data-color-scheme='codex-dark'] .agent-panel .card {
+html[data-color-scheme='codex-dark'] .agent-panel .card,
+html[data-color-scheme='one-dark-modern'] .agent-panel .card {
   background: var(--bg-panel) !important;
   border-color: var(--border-color) !important;
   box-shadow: none !important;

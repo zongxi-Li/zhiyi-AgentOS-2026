@@ -1,4 +1,4 @@
-export type ColorSchemeId = 'codex-dark' | 'claude-warm' | 'tea-green' | 'blue-purple'
+export type ColorSchemeId = 'codex-dark' | 'one-dark-modern' | 'claude-warm' | 'tea-green' | 'blue-purple'
 
 export interface ColorScheme {
   id: ColorSchemeId
@@ -118,6 +118,142 @@ const codexDark: ColorScheme = {
     '--el-border-color-dark': '#4E4E4E',
     '--el-border-color-darker': '#5A5A5A',
     '--el-mask-color': 'rgba(0, 0, 0, 0.72)',
+        // Semantic status tokens — exact spec values for dark surfaces.
+    '--sem-success': '#8BCB78',
+    '--sem-running': '#6EA8FE',
+    '--sem-waiting': '#D9B86C',
+    '--sem-retry': '#E69A62',
+    '--sem-failed': '#E06C75',
+    '--sem-artifact': '#B39DDB',
+    '--sem-flow': '#67C5C8',
+    '--sem-text-1': '#D7DAE0',
+    '--sem-text-2': '#9AA3B2',
+    '--sem-text-3': '#626B78',
+  },
+}
+
+// Palette sourced from the official VS Code "One Dark Modern" theme JSON
+// (extension cweijan.onedark-modern, theme/onedark-modern.json).
+const oneDarkModern: ColorScheme = {
+  id: 'one-dark-modern',
+  name: 'One Dark',
+  nameEn: 'One Dark Modern',
+  previewColor: '#61AFEF',
+  bodyBackground: 'none',
+  variables: {
+    '--primary-color': '#4D78CC',
+    '--primary-hover': '#5C88D8',
+    '--primary-active': '#4064B3',
+    '--primary-fade': 'rgba(77, 120, 204, 0.2)',
+    '--primary-line': 'rgba(82, 139, 255, 0.48)',
+
+    '--accent-color': '#61AFEF',
+    '--accent-fade': 'rgba(97, 175, 239, 0.14)',
+
+    '--bg-app': '#181A1F',
+    '--bg-sidebar': '#21252B',
+    '--bg-card': '#282C34',
+    '--bg-panel': '#2C313C',
+    '--bg-input': '#1D1F23',
+    '--bg-glass': 'rgba(24, 26, 31, 0.88)',
+    '--surface-solid': 'var(--bg-card)',
+    '--surface-raised': 'color-mix(in srgb, var(--bg-card) 88%, transparent)',
+    '--surface-subtle': 'color-mix(in srgb, var(--bg-panel) 80%, transparent)',
+    '--surface-hover': 'var(--bg-panel)',
+    '--overlay-backdrop': 'rgba(8, 9, 18, 0.72)',
+    '--shadow-color': 'rgba(0, 0, 0, 0.28)',
+    '--on-primary': '#FFFFFF',
+    '--app-layout-bg': 'var(--bg-app)',
+    '--sidebar-bg': 'rgba(33, 37, 43, 0.98)',
+    '--drawer-bg': 'rgba(33, 37, 43, 0.99)',
+    '--sidebar-border': 'rgba(62, 68, 82, 0.9)',
+    '--scrollbar-thumb': 'rgba(78, 86, 102, 0.4)',
+    '--scrollbar-thumb-hover': 'rgba(90, 99, 117, 0.5)',
+
+    '--selection-bg': 'rgba(103, 118, 150, 0.4)',
+    '--selection-text': '#FFFFFF',
+
+    '--app-topbar-bg': '#21252B',
+    '--app-topbar-text': '#ABB2BF',
+    '--app-topbar-muted': '#6F7784',
+    '--app-topbar-border': '#2E323A',
+    '--app-topbar-hover': '#2C313C',
+    '--app-topbar-active': '#323842',
+    '--app-topbar-focus-ring': 'rgba(82, 139, 255, 0.34)',
+    '--app-topbar-focus-border': '#528BFF',
+    '--app-topbar-input-bg': '#1D1F23',
+    '--app-topbar-input-bg-hover': '#2C313C',
+    '--app-topbar-input-border': '#3E4452',
+    '--app-topbar-kbd-bg': '#2C313C',
+    '--app-topbar-logo-bg': '#282C34',
+
+    '--text-primary': '#D7DAE0',
+    '--text-regular': '#ABB2BF',
+    '--text-secondary': '#9DA5B4',
+    '--text-muted': '#6F7784',
+    '--text-disabled': '#5C6370',
+
+    '--border-light': '#3E4452',
+    '--border-hover': '#4B5263',
+    '--border-focus': 'rgba(82, 139, 255, 0.68)',
+    '--border-color': 'var(--border-light)',
+    '--color-primary': 'var(--primary-color)',
+
+    '--success': '#98C379',
+    '--warning': '#E5C07B',
+    '--danger': '#E06C75',
+    '--info': '#61AFEF',
+    '--success-fade': 'color-mix(in srgb, var(--success) 12%, transparent)',
+    '--warning-fade': 'color-mix(in srgb, var(--warning) 12%, transparent)',
+    '--danger-fade': 'color-mix(in srgb, var(--danger) 12%, transparent)',
+    '--info-fade': 'color-mix(in srgb, var(--info) 12%, transparent)',
+
+    '--shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.32)',
+    '--shadow-md': '0 10px 26px rgba(0, 0, 0, 0.38)',
+    '--shadow-lg': '0 20px 52px rgba(0, 0, 0, 0.46)',
+    '--shadow-glow': '0 10px 24px rgba(82, 139, 255, 0.24)',
+
+    '--el-color-primary': '#4D78CC',
+    '--el-color-primary-light-3': '#6E8DD6',
+    '--el-color-primary-light-5': '#8FA6E0',
+    '--el-color-primary-light-7': '#B7C5EE',
+    '--el-color-primary-light-8': '#CDD7F3',
+    '--el-color-primary-light-9': '#E6EBF9',
+    '--el-color-primary-dark-2': '#3F63AE',
+    '--el-bg-color': '#282C34',
+    '--el-bg-color-page': '#181A1F',
+    '--el-bg-color-overlay': '#2C313C',
+    '--el-fill-color-blank': '#282C34',
+    '--el-fill-color': '#2C313C',
+    '--el-fill-color-light': '#323842',
+    '--el-fill-color-lighter': '#3A3F4B',
+    '--el-fill-color-extra-light': '#404754',
+    '--el-fill-color-dark': '#21252B',
+    '--el-fill-color-darker': '#181A1F',
+    '--el-fill-color-disabled': '#282C34',
+    '--el-text-color-primary': '#D7DAE0',
+    '--el-text-color-regular': '#ABB2BF',
+    '--el-text-color-secondary': '#9DA5B4',
+    '--el-text-color-placeholder': '#6F7784',
+    '--el-text-color-disabled': '#5C6370',
+    '--el-border-color': '#3E4452',
+    '--el-border-color-light': '#454C59',
+    '--el-border-color-lighter': '#3A3F4B',
+    '--el-border-color-extra-light': '#343A45',
+    '--el-border-color-dark': '#4B5263',
+    '--el-border-color-darker': '#525761',
+    '--el-mask-color': 'rgba(8, 9, 18, 0.72)',
+        // Semantic status tokens — exact spec values for dark surfaces.
+    '--sem-success': '#8BCB78',
+    '--sem-running': '#6EA8FE',
+    '--sem-waiting': '#D9B86C',
+    '--sem-retry': '#E69A62',
+    '--sem-failed': '#E06C75',
+    '--sem-artifact': '#B39DDB',
+    '--sem-flow': '#67C5C8',
+    '--sem-text-1': '#D7DAE0',
+    '--sem-text-2': '#9AA3B2',
+    '--sem-text-3': '#626B78',
   },
 }
 
@@ -176,6 +312,18 @@ const claudeWarm: ColorScheme = {
     '--el-color-primary-light-8': '#F8E5DC',
     '--el-color-primary-light-9': '#FCF2ED',
     '--el-color-primary-dark-2': '#C15F3C',
+
+    // Semantic status tokens — darkened variants for readability on light surfaces.
+    '--sem-success': '#3D7656',
+    '--sem-running': '#2F6BB0',
+    '--sem-waiting': '#9A7432',
+    '--sem-retry': '#B56A2E',
+    '--sem-failed': '#C0533F',
+    '--sem-artifact': '#6E5B9E',
+    '--sem-flow': '#2E7E82',
+    '--sem-text-1': 'var(--text-primary)',
+    '--sem-text-2': 'var(--text-secondary)',
+    '--sem-text-3': 'var(--text-muted)',
   },
 }
 
@@ -234,6 +382,18 @@ const teaGreen: ColorScheme = {
     '--el-color-primary-light-8': '#dbeae2',
     '--el-color-primary-light-9': '#edf5f1',
     '--el-color-primary-dark-2': '#345b54',
+
+    // Semantic status tokens — darkened variants for readability on light surfaces.
+    '--sem-success': '#3D7656',
+    '--sem-running': '#2F6BB0',
+    '--sem-waiting': '#9A7432',
+    '--sem-retry': '#B56A2E',
+    '--sem-failed': '#C0533F',
+    '--sem-artifact': '#6E5B9E',
+    '--sem-flow': '#2E7E82',
+    '--sem-text-1': 'var(--text-primary)',
+    '--sem-text-2': 'var(--text-secondary)',
+    '--sem-text-3': 'var(--text-muted)',
   },
 }
 
@@ -292,10 +452,22 @@ const bluePurple: ColorScheme = {
     '--el-color-primary-light-8': '#DEDFF5',
     '--el-color-primary-light-9': '#EFEFFA',
     '--el-color-primary-dark-2': '#4A4EB8',
+
+    // Semantic status tokens — darkened variants for readability on light surfaces.
+    '--sem-success': '#3D7656',
+    '--sem-running': '#2F6BB0',
+    '--sem-waiting': '#9A7432',
+    '--sem-retry': '#B56A2E',
+    '--sem-failed': '#C0533F',
+    '--sem-artifact': '#6E5B9E',
+    '--sem-flow': '#2E7E82',
+    '--sem-text-1': 'var(--text-primary)',
+    '--sem-text-2': 'var(--text-secondary)',
+    '--sem-text-3': 'var(--text-muted)',
   },
 }
 
-export const colorSchemes: ColorScheme[] = [codexDark, claudeWarm, bluePurple, teaGreen]
+export const colorSchemes: ColorScheme[] = [codexDark, oneDarkModern, claudeWarm, bluePurple, teaGreen]
 
 export function getColorScheme(id: ColorSchemeId): ColorScheme {
   return colorSchemes.find((s) => s.id === id) || codexDark

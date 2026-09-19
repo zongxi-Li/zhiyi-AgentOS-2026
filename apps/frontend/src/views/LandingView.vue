@@ -153,7 +153,7 @@ const LoginView = defineAsyncComponent(() => import('@/views/LoginView.vue').the
 const router = useRouter()
 const route = useRoute()
 const { currentScheme, toggleColorScheme } = useTheme()
-const isDarkTheme = computed(() => currentScheme.value === 'codex-dark')
+const isDarkTheme = computed(() => currentScheme.value === 'codex-dark' || currentScheme.value === 'one-dark-modern')
 const themeToggleLabel = computed(() => `切换到${isDarkTheme.value ? '明亮' : '黑暗'}模式`)
 const desktopShell = isDesktop()
 const dragRegionProps = platform.dragRegionProps

@@ -645,9 +645,9 @@ export default { name: 'GlassConstellation' }
 :global(.landing-view.is-theme-dark) .agent-controls__hint--block { border-color: rgba(144,190,236,.16); }
 :global(.landing-view.is-theme-dark) .agent-color { border-color: rgba(144,190,236,.2); color: #b6cbe2; background: color-mix(in srgb, var(--swatch) 12%, #0b1d35); box-shadow: 0 4px 10px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.12); }
 :global(.landing-view.is-theme-dark) .agent-color:hover, :global(.landing-view.is-theme-dark) .agent-color[aria-pressed='true'] { color: #fff; background: color-mix(in srgb, var(--swatch) 23%, #0c2440); }
-:global(html[data-color-scheme='codex-dark'] .agent-controls__head strong) { color: #eef5ff !important; }
-:global(html[data-color-scheme='codex-dark'] .agent-controls__eyebrow) { color: #b9cdef; }
-:global(html[data-color-scheme='codex-dark'] .agent-controls__panel-intro strong) { color: #f0f6ff; }
+:global(html[data-color-scheme='codex-dark'], html[data-color-scheme='one-dark-modern'] .agent-controls__head strong) { color: #eef5ff !important; }
+:global(html[data-color-scheme='codex-dark'], html[data-color-scheme='one-dark-modern'] .agent-controls__eyebrow) { color: #b9cdef; }
+:global(html[data-color-scheme='codex-dark'], html[data-color-scheme='one-dark-modern'] .agent-controls__panel-intro strong) { color: #f0f6ff; }
 .agent-conversation { position: absolute; right: 6%; bottom: 7%; z-index: 5; width: min(90%, 360px); padding: 13px 16px 14px; border: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); border-radius: 16px; color: #36577f; background: linear-gradient(145deg, rgba(255,255,255,.7), rgba(224,241,255,.42)); box-shadow: 0 18px 34px rgba(55,108,174,.14), inset 0 1px 0 rgba(255,255,255,.9); backdrop-filter: blur(18px) saturate(135%); animation: conversation-in 420ms cubic-bezier(.2, .8, .2, 1) both; }
 .agent-conversation::before { content: ''; position: absolute; top: -5px; right: 28px; width: 10px; height: 10px; border-top: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); border-left: 1px solid color-mix(in srgb, var(--agent-main, #a97efe) 24%, white); background: rgba(246,252,255,.72); transform: rotate(45deg); }
 .agent-conversation__label { display: block; color: color-mix(in srgb, var(--agent-deep, #5c39a1) 76%, #6d8ab1); font: 9px var(--font-mono, monospace); letter-spacing: .16em; }
