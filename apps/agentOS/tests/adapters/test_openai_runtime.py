@@ -351,6 +351,51 @@ def test_glm_runtime_honors_reasoning_effort_and_enables_thinking() -> None:
     assert transport.payload["messages"][0]["role"] == "system"
 
 
+@pytest.mark.parametrize("requested,expected", [("medium", "high"), ("low", "high"), ("max", "max")])
+def test_deepseek_runtime_enables_thinking_and_clamps_effort(requested: str, expected: str) -> None:
+    """DeepSeek 档位走 thinking enabled + effort 外发；low/medium 收敛到官方 high。"""
+    transport = _JsonTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.deepseek", kind=CapabilityKind.MODEL,
+            displayName="DeepSeek", provider="deepseek", capabilities=["deepseek-flash"],
+        ),
+        transport=transport,
+    )
+
+    asyncio.run(runtime.invoke(ModelInvocationRequest(
+        requestId="deepseek-effort", model="deepseek-flash",
+        responseSchema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        options={"reasoning_effort": requested},
+    )))
+
+    assert transport.payload["reasoning_effort"] == expected
+    assert transport.payload["thinking"] == {"type": "enabled"}
+    assert transport.payload["response_format"] == {"type": "json_object"}
+
+
+def test_deepseek_runtime_without_effort_disables_thinking() -> None:
+    """无显式档位时关思考直出，防私有推理与 JSON 输出争夺预算（与 GLM 同语义）。"""
+    transport = _JsonTransport()
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.deepseek", kind=CapabilityKind.MODEL,
+            displayName="DeepSeek", provider="deepseek", capabilities=["deepseek-flash"],
+        ),
+        transport=transport,
+    )
+
+    asyncio.run(runtime.invoke(ModelInvocationRequest(
+        requestId="deepseek-plain", model="deepseek-flash",
+        responseSchema={"type": "object", "properties": {"answer": {"type": "string"}}},
+    )))
+
+    assert transport.payload["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in transport.payload
+    assert transport.payload["response_format"] == {"type": "json_object"}
+    assert '"answer":{"type":"string"}' in transport.payload["messages"][0]["content"]
+
+
 def test_glm_schema_instruction_follows_agentos_system_authority() -> None:
     transport = _JsonTransport()
     runtime = OpenAICompatibleRuntime(
@@ -403,7 +448,7 @@ def test_provider_preserves_complete_executor_authority_and_user_request(provide
 
 
 def test_non_glm_runtime_strips_reasoning_effort_option() -> None:
-    """非 GLM 端点不外发 reasoning_effort，保持既有 wire format。"""
+    """非思考供应商端点不外发 reasoning_effort，保持既有 wire format。"""
     transport = _JsonTransport()
     runtime = OpenAICompatibleRuntime(
         manifest=CapabilityManifest(

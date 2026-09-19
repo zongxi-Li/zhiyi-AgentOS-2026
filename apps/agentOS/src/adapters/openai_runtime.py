@@ -424,20 +424,29 @@ class OpenAICompatibleRuntime:
         payload["model"] = model
         payload["messages"] = [dict(message) for message in request.messages]
         if request.response_schema is not None:
-            # reasoning_effort 只对 GLM 端点外发（当前唯一声明该档位的提供方），
-            # 其余端点剥离该选项，避免未知参数破坏严格兼容端点的 wire format。
+            # 思考档位只对声明该能力的供应商（GLM/DeepSeek）外发，其余端点剥离
+            # 该选项，避免未知参数破坏严格兼容端点的 wire format。判定依据是
+            # 供应商标识而非模型名，官方上新/改名模型自动适用。
             reasoning_effort = payload.pop("reasoning_effort", None)
-            glm_provider = self._manifest.provider.strip().lower() in {"glm", "zhipu"}
-            if glm_provider:
+            provider = self._manifest.provider.strip().lower()
+            thinking_provider = provider in {"glm", "zhipu", "deepseek"}
+            if thinking_provider:
                 if isinstance(reasoning_effort, str) and reasoning_effort.strip():
                     # 显式档位意味着用户选择让思考参与本次输出；此时关闭思考
                     # 会静默吞掉档位语义，等价于档位永远无效。
-                    payload["reasoning_effort"] = reasoning_effort.strip()
+                    # DeepSeek 官方只声明 high/max：low/medium 收敛到 high，
+                    # 与 Chat 链 adapt_chat_completion_parameters 同语义。
+                    if provider == "deepseek":
+                        payload["reasoning_effort"] = (
+                            "max" if reasoning_effort.strip() == "max" else "high"
+                        )
+                    else:
+                        payload["reasoning_effort"] = reasoning_effort.strip()
                     payload["thinking"] = {"type": "enabled"}
                 else:
-                    # 无显式档位时保持直出：GLM 5 系默认长思考，私有推理与
-                    # JSON 答案争夺同一输出预算，可能在对象闭合前耗尽响应；
-                    # 规划器已提供显式校验与修复兜底。
+                    # 无显式档位时保持直出：GLM 5 系/DeepSeek 思考模型默认长思
+                    # 考，私有推理与 JSON 答案争夺同一输出预算，可能在对象闭合
+                    # 前耗尽响应；规划器已提供显式校验与修复兜底。
                     payload["thinking"] = {"type": "disabled"}
                 payload["response_format"] = {"type": "json_object"}
                 schema_instruction = (
