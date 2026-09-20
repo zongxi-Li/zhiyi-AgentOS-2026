@@ -29,14 +29,14 @@ defineProps<{
   min-height: 0;
   flex-direction: column;
   color: var(--wb-text);
-  background: var(--wb-surface-shell);
+  background: var(--wb-surface-1);
 }
 .auxiliary-sidebar__header {
   display: flex;
   min-height: 32px;
   align-items: center;
   padding: 0 12px;
-  background: transparent;
+  background: var(--wb-surface-1);
 }
 .auxiliary-sidebar__heading { min-width: 0; }
 .auxiliary-sidebar__heading span {
@@ -50,7 +50,7 @@ defineProps<{
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  background: var(--wb-surface-shell);
+  background: var(--wb-surface-1);
 }
 .auxiliary-sidebar__body :deep(.acg-copilot) {
   width: 100%;

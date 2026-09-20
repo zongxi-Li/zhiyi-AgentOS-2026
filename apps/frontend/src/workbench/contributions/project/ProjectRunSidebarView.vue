@@ -249,29 +249,29 @@ const phaseToneClass = (phase: NodeExecutionPhase) => `tone-${PHASE_TONE[phase] 
 .low-entropy-hero > div:first-child { display: grid; gap: 4px; min-width: 0; }
 .low-entropy-hero > div:first-child strong { color: var(--wb-accent); font: 500 26px/1.05 var(--font-serif, serif); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .low-entropy-hero span, .low-entropy-hero small { color: var(--wb-text-muted); font: 10px/1.35 var(--font-sans, sans-serif); }
-.low-entropy-hero__saved { display: grid; justify-items: end; gap: 2px; padding-left: 14px; border-left: 1px solid var(--wb-border-soft); text-align: right; }
+.low-entropy-hero__saved { display: grid; justify-items: end; gap: 2px; padding-left: 14px; text-align: right; }
 .low-entropy-hero__saved strong { color: var(--wb-text); font: 500 22px/1.1 var(--font-serif, serif); font-variant-numeric: tabular-nums; }
 .low-entropy-signals { margin-top: 4px; }
 .sidebar-metrics strong.is-retry { color: var(--wb-retry); }
 .sidebar-metrics strong.is-danger { color: var(--wb-danger); }
-.low-entropy-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; padding-top: 9px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); color: var(--wb-text-muted); font: 10px/1.35 var(--font-sans, sans-serif); }
+.low-entropy-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; padding-top: 9px; color: var(--wb-text-muted); font: 10px/1.35 var(--font-sans, sans-serif); }
 .low-entropy-footer strong { color: var(--wb-success); font-weight: 650; }
 .sidebar-empty { margin: 10px 0 0; color: var(--wb-text-muted); font-size: 11px; line-height: 1.5; }
 .recent-traces { display: grid; gap: 8px; }
-.recent-traces__item { display: grid; gap: 3px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
-.recent-traces__item:first-child { padding-top: 0; border-top: 0; }
+.recent-traces__item { display: grid; gap: 3px; padding-top: 8px; }
+.recent-traces__item:first-child { padding-top: 0; }
 .recent-traces__item > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .recent-traces__item strong { overflow: hidden; color: var(--wb-text); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .recent-traces__item time, .recent-traces__item span { overflow: hidden; color: var(--wb-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .recent-traces__item time { flex: 0 0 auto; }
 .record-list { display: grid; gap: 8px; }
-.record-list__item { display: grid; gap: 3px; min-width: 0; padding: 9px 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
+.record-list__item { display: grid; gap: 3px; min-width: 0; padding: 9px 10px; border: 0; border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
 .record-list__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .record-list__heading strong { overflow: hidden; color: var(--wb-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .record-list__item code, .record-list__item small { overflow-wrap: anywhere; color: var(--wb-text-muted); font: 10px/1.4 var(--font-mono, monospace); }
 .record-list__item code { color: var(--sem-running); }
 .record-list__failure { color: var(--wb-danger) !important; }
 .phase { flex: 0 0 auto; padding: 2px 6px; border-radius: 999px; color: var(--tone, var(--wb-accent)); background: var(--tone-fade, var(--wb-accent-soft)); font-size: 9px; }
-.live-output { max-height: 220px; overflow: auto; margin: 9px 0 0; padding: 10px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-surface-inset); font: 11px/1.55 var(--font-mono, monospace); white-space: pre-wrap; word-break: break-word; }
+.live-output { max-height: 220px; overflow: auto; margin: 9px 0 0; padding: 10px; border: 0; border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-surface-inset); font: 11px/1.55 var(--font-mono, monospace); white-space: pre-wrap; word-break: break-word; }
 @media (max-width: 360px) { .sidebar-metrics--four { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; } }
 </style>

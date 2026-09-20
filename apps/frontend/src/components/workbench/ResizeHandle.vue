@@ -56,8 +56,8 @@ const emit = defineEmits<{
   left: 50%;
   width: 1px;
   transform: translateX(-50%);
-  background: var(--border-light);
-  opacity: .5;
+  background: transparent;
+  opacity: 0;
   transition: background-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
 }
 

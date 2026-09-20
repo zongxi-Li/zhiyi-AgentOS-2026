@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   color: var(--app-topbar-text);
   background: var(--app-topbar-bg);
-  border-bottom: 1px solid var(--app-topbar-border);
+  border-bottom: 0;
 }
 
 /* 角落细化：紧凑图标栏那一列上方不画下缘线，线从图标栏右缘（COLLAPSED_SIDEBAR_WIDTH=48，App.vue）开始，对齐 VS Code 标题栏。 */
@@ -295,7 +295,7 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   height: 1px;
-  background: var(--app-topbar-border);
+  background: transparent;
 }
 
 /* Desktop 无边框窗口：关闭按钮必须贴住窗口右缘（Fitts's Law）。 */

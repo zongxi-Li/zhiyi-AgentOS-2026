@@ -1366,7 +1366,7 @@ onUnmounted(() => {
 .app-sidebar {
   position: relative;
   background-color: transparent;
-  border-right: 1px solid var(--border-light);
+  border-right: 0;
   backdrop-filter: blur(18px);
   display: flex;
   flex-direction: row;
@@ -1391,7 +1391,7 @@ onUnmounted(() => {
 }
 
 .app-sidebar.chat-panel-open .primary-sidebar {
-  border-right: 1px solid var(--sidebar-border);
+  border-right: 0;
 }
 
 .app-sidebar.resizing {
@@ -2604,7 +2604,7 @@ onUnmounted(() => {
 
 /* Screenshot refinement: make the shell read as one calm, layered workbench. */
 .app-sidebar {
-  border-right-color: var(--sidebar-border);
+  border-right-color: transparent;
 }
 
 .primary-sidebar,

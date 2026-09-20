@@ -335,7 +335,7 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
   gap: 7px;
   min-height: 34px;
   padding: 0 13px;
-  border-top: 1px solid var(--wb-border-soft);
+  border-top: 0;
   color: var(--wb-text-muted);
   font-size: 10px;
 }

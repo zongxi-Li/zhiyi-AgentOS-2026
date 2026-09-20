@@ -187,7 +187,7 @@ const openMission = () => emit('openEntry', {
 .task-document__breadcrumb button { flex: 0 1 auto; min-width: 0; overflow: hidden; padding: 0; border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
 .task-document__breadcrumb button:hover { color: var(--wb-accent); text-decoration: underline; }
 .task-document__breadcrumb strong { min-width: 0; overflow: hidden; color: var(--wb-text-secondary); font-weight: 500; text-overflow: ellipsis; }
-.task-document__heading-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--wb-border-soft); }
+.task-document__heading-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 0; }
 .task-document__heading { min-width: 0; }
 .task-document__filename { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 .task-document__filename span { color: var(--wb-accent); font-size: 13px; }

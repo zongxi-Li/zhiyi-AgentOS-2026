@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
   width: 100%;
   min-width: 0;
   height: var(--workbench-status-bar-height, 22px);
-  border-top: 1px solid var(--wb-border);
+  border-top: 0;
   background: var(--wb-surface-section);
   color: var(--wb-text-muted);
   font-size: 10px;

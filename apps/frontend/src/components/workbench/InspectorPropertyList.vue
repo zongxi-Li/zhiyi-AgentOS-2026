@@ -25,7 +25,7 @@ defineProps<{
 <style scoped>
 .property-list { margin: 0; }
 .property-row { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 12px; min-height: 34px; padding: 7px 0; font-size: 12px; }
-.property-row + .property-row { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
+.property-row + .property-row { border-top: 0; }
 .property-row dt { overflow: hidden; color: var(--wb-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .property-row dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--wb-text); text-align: left; }
 .property-row dd.is-code { color: var(--sem-running); font: 10px/1.45 var(--font-mono, monospace); }
