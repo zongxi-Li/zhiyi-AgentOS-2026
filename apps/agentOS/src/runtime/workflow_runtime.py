@@ -923,6 +923,39 @@ class ExecutionRuntime:
                         for key, value in persisted_ids.items()
                         if str(key).split(":", 1)[0] not in resumable_step_ids
                     }
+            reused_projection_events: list[dict] = []
+            if not reuse_source_run and self.identity_lifecycle is not None:
+                # 惰性导入与 _flush_identity_outbox 同理由：不把 runtime.v2 的
+                # 重组件图拖进本模块的包初始化。
+                from runtime.v2.resume_projection import (
+                    build_reused_step_projection_events,
+                )
+
+                source_step_counters = {}
+                for reused_step_id in copied_refs:
+                    source_step = source.get_step(reused_step_id)
+                    source_step_counters[reused_step_id] = (
+                        int(source_step.attempt or 0),
+                        int(source_step.retry_count or 0),
+                    )
+                reused_projection_events, reused_state_updates = (
+                    build_reused_step_projection_events(
+                        run_id=retry.run_id,
+                        mission_id=retry.mission_id,
+                        reused_step_ids=sorted(copied_refs),
+                        copied_refs=copied_refs,
+                        copied_summaries=copied_summaries,
+                        source_run_id=source.run_id,
+                        source_execution_state=source.execution_state or {},
+                        source_step_counters=source_step_counters,
+                        attempt_id_for=lambda _step_id: new_attempt_id(),
+                        step_execution_id_for=lambda _step_id: new_step_execution_id(),
+                    )
+                )
+                # attemptIds/stepExecutionIds/executionBindings 写回继任 Run，
+                # 后续若再从本 Run 发起链式恢复，复用账目可被继续追溯。
+                for state_key, entries in reused_state_updates.items():
+                    retry.execution_state.setdefault(state_key, {}).update(entries)
             retry.completed_step_ids = list(source_state.completed_step_ids)
             retry.active_step_ids = []
             retry.current_step_id = step_id
@@ -1000,7 +1033,10 @@ class ExecutionRuntime:
                 },
             )
             retry.updated_at = utc_now()
-            self.workflow_store.save_run(retry)
+            if reused_projection_events:
+                self.workflow_store.save_run_with_events(retry, reused_projection_events)
+            else:
+                self.workflow_store.save_run(retry)
             if reuse_source_run:
                 self.mission_manager.mark_retrying(source.mission_id)
             if self.identity_lifecycle is not None:

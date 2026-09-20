@@ -9,9 +9,15 @@ from components.executor import InMemoryExecutionValueStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
 from contracts.workflow import StepStatus, WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
-from domain.models import AttemptStatus, RunStatus
+from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
 from runtime.workflow_runtime import ExecutionRuntime
-from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
+from runtime.v2 import (
+    AcgIdentityLifecycleService,
+    IdentityProjectionBridge,
+    MissionWorkspaceProjector,
+    WorkspaceEntryKind,
+)
+from runtime.v2.resume_projection import build_reused_step_projection_events
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
@@ -539,3 +545,147 @@ def test_second_in_place_resume_keeps_attempt_numbering_contiguous(tmp_path) -> 
         assert design_attempts[-1].status is AttemptStatus.SUCCEEDED
     finally:
         identity_service.close()
+
+
+def test_successor_resume_backfills_identity_attempts_for_reused_steps(tmp_path) -> None:
+    """继任 Run 断点恢复必须为复用步骤补建 Attempt 投影（2026-09-19 Pending 事故回归）。
+
+    继任 Run 不重新调度源 Run 已完成的步骤，调度器的 attempt.ensured 事件链不会
+    发生；若不为它们补投影，Identity 侧永远没有这些任务在本 Run 的执行账目，
+    Workspace 把已产出结果的任务显示为 Pending · Attempt 0。
+    """
+    agent = _RetryAgent()
+    runtime, blueprint = _retry_runtime(tmp_path, agent, with_identity=True)
+    try:
+        mission = runtime.create_mission("successor resume backfill", workflow_id="single-step-retry")
+        plan = TaskPlan(
+            missionId=mission.mission_id,
+            nodes=tuple(
+                PlannedTask(
+                    key=f"step:{node.node_id}",
+                    title=node.name or node.node_id,
+                    objective=node.goal or node.node_id,
+                    capabilityRequirements=(node.capability,) if node.capability else (),
+                    logicalRole=node.logical_role,
+                )
+                for node in blueprint.step_nodes()
+            ),
+        )
+        mission.input.update({
+            "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
+            "taskPlan": plan.model_dump(by_alias=True, mode="json"),
+            "taskBindings": [
+                TaskImplementationBinding(
+                    planNodeKey=f"step:{node.node_id}",
+                    acgNodeId=node.node_id,
+                ).model_dump(by_alias=True, mode="json")
+                for node in blueprint.step_nodes()
+            ],
+        })
+        runtime.workflow_store.save_mission(mission)
+        _, source = runtime.prepare_run(mission.mission_id)
+
+        with pytest.raises(RuntimeError, match="ACG superstep failed"):
+            asyncio.run(runtime.execute_prepared_run(source.run_id))
+        failed = runtime.get_status(source.run_id)
+        failed.execution_state["activeStepIds"] = ["final"]
+        runtime.workflow_store.save_run(failed)
+
+        retry = runtime.prepare_single_step_retry(
+            failed.run_id,
+            "final",
+            reason="resume after final-node failure",
+        )
+
+        identity_service = runtime.identity_lifecycle.lifecycle_service
+        repositories = identity_service.repositories
+        domain_run = repositories.runs.get(retry.run_id)
+        assert domain_run is not None
+        source_task = runtime.identity_lifecycle._resolve_semantic_task(
+            domain_run.blueprint_id, "source"
+        )
+        backfilled = [
+            attempt for attempt in repositories.attempts.list_for_run(retry.run_id)
+            if attempt.task_id == source_task.task_id
+        ]
+        assert len(backfilled) == 1
+        assert backfilled[0].status is AttemptStatus.SUCCEEDED
+        assert backfilled[0].attempt_number == 1
+        binding = repositories.execution_bindings.get_for_attempt(backfilled[0].attempt_id)
+        assert binding is not None
+        assert binding.acg_node_id == "source"
+        assert binding.metadata.get("reusedFromRunId") == failed.run_id
+        executions = repositories.step_executions.list_for_attempt(backfilled[0].attempt_id)
+        assert [execution.status for execution in executions] == [StepExecutionStatus.SUCCEEDED]
+        assert retry.execution_state["attemptIds"]["source:1:root"] == backfilled[0].attempt_id
+        assert retry.execution_state["stepExecutionIds"]["source:1:root"] == executions[0].step_execution_id
+
+        workspace = MissionWorkspaceProjector(
+            repositories, runtime.content_manifest_store
+        ).project(mission.mission_id, run_id=retry.run_id)
+        source_entry = next(
+            entry for entry in workspace.entries
+            if entry.kind is WorkspaceEntryKind.TASK and entry.semantic_task_key == "step:source"
+        )
+        assert source_entry.status == "completed"
+        assert source_entry.attempt_count == 1
+
+        result = asyncio.run(runtime.execute_prepared_run(retry.run_id))
+        assert result.status is WorkflowStatus.COMPLETED
+        assert result.completed_step_ids == ["source", "final"]
+        assert agent.source_calls == 1
+        assert agent.final_calls == 2
+
+        # 补投影入账不挤占真实执行Attempt：source 任务 1 条（补投影），
+        # final 任务 1 条（继任 Run 真实执行）。
+        final_task = runtime.identity_lifecycle._resolve_semantic_task(
+            domain_run.blueprint_id, "final"
+        )
+        assert [
+            attempt.task_id for attempt in repositories.attempts.list_for_run(retry.run_id)
+        ].count(final_task.task_id) == 1
+        assert repositories.runs.get(retry.run_id).status is RunStatus.SUCCEEDED
+    finally:
+        if runtime.identity_lifecycle is not None:
+            runtime.identity_lifecycle.lifecycle_service.close()
+
+
+def test_resume_projection_builder_locks_event_contract() -> None:
+    """补投影事件构建器：四事件链形状、状态写回条目与 fail-fast 错误路径。"""
+    kwargs = dict(
+        run_id="run_child",
+        mission_id="mission_x",
+        reused_step_ids=["source"],
+        copied_refs={"source": "ref-1"},
+        copied_summaries={"source": "ok"},
+        source_run_id="run_parent",
+        source_execution_state={
+            "executionBindings": {"source": {"resourceId": "agent-x", "bindingId": "binding:old"}},
+        },
+        source_step_counters={"source": (0, 0)},
+        attempt_id_for=lambda step_id: f"attempt_{step_id}",
+        step_execution_id_for=lambda step_id: f"step_execution_{step_id}",
+    )
+    events, state_updates = build_reused_step_projection_events(**kwargs)
+    assert [event["eventType"] for event in events] == [
+        "attempt.ensured", "resource.bound", "step.started", "step.succeeded",
+    ]
+    assert [event["eventId"] for event in events] == [
+        "attempt.ensured:attempt_source",
+        "resource.bound:attempt_source",
+        "step.started:step_execution_source",
+        "step.succeeded:step_execution_source",
+    ]
+    assert events[3]["payload"]["result"]["outputRef"] == "ref-1"
+    binding = events[1]["payload"]["binding"]
+    assert binding["runId"] == "run_child"
+    assert binding["metadata"]["reusedFromRunId"] == "run_parent"
+    assert binding["metadata"]["reusedFromBindingId"] == "binding:old"
+    assert state_updates["attemptIds"] == {"source:1:root": "attempt_source"}
+    assert state_updates["stepExecutionIds"] == {"source:1:root": "step_execution_source"}
+    assert state_updates["executionBindings"]["source"]["bindingId"] == "binding:run_child:source:attempt_source"
+
+    with pytest.raises(ValueError, match="source execution binding: ghost"):
+        build_reused_step_projection_events(**dict(kwargs, reused_step_ids=["ghost"]))
+    with pytest.raises(ValueError, match="no committed outputRef"):
+        build_reused_step_projection_events(**dict(kwargs, copied_refs={}))
