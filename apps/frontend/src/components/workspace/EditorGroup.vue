@@ -1,6 +1,6 @@
 <template>
   <main class="editor-group" aria-label="Workspace editor">
-    <nav class="editor-tabs" aria-label="Open editors" role="tablist">
+    <nav v-if="activeOpened" class="editor-tabs" aria-label="Open editors" role="tablist">
       <div class="editor-tabs__scroll">
         <button
           v-if="sidebarHidden"
@@ -92,7 +92,9 @@
         @content-ready="emit('contentReady', $event)"
         @artifact-projection="emit('artifactProjection', $event)"
       />
-      <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
+      <div v-else class="editor-group__empty">
+        <img class="editor-group__empty-watermark" src="/logo.webp" alt="" aria-hidden="true" />
+      </div>
     </section>
   </main>
 </template>
@@ -184,12 +186,12 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
-.editor-tabs { --editor-tab-bg: color-mix(in srgb, var(--bg-app) 45%, var(--wb-surface-inset)); display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--editor-tab-bg); }
+.editor-tabs { --editor-tab-bg: var(--wb-surface-1); display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 0; background: var(--editor-tab-bg); }
 .editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
 .editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 38px; background: var(--editor-tab-bg); }
-.editor-tab { display: flex; align-items: center; flex: 1 1 0; min-width: 100px; max-width: 300px; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--editor-tab-bg); }
+.editor-tab { display: flex; align-items: center; flex: 1 1 0; min-width: 100px; max-width: 300px; box-sizing: border-box; border-right: 0; background: var(--editor-tab-bg); }
 .editor-tab:hover { background: var(--wb-hover); }
-.editor-tab.is-active { background: var(--wb-surface-shell); box-shadow: inset 0 2px 0 var(--wb-accent); }
+.editor-tab.is-active { background: var(--wb-surface-shell); box-shadow: none; }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
 .editor-tab__main { display: flex; flex: 1 1 auto; align-items: center; align-self: stretch; gap: 7px; min-width: 0; padding: 0 8px 0 12px; text-align: left; font-size: 11px; }
 .editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--wb-text); }
@@ -220,7 +222,7 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   min-height: var(--wb-tab-height);
   padding: 0 6px;
   border: 0;
-  border-right: 1px solid var(--wb-border-soft);
+  border-right: 0;
   color: var(--wb-text-muted);
   background: var(--editor-tab-bg);
   cursor: pointer;
@@ -287,6 +289,33 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-auxiliary-trigger:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-group__surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 10px 12px 12px; background: var(--wb-surface-shell); }
 .editor-group__surface--task { padding: 0; }
-.editor-group__empty { display: grid; place-items: center; height: 100%; color: var(--wb-text-muted); font-size: 12px; }
+.editor-group__empty {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 17px;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 42px 24px;
+  color: var(--wb-text-muted);
+  background: var(--wb-surface-shell);
+  text-align: center;
+}
+.editor-group__empty-watermark {
+  position: relative;
+  z-index: 1;
+  width: min(440px, 58vw);
+  height: min(440px, 58vw);
+  object-fit: contain;
+  opacity: .12;
+  filter: grayscale(1) saturate(.55) contrast(.82) brightness(1.12);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
 
 </style>

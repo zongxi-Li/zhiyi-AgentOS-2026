@@ -6,10 +6,20 @@
       :context="inspectorContext"
       :title="inspectorTitle"
       :historical="historical"
+      :fullscreen="fullscreen"
       :component-props="baseProps"
       @locate-graph="emit('locateGraph')"
+      @toggle-fullscreen="emit('toggleFullscreen')"
+      @close="emit('close')"
     />
-    <InspectorFrame v-else-if="inspectorContribution || inspectorSections.length" :title="inspectorTitle" :historical="historical">
+    <InspectorFrame
+      v-else-if="inspectorContribution || inspectorSections.length"
+      :title="inspectorTitle"
+      :historical="historical"
+      :fullscreen="fullscreen"
+      @toggle-fullscreen="emit('toggleFullscreen')"
+      @close="emit('close')"
+    >
       <div v-if="inspectorSummary" class="runtime-inspector__summary">
         <div class="runtime-inspector__summary-line">
           <span v-if="inspectorSummary.role" class="runtime-inspector__role">{{ inspectorSummary.role }}</span>
@@ -177,6 +187,7 @@ const props = defineProps<{
   runtimeStore?: RuntimeEventStore | null
   entries?: WorkspaceEntry[]
   artifactDocument?: ArtifactDocumentModel | null
+  fullscreen?: boolean
 }>()
 const ownedRuntimeStore = shallowRef<RunRuntimeStore | null>(null)
 const ownedRunId = ref<string | null>(null)
@@ -210,6 +221,8 @@ onBeforeUnmount(() => {
 const emit = defineEmits<{
   locateGraph: []
   openArtifact: [entry: WorkspaceEntry]
+  close: []
+  toggleFullscreen: []
 }>()
 
 const inspectorContext = computed(() => ({
@@ -360,7 +373,7 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 <style scoped>
 .runtime-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--wb-surface-pane); color: var(--wb-text); }
 .runtime-inspector__empty { padding: 22px 15px; color: var(--wb-text-muted); font-size: 12px; line-height: 1.6; }
-.runtime-inspector__summary { display: grid; gap: 7px; padding: 12px 15px 13px; border-bottom: 1px solid var(--wb-border-soft); background: color-mix(in srgb, var(--wb-surface-pane) 82%, var(--wb-surface-inset)); }
+.runtime-inspector__summary { display: grid; gap: 7px; padding: 12px 15px 13px; border-bottom: 0; background: color-mix(in srgb, var(--wb-surface-pane) 82%, var(--wb-surface-inset)); }
 .runtime-inspector__summary-line { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
 .runtime-inspector__role, .runtime-inspector__status, .runtime-inspector__artifact { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); font-size: 10px; line-height: 1.2; }
 .runtime-inspector__role { color: var(--wb-text-secondary); background: var(--wb-surface-inset); }
@@ -378,7 +391,7 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__status.is-retry i { background: var(--wb-retry); }
 .runtime-inspector__artifact { color: var(--wb-text-muted); }
 .runtime-inspector__key { min-width: 0; overflow: hidden; color: var(--wb-text); font: 11px/1.4 var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
-.runtime-inspector__tabs { display: flex; gap: 1px; min-height: 36px; padding: 0 10px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-pane); overflow-x: auto; scrollbar-width: none; }
+.runtime-inspector__tabs { display: flex; gap: 1px; min-height: 36px; padding: 0 10px; border-bottom: 0; background: var(--wb-surface-pane); overflow-x: auto; scrollbar-width: none; }
 .runtime-inspector__tabs::-webkit-scrollbar { display: none; }
 .runtime-inspector__tabs button { flex: 0 0 auto; min-height: 36px; padding: 0 7px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 10px; white-space: nowrap; }
 .runtime-inspector__tabs button:hover { color: var(--wb-text-secondary); }
@@ -394,7 +407,7 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__projection-meta > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
 .runtime-inspector__projection-meta span, .runtime-inspector__reference-group > span { color: var(--wb-text-muted); font-size: 11px; }
 .runtime-inspector__projection-meta code, .runtime-inspector__projection-meta strong { color: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); text-align: right; }
-.runtime-inspector__reference-group { display: grid; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 72%, transparent); }
+.runtime-inspector__reference-group { display: grid; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 0; }
 .runtime-inspector__reference-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .runtime-inspector__reference-list code { max-width: 100%; padding: 3px 5px; overflow-wrap: anywhere; color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 10px var(--font-mono, monospace); }
 .runtime-inspector__provenance { display: grid; gap: 5px; margin: 0; }
@@ -403,7 +416,7 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__provenance dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--wb-text-secondary); font-size: 10px; text-align: right; }
 .runtime-inspector__provenance dd.is-code { font-family: var(--font-mono, monospace); }
 .runtime-inspector__evidence-list { display: grid; gap: 7px; }
-.runtime-inspector__evidence-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid color-mix(in srgb, var(--wb-border-soft) 72%, transparent); }
+.runtime-inspector__evidence-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding-bottom: 6px; border-bottom: 0; }
 .runtime-inspector__evidence-list span { color: var(--wb-text-muted); font-size: 11px; }
 .runtime-inspector__evidence-list code, .runtime-inspector__evidence-list strong { max-width: 150px; overflow: hidden; color: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-inspector__hint, .runtime-inspector__discussion-empty { margin: 11px 0 0; color: var(--wb-text-muted); font-size: 11px; line-height: 1.6; }

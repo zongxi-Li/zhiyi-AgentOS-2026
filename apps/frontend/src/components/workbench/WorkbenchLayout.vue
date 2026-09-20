@@ -5,7 +5,8 @@
     :class="{
       'is-resizing': Boolean(resizingSide),
       'is-left-collapsed': !leftVisible,
-      'is-right-collapsed': !rightPaneVisible
+      'is-right-collapsed': !rightPaneVisible,
+      'is-right-maximized': rightPaneMaximized
     }"
     :style="{
       '--workbench-left-width': `${leftPaneWidth}px`,
@@ -14,12 +15,13 @@
     }"
   >
     <div class="workbench-layout__body">
-      <aside v-if="leftVisible" class="workbench-pane workbench-pane--left" aria-label="项目导航">
+      <aside v-if="leftVisible && !rightPaneMaximized" class="workbench-pane workbench-pane--left" aria-label="项目导航">
         <slot name="left" />
       </aside>
 
       <ResizeHandle
         v-if="showLeft && (leftPaneVisible || leftAutoHidden)"
+        v-show="!rightPaneMaximized"
         side="left"
         :value="leftPaneWidth"
         :min="LEFT_MIN_WIDTH"
@@ -31,7 +33,7 @@
         @click="leftAutoHidden && restoreLeftPane()"
       />
 
-      <main class="workbench-pane workbench-pane--main">
+      <main v-show="!rightPaneMaximized" class="workbench-pane workbench-pane--main">
         <WorkbenchVerticalSplit
           v-if="showBottomPanel"
           ref="splitRef"
@@ -70,6 +72,7 @@
 
       <ResizeHandle
         v-if="rightPaneVisible || rightAutoHidden"
+        v-show="!rightPaneMaximized"
         side="right"
         :value="effectiveRightPaneWidth"
         :min="rightPaneMinWidth"
@@ -81,7 +84,12 @@
       />
 
       <aside v-if="rightPaneVisible" class="workbench-pane workbench-pane--right" aria-label="Workspace Inspector">
-        <slot name="right" />
+        <slot
+          name="right"
+          :right-pane-maximized="rightPaneMaximized"
+          :toggle-right-pane-maximized="toggleRightPaneMaximized"
+          :toggle-right-pane="toggleRightPane"
+        />
       </aside>
     </div>
 
@@ -97,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import ResizeHandle from './ResizeHandle.vue'
 import WorkbenchVerticalSplit from './WorkbenchVerticalSplit.vue'
 import { useWorkbenchLayout } from '@/composables/useWorkbenchLayout'
@@ -165,6 +173,14 @@ const {
   resetWidth
 } = layout
 
+const rightPaneMaximized = ref(false)
+const toggleRightPaneMaximized = () => {
+  if (rightPaneVisible.value) rightPaneMaximized.value = !rightPaneMaximized.value
+}
+watch(rightPaneVisible, visible => {
+  if (!visible) rightPaneMaximized.value = false
+})
+
 const leftVisible = computed(() => props.showLeft && leftPaneVisible.value)
 
 const LEFT_MIN_WIDTH = 240
@@ -216,7 +232,7 @@ const rightMaxForHandle = computed(() => {
 .workbench-pane--left {
   flex: 0 0 var(--workbench-left-width);
   width: var(--workbench-left-width);
-  border-right: 1px solid var(--wb-border);
+  border-right: 0;
   background: var(--wb-surface-1);
 }
 
@@ -234,8 +250,14 @@ const rightMaxForHandle = computed(() => {
   width: min(var(--workbench-right-width), var(--workbench-right-max-width));
   max-width: var(--workbench-right-max-width);
   box-sizing: border-box;
-  border-left: 1px solid var(--wb-border);
+  border-left: 0;
   background: var(--wb-surface-1);
+}
+.workbench-layout.is-right-maximized .workbench-pane--right {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  border-left: 0;
 }
 
 .workbench-layout.is-resizing .workbench-pane {

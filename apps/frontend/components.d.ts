@@ -88,6 +88,7 @@ declare module 'vue' {
     IdentityHealthStrip: typeof import('./src/components/agentos/IdentityHealthStrip.vue')['default']
     ImageViewer: typeof import('./src/components/common/ImageViewer.vue')['default']
     InspectorFrame: typeof import('./src/components/workbench/InspectorFrame.vue')['default']
+    InspectorHeaderActions: typeof import('./src/components/workbench/InspectorHeaderActions.vue')['default']
     InspectorPropertyList: typeof import('./src/components/workbench/InspectorPropertyList.vue')['default']
     InspectorSection: typeof import('./src/components/workbench/InspectorSection.vue')['default']
     IntentProfileArtifact: typeof import('./src/components/workspace/IntentProfileArtifact.vue')['default']

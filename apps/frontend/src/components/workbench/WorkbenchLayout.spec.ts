@@ -27,7 +27,11 @@ const mountLayout = () => mount(WorkbenchLayout, {
   props: { storageKey: STORAGE_KEY },
   slots: {
     left: () => h('div', { class: 'slot-left' }, 'left'),
-    right: () => h('div', { class: 'slot-right' }, 'right'),
+    right: (state: Record<string, any>) => h('div', { class: 'slot-right' }, [
+      h('span', { class: 'right-maximized-state' }, String(state.rightPaneMaximized)),
+      h('button', { class: 'toggle-right-maximized', onClick: state.toggleRightPaneMaximized }, 'maximize'),
+      h('button', { class: 'toggle-right', onClick: state.toggleRightPane }, 'close')
+    ]),
     main: (state: Record<string, unknown>) => h('div', { class: 'slot-main' }, [
       h('span', { class: 'layout-state' }, JSON.stringify({
         leftAutoHidden: state.leftAutoHidden,
@@ -175,27 +179,60 @@ describe('WorkbenchLayout', () => {
     wrapper.unmount()
   })
 
-  it('honors the task Inspector width contract instead of the legacy 640px default', () => {
-    const wrapper = mount(WorkbenchLayout, {
-      props: {
-        storageKey: STORAGE_KEY,
-        rightPaneMinWidth: 280,
-        rightPaneDefaultWidth: 320,
-        rightPaneMaxWidth: 340
-      },
-      slots: {
-        left: '<div>left</div>',
-        main: '<div>main</div>',
-        right: '<div>inspector</div>'
-      }
-    })
+  it('maximizes the Inspector and restores the three-pane workbench', async () => {
+    const wrapper = mountLayout()
 
-    const handle = wrapper.find('.workbench-resize-handle--right')
-    expect(handle.attributes('aria-valuemin')).toBe('280')
-    expect(handle.attributes('aria-valuenow')).toBe('320')
-    expect(handle.attributes('aria-valuemax')).toBe('340')
-    expect(wrapper.find('.workbench-layout').attributes('style')).toContain('--workbench-right-max-width: 340px')
+    expect(wrapper.find('.workbench-pane--left').isVisible()).toBe(true)
+    expect(wrapper.find('.workbench-pane--main').isVisible()).toBe(true)
+    expect(wrapper.find('.right-maximized-state').text()).toBe('false')
+
+    await wrapper.find('.toggle-right-maximized').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.workbench-layout').classes()).toContain('is-right-maximized')
+    expect(wrapper.find('.workbench-pane--left').exists()).toBe(false)
+    expect(wrapper.find('.workbench-pane--main').attributes('style')).toContain('display: none')
+    expect(wrapper.find('.workbench-pane--right').isVisible()).toBe(true)
+    expect(wrapper.find('.right-maximized-state').text()).toBe('true')
+
+    await wrapper.find('.toggle-right-maximized').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.workbench-layout').classes()).not.toContain('is-right-maximized')
+    expect(wrapper.find('.workbench-pane--left').isVisible()).toBe(true)
+    expect(wrapper.find('.workbench-pane--main').isVisible()).toBe(true)
     wrapper.unmount()
+  })
+
+  it('keeps the compact Inspector default while allowing deliberate widening', async () => {
+    const originalViewportWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 })
+    try {
+      const wrapper = mount(WorkbenchLayout, {
+        props: {
+          storageKey: STORAGE_KEY,
+          rightPaneMinWidth: 280,
+          rightPaneDefaultWidth: 320,
+          rightPaneMaxWidth: 520
+        },
+        slots: {
+          left: '<div>left</div>',
+          main: '<div>main</div>',
+          right: '<div>inspector</div>'
+        }
+      })
+
+      const handle = wrapper.find('.workbench-resize-handle--right')
+      expect(handle.attributes('aria-valuemin')).toBe('280')
+      expect(handle.attributes('aria-valuenow')).toBe('320')
+      expect(handle.attributes('aria-valuemax')).toBe('520')
+      expect(wrapper.find('.workbench-layout').attributes('style')).toContain('--workbench-right-max-width: 520px')
+      await handle.trigger('keydown', { key: 'End' })
+      expect(handle.attributes('aria-valuenow')).toBe('520')
+      wrapper.unmount()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalViewportWidth })
+    }
   })
 
   it('manually collapses and reopens the inspector without affecting the left pane', async () => {

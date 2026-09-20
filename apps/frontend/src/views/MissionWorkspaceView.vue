@@ -1,5 +1,7 @@
 <template>
   <div class="mission-workspace-view">
+    <!-- 320px is the visual default; a deliberate drag may widen the Inspector
+         until the shared workbench main-column constraint is reached. -->
     <WorkbenchLayout
       :show-right="true"
       :show-bottom-panel="Boolean(projection)"
@@ -8,7 +10,7 @@
       :bottom-panel-collapsed-height="0"
       :right-pane-min-width="280"
       :right-pane-default-width="320"
-      :right-pane-max-width="340"
+      :right-pane-max-width="520"
       storage-key="zhiyi.mission.workspace.layout.v3"
     >
       <template #left>
@@ -22,6 +24,7 @@
           @back="returnToProjectList"
         />
         <section v-else class="workspace-loading-pane" aria-label="Workspace loading status">
+          <img class="workspace-loading-pane__watermark" src="/logo.webp" alt="" aria-hidden="true" />
           <span class="workspace-loading-pane__mark">MISSION</span>
           <strong>{{ loading ? 'Loading workspace…' : 'Workspace unavailable' }}</strong>
           <span>{{ loadError || '等待 Mission 投影。' }}</span>
@@ -63,13 +66,14 @@
           @artifact-projection="artifactProjection = $event"
         />
         <section v-else class="workspace-main-state" role="status">
+          <img class="workspace-main-state__watermark" src="/logo.webp" alt="" aria-hidden="true" />
           <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
           <span>{{ loadError || '请从 Mission 导航进入一个 Project Workspace。' }}</span>
           <button v-if="loadError" type="button" @click="loadWorkspace()">重新加载</button>
         </section>
       </template>
 
-      <template #right>
+      <template #right="rightState">
         <WorkbenchAuxiliarySidebar
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
@@ -92,8 +96,11 @@
           :runtime-store="runtimeStore"
           :registry="registry"
           :workbench-context="workbenchContext"
+          :fullscreen="rightState.rightPaneMaximized"
           @locate-graph="inspectorEntry && locateGraph(inspectorEntry)"
           @open-artifact="openEntry"
+          @toggle-fullscreen="rightState.toggleRightPaneMaximized"
+          @close="rightState.toggleRightPane"
         />
       </template>
 
@@ -942,8 +949,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .mission-workspace-view { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
 .workspace-loading-pane { display: grid; place-items: center; align-content: center; gap: 8px; box-sizing: border-box; height: 100%; padding: 22px; color: var(--text-secondary); font-size: 12px; text-align: center; }
-.workspace-loading-pane::before,
-.workspace-main-state::before { width: 7px; height: 7px; border: 1px solid color-mix(in srgb, var(--primary-color) 60%, var(--border-light)); border-radius: 50%; background: var(--primary-fade); box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary-color) 8%, transparent); content: ''; animation: workspace-state-pulse 1.8s ease-in-out infinite; }
+.workspace-loading-pane__watermark,
+.workspace-main-state__watermark { display: block; object-fit: contain; opacity: .2; filter: grayscale(1) saturate(.55) contrast(.82) brightness(1.1); mix-blend-mode: screen; animation: workspace-state-pulse 2.4s ease-in-out infinite; }
+.workspace-loading-pane__watermark { width: 78px; height: 78px; }
+.workspace-main-state__watermark { width: 148px; height: 148px; }
 .workspace-loading-pane strong { color: var(--text-primary); font-size: 13px; }
 .workspace-loading-pane span:not(.workspace-loading-pane__mark) { max-width: 230px; line-height: 1.6; }
 .workspace-loading-pane__mark { color: var(--primary-color); font: 10px var(--font-mono, monospace); letter-spacing: .08em; }
@@ -960,8 +969,8 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-loading-pane::before,
-  .workspace-main-state::before { animation: none; }
+  .workspace-loading-pane__watermark,
+  .workspace-main-state__watermark { animation: none; }
 }
 .workspace-request-error {
   /* Keep the notice in the route viewport. Fixed positioning put it under the
