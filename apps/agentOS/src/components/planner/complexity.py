@@ -85,10 +85,14 @@ PLANNING_BUDGETS = {
 # 规划期模型调用的传输层超时预算。重型 Mission 的意图解析/分阶段 outline 推理
 # 常超 2 分钟（provider 客户端默认 120s 读超时不足以覆盖），规划调用必须
 # 显式声明更大的每调用预算；该值随调用透传到 provider 连接层。
-PLANNING_MODEL_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_TIMEOUT_SECONDS", "480"))
-PLANNING_TOTAL_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_TOTAL_TIMEOUT_SECONDS", "660"))
-PLANNING_RETRY_TIMEOUT_SECONDS = 180.0
-PLANNING_MAX_RETRIES = min(1, max(0, int(os.getenv("AGENTOS_LLM_PLANNING_MAX_RETRIES", "1"))))
+# Do not impose a small fixed planning budget during testing. Keep a finite
+# watchdog so a broken provider cannot leave a run pending forever; total=0
+# means "use the watchdog".
+PLANNING_MODEL_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_TIMEOUT_SECONDS", "900"))
+PLANNING_TOTAL_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_TOTAL_TIMEOUT_SECONDS", "0"))
+PLANNING_WATCHDOG_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_WATCHDOG_SECONDS", "1800"))
+PLANNING_RETRY_TIMEOUT_SECONDS = float(os.getenv("AGENTOS_LLM_PLANNING_RETRY_TIMEOUT_SECONDS", "600"))
+PLANNING_MAX_RETRIES = min(2, max(0, int(os.getenv("AGENTOS_LLM_PLANNING_MAX_RETRIES", "2"))))
 
 _PROMPT_AUDIT_KEYS = (
     "promptTemplateHash", "promptInstanceHash", "stablePrefixHash", "schemaHash",
@@ -280,7 +284,8 @@ def call_planning_model(
 ) -> Any:
     """Execute one logical planning call inside a shared 660-second deadline."""
     started = monotonic()
-    deadline = planning_deadline or (started + PLANNING_TOTAL_TIMEOUT_SECONDS)
+    configured_deadline = PLANNING_TOTAL_TIMEOUT_SECONDS if PLANNING_TOTAL_TIMEOUT_SECONDS > 0 else PLANNING_WATCHDOG_SECONDS
+    deadline = planning_deadline or (started + configured_deadline)
     logical_call_key = call_key or stage
     max_attempts = 1 + PLANNING_MAX_RETRIES
     attempts = audit.setdefault("attemptsByStage", {})
@@ -289,7 +294,7 @@ def call_planning_model(
     audit["timeoutBudget"] = {
         "initialSeconds": model_timeout_seconds,
         "retrySeconds": PLANNING_RETRY_TIMEOUT_SECONDS,
-        "totalSeconds": max(0.0, deadline - started) if planning_deadline else PLANNING_TOTAL_TIMEOUT_SECONDS,
+        "totalSeconds": max(0.0, deadline - started),
     }
     for attempt in range(1, max_attempts + 1):
         remaining = max(0.0, deadline - monotonic())

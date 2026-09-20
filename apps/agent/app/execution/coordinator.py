@@ -87,6 +87,9 @@ class RunExecutionCoordinator:
     async def _run_managed(self, run_id: str) -> None:
         started = monotonic()
         try:
+            # Yield once so the async Mission response can be sent before
+            # synchronous planning/bootstrap work occupies the event loop.
+            await asyncio.sleep(0)
             await self.runtime.execute_prepared_run(run_id)
         except asyncio.CancelledError:
             # An operator cancel already persisted CANCELLED before this task

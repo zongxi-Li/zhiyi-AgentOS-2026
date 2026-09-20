@@ -1759,6 +1759,7 @@ def create_router(
                 priority=request.priority,
                 workflow_id=request.workflow_id,
                 enabled_plugin_ids=request.enabled_plugin_ids,
+                defer_identity_projection=True,
             )
             _, run = runtime.prepare_run(
                 task.mission_id,

@@ -136,7 +136,7 @@
                     </select>
                   </label>
                   <label class="advanced-field">
-                    <span>Planning seed <small>optional</small></span>
+                    <span>Planning seed </span>
                     <input v-model.number="draft.planningSeed" aria-label="Planning seed" type="number" min="0" max="2147483647" placeholder="Auto" />
                   </label>
                   <label class="advanced-toggle">

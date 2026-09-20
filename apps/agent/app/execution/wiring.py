@@ -103,39 +103,59 @@ def _run_coroutine_sync(factory):
 
 
 class RegisteredPlannerLLM:
-    """Planner adapter backed by the Runtime-owned registered model stream."""
+    """Planner adapter that resolves the active provider for every call."""
 
     def __init__(self, runtime: ExecutionRuntime) -> None:
-        from app.llm.gateway import get_llm_gateway
+        self._runtime = runtime
 
-        gateway = get_llm_gateway()
-        self.provider = gateway.provider_name
-        self.model = gateway.model
-        self._runtime = GuardedModelRuntime(
-            delegate=RegisteredModelRuntime(
-                registry=runtime.model_registry,
-                provider=self.provider,
-                model=self.model,
-            ),
-            # Planning owns the retry budget so retries cannot restart a stream
-            # underneath the one shared planning deadline.
-            retries=0,
-        )
+    @property
+    def _gateway(self):
+        from app.llm.gateway import get_llm_gateway
+        return get_llm_gateway()
+
+    @property
+    def provider(self) -> str:
+        return str(self._gateway.provider_name or "")
+
+    @property
+    def model(self) -> str:
+        return str(self._gateway.model or "")
 
     def is_available(self) -> bool:
-        return self._runtime.is_available()
+        return self.provider not in {"", "mock", "unavailable"}
 
     def describe_model(self):
-        return self._runtime.describe_model()
+        from app.llm.capabilities import provider_model_capabilities
+        from contracts.capability import ModelCapabilityEnvelope, ModelCapabilitySource, ModelFeatureSet
+        gateway = self._gateway
+        declared = provider_model_capabilities(self.model, str(getattr(gateway.provider, "base_url", "") or ""))
+        return ModelCapabilityEnvelope(
+            provider=self.provider or "unavailable", model=self.model or "unknown",
+            version=declared.version, source=ModelCapabilitySource.ADAPTER_DECLARED,
+            contextWindowTokens=declared.context_window_tokens,
+            maxOutputTokens=declared.max_output_tokens,
+            maxTokensField=declared.max_tokens_field,
+            features=ModelFeatureSet(
+                jsonSchema=declared.supports_json_schema, streaming=declared.supports_stream_usage,
+                tools=declared.supports_tools, thinking=declared.supports_thinking, promptCaching=None,
+            ),
+        )
 
     def stream_generate_json(self, **kwargs):
-        return self._runtime.stream_generate_json(**kwargs)
+        async def one():
+            import asyncio
+            call_kwargs = dict(kwargs)
+            prompt = call_kwargs.pop("prompt")
+            schema = call_kwargs.pop("schema")
+            result = await asyncio.to_thread(self._gateway.generate_json, prompt, schema, **call_kwargs)
+            yield {"eventType": "model.completed", "payload": {
+                "data": result.get("data"), "provider": result.get("provider", self.provider),
+                "model": result.get("model", self.model), "streamUsed": False,
+            }}
+        return one()
 
     def generate_json(self, prompt: str, schema: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        result = _run_coroutine_sync(
-            lambda: self._runtime.generate_json(prompt=prompt, schema=schema, **kwargs)
-        )
-        return result.model_dump(by_alias=True, mode="json")
+        return self._gateway.generate_json(prompt, schema, **kwargs)
 
 
 def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:

@@ -556,9 +556,15 @@ class PlanningEngine:
     def _planning_total_timeout_seconds() -> float:
         # Import lazily so planner tests can patch the environment before the
         # budget is created and so the engine has one deadline per Plan call.
-        from .complexity import PLANNING_TOTAL_TIMEOUT_SECONDS
+        from .complexity import PLANNING_TOTAL_TIMEOUT_SECONDS, PLANNING_WATCHDOG_SECONDS
 
-        return PLANNING_TOTAL_TIMEOUT_SECONDS
+        configured = PLANNING_TOTAL_TIMEOUT_SECONDS
+        watchdog = PLANNING_WATCHDOG_SECONDS
+        if configured <= 0:
+            return watchdog
+        if watchdog <= 0:
+            return configured
+        return max(configured, watchdog)
 
     def _validate_agents(self, blueprint: ACGBlueprint, *, domain: str) -> None:
         missing: list[str] = []

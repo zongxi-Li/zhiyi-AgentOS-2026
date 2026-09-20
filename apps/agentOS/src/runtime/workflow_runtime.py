@@ -468,6 +468,7 @@ class ExecutionRuntime:
         task_type: Optional[str] = None,
         workflow_id: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
+        defer_identity_projection: bool = False,
     ) -> RuntimeMissionRecord:
         """校验请求、解析插件范围并创建任务；合同或插件异常会向调用方明确传播。"""
         task_domain = (role_type or domain or "general").strip()
@@ -493,10 +494,19 @@ class ExecutionRuntime:
             allowed_workflow_ids=scope.workflow_ids,
             mission_id=(self.identity_lifecycle.new_mission_id() if self.identity_lifecycle else None),
         )
-        if self.identity_lifecycle is not None and task.recommended_workflow:
-            recommended = self.workflow_registry.get(task.recommended_workflow)
-            if recommended.effective_runtime_engine == "acg":
-                self._flush_identity_outbox()
+        if (
+            self.identity_lifecycle is not None
+            and task.recommended_workflow
+        ):
+            if defer_identity_projection:
+                # The async mission endpoint still needs the canonical Mission
+                # row before prepare_run() allocates a Run id.  Apply only this
+                # single projection here; defer the full outbox reconciliation.
+                self.identity_lifecycle.on_mission_created(task)
+            else:
+                recommended = self.workflow_registry.get(task.recommended_workflow)
+                if recommended.effective_runtime_engine == "acg":
+                    self._flush_identity_outbox()
         return task
 
     async def start(
@@ -567,7 +577,7 @@ class ExecutionRuntime:
             raise ValueError(
                 "production ACG execution requires the identity lifecycle adapter"
             )
-        if self.identity_lifecycle is not None and is_acg:
+        if self.identity_lifecycle is not None and is_acg and not defer_acg_planning:
             # A task may have been created against a legacy/default workflow and
             # explicitly rebound to ACG only when the run is prepared.
             self.workflow_store.save_mission(task)
