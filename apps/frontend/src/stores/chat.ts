@@ -7,6 +7,25 @@ import { chatApi, type ChatRequest } from '@/services/api/chat'
 import { loadModelSettings, toModelRequestSettings, type ModelSettings } from '@/config/modelSettings'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 
+export interface TerminalExecution {
+  command: string
+  cwd: string
+  exitCode: number | null
+  stdout: string
+  stderr: string
+  timedOut: boolean
+  truncated: boolean
+  durationMs?: number
+}
+
+export interface ExecutionSummaryItem {
+  stage: string
+  status: string
+  description: string
+  durationMs?: number
+  terminal?: TerminalExecution
+}
+
 export interface Message {
   id: number | string
   role: 'user' | 'assistant'
@@ -31,7 +50,7 @@ export interface Message {
   reasoningTokens?: number
   outputTokens?: number
   latencyMs?: number
-  executionSummary?: Array<{ stage: string; status: string; description: string; durationMs?: number }>
+  executionSummary?: ExecutionSummaryItem[]
   skillsUsed?: string[]
   trace?: Array<Record<string, unknown>>
 
@@ -325,19 +344,29 @@ export const useChatStore = defineStore('chat', () => {
       const message = messages.value[streamIndex]
       if (!message) return
       const data = event.data || {}
-      const upsertToolSummary = (status: string) => {
-        const toolName = String(data.toolName || 'unknown')
-        const callId = String(data.callId || toolName)
+      const upsertToolSummary = (status: string, payload: Record<string, any> = data) => {
+        const toolName = String(payload.toolName || 'unknown')
+        const callId = String(payload.callId || toolName)
         const stage = `tool:${toolName}:${callId}`
-        const duration = typeof data.durationMs === 'number' ? data.durationMs : undefined
+        const duration = typeof payload.durationMs === 'number' ? payload.durationMs : undefined
         const description = status === 'completed'
           ? `${toolName} 调用完成${duration === undefined ? '' : `（${duration}ms）`}`
           : status === 'failed'
-            ? `${toolName} 调用失败：${data.errorCode || 'TOOL_FAILED'}`
+            ? `${toolName} 调用失败：${payload.errorCode || 'TOOL_FAILED'}`
             : `${toolName} 调用中`
         const summaries = message.executionSummary || []
         const index = summaries.findIndex(item => item.stage === stage)
-        const next = { stage, status, description, durationMs: duration }
+        const existing = index >= 0 ? summaries[index] : undefined
+        const terminal = payload.terminal && typeof payload.terminal === 'object'
+          ? payload.terminal as TerminalExecution
+          : existing?.terminal
+        const next: ExecutionSummaryItem = {
+          stage,
+          status,
+          description,
+          durationMs: duration,
+          ...(terminal ? { terminal } : {})
+        }
         if (index >= 0) summaries[index] = next
         else summaries.push(next)
         message.executionSummary = [...summaries]
@@ -377,11 +406,11 @@ export const useChatStore = defineStore('chat', () => {
           upsertToolSummary('running')
           break
         case 'tool_result':
-          upsertToolSummary('completed')
+          upsertToolSummary('completed', data)
           mergeSources(data.sources)
           break
         case 'tool_error':
-          upsertToolSummary('failed')
+          upsertToolSummary('failed', data)
           break
         case 'usage':
           message.inputTokens = data.input_tokens ?? data.inputTokens
@@ -408,6 +437,16 @@ export const useChatStore = defineStore('chat', () => {
           break
         case 'done':
           if (typeof data.contextId === 'string' && data.contextId) contextId.value = data.contextId
+          if (Array.isArray(data.toolExecutions)) {
+            for (const execution of data.toolExecutions) {
+              if (execution && typeof execution === 'object') {
+                upsertToolSummary(
+                  execution.status === 'completed' ? 'completed' : 'failed',
+                  execution as Record<string, any>
+                )
+              }
+            }
+          }
           mergeSources(data.sources)
           finishThinking(message.content ? 'complete' : 'error')
           break

@@ -19,7 +19,7 @@ from app.ai_engine.model_runtime import (
     stream_with_runtime_model,
 )
 from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
-from app.tools import get_tool_runtime
+from app.tools import get_chat_tool_runtime
 
 router = APIRouter()
 
@@ -81,9 +81,9 @@ async def chat_model_capabilities(model: str, base_url: str = ""):
 
 @router.get("/chat/capabilities")
 async def chat_capabilities():
-    """Report server-managed model and read-only tool availability without secrets."""
+    """Report server-managed model and Chat tool availability without secrets."""
     models = await list_system_runtime_models()
-    return {**models, "toolRuntime": get_tool_runtime().capabilities()}
+    return {**models, "toolRuntime": get_chat_tool_runtime().capabilities()}
 
 @router.post("/chat/text", response_model=ChatResponse)
 async def chat_text(request: ChatRequest):
@@ -94,7 +94,7 @@ async def chat_text(request: ChatRequest):
     api_key = request.api_key or ""
     if model and not base_url and not api_key:
         model, base_url, api_key = resolve_system_runtime_config(model)
-    runtime = get_tool_runtime() if request.tool_mode == "auto" else get_tool_runtime().scoped([])
+    runtime = get_chat_tool_runtime() if request.tool_mode == "auto" else get_chat_tool_runtime().scoped([])
     response = await runtime.run(
         request.text,
         history=request.context,
@@ -110,10 +110,11 @@ async def chat_text(request: ChatRequest):
     tools_used = list(dict.fromkeys(item.tool_name for item in response.tool_executions))
     execution_summary = [
         {
-            "stage": f"tool:{item.tool_name}",
+            "stage": f"tool:{item.tool_name}:{item.call_id}",
             "status": item.status,
             "description": item.output_summary,
             "durationMs": item.duration_ms,
+            "terminal": item.terminal,
         }
         for item in response.tool_executions
     ]
@@ -232,7 +233,7 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
         request_id = f"chat_{uuid4().hex}"
         if chat_request.model and not chat_request.base_url and not chat_request.api_key:
             chat_request.model, chat_request.base_url, chat_request.api_key = resolve_system_runtime_config(chat_request.model)
-        runtime = get_tool_runtime() if chat_request.tool_mode == "auto" else get_tool_runtime().scoped([])
+        runtime = get_chat_tool_runtime() if chat_request.tool_mode == "auto" else get_chat_tool_runtime().scoped([])
         chunks = runtime.stream(
             chat_request.text,
             history=chat_request.context,

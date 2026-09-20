@@ -150,6 +150,37 @@
           </Transition>
         </section>
 
+        <!-- Chat-only terminal output stays visible in the conversation, rather than
+             being hidden inside the generic thinking details. -->
+        <section
+          v-if="terminalActivities.length"
+          class="terminal-work"
+          aria-label="终端工作"
+        >
+          <div class="terminal-work__header">
+            <span class="terminal-work__title">终端工作</span>
+            <span class="terminal-work__count">{{ terminalActivities.length }} 次调用</span>
+          </div>
+          <article
+            v-for="item in terminalActivities"
+            :key="item.stage"
+            class="terminal-work__item"
+            :class="{ 'is-failed': item.status === 'failed', 'is-running': item.status === 'running' }"
+          >
+            <div v-if="item.terminal" class="terminal-work__meta">
+              <code class="terminal-work__command">$ {{ item.terminal.command }}</code>
+              <span class="terminal-work__cwd">{{ item.terminal.cwd }}</span>
+              <span class="terminal-work__exit">
+                {{ item.terminal.timedOut ? '超时' : `退出码 ${item.terminal.exitCode}` }}
+              </span>
+            </div>
+            <div v-else class="terminal-work__running">正在执行终端命令…</div>
+            <pre v-if="item.terminal?.stdout" class="terminal-work__output">{{ item.terminal.stdout }}</pre>
+            <pre v-if="item.terminal?.stderr" class="terminal-work__output is-stderr">{{ item.terminal.stderr }}</pre>
+            <div v-if="item.terminal?.truncated" class="terminal-work__truncated">输出已截断</div>
+          </article>
+        </section>
+
         <!-- 文本内容 -->
         <div
           v-if="message.content"
@@ -209,6 +240,25 @@ interface ReasoningStep {
   description: string
 }
 
+interface TerminalExecution {
+  command: string
+  cwd: string
+  exitCode: number | null
+  stdout: string
+  stderr: string
+  timedOut: boolean
+  truncated: boolean
+  durationMs?: number
+}
+
+interface ExecutionSummaryItem {
+  stage: string
+  status: string
+  description: string
+  durationMs?: number
+  terminal?: TerminalExecution
+}
+
 interface Props {
   message: {
     id: number | string
@@ -228,7 +278,7 @@ interface Props {
     effectiveThinkingMode?: string
     effectiveReasoningEffort?: string
     reasoningTokens?: number
-    executionSummary?: Array<{ stage: string; status: string; description: string; durationMs?: number }>
+    executionSummary?: ExecutionSummaryItem[]
   }
 }
 
@@ -294,6 +344,9 @@ const hasDetails = computed(() => {
 
 const showThinkingStatus = computed(() => !!props.message.thinkingState || hasDetails.value)
 
+const terminalActivities = computed(() => (props.message.executionSummary || [])
+  .filter(item => item.stage.split(':')[1] === 'terminal'))
+
 const canExpandDetails = computed(() => {
   return hasDetails.value && (
     props.message.thinkingState !== 'thinking' || Boolean(props.message.reasoningContent)
@@ -330,6 +383,7 @@ const getConfidenceColor = (confidence: number) => {
 const executionStageLabel = (stage: string) => {
   if (stage === 'reasoning') return '思考'
   if (stage === 'answer_generation') return '回答生成'
+  if (stage.startsWith('tool:terminal')) return '终端'
   if (stage.startsWith('tool:')) return `工具 · ${stage.split(':')[1] || 'unknown'}`
   return stage
 }
@@ -858,6 +912,94 @@ const formatTime = (date: Date) => {
   color: var(--text-regular);
   overflow-wrap: anywhere;
 }
+
+.terminal-work {
+  width: min(100%, 780px);
+  margin: 10px 0 2px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-light) 88%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-panel) 86%, #101317);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .08);
+}
+
+.terminal-work__header,
+.terminal-work__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-work__header {
+  justify-content: space-between;
+  padding: 8px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 78%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.terminal-work__title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.terminal-work__count,
+.terminal-work__cwd,
+.terminal-work__exit {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.terminal-work__item {
+  padding: 9px 11px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 62%, transparent);
+}
+
+.terminal-work__item:last-child { border-bottom: 0; }
+
+.terminal-work__item.is-failed { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+.terminal-work__item.is-running { background: color-mix(in srgb, var(--primary-color) 4%, transparent); }
+
+.terminal-work__meta {
+  min-width: 0;
+  flex-wrap: wrap;
+  line-height: 1.45;
+}
+
+.terminal-work__command {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font: 12px/1.5 var(--font-mono, monospace);
+}
+
+.terminal-work__cwd { overflow-wrap: anywhere; }
+
+.terminal-work__exit {
+  margin-left: auto;
+  color: var(--success);
+}
+
+.terminal-work__item.is-failed .terminal-work__exit { color: var(--danger); }
+.terminal-work__running { color: var(--text-secondary); font-size: 12px; }
+
+.terminal-work__output {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border-light) 60%, transparent);
+  border-radius: 6px;
+  color: #d7e2ea;
+  background: #101317;
+  font: 12px/1.55 var(--font-mono, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.terminal-work__output.is-stderr { color: #f0b7ad; }
+.terminal-work__truncated { margin-top: 6px; color: var(--warning); font-size: 11px; }
 
 .source-tag {
   display: inline-flex;

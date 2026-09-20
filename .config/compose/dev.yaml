@@ -8,6 +8,7 @@ services:
       DEBUG: "true"
       SSE_TEST_MODE: ${KINLIN_SSE_TEST_MODE:-false}
       SSE_HEARTBEAT_INTERVAL: ${SSE_HEARTBEAT_INTERVAL:-15}
+      CHAT_TERMINAL_ENABLED: ${CHAT_TERMINAL_ENABLED:-true}
     volumes:
       - ./apps/agent:/app/agent
       - ./apps/agentOS:/app/agentOS

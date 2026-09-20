@@ -41,4 +41,43 @@ describe('MessageBubble Markdown rendering', () => {
     expect(wrapper.find('strong').text()).toBe('安全内容')
     expect(wrapper.text()).toContain('<script>')
   })
+
+  it('renders terminal work inline with bounded command output', () => {
+    const wrapper = shallowMount(MessageBubble, {
+      props: {
+        message: {
+          id: 'assistant-terminal',
+          role: 'assistant',
+          content: '命令已执行。',
+          createdAt: new Date('2026-08-03T12:00:00Z'),
+          executionSummary: [{
+            stage: 'tool:terminal:call_1',
+            status: 'completed',
+            description: '终端命令执行完成',
+            terminal: {
+              command: 'python -c "print(1)"',
+              cwd: '/app/workspace',
+              exitCode: 0,
+              stdout: '1\n',
+              stderr: '',
+              timedOut: false,
+              truncated: false
+            }
+          }]
+        }
+      },
+      global: {
+        stubs: {
+          'el-icon': true,
+          'el-tooltip': { template: '<span><slot /></span>' },
+          'el-progress': true,
+          ImageViewer: true
+        }
+      }
+    })
+
+    expect(wrapper.find('.terminal-work').exists()).toBe(true)
+    expect(wrapper.find('.terminal-work__command').text()).toContain('python -c')
+    expect(wrapper.find('.terminal-work__output').text()).toContain('1')
+  })
 })

@@ -1,4 +1,4 @@
-"""OpenAI Agents SDK adapter for DeepSeek-compatible read-only tool runs."""
+"""OpenAI Agents SDK adapter for Chat and read-only AgentOS tool runs."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from app.config import settings
 from app.llm.capabilities import adapt_chat_completion_parameters, normalize_model_request, provider_model_capabilities
 from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
 from app.tools.catalog import ReadOnlyToolCatalog
+from app.tools.chat_catalog import ChatToolCatalog
 from app.tools.contracts import (
     SourceReference,
     ToolExecutionRecord,
@@ -108,9 +109,15 @@ class ToolInvocationContext:
             catalog_kwargs: dict[str, Any] = {"role_id": self.role_id}
             if self.provider:
                 catalog_kwargs["provider"] = self.provider
+            invocation_timeout = max(0.1, float(settings.TOOL_TIMEOUT_SECONDS))
+            if name == "terminal":
+                invocation_timeout = max(
+                    invocation_timeout,
+                    float(settings.TOOL_TERMINAL_MAX_TIMEOUT_SECONDS) + 5.0,
+                )
             payload = await asyncio.wait_for(
                 self.catalog.execute(name, arguments, **catalog_kwargs),
-                timeout=max(0.1, float(settings.TOOL_TIMEOUT_SECONDS)),
+                timeout=invocation_timeout,
             )
             for source in payload.sources:
                 self.sources[source.citation_id] = source
@@ -123,6 +130,12 @@ class ToolInvocationContext:
                 outputSummary=payload.summary[:500],
                 sourceRefs=[source.citation_id for source in payload.sources],
                 provider=self.provider,
+                terminal=(
+                    payload.data.get("terminal")
+                    if isinstance(payload.data, dict)
+                    and isinstance(payload.data.get("terminal"), dict)
+                    else None
+                ),
             )
             self.records.append(record)
             return json.dumps(
@@ -140,6 +153,7 @@ class ToolInvocationContext:
             code = getattr(exc, "code", None) or (
                 "TOOL_TIMEOUT" if isinstance(exc, TimeoutError) else type(exc).__name__.upper()
             )
+            terminal = getattr(exc, "terminal", None)
             self.records.append(
                 ToolExecutionRecord(
                     callId=call_id,
@@ -147,16 +161,16 @@ class ToolInvocationContext:
                     status="failed",
                     durationMs=int((time.perf_counter() - started) * 1000),
                     inputSummary=", ".join(sorted(arguments.keys())),
-                    outputSummary="Tool execution failed.",
+                    outputSummary=str(exc)[:500] or "Tool execution failed.",
                     errorCode=str(code)[:120],
                     provider=self.provider,
+                    terminal=terminal if isinstance(terminal, dict) else None,
                 )
             )
-            return json.dumps(
-                {"ok": False, "tool": name, "error": str(code)},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            response: dict[str, Any] = {"ok": False, "tool": name, "error": str(code)}
+            if isinstance(terminal, dict):
+                response["terminal"] = terminal
+            return json.dumps(response, ensure_ascii=False, separators=(",", ":"))
 
 
 @function_tool(strict_mode=False, timeout=15.0)
@@ -233,6 +247,25 @@ async def industrial_calculator(
     )
 
 
+@function_tool(strict_mode=False, timeout=125.0)
+async def terminal(
+    context: ToolContext[ToolInvocationContext],
+    command: str,
+    cwd: str = ".",
+    timeout_seconds: float = 30.0,
+) -> str:
+    """Run one bounded command inside the configured Chat workspace."""
+    return await context.context.invoke(
+        "terminal",
+        {
+            "command": command,
+            "cwd": cwd,
+            "timeout_seconds": timeout_seconds,
+        },
+        call_id=context.tool_call_id,
+    )
+
+
 SDK_TOOLS = {
     "web_search": web_search,
     "web_extract": web_extract,
@@ -240,6 +273,7 @@ SDK_TOOLS = {
     "codebase_search": codebase_search,
     "current_datetime": current_datetime,
     "industrial_calculator": industrial_calculator,
+    "terminal": terminal,
 }
 
 
@@ -259,9 +293,14 @@ class AgentsToolRuntime:
         return AgentsToolRuntime(self.catalog, set(allowed_tools).intersection(self.allowed_tools))
 
     def capabilities(self) -> dict[str, Any]:
+        terminal_available = (
+            "terminal" in self.allowed_tools
+            and bool(self.catalog.availability().get("terminal", {}).get("available"))
+        )
+        policy = "workspace_scoped" if terminal_available else "read_only"
         return {
             "enabled": bool(settings.TOOL_RUNTIME_ENABLED),
-            "policy": "read_only",
+            "policy": policy,
             "maxTurns": settings.TOOL_MAX_TURNS,
             "maxCalls": settings.TOOL_MAX_CALLS,
             "tools": self.catalog.availability(),
@@ -346,10 +385,20 @@ class AgentsToolRuntime:
             name for name in context.allowed_tools if availability.get(name, {}).get("available")
         )
         unavailable_names = sorted(set(context.allowed_tools).difference(available_names))
-        instructions = (
-            SYSTEM_INSTRUCTIONS
-            + f"\nCurrently available tools: {', '.join(available_names) or 'none'}."
-        )
+        instructions = SYSTEM_INSTRUCTIONS
+        if "terminal" in available_names:
+            instructions = instructions.replace(
+                "access only to the read-only tools listed below.",
+                "access only to the tools listed below.",
+            )
+        instructions += f"\nCurrently available tools: {', '.join(available_names) or 'none'}."
+        if "terminal" in available_names:
+            instructions += (
+                "\nThe terminal is available only inside the configured workspace. Use it for"
+                " concrete inspection or implementation work, keep commands bounded, and"
+                " summarize the observed output accurately. Do not access secrets, system"
+                " directories, or unrelated paths."
+            )
         if unavailable_names:
             instructions += (
                 "\nCurrently unavailable tools (do not call these): "
@@ -368,7 +417,8 @@ class AgentsToolRuntime:
         if adapted.effective_thinking_mode.value != "disabled" and "deepseek" in base_url.lower():
             tool_choice = None
         agent = Agent[ToolInvocationContext](
-            name="Kinlin Read-only Tool Assistant",
+            name=("Kinlin Chat Tool Assistant" if "terminal" in available_names
+                  else "Kinlin Read-only Tool Assistant"),
             instructions=instructions,
             model=sdk_model,
             tools=tools,
@@ -598,6 +648,7 @@ class AgentsToolRuntime:
 
 
 _runtime: AgentsToolRuntime | None = None
+_chat_runtime: AgentsToolRuntime | None = None
 
 
 def get_tool_runtime() -> AgentsToolRuntime:
@@ -607,4 +658,16 @@ def get_tool_runtime() -> AgentsToolRuntime:
     return _runtime
 
 
-__all__ = ["AgentsToolRuntime", "ToolInvocationContext", "get_tool_runtime"]
+def get_chat_tool_runtime() -> AgentsToolRuntime:
+    global _chat_runtime
+    if _chat_runtime is None:
+        _chat_runtime = AgentsToolRuntime(catalog=ChatToolCatalog())
+    return _chat_runtime
+
+
+__all__ = [
+    "AgentsToolRuntime",
+    "ToolInvocationContext",
+    "get_chat_tool_runtime",
+    "get_tool_runtime",
+]

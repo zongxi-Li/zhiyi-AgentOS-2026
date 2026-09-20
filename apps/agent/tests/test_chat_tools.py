@@ -64,7 +64,7 @@ class _CapturingChatToolRuntime:
 
 
 def test_non_stream_chat_returns_sources_and_execution_summary(monkeypatch):
-    monkeypatch.setattr(chat, "get_tool_runtime", lambda: _ChatToolRuntimeStub())
+    monkeypatch.setattr(chat, "get_chat_tool_runtime", lambda: _ChatToolRuntimeStub())
 
     response = asyncio.run(chat.chat_text(chat.ChatRequest(text="latest evidence")))
 
@@ -76,7 +76,7 @@ def test_non_stream_chat_returns_sources_and_execution_summary(monkeypatch):
 
 
 def test_disabled_tool_mode_uses_empty_scope(monkeypatch):
-    monkeypatch.setattr(chat, "get_tool_runtime", lambda: _ChatToolRuntimeStub())
+    monkeypatch.setattr(chat, "get_chat_tool_runtime", lambda: _ChatToolRuntimeStub())
 
     response = asyncio.run(
         chat.chat_text(chat.ChatRequest(text="do not use tools", tool_mode="disabled"))
@@ -89,7 +89,7 @@ def test_disabled_tool_mode_uses_empty_scope(monkeypatch):
 
 def test_chat_endpoint_passes_glm_reasoning_effort_separately(monkeypatch):
     runtime = _CapturingChatToolRuntime()
-    monkeypatch.setattr(chat, "get_tool_runtime", lambda: runtime)
+    monkeypatch.setattr(chat, "get_chat_tool_runtime", lambda: runtime)
 
     response = asyncio.run(
         chat.chat_text(

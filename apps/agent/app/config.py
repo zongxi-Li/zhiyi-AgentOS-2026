@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     TOOL_SEARCH_MAX_RESULTS: int = 5
     TOOL_EXTRACT_MAX_URLS: int = 3
     TOOL_CODEBASE_ROOT: str = ""
+    # Chat-only terminal execution. ACG keeps using the read-only runtime until
+    # its capability and approval contracts are ready.
+    CHAT_TERMINAL_ENABLED: bool = False
+    TOOL_TERMINAL_ROOT: str = ""
+    TOOL_TERMINAL_TIMEOUT_SECONDS: float = 30.0
+    TOOL_TERMINAL_MAX_TIMEOUT_SECONDS: float = 120.0
+    TOOL_TERMINAL_MAX_OUTPUT_BYTES: int = 12_000
 
     @field_validator("DEBUG", mode="before")
     @classmethod
@@ -312,4 +319,3 @@ else:
     _logger.warning("   请通过对应 Secret 文件配置模型 API Key")
     _logger.warning(f"   获取API密钥: https://dashscope.aliyuncs.com/")
     _logger.warning(f"   提示: 运行 'python debug_config.py' 可以诊断配置问题")
-
