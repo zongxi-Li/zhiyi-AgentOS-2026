@@ -175,6 +175,29 @@ describe('WorkbenchLayout', () => {
     wrapper.unmount()
   })
 
+  it('honors the task Inspector width contract instead of the legacy 640px default', () => {
+    const wrapper = mount(WorkbenchLayout, {
+      props: {
+        storageKey: STORAGE_KEY,
+        rightPaneMinWidth: 280,
+        rightPaneDefaultWidth: 320,
+        rightPaneMaxWidth: 340
+      },
+      slots: {
+        left: '<div>left</div>',
+        main: '<div>main</div>',
+        right: '<div>inspector</div>'
+      }
+    })
+
+    const handle = wrapper.find('.workbench-resize-handle--right')
+    expect(handle.attributes('aria-valuemin')).toBe('280')
+    expect(handle.attributes('aria-valuenow')).toBe('320')
+    expect(handle.attributes('aria-valuemax')).toBe('340')
+    expect(wrapper.find('.workbench-layout').attributes('style')).toContain('--workbench-right-max-width: 340px')
+    wrapper.unmount()
+  })
+
   it('manually collapses and reopens the inspector without affecting the left pane', async () => {
     const wrapper = mountLayout()
 

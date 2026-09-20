@@ -7,7 +7,6 @@
         <div class="run-progress__heading-row">
           <div class="run-progress__heading-copy">
             <h1 class="run-progress__goal">{{ goalTitle }}</h1>
-            <p class="run-progress__summary">{{ goalSummary }}</p>
           </div>
           <button type="button" class="run-progress__mission-link" @click="openMission">查看 mission.md</button>
         </div>
@@ -253,11 +252,6 @@ const goalSource = computed(() => props.projection.mission.goal || props.project
 const goalTitle = computed(() => {
   const firstLine = goalSource.value.split(/[\n。！？!?]/)[0].trim()
   return shorten(firstLine || '运行进度', 58)
-})
-const goalSummary = computed(() => {
-  const description = props.projection.mission.description?.trim()
-  if (description && description !== goalSource.value) return shorten(description, 180)
-  return shorten(goalSource.value, 180)
 })
 const missionTitle = computed(() => shorten(goalTitle.value, 32))
 
@@ -707,7 +701,6 @@ watch(documentModel, async () => {
 .run-progress__heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .run-progress__heading-copy { min-width: 0; }
 .run-progress__goal { margin: 0; color: var(--wb-text); font-size: 22px; font-weight: 650; line-height: 1.35; text-wrap: pretty; }
-.run-progress__summary { max-width: min(900px, 100%); margin: 4px 0 0; overflow: hidden; color: var(--wb-text-secondary); font-size: 14px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 .run-progress__mission-link { flex: 0 0 auto; padding: 3px 0; border: 0; color: var(--wb-accent); background: transparent; cursor: pointer; font: 12px var(--font-mono, monospace); }
 .run-progress__mission-link:hover { text-decoration: underline; }
 .run-progress__meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
@@ -803,7 +796,6 @@ watch(documentModel, async () => {
   .run-progress { --run-content-inset: 16px; }
   .run-progress__column.is-graph-column { min-width: 520px; }
   .run-progress__heading-row { display: grid; gap: 8px; }
-  .run-progress__summary { white-space: normal; }
   .run-progress__mission-link { justify-self: start; }
 }
 </style>

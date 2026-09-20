@@ -9,7 +9,8 @@
     }"
     :style="{
       '--workbench-left-width': `${leftPaneWidth}px`,
-      '--workbench-right-width': `${effectiveRightPaneWidth}px`
+      '--workbench-right-width': `${effectiveRightPaneWidth}px`,
+      '--workbench-right-max-width': `${rightPaneMaxWidth}px`
     }"
   >
     <div class="workbench-layout__body">
@@ -71,7 +72,7 @@
         v-if="rightPaneVisible || rightAutoHidden"
         side="right"
         :value="effectiveRightPaneWidth"
-        :min="RIGHT_MIN_WIDTH"
+        :min="rightPaneMinWidth"
         :max="rightMaxForHandle"
         :ariaLabel="rightAutoHidden ? '拖动恢复右侧运行详情并调整宽度' : '调整右侧运行详情宽度'"
         @resize-start="startResize('right', $event)"
@@ -79,7 +80,7 @@
         @reset="resetWidth('right')"
       />
 
-      <aside v-if="rightPaneVisible" class="workbench-pane workbench-pane--right" aria-label="ACG 运行详情">
+      <aside v-if="rightPaneVisible" class="workbench-pane workbench-pane--right" aria-label="Workspace Inspector">
         <slot name="right" />
       </aside>
     </div>
@@ -109,6 +110,9 @@ const props = withDefaults(defineProps<{
   bottomPanelDefaultCollapsed?: boolean
   /** Bottom slot height while collapsed; 0 hides the panel (a status bar replaces it). */
   bottomPanelCollapsedHeight?: number
+  rightPaneMinWidth?: number
+  rightPaneDefaultWidth?: number
+  rightPaneMaxWidth?: number
   storageKey?: string
 }>(), {
   showLeft: true,
@@ -116,6 +120,9 @@ const props = withDefaults(defineProps<{
   showBottomPanel: false,
   bottomPanelStorageKey: 'zhiyi.workbench.bottom-panel.v1',
   bottomPanelDefaultCollapsed: false,
+  rightPaneMinWidth: 300,
+  rightPaneDefaultWidth: 400,
+  rightPaneMaxWidth: 640,
   storageKey: 'zhiyi.acg.workbench.layout.v1'
 })
 
@@ -131,6 +138,11 @@ const toggleBottomPanelCollapsed = () => splitRef.value?.toggleCollapsed()
 
 const layout = useWorkbenchLayout({
   storageKey: props.storageKey,
+  right: {
+    minWidth: props.rightPaneMinWidth,
+    defaultWidth: props.rightPaneDefaultWidth,
+    maxWidth: props.rightPaneMaxWidth
+  },
   rightEnabled: toRef(props, 'showRight')
 })
 
@@ -156,14 +168,13 @@ const {
 const leftVisible = computed(() => props.showLeft && leftPaneVisible.value)
 
 const LEFT_MIN_WIDTH = 240
-const RIGHT_MIN_WIDTH = 300
 const leftMaxWidth = computed(() => {
   const available = layout.containerWidth.value - 560 - (rightPaneVisible.value ? effectiveRightPaneWidth.value + 8 : 0) - 8
   return Math.max(LEFT_MIN_WIDTH, Math.min(520, available > 0 ? available : 520))
 })
 const rightMaxForHandle = computed(() => {
   const available = layout.containerWidth.value - 560 - (leftVisible.value ? leftPaneWidth.value + 8 : 0) - 8
-  return Math.max(RIGHT_MIN_WIDTH, Math.min(rightMaxWidth.value, available > 0 ? available : rightMaxWidth.value))
+  return Math.max(props.rightPaneMinWidth, Math.min(rightMaxWidth.value, available > 0 ? available : rightMaxWidth.value))
 })
 </script>
 
@@ -219,8 +230,10 @@ const rightMaxForHandle = computed(() => {
 }
 
 .workbench-pane--right {
-  flex: 0 0 var(--workbench-right-width);
-  width: var(--workbench-right-width);
+  flex: 0 0 min(var(--workbench-right-width), var(--workbench-right-max-width));
+  width: min(var(--workbench-right-width), var(--workbench-right-max-width));
+  max-width: var(--workbench-right-max-width);
+  box-sizing: border-box;
   border-left: 1px solid var(--wb-border);
   background: var(--wb-surface-1);
 }

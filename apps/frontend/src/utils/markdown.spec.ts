@@ -76,6 +76,13 @@ describe('renderMarkdown 数学公式', () => {
 })
 
 describe('renderMarkdown 既有行为回归', () => {
+  it('renders task list items as disabled document checkboxes', () => {
+    const html = renderMarkdown('- [x] 已完成\n- [ ] 待复核')
+    expect(html).toContain('class="markdown-task-item"')
+    expect(html).toContain('type="checkbox" disabled checked')
+    expect(html).toContain('待复核')
+  })
+
   it('粗体/斜体/链接不受公式管线影响', () => {
     const html = renderMarkdown('**加粗** *斜体* [链接](https://example.com)')
     expect(html).toContain('<strong>加粗</strong>')
@@ -87,5 +94,24 @@ describe('renderMarkdown 既有行为回归', () => {
     const html = renderMarkdown('`<b>**x**</b>`')
     expect(html).toContain('<code>&lt;b&gt;**x**&lt;/b&gt;</code>')
     expect(html).not.toContain('<strong>')
+  })
+})
+
+describe('renderMarkdown 连续重复标题折叠', () => {
+  it('逐字相同的连续标题（中间仅空行）只渲染一次', () => {
+    const html = renderMarkdown('# 报告标题\n\n# 报告标题\n\n正文段落')
+    expect(html.match(/<h1>报告标题<\/h1>/g)).toHaveLength(1)
+    expect(html).toContain('<p>正文段落</p>')
+  })
+
+  it('相同标题被正文隔开后正常保留', () => {
+    const html = renderMarkdown('# 小结\n\n正文内容\n\n# 小结\n\n尾注')
+    expect(html.match(/<h1>小结<\/h1>/g)).toHaveLength(2)
+  })
+
+  it('同文字不同级别或隔代码块的标题不折叠', () => {
+    const html = renderMarkdown('# 标题\n\n## 标题\n\n```js\nconst a = 1\n```\n\n# 标题\n\n尾注')
+    expect(html.match(/<h1>标题<\/h1>/g)).toHaveLength(2)
+    expect(html.match(/<h2>标题<\/h2>/g)).toHaveLength(1)
   })
 })

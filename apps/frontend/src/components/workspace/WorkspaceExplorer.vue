@@ -1,17 +1,22 @@
 <template>
   <aside class="workspace-explorer" aria-label="Mission Project Explorer">
     <header class="workspace-explorer__header">
-      <button class="workspace-explorer__back" type="button" @click="emit('back')">
-        <span>Projects</span>
-      </button>
-      <div class="workspace-explorer__title-row">
-        <span class="workspace-explorer__mark" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
-        <div>
-          <strong>{{ projection.mission.goal }}</strong>
-          <small>PROJECT</small>
-        </div>
+      <div class="workspace-explorer__header-card">
+        <button class="workspace-explorer__back" type="button" @click="emit('back')">
+          <el-icon class="workspace-explorer__back-icon" aria-hidden="true"><ArrowLeft /></el-icon>
+          <span>Projects</span>
+        </button>
       </div>
-      <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
+      <div class="workspace-explorer__project-card">
+        <div class="workspace-explorer__title-row">
+          <span class="workspace-explorer__mark" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
+          <div>
+            <strong>{{ projection.mission.goal }}</strong>
+            <small>PROJECT</small>
+          </div>
+        </div>
+        <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
+      </div>
     </header>
 
     <nav class="workspace-tree" aria-label="Project files">
@@ -81,7 +86,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { FolderOpened } from '@element-plus/icons-vue'
+import { ArrowLeft, FolderOpened } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 
@@ -175,15 +180,29 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 
 .workspace-explorer__header {
   flex: 0 0 auto;
-  margin: 8px 8px 4px;
-  padding: 11px 12px 10px;
+  margin: 8px 8px 6px;
+}
+
+/* 重叠卡片：Projects 背衬卡底部留出叠压区，项目卡同宽对齐、上提盖在其上 */
+.workspace-explorer__header-card {
+  padding: 6px 12px 18px;
   border: 1px solid var(--wb-border-soft);
+  border-radius: var(--wb-radius-section);
+  background: var(--wb-surface-inset);
+}
+
+.workspace-explorer__project-card {
+  position: relative;
+  margin: -14px 0 0;
+  padding: 11px 12px 10px;
+  border: 1px solid var(--wb-border);
   border-radius: var(--wb-radius-section);
   background: var(--wb-surface-section);
   box-shadow: var(--wb-shadow-section);
 }
 
-.workspace-explorer__back { display: inline-flex; align-items: center; gap: 5px; margin: -3px 0 9px; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 11px; }
+.workspace-explorer__back { display: inline-flex; align-items: center; gap: 3px; margin: 0; padding: 0; border: 0; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 11px; }
+.workspace-explorer__back-icon { font-size: 13px; }
 .workspace-explorer__back:hover { color: var(--wb-accent); }
 
 

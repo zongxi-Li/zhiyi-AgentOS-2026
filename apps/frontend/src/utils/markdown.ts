@@ -60,6 +60,8 @@ export const renderMarkdown = (raw: string): string => {
   const lines = mathPass.text.split(/\r?\n/)
   const output: string[] = []
   let listType: 'ul' | 'ol' | null = null
+  // 重试续写偶尔会把同一标题连续写入文档两次；逐字相同的连续标题只保留第一个。
+  let previousHeading: string | null = null
 
   const closeList = () => {
     if (!listType) return
@@ -83,12 +85,14 @@ export const renderMarkdown = (raw: string): string => {
 
     if (/^@@CODE_BLOCK_\d+@@$/.test(trimmed)) {
       closeList()
+      previousHeading = null
       output.push(trimmed)
       continue
     }
 
     if (trimmed.includes('|') && index + 1 < lines.length && isTableDivider(lines[index + 1])) {
       closeList()
+      previousHeading = null
       const headers = tableCells(trimmed)
       const rows: string[][] = []
       index += 2
@@ -111,9 +115,15 @@ export const renderMarkdown = (raw: string): string => {
     if (heading) {
       closeList()
       const level = heading[1].length
-      output.push(`<h${level}>${renderInline(heading[2])}</h${level}>`)
+      const headingKey = `${level}:${heading[2].trim()}`
+      if (headingKey !== previousHeading) {
+        output.push(`<h${level}>${renderInline(heading[2])}</h${level}>`)
+      }
+      previousHeading = headingKey
       continue
     }
+
+    if (trimmed) previousHeading = null
 
     if (/^(-{3,}|\*{3,})$/.test(trimmed)) {
       closeList()
@@ -124,7 +134,13 @@ export const renderMarkdown = (raw: string): string => {
     const unorderedItem = trimmed.match(/^[-*+]\s+(.+)$/)
     if (unorderedItem) {
       openList('ul')
-      output.push(`<li>${renderInline(unorderedItem[1])}</li>`)
+      const task = unorderedItem[1].match(/^\[([ xX])\]\s+(.+)$/)
+      if (task) {
+        const checked = task[1].toLowerCase() === 'x'
+        output.push(`<li class="markdown-task-item"><input type="checkbox" disabled${checked ? ' checked' : ''}>${renderInline(task[2])}</li>`)
+      } else {
+        output.push(`<li>${renderInline(unorderedItem[1])}</li>`)
+      }
       continue
     }
 

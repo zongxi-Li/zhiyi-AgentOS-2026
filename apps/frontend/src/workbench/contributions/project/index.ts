@@ -32,12 +32,17 @@ export const projectContribution: WorkbenchContribution = {
   editors: [
     { id: 'project.graph-editor', entryKinds: ['graph'], component: GraphEditor, title: entry => entry.name },
     { id: 'project.artifact-editor', entryKinds: ['artifact'], component: ArtifactEditor, title: entry => entry.name },
-    { id: 'project.task-editor', entryKinds: ['task'], component: TaskEditor, title: entry => entry.name },
+    {
+      id: 'project.task-editor',
+      entryKinds: ['task'],
+      component: TaskEditor,
+      title: entry => /\.(md|markdown)$/i.test(entry.name) ? entry.name : `${entry.name}.md`
+    },
     {
       id: 'project.run-progress-editor',
       entryKinds: ['progress', 'run'],
       component: RunProgressEditor,
-      title: entry => (entry.kind === 'run' ? `运行进度 · ${entry.name}` : entry.title || entry.name)
+      title: entry => entry.kind === 'run' ? `运行进度 · run-${entry.name}.md` : '运行进度 · run-progress.md'
     },
     { id: 'project.mission-editor', entryKinds: ['virtual_document'], component: MissionEditor, title: entry => entry.name }
   ],
@@ -90,14 +95,14 @@ export const projectContribution: WorkbenchContribution = {
       title: 'Identity',
       order: 100,
       component: ProjectTaskIdentityInspector,
-      when: context => context.entry?.kind === 'task' && context.selectedSymbolType !== 'result'
+      when: context => context.entry?.kind === 'task'
     },
     {
       id: 'project.task-execution-section',
       title: 'Execution',
       order: 110,
       component: ProjectTaskExecutionInspector,
-      when: context => context.entry?.kind === 'task' && context.selectedSymbolType !== 'result'
+      when: context => context.entry?.kind === 'task'
     },
     {
       id: 'project.task-artifacts-section',

@@ -90,6 +90,7 @@
         @open-entry="emit('openEntry', $event)"
         @cancel-run="emit('cancelRun')"
         @content-ready="emit('contentReady', $event)"
+        @artifact-projection="emit('artifactProjection', $event)"
       />
       <div v-else class="editor-group__empty">该 entry 类型暂不支持编辑器渲染。</div>
     </section>
@@ -104,6 +105,7 @@ import type { AuxiliaryViewContribution, WorkbenchContext } from '@/workbench/ty
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
+import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 
 export interface OpenWorkspaceEntry {
@@ -143,6 +145,7 @@ const emit = defineEmits<{
   selectInspector: []
   selectAuxiliary: [viewId: string]
   cancelRun: []
+  artifactProjection: [payload: { entryId: string; projection: ArtifactDocumentModel }]
 }>()
 
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
@@ -181,17 +184,18 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
-.editor-tabs { display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
+.editor-tabs { --editor-tab-bg: color-mix(in srgb, var(--bg-app) 45%, var(--wb-surface-inset)); display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 1px solid var(--wb-border); background: var(--editor-tab-bg); }
 .editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
-.editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 38px; background: var(--wb-surface-inset); }
-.editor-tab { display: flex; align-items: center; flex: 1 1 0; min-width: 100px; max-width: 300px; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--wb-surface-inset); }
+.editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 38px; background: var(--editor-tab-bg); }
+.editor-tab { display: flex; align-items: center; flex: 1 1 0; min-width: 100px; max-width: 300px; box-sizing: border-box; border-right: 1px solid var(--wb-border-soft); background: var(--editor-tab-bg); }
 .editor-tab:hover { background: var(--wb-hover); }
-.editor-tab.is-active { background: var(--wb-surface-shell); }
+.editor-tab.is-active { background: var(--wb-surface-shell); box-shadow: inset 0 2px 0 var(--wb-accent); }
 .editor-tab__main, .editor-tab__close { border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; }
 .editor-tab__main { display: flex; flex: 1 1 auto; align-items: center; align-self: stretch; gap: 7px; min-width: 0; padding: 0 8px 0 12px; text-align: left; font-size: 11px; }
 .editor-tab__main:hover, .editor-tab.is-active .editor-tab__main { color: var(--wb-text); }
 .editor-tab__main:focus-visible, .editor-tab__close:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 .editor-tab__kind { display: inline-flex; align-items: center; justify-content: center; width: 15px; min-width: 15px; color: var(--wb-accent); font: 12px var(--font-mono, monospace); }
+.editor-tab:not(.is-active) .editor-tab__kind { color: var(--wb-text-muted); }
 .editor-tab__kind .el-icon { font-size: 14px; }
 .editor-tab__status { flex: 0 0 auto; color: var(--wb-accent); font-size: 10px; }
 .editor-tab__status.is-success { color: var(--wb-success); }
@@ -218,7 +222,7 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   border: 0;
   border-right: 1px solid var(--wb-border-soft);
   color: var(--wb-text-muted);
-  background: var(--wb-surface-inset);
+  background: var(--editor-tab-bg);
   cursor: pointer;
 }
 .editor-navigator-trigger__mark {
@@ -249,7 +253,7 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   padding: 0 6px;
   border: 0;
   color: var(--wb-text-muted);
-  background: var(--wb-surface-inset);
+  background: var(--editor-tab-bg);
   cursor: pointer;
 }
 .editor-inspector-trigger__mark,

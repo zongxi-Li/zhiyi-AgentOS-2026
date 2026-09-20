@@ -348,7 +348,25 @@ describe('MissionWorkspaceView', () => {
     await wrapper.find('.graph-open').trigger('click')
     expect(wrapper.find('.task-editor').exists()).toBe(true)
     expect(wrapper.find('.editor-group__surface--task').exists()).toBe(true)
-    expect(wrapper.find('.task-editor').text()).toContain('capacity')
+    expect(wrapper.find('.task-editor').text()).toContain('Capacity')
+  })
+
+  it('routes Task metadata into document-oriented Inspector tabs', async () => {
+    const { wrapper } = await mountWorkspace()
+    await wrapper.findAll('.workspace-tree__entry').find(item => item.text().includes('Capacity'))?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.task-editor__heading').exists()).toBe(true)
+    expect(wrapper.findAll('.runtime-inspector__tabs button').map(button => button.text())).toEqual([
+      '任务信息', '证据与引用', '相关文件', '讨论'
+    ])
+    expect(wrapper.find('.runtime-inspector__tab-panel').text()).toContain('Execution')
+
+    await wrapper.findAll('.runtime-inspector__tabs button')[2].trigger('click')
+    expect(wrapper.find('.related-files').text()).toContain('primary.md')
+
+    await wrapper.findAll('.runtime-inspector__tabs button')[1].trigger('click')
+    expect(wrapper.find('.runtime-inspector__evidence-list').exists()).toBe(true)
   })
 
   it('keeps multiple Artifacts inside the matching TaskEditor', async () => {

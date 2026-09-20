@@ -6,7 +6,10 @@
       bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
       :bottom-panel-default-collapsed="false"
       :bottom-panel-collapsed-height="0"
-      storage-key="zhiyi.mission.workspace.layout.v1"
+      :right-pane-min-width="280"
+      :right-pane-default-width="320"
+      :right-pane-max-width="340"
+      storage-key="zhiyi.mission.workspace.layout.v3"
     >
       <template #left>
         <WorkbenchContributionRenderer
@@ -57,6 +60,7 @@
           @open-entry="openEntry"
           @cancel-run="cancelActiveRun"
           @content-ready="finishForegroundContent"
+          @artifact-projection="artifactProjection = $event"
         />
         <section v-else class="workspace-main-state" role="status">
           <strong>{{ loading ? 'Loading Mission Workspace…' : 'Mission Workspace unavailable' }}</strong>
@@ -77,6 +81,8 @@
           :graph-node="inspectorGraphNode"
           :selected-symbol="selectedSymbol"
           :graph-nodes="projection?.graphNodes || []"
+          :entries="projection?.entries || []"
+          :artifact-document="inspectorArtifactDocument"
           :available="inspectorAvailable"
           :run-id="projection?.activeRun?.runId || selectedRunId || null"
           :mission-id="missionId"
@@ -87,6 +93,7 @@
           :registry="registry"
           :workbench-context="workbenchContext"
           @locate-graph="inspectorEntry && locateGraph(inspectorEntry)"
+          @open-artifact="openEntry"
         />
       </template>
 
@@ -184,6 +191,7 @@ import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
+import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
 
@@ -207,6 +215,7 @@ const selectedSemanticTaskKey = ref<string | null>(null)
 const selectedSymbolId = ref<string | null>(null)
 const selectedSymbolType = ref<RunDocumentSymbol['type'] | null>(null)
 const selectedSymbol = ref<RunDocumentSymbol | null>(null)
+const artifactProjection = shallowRef<{ entryId: string; projection: ArtifactDocumentModel } | null>(null)
 const focusNodeId = ref<string | null>(null)
 const selectedGraphNodeId = ref<string | null>(null)
 // Runtime observations can contain tens of thousands of immutable trace rows.
@@ -291,6 +300,11 @@ const openEntries = computed<OpenWorkspaceEntry[]>(() => openEditors.value.flatM
 }))
 const activeOpened = computed(() => openEntries.value.find(item => item.entry.entryId === activeEditorId.value) || null)
 const inspectorEntry = computed(() => activeOpened.value?.entry || null)
+const inspectorArtifactDocument = computed(() => (
+  artifactProjection.value && artifactProjection.value.entryId === inspectorEntry.value?.entryId
+    ? artifactProjection.value.projection
+    : null
+))
 const inspectorAvailable = computed(() => activeOpened.value?.available ?? false)
 const inspectorGraphNode = computed<WorkspaceGraphNode | null>(() => {
   if (inspectorEntry.value?.kind === 'task') {

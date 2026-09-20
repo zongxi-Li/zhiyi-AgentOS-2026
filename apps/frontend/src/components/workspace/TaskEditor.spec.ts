@@ -38,7 +38,7 @@ describe('TaskEditor stage output', () => {
 
     expect(agentosApi.getRunOutput).toHaveBeenCalledWith('run_1', 'output:node_1', expect.anything())
     expect(wrapper.get('[data-testid="task-stage-output"]').text()).toContain('架构方案')
-    expect(wrapper.text()).toContain('RESULT')
+    expect(wrapper.text()).toContain('原始结构化结果')
     expect(wrapper.text()).not.toContain('PERSISTED')
   })
 
@@ -76,5 +76,32 @@ describe('TaskEditor stage output', () => {
       title: 'RTO 不得超过 2 小时',
       subtitle: 'constraints · constraint:3'
     })
+  })
+
+  it('renders requirement-analysis output as a requirements document', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({
+      runId: 'run_1', outputRef: 'output:node_1', content: {
+        requirements: [{ id: 'REQ-03', requirement: '试生产及爬坡周期不超过 6 周，并给出逐周产量与节拍目标。' }],
+        acceptance_criteria: [{
+          requirement_id: 'REQ-03', metric: '试生产 + 爬坡周数', target: '≤ 6 周', criterion: '逐周目标均已给出。'
+        }]
+      }
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    expect(wrapper.find('.task-document__blocks').text()).toContain('REQ-03 试生产及爬坡周期')
+    expect(wrapper.find('.task-document__blocks').text()).toContain('Requirement Acceptance Matrix')
+    expect(wrapper.find('.task-document__blocks').find('table').exists()).toBe(true)
+    expect(wrapper.find('.task-document__blocks').text()).not.toContain('metric:')
+    expect(wrapper.find('.task-document__blocks').text()).not.toContain('requirement_id:')
+    expect(wrapper.findAll('.task-document__gutter').map(gutter => gutter.text())).toEqual(['01', '02', '03'])
+    expect(wrapper.findAll('.task-document__block').map(block => block.attributes('data-block-id'))).toEqual([
+      'intro',
+      'req-03',
+      'acceptance-matrix'
+    ])
+    await wrapper.get('.task-document__gutter[data-block-id="req-03"]').trigger('click')
+    expect(wrapper.get('.task-document__block[data-block-id="req-03"]').classes()).toContain('is-focused')
   })
 })
