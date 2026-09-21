@@ -96,6 +96,16 @@ from .capability import (
     ModelStreamEvent,
     ToolProtocol,
 )
+from .local_runtime import (
+    LOCAL_RUNTIME_PROTOCOL_VERSION,
+    LocalRuntimeAuthorizationRef,
+    LocalRuntimeCapability,
+    LocalRuntimeExecutionError,
+    LocalRuntimeExecutionEvent,
+    LocalRuntimeExecutionLimits,
+    LocalRuntimeExecutionRequest,
+    LocalRuntimeExecutionResult,
+)
 from .evolution import (
     EvolutionAction,
     GraphEvolutionProposal,
@@ -168,6 +178,9 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 
 
 __all__ = [
+    "LOCAL_RUNTIME_PROTOCOL_VERSION", "LocalRuntimeAuthorizationRef", "LocalRuntimeCapability",
+    "LocalRuntimeExecutionError", "LocalRuntimeExecutionEvent", "LocalRuntimeExecutionLimits",
+    "LocalRuntimeExecutionRequest", "LocalRuntimeExecutionResult",
     "AcgIdentityLifecyclePort", "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind", "CompiledACGPackage",
     "ContentFragmentRef", "ContentKind", "ContentManifest", "FragmentEnvelope",
