@@ -825,14 +825,7 @@ summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset:
 .markdown-body :deep(blockquote) { margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--primary-color); background: color-mix(in srgb, var(--primary-color) 5%, transparent); color: var(--text-secondary); }
 .markdown-body :deep(a) { color: var(--primary-color); text-decoration: none; }
 .markdown-body :deep(a:hover) { text-decoration: underline; }
-.markdown-body :deep(.markdown-table-wrap) { margin: 12px 0 18px; overflow-x: auto; border: 1px solid var(--border-light); border-radius: 8px; }
-.markdown-body :deep(table) { width: 100%; border-collapse: collapse; background: var(--bg-panel); font-size: 12px; }
-.markdown-body :deep(th),
-.markdown-body :deep(td) { min-width: 110px; padding: 9px 11px; border-right: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); text-align: left; vertical-align: top; }
-.markdown-body :deep(th) { color: var(--text-primary); background: var(--bg-input); font-weight: 700; }
-.markdown-body :deep(th:last-child),
-.markdown-body :deep(td:last-child) { border-right: 0; }
-.markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
+/* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
 .step-output-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }
 .step-output-section > header { justify-content: space-between; margin-bottom: 9px; }

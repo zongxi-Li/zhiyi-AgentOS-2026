@@ -506,6 +506,48 @@ html[data-color-scheme='one-dark-modern'] .el-overlay {
 .tone-flow { --tone: var(--sem-flow); --tone-fade: var(--sem-flow-fade); }
 .tone-muted { --tone: var(--wb-text-muted); --tone-fade: color-mix(in srgb, var(--wb-text-muted) 12%, transparent); }
 
+/* Markdown 三线表 — 全局统一学术表样式：顶线/栏目线/底线构成骨架，
+   行间只留极淡的引导线，无竖线无斑马纹，单元格内容上下左右居中。
+   字号 clamp 随容器缩放（聊天正文 15.5px → 表格约 14px；工作台 13px → 12px），
+   行高与内边距在表格内自持，不继承聊天的 1.78 行高。 */
+.markdown-body .markdown-table-wrap {
+  width: 100%;
+  margin: 16px 0 20px;
+  overflow-x: auto;
+}
+.markdown-body table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: clamp(12px, 0.9em, 14.5px);
+  line-height: 1.55;
+}
+.markdown-body th,
+.markdown-body td {
+  padding: 8px 14px;
+  text-align: center;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.markdown-body thead th {
+  border-top: 2px solid var(--wb-border-strong);
+  border-bottom: 1.5px solid var(--wb-border-strong);
+  color: var(--wb-text);
+  font-weight: 650;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.markdown-body tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--wb-border-strong) 28%, transparent);
+  color: var(--wb-text-secondary);
+}
+.markdown-body tbody tr:last-child td {
+  border-bottom: 2px solid var(--wb-border-strong);
+}
+.markdown-body td code {
+  font: 11.5px var(--font-mono, monospace);
+}
+
 /* Workbench status bar — spans the viewport edge-to-edge when present.
    The bar fixes itself to the bottom; the shell reserves its row so the icon
    rail and main content stay clear of it. */

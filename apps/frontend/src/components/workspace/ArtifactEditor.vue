@@ -165,15 +165,7 @@ onBeforeUnmount(() => controller?.abort())
 .markdown-body :deep(pre) { overflow: auto; padding: 12px; border: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
 .markdown-body :deep(pre code) { padding: 0; background: transparent; }
 .markdown-body :deep(blockquote) { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--primary-color); }
-.markdown-body :deep(.markdown-table-wrap) { width: 100%; margin: 14px 0 18px; overflow-x: auto; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-surface-section); }
-.markdown-body :deep(table) { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 12px; line-height: 1.6; }
-.markdown-body :deep(th),
-.markdown-body :deep(td) { padding: 9px 11px; border-right: 1px solid var(--wb-border); border-bottom: 1px solid var(--wb-border); text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
-.markdown-body :deep(th:last-child),
-.markdown-body :deep(td:last-child) { border-right: 0; }
-.markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
-.markdown-body :deep(th) { color: var(--wb-text); background: var(--wb-surface-inset); font-weight: 600; white-space: nowrap; }
-.markdown-body :deep(tbody tr:nth-child(even)) { background: color-mix(in srgb, var(--wb-surface-inset) 46%, transparent); }
+/* Markdown 表格样式收敛到 global.css 的全局三线表 */
 .text-body, .json-body { box-sizing: border-box; margin-top: 24px; padding: 18px; overflow: auto; border: 1px solid var(--wb-border); color: var(--wb-text-secondary); background: var(--wb-surface-inset); font: 12px/1.7 var(--font-mono, monospace); white-space: pre-wrap; }
 .json-body { color: var(--wb-text); }
 .generic-preview { display: grid; place-items: center; gap: 9px; min-height: 300px; color: var(--wb-text-secondary); text-align: center; }

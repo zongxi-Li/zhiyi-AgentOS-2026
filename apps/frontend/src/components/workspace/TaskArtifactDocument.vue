@@ -223,9 +223,7 @@ const openMission = () => emit('openEntry', {
 .markdown-body :deep(li) { margin: 4px 0; padding-left: 4px; }
 .markdown-body :deep(blockquote) { margin: 22px 0; padding: 12px 16px; border-left: 2px solid var(--wb-accent); color: var(--wb-text-secondary); background: color-mix(in srgb, var(--wb-accent) 5%, transparent); }
 .markdown-body :deep(blockquote p) { margin: 0; font-size: 12px; line-height: 1.7; }
-.markdown-body :deep(table) { width: 100%; margin: 17px 0 25px; border-collapse: collapse; font-size: 12px; }
-.markdown-body :deep(th), .markdown-body :deep(td) { padding: 9px 10px; border: 1px solid var(--wb-border-soft); color: var(--wb-text-secondary); text-align: left; vertical-align: top; line-height: 1.55; }
-.markdown-body :deep(th) { color: var(--wb-text); background: var(--wb-surface-inset); font-weight: 650; }
+/* Markdown 表格样式收敛到 global.css 的全局三线表 */
 .markdown-body :deep(strong) { color: var(--wb-text); font-weight: 650; }
 .markdown-body :deep(code) { padding: 2px 4px; color: var(--wb-text); background: var(--wb-surface-inset); font: 11px var(--font-mono, monospace); }
 .task-document__links { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--wb-border-soft); }
@@ -252,6 +250,5 @@ const openMission = () => emit('openEntry', {
   .task-document__actions { width: 100%; }
   .task-document__actions button { width: 100%; }
   .task-document__canvas { width: min(calc(100% - 28px), 920px); padding-top: 20px; }
-  .markdown-body :deep(table) { display: block; overflow-x: auto; white-space: nowrap; }
 }
 </style>

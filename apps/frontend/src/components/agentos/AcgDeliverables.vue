@@ -191,38 +191,7 @@ const riskClass = (r: any) => {
   text-decoration: none;
 }
 .markdown-body :deep(a:hover) { text-decoration: underline; }
-.markdown-body :deep(.markdown-table-wrap) {
-  width: 100%;
-  margin: 12px 0 16px;
-  overflow-x: auto;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-}
-.markdown-body :deep(table) {
-  width: 100%;
-  min-width: 560px;
-  border-collapse: collapse;
-  font-size: 12px;
-  line-height: 1.55;
-}
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
-  padding: 8px 10px;
-  border-right: 1px solid var(--border-light);
-  border-bottom: 1px solid var(--border-light);
-  text-align: left;
-  vertical-align: top;
-  overflow-wrap: anywhere;
-}
-.markdown-body :deep(th) {
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-weight: 700;
-  white-space: nowrap;
-}
-.markdown-body :deep(th:last-child),
-.markdown-body :deep(td:last-child) { border-right: 0; }
-.markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
+/* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
 .detail-body { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-md); }
 .deliverable-block { border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: var(--space-sm); background: var(--bg-panel); }

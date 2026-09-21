@@ -94,15 +94,7 @@ const formatBytes = (bytes: number) => bytes < 1024
 .markdown-body :deep(pre code) { padding: 0; background: transparent; }
 .markdown-body :deep(blockquote) { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--wb-accent); color: var(--wb-text-secondary); }
 .markdown-body :deep(a) { color: var(--wb-accent); }
-.markdown-body :deep(.markdown-table-wrap) { width: 100%; margin: 14px 0 18px; overflow-x: auto; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); background: var(--wb-surface-section); }
-.markdown-body :deep(table) { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 12px; line-height: 1.6; }
-.markdown-body :deep(th),
-.markdown-body :deep(td) { padding: 9px 11px; border-right: 1px solid var(--wb-border); border-bottom: 1px solid var(--wb-border); text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
-.markdown-body :deep(th:last-child),
-.markdown-body :deep(td:last-child) { border-right: 0; }
-.markdown-body :deep(tbody tr:last-child td) { border-bottom: 0; }
-.markdown-body :deep(th) { color: var(--wb-text); background: var(--wb-surface-inset); font-weight: 600; white-space: nowrap; }
-.markdown-body :deep(tbody tr:nth-child(even)) { background: color-mix(in srgb, var(--wb-surface-inset) 46%, transparent); }
+/* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
 .mission-editor__meta { width: min(100%, 820px); margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--wb-border-soft); }
 .property-row { display: flex; justify-content: space-between; gap: 24px; min-height: 30px; padding: 7px 0; color: var(--wb-text-secondary); font-size: 12px; }

@@ -5,10 +5,10 @@
       <span class="structured-value__disclosure-action">展开完整结论</span>
       <span class="structured-value__disclosure-count">{{ primitiveText.length }} 字符</span>
     </summary>
-    <div v-if="markdown" class="structured-value__markdown is-long" v-html="renderedMarkdown" />
+    <div v-if="markdown" class="structured-value__markdown markdown-body is-long" v-html="renderedMarkdown" />
     <span v-else class="structured-value__text" :class="[primitiveKindClass, { 'is-long': isLongText }]">{{ primitiveText }}</span>
   </details>
-  <div v-else-if="isPrimitive && markdown" class="structured-value__markdown" v-html="renderedMarkdown" />
+  <div v-else-if="isPrimitive && markdown" class="structured-value__markdown markdown-body" v-html="renderedMarkdown" />
   <span
     v-else-if="isPrimitive"
     class="structured-value__text"
