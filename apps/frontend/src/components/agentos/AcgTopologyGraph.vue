@@ -37,7 +37,11 @@
       </div>
     </header>
 
-    <div v-if="!hasData" class="empty">暂无 ACG 拓扑数据，请先运行一个 ACG 引擎工作流</div>
+    <div v-if="!hasData" class="empty">
+      <span class="empty__badge" aria-hidden="true"><el-icon><Share /></el-icon></span>
+      <p class="empty__title">暂无 ACG 拓扑数据</p>
+      <p class="empty__hint">启动一个 ACG 引擎工作流后，这里会呈现步骤、Agent、记忆与证据的交互拓扑。</p>
+    </div>
     <div v-else class="graph-surface">
       <div class="graph-toolbar" aria-label="拓扑分析视图">
         <div class="view-mode">
@@ -1036,7 +1040,7 @@ onBeforeUnmount(() => {
 .acg-topology.is-workbench .view-mode button:hover { background: var(--wb-hover); color: var(--wb-text); }
 .acg-topology.is-workbench .view-mode button.active { border-bottom-color: var(--wb-accent); background: transparent; color: var(--wb-accent); }
 .acg-topology.is-workbench .filter-trigger { min-height: 30px; border-left: 1px solid var(--wb-border); border-radius: 0; }
-.acg-topology.is-workbench .empty { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; }
+.acg-topology.is-workbench .empty { flex: 1 1 auto; min-height: 0; }
 .acg-topology.is-workbench .graph-stage { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); border: 0; border-radius: 0; background: transparent; }
 .acg-topology.is-workbench .graph-canvas { flex: 1 1 auto; height: 100%; min-height: 0; }
 .acg-topology.is-workbench .node-detail { height: auto; min-height: 0; }
@@ -1115,7 +1119,30 @@ onBeforeUnmount(() => {
 .edge-filters input { position: absolute; opacity: 0; pointer-events: none; }
 .edge-filters i { width: 12px; height: 2px; border-radius: 1px; opacity: .35; }
 .edge-filters label.checked i { opacity: 1; }
-.empty { padding: 32px 12px; text-align: center; color: var(--text-secondary); font-size: 13px; }
+.empty {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 220px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 40px 16px;
+  text-align: center;
+}
+.empty__badge {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 8px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  color: var(--primary-color);
+  font-size: 24px;
+}
+.empty__title { margin: 0; color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.empty__hint { margin: 0; max-width: 420px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.7; }
 .graph-stage {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 540px; overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-light) 88%, var(--bg-panel)); border-radius: 10px; background: var(--bg-panel);
