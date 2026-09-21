@@ -126,7 +126,8 @@
           <el-icon><ArrowDownBold /></el-icon>
         </button>
 
-        <div class="messages" ref="messagesRef">
+        <div class="messages-shell">
+          <div class="messages" ref="messagesRef">
           <div v-if="showHeroMode" class="empty-state">
             <div
               ref="heroLogoFieldRef"
@@ -211,7 +212,9 @@
               v-for="msg in chatStore.messages"
               :key="msg.id"
               class="message-row"
-              :class="msg.role"
+              :class="[msg.role, { 'rail-flash': railFlashId === msg.id }]"
+              :data-message-id="String(msg.id)"
+              :data-role="msg.role"
             >
               <MessageBubble
                 :message="{
@@ -237,6 +240,38 @@
               />
             </div>
           </div>
+          </div>
+
+          <nav
+            v-if="conversationRailVisible"
+            ref="conversationRailRef"
+            class="conversation-rail"
+            aria-label="对话导航"
+            @pointerleave="handleRailLeave"
+          >
+            <div class="conversation-rail__ticks">
+              <button
+                v-for="item in conversationRailItems"
+                :key="item.id"
+                type="button"
+                class="conversation-rail__tick"
+                :class="{ 'is-active': item.id === activeRailTickId }"
+                :aria-label="`跳转到第 ${item.round} 轮对话`"
+                @click="jumpToRailInteraction(item.id)"
+                @pointerenter="handleRailHover(item, $event)"
+              ></button>
+            </div>
+            <Transition name="rail-preview">
+              <div
+                v-if="railHoverItem"
+                class="conversation-rail__preview"
+                :style="{ top: `${railPreviewTop}px` }"
+              >
+                <span class="conversation-rail__preview-round">第 {{ railHoverItem.round }} 轮 · 提问预览</span>
+                <p>{{ railHoverItem.preview }}</p>
+              </div>
+            </Transition>
+          </nav>
         </div>
 
         <div ref="composerRef" class="composer" :style="{ bottom: composerDockOffset }">
@@ -603,7 +638,7 @@ import {
 import type { WorkflowProgress } from '@/services/api/workflow'
 import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
-import { useChatStore, type ChatWorkflowBinding } from '@/stores/chat'
+import { useChatStore, type ChatWorkflowBinding, type Message } from '@/stores/chat'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
@@ -1679,6 +1714,128 @@ const handleFileSelected = async (file: any) => {
 
 let pendingScrollFrame: number | null = null
 
+interface ConversationRailItem {
+  id: Message['id']
+  round: number
+  preview: string
+}
+
+const CONVERSATION_RAIL_MIN_ROUNDS = 3
+const CONVERSATION_RAIL_OVERFLOW_GAP = 120
+
+const conversationRailItems = computed<ConversationRailItem[]>(() => {
+  const items: ConversationRailItem[] = []
+  chatStore.messages.forEach(message => {
+    if (message.role !== 'user') return
+    const text = (message.content || '').replace(/\s+/g, ' ').trim()
+    const preview = text || (message.fileUrl ? '[文件附件]' : '（空消息）')
+    items.push({
+      id: message.id,
+      round: items.length + 1,
+      preview: preview.slice(0, 200)
+    })
+  })
+  return items
+})
+
+const conversationRailOverflow = ref(false)
+const conversationRailVisible = computed(() =>
+  !isAgentMode.value
+  && conversationRailItems.value.length >= CONVERSATION_RAIL_MIN_ROUNDS
+  && conversationRailOverflow.value
+)
+const conversationRailRef = ref<HTMLElement | null>(null)
+const activeRailTickId = ref<Message['id'] | ''>('')
+const railHoverItem = ref<ConversationRailItem | null>(null)
+const railPreviewTop = ref(0)
+const railFlashId = ref<Message['id'] | ''>('')
+let railFlashTimer: number | null = null
+let railScrollFallback: number | null = null
+
+// 隐藏页/禁用平滑滚动的环境里 scrollTo smooth 会原地不动：140ms 无位移则瞬时到位兜底
+const animateRailScrollTo = (container: HTMLElement, target: number) => {
+  if (railScrollFallback !== null) window.clearTimeout(railScrollFallback)
+  const start = container.scrollTop
+  if (Math.abs(target - start) < 2) return
+  container.scrollTo({ top: target, behavior: 'smooth' })
+  railScrollFallback = window.setTimeout(() => {
+    railScrollFallback = null
+    if (Math.abs(container.scrollTop - target) > 4 && Math.abs(container.scrollTop - start) < 2) {
+      container.scrollTo({ top: target, behavior: 'auto' })
+    }
+  }, 140)
+}
+
+const updateRailOverflow = () => {
+  const el = messagesRef.value
+  if (!el) {
+    conversationRailOverflow.value = false
+    return
+  }
+  conversationRailOverflow.value = el.scrollHeight > el.clientHeight + CONVERSATION_RAIL_OVERFLOW_GAP
+}
+
+const updateRailActiveTick = () => {
+  const container = messagesRef.value
+  if (!conversationRailVisible.value || !container) {
+    activeRailTickId.value = ''
+    return
+  }
+  const box = container.getBoundingClientRect()
+  const probe = box.top + box.height * 0.35
+  let current: Message['id'] | '' = ''
+  container.querySelectorAll<HTMLElement>('[data-role="user"][data-message-id]').forEach(row => {
+    if (row.getBoundingClientRect().top <= probe) current = (row.dataset.messageId as Message['id']) || ''
+  })
+  activeRailTickId.value = current
+}
+
+const jumpToRailInteraction = (id: Message['id']) => {
+  const container = messagesRef.value
+  if (!container) return
+  let target: HTMLElement | null = null
+  container.querySelectorAll<HTMLElement>('[data-role="user"][data-message-id]').forEach(row => {
+    if (row.dataset.messageId === String(id)) target = row
+  })
+  if (!target) return
+
+  const box = container.getBoundingClientRect()
+  const top = container.scrollTop + target.getBoundingClientRect().top - box.top - 18
+  animateRailScrollTo(container, Math.max(0, top))
+  activeRailTickId.value = id
+  railFlashId.value = id
+  if (railFlashTimer !== null) window.clearTimeout(railFlashTimer)
+  railFlashTimer = window.setTimeout(() => {
+    railFlashId.value = ''
+    railFlashTimer = null
+  }, 1600)
+}
+
+const handleRailHover = (item: ConversationRailItem, event: PointerEvent) => {
+  railHoverItem.value = item
+  const railEl = conversationRailRef.value
+  const tick = event.currentTarget as HTMLElement | null
+  if (!railEl || !tick) return
+  const railRect = railEl.getBoundingClientRect()
+  const tickRect = tick.getBoundingClientRect()
+  const center = tickRect.top - railRect.top + tickRect.height / 2
+  railPreviewTop.value = Math.min(Math.max(center, 48), Math.max(railRect.height - 48, 48))
+}
+
+const handleRailLeave = () => {
+  railHoverItem.value = null
+}
+
+watch(
+  () => chatStore.messages.length,
+  () => {
+    void nextTick(() => {
+      updateRailOverflow()
+      updateRailActiveTick()
+    })
+  }
+)
+
 const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
   if (!messagesRef.value) return
 
@@ -1772,6 +1929,8 @@ const checkScrollState = () => {
   const isAtBottom = Math.abs(scrollHeight - clientHeight - scrollTop) < 24
   isNearBottom.value = isAtBottom
   if (isAtBottom) pendingMessageCount.value = 0
+  updateRailOverflow()
+  updateRailActiveTick()
 }
 
 const bindMessagesScroll = () => {
@@ -1906,6 +2065,14 @@ onUnmounted(() => {
   window.removeEventListener('agent-new-task', handleNewAgentTask)
   window.removeEventListener('resize', handleWorkflowPanelViewportResize)
   window.removeEventListener('pointerdown', handleMissionOutsideClick)
+  if (railFlashTimer !== null) {
+    window.clearTimeout(railFlashTimer)
+    railFlashTimer = null
+  }
+  if (railScrollFallback !== null) {
+    window.clearTimeout(railScrollFallback)
+    railScrollFallback = null
+  }
   composerResizeObserver?.disconnect()
   stopAgentPanelResize()
   stopWorkflowPanelResize()
@@ -2092,7 +2259,6 @@ const handleHeroLogoPointerUp = () => {
   flex: 0 0 auto;
   min-height: 170px;
   overflow: hidden;
-  border-bottom: 1px solid var(--border-light);
   background: color-mix(in srgb, var(--bg-card) 91%, var(--primary-fade));
   box-shadow: 0 12px 30px rgba(26, 31, 58, 0.035);
   transition: height 0.22s var(--ease-out);
@@ -2316,7 +2482,6 @@ const handleHeroLogoPointerUp = () => {
   gap: 7px;
   padding: 0 14px;
   border: 0;
-  border-bottom: 1px solid var(--border-light);
   background: color-mix(in srgb, var(--bg-card) 94%, var(--primary-fade));
   color: var(--text-muted);
   font: inherit;
@@ -2349,7 +2514,6 @@ const handleHeroLogoPointerUp = () => {
   z-index: 6;
   min-height: 180px;
   overflow: hidden;
-  border-top: 1px solid var(--border-light);
   background: color-mix(in srgb, var(--bg-card) 94%, var(--primary-fade));
   box-shadow: 0 -12px 30px rgba(26, 31, 58, 0.035);
   transition: height 0.2s var(--ease-out);
@@ -2484,7 +2648,6 @@ const handleHeroLogoPointerUp = () => {
   gap: 7px;
   padding: 0 14px;
   border: 0;
-  border-top: 1px solid var(--border-light);
   background: color-mix(in srgb, var(--bg-card) 94%, var(--primary-fade));
   color: var(--text-secondary);
   font: inherit;
@@ -2639,6 +2802,140 @@ const handleHeroLogoPointerUp = () => {
   display: flex;
   flex-direction: column;
   gap: 26px;
+}
+
+.messages-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.conversation-rail {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  z-index: 6;
+  display: flex;
+  max-height: 76%;
+  flex-direction: column;
+  transform: translateY(-50%);
+}
+
+.conversation-rail__ticks {
+  display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 7px;
+  overflow-y: auto;
+  border-radius: 12px;
+  scrollbar-width: none;
+}
+
+.conversation-rail__ticks::-webkit-scrollbar {
+  display: none;
+}
+
+.conversation-rail__tick {
+  flex: none;
+  /* 统一宽度：18px 横杠 + 左右各 6px 命中区，静止时全部刻度左右边缘对齐 */
+  width: 30px;
+  height: 10px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.conversation-rail__tick::after {
+  content: '';
+  width: 100%;
+  height: 2px;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--text-secondary) 36%, transparent);
+  transition: background-color 0.16s var(--ease-out), height 0.16s var(--ease-out);
+}
+
+.conversation-rail__tick:hover::after {
+  height: 3px;
+  background: color-mix(in srgb, var(--text-primary) 64%, transparent);
+}
+
+.conversation-rail__tick.is-active::after {
+  background: var(--accent-color);
+}
+
+.conversation-rail__tick.is-active:hover::after {
+  background: var(--accent-color);
+}
+
+.conversation-rail__preview {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 2px);
+  z-index: 8;
+  width: min(320px, 56vw);
+  padding: 10px 12px 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.36);
+  transform: translateY(-50%);
+  text-align: left;
+  pointer-events: none;
+}
+
+.conversation-rail__preview-round {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.conversation-rail__preview p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.rail-preview-enter-active,
+.rail-preview-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.rail-preview-enter-from,
+.rail-preview-leave-to {
+  opacity: 0;
+  transform: translateY(-50%) translateX(-4px);
+}
+
+.message-row.rail-flash {
+  border-radius: 12px;
+  animation: rail-flash-highlight 1.6s var(--ease-out);
+}
+
+@keyframes rail-flash-highlight {
+  0% {
+    background: var(--accent-fade);
+    box-shadow: inset 2px 0 0 var(--accent-color);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 2px 0 0 transparent;
+  }
 }
 
 .workflow-history-detail {
@@ -3347,9 +3644,8 @@ const handleHeroLogoPointerUp = () => {
   overflow: hidden;
   padding: 0;
   border: 0;
-  border-left: 1px solid var(--border-light);
   border-radius: 0;
-  transition: border-color 0.2s ease, background-color 0.2s ease;
+  transition: background-color 0.2s ease;
 }
 
 .agent-panel-resizer {
