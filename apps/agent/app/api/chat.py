@@ -115,6 +115,7 @@ async def chat_text(request: ChatRequest):
             "description": item.output_summary,
             "durationMs": item.duration_ms,
             "terminal": item.terminal,
+            "activity": item.activity,
         }
         for item in response.tool_executions
     ]

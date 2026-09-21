@@ -18,12 +18,25 @@ export interface TerminalExecution {
   durationMs?: number
 }
 
+export interface ToolExecutionActivity {
+  kind: 'file_read' | 'file_list' | 'file_write' | 'file_patch' | 'terminal' | string
+  capabilityId?: string
+  relativePath?: string
+  status?: string
+  summary?: string
+  addedLines?: number
+  removedLines?: number
+  entryCount?: number
+  errorCode?: string
+}
+
 export interface ExecutionSummaryItem {
   stage: string
   status: string
   description: string
   durationMs?: number
   terminal?: TerminalExecution
+  activity?: ToolExecutionActivity
 }
 
 export interface Message {
@@ -360,12 +373,16 @@ export const useChatStore = defineStore('chat', () => {
         const terminal = payload.terminal && typeof payload.terminal === 'object'
           ? payload.terminal as TerminalExecution
           : existing?.terminal
+        const activity = payload.activity && typeof payload.activity === 'object'
+          ? payload.activity as ToolExecutionActivity
+          : existing?.activity
         const next: ExecutionSummaryItem = {
           stage,
           status,
           description,
           durationMs: duration,
-          ...(terminal ? { terminal } : {})
+          ...(terminal ? { terminal } : {}),
+          ...(activity ? { activity } : {})
         }
         if (index >= 0) summaries[index] = next
         else summaries.push(next)

@@ -32,6 +32,7 @@ from app.tools.contracts import (
     ToolLimitExceededError,
     ToolRunResult,
 )
+from app.tools.local_runtime import LocalRuntimeToolExecutor
 
 
 SYSTEM_INSTRUCTIONS = """You are a careful assistant with access only to the read-only tools listed below.
@@ -115,6 +116,8 @@ class ToolInvocationContext:
                     invocation_timeout,
                     float(settings.TOOL_TERMINAL_MAX_TIMEOUT_SECONDS) + 5.0,
                 )
+            if name in ChatToolCatalog.FILE_TOOL_NAMES and getattr(self.catalog, "supports_call_id", False):
+                catalog_kwargs["call_id"] = call_id
             payload = await asyncio.wait_for(
                 self.catalog.execute(name, arguments, **catalog_kwargs),
                 timeout=invocation_timeout,
@@ -136,6 +139,12 @@ class ToolInvocationContext:
                     and isinstance(payload.data.get("terminal"), dict)
                     else None
                 ),
+                activity=(
+                    payload.data.get("activity")
+                    if isinstance(payload.data, dict)
+                    and isinstance(payload.data.get("activity"), dict)
+                    else None
+                ),
             )
             self.records.append(record)
             return json.dumps(
@@ -154,6 +163,7 @@ class ToolInvocationContext:
                 "TOOL_TIMEOUT" if isinstance(exc, TimeoutError) else type(exc).__name__.upper()
             )
             terminal = getattr(exc, "terminal", None)
+            activity = getattr(exc, "activity", None)
             self.records.append(
                 ToolExecutionRecord(
                     callId=call_id,
@@ -165,11 +175,14 @@ class ToolInvocationContext:
                     errorCode=str(code)[:120],
                     provider=self.provider,
                     terminal=terminal if isinstance(terminal, dict) else None,
+                    activity=activity if isinstance(activity, dict) else None,
                 )
             )
             response: dict[str, Any] = {"ok": False, "tool": name, "error": str(code)}
             if isinstance(terminal, dict):
                 response["terminal"] = terminal
+            if isinstance(activity, dict):
+                response["activity"] = activity
             return json.dumps(response, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -266,6 +279,81 @@ async def terminal(
     )
 
 
+@function_tool(strict_mode=False, timeout=30.0)
+async def read_file(
+    context: ToolContext[ToolInvocationContext],
+    path: str,
+    encoding: str = "utf-8",
+    binary: bool = False,
+) -> str:
+    """Read one file through the trusted workspace Local Runtime."""
+    return await context.context.invoke(
+        "read_file",
+        {"path": path, "encoding": encoding, "binary": binary},
+        call_id=context.tool_call_id,
+    )
+
+
+@function_tool(strict_mode=False, timeout=30.0)
+async def list_files(
+    context: ToolContext[ToolInvocationContext],
+    path: str = ".",
+    max_entries: int = 1000,
+) -> str:
+    """List one directory through the trusted workspace Local Runtime."""
+    return await context.context.invoke(
+        "list_files",
+        {"path": path, "maxEntries": max_entries},
+        call_id=context.tool_call_id,
+    )
+
+
+@function_tool(strict_mode=False, timeout=30.0)
+async def write_file(
+    context: ToolContext[ToolInvocationContext],
+    path: str,
+    content: str,
+    overwrite: bool = False,
+    create_parents: bool = False,
+    encoding: str = "utf-8",
+    binary: bool = False,
+) -> str:
+    """Create or update one workspace file through the Local Runtime."""
+    return await context.context.invoke(
+        "write_file",
+        {
+            "path": path,
+            "content": content,
+            "overwrite": overwrite,
+            "createParents": create_parents,
+            "encoding": encoding,
+            "binary": binary,
+        },
+        call_id=context.tool_call_id,
+    )
+
+
+@function_tool(strict_mode=False, timeout=30.0)
+async def patch_file(
+    context: ToolContext[ToolInvocationContext],
+    path: str,
+    patch: str,
+    encoding: str = "utf-8",
+    expected_sha256: str = "",
+) -> str:
+    """Apply a unified patch to one workspace file through the Local Runtime."""
+    return await context.context.invoke(
+        "patch_file",
+        {
+            "path": path,
+            "patch": patch,
+            "encoding": encoding,
+            "expectedSha256": expected_sha256,
+        },
+        call_id=context.tool_call_id,
+    )
+
+
 SDK_TOOLS = {
     "web_search": web_search,
     "web_extract": web_extract,
@@ -274,6 +362,10 @@ SDK_TOOLS = {
     "current_datetime": current_datetime,
     "industrial_calculator": industrial_calculator,
     "terminal": terminal,
+    "read_file": read_file,
+    "list_files": list_files,
+    "write_file": write_file,
+    "patch_file": patch_file,
 }
 
 
@@ -297,7 +389,12 @@ class AgentsToolRuntime:
             "terminal" in self.allowed_tools
             and bool(self.catalog.availability().get("terminal", {}).get("available"))
         )
-        policy = "workspace_scoped" if terminal_available else "read_only"
+        file_tools_available = any(
+            name in self.allowed_tools
+            and bool(self.catalog.availability().get(name, {}).get("available"))
+            for name in ChatToolCatalog.FILE_TOOL_NAMES
+        )
+        policy = "workspace_scoped" if terminal_available or file_tools_available else "read_only"
         return {
             "enabled": bool(settings.TOOL_RUNTIME_ENABLED),
             "policy": policy,
@@ -386,12 +483,18 @@ class AgentsToolRuntime:
         )
         unavailable_names = sorted(set(context.allowed_tools).difference(available_names))
         instructions = SYSTEM_INSTRUCTIONS
-        if "terminal" in available_names:
+        local_runtime_names = set(ChatToolCatalog.FILE_TOOL_NAMES).intersection(available_names)
+        if "terminal" in available_names or local_runtime_names:
             instructions = instructions.replace(
                 "access only to the read-only tools listed below.",
                 "access only to the tools listed below.",
             )
         instructions += f"\nCurrently available tools: {', '.join(available_names) or 'none'}."
+        if local_runtime_names:
+            instructions += (
+                "\nWorkspace file tools are available through the managed Local Runtime."
+                " Use only workspace-relative paths and use the file tools for file changes."
+            )
         if "terminal" in available_names:
             instructions += (
                 "\nThe terminal is available only inside the configured workspace. Use it for"
@@ -417,7 +520,7 @@ class AgentsToolRuntime:
         if adapted.effective_thinking_mode.value != "disabled" and "deepseek" in base_url.lower():
             tool_choice = None
         agent = Agent[ToolInvocationContext](
-            name=("Kinlin Chat Tool Assistant" if "terminal" in available_names
+            name=("Kinlin Chat Tool Assistant" if ("terminal" in available_names or local_runtime_names)
                   else "Kinlin Read-only Tool Assistant"),
             instructions=instructions,
             model=sdk_model,
@@ -661,13 +764,49 @@ def get_tool_runtime() -> AgentsToolRuntime:
 def get_chat_tool_runtime() -> AgentsToolRuntime:
     global _chat_runtime
     if _chat_runtime is None:
-        _chat_runtime = AgentsToolRuntime(catalog=ChatToolCatalog())
+        _chat_runtime = AgentsToolRuntime(
+            catalog=ChatToolCatalog(
+                legacy_terminal_enabled=settings.CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED
+            )
+        )
+    return _chat_runtime
+
+
+def configure_chat_tool_runtime(execution_runtime: object) -> AgentsToolRuntime:
+    """Bind Chat to the already-composed AgentOS Local Runtime authority."""
+    global _chat_runtime
+    client = getattr(execution_runtime, "local_runtime_client", None)
+    resource_service = getattr(execution_runtime, "resource_service", None)
+    if resource_service is None:
+        resource_service = getattr(execution_runtime, "legacy_resource_service", None)
+    resource = getattr(execution_runtime, "local_runtime_resource", None)
+    health_projector = getattr(execution_runtime, "local_runtime_health_projector", None)
+    health_transport = getattr(execution_runtime, "local_runtime_transport", None)
+    authorization = getattr(execution_runtime, "local_runtime_authorization", None)
+    resource_id = getattr(getattr(resource, "profile", None), "resource_id", None)
+    executor = None
+    if all((client, resource_service, resource_id, health_projector, health_transport, authorization)):
+        executor = LocalRuntimeToolExecutor(
+            resource_service=resource_service,
+            client=client,
+            health_projector=health_projector,
+            health_transport=health_transport,
+            resource_id=str(resource_id),
+            authorization=authorization,
+        )
+    _chat_runtime = AgentsToolRuntime(
+        catalog=ChatToolCatalog(
+            local_runtime_executor=executor,
+            legacy_terminal_enabled=settings.CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED,
+        )
+    )
     return _chat_runtime
 
 
 __all__ = [
     "AgentsToolRuntime",
     "ToolInvocationContext",
+    "configure_chat_tool_runtime",
     "get_chat_tool_runtime",
     "get_tool_runtime",
 ]

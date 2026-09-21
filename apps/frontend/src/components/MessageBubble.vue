@@ -181,6 +181,40 @@
           </article>
         </section>
 
+        <section
+          v-if="fileActivities.length"
+          class="file-work"
+          aria-label="文件工作"
+        >
+          <div class="file-work__header">
+            <span class="file-work__title">文件工作</span>
+            <span class="file-work__count">{{ fileActivities.length }} 次调用</span>
+          </div>
+          <article
+            v-for="item in fileActivities"
+            :key="`file-${item.stage}`"
+            class="file-work__item"
+            :class="{ 'is-failed': item.status === 'failed', 'is-running': item.status === 'running' }"
+          >
+            <div class="file-work__meta">
+              <span class="file-work__kind">{{ fileActivityLabel(item.activity?.kind) }}</span>
+              <code v-if="item.activity?.relativePath" class="file-work__path">{{ item.activity.relativePath }}</code>
+              <span v-if="item.activity?.entryCount !== undefined" class="file-work__count-detail">
+                {{ item.activity.entryCount }} 项
+              </span>
+            </div>
+            <div class="file-work__summary">
+              {{ item.activity?.summary || item.description }}
+              <span v-if="item.activity?.addedLines !== undefined || item.activity?.removedLines !== undefined">
+                （+{{ item.activity?.addedLines || 0 }} / -{{ item.activity?.removedLines || 0 }}）
+              </span>
+            </div>
+            <div v-if="item.status === 'failed'" class="file-work__error">
+              执行失败：{{ item.activity?.errorCode || 'FILE_OPERATION_FAILED' }}
+            </div>
+          </article>
+        </section>
+
         <!-- 文本内容 -->
         <div
           v-if="message.content"
@@ -251,12 +285,25 @@ interface TerminalExecution {
   durationMs?: number
 }
 
+interface ToolExecutionActivity {
+  kind: string
+  capabilityId?: string
+  relativePath?: string
+  status?: string
+  summary?: string
+  addedLines?: number
+  removedLines?: number
+  entryCount?: number
+  errorCode?: string
+}
+
 interface ExecutionSummaryItem {
   stage: string
   status: string
   description: string
   durationMs?: number
   terminal?: TerminalExecution
+  activity?: ToolExecutionActivity
 }
 
 interface Props {
@@ -347,6 +394,9 @@ const showThinkingStatus = computed(() => !!props.message.thinkingState || hasDe
 const terminalActivities = computed(() => (props.message.executionSummary || [])
   .filter(item => item.stage.split(':')[1] === 'terminal'))
 
+const fileActivities = computed(() => (props.message.executionSummary || [])
+  .filter(item => item.activity && item.activity.kind !== 'terminal'))
+
 const canExpandDetails = computed(() => {
   return hasDetails.value && (
     props.message.thinkingState !== 'thinking' || Boolean(props.message.reasoningContent)
@@ -386,6 +436,14 @@ const executionStageLabel = (stage: string) => {
   if (stage.startsWith('tool:terminal')) return '终端'
   if (stage.startsWith('tool:')) return `工具 · ${stage.split(':')[1] || 'unknown'}`
   return stage
+}
+
+const fileActivityLabel = (kind?: string) => {
+  if (kind === 'file_read') return '读取'
+  if (kind === 'file_list') return '列出'
+  if (kind === 'file_write') return '写入'
+  if (kind === 'file_patch') return '编辑'
+  return '文件工具'
 }
 
 const isImage = (url: string) => {
@@ -688,52 +746,7 @@ const formatTime = (date: Date) => {
   word-break: break-all;
 }
 
-.message-text.markdown-body :deep(.markdown-table-wrap) {
-  width: 100%;
-  margin: 14px 0 18px;
-  overflow-x: auto;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  background: var(--bg-card);
-}
-
-.message-text.markdown-body :deep(table) {
-  width: 100%;
-  min-width: 560px;
-  border-collapse: collapse;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.message-text.markdown-body :deep(th),
-.message-text.markdown-body :deep(td) {
-  padding: 10px 12px;
-  border-right: 1px solid var(--border-light);
-  border-bottom: 1px solid var(--border-light);
-  text-align: left;
-  vertical-align: top;
-  overflow-wrap: anywhere;
-}
-
-.message-text.markdown-body :deep(th:last-child),
-.message-text.markdown-body :deep(td:last-child) {
-  border-right: 0;
-}
-
-.message-text.markdown-body :deep(tbody tr:last-child td) {
-  border-bottom: 0;
-}
-
-.message-text.markdown-body :deep(th) {
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.message-text.markdown-body :deep(tbody tr:nth-child(even)) {
-  background: color-mix(in srgb, var(--bg-input) 46%, transparent);
-}
+/* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
 /* Inline thinking status — compact, borderless and theme-token driven */
 .thinking-status {
@@ -1000,6 +1013,43 @@ const formatTime = (date: Date) => {
 
 .terminal-work__output.is-stderr { color: #f0b7ad; }
 .terminal-work__truncated { margin-top: 6px; color: var(--warning); font-size: 11px; }
+
+.file-work {
+  width: min(100%, 780px);
+  margin: 10px 0 2px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-light) 88%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-panel) 86%, #101317);
+}
+
+.file-work__header,
+.file-work__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-work__header {
+  justify-content: space-between;
+  padding: 8px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 78%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.file-work__title { color: var(--text-primary); font-weight: 600; }
+.file-work__count,
+.file-work__count-detail { color: var(--text-muted); font-size: 11px; }
+.file-work__item { padding: 9px 11px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border-light) 62%, transparent); }
+.file-work__item:last-child { border-bottom: 0; }
+.file-work__item.is-failed { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+.file-work__item.is-running { background: color-mix(in srgb, var(--primary-color) 4%, transparent); }
+.file-work__meta { flex-wrap: wrap; line-height: 1.45; }
+.file-work__kind { color: var(--text-secondary); font-size: 12px; }
+.file-work__path { color: var(--text-primary); font: 12px/1.5 var(--font-mono, monospace); overflow-wrap: anywhere; }
+.file-work__summary { margin-top: 5px; color: var(--text-regular); font-size: 12px; }
+.file-work__error { margin-top: 5px; color: var(--danger); font-size: 11px; }
 
 .source-tag {
   display: inline-flex;

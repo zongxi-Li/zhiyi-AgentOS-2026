@@ -24,7 +24,7 @@ from app.execution import (
     build_model_setup,
     close_runtime,
 )
-from app.tools import get_tool_runtime
+from app.tools import configure_chat_tool_runtime, get_tool_runtime
 from app.config import settings
 from app.security.internal_auth import (
     InternalServiceAuthMiddleware,
@@ -41,6 +41,7 @@ logger = setup_logger(level=logging.INFO)
 configure_model_adapter()
 configure_tool_adapter()
 runtime = build_default_runtime()
+configure_chat_tool_runtime(runtime)
 model_setup = build_model_setup(runtime)
 coordinator = RunExecutionCoordinator(runtime)
 

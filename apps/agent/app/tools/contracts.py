@@ -41,6 +41,7 @@ class ToolExecutionRecord(BaseModel):
     error_code: str | None = Field(default=None, alias="errorCode")
     provider: str | None = None
     terminal: dict[str, Any] | None = None
+    activity: dict[str, Any] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json", exclude_none=True)

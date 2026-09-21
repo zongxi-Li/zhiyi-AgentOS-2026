@@ -93,6 +93,8 @@ class Settings(BaseSettings):
     # Chat-only terminal execution. ACG keeps using the read-only runtime until
     # its capability and approval contracts are ready.
     CHAT_TERMINAL_ENABLED: bool = False
+    # Compatibility switch only; production Chat uses AgentOS Local Runtime.
+    CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED: bool = False
     TOOL_TERMINAL_ROOT: str = ""
     TOOL_TERMINAL_TIMEOUT_SECONDS: float = 30.0
     TOOL_TERMINAL_MAX_TIMEOUT_SECONDS: float = 120.0

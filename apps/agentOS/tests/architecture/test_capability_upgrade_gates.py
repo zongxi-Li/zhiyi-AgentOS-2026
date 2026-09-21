@@ -60,6 +60,104 @@ def test_resource_directory_has_no_independent_truth_containers() -> None:
     assert set(vars(directory)) == {"resource_service"}
 
 
+def test_local_runtime_is_only_a_contract_and_transport_boundary() -> None:
+    """Host tools must not create a parallel authority or execute inside AgentOS."""
+    local_files = (SRC / "contracts" / "local_runtime.py", SRC / "adapters" / "local_runtime.py")
+    forbidden_classes = {"CapabilityRegistry", "ResourceRegistry", "RuntimeEventBroker"}
+    forbidden_imports = {
+        "service.agents.base", "app.tools.terminal", "app.tools.chat_catalog",
+        "subprocess", "httpx", "requests", "socket",
+    }
+    forbidden_calls = {"exec", "eval", "system", "Popen", "run", "create_subprocess_shell"}
+    for path in local_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        classes = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+        imports = {
+            alias.name
+            for node in ast.walk(tree) if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        imports.update(
+            node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        )
+        calls = {
+            node.func.id for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert classes.isdisjoint(forbidden_classes), path
+        assert imports.isdisjoint(forbidden_imports), path
+        assert calls.isdisjoint(forbidden_calls), path
+
+
+def test_local_runtime_http_transport_keeps_the_low_level_boundary() -> None:
+    """HTTP Local Runtime transport must not become the AgentRun adapter."""
+    path = SRC / "adapters" / "local_runtime_http.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    assert "AgentRunContext" not in names
+    assert "AgentOutput" not in names
+    assert "HttpResourceExecutionAdapter" not in names
+    assert "LocalRuntimeExecutionRequest" in names
+    assert "LocalRuntimeExecutionResult" in names
+    assert "AgentRunContext" not in attributes
+
+
+def test_local_runtime_process_does_not_introduce_agentos_authorities() -> None:
+    """The host process may dispatch handlers, but it owns no AgentOS registry."""
+    local_root = SRC.parents[1] / "local-runtime"
+    for path in local_root.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        classes = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        imported.update(
+            node.module or ""
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        )
+        assert classes.isdisjoint({"CapabilityRegistry", "ResourceRegistry", "RuntimeEventBroker"})
+        assert imported.isdisjoint({"subprocess", "service.agents.base"})
+
+
+def test_local_runtime_integration_does_not_route_chat_acg_or_tauri() -> None:
+    """Chat may use the AgentOS Local Runtime seam without creating a parallel authority."""
+    chat_api = SRC.parents[1] / "agent" / "app" / "api" / "chat.py"
+    chat_catalog = SRC.parents[1] / "agent" / "app" / "tools" / "chat_catalog.py"
+    chat_executor = SRC.parents[1] / "agent" / "app" / "tools" / "local_runtime.py"
+    assert "get_chat_tool_runtime" in chat_api.read_text(encoding="utf-8")
+    assert "ResourceService(" not in chat_api.read_text(encoding="utf-8")
+    assert "FilesystemCapabilities" not in chat_catalog.read_text(encoding="utf-8")
+    assert "LocalRuntimeExecutor" not in chat_catalog.read_text(encoding="utf-8")
+    assert "LocalRuntimeToolExecutor" in chat_catalog.read_text(encoding="utf-8")
+    assert "AgentRunContext" not in chat_executor.read_text(encoding="utf-8")
+
+    tauri_root = SRC.parents[1] / "desktop"
+    if tauri_root.exists():
+        tauri_source = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in tauri_root.rglob("*.rs"))
+        assert "LocalRuntime" not in tauri_source
+
+
+def test_chat_terminal_keeps_its_existing_composition() -> None:
+    """Chat routes file work through the existing AgentOS Local Runtime adapter."""
+    chat_api = SRC.parents[1] / "agent" / "app" / "api" / "chat.py"
+    catalog = SRC.parents[1] / "agent" / "app" / "tools" / "chat_catalog.py"
+    runtime = SRC.parents[1] / "agent" / "app" / "tools" / "runtime.py"
+    assert "get_chat_tool_runtime" in chat_api.read_text(encoding="utf-8")
+    assert "LocalRuntimeToolExecutor" in catalog.read_text(encoding="utf-8")
+    assert all(name in runtime.read_text(encoding="utf-8") for name in (
+        "read_file", "list_files", "write_file", "patch_file"
+    ))
+    config = SRC.parents[1] / "agent" / "app" / "config.py"
+    assert "CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED: bool = False" in config.read_text(encoding="utf-8")
+
+
 def test_memory_and_evolution_forbid_runtime_mutation_primitives() -> None:
     """Memory remains a service/store and evolution remains declarative policy data."""
     guarded_roots = (SRC / "components" / "memory", SRC / "components" / "evolution")
