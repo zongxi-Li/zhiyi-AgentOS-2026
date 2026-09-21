@@ -89,7 +89,7 @@
           >
             <span class="project-row__icon" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
             <span class="project-row__copy">
-              <strong :title="mission.title">{{ mission.title || '未命名工程' }}</strong>
+              <strong :title="missionDisplayTitle(mission)">{{ missionDisplayTitle(mission) }}</strong>
               <span>{{ mission.missionId }}</span>
             </span>
             <span class="project-row__meta">
@@ -197,6 +197,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import { agentosApi, type MissionListItem, type WorkflowRunSummary } from '@/services/api/agentos'
 import { downloadFile, exportMissionDetailToCsv, exportMissionDetailToJson, exportMissionDetailToMarkdown, exportMissionDetailToTxt, exportMissionsToCsv, exportMissionsToJson, exportMissionsToMarkdown, exportMissionsToTxt, type MissionDetailExport } from '@/utils/export'
+import { plainMissionTitle } from '@/utils/missionTitle'
 
 const router = useRouter()
 const missions = ref<MissionListItem[]>([])
@@ -493,10 +494,7 @@ const removeMission = (missionId: string) => {
   missions.value = missions.value.filter(mission => mission.missionId !== missionId)
 }
 
-const missionDisplayTitle = (mission: MissionListItem) => {
-  const title = mission.title?.replace(/\s+/g, ' ').trim()
-  return title || '未命名工程'
-}
+const missionDisplayTitle = (mission: MissionListItem) => plainMissionTitle(mission.title)
 
 const missionDeleteMessage = (mission: MissionListItem) => {
   const title = missionDisplayTitle(mission)

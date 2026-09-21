@@ -25,8 +25,18 @@
             <div class="mission-pane__scroll">
               <div class="mission-fields">
                 <label class="field-block field-block--brief" for="mission-goal">
-                  <div class="field-block__header"><span class="field-block__label">Objective <small>必填</small></span><em>MISSION BRIEF</em></div>
-                  <textarea id="mission-goal" v-model="draft.taskGoal" rows="8" placeholder="描述需要完成什么、关键约束以及最终希望得到什么结果。" aria-required="true"></textarea>
+                  <div class="field-block__header">
+                    <span class="field-block__label">Objective <small>必填</small></span>
+                    <div class="brief-mode-switch" role="tablist" aria-label="Objective 显示模式">
+                      <button type="button" role="tab" :aria-selected="objectiveMode === 'write'" :class="{ active: objectiveMode === 'write' }" @click="objectiveMode = 'write'">编写</button>
+                      <button type="button" role="tab" :aria-selected="objectiveMode === 'preview'" :class="{ active: objectiveMode === 'preview' }" @click="objectiveMode = 'preview'">预览</button>
+                    </div>
+                  </div>
+                  <textarea v-if="objectiveMode === 'write'" id="mission-goal" v-model="draft.taskGoal" rows="8" placeholder="描述需要完成什么、关键约束以及最终希望得到什么结果。支持 Markdown，切到「预览」查看渲染效果。" aria-required="true"></textarea>
+                  <div v-else class="objective-preview markdown-body" role="tabpanel" aria-label="Objective 预览">
+                    <div v-if="hasObjectiveContent" v-html="objectivePreviewHtml"></div>
+                    <p v-else class="objective-preview__empty">暂无内容。切回「编写」输入任务简报，支持 Markdown 标题、列表与表格。</p>
+                  </div>
                 </label>
               </div>
             </div>
@@ -194,6 +204,8 @@ import type { InputAttachment } from '@/services/api/agentos'
 import { buildWorkbenchStartRequest, createNativeWorkbenchDraft, type WorkbenchDraft } from '@/features/acg/workbench'
 import { pluginUiExtensions } from '@/plugins'
 import { apiUrl } from '@/platform'
+import { renderMarkdown } from '@/utils/markdown'
+import { plainMissionTitle } from '@/utils/missionTitle'
 import {
   MODEL_SETTINGS_EVENT,
   capabilityFromPayload,
@@ -319,10 +331,11 @@ const runSummaryIssues = computed(() => {
 })
 const isReadyToRun = computed(() => !submitting.value && runSummaryIssues.value.length === 0)
 
-const automaticMissionTitle = (objective: string) => {
-  const firstLine = objective.trim().split(/\r?\n/, 1)[0].replace(/^#+\s*/, '').trim()
-  return (firstLine || 'AI Mission').slice(0, 80)
-}
+const automaticMissionTitle = (objective: string) => plainMissionTitle(objective, 'AI Mission').slice(0, 80)
+
+const objectiveMode = ref<'write' | 'preview'>('write')
+const hasObjectiveContent = computed(() => Boolean(draft.value.taskGoal.trim()))
+const objectivePreviewHtml = computed(() => renderMarkdown(draft.value.taskGoal || ''))
 
 const applyAdvancedPreset = (preset: AdvancedPreset) => {
   draft.value.capabilityProfile = preset === 'fast' ? 'standard' : preset === 'deep' ? 'full' : 'auto'
@@ -634,6 +647,27 @@ onBeforeUnmount(() => {
 .field-block__header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .field-block__header em { color: var(--text-muted); font: 9px var(--font-mono, monospace); font-style: normal; letter-spacing: .1em; }
 .field-block--brief { grid-template-rows: auto minmax(0, 1fr); min-height: 0; padding: 0; }
+
+.brief-mode-switch { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--mission-border); border-radius: 7px; background: var(--mission-surface); }
+.brief-mode-switch button { min-width: 44px; padding: 3px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out); }
+.brief-mode-switch button:hover { color: var(--text-primary); }
+.brief-mode-switch button.active { background: var(--primary-fade); color: var(--primary-color); font-weight: 600; }
+
+.objective-preview {
+  height: 100%;
+  min-height: 320px;
+  padding: 16px;
+  overflow-y: auto;
+  border: 1px solid var(--mission-border);
+  border-radius: 9px;
+  outline: 0;
+  color: var(--text-primary);
+  background: var(--mission-surface);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.objective-preview :deep(> div > *:first-child) { margin-top: 0; }
+.objective-preview__empty { margin: 0; color: var(--text-muted); font-size: 12.5px; }
 
 #mission-goal,
 .advanced-field select,

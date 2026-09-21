@@ -188,14 +188,14 @@
                     <button
                       class="chat-project-item"
                       type="button"
-                      :title="mission.title || '未命名工程'"
+                      :title="plainMissionTitle(mission.title)"
                       @click="openAgentProject(mission)"
                     >
                       <span class="chat-project-icon" aria-hidden="true">
                         <el-icon><Cpu /></el-icon>
                       </span>
                       <span class="chat-project-copy">
-                        <span class="chat-project-title">{{ mission.title || '未命名工程' }}</span>
+                        <span class="chat-project-title">{{ plainMissionTitle(mission.title) }}</span>
                         <span class="chat-project-time">
                           {{ agentProjectState(mission) }} · {{ formatConversationTime(mission.updatedAt || mission.createdAt) }}
                         </span>
@@ -499,6 +499,7 @@ import {
   type AcgHistoryRole
 } from '@/utils/acgHistoryFilter'
 import { isDesktop } from '@/platform'
+import { plainMissionTitle } from '@/utils/missionTitle'
 import { initUiZoom } from '@ui-zoom'
 import ZoomIndicator from '@/components/desktop/ZoomIndicator.vue'
 
@@ -2645,7 +2646,6 @@ onUnmounted(() => {
 }
 
 .chat-project-row {
-  border-left: 2px solid transparent;
   border-radius: 8px;
 }
 
@@ -2654,8 +2654,7 @@ onUnmounted(() => {
 }
 
 .chat-project-row.active {
-  border-left-color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-fade) 72%, var(--bg-card));
+  background: color-mix(in srgb, var(--primary-fade) 55%, var(--bg-card));
   color: var(--text-primary);
 }
 
