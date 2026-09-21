@@ -99,7 +99,7 @@ def _environment(root: Path) -> dict[str, str]:
     }
 
 
-def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_path: Path) -> None:
+def test_application_builds_the_single_execution_runtime_with_authoritative_resource_store(tmp_path: Path) -> None:
     tools = _InjectedToolRuntime()
     model = _InjectedModelRuntime()
     intent = _InjectedIntentLLM()
@@ -121,7 +121,10 @@ def test_application_builds_the_single_execution_runtime_with_six_stores(tmp_pat
         assert isinstance(runtime.node_service.store, SQLiteNodeStore)
         assert isinstance(runtime.agent_service.store, SQLiteAgentStore)
         assert isinstance(runtime.scheduler_service, TwoLayerSchedulerService)
-        assert runtime.resource_service is None
+        assert runtime.resource_service is not None
+        assert isinstance(runtime.resource_service.store, SQLiteResourceStore)
+        assert isinstance(runtime.resource_service.health_monitor.store, SQLiteResourceHealthStore)
+        assert runtime.legacy_resource_service is runtime.resource_service
         assert isinstance(runtime.evolution_service.store, SQLiteEvolutionStore)
         assert runtime.tool_runtime is tools
         assert isinstance(runtime._model_runtime, GuardedModelRuntime)

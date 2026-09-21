@@ -23,6 +23,12 @@ from adapters.openai_runtime import (
 )
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.http_transport import HttpJsonTransport, HttpTransportError, RotatingKeyProvider
+from adapters.local_runtime import LocalRuntimeClient, LocalRuntimeTransport
+from adapters.local_runtime_http import (
+    HttpLocalRuntimeTransport,
+    LocalRuntimeCredentialProvider,
+    LocalRuntimeTransportError,
+)
 from adapters.skill_tool_compatibility import SkillToolCompatibilityRegistry
 from .model import ModelProvider
 
@@ -34,11 +40,16 @@ __all__ = [
     "GuardedToolRuntime",
     "HttpJsonTransport",
     "HttpTransportError",
+    "HttpLocalRuntimeTransport",
     "JsonTransport",
     "ModelAdapter",
     "ModelCompatibilityRegistry",
     "ModelInvocationError",
     "ModelProvider",
+    "LocalRuntimeCredentialProvider",
+    "LocalRuntimeClient",
+    "LocalRuntimeTransport",
+    "LocalRuntimeTransportError",
     "ModelService",
     "ModelServiceFactory",
     "OpenAICompatibleRuntime",

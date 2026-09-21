@@ -61,7 +61,12 @@ class ResourceService:
     register_resource = register
 
     def register_remote(
-        self, profile: ResourceProfile, snapshot: ResourceSnapshot
+        self,
+        profile: ResourceProfile,
+        snapshot: ResourceSnapshot,
+        *,
+        credential_id: str | None = None,
+        secret: str | None = None,
     ) -> IssuedResourceCredential:
         """登记远程资源并生成只能在注册响应中读取一次的凭据。"""
         if profile.deployment_tier is DeploymentTier.LOCAL:
@@ -70,10 +75,15 @@ class ResourceService:
             raise ValueError("remote resource owner_scope is required")
         if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
             raise ValueError("remote resource execution endpoint is required")
-        secret = secrets.token_urlsafe(32)
+        if (credential_id is None) != (secret is None):
+            raise ValueError("credential_id and secret must be supplied together")
+        credential_id = credential_id.strip() if credential_id is not None else f"rc_{uuid.uuid4().hex}"
+        secret = secret.strip() if secret is not None else secrets.token_urlsafe(32)
+        if not credential_id or not secret:
+            raise ValueError("remote credential_id and secret must not be empty")
         record = ResourceCredentialRecord(
             resource_id=profile.resource_id,
-            credential_id=f"rc_{uuid.uuid4().hex}",
+            credential_id=credential_id,
             owner_scope=profile.owner_scope,
             secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
             encrypted_secret=self.secret_box.encrypt(secret),

@@ -5,11 +5,14 @@ from __future__ import annotations
 import os
 import asyncio
 import json
+from datetime import timedelta
 from pathlib import Path
 from threading import Thread
 from typing import Any, Mapping
 
 from adapters.model.native import register_native_runtime
+from adapters.local_runtime import LocalRuntimeClient
+from adapters.local_runtime_http import HttpLocalRuntimeTransport
 from components.auditor.decision_store import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
@@ -27,6 +30,12 @@ from components.attachments import (
     PlainTextExtractor,
 )
 from components.resource.service import ResourceService
+from components.resource.local_runtime import (
+    LocalRuntimeHealthProjector,
+    LocalRuntimeResourceConfig,
+    ensure_local_runtime_resource,
+)
+from contracts.local_runtime import LocalRuntimeAuthorizationRef
 from components.resource.health import ResourceHealthMonitor
 from components.resource.health_store import SQLiteResourceHealthStore
 from components.resource.store import SQLiteResourceStore
@@ -293,6 +302,17 @@ def build_default_runtime(
     agent_service = AgentService(
         store=SQLiteAgentStore(_database_path(env, "AGENTOS_AGENT_DB")),
     )
+    resource_health_store = SQLiteResourceHealthStore(
+        _database_path(env, "AGENTOS_RESOURCE_HEALTH_DB")
+    )
+    resource_service = ResourceService(
+        store=SQLiteResourceStore(_database_path(env, "AGENTOS_RESOURCE_DB")),
+        health_monitor=ResourceHealthMonitor(
+            store=resource_health_store,
+            heartbeat_timeout=timedelta(seconds=float(env.get("AGENTOS_RESOURCE_HEARTBEAT_TIMEOUT_SECONDS") or 60)),
+        ),
+        credential_key=resource_credential_key,
+    )
     coordination_url = str(env.get("AGENTOS_COORDINATION_REDIS_URL") or "").strip()
     scheduler_service = None
     legacy_scheduler_service = None
@@ -362,6 +382,7 @@ def build_default_runtime(
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
         node_service=node_service,
         agent_service=agent_service,
+        resource_service=resource_service,
         scheduler_service=scheduler_service,
         legacy_scheduler_service=legacy_scheduler_service,
         evolution_service=EvolutionService(
@@ -380,6 +401,42 @@ def build_default_runtime(
         identity_adapter
     ).reconcile_workflow_store(runtime.workflow_store)
     runtime.identity_reconciliation_report = reconciliation
+    local_runtime_endpoint = str(env.get("AGENTOS_LOCAL_RUNTIME_ENDPOINT") or "").strip()
+    if local_runtime_endpoint:
+        local_runtime_config = LocalRuntimeResourceConfig(
+            resource_id=str(env.get("AGENTOS_LOCAL_RUNTIME_RESOURCE_ID") or "zhiyi-local-runtime"),
+            owner_scope=str(env.get("AGENTOS_LOCAL_RUNTIME_OWNER_SCOPE") or "desktop-user"),
+            execution_endpoint=local_runtime_endpoint,
+            version=int(env.get("AGENTOS_LOCAL_RUNTIME_VERSION") or 1),
+            capacity=int(env.get("AGENTOS_LOCAL_RUNTIME_CAPACITY") or 1),
+            credential_id=str(env.get("AGENTOS_LOCAL_RUNTIME_CREDENTIAL_ID") or "").strip() or None,
+            credential_secret=_read_optional_secret(env, "AGENTOS_LOCAL_RUNTIME_CREDENTIAL_SECRET"),
+        )
+        registered_local_runtime = ensure_local_runtime_resource(
+            resource_service, local_runtime_config
+        )
+        local_runtime_transport = HttpLocalRuntimeTransport(
+            resource_id=registered_local_runtime.profile.resource_id,
+            address=registered_local_runtime.profile.execution_endpoint.address,
+            credential_provider=resource_service,
+            timeout_seconds=float(env.get("AGENTOS_LOCAL_RUNTIME_TIMEOUT_SECONDS") or 120),
+        )
+        runtime.local_runtime_resource = registered_local_runtime
+        runtime.local_runtime_transport = local_runtime_transport
+        runtime.local_runtime_client = LocalRuntimeClient(local_runtime_transport)
+        runtime.local_runtime_health_projector = LocalRuntimeHealthProjector(
+            resource_service, registered_local_runtime.profile.resource_id
+        )
+        workspace_id = str(env.get("AGENTOS_LOCAL_RUNTIME_WORKSPACE_ID") or "").strip()
+        grant_id = str(env.get("AGENTOS_LOCAL_RUNTIME_GRANT_ID") or "").strip()
+        runtime.local_runtime_authorization = (
+            LocalRuntimeAuthorizationRef(
+                grantId=grant_id,
+                workspaceId=workspace_id,
+            )
+            if workspace_id and grant_id
+            else None
+        )
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)
     runtime.plugin_manifests = register_installed_packs(
         agent_registry=runtime.agent_registry,

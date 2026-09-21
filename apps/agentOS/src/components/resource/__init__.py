@@ -32,6 +32,14 @@ from .agent_store import AgentStore, InMemoryAgentStore, SQLiteAgentStore
 from .node_health import NodeHealthMonitor, infer_load_status
 from .node_service import NodeService
 from .node_store import InMemoryNodeStore, NodeStore, SQLiteNodeStore
+from .local_runtime import (
+    LOCAL_RUNTIME_RESOURCE_CAPABILITIES,
+    LocalRuntimeHealthProjector,
+    LocalRuntimeResourceConfig,
+    RegisteredLocalRuntimeResource,
+    ensure_local_runtime_resource,
+    local_runtime_profile,
+)
 from .service import IssuedResourceCredential, ResourceService
 from .store import (
     InMemoryResourceStore,
@@ -43,6 +51,7 @@ from .store import (
 
 __all__ = [
     "InMemoryResourceStore",
+    "LOCAL_RUNTIME_RESOURCE_CAPABILITIES",
     "AgentResource",
     "ResourceCandidate",
     "ResourceConflictError",
@@ -50,6 +59,8 @@ __all__ = [
     "ResourceDirectory",
     "ResourceHealth",
     "ResourceHealthMonitor",
+    "LocalRuntimeHealthProjector",
+    "LocalRuntimeResourceConfig",
     "InMemoryResourceHealthStore",
     "ResourceHealthState",
     "ResourceHealthStore",
@@ -64,6 +75,7 @@ __all__ = [
     "ResourceNotFoundError",
     "ResourceService",
     "ResourceStore",
+    "RegisteredLocalRuntimeResource",
     "SQLiteResourceStore",
     "IssuedResourceCredential",
     "VersionConflict",
@@ -83,4 +95,6 @@ __all__ = [
     "VersionedNodeSnapshot",
     "infer_load_status",
     "build_resource_signature",
+    "ensure_local_runtime_resource",
+    "local_runtime_profile",
 ]
