@@ -9,11 +9,13 @@ from contracts.local_runtime import (
     LOCAL_RUNTIME_PROTOCOL_VERSION,
     LocalRuntimeExecutionRequest,
     LocalRuntimeExecutionResult,
+    LocalRuntimeCapability,
 )
 
 from capabilities import CapabilityDispatcher
 from runtime.errors import LocalRuntimeError
 from grants import GrantAuthorizationService
+from process import ProcessExecutionRequest, ProcessExecutionService
 
 
 class LocalRuntimeExecutor:
@@ -23,12 +25,14 @@ class LocalRuntimeExecutor:
         resource_id: str,
         authorizer: GrantAuthorizationService,
         dispatcher: CapabilityDispatcher,
+        process_service: ProcessExecutionService | None = None,
     ) -> None:
         self.resource_id = str(resource_id).strip()
         if not self.resource_id:
             raise ValueError("resource_id must not be empty")
         self.authorizer = authorizer
         self.dispatcher = dispatcher
+        self.process_service = process_service
 
     async def execute(self, request: LocalRuntimeExecutionRequest) -> LocalRuntimeExecutionResult:
         started_at = datetime.now(timezone.utc)
@@ -41,6 +45,36 @@ class LocalRuntimeExecutor:
                 request.authorization,
                 request.capability_id,
             )
+            if request.capability_id is LocalRuntimeCapability.SHELL_EXEC:
+                if self.process_service is None:
+                    raise LocalRuntimeError(
+                        "CAPABILITY_NOT_IMPLEMENTED",
+                        "requested local runtime capability is not implemented",
+                    )
+                try:
+                    process_request = ProcessExecutionRequest.model_validate(request.input)
+                except Exception as exc:
+                    raise LocalRuntimeError(
+                        "PROCESS_REQUEST_INVALID",
+                        "process execution request is invalid",
+                    ) from exc
+                execution_id = self.process_service.start(
+                    process_request,
+                    root=authorized.canonical_root,
+                    request_id=request.request_id,
+                    invocation_id=request.invocation_id,
+                    resource_id=request.resource_id,
+                    limits=request.limits,
+                )
+                return LocalRuntimeExecutionResult(
+                    protocolVersion=LOCAL_RUNTIME_PROTOCOL_VERSION,
+                    requestId=request.request_id,
+                    invocationId=request.invocation_id,
+                    status="accepted",
+                    output={"executionId": execution_id, "state": "running"},
+                    startedAt=started_at,
+                    completedAt=datetime.now(timezone.utc),
+                )
             try:
                 output = await asyncio.wait_for(
                     self.dispatcher.execute(

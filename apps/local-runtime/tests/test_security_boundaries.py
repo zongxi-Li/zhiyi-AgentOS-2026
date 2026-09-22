@@ -35,7 +35,7 @@ async def test_shell_exec_is_declared_but_never_executed(tmp_path, runtime_facto
         LocalRuntimeCapability.SHELL_EXEC,
         {"command": f"echo executed > {marker}"},
     ))
-    assert result.error.code == "CAPABILITY_NOT_IMPLEMENTED"
+    assert result.error.code == "CAPABILITY_DENIED"
     assert not marker.exists()
 
 

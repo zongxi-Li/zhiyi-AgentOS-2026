@@ -8,6 +8,7 @@ import pytest
 from capabilities import CapabilityDispatcher, FileSystemPolicy, FilesystemCapabilities
 from contracts.local_runtime import LocalRuntimeCapability
 from grants import GrantAuthorizationService, InMemoryGrantStore
+from process import ProcessExecutionService
 from runtime import LocalRuntimeExecutor, LocalRuntimeService
 from workspace import CanonicalWorkspaceResolver
 
@@ -27,6 +28,7 @@ def runtime_factory():
             workspace_id=workspace.workspace_id,
             capabilities=capabilities or {
                 capability.value for capability in LocalRuntimeCapability
+                if capability is not LocalRuntimeCapability.SHELL_EXEC
             },
             created_at=datetime.now(timezone.utc),
         )
@@ -35,6 +37,7 @@ def runtime_factory():
             resource_id="zhiyi-local-runtime",
             authorizer=GrantAuthorizationService(store),
             dispatcher=CapabilityDispatcher(filesystem),
+            process_service=ProcessExecutionService(resolver),
         )
         service = LocalRuntimeService(executor)
         service.start()

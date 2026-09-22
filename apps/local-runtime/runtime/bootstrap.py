@@ -23,6 +23,9 @@ BOOTSTRAP_CAPABILITIES = frozenset(
         LocalRuntimeCapability.FS_PATCH.value,
     }
 )
+SUPPORTED_CAPABILITIES = frozenset(
+    {*BOOTSTRAP_CAPABILITIES, LocalRuntimeCapability.SHELL_EXEC.value}
+)
 
 
 class LocalRuntimeWorkspaceBootstrap(BaseModel):
@@ -53,7 +56,7 @@ class LocalRuntimeGrantBootstrap(BaseModel):
                 raise ValueError("expiresAt must be later than createdAt")
         if len(set(self.capabilities)) != len(self.capabilities):
             raise ValueError("grant capabilities must not contain duplicates")
-        unsupported = set(self.capabilities) - BOOTSTRAP_CAPABILITIES
+        unsupported = set(self.capabilities) - SUPPORTED_CAPABILITIES
         if unsupported:
             raise ValueError("grant contains unsupported capabilities")
         return self
@@ -117,6 +120,7 @@ def build_grant_store_from_bootstrap(
 
 __all__ = [
     "BOOTSTRAP_CAPABILITIES",
+    "SUPPORTED_CAPABILITIES",
     "BOOTSTRAP_SCHEMA_VERSION",
     "LocalRuntimeGrantBootstrap",
     "LocalRuntimeGrantsBootstrap",

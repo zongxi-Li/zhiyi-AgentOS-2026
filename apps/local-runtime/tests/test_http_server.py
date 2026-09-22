@@ -196,7 +196,7 @@ def test_shell_is_domain_error_and_never_starts_a_process(tmp_path, runtime_fact
 
     payload = json.loads(response.body)
     assert payload["status"] == "failed"
-    assert payload["error"]["code"] == "CAPABILITY_NOT_IMPLEMENTED"
+    assert payload["error"]["code"] == "CAPABILITY_DENIED"
 
 
 def test_http_server_binds_only_when_explicitly_created(tmp_path, runtime_factory):

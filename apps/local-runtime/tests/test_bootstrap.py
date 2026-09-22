@@ -81,7 +81,7 @@ def test_bootstrap_loads_multiple_grants_and_preserves_workspace_authority(tmp_p
 @pytest.mark.parametrize("mutation", [
     lambda payload: payload["grants"].append(dict(payload["grants"][0])),
     lambda payload: payload["grants"][0].update({"workspaceId": "missing-workspace"}),
-    lambda payload: payload["grants"][0].update({"capabilities": ["shell.exec"]}),
+    lambda payload: payload["grants"][0].update({"capabilities": ["process.unsupported"]}),
     lambda payload: payload["grants"][0].update({"createdAt": "not-a-timestamp"}),
     lambda payload: payload["grants"][0].update({"allowedRoot": "C:\\"}),
 ])

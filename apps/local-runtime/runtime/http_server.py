@@ -16,9 +16,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import RLock
 from typing import Callable, Mapping
+from urllib.parse import parse_qs, urlsplit
 
 from contracts.local_runtime import (
     LOCAL_RUNTIME_PROTOCOL_VERSION,
+    LocalRuntimeExecutionCancelRequest,
     LocalRuntimeExecutionError,
     LocalRuntimeExecutionRequest,
     LocalRuntimeExecutionResult,
@@ -156,7 +158,33 @@ class LocalRuntimeHttpApplication:
         request_headers = headers or {}
         if method.upper() == "GET" and path == HEALTH_PATH:
             return self._json(HTTPStatus.OK, self.identity.health_payload(running=self.service.running))
-        if method.upper() != "POST" or path != EXECUTION_PATH:
+        parsed = urlsplit(path)
+        execution_id, endpoint = self._execution_endpoint(parsed.path)
+        if method.upper() == "GET" and endpoint == "events" and execution_id:
+            try:
+                self.authenticator.authenticate(
+                    method="GET", path=path, headers=request_headers, body=b""
+                )
+            except RuntimeHttpError as exc:
+                return self._error(exc.status, exc.code, exc.message)
+            return self._events(execution_id, parse_qs(parsed.query))
+        if method.upper() == "POST" and endpoint == "cancel" and execution_id:
+            if len(body) > self.max_body_bytes:
+                return self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "REQUEST_TOO_LARGE", "request body is too large")
+            try:
+                self.authenticator.authenticate(
+                    method="POST", path=path, headers=request_headers, body=body
+                )
+            except RuntimeHttpError as exc:
+                return self._error(exc.status, exc.code, exc.message)
+            try:
+                cancellation = LocalRuntimeExecutionCancelRequest.model_validate_json(body)
+            except Exception:
+                return self._error(HTTPStatus.BAD_REQUEST, "PROTOCOL_MISMATCH", "cancel envelope is invalid")
+            if cancellation.execution_id != execution_id:
+                return self._error(HTTPStatus.BAD_REQUEST, "PROTOCOL_MISMATCH", "execution id does not match path")
+            return self._cancel(cancellation)
+        if method.upper() != "POST" or parsed.path != EXECUTION_PATH or parsed.query:
             return self._error(HTTPStatus.NOT_FOUND, "NOT_FOUND", "local runtime endpoint not found")
         if len(body) > self.max_body_bytes:
             return self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "REQUEST_TOO_LARGE", "request body is too large")
@@ -178,6 +206,68 @@ class LocalRuntimeHttpApplication:
                 "idempotency key does not match request envelope",
             )
         return self._execute(request, body)
+
+    @staticmethod
+    def _execution_endpoint(path: str) -> tuple[str | None, str | None]:
+        prefix = f"{EXECUTION_PATH}/"
+        if not path.startswith(prefix):
+            return None, None
+        remainder = path[len(prefix):]
+        parts = remainder.split("/")
+        if len(parts) != 2 or not parts[0] or parts[1] not in {"events", "cancel"}:
+            return None, None
+        return parts[0], parts[1]
+
+    def _events(self, execution_id: str, query: Mapping[str, list[str]]) -> RuntimeHttpResponse:
+        process_service = self.service.executor.process_service
+        if process_service is None:
+            return self._error(HTTPStatus.NOT_IMPLEMENTED, "CAPABILITY_NOT_IMPLEMENTED", "process execution is unavailable")
+        try:
+            after_sequence = int((query.get("afterSequence") or ["-1"])[0])
+            wait_seconds = float((query.get("waitSeconds") or ["0"])[0])
+            request_id, invocation_id, resource_id, _state = process_service.supervisor.get_identity(execution_id)
+            events, terminal, state = process_service.events(
+                execution_id,
+                request_id=request_id,
+                invocation_id=invocation_id,
+                resource_id=resource_id,
+                after_sequence=after_sequence,
+                wait_seconds=wait_seconds,
+            )
+        except (ValueError, TypeError):
+            return self._error(HTTPStatus.BAD_REQUEST, "PROTOCOL_MISMATCH", "event cursor is invalid")
+        except KeyError:
+            return self._error(HTTPStatus.NOT_FOUND, "EXECUTION_NOT_FOUND", "execution was not found")
+        except LocalRuntimeError as exc:
+            return self._error(HTTPStatus.CONFLICT, exc.code, exc.safe_message)
+        return self._json(HTTPStatus.OK, {
+            "executionId": execution_id,
+            "events": [event.model_dump(by_alias=True, mode="json") for event in events],
+            "terminal": terminal,
+            "state": state,
+        })
+
+    def _cancel(self, cancellation: LocalRuntimeExecutionCancelRequest) -> RuntimeHttpResponse:
+        process_service = self.service.executor.process_service
+        if process_service is None:
+            return self._error(HTTPStatus.NOT_IMPLEMENTED, "CAPABILITY_NOT_IMPLEMENTED", "process execution is unavailable")
+        try:
+            state = process_service.cancel(
+                cancellation.execution_id,
+                request_id=cancellation.request_id,
+                invocation_id=cancellation.invocation_id,
+                resource_id=cancellation.resource_id,
+            )
+        except LocalRuntimeError as exc:
+            status = HTTPStatus.NOT_FOUND if exc.code == "EXECUTION_NOT_FOUND" else HTTPStatus.CONFLICT
+            return self._error(status, exc.code, exc.safe_message)
+        return self._json(HTTPStatus.OK, {
+            "protocolVersion": LOCAL_RUNTIME_PROTOCOL_VERSION,
+            "executionId": cancellation.execution_id,
+            "requestId": cancellation.request_id,
+            "invocationId": cancellation.invocation_id,
+            "state": state,
+        })
 
     def _execute(self, request: LocalRuntimeExecutionRequest, body: bytes) -> RuntimeHttpResponse:
         key = (request.resource_id, request.idempotency_key)

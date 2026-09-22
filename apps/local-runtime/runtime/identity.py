@@ -25,8 +25,9 @@ class LocalRuntimeIdentity:
             raise ValueError("runtime_id and resource_id are required")
         if self.protocol_version != LOCAL_RUNTIME_PROTOCOL_VERSION:
             raise ValueError("unsupported local runtime protocol version")
-        if any(capability == LocalRuntimeCapability.SHELL_EXEC.value for capability in self.capabilities):
-            raise ValueError("shell.exec must not be advertised by the MVP runtime")
+        supported = {capability.value for capability in LocalRuntimeCapability}
+        if not self.capabilities or any(capability not in supported for capability in self.capabilities):
+            raise ValueError("local runtime capabilities contain unsupported values")
 
     def health_payload(self, *, running: bool) -> dict[str, object]:
         """Return non-sensitive health data; never include grants or credentials."""

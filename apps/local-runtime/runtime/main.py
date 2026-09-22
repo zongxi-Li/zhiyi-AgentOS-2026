@@ -10,10 +10,12 @@ from pathlib import Path
 
 from capabilities import CapabilityDispatcher, FileSystemPolicy, FilesystemCapabilities
 from grants import GrantAuthorizationService, InMemoryGrantStore
+from process import ProcessExecutionService
 from workspace import CanonicalWorkspaceResolver
 
 from runtime.bootstrap import (
     BOOTSTRAP_CAPABILITIES,
+    SUPPORTED_CAPABILITIES,
     build_grant_store_from_bootstrap,
     load_grants_bootstrap,
 )
@@ -38,7 +40,7 @@ def _configured_capabilities(values: dict[str, str]) -> set[str]:
         if configured
         else set(BOOTSTRAP_CAPABILITIES)
     )
-    if not capabilities or not capabilities <= BOOTSTRAP_CAPABILITIES:
+    if not capabilities or not capabilities <= SUPPORTED_CAPABILITIES:
         raise RuntimeError("local runtime capabilities contain unsupported values")
     return capabilities
 
@@ -90,12 +92,14 @@ def build_runtime_from_environment(environ: dict[str, str] | None = None) -> Loc
         resource_id=resource_id,
         authorizer=GrantAuthorizationService(grants),
         dispatcher=CapabilityDispatcher(filesystem),
+        process_service=ProcessExecutionService(resolver),
     ))
     service.start()
     identity = LocalRuntimeIdentity(
         runtime_id=runtime_id,
         resource_id=resource_id,
         version=str(values.get("ZHIYI_LOCAL_RUNTIME_VERSION") or "0.1.0"),
+        capabilities=tuple(sorted(_configured_capabilities(values))),
     )
     return LocalRuntimeHttpApplication(
         service=service,

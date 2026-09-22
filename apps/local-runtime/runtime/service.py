@@ -22,6 +22,8 @@ class LocalRuntimeService:
 
     def stop(self) -> None:
         self._running = False
+        if self.executor.process_service is not None:
+            self.executor.process_service.shutdown()
 
     async def execute(self, request: LocalRuntimeExecutionRequest) -> LocalRuntimeExecutionResult:
         if not self._running:
