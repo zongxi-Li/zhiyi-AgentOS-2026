@@ -31,6 +31,7 @@ from components.attachments import (
 )
 from components.resource.service import ResourceService
 from components.resource.local_runtime import (
+    LOCAL_RUNTIME_RESOURCE_CAPABILITIES,
     LocalRuntimeHealthProjector,
     LocalRuntimeResourceConfig,
     ensure_local_runtime_resource,
@@ -403,6 +404,11 @@ def build_default_runtime(
     runtime.identity_reconciliation_report = reconciliation
     local_runtime_endpoint = str(env.get("AGENTOS_LOCAL_RUNTIME_ENDPOINT") or "").strip()
     if local_runtime_endpoint:
+        configured_capabilities = tuple(
+            item.strip()
+            for item in str(env.get("AGENTOS_LOCAL_RUNTIME_CAPABILITIES") or "").split(",")
+            if item.strip()
+        )
         local_runtime_config = LocalRuntimeResourceConfig(
             resource_id=str(env.get("AGENTOS_LOCAL_RUNTIME_RESOURCE_ID") or "zhiyi-local-runtime"),
             owner_scope=str(env.get("AGENTOS_LOCAL_RUNTIME_OWNER_SCOPE") or "desktop-user"),
@@ -411,6 +417,9 @@ def build_default_runtime(
             capacity=int(env.get("AGENTOS_LOCAL_RUNTIME_CAPACITY") or 1),
             credential_id=str(env.get("AGENTOS_LOCAL_RUNTIME_CREDENTIAL_ID") or "").strip() or None,
             credential_secret=_read_optional_secret(env, "AGENTOS_LOCAL_RUNTIME_CREDENTIAL_SECRET"),
+            capabilities=configured_capabilities or LOCAL_RUNTIME_RESOURCE_CAPABILITIES,
+            shell_exec_enabled=str(env.get("AGENTOS_LOCAL_RUNTIME_SHELL_ENABLED") or "false").strip().lower()
+            in {"1", "true", "yes", "on"},
         )
         registered_local_runtime = ensure_local_runtime_resource(
             resource_service, local_runtime_config

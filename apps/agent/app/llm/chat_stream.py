@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class ChatStreamEventType(str, Enum):
+    HEARTBEAT = "heartbeat"
     REASONING_START = "reasoning_start"
     REASONING_DELTA = "reasoning_delta"
     REASONING_END = "reasoning_end"
@@ -15,6 +16,14 @@ class ChatStreamEventType(str, Enum):
     TOOL_START = "tool_start"
     TOOL_RESULT = "tool_result"
     TOOL_ERROR = "tool_error"
+    APPROVAL_REQUIRED = "approval_required"
+    APPROVAL_RESOLVED = "approval_resolved"
+    EXECUTION_STARTED = "execution_started"
+    STDOUT_DELTA = "stdout_delta"
+    STDERR_DELTA = "stderr_delta"
+    EXECUTION_COMPLETED = "execution_completed"
+    EXECUTION_FAILED = "execution_failed"
+    EXECUTION_CANCELLED = "execution_cancelled"
     USAGE = "usage"
     DONE = "done"
     ERROR = "error"

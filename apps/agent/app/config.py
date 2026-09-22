@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     AI_INTERNAL_TOKEN: str = ""
-    SSE_HEARTBEAT_INTERVAL: float = 15.0
+    SSE_HEARTBEAT_INTERVAL: float = 5.0
     SSE_TEST_MODE: bool = False
     PROVIDER_STATE_ENABLED: bool = False
     PROVIDER_STATE_REDIS_URL: str = "redis://redis:6379/0"
@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     CHAT_TERMINAL_ENABLED: bool = False
     # Compatibility switch only; production Chat uses AgentOS Local Runtime.
     CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED: bool = False
+    # Chat-only approval lifetime. Session grants remain in memory and are never
+    # promoted to Local Runtime grants.
+    CHAT_APPROVAL_TTL_SECONDS: float = 300.0
     TOOL_TERMINAL_ROOT: str = ""
     TOOL_TERMINAL_TIMEOUT_SECONDS: float = 30.0
     TOOL_TERMINAL_MAX_TIMEOUT_SECONDS: float = 120.0

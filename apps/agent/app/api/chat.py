@@ -1,9 +1,9 @@
 """
 对话API路由
 """
-from fastapi import APIRouter, UploadFile, File, Form, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Dict, Literal, Optional
 import asyncio
 import logging
@@ -20,6 +20,11 @@ from app.ai_engine.model_runtime import (
 )
 from app.llm.chat_stream import ChatStreamEvent, ChatStreamEventType
 from app.tools import get_chat_tool_runtime
+from app.tools.permissions import (
+    ApprovalDecision,
+    ApprovalResolutionError,
+    get_chat_permission_service,
+)
 
 router = APIRouter()
 
@@ -52,13 +57,59 @@ class ChatRequest(BaseModel):
         return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
 
 class ChatResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     text: str
+    context_id: Optional[str] = Field(default=None, alias="contextId")
     confidence: float
     tokens_used: int
     animation: Optional[Dict] = None
     model_info: Optional[str] = None
     metadata: Optional[Dict] = None
     sources: Optional[List[Dict]] = None
+
+
+class ChatApprovalDecisionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    decision: ApprovalDecision
+    session_id: str = Field(alias="sessionId", min_length=1)
+    invocation_id: Optional[str] = Field(default=None, alias="invocationId")
+    capability_id: Optional[str] = Field(default=None, alias="capabilityId")
+    relative_path: Optional[str] = Field(default=None, alias="relativePath")
+
+
+class ChatExecutionCancelRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    request_id: str = Field(alias="requestId", min_length=1)
+
+
+@router.post("/chat/approvals/{approval_id}")
+async def resolve_chat_approval(
+    approval_id: str,
+    request: ChatApprovalDecisionRequest,
+):
+    """Resolve one pending Chat approval without exposing Host Grant authority."""
+    try:
+        await get_chat_permission_service().resolve(
+            approval_id,
+            decision=request.decision,
+            session_id=request.session_id,
+            invocation_id=request.invocation_id,
+            capability_id=request.capability_id,
+            relative_path=request.relative_path,
+        )
+    except ApprovalResolutionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": str(error)},
+        ) from error
+    return {
+        "approvalId": approval_id,
+        "status": "resolved",
+        "decision": request.decision.value,
+    }
 
 
 @router.get("/chat/models")
@@ -95,6 +146,7 @@ async def chat_text(request: ChatRequest):
     if model and not base_url and not api_key:
         model, base_url, api_key = resolve_system_runtime_config(model)
     runtime = get_chat_tool_runtime() if request.tool_mode == "auto" else get_chat_tool_runtime().scoped([])
+    session_id = request.context_id or f"chat_{uuid4().hex}"
     response = await runtime.run(
         request.text,
         history=request.context,
@@ -104,6 +156,7 @@ async def chat_text(request: ChatRequest):
         api_key=api_key,
         thinking_mode=requested_thinking_mode,
         parameters=request.provider_parameters(),
+        session_id=session_id,
     )
     usage = response.usage
     tool_executions = [item.public_dict() for item in response.tool_executions]
@@ -128,6 +181,7 @@ async def chat_text(request: ChatRequest):
     )
     return ChatResponse(
         text=response.text,
+        contextId=session_id,
         confidence=0.95,
         tokens_used=int(usage.get("total_tokens") or 0),
         model_info=response.model,
@@ -172,7 +226,17 @@ async def _stream_sse_events(
                 if await http_request.is_disconnected():
                     logger.info("SSE client disconnected while awaiting model chunk")
                     return
+                # Keep the comment for legacy clients, and emit a real event
+                # because the Java WebClient SSE bridge drops comments.
+                sequence += 1
+                heartbeat = ChatStreamEvent(
+                    event=ChatStreamEventType.HEARTBEAT,
+                    request_id=request_id,
+                    sequence=sequence,
+                    data={"status": "waiting"},
+                )
                 yield ": heartbeat\n\n"
+                yield f"event: {heartbeat.event.value}\ndata: {heartbeat.sse_data()}\n\n"
 
             try:
                 chunk = pending_chunk.result()
@@ -232,6 +296,7 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
     """流式文本对话 (SSE)"""
     async def event_stream():
         request_id = f"chat_{uuid4().hex}"
+        session_id = chat_request.context_id or request_id
         if chat_request.model and not chat_request.base_url and not chat_request.api_key:
             chat_request.model, chat_request.base_url, chat_request.api_key = resolve_system_runtime_config(chat_request.model)
         runtime = get_chat_tool_runtime() if chat_request.tool_mode == "auto" else get_chat_tool_runtime().scoped([])
@@ -245,13 +310,14 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
             thinking_mode=chat_request.resolved_thinking_mode(),
             parameters=chat_request.provider_parameters(),
             request_id=request_id,
+            session_id=session_id,
         )
         async for event in _stream_sse_events(
                 chunks,
                 http_request,
                 max(settings.SSE_HEARTBEAT_INTERVAL, 0.1),
                 request_id=request_id,
-                context_id=chat_request.context_id,
+                context_id=session_id,
         ):
             yield event
     return StreamingResponse(
@@ -262,6 +328,13 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/chat/text/cancel")
+async def chat_text_cancel(request: ChatExecutionCancelRequest):
+    """Cancel the active Local Runtime process for one Chat stream."""
+    cancelled = await get_chat_tool_runtime().cancel(request.request_id)
+    return {"requestId": request.request_id, "cancelled": cancelled}
 
 
 async def _plain_text_stream_events(

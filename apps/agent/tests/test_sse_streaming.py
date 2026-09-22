@@ -46,6 +46,11 @@ async def test_heartbeat_is_emitted_while_model_is_idle():
     events = await collect(_stream_sse_events(chunks(), FakeRequest(), 0.01))
 
     assert events.count(": heartbeat\n\n") >= 3
+    heartbeat_events = [event for event in events if "event: heartbeat\n" in event]
+    assert len(heartbeat_events) >= 3
+    heartbeat = json.loads(heartbeat_events[0].split("data: ", 1)[1])
+    assert heartbeat["event"] == "heartbeat"
+    assert heartbeat["data"]["status"] == "waiting"
     assert '"event": "done"' in events[-1]
 
 

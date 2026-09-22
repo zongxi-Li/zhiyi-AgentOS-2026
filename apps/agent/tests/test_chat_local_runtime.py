@@ -10,6 +10,7 @@ from app.config import settings
 from app.tools.chat_catalog import ChatToolCatalog
 from app.tools.local_runtime import LocalRuntimeToolError, LocalRuntimeToolExecutor
 from app.tools.runtime import SDK_TOOLS, ToolInvocationContext
+from app.tools.permissions import ApprovalDecision, ChatPermissionService
 from contracts.local_runtime import (
     LocalRuntimeAuthorizationRef,
     LocalRuntimeExecutionError,
@@ -61,6 +62,69 @@ class _Client:
             startedAt=datetime.now(timezone.utc),
             completedAt=datetime.now(timezone.utc),
         )
+
+
+class _ShellResourceService(_ResourceService):
+    def profile(self, _resource_id):
+        return SimpleNamespace(capabilities=[
+            "fs.read", "fs.list", "fs.write", "fs.patch", "shell.exec"
+        ])
+
+    def candidates(self, capabilities):
+        self.calls.append(list(capabilities))
+        return [SimpleNamespace(profile=SimpleNamespace(
+            resource_id="runtime-1",
+            resource_type=ResourceType.WORKER,
+            deployment_tier=DeploymentTier.TERMINAL,
+            capabilities=["fs.read", "fs.list", "fs.write", "fs.patch", "shell.exec"],
+        ))]
+
+
+class _ReadOnlyResourceService(_ResourceService):
+    def profile(self, _resource_id):
+        return SimpleNamespace(capabilities=["fs.read", "fs.list"])
+
+    def candidates(self, capabilities):
+        self.calls.append(list(capabilities))
+        return [SimpleNamespace(profile=SimpleNamespace(
+            resource_id="runtime-1",
+            resource_type=ResourceType.WORKER,
+            deployment_tier=DeploymentTier.TERMINAL,
+            capabilities=["fs.read", "fs.list"],
+        ))]
+
+
+class _ShellClient:
+    def __init__(self):
+        self.calls = []
+        self.cancel_calls = []
+
+    async def execute(self, invocation, **kwargs):
+        self.calls.append((invocation, kwargs))
+        return LocalRuntimeExecutionResult(
+            requestId="runtime-request-1",
+            invocationId=invocation.invocation_id,
+            status="accepted",
+            output={"executionId": "execution-1", "state": "running"},
+            startedAt=datetime.now(timezone.utc),
+            completedAt=datetime.now(timezone.utc),
+        )
+
+    async def stream_events(self, **_kwargs):
+        for event_type, data in (
+            ("started", {}),
+            ("stdout_delta", {"delta": "hello\n", "bytes": 6}),
+            ("stderr_delta", {"delta": "", "bytes": 0}),
+            ("completed", {"exitCode": 0}),
+        ):
+            yield SimpleNamespace(
+                event_type=event_type,
+                data=data,
+            )
+
+    async def cancel(self, **kwargs):
+        self.cancel_calls.append(kwargs)
+        return "cancelling"
 
 
 def _executor(*, healthy=True, candidate=True, client=None):
@@ -176,3 +240,126 @@ def test_file_tools_are_unavailable_without_runtime_and_never_fallback(monkeypat
         asyncio.run(catalog.execute("read_file", {"path": "a.txt"}, call_id="call-1"))
     assert getattr(error.value, "code") == "LOCAL_RUNTIME_UNAVAILABLE"
     assert "terminal" not in catalog.TOOL_NAMES
+
+
+def test_chat_catalog_only_advertises_runtime_granted_file_capabilities(monkeypatch):
+    monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
+    resource_service = _ReadOnlyResourceService()
+    executor = LocalRuntimeToolExecutor(
+        resource_service=resource_service,
+        client=_Client(),
+        health_projector=_HealthProjector(),
+        health_transport=object(),
+        resource_id="runtime-1",
+        authorization=LocalRuntimeAuthorizationRef(
+            grantId="grant-1", workspaceId="workspace-1"
+        ),
+    )
+    catalog = ChatToolCatalog(local_runtime_executor=executor, legacy_terminal_enabled=False)
+
+    assert "read_file" in catalog.TOOL_NAMES
+    assert "list_files" in catalog.TOOL_NAMES
+    assert "write_file" not in catalog.TOOL_NAMES
+    assert "patch_file" not in catalog.TOOL_NAMES
+    assert catalog.availability()["write_file"]["available"] is False
+    assert catalog.availability()["patch_file"]["available"] is False
+
+
+def test_run_command_uses_host_approved_local_runtime_and_streams_events(monkeypatch):
+    monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
+    resource_service = _ShellResourceService()
+    client = _ShellClient()
+    executor = LocalRuntimeToolExecutor(
+        resource_service=resource_service,
+        client=client,
+        health_projector=_HealthProjector(),
+        health_transport=object(),
+        resource_id="runtime-1",
+        authorization=LocalRuntimeAuthorizationRef(grantId="grant-1", workspaceId="workspace-1"),
+        limits=LocalRuntimeExecutionLimits(timeoutSeconds=10, maxStdoutBytes=1024, maxStderrBytes=1024),
+    )
+    catalog = ChatToolCatalog(local_runtime_executor=executor, legacy_terminal_enabled=False)
+    assert "run_command" in catalog.TOOL_NAMES
+    assert catalog.availability()["run_command"]["capabilityId"] == "shell.exec"
+    schema = set(SDK_TOOLS["run_command"].params_json_schema.get("properties", {}))
+    assert schema.isdisjoint({"securityProfile", "grantId", "workspaceId", "resourceId", "allowedRoot"})
+
+    events = []
+
+    async def sink(event_type, payload):
+        events.append((event_type, payload))
+
+    result = asyncio.run(executor.execute(
+        "run_command",
+        {"mode": "shell", "command": "echo hello", "cwd": "."},
+        call_id="call-shell",
+        request_id="chat-request",
+        event_sink=sink,
+    ))
+
+    invocation, request = client.calls[0]
+    assert invocation.capability_id == "shell.exec"
+    assert invocation.input["securityProfile"] == "host_approved"
+    assert "grantId" not in invocation.input
+    assert request["authorization"].grant_id == "grant-1"
+    assert result.data["terminal"]["stdout"] == "hello\n"
+    assert [event[0] for event in events] == [
+        "execution_started", "stdout_delta", "stderr_delta", "execution_completed"
+    ]
+    with pytest.raises(LocalRuntimeToolError, match="system-controlled"):
+        asyncio.run(executor.execute(
+            "run_command",
+            {"mode": "shell", "command": "echo blocked", "cwd": ".", "securityProfile": "isolated_workspace"},
+            call_id="call-forbidden",
+        ))
+
+
+def test_run_command_permission_is_one_time_and_exposes_no_host_authority(monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
+        resource_service = _ShellResourceService()
+        executor = LocalRuntimeToolExecutor(
+            resource_service=resource_service,
+            client=_ShellClient(),
+            health_projector=_HealthProjector(),
+            health_transport=object(),
+            resource_id="runtime-1",
+            authorization=LocalRuntimeAuthorizationRef(grantId="grant-1", workspaceId="workspace-1"),
+        )
+        permission = ChatPermissionService()
+        catalog = ChatToolCatalog(
+            local_runtime_executor=executor,
+            legacy_terminal_enabled=False,
+            permission_service=permission,
+        )
+        queue = asyncio.Queue()
+        context = ToolInvocationContext(
+            catalog,
+            frozenset({"run_command"}),
+            session_id="chat-session",
+            request_id="chat-request",
+            permission_event_queue=queue,
+        )
+        task = asyncio.create_task(context.invoke(
+            "run_command",
+            {"mode": "shell", "command": "echo approved", "cwd": "."},
+            call_id="call-shell",
+        ))
+        event, payload = await queue.get()
+        assert event == "approval_required"
+        approval = payload["approval"]
+        assert approval["capabilityId"] == "shell.exec"
+        assert approval["operation"] == "Run command"
+        assert approval["riskNotice"]
+        assert "grantId" not in approval and "resourceId" not in approval
+        await permission.resolve(
+            approval["approvalId"],
+            decision=ApprovalDecision.ALLOW_ONCE,
+            session_id="chat-session",
+            invocation_id="call-shell",
+            capability_id="shell.exec",
+            relative_path=".",
+        )
+        await task
+
+    asyncio.run(scenario())
