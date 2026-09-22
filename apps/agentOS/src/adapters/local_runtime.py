@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import AsyncIterator, Protocol
 from uuid import uuid4
 
 from contracts.capability import CapabilityInvocation
@@ -12,6 +12,7 @@ from contracts.local_runtime import (
     LocalRuntimeCapability,
     LocalRuntimeExecutionLimits,
     LocalRuntimeExecutionRequest,
+    LocalRuntimeExecutionEvent,
     LocalRuntimeExecutionResult,
 )
 
@@ -20,6 +21,22 @@ class LocalRuntimeTransport(Protocol):
     async def execute(
         self, request: LocalRuntimeExecutionRequest
     ) -> LocalRuntimeExecutionResult: ...
+
+    def stream_events(
+        self,
+        *,
+        execution_id: str,
+        request_id: str,
+        invocation_id: str,
+    ) -> AsyncIterator[LocalRuntimeExecutionEvent]: ...
+
+    async def cancel(
+        self,
+        *,
+        execution_id: str,
+        request_id: str,
+        invocation_id: str,
+    ) -> str: ...
 
 
 class LocalRuntimeClient:
@@ -53,9 +70,53 @@ class LocalRuntimeClient:
             idempotencyKey=idempotency_key,
         )
         result = await self._transport.execute(request)
-        if result.request_id != request.request_id or result.invocation_id != request.invocation_id:
+        if (
+            result.protocol_version != LOCAL_RUNTIME_PROTOCOL_VERSION
+            or result.request_id != request.request_id
+            or result.invocation_id != request.invocation_id
+        ):
             raise ValueError("local runtime response correlation mismatch")
         return result
+
+    async def stream_events(
+        self,
+        *,
+        execution_id: str,
+        request_id: str,
+        invocation_id: str,
+    ) -> AsyncIterator[LocalRuntimeExecutionEvent]:
+        stream = getattr(self._transport, "stream_events", None)
+        if stream is None:
+            raise RuntimeError("local runtime transport does not support execution events")
+        async for event in stream(
+            execution_id=execution_id,
+            request_id=request_id,
+            invocation_id=invocation_id,
+        ):
+            if (
+                event.protocol_version != LOCAL_RUNTIME_PROTOCOL_VERSION
+                or event.request_id != request_id
+                or event.invocation_id != invocation_id
+                or event.execution_id != execution_id
+            ):
+                raise ValueError("local runtime event correlation mismatch")
+            yield event
+
+    async def cancel(
+        self,
+        *,
+        execution_id: str,
+        request_id: str,
+        invocation_id: str,
+    ) -> str:
+        cancel = getattr(self._transport, "cancel", None)
+        if cancel is None:
+            raise RuntimeError("local runtime transport does not support cancellation")
+        return await cancel(
+            execution_id=execution_id,
+            request_id=request_id,
+            invocation_id=invocation_id,
+        )
 
 
 __all__ = ["LocalRuntimeClient", "LocalRuntimeTransport"]

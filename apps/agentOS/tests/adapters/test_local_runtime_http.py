@@ -192,3 +192,85 @@ async def test_health_probe_is_separate_from_signed_execution():
     )
     assert (await transport.health())["status"] == "online"
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_authenticates_events_and_cancel_on_same_runtime_boundary():
+    execution_id = "execution-1"
+    request_id = "request-1"
+    invocation_id = "invocation-1"
+    captured: list[tuple[str, str]] = []
+
+    async def handler(incoming: httpx.Request) -> httpx.Response:
+        path = incoming.url.raw_path.decode("ascii")
+        captured.append((incoming.method, path))
+        headers = incoming.headers
+        expected = build_resource_signature(
+            "secret-1",
+            method=incoming.method,
+            path=path,
+            timestamp=int(headers["x-resource-timestamp"]),
+            nonce=headers["x-resource-nonce"],
+            body=incoming.content,
+        )
+        assert headers["x-resource-signature"] == expected
+        if incoming.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "executionId": execution_id,
+                    "events": [{
+                        "protocolVersion": "1",
+                        "requestId": request_id,
+                        "invocationId": invocation_id,
+                        "executionId": execution_id,
+                        "eventType": "started",
+                        "sequence": 0,
+                        "data": {},
+                    }],
+                    "terminal": False,
+                    "state": "running",
+                },
+                request=incoming,
+            )
+        assert incoming.url.path == f"/v1/executions/{execution_id}/cancel"
+        return httpx.Response(
+            200,
+            json={
+                "protocolVersion": "1",
+                "executionId": execution_id,
+                "requestId": request_id,
+                "invocationId": invocation_id,
+                "state": "cancelling",
+            },
+            request=incoming,
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://runtime.test")
+    transport = HttpLocalRuntimeTransport(
+        resource_id="zhiyi-local-runtime",
+        address="http://runtime.test/v1/executions",
+        credential_provider=CredentialProvider(),
+        client=client,
+    )
+    events, terminal, state = await transport.events(
+        execution_id=execution_id,
+        after_sequence=-1,
+        wait_seconds=0.1,
+        request_id=request_id,
+        invocation_id=invocation_id,
+    )
+    cancel_state = await transport.cancel(
+        execution_id=execution_id,
+        request_id=request_id,
+        invocation_id=invocation_id,
+    )
+    await client.aclose()
+
+    assert events[0].execution_id == execution_id
+    assert terminal is False
+    assert state == "running"
+    assert cancel_state == "cancelling"
+    assert captured[0][0] == "GET"
+    assert captured[0][1].startswith(f"/v1/executions/{execution_id}/events?")
+    assert captured[1] == ("POST", f"/v1/executions/{execution_id}/cancel")

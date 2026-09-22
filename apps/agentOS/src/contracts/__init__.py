@@ -98,8 +98,10 @@ from .capability import (
 )
 from .local_runtime import (
     LOCAL_RUNTIME_PROTOCOL_VERSION,
+    ExecutionSecurityProfile,
     LocalRuntimeAuthorizationRef,
     LocalRuntimeCapability,
+    LocalRuntimeExecutionCancelRequest,
     LocalRuntimeExecutionError,
     LocalRuntimeExecutionEvent,
     LocalRuntimeExecutionLimits,
@@ -178,8 +180,9 @@ from .workflow import GraphEdgeRef, GraphNodeRef, GraphRef
 
 
 __all__ = [
-    "LOCAL_RUNTIME_PROTOCOL_VERSION", "LocalRuntimeAuthorizationRef", "LocalRuntimeCapability",
+    "LOCAL_RUNTIME_PROTOCOL_VERSION", "ExecutionSecurityProfile", "LocalRuntimeAuthorizationRef", "LocalRuntimeCapability",
     "LocalRuntimeExecutionError", "LocalRuntimeExecutionEvent", "LocalRuntimeExecutionLimits",
+    "LocalRuntimeExecutionCancelRequest",
     "LocalRuntimeExecutionRequest", "LocalRuntimeExecutionResult",
     "AcgIdentityLifecyclePort", "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind", "CompiledACGPackage",

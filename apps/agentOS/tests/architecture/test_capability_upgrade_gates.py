@@ -104,8 +104,9 @@ def test_local_runtime_http_transport_keeps_the_low_level_boundary() -> None:
 
 
 def test_local_runtime_process_does_not_introduce_agentos_authorities() -> None:
-    """The host process may dispatch handlers, but it owns no AgentOS registry."""
+    """The host process may supervise native children, but owns no AgentOS authority."""
     local_root = SRC.parents[1] / "local-runtime"
+    process_sources = []
     for path in local_root.rglob("*.py"):
         if "tests" in path.parts:
             continue
@@ -123,7 +124,59 @@ def test_local_runtime_process_does_not_introduce_agentos_authorities() -> None:
             if isinstance(node, ast.ImportFrom)
         )
         assert classes.isdisjoint({"CapabilityRegistry", "ResourceRegistry", "RuntimeEventBroker"})
-        assert imported.isdisjoint({"subprocess", "service.agents.base"})
+        if "process" in path.parts:
+            process_sources.append(path)
+        else:
+            assert imported.isdisjoint({"subprocess", "service.agents.base"})
+    assert process_sources
+    assert all(path.is_relative_to(local_root / "process") for path in process_sources)
+
+
+def test_agentos_does_not_host_native_process_execution() -> None:
+    """Native subprocess and Windows Job Object code stay in local-runtime."""
+    for path in SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        imports.update(
+            node.module or ""
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        )
+        assert "subprocess" not in imports, path
+        assert "ProcessExecutionService" not in path.read_text(encoding="utf-8"), path
+
+
+def test_windows_isolation_is_local_runtime_only() -> None:
+    """OS identity, ACL, and Job Object code cannot cross into AgentOS."""
+    agentos_source = "\n".join(
+        path.read_text(encoding="utf-8") for path in SRC.rglob("*.py")
+    )
+    assert "WindowsWorkspaceSecurityLease" not in agentos_source
+    assert "CreateAppContainerToken" not in agentos_source
+    assert "CreateRestrictedToken" not in agentos_source
+    assert "CreateJobObjectW" not in agentos_source
+
+    local_root = SRC.parents[1] / "local-runtime"
+    local_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in local_root.rglob("*.py")
+        if "tests" not in path.parts
+    )
+    assert "WindowsWorkspaceSecurityLease" in local_source
+    assert "ProcessSupervisor" in local_source
+
+
+def test_acg_does_not_expose_shell_execution_in_pr6() -> None:
+    """PR-6 supplies the host primitive only; ACG remains unchanged."""
+    acg_root = SRC / "components" / "executor"
+    source = "\n".join(path.read_text(encoding="utf-8") for path in _python_sources(acg_root))
+    assert "shell.exec" not in source
+    assert "ProcessExecutionService" not in source
 
 
 def test_local_runtime_integration_does_not_route_chat_acg_or_tauri() -> None:
@@ -136,6 +189,10 @@ def test_local_runtime_integration_does_not_route_chat_acg_or_tauri() -> None:
     assert "FilesystemCapabilities" not in chat_catalog.read_text(encoding="utf-8")
     assert "LocalRuntimeExecutor" not in chat_catalog.read_text(encoding="utf-8")
     assert "LocalRuntimeToolExecutor" in chat_catalog.read_text(encoding="utf-8")
+    catalog_source = chat_catalog.read_text(encoding="utf-8")
+    assert "run_command" in catalog_source
+    assert "ProcessExecutionService" not in catalog_source
+    assert "subprocess" not in catalog_source
     assert "AgentRunContext" not in chat_executor.read_text(encoding="utf-8")
 
     tauri_root = SRC.parents[1] / "desktop"
@@ -156,6 +213,44 @@ def test_chat_terminal_keeps_its_existing_composition() -> None:
     ))
     config = SRC.parents[1] / "agent" / "app" / "config.py"
     assert "CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED: bool = False" in config.read_text(encoding="utf-8")
+
+
+def test_chat_permission_policy_does_not_create_a_second_execution_authority() -> None:
+    """Approval is a Chat gate; AgentOS Resource/Capability remains execution truth."""
+    permission = SRC.parents[1] / "agent" / "app" / "tools" / "permissions.py"
+    catalog = SRC.parents[1] / "agent" / "app" / "tools" / "chat_catalog.py"
+    runtime = SRC.parents[1] / "agent" / "app" / "tools" / "runtime.py"
+    permission_source = permission.read_text(encoding="utf-8")
+    catalog_source = catalog.read_text(encoding="utf-8")
+    runtime_source = runtime.read_text(encoding="utf-8")
+
+    assert "ChatPermissionService" in catalog_source
+    assert "LocalRuntimeToolExecutor" in catalog_source
+    assert "CapabilityRegistry" not in permission_source + catalog_source
+    assert "ResourceRegistry" not in permission_source + catalog_source
+    assert "RuntimeEventBroker" not in permission_source + catalog_source
+    assert "ResourceService(" not in permission_source + catalog_source
+    assert "subprocess" not in permission_source
+    assert "allowedRoot" not in permission_source
+    assert "AgentRunContext" not in permission_source + runtime_source
+    assert "APPROVAL_REQUIRED" in runtime_source
+    assert "APPROVAL_RESOLVED" in runtime_source
+    assert "allow_session" in permission_source
+    assert "shell.exec" in permission_source
+
+
+def test_chat_approval_contract_exposes_only_safe_display_fields() -> None:
+    """Approval SSE/API data must not become a grant, credential, or host-root channel."""
+    permission = SRC.parents[1] / "agent" / "app" / "tools" / "permissions.py"
+    source = permission.read_text(encoding="utf-8")
+    approval_block = source[source.index("class ApprovalRequest"):source.index("class ApprovalResolutionError")]
+    assert "approvalId" in approval_block
+    assert "toolCallId" in approval_block
+    assert "capabilityId" in approval_block
+    assert "relativePath" in approval_block
+    assert "allowedRoot" not in approval_block
+    assert "resourceId" not in approval_block
+    assert "credentialId" not in approval_block
 
 
 def test_memory_and_evolution_forbid_runtime_mutation_primitives() -> None:

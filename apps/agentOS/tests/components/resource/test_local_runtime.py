@@ -35,6 +35,38 @@ def test_local_runtime_registers_as_worker_terminal_without_shell():
     assert registered.credential.secret not in registered.profile.model_dump_json()
 
 
+def test_local_runtime_can_advertise_only_configured_file_capabilities():
+    resources = ResourceService()
+    config = LocalRuntimeResourceConfig(
+        resource_id="zhiyi-local-runtime-readonly",
+        owner_scope="desktop-user",
+        execution_endpoint="http://127.0.0.1:8765/v1/executions",
+        capabilities=(
+            LocalRuntimeCapability.FS_READ.value,
+            LocalRuntimeCapability.FS_LIST.value,
+        ),
+    )
+
+    registered = ensure_local_runtime_resource(resources, config)
+
+    assert registered.profile.capabilities == ["fs.read", "fs.list"]
+
+    class HealthyReadOnlyRuntime:
+        async def health(self):
+            return {
+                "runtimeId": "runtime-readonly",
+                "resourceId": registered.profile.resource_id,
+                "protocolVersion": "1",
+                "status": "online",
+                "capabilities": ["fs.read", "fs.list"],
+                "availableSlots": 1,
+                "utilization": 0.0,
+            }
+
+    projector = LocalRuntimeHealthProjector(resources, registered.profile.resource_id)
+    assert asyncio.run(projector.refresh(HealthyReadOnlyRuntime())) is True
+
+
 def test_local_runtime_can_use_out_of_band_bootstrap_credential():
     resources = ResourceService()
     config = LocalRuntimeResourceConfig(
@@ -49,6 +81,33 @@ def test_local_runtime_can_use_out_of_band_bootstrap_credential():
 
     assert registered.credential.credential_id == "bootstrap-credential"
     assert registered.credential.secret == "provided-out-of-band-secret"
+
+
+def test_shell_profile_is_opt_in_and_health_must_advertise_it():
+    resources = ResourceService()
+    config = LocalRuntimeResourceConfig(
+        resource_id="zhiyi-local-runtime-shell",
+        owner_scope="desktop-user",
+        execution_endpoint="http://127.0.0.1:8765/v1/executions",
+        shell_exec_enabled=True,
+    )
+    registered = ensure_local_runtime_resource(resources, config)
+    assert LocalRuntimeCapability.SHELL_EXEC.value in registered.profile.capabilities
+
+    class HealthyShellRuntime:
+        async def health(self):
+            return {
+                "runtimeId": "runtime-shell",
+                "resourceId": registered.profile.resource_id,
+                "protocolVersion": "1",
+                "status": "online",
+                "capabilities": registered.profile.capabilities,
+                "availableSlots": 1,
+                "utilization": 0.0,
+            }
+
+    projector = LocalRuntimeHealthProjector(resources, registered.profile.resource_id)
+    assert asyncio.run(projector.refresh(HealthyShellRuntime())) is True
 
 
 def test_local_runtime_registration_is_idempotent_and_uses_resource_credential_rotation():

@@ -26,6 +26,7 @@ LOCAL_RUNTIME_RESOURCE_CAPABILITIES: tuple[str, ...] = (
     LocalRuntimeCapability.FS_WRITE.value,
     LocalRuntimeCapability.FS_PATCH.value,
 )
+LOCAL_RUNTIME_SHELL_CAPABILITY = LocalRuntimeCapability.SHELL_EXEC.value
 
 
 class LocalRuntimeHealthTransport(Protocol):
@@ -41,6 +42,8 @@ class LocalRuntimeResourceConfig:
     capacity: int = 1
     credential_id: str | None = None
     credential_secret: str | None = None
+    capabilities: tuple[str, ...] = LOCAL_RUNTIME_RESOURCE_CAPABILITIES
+    shell_exec_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not self.resource_id.strip() or not self.owner_scope.strip():
@@ -51,6 +54,15 @@ class LocalRuntimeResourceConfig:
             raise ValueError("local runtime version and capacity must be positive")
         if (self.credential_id is None) != (self.credential_secret is None):
             raise ValueError("local runtime credential_id and credential_secret must be supplied together")
+        normalized_capabilities = tuple(dict.fromkeys(
+            str(capability).strip() for capability in self.capabilities if str(capability).strip()
+        ))
+        if not normalized_capabilities:
+            raise ValueError("local runtime capabilities must not be empty")
+        unsupported = set(normalized_capabilities) - set(LOCAL_RUNTIME_RESOURCE_CAPABILITIES)
+        if unsupported:
+            raise ValueError("local runtime capabilities contain unsupported values")
+        object.__setattr__(self, "capabilities", normalized_capabilities)
 
 
 @dataclass(frozen=True)
@@ -61,11 +73,14 @@ class RegisteredLocalRuntimeResource:
 
 def local_runtime_profile(config: LocalRuntimeResourceConfig) -> ResourceProfile:
     """Build the only advertised Resource profile for the host runtime."""
+    capabilities = list(config.capabilities)
+    if config.shell_exec_enabled:
+        capabilities.append(LOCAL_RUNTIME_SHELL_CAPABILITY)
     return ResourceProfile(
         resourceId=config.resource_id,
         resourceType=ResourceType.WORKER,
         deploymentTier=DeploymentTier.TERMINAL,
-        capabilities=list(LOCAL_RUNTIME_RESOURCE_CAPABILITIES),
+        capabilities=capabilities,
         ownerScope=config.owner_scope,
         executionEndpoint=ResourceEndpoint(
             protocol="http",
@@ -163,8 +178,11 @@ class LocalRuntimeHealthProjector:
             payload.get("resourceId") == profile.resource_id
             and payload.get("protocolVersion") == LOCAL_RUNTIME_PROTOCOL_VERSION
             and payload.get("status") == "online"
-            and set(LOCAL_RUNTIME_RESOURCE_CAPABILITIES).issubset(capabilities)
-            and LocalRuntimeCapability.SHELL_EXEC.value not in capabilities
+            and set(profile.capabilities).issubset(capabilities)
+            and (
+                LOCAL_RUNTIME_SHELL_CAPABILITY not in capabilities
+                or LOCAL_RUNTIME_SHELL_CAPABILITY in profile.capabilities
+            )
             and isinstance(available_slots, int)
             and not isinstance(available_slots, bool)
             and 0 <= available_slots <= profile.capacity
@@ -176,6 +194,7 @@ class LocalRuntimeHealthProjector:
 
 __all__ = [
     "LOCAL_RUNTIME_RESOURCE_CAPABILITIES",
+    "LOCAL_RUNTIME_SHELL_CAPABILITY",
     "LocalRuntimeHealthProjector",
     "LocalRuntimeResourceConfig",
     "RegisteredLocalRuntimeResource",

@@ -24,6 +24,13 @@ class LocalRuntimeCapability(str, Enum):
     SHELL_EXEC = "shell.exec"
 
 
+class ExecutionSecurityProfile(str, Enum):
+    """Runtime-selected process boundary; never an arbitrary Windows identity."""
+
+    HOST_APPROVED = "host_approved"
+    ISOLATED_WORKSPACE = "isolated_workspace"
+
+
 class _Envelope(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
@@ -81,9 +88,13 @@ class LocalRuntimeExecutionError(_Envelope):
 
 
 class LocalRuntimeExecutionResult(_Envelope):
+    protocol_version: Literal["1"] = Field(
+        default=LOCAL_RUNTIME_PROTOCOL_VERSION,
+        alias="protocolVersion",
+    )
     request_id: StrictStr = Field(alias="requestId", min_length=1)
     invocation_id: StrictStr = Field(alias="invocationId", min_length=1)
-    status: Literal["completed", "failed"]
+    status: Literal["accepted", "completed", "failed", "cancelled"]
     output: dict[str, Any] = Field(default_factory=dict)
     error: LocalRuntimeExecutionError | None = None
     started_at: datetime = Field(alias="startedAt")
@@ -102,18 +113,41 @@ class LocalRuntimeExecutionEvent(_Envelope):
     protocol_version: Literal["1"] = Field(alias="protocolVersion")
     request_id: StrictStr = Field(alias="requestId", min_length=1)
     invocation_id: StrictStr = Field(alias="invocationId", min_length=1)
+    execution_id: StrictStr | None = Field(default=None, alias="executionId")
     event_type: Literal[
-        "requested", "started", "stdout", "stderr", "file_changed", "completed", "failed"
+        "requested",
+        "started",
+        "stdout",
+        "stderr",
+        "stdout_delta",
+        "stderr_delta",
+        "file_changed",
+        "completed",
+        "failed",
+        "cancelled",
     ] = Field(alias="eventType")
     sequence: int = Field(ge=0)
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class LocalRuntimeExecutionCancelRequest(_Envelope):
+    protocol_version: Literal["1"] = Field(
+        default=LOCAL_RUNTIME_PROTOCOL_VERSION,
+        alias="protocolVersion",
+    )
+    request_id: StrictStr = Field(alias="requestId", min_length=1)
+    invocation_id: StrictStr = Field(alias="invocationId", min_length=1)
+    resource_id: StrictStr = Field(alias="resourceId", min_length=1)
+    execution_id: StrictStr = Field(alias="executionId", min_length=1)
 
 
 __all__ = [
     "LOCAL_RUNTIME_PROTOCOL_VERSION",
     "LocalRuntimeAuthorizationRef",
     "LocalRuntimeCapability",
+    "ExecutionSecurityProfile",
     "LocalRuntimeExecutionError",
+    "LocalRuntimeExecutionCancelRequest",
     "LocalRuntimeExecutionEvent",
     "LocalRuntimeExecutionLimits",
     "LocalRuntimeExecutionRequest",

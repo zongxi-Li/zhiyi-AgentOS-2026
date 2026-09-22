@@ -9,12 +9,18 @@ from __future__ import annotations
 import json
 import secrets
 from time import time
-from typing import Any, Protocol
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any, AsyncIterator, Protocol
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 
-from contracts.local_runtime import LocalRuntimeExecutionRequest, LocalRuntimeExecutionResult
+from contracts.local_runtime import (
+    LOCAL_RUNTIME_PROTOCOL_VERSION,
+    LocalRuntimeExecutionCancelRequest,
+    LocalRuntimeExecutionEvent,
+    LocalRuntimeExecutionRequest,
+    LocalRuntimeExecutionResult,
+)
 from contracts.resource_signing import build_resource_signature
 
 
@@ -74,7 +80,12 @@ class HttpLocalRuntimeTransport:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        headers = self._signed_headers(body, request.idempotency_key)
+        headers = self._signed_headers(
+            method="POST",
+            path=self._path,
+            body=body,
+            idempotency_key=request.idempotency_key,
+        )
         try:
             response = await self._client.post(
                 self.address,
@@ -105,11 +116,139 @@ class HttpLocalRuntimeTransport:
             raise LocalRuntimeTransportError(
                 "TRANSPORT_RESPONSE_INVALID", "local runtime response is invalid"
             ) from exc
-        if result.request_id != request.request_id or result.invocation_id != request.invocation_id:
+        if (
+            result.protocol_version != LOCAL_RUNTIME_PROTOCOL_VERSION
+            or result.request_id != request.request_id
+            or result.invocation_id != request.invocation_id
+        ):
             raise LocalRuntimeTransportError(
                 "TRANSPORT_CORRELATION_MISMATCH", "local runtime response correlation mismatch"
             )
         return result
+
+    async def events(
+        self,
+        *,
+        execution_id: str,
+        after_sequence: int = -1,
+        wait_seconds: float = 0.0,
+        request_id: str | None = None,
+        invocation_id: str | None = None,
+    ) -> tuple[list[LocalRuntimeExecutionEvent], bool, str]:
+        if not execution_id.strip():
+            raise ValueError("execution_id is required")
+        if after_sequence < -1:
+            raise ValueError("after_sequence must not be below -1")
+        path = f"{self._path}/{quote(execution_id, safe='')}/events"
+        query = f"afterSequence={after_sequence}&waitSeconds={max(0.0, min(wait_seconds, 5.0)):.3f}"
+        signed_path = f"{path}?{query}"
+        address = self._address_for_path(signed_path)
+        try:
+            response = await self._client.get(
+                address,
+                headers=self._signed_headers(method="GET", path=signed_path, body=b""),
+                timeout=self.timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_UNAVAILABLE", "local runtime event polling timed out", retryable=True
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_UNAVAILABLE", "local runtime is unavailable", retryable=True
+            ) from exc
+        payload = self._decode_response(response)
+        if response.status_code < 200 or response.status_code >= 300:
+            self._raise_http_error(payload, response.status_code)
+        try:
+            events = [LocalRuntimeExecutionEvent.model_validate(item) for item in payload.get("events", [])]
+            terminal = bool(payload["terminal"])
+            state = str(payload["state"])
+            if str(payload["executionId"]) != execution_id:
+                raise ValueError("execution correlation mismatch")
+            for event in events:
+                if event.execution_id != execution_id:
+                    raise ValueError("event execution correlation mismatch")
+                if request_id is not None and event.request_id != request_id:
+                    raise ValueError("event request correlation mismatch")
+                if invocation_id is not None and event.invocation_id != invocation_id:
+                    raise ValueError("event invocation correlation mismatch")
+        except Exception as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_RESPONSE_INVALID", "local runtime event response is invalid"
+            ) from exc
+        return events, terminal, state
+
+    async def stream_events(
+        self,
+        *,
+        execution_id: str,
+        request_id: str,
+        invocation_id: str,
+        poll_seconds: float = 0.05,
+    ) -> AsyncIterator[LocalRuntimeExecutionEvent]:
+        cursor = -1
+        while True:
+            events, terminal, _state = await self.events(
+                execution_id=execution_id,
+                after_sequence=cursor,
+                wait_seconds=max(poll_seconds, 0.05),
+                request_id=request_id,
+                invocation_id=invocation_id,
+            )
+            for event in events:
+                cursor = max(cursor, event.sequence)
+                yield event
+            if terminal:
+                return
+
+    async def cancel(
+        self,
+        *,
+        execution_id: str,
+        request_id: str,
+        invocation_id: str,
+    ) -> str:
+        cancellation = LocalRuntimeExecutionCancelRequest(
+            requestId=request_id,
+            invocationId=invocation_id,
+            resourceId=self.resource_id,
+            executionId=execution_id,
+        )
+        body = json.dumps(
+            cancellation.model_dump(by_alias=True, mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        path = f"{self._path}/{quote(execution_id, safe='')}/cancel"
+        try:
+            response = await self._client.post(
+                self._address_for_path(path),
+                content=body,
+                headers=self._signed_headers(method="POST", path=path, body=body),
+                timeout=self.timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_UNAVAILABLE", "local runtime cancellation timed out", retryable=True
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_UNAVAILABLE", "local runtime is unavailable", retryable=True
+            ) from exc
+        payload = self._decode_response(response)
+        if response.status_code < 200 or response.status_code >= 300:
+            self._raise_http_error(payload, response.status_code)
+        if (
+            payload.get("executionId") != execution_id
+            or payload.get("requestId") != request_id
+            or payload.get("invocationId") != invocation_id
+        ):
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_CORRELATION_MISMATCH", "local runtime cancellation correlation mismatch"
+            )
+        return str(payload.get("state") or "")
 
     async def health(self) -> dict[str, Any]:
         """Probe the non-sensitive health endpoint for ResourceService projection."""
@@ -130,7 +269,14 @@ class HttpLocalRuntimeTransport:
             )
         return payload
 
-    def _signed_headers(self, body: bytes, idempotency_key: str) -> dict[str, str]:
+    def _signed_headers(
+        self,
+        *,
+        method: str,
+        path: str,
+        body: bytes,
+        idempotency_key: str | None = None,
+    ) -> dict[str, str]:
         try:
             credential_id, secret = self.credential_provider.current_signing_credential(self.resource_id)
         except Exception as exc:
@@ -143,22 +289,38 @@ class HttpLocalRuntimeTransport:
             )
         timestamp = int(time())
         nonce = secrets.token_urlsafe(24)
-        return {
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Idempotency-Key": idempotency_key,
             "X-Resource-Credential": credential_id,
             "X-Resource-Timestamp": str(timestamp),
             "X-Resource-Nonce": nonce,
             "X-Resource-Signature": build_resource_signature(
                 secret,
-                method="POST",
-                path=self._path,
+                method=method,
+                path=path,
                 timestamp=timestamp,
                 nonce=nonce,
                 body=body,
             ),
         }
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
+        return headers
+
+    def _address_for_path(self, path: str) -> str:
+        parsed = urlsplit(self.address)
+        return urlunsplit((parsed.scheme, parsed.netloc, path.split("?", 1)[0], path.split("?", 1)[1] if "?" in path else "", ""))
+
+    @staticmethod
+    def _raise_http_error(payload: Any, status_code: int) -> None:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        code = str(error.get("code") or "TRANSPORT_HTTP_ERROR") if isinstance(error, dict) else "TRANSPORT_HTTP_ERROR"
+        raise LocalRuntimeTransportError(
+            code,
+            "local runtime rejected the request",
+            retryable=status_code >= 500,
+        )
 
     @staticmethod
     def _decode_response(response: httpx.Response) -> Any:
