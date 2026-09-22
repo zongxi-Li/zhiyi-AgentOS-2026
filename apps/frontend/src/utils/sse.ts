@@ -8,6 +8,7 @@ export function parseSseDataLine(line: string): string | null {
 }
 
 export type ChatStreamEventType =
+  | 'heartbeat'
   | 'reasoning_start'
   | 'reasoning_delta'
   | 'reasoning_end'
@@ -15,6 +16,14 @@ export type ChatStreamEventType =
   | 'tool_start'
   | 'tool_result'
   | 'tool_error'
+  | 'approval_required'
+  | 'approval_resolved'
+  | 'execution_started'
+  | 'stdout_delta'
+  | 'stderr_delta'
+  | 'execution_completed'
+  | 'execution_failed'
+  | 'execution_cancelled'
   | 'usage'
   | 'done'
   | 'error'

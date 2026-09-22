@@ -229,6 +229,8 @@
                   reasoningPath: msg.reasoningPath,
                   modelInfo: msg.modelInfo,
                   thinkingState: msg.thinkingState,
+                  streamActivity: msg.streamActivity,
+                  streamPhase: msg.streamPhase,
                   thinkingDurationMs: msg.thinkingDurationMs,
                   reasoningContent: msg.reasoningContent,
                   requestedThinkingMode: msg.requestedThinkingMode,
@@ -465,6 +467,14 @@
                   <el-icon><Microphone /></el-icon>
                 </button>
                 <el-button v-if="inputText.length > 500" text @click="autoSegment">自动分段</el-button>
+                <el-button
+                  v-if="isStreamingChat"
+                  class="composer-cancel"
+                  type="danger"
+                  @click="cancelMessageStream"
+                >
+                  <span>停止</span>
+                </el-button>
                 <el-button class="composer-send" type="primary" :disabled="isSendDisabled" @click="sendMessage">
                   <el-icon v-if="!loading"><ArrowUp /></el-icon>
                   <el-icon v-else class="is-loading"><Loading /></el-icon>
@@ -743,6 +753,10 @@ const currentConversationId = computed(() => {
   return routeContextId || chatStore.contextId || draftConversationId.value
 })
 const isStreamingChat = computed(() => chatStore.isStreaming)
+const cancelMessageStream = () => {
+  const cancel = (chatStore as typeof chatStore & { cancelMessageStream?: () => unknown }).cancelMessageStream
+  if (typeof cancel === 'function') void cancel()
+}
 const isLoadingConversation = computed(() => chatStore.isLoadingConversation)
 const workflowProgressState = useWorkflowProgress({
   intervalMs: 2000,

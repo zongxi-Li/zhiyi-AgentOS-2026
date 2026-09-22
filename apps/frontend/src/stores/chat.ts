@@ -30,6 +30,23 @@ export interface ToolExecutionActivity {
   errorCode?: string
 }
 
+export interface ChatApproval {
+  approvalId: string
+  toolCallId: string
+  invocationId: string
+  toolName: string
+  capabilityId: string
+  relativePath?: string
+  operationSummary: string
+  createdAt: string
+  status: 'pending' | 'approved' | 'denied' | 'expired' | string
+  sessionId: string
+  operation?: string
+  command?: string
+  cwd?: string
+  riskNotice?: string
+}
+
 export interface ExecutionSummaryItem {
   stage: string
   status: string
@@ -37,6 +54,7 @@ export interface ExecutionSummaryItem {
   durationMs?: number
   terminal?: TerminalExecution
   activity?: ToolExecutionActivity
+  approval?: ChatApproval
 }
 
 export interface Message {
@@ -54,6 +72,8 @@ export interface Message {
   reasoningPath?: any[]
   modelInfo?: string
   thinkingState?: 'thinking' | 'complete' | 'error'
+  streamActivity?: 'receiving' | 'waiting' | 'complete'
+  streamPhase?: string
   thinkingDurationMs?: number
   reasoningContent?: string
   requestedThinkingMode?: string
@@ -129,6 +149,7 @@ export const useChatStore = defineStore('chat', () => {
   const workflowBindings = ref<Record<string, ChatWorkflowBinding[]>>(loadWorkflowBindings())
   const workflowRunsStore = useWorkflowRunsStore()
   let activeStreamController: AbortController | null = null
+  let activeRequestId: string | null = null
   const contextId = ref<string | null>(null)
   const currentRoleId = ref<string | null>(null)
   // Context window usage for the composer indicator: tokens consumed by the
@@ -326,6 +347,8 @@ export const useChatStore = defineStore('chat', () => {
       thinkingState: runtimeSettings.thinkingMode === 'disabled' ? undefined : 'thinking',
       requestedThinkingMode: runtimeSettings.thinkingMode,
       reasoningContent: '',
+      streamActivity: 'receiving',
+      streamPhase: '解析任务意图',
       agentMode
     }
     messages.value.push(streamMsg)
@@ -357,9 +380,18 @@ export const useChatStore = defineStore('chat', () => {
       const message = messages.value[streamIndex]
       if (!message) return
       const data = event.data || {}
+      if (event.event !== 'heartbeat' && event.event !== 'done' && event.event !== 'error') {
+        message.streamActivity = 'receiving'
+      }
+      if (event.requestId && event.requestId !== 'unknown' && event.requestId !== 'legacy') {
+        activeRequestId = event.requestId
+      }
       const upsertToolSummary = (status: string, payload: Record<string, any> = data) => {
-        const toolName = String(payload.toolName || 'unknown')
-        const callId = String(payload.callId || toolName)
+        const approval = payload.approval && typeof payload.approval === 'object'
+          ? payload.approval as ChatApproval
+          : undefined
+        const toolName = String(payload.toolName || approval?.toolName || 'unknown')
+        const callId = String(payload.callId || approval?.toolCallId || toolName)
         const stage = `tool:${toolName}:${callId}`
         const duration = typeof payload.durationMs === 'number' ? payload.durationMs : undefined
         const description = status === 'completed'
@@ -382,11 +414,23 @@ export const useChatStore = defineStore('chat', () => {
           description,
           durationMs: duration,
           ...(terminal ? { terminal } : {}),
-          ...(activity ? { activity } : {})
+          ...(activity ? { activity } : {}),
+          ...(approval ? { approval } : existing?.approval ? { approval: existing.approval } : {})
         }
         if (index >= 0) summaries[index] = next
         else summaries.push(next)
         message.executionSummary = [...summaries]
+      }
+      const phaseForTool = (toolName: string) => {
+        const phases: Record<string, string> = {
+          read_file: '读取工作文件',
+          list_files: '浏览工作区',
+          write_file: '写入目标文件',
+          patch_file: '应用局部修改',
+          run_command: '执行受控命令',
+          terminal: '执行受控命令'
+        }
+        return phases[toolName] || '调用工作工具'
       }
       const mergeSources = (items: unknown) => {
         if (!Array.isArray(items)) return
@@ -404,30 +448,74 @@ export const useChatStore = defineStore('chat', () => {
         message.sources = [...existing]
       }
       switch (event.event) {
+        case 'heartbeat':
+          message.streamActivity = 'waiting'
+          message.streamPhase = '等待模型继续'
+          break
         case 'reasoning_start':
+          message.streamActivity = 'receiving'
+          message.streamPhase = '解析任务意图'
           message.thinkingState = 'thinking'
           message.requestedThinkingMode = data.requestedThinkingMode || message.requestedThinkingMode
           message.effectiveThinkingMode = data.effectiveThinkingMode
           message.effectiveReasoningEffort = data.effectiveReasoningEffort
           break
         case 'reasoning_delta':
+          message.streamActivity = 'receiving'
           if (typeof data.delta === 'string') appendReasoningContent(data.delta)
           break
         case 'reasoning_end':
+          message.streamPhase = '构建工作上下文'
           finishThinking('complete', typeof data.reasoningPhaseMs === 'number' ? data.reasoningPhaseMs : undefined)
           break
         case 'content_delta':
+          message.streamActivity = 'receiving'
+          message.streamPhase = '组织最终回复'
           if (typeof data.delta === 'string') appendStreamContent(data.delta)
           break
         case 'tool_start':
+          message.streamActivity = 'receiving'
+          message.streamPhase = phaseForTool(String(data.toolName || ''))
           upsertToolSummary('running')
           break
         case 'tool_result':
+          message.streamActivity = 'receiving'
+          message.streamPhase = '整理工具结果'
           upsertToolSummary('completed', data)
           mergeSources(data.sources)
           break
         case 'tool_error':
+          message.streamPhase = '处理工具异常'
           upsertToolSummary('failed', data)
+          break
+        case 'approval_required':
+          message.streamPhase = '等待操作确认'
+          upsertToolSummary('approval_required', data)
+          break
+        case 'approval_resolved':
+          message.streamPhase = '确认已通过，继续执行'
+          upsertToolSummary('approval_resolved', data)
+          break
+        case 'execution_started':
+          message.streamPhase = '执行受控命令'
+          upsertToolSummary('running', data)
+          break
+        case 'stdout_delta':
+        case 'stderr_delta':
+          message.streamPhase = '读取命令输出'
+          upsertToolSummary('running', data)
+          break
+        case 'execution_completed':
+          message.streamPhase = '整理执行结果'
+          upsertToolSummary('completed', data)
+          break
+        case 'execution_failed':
+          message.streamPhase = '处理执行异常'
+          upsertToolSummary('failed', data)
+          break
+        case 'execution_cancelled':
+          message.streamPhase = '执行已取消'
+          upsertToolSummary('cancelled', data)
           break
         case 'usage':
           message.inputTokens = data.input_tokens ?? data.inputTokens
@@ -453,6 +541,8 @@ export const useChatStore = defineStore('chat', () => {
           }
           break
         case 'done':
+          message.streamActivity = 'complete'
+          message.streamPhase = '已完成'
           if (typeof data.contextId === 'string' && data.contextId) contextId.value = data.contextId
           if (Array.isArray(data.toolExecutions)) {
             for (const execution of data.toolExecutions) {
@@ -468,6 +558,8 @@ export const useChatStore = defineStore('chat', () => {
           finishThinking(message.content ? 'complete' : 'error')
           break
         case 'error':
+          message.streamActivity = 'complete'
+          message.streamPhase = '请求未完成'
           finishThinking('error')
           if (!message.content) message.content = `Stream request failed: ${data.code || 'AI_STREAM_FAILED'}`
           break
@@ -477,6 +569,7 @@ export const useChatStore = defineStore('chat', () => {
     const token = localStorage.getItem('token')
     const streamController = new AbortController()
     activeStreamController = streamController
+    activeRequestId = null
     try {
       const resp = await fetch(apiUrl('/ai/chat/text/stream'), {
         method: 'POST',
@@ -560,12 +653,21 @@ export const useChatStore = defineStore('chat', () => {
         finishThinking(message.content && !message.content.startsWith('Stream request failed:') ? 'complete' : 'error')
       }
       if (activeStreamController === streamController) activeStreamController = null
+      activeRequestId = null
       isStreaming.value = false
       loading.value = false
     }
   }
 
-  const cancelMessageStream = () => {
+  const cancelMessageStream = async () => {
+    const requestId = activeRequestId
+    if (requestId) {
+      try {
+        await chatApi.cancelExecution(requestId)
+      } catch {
+        // The abort below still closes the UI stream if the control request races shutdown.
+      }
+    }
     activeStreamController?.abort()
   }
 

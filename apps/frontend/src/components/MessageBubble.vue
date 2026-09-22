@@ -34,7 +34,7 @@
         <section
           v-if="message.role === 'assistant' && showThinkingStatus"
           class="thinking-status"
-          :class="{ 'is-thinking': message.thinkingState === 'thinking' }"
+          :class="{ 'is-thinking': headerThinkingActive }"
           aria-label="AI 思考状态"
         >
           <button
@@ -47,16 +47,20 @@
           >
             <span class="thinking-status__identity">
               <el-icon class="thinking-status__icon"><Cpu /></el-icon>
-              <span>{{ thinkingLabel }}</span>
+              <Transition name="thinking-phase" mode="out-in">
+                <span :key="thinkingLabel" class="thinking-status__phase">{{ thinkingLabel }}</span>
+              </Transition>
             </span>
             <el-icon class="thinking-status__chevron" :class="{ open: detailsOpen }"><ArrowDown /></el-icon>
           </button>
           <div v-else class="thinking-status__summary" role="status" aria-live="polite">
             <span class="thinking-status__identity">
               <el-icon class="thinking-status__icon"><Cpu /></el-icon>
-              <span>{{ thinkingLabel }}</span>
+              <Transition name="thinking-phase" mode="out-in">
+                <span :key="thinkingLabel" class="thinking-status__phase">{{ thinkingLabel }}</span>
+              </Transition>
             </span>
-            <span v-if="message.thinkingState === 'thinking'" class="thinking-status__dots" aria-hidden="true">
+            <span v-if="headerThinkingActive" class="thinking-status__dots" aria-hidden="true">
               <i></i><i></i><i></i>
             </span>
           </div>
@@ -150,6 +154,61 @@
           </Transition>
         </section>
 
+        <section
+          v-if="approvalActivities.length"
+          class="approval-work"
+          aria-label="文件操作审批"
+        >
+          <article
+            v-for="item in approvalActivities"
+            :key="`approval-${item.approval?.approvalId}`"
+            class="approval-work__card"
+            :class="{ 'is-resolved': item.approval?.status !== 'pending' }"
+          >
+            <div class="approval-work__title">
+              {{ item.approval?.operation === 'Run command' ? '需要确认命令执行' : '需要确认文件操作' }}
+            </div>
+            <div class="approval-work__summary">{{ item.approval?.operationSummary }}</div>
+            <div v-if="item.approval?.command" class="approval-work__command">
+              <code>$ {{ item.approval.command }}</code>
+            </div>
+            <div v-if="item.approval?.cwd" class="approval-work__cwd">
+              cwd: <code>{{ item.approval.cwd }}</code>
+            </div>
+            <div v-if="item.approval?.riskNotice" class="approval-work__risk">
+              {{ item.approval.riskNotice }}
+            </div>
+            <div class="approval-work__scope">
+              <code>{{ item.approval?.capabilityId }}</code>
+              <code v-if="item.approval?.relativePath">{{ item.approval.relativePath }}</code>
+            </div>
+            <div v-if="item.approval?.status === 'pending'" class="approval-work__actions">
+              <button
+                type="button"
+                class="approval-work__button is-primary"
+                :disabled="approvalBusy[item.approval.approvalId]"
+                @click="resolveApproval(item, 'allow_once')"
+              >允许一次</button>
+              <button
+                v-if="item.approval?.capabilityId !== 'shell.exec'"
+                type="button"
+                class="approval-work__button"
+                :disabled="approvalBusy[item.approval.approvalId]"
+                @click="resolveApproval(item, 'allow_session')"
+              >本次会话允许</button>
+              <button
+                type="button"
+                class="approval-work__button is-danger"
+                :disabled="approvalBusy[item.approval.approvalId]"
+                @click="resolveApproval(item, 'deny')"
+              >拒绝</button>
+            </div>
+            <div v-else class="approval-work__resolved">
+              {{ item.approval?.status === 'approved' ? '已允许' : item.approval?.status === 'denied' ? '已拒绝' : '已失效' }}
+            </div>
+          </article>
+        </section>
+
         <!-- Chat-only terminal output stays visible in the conversation, rather than
              being hidden inside the generic thinking details. -->
         <section
@@ -165,7 +224,7 @@
             v-for="item in terminalActivities"
             :key="item.stage"
             class="terminal-work__item"
-            :class="{ 'is-failed': item.status === 'failed', 'is-running': item.status === 'running' }"
+            :class="{ 'is-failed': item.status === 'failed' || item.status === 'cancelled', 'is-running': item.status === 'running' }"
           >
             <div v-if="item.terminal" class="terminal-work__meta">
               <code class="terminal-work__command">$ {{ item.terminal.command }}</code>
@@ -194,7 +253,7 @@
             v-for="item in fileActivities"
             :key="`file-${item.stage}`"
             class="file-work__item"
-            :class="{ 'is-failed': item.status === 'failed', 'is-running': item.status === 'running' }"
+            :class="{ 'is-failed': item.status === 'failed' || item.status === 'cancelled', 'is-running': item.status === 'running' }"
           >
             <div class="file-work__meta">
               <span class="file-work__kind">{{ fileActivityLabel(item.activity?.kind) }}</span>
@@ -221,6 +280,25 @@
           class="message-text markdown-body"
           v-html="renderedMessageHtml"
         />
+
+        <Transition name="continuation-status">
+          <div
+            v-if="showContinuationStatus"
+            class="continuation-status"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="continuation-status__pulse" aria-hidden="true">
+              <i></i><i></i><i></i>
+            </span>
+            <span class="continuation-status__eyebrow">执行脉络</span>
+            <Transition name="thinking-phase" mode="out-in">
+              <span :key="continuationLabel" class="continuation-status__label">
+                {{ continuationLabel }}
+              </span>
+            </Transition>
+          </div>
+        </Transition>
       </div>
 
       <!-- Message Actions Area -->
@@ -257,6 +335,7 @@ import { ArrowDown, Cpu, Document, Link, CopyDocument, ChatLineSquare, Delete, M
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImageViewer from '@/components/common/ImageViewer.vue'
 import { renderMarkdown } from '@/utils/markdown'
+import { chatApi, type ChatApprovalDecision } from '@/services/api/chat'
 
 interface Source {
   title?: string
@@ -297,6 +376,23 @@ interface ToolExecutionActivity {
   errorCode?: string
 }
 
+interface ChatApproval {
+  approvalId: string
+  toolCallId: string
+  invocationId: string
+  toolName: string
+  capabilityId: string
+  relativePath?: string
+  operationSummary: string
+  createdAt: string
+  status: string
+  sessionId: string
+  operation?: string
+  command?: string
+  cwd?: string
+  riskNotice?: string
+}
+
 interface ExecutionSummaryItem {
   stage: string
   status: string
@@ -304,6 +400,7 @@ interface ExecutionSummaryItem {
   durationMs?: number
   terminal?: TerminalExecution
   activity?: ToolExecutionActivity
+  approval?: ChatApproval
 }
 
 interface Props {
@@ -319,6 +416,8 @@ interface Props {
     reasoningPath?: ReasoningStep[]
     modelInfo?: string
     thinkingState?: 'thinking' | 'complete' | 'error'
+    streamActivity?: 'receiving' | 'waiting' | 'complete'
+    streamPhase?: string
     thinkingDurationMs?: number
     reasoningContent?: string
     requestedThinkingMode?: string
@@ -333,6 +432,7 @@ const props = defineProps<Props>()
 const emit = defineEmits(['copy', 'quote', 'delete', 'tts', 'export'])
 const detailsOpen = ref(false)
 const imageViewerVisible = ref(false)
+const approvalBusy = ref<Record<string, boolean>>({})
 const detailsId = computed(() => `thinking-details-${String(props.message.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`)
 
 const openImageViewer = () => {
@@ -392,10 +492,34 @@ const hasDetails = computed(() => {
 const showThinkingStatus = computed(() => !!props.message.thinkingState || hasDetails.value)
 
 const terminalActivities = computed(() => (props.message.executionSummary || [])
-  .filter(item => item.stage.split(':')[1] === 'terminal'))
+  .filter(item => item.stage.split(':')[1] === 'terminal' || item.stage.split(':')[1] === 'run_command'))
 
 const fileActivities = computed(() => (props.message.executionSummary || [])
   .filter(item => item.activity && item.activity.kind !== 'terminal'))
+
+const approvalActivities = computed(() => (props.message.executionSummary || [])
+  .filter(item => item.approval))
+
+const resolveApproval = async (item: ExecutionSummaryItem, decision: ChatApprovalDecision) => {
+  const approval = item.approval
+  if (!approval || approvalBusy.value[approval.approvalId]) return
+  approvalBusy.value = { ...approvalBusy.value, [approval.approvalId]: true }
+  try {
+    await chatApi.resolveApproval(approval.approvalId, {
+      decision,
+      sessionId: approval.sessionId,
+      invocationId: approval.invocationId,
+      capabilityId: approval.capabilityId,
+      relativePath: approval.relativePath
+    })
+  } catch {
+    ElMessage.error('审批请求处理失败，请重试')
+  } finally {
+    const next = { ...approvalBusy.value }
+    delete next[approval.approvalId]
+    approvalBusy.value = next
+  }
+}
 
 const canExpandDetails = computed(() => {
   return hasDetails.value && (
@@ -415,13 +539,34 @@ const thinkingDurationSeconds = computed(() => {
   return Math.max(1, Math.ceil(props.message.thinkingDurationMs / 1000))
 })
 
+const headerThinkingActive = computed(() => {
+  if (props.message.thinkingState === 'thinking') return true
+  return !props.message.thinkingState
+    && (props.message.streamActivity === 'receiving' || props.message.streamActivity === 'waiting')
+})
+
 const thinkingLabel = computed(() => {
   const seconds = thinkingDurationSeconds.value
   const duration = seconds === null ? '' : `（用时 ${seconds} 秒）`
-  if (props.message.thinkingState === 'thinking') return '思考中'
   if (props.message.thinkingState === 'complete') return `已思考${duration}`
   if (props.message.thinkingState === 'error') return `思考已中断${duration}`
+  if (props.message.thinkingState === 'thinking') return '思考中'
+  if (props.message.streamActivity === 'waiting') return props.message.streamPhase || '等待模型继续'
+  if (props.message.streamActivity === 'receiving') {
+    return props.message.streamPhase || '处理中'
+  }
   return '运行详情'
+})
+
+const showContinuationStatus = computed(() => {
+  return props.message.role === 'assistant'
+    && Boolean(props.message.content)
+    && (props.message.streamActivity === 'receiving' || props.message.streamActivity === 'waiting')
+})
+
+const continuationLabel = computed(() => {
+  if (props.message.streamPhase) return props.message.streamPhase
+  return props.message.streamActivity === 'waiting' ? '等待模型继续' : '继续推进任务'
 })
 
 const getConfidenceColor = (confidence: number) => {
@@ -533,6 +678,67 @@ const formatTime = (date: Date) => {
 .message-bubble.system .message-avatar, 
 .message-bubble.system .message-meta {
   display: none;
+}
+
+.continuation-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.continuation-status__pulse {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 14px;
+  height: 12px;
+}
+
+.continuation-status__pulse i {
+  display: block;
+  width: 2px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--primary-color);
+  animation: continuationSignal 1.15s ease-in-out infinite;
+}
+
+.continuation-status__pulse i:nth-child(2) {
+  height: 11px;
+  animation-delay: 0.14s;
+}
+
+.continuation-status__pulse i:nth-child(3) {
+  height: 8px;
+  animation-delay: 0.28s;
+}
+
+.continuation-status__eyebrow {
+  color: var(--text-disabled);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.continuation-status__label {
+  color: var(--text-secondary);
+}
+
+.continuation-status-enter-active,
+.continuation-status-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.continuation-status-enter-from,
+.continuation-status-leave-to {
+  opacity: 0;
+  transform: translateY(-3px);
 }
 
 /* Error Message Style */
@@ -792,6 +998,26 @@ const formatTime = (date: Date) => {
   gap: 7px;
 }
 
+.thinking-status__phase {
+  display: inline-block;
+  min-width: 7em;
+}
+
+.thinking-phase-enter-active,
+.thinking-phase-leave-active {
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+
+.thinking-phase-enter-from {
+  opacity: 0;
+  transform: translateY(2px);
+}
+
+.thinking-phase-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
 .thinking-status__icon {
   flex: 0 0 auto;
   color: var(--primary-color);
@@ -924,6 +1150,100 @@ const formatTime = (date: Date) => {
 .execution-summary__description {
   color: var(--text-regular);
   overflow-wrap: anywhere;
+}
+
+.approval-work {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 14px;
+}
+
+.approval-work__card {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 58%, var(--border-light));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--bg-card));
+}
+
+.approval-work__card.is-resolved {
+  border-color: var(--border-light);
+  background: var(--bg-card);
+}
+
+.approval-work__title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.approval-work__summary,
+.approval-work__command,
+.approval-work__cwd,
+.approval-work__risk,
+.approval-work__scope,
+.approval-work__resolved {
+  margin-top: 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.approval-work__command,
+.approval-work__cwd {
+  margin-top: 7px;
+  color: var(--text-primary);
+  font: 12px/1.5 var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.approval-work__risk {
+  margin-top: 9px;
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.approval-work__scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-work__scope code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+}
+
+.approval-work__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.approval-work__button {
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.approval-work__button.is-primary {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.approval-work__button.is-danger {
+  color: var(--danger);
+}
+
+.approval-work__button:disabled {
+  cursor: wait;
+  opacity: .55;
 }
 
 .terminal-work {
@@ -1119,15 +1439,23 @@ const formatTime = (date: Date) => {
   30% { opacity: 0.9; transform: translateY(-2px); }
 }
 
+@keyframes continuationSignal {
+  0%, 100% { opacity: 0.28; transform: scaleY(0.7); }
+  50% { opacity: 0.95; transform: scaleY(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .thinking-status__icon,
-  .thinking-status__dots i {
+  .thinking-status__dots i,
+  .continuation-status__pulse i {
     animation: none !important;
   }
 
   .thinking-details-enter-active,
   .thinking-details-leave-active,
-  .thinking-status__chevron {
+  .thinking-status__chevron,
+  .continuation-status-enter-active,
+  .continuation-status-leave-active {
     transition: none;
   }
 }

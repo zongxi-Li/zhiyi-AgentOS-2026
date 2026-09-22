@@ -46,6 +46,8 @@ export interface ChatResponse {
   metadata?: Record<string, any>
 }
 
+export type ChatApprovalDecision = 'allow_once' | 'allow_session' | 'deny'
+
 export const chatApi = {
   // 发送文本消息
   async sendMessage(chatRequest: ChatRequest): Promise<ChatResponse & { audioUrl?: string; animation?: any }> {
@@ -64,6 +66,25 @@ export const chatApi = {
       tool_mode: chatRequest.toolMode || 'auto'
     })
     return response.data
+  },
+
+  async resolveApproval(
+    approvalId: string,
+    payload: {
+      decision: ChatApprovalDecision
+      sessionId: string
+      invocationId?: string
+      capabilityId?: string
+      relativePath?: string
+    }
+  ) {
+    const response = await request.post(`/ai/chat/approvals/${encodeURIComponent(approvalId)}`, payload)
+    return response.data as { approvalId: string; status: string; decision: ChatApprovalDecision }
+  },
+
+  async cancelExecution(requestId: string) {
+    const response = await request.post('/ai/chat/text/cancel', { requestId })
+    return response.data as { requestId: string; cancelled: boolean }
   },
 
   // 获取对话历史
