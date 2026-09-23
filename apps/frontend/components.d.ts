@@ -122,6 +122,7 @@ declare module 'vue' {
     RunResourceStrip: typeof import('./src/components/agentos/RunResourceStrip.vue')['default']
     RunSymbolRow: typeof import('./src/components/workspace/RunSymbolRow.vue')['default']
     RuntimeAuditTimeline: typeof import('./src/components/agentos/RuntimeAuditTimeline.vue')['default']
+    RuntimeEventRow: typeof import('./src/components/workbench/runtime/RuntimeEventRow.vue')['default']
     RuntimeInspector: typeof import('./src/components/workspace/RuntimeInspector.vue')['default']
     SearchBar: typeof import('./src/components/SearchBar.vue')['default']
     SecondarySidebar: typeof import('./src/components/workbench/SecondarySidebar.vue')['default']
