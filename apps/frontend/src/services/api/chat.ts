@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { GlmReasoningEffort, ThinkingMode } from '@/config/modelSettings'
+import type { ReasoningEffort, ThinkingMode } from '@/config/modelSettings'
 
 export interface ChatRequest {
   text?: string
@@ -14,7 +14,7 @@ export interface ChatRequest {
   baseUrl?: string
   apiKey?: string
   thinkingMode?: ThinkingMode
-  reasoningEffort?: GlmReasoningEffort
+  reasoningEffort?: ReasoningEffort
   toolMode?: 'auto' | 'disabled'
 }
 

@@ -47,11 +47,12 @@ class ChatRequest(BaseModel):
     def resolved_thinking_mode(self) -> str:
         if self.thinking_mode:
             return self.thinking_mode
-        if self.reasoning_effort in {"high", "xhigh", "max"}:
-            return "deep"
-        if self.reasoning_effort in {"low", "medium"}:
-            return "standard"
-        return self.reasoning_effort or "disabled"
+        effort = (self.reasoning_effort or "").strip().lower()
+        if effort in {"", "none", "off", "disabled"}:
+            return "disabled"
+        # Keep the exact provider value in provider_parameters(); this is only
+        # the legacy coarse mode used before capability adaptation.
+        return "standard" if effort in {"low", "medium", "minimal"} else "deep"
 
     def provider_parameters(self) -> Dict[str, str]:
         return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}

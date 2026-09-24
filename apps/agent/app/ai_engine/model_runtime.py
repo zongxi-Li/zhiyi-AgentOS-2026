@@ -111,6 +111,7 @@ def model_capability_summary(name: str, base_url: str, provider: str) -> Dict[st
         "alwaysThinking": caps.always_thinking,
         "supportsReasoningEffort": caps.supports_reasoning_effort,
         "reasoningEfforts": list(caps.reasoning_efforts or []),
+        "defaultReasoningEffort": caps.default_reasoning_effort,
         "contextWindow": caps.context_window_tokens,
     }
 

@@ -49,6 +49,9 @@ class ProviderModelCapabilities(BaseModel):
     # 供应商接受的 reasoning_effort 档位（supports_reasoning_effort 为真时下发
     # 给前端渲染档位选择器）；None 表示供应商级未声明。
     reasoning_efforts: Optional[List[str]] = None
+    # Provider-specific compatibility aliases, normalized before the wire call.
+    reasoning_effort_aliases: Dict[str, str] = Field(default_factory=dict)
+    default_reasoning_effort: Optional[str] = None
     supports_tools: bool = True
     supports_tool_choice_in_thinking: bool = True
     requires_reasoning_content_for_tool_calls: bool = False
