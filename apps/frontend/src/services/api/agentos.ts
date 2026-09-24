@@ -742,6 +742,25 @@ export interface MissionWorkspaceProjection {
   diagnostics: WorkspaceDiagnostic[]
 }
 
+export interface WorkspaceFileEntry {
+  name: string
+  path: string
+  type: 'directory' | 'file'
+}
+
+export interface WorkspaceFileListing {
+  workspaceRoot: string
+  path: string
+  entries: WorkspaceFileEntry[]
+}
+
+export interface WorkspaceFileOpenRequest {
+  missionId: string
+  workspaceRoot: string
+  relativePath: string
+  name: string
+}
+
 export type InputAttachmentStatus = 'UPLOADED' | 'PARSING' | 'READY' | 'FAILED'
 
 export interface InputAttachment {
@@ -1444,6 +1463,18 @@ export const agentosApi = {
         params: { runId: options.runId || undefined },
         signal: options.signal
       }
+    )
+    return response.data
+  },
+
+  async listWorkspaceFiles(
+    missionId: string,
+    path = '.',
+    options: { signal?: AbortSignal } = {}
+  ): Promise<WorkspaceFileListing> {
+    const response = await agentosRequest.get<WorkspaceFileListing>(
+      `/missions/${encodeURIComponent(missionId)}/workspace/files`,
+      { params: { path, maxEntries: 1000 }, signal: options.signal }
     )
     return response.data
   },

@@ -163,17 +163,21 @@ describe('MissionWorkspaceView', () => {
 
   it('switches Inspector and ACG Copilot inside the shared right sidebar', async () => {
     const { wrapper } = await mountWorkspace()
+    const copilotTrigger = () => wrapper.findAll('.editor-auxiliary-trigger')
+      .find(trigger => trigger.attributes('title').includes('ACG Copilot'))!
 
     expect(wrapper.find('.secondary-sidebar').exists()).toBe(true)
     expect(wrapper.find('.auxiliary-sidebar').exists()).toBe(false)
-    expect(wrapper.get('.editor-auxiliary-trigger').attributes('aria-label')).toBe('打开 ACG Copilot')
+    expect(wrapper.findAll('.editor-auxiliary-trigger')).toHaveLength(2)
+    expect(wrapper.findAll('.editor-auxiliary-trigger').some(trigger => trigger.attributes('title').includes('文件'))).toBe(true)
+    expect(copilotTrigger().attributes('aria-label')).toBe('打开 ACG Copilot')
 
-    await wrapper.get('.editor-auxiliary-trigger').trigger('click')
+    await copilotTrigger().trigger('click')
 
     expect(wrapper.find('.secondary-sidebar').exists()).toBe(false)
     expect(wrapper.get('.auxiliary-sidebar').attributes('aria-label')).toBe('ACG Copilot')
     expect(wrapper.get('.auxiliary-sidebar .acg-copilot').exists()).toBe(true)
-    expect(wrapper.get('.editor-auxiliary-trigger').attributes('aria-label')).toBe('收起 ACG Copilot')
+    expect(copilotTrigger().attributes('aria-label')).toBe('收起 ACG Copilot')
     expect(wrapper.get('.editor-inspector-trigger').attributes('aria-label')).toBe('打开 Inspector')
 
     await wrapper.get('.editor-inspector-trigger').trigger('click')

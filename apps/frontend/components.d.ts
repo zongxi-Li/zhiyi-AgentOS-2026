@@ -149,6 +149,8 @@ declare module 'vue' {
     WorkflowRunPanel: typeof import('./src/components/agentos/WorkflowRunPanel.vue')['default']
     WorkflowStepList: typeof import('./src/components/agentos/WorkflowStepList.vue')['default']
     WorkspaceExplorer: typeof import('./src/components/workspace/WorkspaceExplorer.vue')['default']
+    WorkspaceFileExplorer: typeof import('./src/components/workbench/WorkspaceFileExplorer.vue')['default']
+    WorkspaceFileTreeNode: typeof import('./src/components/workbench/WorkspaceFileTreeNode.vue')['default']
     WorkspacePageHero: typeof import('./src/components/app/WorkspacePageHero.vue')['default']
     ZoomIndicator: typeof import('./src/components/desktop/ZoomIndicator.vue')['default']
   }

@@ -445,6 +445,18 @@ describe('AgentOS v2 application API', () => {
     expect(get).toHaveBeenCalledTimes(1)
   })
 
+  it('lists one workspace directory without requesting a recursive tree scan', async () => {
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { workspaceRoot: 'C:/work/project', path: 'apps', entries: [] }
+    } as never)
+
+    await agentosApi.listWorkspaceFiles('mission/1', 'apps/ui')
+
+    expect(get).toHaveBeenCalledWith('/missions/mission%2F1/workspace/files', {
+      params: { path: 'apps/ui', maxEntries: 1000 }, signal: undefined
+    })
+  })
+
   it('uses the existing Artifact download endpoint rather than a second content store', async () => {
     const signal = new AbortController().signal
     const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: new Blob(['body']) } as never)

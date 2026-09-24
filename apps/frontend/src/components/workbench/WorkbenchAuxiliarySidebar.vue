@@ -2,21 +2,30 @@
   <aside class="auxiliary-sidebar" :aria-label="view.title">
     <header class="auxiliary-sidebar__header">
       <div class="auxiliary-sidebar__heading">
-        <span>CODEX</span>
+        <span>{{ view.title }}</span>
       </div>
     </header>
     <div class="auxiliary-sidebar__body">
-      <component :is="view.component" v-bind="componentProps" />
+      <component
+        :is="view.component"
+        v-bind="componentProps"
+        @open-file="emit('open-file', $event)"
+      />
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import type { AuxiliaryViewContribution } from '@/workbench/types'
+import type { WorkspaceFileOpenRequest } from '@/services/api/agentos'
 
 defineProps<{
   view: AuxiliaryViewContribution
   componentProps?: Record<string, unknown>
+}>()
+
+const emit = defineEmits<{
+  'open-file': [request: WorkspaceFileOpenRequest]
 }>()
 </script>
 

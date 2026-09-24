@@ -7,6 +7,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -38,6 +39,7 @@ from contracts.resource import (
 )
 from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
+from app.tools.permissions import normalize_relative_path
 from runtime import ExecutionRuntime
 from runtime.v2 import IdentityQueryService
 from runtime.v2.workspace import (
@@ -1638,6 +1640,66 @@ def create_router(
             mode="json",
             exclude_none=True,
         )
+
+    @router.get("/missions/{mission_id}/workspace/files")
+    async def list_workspace_files(
+        mission_id: str,
+        path: str = Query(default="."),
+        max_entries: int = Query(default=1000, alias="maxEntries", ge=1, le=1000),
+    ):
+        """List one directory through the existing grant-bound fs.list tool."""
+        require_mission_access(mission_id)
+        relative_path = normalize_relative_path(path)
+        if relative_path is None or len(relative_path) > 4096:
+            raise HTTPException(status_code=400, detail="workspace-relative path is invalid")
+
+        client = getattr(runtime, "local_runtime_client", None)
+        authorization = getattr(runtime, "local_runtime_authorization", None)
+        if client is None or authorization is None:
+            raise HTTPException(status_code=503, detail="workspace file capability unavailable")
+
+        try:
+            workspace_root = await client.workspace_root(authorization)
+            from app.tools import get_chat_tool_runtime
+
+            payload = await get_chat_tool_runtime().catalog.execute(
+                "list_files",
+                {"path": relative_path, "maxEntries": max_entries},
+                call_id=f"workspace-explorer:{uuid4().hex}",
+                session_id=f"workspace-explorer:{mission_id}",
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            from app.tools.local_runtime import LocalRuntimeToolError
+
+            if isinstance(exc, LocalRuntimeToolError):
+                if exc.code in {"PATH_INVALID", "DIRECTORY_REQUIRED", "LIST_LIMIT_EXCEEDED"}:
+                    raise HTTPException(status_code=400, detail=exc.code) from exc
+                if exc.code in {"PATH_NOT_FOUND", "PARENT_NOT_FOUND"}:
+                    raise HTTPException(status_code=404, detail="workspace directory not found") from exc
+                if exc.code in {
+                    "PATH_OUTSIDE_WORKSPACE", "CAPABILITY_DENIED", "GRANT_REVOKED", "GRANT_EXPIRED"
+                }:
+                    raise HTTPException(status_code=403, detail="workspace access denied") from exc
+                raise HTTPException(status_code=503, detail="workspace file capability unavailable") from exc
+            logger.warning("Workspace file listing unavailable: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="workspace file capability unavailable") from exc
+
+        result = payload.data.get("result") if isinstance(payload.data, dict) else None
+        entries = result.get("entries") if isinstance(result, dict) else None
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=502, detail="workspace listing response is invalid")
+        return {
+            "workspaceRoot": workspace_root,
+            "path": relative_path,
+            "entries": [
+                item for item in entries
+                if isinstance(item, dict)
+                and isinstance(item.get("name"), str)
+                and item.get("type") in {"file", "directory"}
+            ],
+        }
 
     def change_mission_record_state(mission_id: str, state: MissionRecordState) -> dict[str, Any]:
         require_mission_access(mission_id)

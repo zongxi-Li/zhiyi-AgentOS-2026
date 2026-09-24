@@ -78,6 +78,7 @@
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
           :component-props="auxiliaryViewProps"
+          @open-file="emit('open-workspace-file', $event)"
         />
         <RuntimeInspector
           v-else
@@ -185,7 +186,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceGraphNode } from '@/services/api/agentos'
+import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
@@ -204,6 +205,9 @@ import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
 
 const route = useRoute()
 const router = useRouter()
+const emit = defineEmits<{
+  'open-workspace-file': [request: WorkspaceFileOpenRequest]
+}>()
 const missionId = computed(() => String(route.params.missionId || route.query.missionId || ''))
 const registry = createNativeWorkbenchRegistry()
 
