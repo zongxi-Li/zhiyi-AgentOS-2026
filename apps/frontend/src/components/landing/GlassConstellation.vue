@@ -179,8 +179,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Microphone } from '@element-plus/icons-vue'
-import { useChatStore } from '@/stores/chat'
+import type { useChatStore } from '@/stores/chat'
 import { GROK_GEO, GROK_META, GrokCharacter, type GrokCharacterInstance } from '@/lib/grok-character'
+
+type ChatStore = ReturnType<typeof useChatStore>
 
 type OneShotId = 'spin' | 'bounce' | 'burst'
 
@@ -228,7 +230,26 @@ const avatarSvg = ref<SVGSVGElement | null>(null)
 const emit = defineEmits<{
   (event: 'voice-message', text: string): void
 }>()
-const chatStore = useChatStore()
+let activeChatStore: ChatStore | null = null
+let chatStorePromise: Promise<ChatStore | null> | null = null
+let conversationGeneration = 0
+let stopConversationWatch: (() => void) | null = null
+
+const loadChatStoreForConversation = async (requestId: number): Promise<ChatStore | null> => {
+  if (activeChatStore) return activeChatStore
+
+  const pendingStore = chatStorePromise ?? (chatStorePromise = import('@/stores/chat').then(({ useChatStore }) => {
+    if (requestId !== conversationGeneration) return null
+    activeChatStore = useChatStore()
+    return activeChatStore
+  }))
+
+  try {
+    return await pendingStore
+  } finally {
+    if (chatStorePromise === pendingStore) chatStorePromise = null
+  }
+}
 
 const currentShape = ref('blob')
 const currentColor = ref('violet')
@@ -361,20 +382,27 @@ const submitConversation = async (text: string) => {
   conversationReply.value = ''
   conversationError.value = ''
   conversationPending.value = true
-  const streamStart = chatStore.messages.length
-  const stopWatching = watch(
-    () => chatStore.messages.slice(streamStart).map(item => ({ role: item.role, content: item.content })),
-    (items) => {
-      const latest = [...items].reverse().find(item => item.role === 'assistant')
-      if (latest?.content) conversationReply.value = latest.content
-    },
-    { deep: true }
-  )
-
-  applyState('thinking')
+  const requestId = ++conversationGeneration
   try {
-    await chatStore.sendMessageStream(message, 'default', undefined, 'agent')
-    const latest = chatStore.messages.slice(streamStart).reverse().find(item => item.role === 'assistant')
+    const store = await loadChatStoreForConversation(requestId)
+    if (!store || requestId !== conversationGeneration) return
+
+    const streamStart = store.messages.length
+    const stopWatching = watch(
+      () => store.messages.slice(streamStart).map(item => ({ role: item.role, content: item.content })),
+      (items) => {
+        const latest = [...items].reverse().find(item => item.role === 'assistant')
+        if (latest?.content) conversationReply.value = latest.content
+      },
+      { deep: true }
+    )
+    stopConversationWatch = stopWatching
+
+    applyState('thinking')
+    await store.sendMessageStream(message, 'default', undefined, 'agent')
+    if (requestId !== conversationGeneration) return
+
+    const latest = store.messages.slice(streamStart).reverse().find(item => item.role === 'assistant')
     if (latest?.content) {
       conversationReply.value = latest.content
       applyState('happy')
@@ -383,12 +411,16 @@ const submitConversation = async (text: string) => {
       applyState('surprised')
     }
   } catch (error) {
+    if (requestId !== conversationGeneration) return
     conversationError.value = error instanceof Error ? error.message : '对话请求失败，请稍后再试'
     applyState('surprised')
   } finally {
-    stopWatching()
-    conversationPending.value = false
-    resumeOnboardingLater()
+    if (requestId === conversationGeneration) {
+      stopConversationWatch?.()
+      stopConversationWatch = null
+      conversationPending.value = false
+      resumeOnboardingLater()
+    }
   }
 }
 
@@ -538,13 +570,16 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  conversationGeneration += 1
   window.clearTimeout(labelTimer)
   window.clearTimeout(resumeTimer)
   window.clearTimeout(voiceRestartTimer)
   stopVoice()
   bot?.destroy()
   bot = null
-  if (conversationPending.value) chatStore.cancelMessageStream()
+  stopConversationWatch?.()
+  stopConversationWatch = null
+  if (conversationPending.value) activeChatStore?.cancelMessageStream()
 })
 </script>
 

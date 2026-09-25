@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import GlassConstellation from './GlassConstellation.vue'
 import { GROK_META } from '@/lib/grok-character'
 
@@ -180,7 +180,6 @@ describe('GlassConstellation', () => {
   })
 
   it('emits natural-language speech after Justin wakes the agent', async () => {
-    localStorage.setItem('token', 'test-token')
     const recognition = {
       lang: '', continuous: false, interimResults: false,
       onresult: null as ((event: unknown) => void) | null,
@@ -198,12 +197,21 @@ describe('GlassConstellation', () => {
 
     expect(wrapper.emitted('voice-message')?.[0]).toEqual(['帮我分析一下这个任务'])
     wrapper.unmount()
-    localStorage.removeItem('token')
     Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: undefined })
   })
 
-  it('renders the authenticated backend stream in the Justin conversation bubble', async () => {
+  it('renders the lazily loaded store response in the Justin conversation bubble', async () => {
     localStorage.setItem('token', 'test-token')
+    const messages: Array<{ role: string; content: string }> = []
+    const store = {
+      messages,
+      sendMessageStream: vi.fn(async () => {
+        messages.push({ role: 'assistant', content: '这是后端回复' })
+      }),
+      cancelMessageStream: vi.fn()
+    }
+    const useChatStore = vi.fn(() => store)
+    vi.doMock('@/stores/chat', () => ({ useChatStore }))
     const recognition = {
       lang: '', continuous: false, interimResults: false,
       onresult: null as ((event: unknown) => void) | null,
@@ -212,31 +220,23 @@ describe('GlassConstellation', () => {
       start: vi.fn(), stop: vi.fn()
     }
     Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: vi.fn(() => recognition) })
-    const chunks = [
-      `data: ${JSON.stringify({ event: 'content_delta', data: { delta: '这是后端回复' } })}\n`,
-      `data: ${JSON.stringify({ event: 'done', data: { contextId: 'ctx-justin' } })}\n`
-    ]
-    let chunkIndex = 0
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      body: {
-        getReader: () => ({
-          read: async () => chunkIndex < chunks.length
-            ? { done: false, value: new TextEncoder().encode(chunks[chunkIndex++]) }
-            : { done: true, value: undefined }
-        })
-      }
-    })))
     const wrapper = mountAgent()
 
     await wrapper.get('[data-testid="agent-voice-toggle"]').trigger('click')
     recognition.onresult?.({ results: [[{ transcript: 'Justin 帮我分析一下' }]], resultIndex: 0 })
-    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="agent-conversation"]').text()).toContain('这是后端回复')
+    })
 
-    expect(wrapper.get('[data-testid="agent-conversation"]').text()).toContain('这是后端回复')
+    expect(useChatStore).toHaveBeenCalledOnce()
+    expect(store.sendMessageStream).toHaveBeenCalledWith('帮我分析一下', 'default', undefined, 'agent')
     wrapper.unmount()
-    vi.unstubAllGlobals()
+    vi.doUnmock('@/stores/chat')
     localStorage.removeItem('token')
     Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: undefined })
+  })
+
+  afterEach(() => {
+    vi.doUnmock('@/stores/chat')
   })
 })
