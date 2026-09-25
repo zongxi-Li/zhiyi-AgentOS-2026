@@ -69,4 +69,56 @@ describe('request error notifications', () => {
     expect(localStorage.getItem('token')).toBeNull()
     expect(errorMessage).toHaveBeenCalledWith('登录状态已过期，请重新登录')
   })
+
+  it('strips a stale authorization header from public authentication requests', async () => {
+    localStorage.setItem('token', 'stored-token')
+    let authorization: unknown
+
+    await request.request({
+      url: '/auth/login',
+      method: 'post',
+      headers: { Authorization: 'Bearer stale-header' },
+      adapter: async config => {
+        authorization = config.headers.Authorization
+        return { data: { token: 'new-token' }, status: 200, statusText: 'OK', headers: {}, config }
+      }
+    })
+
+    expect(authorization).toBeUndefined()
+    expect(localStorage.getItem('token')).toBe('stored-token')
+  })
+
+  it.each(['/auth/login', '/auth/register', '/auth/verify'])('keeps %s 401 handling with its auth page', async url => {
+    localStorage.setItem('token', 'stored-token')
+    localStorage.setItem('userId', 'user_1')
+    isDesktop.mockReturnValue(true)
+    window.location.hash = '#/login'
+
+    await request.request({
+      url,
+      method: 'post',
+      adapter: async config => Promise.reject({ config, response: { status: 401, data: {} } })
+    }).catch(() => undefined)
+
+    expect(errorMessage).not.toHaveBeenCalled()
+    expect(localStorage.getItem('token')).toBe('stored-token')
+    expect(localStorage.getItem('userId')).toBe('user_1')
+    expect(window.location.hash).toBe('#/login')
+  })
+
+  it('keeps global forbidden notifications on the shared request client', async () => {
+    const pending = request.request({
+      url: '/roles/builtin',
+      method: 'get',
+      adapter: async config => Promise.reject({
+        config,
+        response: { status: 403, data: { message: 'role access denied' } }
+      })
+    })
+
+    await pending.catch(() => undefined)
+
+    expect(errorMessage).toHaveBeenCalledWith('role access denied')
+  })
+
 })

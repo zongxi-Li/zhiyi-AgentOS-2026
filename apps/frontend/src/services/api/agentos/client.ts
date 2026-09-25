@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { apiUrl } from '@/platform'
+import { attachAuthToken, handleUnauthorizedError } from '@/utils/requestAuth'
 
 export const agentosRequest = axios.create({
   baseURL: apiUrl('/api/agentos/v2'),
@@ -9,10 +10,12 @@ export const agentosRequest = axios.create({
   }
 })
 
-agentosRequest.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+agentosRequest.interceptors.request.use(attachAuthToken)
+
+agentosRequest.interceptors.response.use(
+  response => response,
+  (error) => {
+    handleUnauthorizedError(error)
+    return Promise.reject(error)
   }
-  return config
-})
+)
