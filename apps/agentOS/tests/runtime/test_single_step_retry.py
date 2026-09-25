@@ -203,6 +203,7 @@ def test_single_step_retry_reuses_committed_upstream_and_runs_only_final(
 
         assert retry.run_id != failed.run_id
         assert retry.status is WorkflowStatus.PENDING
+        assert retry.execution_state["compiledACGPackage"]["packageVersion"] == 4
         assert retry.current_step_id == "final"
         assert retry.completed_step_ids == ["source"]
         assert retry.get_step("source").status is StepStatus.COMPLETED
@@ -234,6 +235,7 @@ def test_single_step_retry_reuses_committed_upstream_and_runs_only_final(
 
         result = asyncio.run(runtime.execute_prepared_run(retry.run_id))
         assert result.status is WorkflowStatus.COMPLETED
+        assert result.execution_state["compiledACGPackage"]["packageVersion"] == 4
         assert result.completed_step_ids == ["source", "final"]
         assert agent.source_calls == 1
         assert agent.final_calls == 2

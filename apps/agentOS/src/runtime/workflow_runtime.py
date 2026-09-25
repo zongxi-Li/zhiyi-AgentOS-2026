@@ -750,9 +750,9 @@ class ExecutionRuntime:
             raw_package = source.execution_state.get("compiledACGPackage")
             if not isinstance(raw_package, dict):
                 raise ValueError("single-step retry requires a persisted compiled ACG package")
-            from contracts.compiled_acg import CompiledACGPackage
+            from contracts.compiled_acg import load_compiled_acg_package
 
-            package = CompiledACGPackage.model_validate(raw_package)
+            package = load_compiled_acg_package(raw_package)
             graph = ACGGraphCompiler().compile(
                 blueprint,
                 run_id=source.run_id,
@@ -1305,9 +1305,9 @@ class ExecutionRuntime:
         raw_package = run.execution_state.get("compiledACGPackage")
         if not isinstance(raw_package, dict):
             raise ExecutionEngineMigratingError(run.run_id)
-        from contracts.compiled_acg import CompiledACGPackage
+        from contracts.compiled_acg import load_compiled_acg_package
 
-        compiled_package = CompiledACGPackage.model_validate(raw_package)
+        compiled_package = load_compiled_acg_package(raw_package)
         graph = ACGGraphCompiler().compile(
             blueprint,
             run_id=run.run_id,

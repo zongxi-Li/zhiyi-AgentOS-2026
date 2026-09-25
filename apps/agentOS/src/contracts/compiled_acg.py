@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 from typing import Any, Literal
 
@@ -39,7 +40,7 @@ class CompiledEdge(FrozenContract):
     edge_id: StrictStr = Field(alias="edgeId", min_length=1)
     source_id: StrictStr = Field(alias="sourceId", min_length=1)
     target_id: StrictStr = Field(alias="targetId", min_length=1)
-    edge_type: StrictStr = Field(alias="edgeType", min_length=1)
+    edge_type: Literal["dependency"] = Field(alias="edgeType")
 
 
 class BindingRule(FrozenContract):
@@ -205,7 +206,7 @@ class ControlManifest(FrozenContract):
 
 
 class CompiledACGPackage(FrozenContract):
-    package_version: Literal[3] = Field(default=3, alias="packageVersion")
+    package_version: Literal[4] = Field(default=4, alias="packageVersion")
     package_id: StrictStr = Field(alias="packageId", min_length=1)
     run_id: StrictStr | None = Field(default=None, alias="runId")
     blueprint_id: StrictStr = Field(alias="blueprintId", min_length=1)
@@ -223,14 +224,147 @@ class CompiledACGPackage(FrozenContract):
     checksum: StrictStr = Field(min_length=64, max_length=64)
 
     @model_validator(mode="after")
-    def validate_manifest_coverage(self) -> "CompiledACGPackage":
+    def validate_canonical_structure(self) -> "CompiledACGPackage":
+        node_id_list = [node.node_id for node in self.nodes]
+        if len(node_id_list) != len(set(node_id_list)):
+            raise ValueError("compiled package contains duplicate nodeId")
+        node_ids = set(node_id_list)
         step_ids = {node.node_id for node in self.nodes if node.kind is CompiledNodeKind.STEP}
-        binding_ids = {rule.step_id for rule in self.binding_manifest.rules}
+        control_nodes = {
+            node.node_id: node for node in self.nodes if node.kind is CompiledNodeKind.CONTROL
+        }
+
+        edge_id_list = [edge.edge_id for edge in self.edges]
+        if len(edge_id_list) != len(set(edge_id_list)):
+            raise ValueError("compiled package contains duplicate edgeId")
+        for edge in self.edges:
+            if edge.source_id not in node_ids or edge.target_id not in node_ids:
+                raise ValueError(
+                    "compiled edge references unknown executable node: "
+                    f"{edge.source_id} -> {edge.target_id}"
+                )
+
+        binding_id_list = [rule.step_id for rule in self.binding_manifest.rules]
+        if len(binding_id_list) != len(set(binding_id_list)):
+            raise ValueError("binding manifest contains duplicate stepId")
+        binding_ids = set(binding_id_list)
         if binding_ids != step_ids:
             missing = sorted(step_ids - binding_ids)
             extra = sorted(binding_ids - step_ids)
             raise ValueError(f"binding manifest coverage mismatch: missing={missing}, extra={extra}")
+
+        for label, rules in (
+            ("skill", self.skill_manifest.rules),
+            ("memory", self.memory_manifest.rules),
+            ("evidence", self.evidence_manifest.rules),
+        ):
+            unknown = sorted({rule.step_id for rule in rules} - step_ids)
+            if unknown:
+                raise ValueError(f"{label} manifest references unknown Step: {unknown}")
+
+        for rule in self.communication_manifest.rules:
+            referenced_steps = {
+                rule.producer_step_id,
+                rule.consumer_step_id,
+                *rule.participant_step_ids,
+            }
+            unknown = sorted(referenced_steps - step_ids)
+            if unknown:
+                raise ValueError(f"communication manifest references unknown Step: {unknown}")
+        unknown_budget_steps = sorted(set(self.communication_manifest.step_budgets) - step_ids)
+        if unknown_budget_steps:
+            raise ValueError(
+                f"communication step budgets reference unknown Step: {unknown_budget_steps}"
+            )
+
+        for label, references in (
+            ("control entry", self.control_manifest.entry_node_ids),
+            ("control exit", self.control_manifest.exit_node_ids),
+        ):
+            unknown = sorted(set(references) - node_ids)
+            if unknown:
+                raise ValueError(f"{label} references unknown executable node: {unknown}")
+
+        control_id_list = [rule.control_id for rule in self.control_manifest.rules]
+        if len(control_id_list) != len(set(control_id_list)):
+            raise ValueError("control manifest contains duplicate controlId")
+        if set(control_id_list) != set(control_nodes):
+            missing = sorted(set(control_nodes) - set(control_id_list))
+            extra = sorted(set(control_id_list) - set(control_nodes))
+            raise ValueError(f"control manifest coverage mismatch: missing={missing}, extra={extra}")
+        for rule in self.control_manifest.rules:
+            control_node = control_nodes[rule.control_id]
+            if control_node.control_type != rule.control_type:
+                raise ValueError(f"control type mismatch for {rule.control_id}")
+            self._validate_condition(rule.condition, step_ids, node_ids, rule.control_id)
+            if rule.loop is not None:
+                self._require_refs(
+                    (rule.loop.body_entry_id, rule.loop.body_exit_id),
+                    step_ids,
+                    f"LOOP {rule.control_id} body",
+                )
+                self._validate_condition(
+                    rule.loop.condition, step_ids, node_ids, f"LOOP {rule.control_id}"
+                )
+            if rule.parallel is not None:
+                self._require_refs(
+                    rule.parallel.branch_entry_ids,
+                    step_ids,
+                    f"PARALLEL {rule.control_id} branches",
+                )
+                self._require_refs(
+                    (rule.parallel.join_node_id,),
+                    set(control_nodes),
+                    f"PARALLEL {rule.control_id} join",
+                )
+            if rule.consensus is not None:
+                self._require_refs(
+                    rule.consensus.participant_step_ids,
+                    step_ids,
+                    f"CONSENSUS {rule.control_id} participants",
+                )
         return self
+
+    @staticmethod
+    def _require_refs(references, allowed: set[str], label: str) -> None:
+        unknown = sorted(set(references) - allowed)
+        if unknown:
+            raise ValueError(f"{label} references unknown node: {unknown}")
+
+    @classmethod
+    def _validate_condition(
+        cls,
+        condition: ConditionalControlSpec | None,
+        step_ids: set[str],
+        node_ids: set[str],
+        label: str,
+    ) -> None:
+        if condition is None:
+            return
+        cls._require_refs((condition.source_step_id,), step_ids, f"{label} condition source")
+        targets = tuple(condition.targets_by_case.values()) + (
+            (condition.default_target,) if condition.default_target is not None else ()
+        )
+        cls._require_refs(targets, node_ids, f"{label} condition targets")
+
+
+class UnsupportedCompiledACGPackageVersion(ValueError):
+    """Raised when persisted runtime state is not the canonical package version."""
+
+
+def load_compiled_acg_package(
+    value: CompiledACGPackage | Mapping[str, Any],
+) -> CompiledACGPackage:
+    """Load the canonical V4 runtime contract and reject every other version."""
+    if isinstance(value, CompiledACGPackage):
+        return value
+    payload = dict(value)
+    version = payload.get("packageVersion", payload.get("package_version"))
+    if version != 4:
+        raise UnsupportedCompiledACGPackageVersion(
+            f"unsupported CompiledACGPackage version: {version}; canonical version is 4"
+        )
+    return CompiledACGPackage.model_validate(payload)
 
 
 __all__ = [
@@ -239,4 +373,5 @@ __all__ = [
     "CompiledNodeSpec", "ConditionalControlSpec", "ConsensusControlSpec", "ControlManifest",
     "ControlRule", "EvidenceManifest", "EvidenceRule", "LoopControlSpec", "MemoryManifest",
     "MemoryRule", "ParallelControlSpec", "SkillManifest", "SkillRule",
+    "UnsupportedCompiledACGPackageVersion", "load_compiled_acg_package",
 ]

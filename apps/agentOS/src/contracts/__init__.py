@@ -78,6 +78,7 @@ from .compiled_acg import (
     CompiledNodeSpec, ConditionalControlSpec, ConsensusControlSpec, ControlManifest,
     ControlRule, EvidenceManifest, EvidenceRule, LoopControlSpec, MemoryManifest,
     MemoryRule, ParallelControlSpec, SkillManifest, SkillRule,
+    UnsupportedCompiledACGPackageVersion, load_compiled_acg_package,
 )
 from .capability import (
     AgentArchitecture,
@@ -188,6 +189,7 @@ __all__ = [
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind", "CompiledACGPackage",
     "ContentFragmentRef", "ContentKind", "ContentManifest", "FragmentEnvelope",
     "CompiledEdge", "CompiledNodeKind", "CompiledNodeSpec", "BindingManifest", "BindingRule",
+    "UnsupportedCompiledACGPackageVersion", "load_compiled_acg_package",
     "SkillManifest", "SkillRule", "MemoryManifest", "MemoryRule", "EvidenceManifest", "EvidenceRule",
     "CommunicationManifestSpec", "CommunicationMode", "CommunicationRuleSpec", "ControlManifest",
     "ControlRule", "ConditionalControlSpec", "LoopControlSpec", "ParallelControlSpec", "ConsensusControlSpec",

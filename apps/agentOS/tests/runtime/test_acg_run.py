@@ -17,6 +17,7 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
 from components.mission_manager.store import WorkflowRegistry
+from contracts import UnsupportedCompiledACGPackageVersion
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, RuntimeRunRecord, WorkflowStep, WorkflowStepDefinition, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRelation, PlannedTask
 from service.agents import AgentRegistry
@@ -141,6 +142,23 @@ def test_runtime_executes_prepared_acg_with_reference_state() -> None:
         assert metrics["schedulingWaitMs"] >= 0
         assert metrics["executionMs"] >= 0
         assert metrics["totalMs"] >= metrics["executionMs"]
+
+
+def test_runtime_rejects_persisted_v3_package() -> None:
+    runtime = _runtime()
+    task = runtime.create_mission("v3 persisted package", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
+    persisted = runtime.workflow_store.get_run(run.run_id)
+    package = persisted.execution_state["compiledACGPackage"]
+    package["packageVersion"] = 3
+    persisted.execution_state["compiledPackageVersion"] = 3
+    runtime.workflow_store.save_run(persisted)
+
+    with pytest.raises(
+        UnsupportedCompiledACGPackageVersion,
+        match="unsupported CompiledACGPackage version: 3; canonical version is 4",
+    ):
+        asyncio.run(runtime.execute_prepared_run(run.run_id))
 
 
 def test_deferred_acg_planning_materializes_inside_single_runtime() -> None:
@@ -360,6 +378,9 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
 
     assert paused.status is WorkflowStatus.WAITING_REVIEW
     assert paused.execution_state["checkpointId"].startswith("acgckpt_")
+    assert paused.execution_state["compiledACGPackage"]["packageVersion"] == 4
+    package_id = paused.execution_state["compiledPackageId"]
+    package_checksum = paused.execution_state["compiledPackageChecksum"]
     recreated = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
@@ -378,6 +399,9 @@ def test_runtime_resumes_review_checkpoint_after_recreation(tmp_path) -> None:
 
     assert result.status is WorkflowStatus.COMPLETED
     assert result.completed_step_ids == ["review", "deliver"]
+    assert result.execution_state["compiledACGPackage"]["packageVersion"] == 4
+    assert result.execution_state["compiledPackageId"] == package_id
+    assert result.execution_state["compiledPackageChecksum"] == package_checksum
 
 
 def test_review_approval_commits_deferred_memory_after_recreation(tmp_path) -> None:

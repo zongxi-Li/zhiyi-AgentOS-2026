@@ -56,7 +56,7 @@ class IncompleteACGCompilationError(ValueError):
 class ACGGraphCompiler:
     """The only Blueprint-to-runtime compilation boundary."""
 
-    package_version = 3
+    package_version = 4
     supported_communication_modes = {mode.value for mode in CommunicationMode}
 
     def compile_package(
@@ -96,6 +96,7 @@ class ACGGraphCompiler:
             if isinstance(node, (StepNode, ControlNode))
             and str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
         )
+        executable_ids = {node.node_id for node in node_specs}
         compiled_edges = tuple(
             CompiledEdge(
                 edgeId=edge.edge_id,
@@ -103,7 +104,8 @@ class ACGGraphCompiler:
                 targetId=edge.target_id,
                 edgeType=edge.edge_type.value,
             )
-            for edge in blueprint.edges
+            for edge in blueprint.edges_of_type(EdgeType.DEPENDENCY)
+            if edge.source_id in executable_ids and edge.target_id in executable_ids
         )
 
         binding_manifest = self._compile_bindings(
@@ -187,13 +189,10 @@ class ACGGraphCompiler:
                 condition=condition,
                 control_type=node.control_type,
             )
-        executable_ids = set(node_specs)
         dependency_edges = tuple(
             (edge.source_id, edge.target_id)
             for edge in compiled.edges
             if edge.edge_type == EdgeType.DEPENDENCY.value
-            and edge.source_id in executable_ids
-            and edge.target_id in executable_ids
         )
         return ACGExecutionGraph(
             nodes=tuple(node.node_id for node in compiled.nodes),
