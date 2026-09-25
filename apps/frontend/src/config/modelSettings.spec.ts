@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   applyProviderPreset,
+  capabilityFromPayload,
+  defaultReasoningEffortFromCapability,
   getDefaultModelSettings,
+  isEffortKindOption,
   loadModelSettings,
+  reasoningOptionsFromCapability,
   saveModelSettings,
   toModelRequestSettings
 } from './modelSettings'
@@ -55,5 +59,35 @@ describe('model settings provider selection', () => {
       apiKey: 'glm-key',
       reasoningEffort: 'max'
     })
+  })
+
+  it('exposes DeepSeek off plus low/high/max reasoning options', () => {
+    const capability = capabilityFromPayload({
+      thinkingModes: ['disabled', 'standard', 'deep'],
+      alwaysThinking: false,
+      supportsReasoningEffort: true,
+      reasoningEfforts: ['low', 'high', 'max'],
+      defaultReasoningEffort: 'high'
+    })
+    const options = reasoningOptionsFromCapability(capability)
+
+    expect(isEffortKindOption(options)).toBe(true)
+    expect(options.map(option => option.value)).toEqual(['disabled', 'low', 'high', 'max'])
+    expect(options.map(option => option.kind)).toEqual(['thinking', 'effort', 'effort', 'effort'])
+    expect(defaultReasoningEffortFromCapability(capability, options)).toBe('high')
+  })
+
+  it('keeps newly declared provider efforts dynamic', () => {
+    const capability = capabilityFromPayload({
+      thinkingModes: ['disabled', 'standard', 'deep'],
+      alwaysThinking: false,
+      supportsReasoningEffort: true,
+      reasoningEfforts: ['low', 'high', 'max', 'ultra'],
+      defaultReasoningEffort: 'ultra'
+    })
+    const options = reasoningOptionsFromCapability(capability)
+
+    expect(options.map(option => option.value)).toEqual(['disabled', 'low', 'high', 'max', 'ultra'])
+    expect(defaultReasoningEffortFromCapability(capability, options)).toBe('ultra')
   })
 })

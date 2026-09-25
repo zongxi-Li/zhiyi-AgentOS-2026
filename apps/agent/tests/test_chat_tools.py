@@ -110,6 +110,13 @@ def test_chat_endpoint_passes_glm_reasoning_effort_separately(monkeypatch):
     assert runtime.kwargs["parameters"] == {"reasoning_effort": "high"}
 
 
+def test_chat_request_keeps_unknown_future_effort_as_deep_coarse_mode():
+    request = chat.ChatRequest(text="future effort", reasoning_effort="ultra")
+
+    assert request.resolved_thinking_mode() == "deep"
+    assert request.provider_parameters() == {"reasoning_effort": "ultra"}
+
+
 def test_sse_forwarder_preserves_tool_events():
     async def chunks():
         yield ChatStreamEvent(

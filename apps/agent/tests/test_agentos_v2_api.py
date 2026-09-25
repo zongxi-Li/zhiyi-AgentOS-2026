@@ -1755,6 +1755,29 @@ async def test_v2_workspace_includes_runtime_only_deferred_runs(tmp_path) -> Non
         runtime.identity_lifecycle.lifecycle_service.close()
 
 
+async def test_workspace_file_listing_rejects_parent_paths_and_never_falls_back_to_process_cwd(tmp_path) -> None:
+    runtime = _runtime(tmp_path, with_identity=True)
+    mission = runtime.create_mission("Workspace file access")
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            traversal = await client.get(
+                f"/agentos/v2/missions/{mission.mission_id}/workspace/files",
+                params={"path": "../outside"},
+            )
+            unavailable = await client.get(
+                f"/agentos/v2/missions/{mission.mission_id}/workspace/files",
+                params={"path": "."},
+            )
+        assert traversal.status_code == 400
+        assert unavailable.status_code == 503
+        assert unavailable.json()["detail"] == "workspace file capability unavailable"
+    finally:
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
 async def test_v2_rerun_creates_another_run_under_same_mission(tmp_path) -> None:
     runtime = _runtime(tmp_path, with_identity=True)
     task = runtime.create_mission(

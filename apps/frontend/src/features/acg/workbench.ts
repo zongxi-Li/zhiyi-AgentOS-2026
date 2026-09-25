@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 import type { AsyncWorkflowStartRequest } from '@/services/api/workflow'
-import type { GlmReasoningEffort } from '@/config/modelSettings'
+import type { ReasoningEffort } from '@/config/modelSettings'
 
 export type WorkbenchPlanningMode = 'dynamic' | 'template_preferred'
 export type PlanningDiversity = 'stable' | 'balanced' | 'exploratory'
@@ -20,7 +20,7 @@ export interface WorkbenchDraft {
   planningSeed: number | null
   webSearchEnabled: boolean
   thinkingMode: 'disabled' | 'standard' | 'deep'
-  reasoningEffort?: GlmReasoningEffort
+  reasoningEffort?: ReasoningEffort
   reviewMode: 'auto' | 'human_in_loop'
   pluginData: Record<string, Record<string, unknown>>
 }

@@ -4,6 +4,7 @@ import ArtifactEditor from '@/components/workspace/ArtifactEditor.vue'
 import MissionEditor from '@/components/workspace/MissionEditor.vue'
 import TaskEditor from '@/components/workspace/TaskEditor.vue'
 import WorkspaceExplorer from '@/components/workspace/WorkspaceExplorer.vue'
+import WorkspaceFileExplorer from '@/components/workbench/WorkspaceFileExplorer.vue'
 import ProblemsPanel from '@/components/workbench/ProblemsPanel.vue'
 import ProjectArtifactInspector from './ProjectArtifactInspector.vue'
 import ProjectGraphInspector from './ProjectGraphInspector.vue'
@@ -28,6 +29,17 @@ export const projectContribution: WorkbenchContribution = {
   ],
   sidebarViews: [
     { id: 'project.explorer', title: 'Project Explorer', component: WorkspaceExplorer }
+  ],
+  auxiliaryViews: [
+    {
+      id: 'project.workspace-files',
+      title: '文件',
+      order: 50,
+      icon: FolderOpened,
+      component: WorkspaceFileExplorer,
+      when: () => true,
+      getProps: context => ({ missionId: context.missionId })
+    }
   ],
   editors: [
     { id: 'project.graph-editor', entryKinds: ['graph'], component: GraphEditor, title: entry => entry.name },

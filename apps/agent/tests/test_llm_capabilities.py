@@ -45,7 +45,9 @@ def test_official_new_model_name_automatically_gets_family_capabilities():
     current = provider_model_capabilities("deepseek-flash", "https://api.deepseek.com/v1")
     assert current.supports_thinking is True
     assert current.supports_reasoning_effort is True
-    assert current.reasoning_efforts == ["high", "max"]
+    assert current.reasoning_efforts == ["low", "high", "max"]
+    assert current.default_reasoning_effort == "high"
+    assert current.reasoning_effort_aliases["xhigh"] == "high"
     assert current.version == "DeepSeek-V4.1-Flash"
 
     future = provider_model_capabilities("deepseek-v9-turbo", "https://api.deepseek.com/v1")
@@ -184,6 +186,37 @@ def test_deepseek_thinking_request_removes_unsupported_parameters():
         "reasoning_effort": "max",
         "extra_body": {"thinking": {"type": "enabled"}},
     }
+
+
+def test_deepseek_preserves_official_reasoning_efforts_and_aliases():
+    expected = {
+        "minimal": "low",
+        "low": "low",
+        "medium": "high",
+        "high": "high",
+        "xhigh": "high",
+        "max": "max",
+        "ultra": "max",
+    }
+    for requested, effective in expected.items():
+        adapted = adapt_chat_completion_parameters(
+            model="deepseek-flash",
+            base_url="https://api.deepseek.com/v1",
+            thinking_mode=ThinkingMode.STANDARD,
+            parameters={"reasoning_effort": requested},
+        )
+        assert adapted.effective_reasoning_effort == effective
+        assert adapted.parameters["reasoning_effort"] == effective
+
+
+def test_deepseek_implicit_official_effort_is_not_upgraded_to_max():
+    adapted = adapt_chat_completion_parameters(
+        model="deepseek-flash",
+        base_url="https://api.deepseek.com/v1",
+        thinking_mode="high",
+    )
+    assert adapted.effective_reasoning_effort == "high"
+    assert adapted.parameters["reasoning_effort"] == "high"
 
 
 def test_acg_safe_invocation_result_has_no_reasoning_field():

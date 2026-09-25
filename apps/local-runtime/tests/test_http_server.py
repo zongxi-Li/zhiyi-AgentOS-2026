@@ -73,6 +73,48 @@ def test_health_is_non_sensitive_and_does_not_advertise_shell(tmp_path, runtime_
     assert SECRET not in response.body.decode("utf-8")
 
 
+def test_workspace_root_requires_signed_fs_list_grant(tmp_path, runtime_factory):
+    app = _app(tmp_path, runtime_factory)
+    path = "/v1/workspace?grantId=grant_main&workspaceId=workspace_main"
+    timestamp = int(NOW.timestamp())
+    headers = {
+        "X-Resource-Credential": CREDENTIAL_ID,
+        "X-Resource-Timestamp": str(timestamp),
+        "X-Resource-Nonce": "workspace-root-valid",
+        "X-Resource-Signature": build_resource_signature(
+            SECRET,
+            method="GET",
+            path=path,
+            timestamp=timestamp,
+            nonce="workspace-root-valid",
+            body=b"",
+        ),
+    }
+
+    response = app.handle(method="GET", path=path, headers=headers)
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload == {"workspaceId": "workspace_main", "workspaceRoot": str(tmp_path)}
+
+    denied_path = "/v1/workspace?grantId=missing&workspaceId=workspace_main"
+    denied_nonce = "workspace-root-denied"
+    denied_headers = {
+        **headers,
+        "X-Resource-Nonce": denied_nonce,
+        "X-Resource-Signature": build_resource_signature(
+            SECRET,
+            method="GET",
+            path=denied_path,
+            timestamp=timestamp,
+            nonce=denied_nonce,
+            body=b"",
+        ),
+    }
+    denied = app.handle(method="GET", path=denied_path, headers=denied_headers)
+    assert denied.status == 409
+    assert b"workspaceRoot" not in denied.body
+
+
 def test_valid_signed_request_reaches_filesystem_capability(tmp_path, runtime_factory):
     app = _app(tmp_path, runtime_factory)
     request = make_request(

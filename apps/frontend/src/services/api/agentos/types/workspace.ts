@@ -92,3 +92,22 @@ export interface MissionWorkspaceProjection {
   inputAttachments?: InputAttachment[]
   diagnostics: WorkspaceDiagnostic[]
 }
+
+export interface WorkspaceFileEntry {
+  name: string
+  path: string
+  type: 'directory' | 'file'
+}
+
+export interface WorkspaceFileListing {
+  workspaceRoot: string
+  path: string
+  entries: WorkspaceFileEntry[]
+}
+
+export interface WorkspaceFileOpenRequest {
+  missionId: string
+  workspaceRoot: string
+  relativePath: string
+  name: string
+}

@@ -2,8 +2,10 @@ import { apiUrl } from '@/platform'
 
 export type ModelProviderId = 'system' | 'qwen' | 'deepseek' | 'glm' | 'openai' | 'custom'
 export type ThinkingMode = 'disabled' | 'standard' | 'deep'
-export const GLM_REASONING_EFFORTS = ['low', 'high', 'max'] as const
-export type GlmReasoningEffort = typeof GLM_REASONING_EFFORTS[number]
+// Effort values are provider-declared; keep the client open to newly added values.
+export type ReasoningEffort = string
+/** @deprecated use ReasoningEffort; kept for compatibility with older consumers. */
+export type GlmReasoningEffort = ReasoningEffort
 
 export interface ModelProviderPreset {
   id: ModelProviderId
@@ -19,7 +21,7 @@ export interface ModelProviderConnection {
   models: string[]
   selectedModel: string
   thinkingMode?: ThinkingMode
-  reasoningEffort?: GlmReasoningEffort
+  reasoningEffort?: ReasoningEffort
 }
 
 export interface ModelSettings {
@@ -29,7 +31,7 @@ export interface ModelSettings {
   models: string[]
   selectedModel: string
   thinkingMode: ThinkingMode
-  reasoningEffort?: GlmReasoningEffort
+  reasoningEffort?: ReasoningEffort
   providerConnections?: Partial<Record<Exclude<ModelProviderId, 'system'>, ModelProviderConnection>>
 }
 
@@ -103,11 +105,12 @@ export interface ModelCapability {
   alwaysThinking: boolean
   supportsReasoningEffort: boolean
   reasoningEfforts: string[]
+  defaultReasoningEffort?: string | null
   contextWindow?: number | null
 }
 
 export interface ReasoningOption {
-  value: ThinkingMode | GlmReasoningEffort
+  value: ThinkingMode | ReasoningEffort
   label: string
   shortLabel: string
   kind: 'effort' | 'thinking'
@@ -129,20 +132,31 @@ export function capabilityFromPayload(payload: unknown): ModelCapability | null 
     thinkingModes: modes,
     alwaysThinking: raw.alwaysThinking === true,
     supportsReasoningEffort: raw.supportsReasoningEffort === true,
-    reasoningEfforts: efforts
+    reasoningEfforts: efforts,
+    defaultReasoningEffort: typeof raw.defaultReasoningEffort === 'string' && raw.defaultReasoningEffort.trim()
+      ? raw.defaultReasoningEffort.trim().toLowerCase()
+      : null
   }
 }
 
 export function reasoningOptionsFromCapability(capability: ModelCapability | null): ReasoningOption[] {
   // 不可关思考的模型（如 GLM 5.3 系）语义是"档位"而非"开关"，按服务端下发的
-  // reasoningEfforts 渲染；其余按思考开关三档渲染（服务端会按供应商纠正参数）。
-  if (capability && capability.alwaysThinking && capability.reasoningEfforts.length) {
-    return capability.reasoningEfforts.map(effort => ({
-      value: effort as GlmReasoningEffort,
+  // reasoningEfforts 渲染；可切换思考的模型额外保留关闭选项。
+  if (capability && capability.reasoningEfforts.length) {
+    const effortOptions = capability.reasoningEfforts.map(effort => ({
+      value: effort as ReasoningEffort,
       kind: 'effort' as const,
       label: EFFORT_LABELS[effort] || effort,
       shortLabel: effort
     }))
+    if (capability.alwaysThinking) return effortOptions
+
+    // DeepSeek exposes a real off state in addition to low/high/max effort.
+    const disabledOption = thinkingOptions.find(option => option.value === 'disabled')
+    return [
+      ...(disabledOption ? [{ ...disabledOption, kind: 'thinking' as const }] : []),
+      ...effortOptions
+    ]
   }
   const modes = capability?.thinkingModes?.length
     ? capability.thinkingModes
@@ -153,7 +167,27 @@ export function reasoningOptionsFromCapability(capability: ModelCapability | nul
 }
 
 export function isEffortKindOption(options: ReasoningOption[]): boolean {
-  return options.length > 0 && options.every(option => option.kind === 'effort')
+  return options.some(option => option.kind === 'effort')
+}
+
+export function effortValuesFromOptions(options: ReasoningOption[]): ReasoningEffort[] {
+  return options
+    .filter(option => option.kind === 'effort')
+    .map(option => String(option.value))
+}
+
+export function defaultReasoningEffortFromCapability(
+  capability: ModelCapability | null,
+  options: ReasoningOption[]
+): ReasoningEffort | undefined {
+  const efforts = effortValuesFromOptions(options)
+  if (!efforts.length) return undefined
+  const declared = capability?.defaultReasoningEffort?.trim().toLowerCase()
+  if (declared && efforts.includes(declared)) return declared
+  // Always-thinking providers historically defaulted to their strongest option;
+  // switchable providers use the API's normal high effort by default.
+  if (capability?.alwaysThinking) return efforts[efforts.length - 1]
+  return efforts.includes('high') ? 'high' : efforts[efforts.length - 1]
 }
 
 export async function fetchModelCapability(model: string, baseUrl = ''): Promise<ModelCapability | null> {
@@ -173,13 +207,13 @@ export async function fetchModelCapability(model: string, baseUrl = ''): Promise
   }
 }
 
-function migrateReasoningEffort(value: unknown): GlmReasoningEffort {
-  return GLM_REASONING_EFFORTS.includes(value as GlmReasoningEffort)
-    ? value as GlmReasoningEffort
-    : 'max'
+function migrateReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().toLowerCase()
+    : undefined
 }
 
-function thinkingModeForGlmEffort(effort: GlmReasoningEffort): ThinkingMode {
+function thinkingModeForEffort(effort: ReasoningEffort): ThinkingMode {
   return effort === 'low' ? 'standard' : 'deep'
 }
 
@@ -232,7 +266,7 @@ export function loadModelSettings(): ModelSettings {
       models,
       selectedModel,
       thinkingMode: reasoningEffort
-        ? thinkingModeForGlmEffort(reasoningEffort)
+        ? thinkingModeForEffort(reasoningEffort)
         : migrateThinkingMode(parsed.thinkingMode ?? parsed.reasoningEffort),
       reasoningEffort
     }
@@ -252,7 +286,7 @@ export function saveModelSettings(settings: ModelSettings): void {
     ? migrateReasoningEffort(settings.reasoningEffort)
     : undefined
   const normalizedThinkingMode = normalizedReasoningEffort
-    ? thinkingModeForGlmEffort(normalizedReasoningEffort)
+    ? thinkingModeForEffort(normalizedReasoningEffort)
     : settings.thinkingMode
   if (settings.provider !== 'system') {
     providerConnections[settings.provider] = {
@@ -303,7 +337,7 @@ export function applyProviderPreset(settings: ModelSettings, provider: ModelProv
     ? migrateReasoningEffort(reasoningEffort)
     : undefined
   const thinkingMode = normalizedReasoningEffort
-    ? thinkingModeForGlmEffort(normalizedReasoningEffort)
+    ? thinkingModeForEffort(normalizedReasoningEffort)
     : savedConnection?.thinkingMode || settings.thinkingMode
   return {
     ...settings,

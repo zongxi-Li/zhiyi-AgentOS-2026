@@ -124,6 +124,7 @@ declare module 'vue' {
     RunResourceStrip: typeof import('./src/components/agentos/RunResourceStrip.vue')['default']
     RunSymbolRow: typeof import('./src/components/workspace/RunSymbolRow.vue')['default']
     RuntimeAuditTimeline: typeof import('./src/components/agentos/RuntimeAuditTimeline.vue')['default']
+    RuntimeEventRow: typeof import('./src/components/workbench/runtime/RuntimeEventRow.vue')['default']
     RuntimeInspector: typeof import('./src/components/workspace/RuntimeInspector.vue')['default']
     SearchBar: typeof import('./src/components/SearchBar.vue')['default']
     SecondarySidebar: typeof import('./src/components/workbench/SecondarySidebar.vue')['default']
@@ -150,6 +151,8 @@ declare module 'vue' {
     WorkflowRunPanel: typeof import('./src/components/agentos/WorkflowRunPanel.vue')['default']
     WorkflowStepList: typeof import('./src/components/agentos/WorkflowStepList.vue')['default']
     WorkspaceExplorer: typeof import('./src/components/workspace/WorkspaceExplorer.vue')['default']
+    WorkspaceFileExplorer: typeof import('./src/components/workbench/WorkspaceFileExplorer.vue')['default']
+    WorkspaceFileTreeNode: typeof import('./src/components/workbench/WorkspaceFileTreeNode.vue')['default']
     WorkspacePageHero: typeof import('./src/components/app/WorkspacePageHero.vue')['default']
     ZoomIndicator: typeof import('./src/components/desktop/ZoomIndicator.vue')['default']
   }

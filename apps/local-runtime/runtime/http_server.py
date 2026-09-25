@@ -34,6 +34,7 @@ from runtime.service import LocalRuntimeService
 
 
 EXECUTION_PATH = "/v1/executions"
+WORKSPACE_PATH = "/v1/workspace"
 HEALTH_PATH = "/health"
 
 
@@ -159,6 +160,32 @@ class LocalRuntimeHttpApplication:
         if method.upper() == "GET" and path == HEALTH_PATH:
             return self._json(HTTPStatus.OK, self.identity.health_payload(running=self.service.running))
         parsed = urlsplit(path)
+        if method.upper() == "GET" and parsed.path == WORKSPACE_PATH:
+            try:
+                self.authenticator.authenticate(
+                    method="GET", path=path, headers=request_headers, body=b""
+                )
+            except RuntimeHttpError as exc:
+                return self._error(exc.status, exc.code, exc.message)
+            try:
+                query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+            except ValueError:
+                return self._error(HTTPStatus.BAD_REQUEST, "PROTOCOL_MISMATCH", "workspace request is invalid")
+            if set(query) != {"grantId", "workspaceId"} or any(len(values) != 1 for values in query.values()):
+                return self._error(HTTPStatus.BAD_REQUEST, "PROTOCOL_MISMATCH", "workspace request is invalid")
+            try:
+                from contracts.local_runtime import LocalRuntimeAuthorizationRef
+
+                authorization = LocalRuntimeAuthorizationRef(
+                    grantId=query["grantId"][0],
+                    workspaceId=query["workspaceId"][0],
+                )
+                return self._json(HTTPStatus.OK, self.service.workspace_root(authorization))
+            except LocalRuntimeError as exc:
+                status = HTTPStatus.FORBIDDEN if exc.code.startswith("CAPABILITY_") else HTTPStatus.CONFLICT
+                return self._error(status, exc.code, exc.safe_message)
+            except Exception:
+                return self._error(HTTPStatus.BAD_REQUEST, "PROTOCOL_MISMATCH", "workspace request is invalid")
         execution_id, endpoint = self._execution_endpoint(parsed.path)
         if method.upper() == "GET" and endpoint == "events" and execution_id:
             try:
@@ -383,5 +410,6 @@ __all__ = [
     "LocalRuntimeHttpServer",
     "RuntimeCredentialStore",
     "RuntimeRequestAuthenticator",
+    "WORKSPACE_PATH",
     "create_runtime_http_server",
 ]

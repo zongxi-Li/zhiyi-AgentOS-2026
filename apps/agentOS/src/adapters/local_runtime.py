@@ -38,6 +38,8 @@ class LocalRuntimeTransport(Protocol):
         invocation_id: str,
     ) -> str: ...
 
+    async def workspace_root(self, authorization: LocalRuntimeAuthorizationRef) -> str: ...
+
 
 class LocalRuntimeClient:
     """Validate and delegate; grant resolution belongs to the host runtime.
@@ -117,6 +119,12 @@ class LocalRuntimeClient:
             request_id=request_id,
             invocation_id=invocation_id,
         )
+
+    async def workspace_root(self, authorization: LocalRuntimeAuthorizationRef) -> str:
+        get_root = getattr(self._transport, "workspace_root", None)
+        if get_root is None:
+            raise RuntimeError("local runtime transport does not support workspace discovery")
+        return await get_root(authorization)
 
 
 __all__ = ["LocalRuntimeClient", "LocalRuntimeTransport"]

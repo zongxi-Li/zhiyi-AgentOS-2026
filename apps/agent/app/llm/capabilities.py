@@ -7,6 +7,13 @@ from app.llm.contracts import ProviderModelCapabilities, ThinkingMode
 
 
 DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
+DEEPSEEK_REASONING_EFFORTS = ("low", "high", "max")
+DEEPSEEK_REASONING_EFFORT_ALIASES = {
+    "minimal": "low",
+    "medium": "high",
+    "xhigh": "high",
+    "ultra": "max",
+}
 DEEPSEEK_LEGACY_MODELS = {
     "deepseek-chat": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.DISABLED),
     "deepseek-reasoner": (DEEPSEEK_DEFAULT_MODEL, ThinkingMode.STANDARD),
@@ -122,6 +129,26 @@ def normalize_thinking_mode(value: str | ThinkingMode | None) -> ThinkingMode:
         raise ValueError(f"Unsupported thinking mode: {value}") from exc
 
 
+def normalize_deepseek_reasoning_effort(
+    value: Any,
+    *,
+    strict: bool = False,
+) -> Optional[str]:
+    """Normalize DeepSeek effort aliases without collapsing low/high/max."""
+    if value is None or isinstance(value, ThinkingMode):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"", "none", "off", "disabled", "standard", "deep"}:
+        return None
+    effort = normalized if normalized in DEEPSEEK_REASONING_EFFORTS else DEEPSEEK_REASONING_EFFORT_ALIASES.get(normalized)
+    if effort:
+        return effort
+    if strict:
+        allowed = ", ".join((*DEEPSEEK_REASONING_EFFORTS, "minimal", "medium", "xhigh", "ultra"))
+        raise ValueError(f"DeepSeek reasoning_effort must be one of: {allowed}")
+    return None
+
+
 def normalize_deepseek_model(model: str) -> str:
     normalized = (model or "").strip()
     legacy = DEEPSEEK_LEGACY_MODELS.get(normalized.lower())
@@ -209,7 +236,9 @@ def provider_model_capabilities(
                 ThinkingMode.DEEP,
             },
             supports_reasoning_effort=True,
-            reasoning_efforts=["high", "max"],
+            reasoning_efforts=list(DEEPSEEK_REASONING_EFFORTS),
+            reasoning_effort_aliases=dict(DEEPSEEK_REASONING_EFFORT_ALIASES),
+            default_reasoning_effort="high",
             supports_tools=True,
             supports_tool_choice_in_thinking=False,
             requires_reasoning_content_for_tool_calls=True,
@@ -259,6 +288,49 @@ def provider_model_capabilities(
     return ProviderModelCapabilities()
 
 
+def normalize_provider_reasoning_effort(
+    value: Any,
+    capabilities: ProviderModelCapabilities,
+    *,
+    strict: bool = False,
+) -> Optional[str]:
+    """Normalize a provider effort using the capability declaration for that model."""
+    if value is None or isinstance(value, ThinkingMode):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"", "none", "off", "disabled", "standard", "deep"}:
+        return None
+
+    allowed = tuple(capabilities.reasoning_efforts or ())
+    if normalized in allowed:
+        return normalized
+    alias = capabilities.reasoning_effort_aliases.get(normalized)
+    if alias in allowed:
+        return alias
+    if strict and allowed:
+        raise ValueError(
+            f"Model reasoning_effort must be one of: {', '.join((*allowed, *capabilities.reasoning_effort_aliases))}"
+        )
+    return None
+
+
+def _reasoning_effort_for_mode(
+    mode: ThinkingMode,
+    capabilities: ProviderModelCapabilities,
+) -> Optional[str]:
+    """Choose a declared provider effort for a legacy coarse thinking mode."""
+    allowed = tuple(capabilities.reasoning_efforts or ())
+    if not allowed:
+        return None
+    if mode == ThinkingMode.DEEP:
+        return allowed[-1]
+    declared = normalize_provider_reasoning_effort(
+        capabilities.default_reasoning_effort,
+        capabilities,
+    )
+    return declared or allowed[0]
+
+
 def adapt_chat_completion_parameters(
     *,
     model: str,
@@ -295,7 +367,16 @@ def adapt_chat_completion_parameters(
             request.pop("reasoning_effort", None)
         else:
             extra_body["thinking"] = {"type": "enabled"}
-            effective_effort = "max" if mode == ThinkingMode.DEEP else "high"
+            if "reasoning_effort" in request:
+                effective_effort = normalize_provider_reasoning_effort(
+                    request.get("reasoning_effort"),
+                    capabilities,
+                    strict=True,
+                )
+            if effective_effort is None:
+                effective_effort = normalize_provider_reasoning_effort(thinking_mode, capabilities)
+            if effective_effort is None:
+                effective_effort = _reasoning_effort_for_mode(mode, capabilities)
             request["reasoning_effort"] = effective_effort
             for key in (
                 "temperature",
@@ -310,25 +391,27 @@ def adapt_chat_completion_parameters(
     elif family == "glm":
         extra_body = dict(request.get("extra_body") or {})
         if capabilities.always_thinking:
-            allowed_efforts = tuple(capabilities.reasoning_efforts or GLM_5_3_FLASH_REASONING_EFFORTS)
             requested_effort = request.get("reasoning_effort")
             if requested_effort is not None:
-                requested_effort = str(requested_effort).strip().lower()
-                if requested_effort not in allowed_efforts:
-                    allowed = ", ".join(allowed_efforts)
-                    raise ValueError(
-                        f"Model {model} only supports reasoning_effort: {allowed}"
-                    )
-                effective_effort = requested_effort
+                effective_effort = normalize_provider_reasoning_effort(
+                    requested_effort,
+                    capabilities,
+                    strict=True,
+                )
             else:
                 # Backward-compatible callers still speak in the three internal
                 # semantic modes. When no exact provider value was supplied,
                 # choose the nearest official GLM strength without disabling
                 # thinking on an always-thinking model.
-                effective_effort = "max" if mode == ThinkingMode.DEEP else "low"
+                effective_effort = _reasoning_effort_for_mode(mode, capabilities)
             request["reasoning_effort"] = effective_effort
             extra_body["thinking"] = {"type": "enabled"}
-            mode = ThinkingMode.DEEP if effective_effort in {"high", "max"} else ThinkingMode.STANDARD
+            allowed_efforts = tuple(capabilities.reasoning_efforts or ())
+            mode = (
+                ThinkingMode.DEEP
+                if effective_effort in allowed_efforts[1:]
+                else ThinkingMode.STANDARD
+            )
         else:
             extra_body["thinking"] = {"type": "enabled" if mode != ThinkingMode.DISABLED else "disabled"}
         request["extra_body"] = extra_body
@@ -363,13 +446,17 @@ __all__ = [
     "DEEPSEEK_DEFAULT_MODEL",
     "DEEPSEEK_LEGACY_MODELS",
     "DEEPSEEK_MODEL_METADATA",
+    "DEEPSEEK_REASONING_EFFORT_ALIASES",
+    "DEEPSEEK_REASONING_EFFORTS",
     "GLM_5_3_FLASH_REASONING_EFFORTS",
     "GLM_CONTEXT_WINDOWS",
     "GLM_MODEL_OVERRIDES",
     "NormalizedModelRequest",
     "adapt_chat_completion_parameters",
     "normalize_deepseek_model",
+    "normalize_deepseek_reasoning_effort",
     "normalize_model_request",
+    "normalize_provider_reasoning_effort",
     "normalize_thinking_mode",
     "provider_family",
     "provider_model_capabilities",

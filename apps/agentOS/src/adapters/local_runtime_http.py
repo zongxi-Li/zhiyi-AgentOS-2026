@@ -16,6 +16,7 @@ import httpx
 
 from contracts.local_runtime import (
     LOCAL_RUNTIME_PROTOCOL_VERSION,
+    LocalRuntimeAuthorizationRef,
     LocalRuntimeExecutionCancelRequest,
     LocalRuntimeExecutionEvent,
     LocalRuntimeExecutionRequest,
@@ -268,6 +269,42 @@ class HttpLocalRuntimeTransport:
                 "TRANSPORT_RESPONSE_INVALID", "local runtime health response is invalid"
             )
         return payload
+
+    async def workspace_root(self, authorization: LocalRuntimeAuthorizationRef) -> str:
+        """Fetch the canonical root over the signed, grant-checked runtime boundary."""
+        path = (
+            "/v1/workspace?"
+            f"grantId={quote(authorization.grant_id, safe='')}"
+            f"&workspaceId={quote(authorization.workspace_id, safe='')}"
+        )
+        try:
+            response = await self._client.get(
+                self._address_for_path(path),
+                headers=self._signed_headers(method="GET", path=path, body=b""),
+                timeout=self.timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_UNAVAILABLE", "local runtime request timed out", retryable=True
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_UNAVAILABLE", "local runtime is unavailable", retryable=True
+            ) from exc
+        payload = self._decode_response(response)
+        if response.status_code < 200 or response.status_code >= 300:
+            self._raise_http_error(payload, response.status_code)
+        workspace_root = payload.get("workspaceRoot") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("workspaceId") != authorization.workspace_id
+            or not isinstance(workspace_root, str)
+            or not workspace_root.strip()
+        ):
+            raise LocalRuntimeTransportError(
+                "TRANSPORT_RESPONSE_INVALID", "local runtime workspace response is invalid"
+            )
+        return workspace_root
 
     def _signed_headers(
         self,

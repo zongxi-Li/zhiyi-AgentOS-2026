@@ -209,12 +209,14 @@ import { plainMissionTitle } from '@/utils/missionTitle'
 import {
   MODEL_SETTINGS_EVENT,
   capabilityFromPayload,
+  defaultReasoningEffortFromCapability,
+  effortValuesFromOptions,
   fetchModelCapability,
   isEffortKindOption,
   loadModelSettings,
   reasoningOptionsFromCapability,
   thinkingOptions,
-  type GlmReasoningEffort,
+  type ReasoningEffort,
   type ModelCapability,
   type ModelSettings,
   type ThinkingMode
@@ -243,19 +245,25 @@ const activeModel = computed(() => (
 const modelCapability = ref<ModelCapability | null>(null)
 const reasoningOptions = computed(() => reasoningOptionsFromCapability(modelCapability.value))
 const usesEffortOptions = computed(() => isEffortKindOption(reasoningOptions.value))
-const effortOptions = computed(() => reasoningOptions.value.map(option => String(option.value)))
-const thinkingSelection = computed<GlmReasoningEffort | ThinkingMode>({
+const effortOptions = computed(() => effortValuesFromOptions(reasoningOptions.value))
+const thinkingSelection = computed<ReasoningEffort | ThinkingMode>({
   get: () => {
     if (usesEffortOptions.value) {
       const stored = draft.value.reasoningEffort || modelSettings.value.reasoningEffort
-      const matched = stored && effortOptions.value.includes(stored) ? stored : effortOptions.value[effortOptions.value.length - 1]
-      return (matched || 'max') as GlmReasoningEffort
+      if (stored && effortOptions.value.includes(stored)) return stored as ReasoningEffort
+      if (draft.value.thinkingMode === 'disabled' && reasoningOptions.value.some(option => option.value === 'disabled')) {
+        return 'disabled'
+      }
+      if (draft.value.thinkingMode === 'standard' && effortOptions.value.includes('low')) return 'low'
+      if (draft.value.thinkingMode === 'deep' && effortOptions.value.includes('max')) return 'max'
+      return defaultReasoningEffortFromCapability(modelCapability.value, reasoningOptions.value) as ReasoningEffort
     }
     return draft.value.thinkingMode
   },
   set: value => {
-    if (usesEffortOptions.value) {
-      const effort = value as GlmReasoningEffort
+    const selected = reasoningOptions.value.find(option => option.value === value)
+    if (selected?.kind === 'effort') {
+      const effort = value as ReasoningEffort
       draft.value.reasoningEffort = effort
       draft.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
       return
@@ -268,7 +276,9 @@ const thinkingSelection = computed<GlmReasoningEffort | ThinkingMode>({
 type AdvancedPreset = 'fast' | 'balanced' | 'deep' | 'custom'
 const advancedPreset = computed<AdvancedPreset>(() => {
   if (usesEffortOptions.value) {
-    const effort = draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'
+    const effort = draft.value.reasoningEffort
+      || modelSettings.value.reasoningEffort
+      || defaultReasoningEffortFromCapability(modelCapability.value, reasoningOptions.value)
     if (effort === 'low' && !draft.value.webSearchEnabled && draft.value.planningDiversity === 'stable') return 'fast'
     if (effort === 'high' && draft.value.webSearchEnabled && draft.value.planningDiversity === 'balanced') return 'balanced'
     if (effort === 'max' && draft.value.webSearchEnabled && draft.value.planningDiversity === 'exploratory') return 'deep'
@@ -286,7 +296,11 @@ const planningModeDescription = computed(() => draft.value.planningMode === 'dyn
   : '优先复用已验证模板，未命中时自动切换动态规划。')
 const advancedSettingsSummary = computed(() => [
   usesEffortOptions.value
-    ? `GLM reasoning_effort: ${draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'}`
+    ? draft.value.reasoningEffort || modelSettings.value.reasoningEffort
+      ? `reasoning_effort: ${draft.value.reasoningEffort || modelSettings.value.reasoningEffort}`
+      : draft.value.thinkingMode === 'disabled'
+        ? 'Thinking: disabled'
+        : `reasoning_effort: ${defaultReasoningEffortFromCapability(modelCapability.value, reasoningOptions.value) || effortOptions.value[effortOptions.value.length - 1]}`
     : draft.value.thinkingMode === 'disabled' ? '关闭思考' : draft.value.thinkingMode === 'standard' ? '标准思考' : '深度思考',
   draft.value.webSearchEnabled ? '联网' : '仅本地',
   draft.value.planningDiversity === 'stable' ? '稳定规划' : draft.value.planningDiversity === 'balanced' ? '均衡规划' : '探索规划'
@@ -343,8 +357,8 @@ const applyAdvancedPreset = (preset: AdvancedPreset) => {
     // 档位集合来自服务端能力元数据：预设值不在集合内时收敛到最近可用档。
     const pick = (preferred: string) => effortOptions.value.includes(preferred)
       ? preferred
-      : effortOptions.value[effortOptions.value.length - 1] || 'max'
-    const effort: GlmReasoningEffort = (preset === 'fast' ? pick('low') : preset === 'balanced' ? pick('high') : pick('max')) as GlmReasoningEffort
+      : effortOptions.value[effortOptions.value.length - 1]
+    const effort: ReasoningEffort = (preset === 'fast' ? pick('low') : preset === 'balanced' ? pick('high') : pick('max')) as ReasoningEffort
     draft.value.reasoningEffort = effort
     draft.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
     draft.value.webSearchEnabled = preset !== 'fast'
@@ -375,7 +389,13 @@ const syncAdvancedConfigState = (event: Event) => {
 
 const syncDraftRuntimeSelection = () => {
   if (usesEffortOptions.value) {
-    const effort = draft.value.reasoningEffort || modelSettings.value.reasoningEffort || 'max'
+    const hasDisabledOption = reasoningOptions.value.some(option => option.value === 'disabled')
+    const storedEffort = draft.value.reasoningEffort || modelSettings.value.reasoningEffort
+    if (!storedEffort && hasDisabledOption && draft.value.thinkingMode === 'disabled') {
+      draft.value.reasoningEffort = undefined
+      return
+    }
+    const effort = (storedEffort || defaultReasoningEffortFromCapability(modelCapability.value, reasoningOptions.value)) as ReasoningEffort
     draft.value.reasoningEffort = effort
     draft.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
   } else if (draft.value.reasoningEffort) {

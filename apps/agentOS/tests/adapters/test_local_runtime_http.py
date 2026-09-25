@@ -195,6 +195,44 @@ async def test_health_probe_is_separate_from_signed_execution():
 
 
 @pytest.mark.asyncio
+async def test_workspace_root_uses_signed_grant_reference_and_checks_response_identity():
+    authorization = LocalRuntimeAuthorizationRef(grantId="grant-1", workspaceId="workspace-1")
+    captured: list[str] = []
+
+    async def handler(incoming: httpx.Request) -> httpx.Response:
+        raw_path = incoming.url.raw_path.decode("ascii")
+        captured.append(raw_path)
+        headers = incoming.headers
+        expected = build_resource_signature(
+            "secret-1",
+            method="GET",
+            path=raw_path,
+            timestamp=int(headers["x-resource-timestamp"]),
+            nonce=headers["x-resource-nonce"],
+            body=b"",
+        )
+        assert headers["x-resource-signature"] == expected
+        return httpx.Response(
+            200,
+            json={"workspaceId": "workspace-1", "workspaceRoot": "C:/work/project"},
+            request=incoming,
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://runtime.test")
+    transport = HttpLocalRuntimeTransport(
+        resource_id="zhiyi-local-runtime",
+        address="http://runtime.test/v1/executions",
+        credential_provider=CredentialProvider(),
+        client=client,
+    )
+    try:
+        assert await transport.workspace_root(authorization) == "C:/work/project"
+    finally:
+        await client.aclose()
+    assert captured == ["/v1/workspace?grantId=grant-1&workspaceId=workspace-1"]
+
+
+@pytest.mark.asyncio
 async def test_http_transport_authenticates_events_and_cancel_on_same_runtime_boundary():
     execution_id = "execution-1"
     request_id = "request-1"
