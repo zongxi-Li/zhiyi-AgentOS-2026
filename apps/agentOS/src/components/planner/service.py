@@ -24,14 +24,14 @@ from contracts.planning import (
     TaskPlanPatch,
 )
 from service.agents import AgentRegistry
-from support.acg.models import ACGBlueprint, CapabilityCandidate, ControlNode
+from support.acg.schema import ACGBlueprint, ControlNode
+from support.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
 from .acg_builder import ACGBuilder
 from .semantic_planner import SemanticPlanner
-from support.acg.models import CapabilityCatalog
+from support.acg.capabilities import CapabilityCatalog
 from .cognitive_router import CognitiveRouter
-from support.acg.models import build_default_capability_catalog
+from support.acg.native_capabilities import build_default_capability_catalog
 from .intent_analyzer import IntentLLM, IntentParser
-from support.acg.models import TaskSemanticProfile
 from .template_matcher import TemplateMatcher
 from .algorithms import (
     PLANNER_ALGORITHM_VERSION,

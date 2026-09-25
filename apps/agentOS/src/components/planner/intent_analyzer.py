@@ -6,12 +6,12 @@ import json
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Optional, Protocol
 
-from support.acg.models import (
+from support.acg.capabilities import (
     CapabilityCatalog,
     highest_planning_risk_level,
 )
-from support.acg.models import build_default_capability_catalog
-from support.acg.models import CapabilityCandidate, TaskSemanticProfile
+from support.acg.native_capabilities import build_default_capability_catalog
+from support.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
 from .complexity import (
     PLANNING_MODEL_TIMEOUT_SECONDS,
     assess_complexity,

@@ -17,7 +17,7 @@ from domain.models import (
     MissionStatus,
     WorkflowRun,
 )
-from support.acg.models import ACGBlueprint
+from support.acg.schema import ACGBlueprint
 
 
 def _runtime_status(value: Any) -> str:

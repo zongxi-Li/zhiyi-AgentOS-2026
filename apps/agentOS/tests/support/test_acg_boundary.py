@@ -1,5 +1,8 @@
 """Regression tests for the public ACG model boundary."""
 
+import ast
+from pathlib import Path
+
 def test_step_node_uses_the_exported_node_type() -> None:
     from support.acg.models import NodeType, StepNode
 
@@ -25,3 +28,20 @@ def test_task_understanding_preserves_detailed_acceptance_criteria() -> None:
     assert success_criteria["type"] == "array"
     assert "maxItems" not in success_criteria
     assert "maxLength" not in success_criteria["items"]
+
+
+def test_legacy_models_module_is_an_import_only_compatibility_facade() -> None:
+    import support.acg.models as facade
+    from support.acg.capabilities import CapabilityCatalog
+    from support.acg.legacy.workflow_adapter import promote_workflow_to_acg
+    from support.acg.schema import StepNode
+
+    assert facade.StepNode is StepNode
+    assert facade.CapabilityCatalog is CapabilityCatalog
+    assert facade.promote_workflow_to_acg is promote_workflow_to_acg
+
+    tree = ast.parse(Path(facade.__file__).read_text(encoding="utf-8"))
+    implementation_nodes = (
+        ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef,
+    )
+    assert not any(isinstance(node, implementation_nodes) for node in tree.body)

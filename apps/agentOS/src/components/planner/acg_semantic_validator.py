@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from contracts.planning import SemanticTaskRelationType, TaskImplementationBinding, TaskPlan
-from support.acg.models import ACGBlueprint, ControlNode, ControlType, EdgeType, StepNode
+from support.acg.schema import ACGBlueprint, ControlNode, ControlType, EdgeType, StepNode
 
 
 class ACGSemanticPreservationError(ValueError):

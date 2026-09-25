@@ -19,10 +19,8 @@ from typing import Any, Callable, Mapping, Optional
 from uuid import uuid4
 
 from service.agents import AgentRegistry
-from support.acg.models import (
-    RuntimeBlueprintSpec,
-    promote_workflow_to_acg,
-)
+from support.acg.legacy.workflow_adapter import promote_workflow_to_acg
+from support.acg.schema import RuntimeBlueprintSpec
 from components.auditor.governance.evaluation import WorkflowEvaluator
 from components.mission_manager.store import WorkflowRegistry
 from components.auditor.governance.review import ReviewManager
@@ -117,8 +115,8 @@ from contracts.recovery import GraphPatch, GraphPatchRef, GraphPatchResult
 from contracts.workflow import GraphRef
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from runtime.execution_migration import ExecutionEngineMigratingError
-from support.acg.models import build_default_capability_catalog
-from support.acg.models import CapabilityCatalog
+from support.acg.capabilities import CapabilityCatalog
+from support.acg.native_capabilities import build_default_capability_catalog
 from components.planner.algorithms import (
     PLANNER_ALGORITHM_VERSION,
     normalize_planning_diversity,

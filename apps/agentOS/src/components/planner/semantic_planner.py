@@ -15,7 +15,8 @@ from contracts.artifacts import (
     FINAL_SYNTHESIS_LOGICAL_ROLE,
     canonicalize_final_synthesis_nodes,
 )
-from support.acg.models import CapabilityCatalog, TaskSemanticProfile
+from support.acg.capabilities import CapabilityCatalog
+from support.acg.semantic_profile import TaskSemanticProfile
 from .intent_analyzer import IntentLLM
 from .task_decomposer import TaskDecomposer
 from .topology import EdgeOrigin, validate_task_plan_for_execution

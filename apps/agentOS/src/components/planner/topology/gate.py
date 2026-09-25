@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Callable
 
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
-from support.acg.models import CapabilityCatalog
+from support.acg.capabilities import CapabilityCatalog
 
 from .compiler import TaskPlanTopologyCompiler
 from .audit import failed_topology_audit, successful_topology_audit

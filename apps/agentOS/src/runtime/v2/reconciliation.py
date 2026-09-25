@@ -12,7 +12,7 @@ from contracts.planning import TaskImplementationBinding, TaskPlan
 from contracts.workflow import RuntimeMissionRecord
 from domain.lifecycle_projection import LifecycleProjectionEvent, ProjectionEventStatus
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
-from support.acg.models import RuntimeBlueprintSpec
+from support.acg.schema import RuntimeBlueprintSpec
 from types import SimpleNamespace
 
 from .identity_projection import DEAD_LETTER_MAX_ATTEMPTS, IdentityProjectionBridge

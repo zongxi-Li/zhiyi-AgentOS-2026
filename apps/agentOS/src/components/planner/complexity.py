@@ -10,7 +10,8 @@ from time import monotonic
 from typing import Any, Callable
 from adapters.prompt_runtime import planner_prompt_metadata, planner_system_prompt
 
-from support.acg.models import ComplexityAssessment, ComplexityLevel
+from support.acg.schema import ComplexityLevel
+from support.acg.semantic_profile import ComplexityAssessment
 
 
 DIMENSIONS = (

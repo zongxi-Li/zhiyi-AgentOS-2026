@@ -26,7 +26,7 @@ from adapters.model.native_prompt import (
     NativeCapabilityPromptBuilder,
     prompt_version_for_capability,
 )
-from support.acg.models import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
+from support.acg.native_capabilities import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
 from components.communicator.contracts import ContextPack, input_revision
 from runtime.live_events import runtime_event_broker
 

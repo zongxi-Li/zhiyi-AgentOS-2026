@@ -30,7 +30,7 @@ from contracts.compiled_acg import (
 )
 from components.communicator.manifest import CommunicationManifest, CommunicationRule
 from components.executor.graph import ACGConditionalRoute, ACGExecutionGraph, ACGNodeSpec
-from support.acg.models import (
+from support.acg.schema import (
     ACGBlueprint,
     AgentNode,
     ControlNode,
@@ -41,8 +41,8 @@ from support.acg.models import (
     NodeType,
     SkillNode,
     StepNode,
-    validate_blueprint,
 )
+from support.acg.validation import validate_blueprint
 
 
 class UnsupportedCommunicationModeError(ValueError):

@@ -28,7 +28,8 @@ from components.planner.topology import (
     validate_task_plan_for_execution,
     failed_topology_audit, successful_topology_audit,
 )
-from support.acg.models import CapabilityCatalog, TaskSemanticProfile
+from support.acg.capabilities import CapabilityCatalog
+from support.acg.semantic_profile import TaskSemanticProfile
 
 from .complexity import (
     PLANNING_BUDGETS, PLANNING_MODEL_TIMEOUT_SECONDS, call_planning_model,

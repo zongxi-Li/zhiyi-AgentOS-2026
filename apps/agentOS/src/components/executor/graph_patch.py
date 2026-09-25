@@ -6,7 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from contracts.recovery import GraphPatch
-from support.acg.models import ACGBlueprint, ACGEdge, parse_node, validate_blueprint
+from support.acg.schema import ACGBlueprint, ACGEdge, parse_node
+from support.acg.validation import validate_blueprint
 
 
 class GraphPatchConflictError(ValueError):

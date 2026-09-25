@@ -11,7 +11,8 @@ from domain.models import SemanticTask
 from domain.repository import IdentityConflictError
 from components.planner.service import apply_task_plan_patch
 from components.planner.topology import EdgeOrigin, validate_task_plan_for_execution
-from support.acg.models import CapabilityCatalog, build_default_capability_catalog
+from support.acg.capabilities import CapabilityCatalog
+from support.acg.native_capabilities import build_default_capability_catalog
 
 from .runner import AcgIdentityLifecycleService
 

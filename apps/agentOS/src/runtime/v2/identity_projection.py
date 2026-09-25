@@ -46,8 +46,10 @@ from domain.models import (
 )
 from domain.lifecycle_projection import LifecycleProjectionEvent
 from domain.repository import EntityNotFoundError, IdentityConflictError, RepositorySet
-from support.acg.models import (CapabilityCatalog, EdgeType, RuntimeBlueprintSpec,
-                                build_default_capability_catalog, validate_blueprint)
+from support.acg.capabilities import CapabilityCatalog
+from support.acg.native_capabilities import build_default_capability_catalog
+from support.acg.schema import EdgeType, RuntimeBlueprintSpec
+from support.acg.validation import validate_blueprint
 from components.planner.service import apply_task_plan_patch
 
 from .context import ExecutionContext

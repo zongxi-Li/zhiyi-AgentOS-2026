@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
-from support.acg.models import TaskSemanticProfile
+from support.acg.semantic_profile import TaskSemanticProfile
 from components.mission_manager.store import WorkflowRegistry
 
 # 工作流对象由任务管理器提供；规划器只读取其公开字段。

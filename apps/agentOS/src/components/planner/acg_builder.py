@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from contracts.planning import SemanticTaskRelationType, TaskImplementationBinding, TaskPlan
-from support.acg.models import (
+from support.acg.schema import (
     ACGBlueprint,
     ACGEdge,
     AgentNode,
@@ -22,17 +22,17 @@ from support.acg.models import (
     LoopSpec,
     ConsensusSpec,
     StepNode,
-    validate_blueprint,
-    promote_workflow_to_acg,
 )
-from support.acg.models import CapabilityCatalog
+from support.acg.capabilities import CapabilityCatalog
+from support.acg.legacy.workflow_adapter import promote_workflow_to_acg
+from support.acg.validation import validate_blueprint
 from .cognitive_router import CollaborationNetwork
 from .acg_semantic_validator import (
     validate_acg_semantic_preservation,
     validate_bound_acg_semantics,
 )
-from support.acg.models import build_default_capability_catalog
-from support.acg.models import TaskSemanticProfile
+from support.acg.native_capabilities import build_default_capability_catalog
+from support.acg.semantic_profile import TaskSemanticProfile
 
 if TYPE_CHECKING:
     from .algorithms import PlanningVariant
