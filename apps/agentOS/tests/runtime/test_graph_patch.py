@@ -8,7 +8,7 @@ import pytest
 from components.executor import GraphPatchConflictError, InMemoryExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission_manager.store import WorkflowRegistry
-from contracts.planning import TaskBindingPatch, TaskImplementationBinding, PlannedTask, TaskPlanPatch
+from contracts.planning import TaskBindingPatch, TaskImplementationBinding, PlannedTask, TaskPlanPatch, TaskPlanRelation
 from contracts.recovery import GraphPatch
 from contracts.workflow import (
     ReviewDecision,
@@ -22,7 +22,8 @@ from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import (
-    ACGBlueprint, ACGEdge, CapabilityCatalog, EdgeType, PlanningCapabilityDescriptor, StepNode,
+    ACGBlueprint, ACGEdge, CapabilityCatalog, ControlNode, ControlType, EdgeType,
+    PlanningCapabilityDescriptor, StepNode,
     build_default_capability_catalog,
 )
 from components.planner.topology import catalog_fingerprint
@@ -83,6 +84,9 @@ def _runtime(
                     objective="deliver the approved result",
                 ),
             ],
+            planningRelations=[TaskPlanRelation(
+                sourceKey="step:review", targetKey="step:deliver", relationType="depends_on",
+            )],
             steps=[
                 WorkflowStepDefinition(
                     stepId="review",
@@ -180,6 +184,10 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
                     title="enrich",
                     objective="enrich result",
                 ),),
+                relations=(
+                    TaskPlanRelation(sourceKey="step:review", targetKey="step:enrich", relationType="depends_on"),
+                    TaskPlanRelation(sourceKey="step:enrich", targetKey="step:deliver", relationType="depends_on"),
+                ),
             ),
             taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
                     planNodeKey="step:enrich",
@@ -215,6 +223,57 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
         identity.close()
 
 
+def test_edge_only_semantic_patch_requires_plan_patch_without_successor(tmp_path):
+    runtime, _agent = _runtime(tmp_path, with_identity=True)
+    identity = runtime.identity_lifecycle.lifecycle_service
+    try:
+        mission = runtime.create_mission("edge only", workflow_id="patchable")
+        paused = asyncio.run(runtime.start(mission.mission_id, workflow_id="patchable"))
+        blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
+        dependency = next(edge for edge in blueprint.edges
+                          if edge.edge_type is EdgeType.DEPENDENCY
+                          and edge.source_id == "review" and edge.target_id == "deliver")
+        patch = GraphPatch(
+            patchId="edge-only-semantic", idempotencyKey="edge-only-semantic:v1",
+            runId=paused.run_id, graphId=blueprint.graph_id,
+            baseGraphVersion=blueprint.version, removeEdgeIds=[dependency.edge_id],
+        )
+        with pytest.raises(ValueError, match="TaskPlanPatch"):
+            asyncio.run(runtime.apply_graph_patch(patch))
+        assert [item.run_id for item in identity.repositories.runs.list_for_mission(mission.mission_id)] == [paused.run_id]
+        assert runtime.get_status(paused.run_id).status is WorkflowStatus.WAITING_REVIEW
+    finally:
+        identity.close()
+
+
+def test_control_only_patch_preserves_semantic_reachability(tmp_path):
+    runtime, _agent = _runtime(tmp_path, with_identity=True)
+    identity = runtime.identity_lifecycle.lifecycle_service
+    try:
+        mission = runtime.create_mission("control only", workflow_id="patchable")
+        paused = asyncio.run(runtime.start(mission.mission_id, workflow_id="patchable"))
+        blueprint = ACGBlueprint.model_validate(paused.acg_blueprint)
+        dependency = next(edge for edge in blueprint.edges
+                          if edge.edge_type is EdgeType.DEPENDENCY
+                          and edge.source_id == "review" and edge.target_id == "deliver")
+        patch = GraphPatch(
+            patchId="control-only", idempotencyKey="control-only:v1",
+            runId=paused.run_id, graphId=blueprint.graph_id,
+            baseGraphVersion=blueprint.version, removeEdgeIds=[dependency.edge_id],
+            addNodes=[ControlNode(nodeId="control-x", controlType=ControlType.CONSENSUS).model_dump(by_alias=True)],
+            addEdges=[
+                ACGEdge(sourceId="review", targetId="control-x").model_dump(by_alias=True),
+                ACGEdge(sourceId="control-x", targetId="deliver").model_dump(by_alias=True),
+            ],
+        )
+        applied = asyncio.run(runtime.apply_graph_patch(patch))
+        assert applied.run_id != paused.run_id
+        successor = runtime.get_status(applied.run_id)
+        assert successor.execution_state["taskPlanVersion"] == paused.execution_state["taskPlanVersion"]
+    finally:
+        identity.close()
+
+
 def test_runtime_patch_audit_uses_injected_custom_catalog(tmp_path):
     catalog = build_default_capability_catalog()
     catalog.register(PlanningCapabilityDescriptor(
@@ -245,6 +304,10 @@ def test_runtime_patch_audit_uses_injected_custom_catalog(tmp_path):
             taskPlanPatch=TaskPlanPatch(
                 missionId=task.mission_id, basePlanVersion=1, planVersion=2,
                 addNodes=(PlannedTask(key="step:enrich", title="enrich", objective="enrich"),),
+                relations=(
+                    TaskPlanRelation(sourceKey="step:review", targetKey="step:enrich", relationType="depends_on"),
+                    TaskPlanRelation(sourceKey="step:enrich", targetKey="step:deliver", relationType="depends_on"),
+                ),
             ),
             taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
                 planNodeKey="step:enrich", acgNodeId="enrich"
@@ -350,6 +413,10 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
                     title="enrich",
                     objective="enrich result",
                 ),),
+                relations=(
+                    TaskPlanRelation(sourceKey="step:review", targetKey="step:enrich", relationType="depends_on"),
+                    TaskPlanRelation(sourceKey="step:enrich", targetKey="step:deliver", relationType="depends_on"),
+                ),
             ),
             taskNodeBindingPatch=TaskBindingPatch(bindings=(
                 TaskImplementationBinding(

@@ -66,8 +66,7 @@ class ACGGraphCompiler:
         run_id: str | None = None,
     ) -> CompiledACGPackage:
         """Validate and lower every node and edge into immutable manifests."""
-        if run_id is not None:
-            validate_blueprint(blueprint)
+        validate_blueprint(blueprint)
         self._assert_enum_coverage()
         nodes_by_id = {node.node_id: node for node in blueprint.nodes}
         steps = {

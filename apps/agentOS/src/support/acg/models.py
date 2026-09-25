@@ -875,6 +875,7 @@ def promote_workflow_to_acg(
     *,
     mission_id: str | None = None,
     enrich: bool = True,
+    infer_dependencies: bool = True,
 ) -> ACGBlueprint:
     """把线性 WorkflowDefinition 升格为 ACGBlueprint。
 
@@ -919,22 +920,24 @@ def promote_workflow_to_acg(
         )
         blueprint.nodes.append(node)
 
-    # 构建依赖边：优先用显式 next_step_id，回退到声明顺序。
+    # Legacy workflow-only execution infers ordering. Canonical TaskPlan callers
+    # disable this and lower only Planner-authorized semantic dependencies.
     step_ids = {definition.step_id for definition in steps}
-    for index, definition in enumerate(steps):
-        target_id = definition.next_step_id
-        if target_id in ("", "done", "completed", None):
-            target_id = None
-        if target_id is None and index + 1 < len(steps):
-            target_id = steps[index + 1].step_id
-        if target_id and target_id in step_ids:
-            blueprint.edges.append(
-                ACGEdge(
-                    sourceId=definition.step_id,
-                    targetId=target_id,
-                    edgeType=EdgeType.DEPENDENCY,
+    if infer_dependencies:
+        for index, definition in enumerate(steps):
+            target_id = definition.next_step_id
+            if target_id in ("", "done", "completed", None):
+                target_id = None
+            if target_id is None and index + 1 < len(steps):
+                target_id = steps[index + 1].step_id
+            if target_id and target_id in step_ids:
+                blueprint.edges.append(
+                    ACGEdge(
+                        sourceId=definition.step_id,
+                        targetId=target_id,
+                        edgeType=EdgeType.DEPENDENCY,
+                    )
                 )
-            )
 
     # input.from 是结构化通信契约。为每个声明的数据来源创建通信边，并补齐
     # 执行依赖，保证消费者不会在生产者完成前被调度。
@@ -955,7 +958,7 @@ def promote_workflow_to_acg(
                     metadata={"contract": "input.from"},
                 )
             )
-            if not any(
+            if infer_dependencies and not any(
                 edge.edge_type == EdgeType.DEPENDENCY
                 and edge.source_id == source_id
                 and edge.target_id == definition.step_id

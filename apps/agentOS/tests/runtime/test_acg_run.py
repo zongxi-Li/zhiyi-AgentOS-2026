@@ -18,7 +18,7 @@ from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
 from components.mission_manager.store import WorkflowRegistry
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, RuntimeRunRecord, WorkflowStep, WorkflowStepDefinition, WorkflowStatus
-from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
+from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRelation, PlannedTask
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
@@ -88,6 +88,34 @@ def _runtime() -> ExecutionRuntime:
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
     )
+
+
+def test_explicit_blueprint_reversal_fails_before_materialization() -> None:
+    runtime = _runtime()
+    mission = runtime.create_mission("explicit mismatch", workflow_id="acg-run")
+    blueprint = ACGBlueprint(
+        graphId="explicit-runtime-mismatch",
+        nodes=[StepNode(nodeId="step-a", agentName="runner"),
+               StepNode(nodeId="step-b", agentName="runner")],
+        edges=[ACGEdge(sourceId="step-b", targetId="step-a")],
+    )
+    plan = TaskPlan(
+        missionId=mission.mission_id,
+        nodes=(PlannedTask(key="A", title="A", objective="A"),
+               PlannedTask(key="B", title="B", objective="B")),
+        relations=(TaskPlanRelation(sourceKey="A", targetKey="B", relationType="depends_on"),),
+    )
+    mission.input.update({
+        "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
+        "taskPlan": plan.model_dump(by_alias=True, mode="json"),
+        "taskBindings": [
+            TaskImplementationBinding(planNodeKey="A", acgNodeId="step-a").model_dump(by_alias=True),
+            TaskImplementationBinding(planNodeKey="B", acgNodeId="step-b").model_dump(by_alias=True),
+        ],
+    })
+    runtime.workflow_store.save_mission(mission)
+    with pytest.raises(ValueError, match="reversed"):
+        runtime.prepare_run(mission.mission_id)
 
 
 def test_runtime_executes_prepared_acg_with_reference_state() -> None:
@@ -1212,6 +1240,10 @@ def test_runtime_marks_unselected_acg_branch_skipped() -> None:
             objective=step.goal or step.description or step.node_id,
             metadata={"plannerStrategy": "test_explicit"},
         ) for step in blueprint.step_nodes()),
+        relations=(
+            TaskPlanRelation(sourceKey="step:source", targetKey="step:yes", relationType="depends_on"),
+            TaskPlanRelation(sourceKey="step:source", targetKey="step:no", relationType="depends_on"),
+        ),
     )
     task.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),

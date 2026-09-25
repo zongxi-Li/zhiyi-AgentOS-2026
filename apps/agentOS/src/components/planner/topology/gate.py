@@ -38,7 +38,7 @@ def validate_task_plan_for_execution(
         audit = failed_topology_audit(
             error=exc, nodes=nodes, relations=relations, control_policies=control_policies,
             catalog=capability_catalog, producer_kind=kind, catalog_source=catalog_source,
-            capability_coverage_mode="declared_producers_only",
+            capability_coverage_mode="all_required_dependencies",
         )
         exc.audit = audit
         if audit_sink is not None:
@@ -46,7 +46,7 @@ def validate_task_plan_for_execution(
         raise
     audit = successful_topology_audit(
         result=result, nodes=nodes, catalog=capability_catalog, producer_kind=kind,
-        catalog_source=catalog_source, capability_coverage_mode="declared_producers_only",
+        catalog_source=catalog_source, capability_coverage_mode="all_required_dependencies",
     )
     if audit_sink is not None:
         audit_sink(audit)

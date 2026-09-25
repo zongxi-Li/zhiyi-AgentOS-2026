@@ -8,7 +8,7 @@ from components.memory import MemoryService, PhaseCapsule
 from components.memory.store import SQLiteMemoryStore
 from components.mission_manager.store import WorkflowRegistry
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, WorkflowStatus
-from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
+from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRelation, PlannedTask
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
@@ -137,6 +137,10 @@ def _run(tmp_path):
             capabilityRequirements=((step.capability,) if step.capability else ()),
             metadata={"plannerStrategy": "test_explicit"},
         ) for step in blueprint.step_nodes()),
+        relations=(
+            TaskPlanRelation(sourceKey="step:research-a", targetKey="step:synthesize", relationType="depends_on"),
+            TaskPlanRelation(sourceKey="step:research-b", targetKey="step:synthesize", relationType="depends_on"),
+        ),
     )
     task.input.update({
         "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),

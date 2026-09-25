@@ -27,7 +27,10 @@ from support.acg.models import (
 )
 from support.acg.models import CapabilityCatalog
 from .cognitive_router import CollaborationNetwork
-from .acg_semantic_validator import validate_acg_semantic_preservation
+from .acg_semantic_validator import (
+    validate_acg_semantic_preservation,
+    validate_bound_acg_semantics,
+)
 from support.acg.models import build_default_capability_catalog
 from support.acg.models import TaskSemanticProfile
 
@@ -141,11 +144,76 @@ class ACGBuilder:
         blueprint.touch()
         validate_blueprint(blueprint)
         validate_acg_semantic_preservation(task_plan, blueprint)
+        validate_bound_acg_semantics(
+            task_plan,
+            blueprint,
+            tuple(TaskImplementationBinding(
+                planNodeKey=step.metadata["taskPlanKey"], acgNodeId=step.node_id,
+            ) for step in steps),
+            require_exact=True,
+        )
         return blueprint
 
     def build_template(self, *, workflow, task_plan: TaskPlan) -> ACGBuildResult:
         """Promote an execution template and bind it to declared Planner semantics."""
-        blueprint = promote_workflow_to_acg(workflow, mission_id=task_plan.mission_id)
+        blueprint = promote_workflow_to_acg(
+            workflow, mission_id=task_plan.mission_id, infer_dependencies=False,
+        )
+        plan_keys = {node.key for node in task_plan.nodes}
+        steps = blueprint.step_nodes()
+        if len(steps) == 1 and len(plan_keys) == 1:
+            steps[0].metadata["taskPlanKey"] = next(iter(plan_keys))
+        else:
+            for step in steps:
+                step.metadata["taskPlanKey"] = f"step:{step.node_id}"
+        step_by_key = {step.metadata["taskPlanKey"]: step for step in steps}
+        if len(step_by_key) != len(steps) or set(step_by_key) != plan_keys:
+            raise ValueError("Template Steps must bind exactly to TaskPlan nodes")
+
+        plan_adjacency: dict[str, list[str]] = {}
+        for relation in task_plan.relations:
+            if relation.relation_type is SemanticTaskRelationType.DEPENDS_ON:
+                plan_adjacency.setdefault(relation.source_key, []).append(relation.target_key)
+                self._add_dependency(
+                    blueprint,
+                    step_by_key[relation.source_key].node_id,
+                    step_by_key[relation.target_key].node_id,
+                )
+
+        def authorized_order(source_key: str, target_key: str) -> bool:
+            pending = [source_key]
+            visited: set[str] = set()
+            while pending:
+                current = pending.pop()
+                if current == target_key:
+                    return True
+                if current not in visited:
+                    visited.add(current)
+                    pending.extend(plan_adjacency.get(current, ()))
+            return False
+
+        key_by_step_id = {step.node_id: key for key, step in step_by_key.items()}
+        for definition in workflow.steps:
+            target_id = definition.next_step_id
+            if target_id in (None, "", "done", "completed"):
+                continue
+            if target_id not in key_by_step_id or not authorized_order(
+                key_by_step_id[definition.step_id], key_by_step_id[target_id],
+            ):
+                raise ValueError(
+                    "Template nextStepId requires a TaskPlan semantic dependency: "
+                    f"{definition.step_id} -> {target_id}"
+                )
+        for edge in blueprint.edges_of_type(EdgeType.COMMUNICATION):
+            if edge.metadata.get("contract") != "input.from":
+                continue
+            if not authorized_order(
+                key_by_step_id[edge.source_id], key_by_step_id[edge.target_id],
+            ):
+                raise ValueError(
+                    "Template input.from requires a TaskPlan semantic dependency: "
+                    f"{edge.source_id} -> {edge.target_id}"
+                )
         return self.finalize(blueprint=blueprint, task_plan=task_plan)
 
     def finalize(
@@ -160,22 +228,26 @@ class ACGBuilder:
             raise ValueError(
                 "Blueprint implementation bindings must cover the complete TaskPlan"
             )
-        for step, node in zip(steps, task_plan.nodes):
-            step.metadata["taskPlanKey"] = node.key
+        plan_keys = {node.key for node in task_plan.nodes}
+        if len(steps) == 1 and not steps[0].metadata.get("taskPlanKey"):
+            steps[0].metadata["taskPlanKey"] = next(iter(plan_keys))
+        for step in steps:
+            if not step.metadata.get("taskPlanKey") and f"step:{step.node_id}" in plan_keys:
+                step.metadata["taskPlanKey"] = f"step:{step.node_id}"
         bindings = tuple(
             TaskImplementationBinding(
-                planNodeKey=node.key,
+                planNodeKey=step.metadata["taskPlanKey"],
                 acgNodeId=step.node_id,
             )
-            for step, node in zip(steps, task_plan.nodes)
+            for step in steps
+            if step.metadata.get("taskPlanKey") in plan_keys
         )
-        if {item.plan_node_key for item in bindings} != {
-            node.key for node in task_plan.nodes
-        }:
+        if len(bindings) != len(steps) or {item.plan_node_key for item in bindings} != plan_keys:
             raise ValueError(
-                "Blueprint implementation bindings must cover the complete TaskPlan"
+                "Blueprint requires explicit, unique taskPlanKey bindings for every Step"
             )
         validate_acg_semantic_preservation(task_plan, blueprint)
+        validate_bound_acg_semantics(task_plan, blueprint, bindings, require_exact=True)
         return ACGBuildResult(blueprint=blueprint, bindings=bindings)
 
     def _build_steps(
@@ -474,7 +546,7 @@ class ACGBuilder:
                 if not group_dependencies:
                     self._add_dependency(blueprint, start.node_id, parallel.node_id)
                 for dependency in group_dependencies:
-                    source = self._execution_source(dependency, group_for, controls, step_by_capability)
+                    source = self._execution_source(dependency, step_by_capability)
                     self._add_dependency(blueprint, source, parallel.node_id)
                 continue
 
@@ -482,7 +554,7 @@ class ACGBuilder:
             if not dependencies[capability_id]:
                 self._add_dependency(blueprint, start.node_id, target)
             for dependency in dependencies[capability_id]:
-                source = self._execution_source(dependency, group_for, controls, step_by_capability)
+                source = self._execution_source(dependency, step_by_capability)
                 self._add_dependency(blueprint, source, target)
 
         consumed = {dependency for values in dependencies.values() for dependency in values}
@@ -593,10 +665,9 @@ class ACGBuilder:
         ]
 
     @staticmethod
-    def _execution_source(dependency, group_for, controls, step_by_capability) -> str:
-        group_index = group_for.get(dependency)
-        if group_index is not None:
-            return controls[group_index][1].node_id
+    def _execution_source(dependency, step_by_capability) -> str:
+        # A shared JOIN would make every sibling precede the consumer, including
+        # siblings absent from its TaskPlan dependencies.
         return step_by_capability[dependency].node_id
 
     @staticmethod

@@ -184,16 +184,17 @@ def test_compiler_accepts_event_mode_without_downgrading_it() -> None:
 def test_compiler_uses_dependency_edges_only() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-test",
-        nodes=[StepNode(nodeId="one"), StepNode(nodeId="two")],
+        nodes=[StepNode(nodeId=node_id, agentName="runner") for node_id in ("one", "two", "three")],
         edges=[
             ACGEdge(sourceId="one", targetId="two", edgeType=EdgeType.DEPENDENCY),
-            ACGEdge(sourceId="two", targetId="one", edgeType=EdgeType.COMMUNICATION),
+            ACGEdge(sourceId="two", targetId="three", edgeType=EdgeType.DEPENDENCY),
+            ACGEdge(sourceId="one", targetId="three", edgeType=EdgeType.COMMUNICATION),
         ],
     )
 
     graph = ACGGraphCompiler().compile(blueprint)
 
-    assert graph.edges == (("one", "two"),)
+    assert graph.edges == (("one", "two"), ("two", "three"))
 
 
 def test_compiler_maps_blueprint_budget_to_manifest_run_budget() -> None:

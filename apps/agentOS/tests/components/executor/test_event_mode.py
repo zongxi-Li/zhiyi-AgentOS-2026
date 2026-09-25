@@ -13,7 +13,7 @@ from components.executor.node_runner import ACGNodeRunner
 from components.executor.value_store import InMemoryExecutionValueStore
 from components.memory import MemoryService
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from support.acg.models import ACGBlueprint, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, StepNode
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 
 
@@ -64,12 +64,15 @@ def test_compiler_rejects_event_step_declaring_input_slots() -> None:
     blueprint = ACGBlueprint(
         graphId="event-with-slots",
         nodes=[
+            StepNode(nodeId="source", agentName="event-agent"),
             StepNode(
                 nodeId="notify",
+                agentName="event-agent",
                 metadata={"communicationMode": "EVENT"},
                 inputSpec={"from": {"source": ["title"]}},
             )
         ],
+        edges=[ACGEdge(sourceId="source", targetId="notify")],
     )
 
     with pytest.raises(ValueError, match="EVENT.*inputSpec.from"):

@@ -339,6 +339,20 @@ def test_existing_plan_relations_are_fixed_and_not_silently_repaired() -> None:
     assert {edge.origin for edge in conflict.fixed_edges} == {EdgeOrigin.TEMPLATE_DECLARED}
 
 
+@pytest.mark.parametrize("origin", [
+    EdgeOrigin.TEMPLATE_DECLARED, EdgeOrigin.FALLBACK_GENERATED, EdgeOrigin.PLAN_PATCH,
+])
+def test_existing_plan_missing_mandatory_catalog_producer_fails_closed(origin) -> None:
+    from components.planner.topology import validate_task_plan_for_execution
+
+    with pytest.raises(TopologyCompileError) as captured:
+        validate_task_plan_for_execution(
+            capability_catalog=_catalog(), mission_id="mission_0123456789ab",
+            nodes=[_task("B", "cap_b")], relation_origin=origin,
+        )
+    assert captured.value.conflict.code is TopologyConflictCode.CAPABILITY_BINDING_CONFLICT
+
+
 def test_template_cycle_fails_before_acg_build_with_structured_conflict() -> None:
     workflow = WorkflowDefinition(
         workflowId="cyclic-template", name="Cyclic", domain="general",
@@ -547,4 +561,4 @@ def test_patch_default_catalog_is_explicitly_marked_compatibility() -> None:
         ), audit_sink=audits.append,
     )
     assert audits[0]["catalogSource"] == "default_compatibility"
-    assert audits[0]["capabilityCoverageMode"] == "declared_producers_only"
+    assert audits[0]["capabilityCoverageMode"] == "all_required_dependencies"

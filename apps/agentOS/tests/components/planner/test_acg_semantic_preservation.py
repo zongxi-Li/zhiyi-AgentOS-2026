@@ -4,13 +4,14 @@ import pytest
 
 from components.planner.acg_builder import ACGBuilder
 from components.planner.acg_semantic_validator import (
-    ACGSemanticPreservationError, validate_acg_semantic_preservation,
+    ACGSemanticPreservationError, semantic_reachability_projection,
+    validate_acg_semantic_preservation, validate_bound_acg_semantics,
 )
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from components.planner.topology.compiler import TaskPlanTopologyCompiler
-from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
+from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
 from support.acg.models import (
-    ACGBlueprint, CapabilityCatalog, ControlNode, ControlType, EdgeType,
+    ACGBlueprint, ACGEdge, CapabilityCatalog, ControlNode, ControlType, EdgeType, StepNode,
     PlanningCapabilityDescriptor, TaskSemanticProfile,
 )
 
@@ -81,6 +82,17 @@ def test_parallel_join_preserves_dependencies_without_serializing_siblings() -> 
         isinstance(node, ControlNode) and node.control_type is ControlType.PARALLEL
         for node in blueprint.nodes
     )
+
+
+def test_parallel_join_does_not_make_unrelated_sibling_precede_consumer() -> None:
+    plan = _plan(("A", "B"), ("A", "C"), ("B", "D"))
+    blueprint = _build(plan)
+    bindings = tuple(TaskImplementationBinding(
+        planNodeKey=step.metadata["taskPlanKey"], acgNodeId=step.node_id,
+    ) for step in blueprint.step_nodes())
+
+    assert ("C", "D") not in semantic_reachability_projection(blueprint, bindings)
+    validate_bound_acg_semantics(plan, blueprint, bindings, require_exact=True)
 
 
 def test_verification_loop_remains_control_topology_not_semantic_back_edge() -> None:
@@ -159,3 +171,58 @@ def test_builder_always_invokes_semantic_preservation_guard(monkeypatch) -> None
     plan = _plan(("A", "B"))
     blueprint = _build(plan)
     assert calls == [(plan, blueprint)]
+
+
+def test_explicit_bindings_reject_reversed_semantic_dependency() -> None:
+    plan = _plan(("A", "B"))
+    blueprint = ACGBlueprint(
+        graphId="explicit-reversed",
+        nodes=[StepNode(nodeId="step-b"), StepNode(nodeId="step-a")],
+        edges=[ACGEdge(sourceId="step-b", targetId="step-a")],
+    )
+    bindings = (
+        TaskImplementationBinding(planNodeKey="A", acgNodeId="step-a"),
+        TaskImplementationBinding(planNodeKey="B", acgNodeId="step-b"),
+    )
+    with pytest.raises(ACGSemanticPreservationError, match="reversed"):
+        validate_bound_acg_semantics(plan, blueprint, bindings)
+
+
+def test_explicit_bindings_accept_dependency_through_control() -> None:
+    plan = _plan(("A", "B"))
+    blueprint = ACGBlueprint(
+        graphId="explicit-control",
+        nodes=[StepNode(nodeId="step-b"), ControlNode(nodeId="control-x", controlType=ControlType.START),
+               StepNode(nodeId="step-a")],
+        edges=[ACGEdge(sourceId="step-a", targetId="control-x"),
+               ACGEdge(sourceId="control-x", targetId="step-b")],
+    )
+    bindings = (
+        TaskImplementationBinding(planNodeKey="B", acgNodeId="step-b"),
+        TaskImplementationBinding(planNodeKey="A", acgNodeId="step-a"),
+    )
+    validate_bound_acg_semantics(plan, blueprint, bindings)
+    assert semantic_reachability_projection(blueprint, bindings) == {("A", "B")}
+
+
+def test_explicit_bindings_reject_missing_and_duplicate_semantics() -> None:
+    plan = _plan(("A", "B"))
+    blueprint = ACGBlueprint(
+        graphId="explicit-extra", nodes=[StepNode(nodeId="step-a"), StepNode(nodeId="step-b")],
+        edges=[ACGEdge(sourceId="step-a", targetId="step-b")],
+    )
+    with pytest.raises(ACGSemanticPreservationError, match="do not cover"):
+        validate_bound_acg_semantics(plan, blueprint, (
+            TaskImplementationBinding(planNodeKey="A", acgNodeId="step-a"),
+        ))
+    with pytest.raises(ACGSemanticPreservationError, match="exactly once"):
+        validate_bound_acg_semantics(plan, blueprint, (
+            TaskImplementationBinding(planNodeKey="A", acgNodeId="step-a"),
+            TaskImplementationBinding(planNodeKey="B", acgNodeId="step-a"),
+        ))
+    without_dependency = TaskPlan(missionId=plan.mission_id, nodes=plan.nodes)
+    with pytest.raises(ACGSemanticPreservationError, match="undeclared"):
+        validate_bound_acg_semantics(without_dependency, blueprint, (
+            TaskImplementationBinding(planNodeKey="A", acgNodeId="step-a"),
+            TaskImplementationBinding(planNodeKey="B", acgNodeId="step-b"),
+        ), require_exact=True)

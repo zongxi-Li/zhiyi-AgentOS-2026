@@ -53,6 +53,17 @@ def _message(message_id: str, *, artifact_ref: str = "output:one") -> ReliableMe
     )
 
 
+def test_compile_package_validates_blueprint_without_run_id() -> None:
+    blueprint = ACGBlueprint(
+        graphId="invalid-compile",
+        nodes=[StepNode(nodeId="a"), StepNode(nodeId="b")],
+        edges=[ACGEdge(sourceId="a", targetId="b"),
+               ACGEdge(sourceId="b", targetId="a")],
+    )
+    with pytest.raises(ValueError, match="cycle"):
+        ACGGraphCompiler().compile_package(blueprint, run_id=None)
+
+
 def test_operation_artifact_is_invisible_until_node_commit() -> None:
     store = InMemoryExecutionValueStore()
     store.prepare_node_commit(run_id="run-1", commit_id="commit-1")

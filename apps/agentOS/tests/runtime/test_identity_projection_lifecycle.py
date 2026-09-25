@@ -32,7 +32,7 @@ from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, StepNode
+from support.acg.models import ACGBlueprint, CapabilityCatalog, StepNode, build_default_capability_catalog
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -77,7 +77,12 @@ def _runtime(
 ):
     repositories = SQLiteV2Repositories(SQLiteV2Storage(":memory:"))
     identity_runtime = AcgIdentityLifecycleService(repositories)
-    bridge = IdentityProjectionBridge(identity_runtime, repositories)
+    catalog = CapabilityCatalog(
+        descriptor.model_copy(update={"depends_on": []})
+        if descriptor.capability_id == "analysis" else descriptor
+        for descriptor in build_default_capability_catalog().available()
+    )
+    bridge = IdentityProjectionBridge(identity_runtime, repositories, capability_catalog=catalog)
     agents = AgentRegistry()
     agents.register(_IdentityAgent(AgentProfile(
         agentId="agent-identity",
@@ -110,6 +115,7 @@ def _runtime(
         workflow_registry=workflows,
         workflow_store=workflow_store or MemoryWorkflowStore(),
         identity_lifecycle=bridge,
+        capability_catalog=catalog,
     )
     task = runtime.create_mission(
         "身份纵向测试",

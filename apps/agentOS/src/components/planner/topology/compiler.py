@@ -21,7 +21,6 @@ class TaskPlanTopologyCompiler:
             relation_origin=EdgeOrigin.MODEL,
             relation_mutation_policy=EdgeMutationPolicy.REPAIRABLE,
             normalize_reversed_requirements=True,
-            require_all_catalog_dependencies=True,
         )
 
     def validate_existing_plan(
@@ -49,7 +48,6 @@ class TaskPlanTopologyCompiler:
             relation_origin=relation_origin,
             relation_mutation_policy=EdgeMutationPolicy.FIXED,
             normalize_reversed_requirements=False,
-            require_all_catalog_dependencies=False,
         )
 
     def _compile(
@@ -61,7 +59,6 @@ class TaskPlanTopologyCompiler:
         relation_origin: EdgeOrigin,
         relation_mutation_policy: EdgeMutationPolicy,
         normalize_reversed_requirements: bool,
-        require_all_catalog_dependencies: bool,
     ) -> TopologyCompileResult:
         positions = {node.key: index for index, node in enumerate(nodes)}
         capabilities = {
@@ -132,9 +129,6 @@ class TaskPlanTopologyCompiler:
                 )
                 requirements.append(requirement)
                 if not candidates:
-                    if not require_all_catalog_dependencies:
-                        requirements.pop()
-                        continue
                     raise TopologyCompileError(
                         TopologyConflict(
                             code=TopologyConflictCode.CAPABILITY_BINDING_CONFLICT,

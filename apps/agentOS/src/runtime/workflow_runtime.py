@@ -62,6 +62,10 @@ from contracts.planning import (
     TaskImplementationBinding,
     TaskPlan,
 )
+from components.planner.acg_semantic_validator import (
+    semantic_reachability_projection,
+    validate_bound_acg_semantics,
+)
 from components.resource.agent_service import AgentService
 from components.resource.agent_directory import AgentDirectory
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
@@ -1077,10 +1081,10 @@ class ExecutionRuntime:
         scope: RunExecutionScope,
     ) -> None:
         """Run the existing L1-L3 plan/build/compile path for one persisted Run."""
-        # 显式 Blueprint 兼容入口（必须同时提供 taskPlan/bindings）没有 Planner
-        # 运行，绝不能伪造 planner started/parsed/compiled/completed 事件。
         provided_explicit = run.input.get("acgBlueprint") or run.acg_blueprint or None
         explicit_blueprint = isinstance(provided_explicit, dict) and bool(provided_explicit.get("nodes"))
+        # 显式 Blueprint 兼容入口（必须同时提供 taskPlan/bindings）没有 Planner
+        # 运行，绝不能伪造 planner started/parsed/compiled/completed 事件。
         blueprint, task_plan, task_bindings = self._build_acg_blueprint(
             task,
             run,
@@ -1092,6 +1096,10 @@ class ExecutionRuntime:
             )
             if callable(resolve_snapshot):
                 task_plan = resolve_snapshot(task_plan)
+        if task_plan is not None:
+            validate_bound_acg_semantics(
+                task_plan, blueprint, task_bindings, require_exact=True,
+            )
         self._validate_blueprint_agents(
             blueprint,
             domain=workflow.domain or task.domain,
@@ -3144,27 +3152,13 @@ class ExecutionRuntime:
                 raise ValueError(
                     "explicit ACG Blueprint requires taskPlan and taskBindings"
                 )
-            if isinstance(raw_plan, dict) and isinstance(raw_bindings, list):
-                task_plan = TaskPlan.model_validate(raw_plan)
-                task_bindings = tuple(
-                    TaskImplementationBinding.model_validate(item)
-                    for item in raw_bindings
-                )
+            task_plan = TaskPlan.model_validate(raw_plan)
+            task_bindings = tuple(
+                TaskImplementationBinding.model_validate(item)
+                for item in raw_bindings
+            )
             if task_plan.mission_id != task.mission_id:
                 raise ValueError("TaskPlan missionId does not match RuntimeMissionRecord")
-            binding_keys = [item.plan_node_key for item in task_bindings]
-            binding_nodes = [item.acg_node_id for item in task_bindings]
-            plan_keys = {node.key for node in task_plan.nodes}
-            executable_ids = {node.node_id for node in blueprint.step_nodes()}
-            if (
-                len(set(binding_keys)) != len(binding_keys)
-                or len(set(binding_nodes)) != len(binding_nodes)
-                or set(binding_keys) != plan_keys
-                or set(binding_nodes) != executable_ids
-            ):
-                raise ValueError(
-                    "Blueprint bindings must cover the complete TaskPlan and executable Blueprint"
-                )
             return blueprint, task_plan, task_bindings
 
         planning_mode = str(run.input.get("planningMode") or "").strip().lower()
@@ -4081,7 +4075,16 @@ class ExecutionRuntime:
                 node.node_id for node in outcome.blueprint.step_nodes()
                 if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
             }
+            base_bindings = tuple(
+                TaskImplementationBinding.model_validate(item)
+                for item in raw_bindings
+            )
             semantic_execution_change = active_old_step_ids != active_new_step_ids
+            if not semantic_execution_change:
+                semantic_execution_change = (
+                    semantic_reachability_projection(blueprint, base_bindings)
+                    != semantic_reachability_projection(outcome.blueprint, base_bindings)
+                )
             if semantic_execution_change and patch.task_plan_patch is None:
                 raise ValueError(
                     "executable Graph Patch changes require Planner TaskPlanPatch"
@@ -4106,10 +4109,6 @@ class ExecutionRuntime:
             added_step_ids = active_new_step_ids - active_old_step_ids
             if added_step_ids and binding_patch is None:
                 raise ValueError("new executable Graph Patch nodes require TaskBindingPatch")
-            base_bindings = tuple(
-                TaskImplementationBinding.model_validate(item)
-                for item in raw_bindings
-            )
             removed_plan_keys = (
                 set(patch.task_plan_patch.retire_keys)
                 | set(patch.task_plan_patch.replace_keys)
@@ -4133,6 +4132,9 @@ class ExecutionRuntime:
                 raise ValueError(
                     "Graph Patch bindings must cover every active executable node"
                 )
+            validate_bound_acg_semantics(
+                next_plan, outcome.blueprint, next_bindings, require_exact=True,
+            )
 
             new_run_id = (
                 self.identity_lifecycle.new_run_id(task.mission_id)

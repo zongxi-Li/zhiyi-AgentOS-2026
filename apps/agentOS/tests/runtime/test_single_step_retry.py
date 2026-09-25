@@ -7,7 +7,7 @@ import pytest
 from components.content import SQLiteContentManifestStore
 from components.executor import InMemoryExecutionValueStore
 from components.mission_manager.store import WorkflowRegistry
-from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
+from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan, TaskPlanRelation
 from contracts.workflow import StepStatus, WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
 from runtime.workflow_runtime import ExecutionRuntime
@@ -162,6 +162,9 @@ def test_single_step_retry_reuses_committed_upstream_and_runs_only_final(
                 )
                 for node in blueprint.step_nodes()
             ),
+            relations=(TaskPlanRelation(
+                sourceKey="step:source", targetKey="step:final", relationType="depends_on",
+            ),),
         )
         mission.input.update({
             "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
@@ -317,6 +320,10 @@ def test_checkpoint_resume_can_retry_failed_step_in_the_same_run(
             )
             for node in blueprint.step_nodes()
         ),
+        relations=(
+            TaskPlanRelation(sourceKey="step:source", targetKey="step:design", relationType="depends_on"),
+            TaskPlanRelation(sourceKey="step:design", targetKey="step:final", relationType="depends_on"),
+        ),
     )
     mission.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
@@ -465,6 +472,10 @@ def _twice_failure_runtime(tmp_path):
             )
             for node in blueprint.step_nodes()
         ),
+        relations=(
+            TaskPlanRelation(sourceKey="step:source", targetKey="step:design", relationType="depends_on"),
+            TaskPlanRelation(sourceKey="step:design", targetKey="step:final", relationType="depends_on"),
+        ),
     )
     mission.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
@@ -570,6 +581,9 @@ def test_successor_resume_backfills_identity_attempts_for_reused_steps(tmp_path)
                 )
                 for node in blueprint.step_nodes()
             ),
+            relations=(TaskPlanRelation(
+                sourceKey="step:source", targetKey="step:final", relationType="depends_on",
+            ),),
         )
         mission.input.update({
             "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
