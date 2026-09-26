@@ -1,9 +1,9 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.Message;
-import com.kinlin.ai.repository.MessageRepository;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ChatService;
+import com.kinlin.ai.service.SearchService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,7 +20,7 @@ import java.util.UUID;
 public class SearchController {
 
     private final ChatService chatService;
-    private final MessageRepository messageRepository;
+    private final SearchService searchService;
 
     /**
      * 搜索对话消息
@@ -55,11 +55,8 @@ public class SearchController {
             return ResponseEntity.badRequest().build();
         }
 
-        // 这里需要根据实际需求实现跨对话搜索
-        // 简化实现：搜索所有包含关键词的消息
-        List<Message> results = messageRepository.findAll().stream()
-                .filter(msg -> msg.getContent().toLowerCase().contains(keyword.toLowerCase()))
-                .toList();
+        // 跨对话搜索当前用户会话中包含关键词的消息（最多200条）
+        List<Message> results = searchService.searchMessages(userId, keyword);
 
         return ResponseEntity.ok(results);
     }

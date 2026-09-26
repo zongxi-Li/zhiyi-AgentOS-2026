@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -30,32 +31,36 @@ public class ChatService {
     private final RagService ragService;
     private final MetricsService metricsService;
     private final RoleSwitchOptimizer roleSwitchOptimizer;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 发送消息并获取回复
      */
-    @Transactional
     @LogExecutionTime("发送消息")
     public ChatResponse sendMessage(ChatRequest request, UUID userId) {
-        // 获取或创建对话
-        Conversation conversation = getOrCreateConversation(
-                request.getContextId(),
-                userId,
-                request.getRoleId(),
-                request.getWorkspaceMode()
-        );
+        // 短事务一：获取或创建对话 + 保存用户消息（阻塞HTTP调用不得进入事务）
+        Conversation conversation = transactionTemplate.execute(tx -> {
+            // 获取或创建对话
+            Conversation conv = getOrCreateConversation(
+                    request.getContextId(),
+                    userId,
+                    request.getRoleId(),
+                    request.getWorkspaceMode()
+            );
 
-        // 保存用户消息
-        Message userMessage = new Message();
-        userMessage.setConversationId(conversation.getId());
-        userMessage.setRole(Message.MessageRole.USER);
-        userMessage.setContent(request.getText());
-        userMessage.setMessageType(Message.MessageType.TEXT);
-        if (request.getFileUrl() != null) {
-            userMessage.setFileUrl(request.getFileUrl());
-            userMessage.setMessageType(Message.MessageType.IMAGE); // 根据文件类型设置
-        }
-        messageRepository.save(userMessage);
+            // 保存用户消息
+            Message userMessage = new Message();
+            userMessage.setConversationId(conv.getId());
+            userMessage.setRole(Message.MessageRole.USER);
+            userMessage.setContent(request.getText());
+            userMessage.setMessageType(Message.MessageType.TEXT);
+            if (request.getFileUrl() != null) {
+                userMessage.setFileUrl(request.getFileUrl());
+                userMessage.setMessageType(Message.MessageType.IMAGE); // 根据文件类型设置
+            }
+            messageRepository.save(userMessage);
+            return conv;
+        });
 
         // 获取对话上下文：优先使用请求中提供的context，否则从数据库构建
         List<Map<String, String>> context;
@@ -139,29 +144,32 @@ public class ChatService {
             aiResponse.setMetadata(responseMetadata);
         }
 
-        // 保存AI回复
-        Message assistantMessage = new Message();
-        assistantMessage.setConversationId(conversation.getId());
-        assistantMessage.setRole(Message.MessageRole.ASSISTANT);
-        assistantMessage.setContent(aiResponse.getText());
-        assistantMessage.setMessageType(Message.MessageType.TEXT);
-        Map<String, Object> metadata = new HashMap<>();
-        if (aiResponse.getMetadata() != null) {
-            metadata.putAll(aiResponse.getMetadata());
-        }
-        metadata.put("confidence", aiResponse.getConfidence());
-        // 添加可解释性信息
-        if (aiResponse.getTokensUsed() != null) {
-            metadata.put("tokens_used", aiResponse.getTokensUsed());
-        }
-        if (aiResponse.getSources() != null && !aiResponse.getSources().isEmpty()) {
-            metadata.put("sources", aiResponse.getSources());
-        }
-        if (aiResponse.getReasoningPath() != null) {
-            metadata.put("reasoning_path", aiResponse.getReasoningPath());
-        }
-        assistantMessage.setMetadata(metadata);
-        messageRepository.save(assistantMessage);
+        // 短事务二：保存AI回复
+        transactionTemplate.execute(tx -> {
+            Message assistantMessage = new Message();
+            assistantMessage.setConversationId(conversation.getId());
+            assistantMessage.setRole(Message.MessageRole.ASSISTANT);
+            assistantMessage.setContent(aiResponse.getText());
+            assistantMessage.setMessageType(Message.MessageType.TEXT);
+            Map<String, Object> metadata = new HashMap<>();
+            if (aiResponse.getMetadata() != null) {
+                metadata.putAll(aiResponse.getMetadata());
+            }
+            metadata.put("confidence", aiResponse.getConfidence());
+            // 添加可解释性信息
+            if (aiResponse.getTokensUsed() != null) {
+                metadata.put("tokens_used", aiResponse.getTokensUsed());
+            }
+            if (aiResponse.getSources() != null && !aiResponse.getSources().isEmpty()) {
+                metadata.put("sources", aiResponse.getSources());
+            }
+            if (aiResponse.getReasoningPath() != null) {
+                metadata.put("reasoning_path", aiResponse.getReasoningPath());
+            }
+            assistantMessage.setMetadata(metadata);
+            messageRepository.save(assistantMessage);
+            return null;
+        });
 
         // 记录消息数指标
         try {
@@ -169,8 +177,6 @@ public class ChatService {
         } catch (Exception e) {
             log.warn("记录消息指标失败: " + e.getMessage());
         }
-
-        // 缓存清除由 @CacheEvict 注解处理（在 clearHistory 方法中）
 
         // 设置contextId
         aiResponse.setContextId(conversation.getContextId());
