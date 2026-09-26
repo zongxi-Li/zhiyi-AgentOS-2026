@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from support.acg.models import EdgeType, AgentNode
+
+
 import asyncio
 
 import pytest
@@ -64,15 +67,15 @@ def test_compiler_rejects_event_step_declaring_input_slots() -> None:
     blueprint = ACGBlueprint(
         graphId="event-with-slots",
         nodes=[
-            StepNode(nodeId="source", agentName="event-agent"),
+            StepNode(nodeId="source"),
             StepNode(
                 nodeId="notify",
-                agentName="event-agent",
+
                 metadata={"communicationMode": "EVENT"},
                 inputSpec={"from": {"source": ["title"]}},
             )
-        ],
-        edges=[ACGEdge(sourceId="source", targetId="notify")],
+        , AgentNode(nodeId="fixture-agent::source", name="event-agent"), AgentNode(nodeId="fixture-agent::notify", name="event-agent")],
+        edges=[ACGEdge(sourceId="source", targetId="notify"), ACGEdge(sourceId="fixture-agent::source", targetId="source", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::notify", targetId="notify", edgeType=EdgeType.EXECUTION)],
     )
 
     with pytest.raises(ValueError, match="EVENT.*inputSpec.from"):

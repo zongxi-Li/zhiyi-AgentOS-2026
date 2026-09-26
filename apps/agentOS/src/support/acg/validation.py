@@ -9,8 +9,8 @@ from .graph import (
     conditional_branch_exclusive_nodes, detect_cycle, find_dangling_dependencies,
 )
 from .schema import (
-    ACGBlueprint, ACGValidationError, AgentNode, ControlNode, ControlType, EdgeType,
-    NodeType, StepNode,
+    ACGBlueprint, ACGValidationError, ControlNode, ControlType, EdgeType,
+    EvidenceNode, NodeType, StepNode,
 )
 
 def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
@@ -128,6 +128,7 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
     if cycle:
         raise ACGValidationError(f"ACG contains a cycle: {' -> '.join(cycle)}")
 
+    agent_bindings_by_step = blueprint.agent_bindings_by_step()
     for node in blueprint.nodes:
         if isinstance(node, ControlNode) and node.control_type == ControlType.LOOP:
             if node.loop_spec is None:
@@ -152,15 +153,10 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
             _validate_conditional_control(blueprint, node)
         if not isinstance(node, StepNode):
             continue
-        explicit_agent_binding = any(
-            edge.edge_type is EdgeType.EXECUTION
-            and edge.target_id == node.node_id
-            and isinstance(blueprint.get_node(edge.source_id), AgentNode)
-            for edge in blueprint.edges
-        )
-        if not node.agent_name and not explicit_agent_binding:
+        agent_bindings = agent_bindings_by_step.get(node.node_id, [])
+        if len(agent_bindings) != 1:
             raise ACGValidationError(
-                f"Step node {node.node_id} requires AgentNode + EXECUTION or legacy agentName"
+                f"Step node {node.node_id} requires exactly one AgentNode + EXECUTION binding"
             )
         try:
             check_contract_schema(node.output_spec, label=f"{node.node_id}.outputSpec")
@@ -185,6 +181,15 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
                     raise ACGValidationError(
                         f"Step {node.node_id} consumes {source} without an execution dependency path"
                     )
+
+    step_ids = {node.node_id for node in blueprint.step_nodes()}
+    for node in blueprint.nodes:
+        if isinstance(node, EvidenceNode) and node.producer_step_id:
+            if node.producer_step_id not in step_ids:
+                raise ACGValidationError(
+                    f"Evidence node {node.node_id} references missing producer Step: "
+                    f"{node.producer_step_id}"
+                )
 
     for edge in blueprint.edges_of_type(EdgeType.COMMUNICATION):
         if not _has_dependency_path(blueprint, edge.source_id, edge.target_id):

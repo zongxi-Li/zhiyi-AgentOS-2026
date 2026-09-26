@@ -160,6 +160,20 @@ class ACGNodeBase(BaseModel):
         return data
 
 
+def _reject_removed_resource_fields(value: Any, fields: set[str], label: str) -> Any:
+    if isinstance(value, dict):
+        containers = ((value, label), (value.get("metadata"), f"{label} metadata"))
+        for container, container_label in containers:
+            if not isinstance(container, dict):
+                continue
+            removed = sorted(fields.intersection(container))
+            if removed:
+                raise ValueError(
+                    f"{container_label} no longer accepts legacy resource fields: {removed}"
+                )
+    return value
+
+
 class StepNode(ACGNodeBase):
     """执行步骤节点 ACG 中的最小执行单元。"""
 
@@ -171,18 +185,26 @@ class StepNode(ACGNodeBase):
     logical_role: str = Field(default="task", alias="logicalRole")
     input_spec: Dict[str, Any] = Field(default_factory=dict, alias="inputSpec")
     output_spec: Dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
-    # 执行绑定：谁来执行、用什么技能
-    assigned_agent_id: Optional[str] = Field(default=None, alias="assignedAgentId")
-    agent_name: Optional[str] = Field(default=None, alias="agentName")
+    # Execution capability requirement. The Agent binding is represented by an EXECUTION edge.
     capability: Optional[str] = None
-    skill_ids: List[str] = Field(default_factory=list, alias="skillIds")
-    memory_ids: List[str] = Field(default_factory=list, alias="memoryIds")
-    evidence_ids: List[str] = Field(default_factory=list, alias="evidenceIds")
     timeout: int = 0
     retry_limit: int = Field(default=0, alias="retryLimit")
     priority: int = 0
     status: BlueprintStatus = BlueprintStatus.DRAFT
     review_required: bool = Field(default=False, alias="reviewRequired")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_resource_fields(cls, value: Any) -> Any:
+        return _reject_removed_resource_fields(
+            value,
+            {
+                "agentName", "agent_name", "assignedAgentId", "assigned_agent_id",
+                "skillIds", "skill_ids", "memoryIds", "memory_ids",
+                "evidenceIds", "evidence_ids",
+            },
+            "StepNode",
+        )
 
     @computed_field(alias="stepId", return_type=str)
     @property
@@ -204,11 +226,16 @@ class AgentNode(ACGNodeBase):
     role: str = ""
     model_name: Optional[str] = Field(default=None, alias="modelName")
     capability_tags: List[str] = Field(default_factory=list, alias="capabilityTags")
-    skill_ids: List[str] = Field(default_factory=list, alias="skillIds")
-    memory_ids: List[str] = Field(default_factory=list, alias="memoryIds")
     max_concurrency: int = Field(default=1, alias="maxConcurrency")
     status: BlueprintStatus = BlueprintStatus.DRAFT
     ephemeral: bool = False  # 动态角色生成器产出的临时角色标记
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_inline_resource_lists(cls, value: Any) -> Any:
+        return _reject_removed_resource_fields(
+            value, {"skillIds", "skill_ids", "memoryIds", "memory_ids"}, "AgentNode"
+        )
 
     @computed_field(alias="agentId", return_type=str)
     @property
@@ -276,6 +303,19 @@ class EvidenceNode(ACGNodeBase):
     source: str = ""
     schema_: Dict[str, Any] = Field(default_factory=dict, alias="schema")
     producer_step_id: Optional[str] = Field(default=None, alias="producerStepId")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_metadata_producer_fallback(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            metadata = value.get("metadata")
+            if isinstance(metadata, dict) and (
+                "producerStepId" in metadata or "producer_step_id" in metadata
+            ):
+                raise ValueError(
+                    "EvidenceNode producer must use the typed producerStepId field"
+                )
+        return value
 
     @computed_field(alias="evidenceId", return_type=str)
     @property
@@ -455,6 +495,15 @@ class RuntimeBlueprintSpec(BaseModel):
     def edges_of_type(self, edge_type: EdgeType) -> List[ACGEdge]:
         """按原始顺序筛选指定类别边，复杂度 ``O(E)``。"""
         return [e for e in self.edges if e.edge_type == edge_type]
+
+    def agent_bindings_by_step(self) -> Dict[str, List[AgentNode]]:
+        """Return canonical AgentNode bindings declared by EXECUTION edges."""
+        bindings: Dict[str, List[AgentNode]] = {}
+        for edge in self.edges_of_type(EdgeType.EXECUTION):
+            agent = self.get_node(edge.source_id)
+            if isinstance(agent, AgentNode):
+                bindings.setdefault(edge.target_id, []).append(agent)
+        return bindings
 
     def incoming(self, node_id: str, edge_type: Optional[EdgeType] = None) -> List[ACGEdge]:
         """返回指向节点的边，可按类别过滤，结果保持边列表顺序，复杂度 ``O(E)``。"""

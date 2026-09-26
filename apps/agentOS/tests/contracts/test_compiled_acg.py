@@ -63,6 +63,7 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
     blueprint = _resource_rich_blueprint()
     compiler = ACGGraphCompiler()
     package = compiler.compile_package(blueprint, run_id="run-1")
+    package_payload = package.model_dump(by_alias=True, mode="json")
 
     node_ids = {node.node_id for node in package.nodes}
     assert {(node.node_id, node.kind.value) for node in package.nodes} == {
@@ -72,6 +73,14 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
         ("start", "a", "dependency"), ("a", "b", "dependency"),
     ]
     assert all(edge.source_id in node_ids and edge.target_id in node_ids for edge in package.edges)
+    assert "compatibilityWarnings" not in package_payload
+    for manifest in (
+        "bindingManifest", "skillManifest", "memoryManifest", "evidenceManifest",
+    ):
+        assert all(
+            "compatibilitySource" not in rule
+            for rule in package_payload[manifest]["rules"]
+        )
 
     assert package.binding_manifest.for_step("a").agent_node_ids == ("agent",)
     assert package.skill_manifest.for_step("a")[0].skill_node_id == "skill"
@@ -98,23 +107,48 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
     )) == ("b",)
 
 
-def test_legacy_inline_resources_still_compile_with_compatibility_warnings() -> None:
-    blueprint = ACGBlueprint(
-        graphId="legacy-inline",
-        nodes=[StepNode(
-            nodeId="step", agentName="legacy-agent", skillIds=["skill"],
-            memoryIds=["memory"], evidenceIds=["evidence"],
-        )],
-    )
+@pytest.mark.parametrize("field", [
+    "agentName", "agent_name", "assignedAgentId", "assigned_agent_id",
+    "skillIds", "skill_ids", "memoryIds", "memory_ids", "evidenceIds", "evidence_ids",
+])
+def test_step_node_rejects_removed_inline_resource_fields(field: str) -> None:
+    with pytest.raises(ValidationError, match="legacy resource fields"):
+        StepNode.model_validate({"nodeId": "step", field: "legacy"})
 
-    with pytest.warns(DeprecationWarning) as warnings:
-        package = ACGGraphCompiler().compile_package(blueprint, run_id="run-1")
 
-    assert len(warnings) == 4
-    assert package.binding_manifest.for_step("step").compatibility_source is True
-    assert package.skill_manifest.for_step("step")[0].compatibility_source is True
-    assert package.memory_manifest.for_step("step")[0].compatibility_source is True
-    assert package.evidence_manifest.for_step("step")[0].compatibility_source is True
+@pytest.mark.parametrize("field", ["skillIds", "skill_ids", "memoryIds", "memory_ids"])
+def test_agent_node_rejects_removed_inline_resource_fields(field: str) -> None:
+    with pytest.raises(ValidationError, match="legacy resource fields"):
+        AgentNode.model_validate({"nodeId": "agent", "name": "Agent", field: ["legacy"]})
+
+
+@pytest.mark.parametrize("field", ["producerStepId", "producer_step_id"])
+def test_evidence_metadata_cannot_supply_producer_identity(field: str) -> None:
+    with pytest.raises(ValidationError, match="typed producerStepId"):
+        EvidenceNode.model_validate({
+            "nodeId": "evidence", "metadata": {field: "step"},
+        })
+
+
+@pytest.mark.parametrize("model,field", [
+    (StepNode, "agentName"),
+    (StepNode, "agent_name"),
+    (StepNode, "assignedAgentId"),
+    (StepNode, "assigned_agent_id"),
+    (StepNode, "skillIds"),
+    (StepNode, "skill_ids"),
+    (StepNode, "memoryIds"),
+    (StepNode, "memory_ids"),
+    (StepNode, "evidenceIds"),
+    (StepNode, "evidence_ids"),
+    (AgentNode, "skillIds"),
+    (AgentNode, "skill_ids"),
+    (AgentNode, "memoryIds"),
+    (AgentNode, "memory_ids"),
+])
+def test_removed_resource_fields_cannot_be_hidden_in_metadata(model, field: str) -> None:
+    with pytest.raises(ValidationError, match="legacy resource fields"):
+        model.model_validate({"nodeId": "node", "metadata": {field: "legacy"}})
 
 
 def test_package_rejects_duplicate_identities_and_dangling_edges() -> None:

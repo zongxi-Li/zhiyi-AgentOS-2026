@@ -109,7 +109,10 @@ def test_builder_compiles_evidence_producer_and_consumer_permissions() -> None:
     analyze_step = next(node for node in blueprint.step_nodes() if node.capability == "analyze")
     evidence_node_id = f"evidence::{retrieve_step.node_id}"
 
-    assert retrieve_step.evidence_ids == []
+    assert "evidenceIds" not in retrieve_step.model_dump(by_alias=True)
+    assert next(
+        node for node in blueprint.nodes if node.node_id == evidence_node_id
+    ).producer_step_id == retrieve_step.node_id
     assert any(
         rule.step_id == retrieve_step.node_id
         and rule.evidence_node_id == evidence_node_id

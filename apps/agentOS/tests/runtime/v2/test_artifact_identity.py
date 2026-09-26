@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from support.acg.models import ACGEdge, EdgeType, AgentNode
+
+
 import sqlite3
 from types import SimpleNamespace
 
@@ -97,10 +100,10 @@ def _prepare_identity_chain(service, bridge):
             nodes=[StepNode(
                 nodeId="equipment-node",
                 name="设备人员规划",
-                agentName="planning-agent",
+
                 capability="planning",
-            )],
-        ),
+            ), AgentNode(nodeId="fixture-agent::equipment-node", name="planning-agent")],
+        edges=[ACGEdge(sourceId="fixture-agent::equipment-node", targetId="equipment-node", edgeType=EdgeType.EXECUTION)]),
         task_bindings={changed.task_id: "equipment-node"},
     )
     return mission, changed, blueprint
@@ -264,8 +267,8 @@ def test_run_preparation_allocates_snapshot_version_without_changing_logical_key
         blueprint = ACGBlueprint(
             graphId="acg_stable_task",
             missionId=mission.mission_id,
-            nodes=[StepNode(nodeId="stable-node", name="稳定步骤", agentName="agent")],
-        )
+            nodes=[StepNode(nodeId="stable-node", name="稳定步骤"), AgentNode(nodeId="fixture-agent::stable-node", name="agent")],
+        edges=[ACGEdge(sourceId="fixture-agent::stable-node", targetId="stable-node", edgeType=EdgeType.EXECUTION)])
         binding = TaskImplementationBinding(
             planNodeKey="stable_logical_step", acgNodeId="stable-node"
         )

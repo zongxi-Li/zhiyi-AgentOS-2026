@@ -304,7 +304,6 @@ class ACGBuilder:
                 acceptanceCriteria=list(task.acceptance_criteria),
                 sourceRefs=list(task.source_refs),
                 logicalRole=task.logical_role,
-                agentName=binding.agent_name,
                 capability=descriptor.capability_id,
                 inputSpec=input_spec,
                 outputSpec=dict(descriptor.output_contract),
@@ -380,7 +379,7 @@ class ACGBuilder:
                     name=f"Evidence:{descriptor.display_name}",
                     evidenceType="retrieved",
                     producerStepId=node_id,
-                    metadata={"producerStepId": node_id, "capabilityId": descriptor.capability_id},
+                    metadata={"capabilityId": descriptor.capability_id},
                 )
                 blueprint.nodes.append(evidence)
             if descriptor.writes_memory:
@@ -394,7 +393,6 @@ class ACGBuilder:
                 blueprint.edges.append(
                     ACGEdge(sourceId=node_id, targetId=memory.node_id, edgeType=EdgeType.WRITE)
                 )
-                step.memory_ids.append(memory.node_id)
 
         return steps, step_by_capability
 
@@ -585,6 +583,9 @@ class ACGBuilder:
             for node in blueprint.nodes
             if isinstance(node, EvidenceNode) and node.producer_step_id
         }
+        memory_by_producer: dict[str, str] = {}
+        for edge in blueprint.edges_of_type(EdgeType.WRITE):
+            memory_by_producer.setdefault(edge.source_id, edge.target_id)
         for target_capability in selected:
             target = step_by_capability[target_capability]
             for source_capability in dependencies[target_capability]:
@@ -608,10 +609,11 @@ class ACGBuilder:
                             edgeType=EdgeType.SUPPORT,
                         )
                     )
-                if source.memory_ids:
+                memory_id = memory_by_producer.get(source.node_id)
+                if memory_id:
                     blueprint.edges.append(
                         ACGEdge(
-                            sourceId=source.memory_ids[0],
+                            sourceId=memory_id,
                             targetId=target.node_id,
                             edgeType=EdgeType.READ,
                         )

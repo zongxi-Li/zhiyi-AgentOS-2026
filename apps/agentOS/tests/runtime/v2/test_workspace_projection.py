@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import pytest
 
 from components.content import SQLiteContentManifestStore
@@ -17,7 +18,7 @@ from runtime.v2 import (
     WorkspaceIdentityQuality,
 )
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
 
 
 def _foundation(tmp_path):
@@ -75,18 +76,18 @@ def _mission_graph(service, bridge, *, final_role="deliverable"):
                 StepNode(
                     nodeId="equipment-node",
                     name="设备规划",
-                    agentName="planning-agent",
+
                     capability="resource_planning",
                 ),
                 StepNode(
                     nodeId="final-node",
                     name="最终交付",
-                    agentName="delivery-agent",
+
                     capability="artifact_generation",
                     logicalRole=final_role,
                 ),
-            ],
-            edges=[ACGEdge(sourceId="equipment-node", targetId="final-node", edgeType=EdgeType.DEPENDENCY)],
+            AgentNode(nodeId="fixture-agent::equipment-node", name="planning-agent"), AgentNode(nodeId="fixture-agent::final-node", name="delivery-agent")],
+            edges=[ACGEdge(sourceId="equipment-node", targetId="final-node", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::equipment-node", targetId="equipment-node", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::final-node", targetId="final-node", edgeType=EdgeType.EXECUTION)],
         ),
         task_bindings={
             tasks["equipment_plan"].task_id: "equipment-node",
@@ -354,8 +355,8 @@ def test_workspace_legacy_identity_is_explicit_and_never_guessed(tmp_path):
             runtime_blueprint=ACGBlueprint(
                 graphId="acg_legacy_workspace",
                 missionId=mission.mission_id,
-                nodes=[StepNode(nodeId="legacy-node", name="旧任务", agentName="legacy-agent")],
-            ),
+                nodes=[StepNode(nodeId="legacy-node", name="旧任务"), AgentNode(nodeId="fixture-agent::legacy-node", name="legacy-agent")],
+            edges=[ACGEdge(sourceId="fixture-agent::legacy-node", targetId="legacy-node", edgeType=EdgeType.EXECUTION)]),
             task_bindings={legacy_task.task_id: "legacy-node"},
         )
         run = _run(service, mission.mission_id, blueprint.blueprint_id, status=RunStatus.FAILED)
@@ -475,10 +476,10 @@ def test_workspace_keeps_artifact_generation_capability_in_steps_without_final_r
                     nodes=[StepNode(
                         nodeId="draft-node",
                         name="草稿产物",
-                        agentName="draft-agent",
+
                         capability="artifact_generation",
-                    )],
-            ),
+                    ), AgentNode(nodeId="fixture-agent::draft-node", name="draft-agent")],
+            edges=[ACGEdge(sourceId="fixture-agent::draft-node", targetId="draft-node", edgeType=EdgeType.EXECUTION)]),
             task_bindings={tasks["draft_artifact"].task_id: "draft-node"},
         )
         run = _run(service, mission.mission_id, blueprint.blueprint_id, status=RunStatus.SUCCEEDED)

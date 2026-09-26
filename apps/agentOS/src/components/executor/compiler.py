@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 from contracts import stable_checksum
 from contracts.compiled_acg import (
     BindingManifest,
@@ -74,8 +72,6 @@ class ACGGraphCompiler:
             for node in blueprint.step_nodes()
             if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
         }
-        compatibility_warnings: list[str] = []
-
         node_specs = tuple(
             CompiledNodeSpec(
                 nodeId=node.node_id,
@@ -108,18 +104,10 @@ class ACGGraphCompiler:
             if edge.source_id in executable_ids and edge.target_id in executable_ids
         )
 
-        binding_manifest = self._compile_bindings(
-            blueprint, steps, nodes_by_id, compatibility_warnings
-        )
-        skill_manifest = self._compile_skills(
-            blueprint, steps, nodes_by_id, compatibility_warnings
-        )
-        memory_manifest = self._compile_memory(
-            blueprint, steps, nodes_by_id, compatibility_warnings
-        )
-        evidence_manifest = self._compile_evidence(
-            blueprint, steps, nodes_by_id, compatibility_warnings
-        )
+        binding_manifest = self._compile_bindings(blueprint, steps, nodes_by_id)
+        skill_manifest = self._compile_skills(blueprint, steps, nodes_by_id)
+        memory_manifest = self._compile_memory(blueprint, steps, nodes_by_id)
+        evidence_manifest = self._compile_evidence(blueprint, steps, nodes_by_id)
         communication_manifest = self._compile_communication(
             blueprint, steps, run_id=run_id
         )
@@ -141,7 +129,6 @@ class ACGGraphCompiler:
             "memoryManifest": memory_manifest,
             "evidenceManifest": evidence_manifest,
             "communicationManifest": communication_manifest,
-            "compatibilityWarnings": tuple(dict.fromkeys(compatibility_warnings)),
         }
         checksum = stable_checksum(package_payload)
         package = CompiledACGPackage(
@@ -149,8 +136,6 @@ class ACGGraphCompiler:
             checksum=checksum,
             **package_payload,
         )
-        for warning_text in package.compatibility_warnings:
-            warnings.warn(warning_text, DeprecationWarning, stacklevel=2)
         return package
 
     def compile(
@@ -233,7 +218,7 @@ class ACGGraphCompiler:
         return mode
 
     @staticmethod
-    def _compile_bindings(blueprint, steps, nodes_by_id, compatibility_warnings):
+    def _compile_bindings(blueprint, steps, nodes_by_id):
         explicit: dict[str, list[AgentNode]] = {step_id: [] for step_id in steps}
         for edge in blueprint.edges_of_type(EdgeType.EXECUTION):
             source = nodes_by_id[edge.source_id]
@@ -242,36 +227,25 @@ class ACGGraphCompiler:
         rules: list[BindingRule] = []
         for step_id, step in steps.items():
             agents = explicit[step_id]
-            compatibility = not agents
-            if compatibility:
-                compatibility_warnings.append(
-                    f"step {step_id} uses legacy agent fields; declare AgentNode + EXECUTION"
-                )
             capabilities = {str(step.capability)} if step.capability else set()
             if not capabilities:
                 for agent in agents:
                     capabilities.update(str(item) for item in agent.capability_tags)
             if not capabilities:
                 capabilities.add(
-                    f"agent:{step.agent_name.lower()}" if step.agent_name else "general"
+                    f"agent:{agents[0].name.lower()}" if len(agents) == 1 else "general"
                 )
-            allowed = tuple(
-                dict.fromkeys(
-                    [str(step.assigned_agent_id)] if step.assigned_agent_id else []
-                )
-            )
             rules.append(BindingRule(
                 stepId=step_id,
                 agentNodeIds=tuple(agent.node_id for agent in agents),
                 requiredCapabilities=tuple(sorted(capabilities)),
-                allowedResourceIds=allowed,
+                allowedResourceIds=(),
                 maxConcurrency=min((agent.max_concurrency for agent in agents), default=1),
-                compatibilitySource=compatibility,
             ))
         return BindingManifest(rules=tuple(rules))
 
     @staticmethod
-    def _compile_skills(blueprint, steps, nodes_by_id, compatibility_warnings):
+    def _compile_skills(blueprint, steps, nodes_by_id):
         rules: list[SkillRule] = []
         explicit_pairs = {
             (edge.target_id, edge.source_id)
@@ -280,28 +254,17 @@ class ACGGraphCompiler:
         }
         for step_id, step in steps.items():
             ids = [skill_id for target, skill_id in explicit_pairs if target == step_id]
-            compatibility_ids = [skill_id for skill_id in step.skill_ids if skill_id not in ids]
-            if compatibility_ids:
-                compatibility_warnings.append(
-                    f"step {step_id} uses legacy skillIds; declare SkillNode + EXECUTION"
-                )
-            for skill_id in [*ids, *compatibility_ids]:
+            for skill_id in ids:
                 node = nodes_by_id.get(skill_id)
                 if isinstance(node, SkillNode):
                     rules.append(SkillRule(
                         stepId=step_id, skillNodeId=skill_id, toolName=node.tool_name,
                         version=node.version, inputSpec=node.input_spec, outputSpec=node.output_spec,
-                        compatibilitySource=skill_id in compatibility_ids,
-                    ))
-                else:
-                    rules.append(SkillRule(
-                        stepId=step_id, skillNodeId=skill_id,
-                        compatibilitySource=True,
                     ))
         return SkillManifest(rules=tuple(rules))
 
     @staticmethod
-    def _compile_memory(blueprint, steps, nodes_by_id, compatibility_warnings):
+    def _compile_memory(blueprint, steps, nodes_by_id):
         rules: list[MemoryRule] = []
         explicit_pairs: set[tuple[str, str, str]] = set()
         for edge in blueprint.edges:
@@ -311,13 +274,6 @@ class ACGGraphCompiler:
                 explicit_pairs.add((edge.source_id, edge.target_id, "write"))
         for step_id, step in steps.items():
             pairs = [(memory_id, access) for target, memory_id, access in explicit_pairs if target == step_id]
-            explicit_ids = {memory_id for memory_id, _ in pairs}
-            compatibility_ids = [item for item in step.memory_ids if item not in explicit_ids]
-            if compatibility_ids:
-                compatibility_warnings.append(
-                    f"step {step_id} uses legacy memoryIds; declare MemoryNode + READ/WRITE"
-                )
-            pairs.extend((memory_id, "read") for memory_id in compatibility_ids)
             for memory_id, access in pairs:
                 node = nodes_by_id.get(memory_id)
                 if isinstance(node, MemoryNode):
@@ -325,18 +281,11 @@ class ACGGraphCompiler:
                         stepId=step_id, memoryNodeId=memory_id, access=access,
                         memoryType=node.memory_type, storageType=node.storage_type,
                         retentionPolicy=node.retention_policy, schema=node.schema_,
-                        compatibilitySource=memory_id in compatibility_ids,
-                    ))
-                else:
-                    rules.append(MemoryRule(
-                        stepId=step_id, memoryNodeId=memory_id, access=access,
-                        memoryType="working", storageType="compatibility",
-                        retentionPolicy="task", compatibilitySource=True,
                     ))
         return MemoryManifest(rules=tuple(rules))
 
     @staticmethod
-    def _compile_evidence(blueprint, steps, nodes_by_id, compatibility_warnings):
+    def _compile_evidence(blueprint, steps, nodes_by_id):
         rules: list[EvidenceRule] = []
         consume_pairs = {
             (edge.target_id, edge.source_id)
@@ -347,41 +296,21 @@ class ACGGraphCompiler:
             if not isinstance(node, EvidenceNode):
                 continue
             producer_step_id = node.producer_step_id
-            if producer_step_id is None:
-                legacy_producer = node.metadata.get("producerStepId")
-                if isinstance(legacy_producer, str) and legacy_producer in steps:
-                    producer_step_id = legacy_producer
-                    compatibility_warnings.append(
-                        f"evidence {node.node_id} uses metadata producerStepId; use the typed field"
-                    )
             if producer_step_id in steps:
                 produce_pairs.add((producer_step_id, node.node_id))
         for step_id, step in steps.items():
             consume_ids = [evidence_id for target, evidence_id in consume_pairs if target == step_id]
             produce_ids = [evidence_id for producer, evidence_id in produce_pairs if producer == step_id]
-            explicit_ids = {*consume_ids, *produce_ids}
-            compatibility_ids = [item for item in step.evidence_ids if item not in explicit_ids]
-            if compatibility_ids:
-                compatibility_warnings.append(
-                    f"step {step_id} uses legacy evidenceIds; declare an EvidenceNode producer"
-                )
             for evidence_id, access in [
                 *((item, "produce") for item in produce_ids),
                 *((item, "consume") for item in consume_ids),
-                *((item, "produce") for item in compatibility_ids),
             ]:
                 node = nodes_by_id.get(evidence_id)
                 if isinstance(node, EvidenceNode):
                     rules.append(EvidenceRule(
                         stepId=step_id, evidenceNodeId=evidence_id, access=access,
                         evidenceType=node.evidence_type, source=node.source,
-                        schema=node.schema_, compatibilitySource=evidence_id in compatibility_ids,
-                    ))
-                else:
-                    rules.append(EvidenceRule(
-                        stepId=step_id, evidenceNodeId=evidence_id, access=access,
-                        evidenceType="reference", source="compatibility",
-                        compatibilitySource=True,
+                        schema=node.schema_,
                     ))
         return EvidenceManifest(rules=tuple(rules))
 

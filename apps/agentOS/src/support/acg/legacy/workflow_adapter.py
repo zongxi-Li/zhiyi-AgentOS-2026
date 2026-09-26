@@ -46,8 +46,8 @@ def promote_workflow_to_acg(
     - 保留 step 顺序：用每个 step 的 stepId 作为 StepNode.node_id。
     - 依赖边：按 next_step_id 串联；若无显式 next，则按声明顺序串联。
     - reviewRequired 透传到 StepNode.review_required。
-    - enrich=True（默认）时注入认知协作节点，使图从线性链变为多层认知网络：
-        * 每个 Step 挂一个执行 Agent 节点（按 agentName 去重复用）+ EXECUTION 边
+    - 每个 Step 都从 WorkflowDefinition.agent_name 降级为 AgentNode + EXECUTION 边。
+    - enrich=True（默认）时继续注入可选的 Memory/Evidence 认知资源：
         * 产出结论的 Step 挂 Memory 节点 + WRITE 边
         * 需外部依据的 Step 挂 Evidence 节点 + SUPPORT 边
       这些节点与边不参与就绪集调度（执行器只看 STEP + DEPENDENCY），
@@ -73,7 +73,6 @@ def promote_workflow_to_acg(
             name=definition.name,
             stepType="agent",
             goal=definition.name,
-            agentName=definition.agent_name,
             capability=definition.capability,
             inputSpec=dict(definition.input),
             outputSpec=dict(definition.output_spec),
@@ -137,6 +136,7 @@ def promote_workflow_to_acg(
                     )
                 )
 
+    _inject_agent_bindings(blueprint, steps)
     if enrich:
         _inject_cognitive_nodes(blueprint, steps)
 
@@ -144,35 +144,47 @@ def promote_workflow_to_acg(
     return blueprint
 
 
+def _inject_agent_bindings(blueprint: ACGBlueprint, steps) -> None:
+    """Lower WorkflowDefinition assignments to canonical Agent EXECUTION edges."""
+    agent_nodes: dict[str, str] = {}
+    for definition in steps:
+        agent_name = definition.agent_name or definition.step_id
+        capability = definition.capability or ""
+        if agent_name not in agent_nodes:
+            agent_id = f"agent::{agent_name}"
+            blueprint.nodes.append(
+                AgentNode(
+                    nodeId=agent_id,
+                    name=agent_name,
+                    role=capability or agent_name,
+                    capabilityTags=[capability] if capability else [],
+                )
+            )
+            agent_nodes[agent_name] = agent_id
+        elif capability:
+            agent_node = blueprint.get_node(agent_nodes[agent_name])
+            if capability not in agent_node.capability_tags:
+                agent_node.capability_tags.append(capability)
+        blueprint.edges.append(
+            ACGEdge(
+                sourceId=agent_nodes[agent_name],
+                targetId=definition.step_id,
+                edgeType=EdgeType.EXECUTION,
+            )
+        )
+
+
 def _inject_cognitive_nodes(blueprint: ACGBlueprint, steps) -> None:
-    """为每个 Step 注入 Agent / Memory / Evidence 认知节点与关联边。"""
-    agent_nodes: dict[str, str] = {}  # agentName -> agent_node_id（去重复用）
+    """Inject optional Memory and Evidence nodes for a legacy workflow."""
     memory_nodes: dict[str, str] = {}
     evidence_nodes: dict[str, str] = {}
 
     for definition in steps:
         step_id = definition.step_id
-        agent_name = definition.agent_name or step_id
         cap = definition.capability or ""
         sig = f"{cap} {step_id}"
 
-        # 1) 执行 Agent 节点（同名 Agent 复用一个节点，体现“一个 Agent 执行多个 Step”）
-        if agent_name not in agent_nodes:
-            an_id = f"agent::{agent_name}"
-            blueprint.nodes.append(
-                AgentNode(
-                    nodeId=an_id,
-                    name=agent_name,
-                    role=cap or agent_name,
-                    capabilityTags=[cap] if cap else [],
-                )
-            )
-            agent_nodes[agent_name] = an_id
-        blueprint.edges.append(
-            ACGEdge(sourceId=agent_nodes[agent_name], targetId=step_id, edgeType=EdgeType.EXECUTION)
-        )
-
-        # 2) Evidence 节点（需外部依据支撑的步骤）
+        # Evidence nodes are optional cognitive enrichment.
         output_properties = (
             definition.output_spec.get("properties", {})
             if isinstance(definition.output_spec, dict)
@@ -189,12 +201,11 @@ def _inject_cognitive_nodes(blueprint: ACGBlueprint, steps) -> None:
                     name=f"证据·{definition.name}",
                     evidenceType="retrieved",
                     producerStepId=step_id,
-                    metadata={"producerStepId": step_id},
                 )
             )
             evidence_nodes[step_id] = ev_id
 
-        # 3) Memory 节点（产出结论、值得沉淀的步骤）
+        # Memory nodes are optional cognitive enrichment.
         memory_policy = (
             definition.input.get("memoryPolicy", {})
             if isinstance(definition.input, dict)

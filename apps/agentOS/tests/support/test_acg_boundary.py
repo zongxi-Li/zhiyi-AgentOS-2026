@@ -6,7 +6,7 @@ from pathlib import Path
 def test_step_node_uses_the_exported_node_type() -> None:
     from support.acg.models import NodeType, StepNode
 
-    node = StepNode(nodeId="step-1", agentName="planner")
+    node = StepNode(nodeId="step-1")
 
     assert isinstance(node.node_type, NodeType)
     assert node.node_type is NodeType.STEP

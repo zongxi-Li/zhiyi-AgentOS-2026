@@ -1132,7 +1132,6 @@ class ExecutionRuntime:
                 "compiledPackageChecksum": compiled_package.checksum,
                 "compiledPackageVersion": compiled_package.package_version,
                 "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
-                "compilerWarnings": list(compiled_package.compatibility_warnings),
                 **(
                     {
                         "taskPlanVersion": task_plan.plan_version,
@@ -2740,11 +2739,17 @@ class ExecutionRuntime:
         scope: RunExecutionScope | None = None,
     ) -> None:
         missing: list[str] = []
+        agents_by_step = blueprint.agent_bindings_by_step()
         for step in blueprint.step_nodes():
+            agents = agents_by_step.get(step.node_id, [])
+            if len(agents) != 1:
+                missing.append(step.node_id)
+                continue
+            agent = agents[0]
             try:
                 self.agent_registry.resolve(
                     domain=domain,
-                    agent_name=step.agent_name,
+                    agent_name=agent.name,
                     capability=step.capability,
                     allowed_agent_ids=(scope.agent_ids if scope is not None else None),
                 )
@@ -2754,7 +2759,7 @@ class ExecutionRuntime:
                     for resource_id in self._known_remote_resource_ids()
                 )
                 if not remote_match:
-                    missing.append(step.agent_name or step.node_id)
+                    missing.append(agent.name or step.node_id)
         if missing:
             raise ValueError("ACG references unregistered Agents: " + ", ".join(sorted(set(missing))))
 
@@ -2833,7 +2838,6 @@ class ExecutionRuntime:
                     "stepId": step.step_id,
                     "agentNodeIds": list(rule.agent_node_ids),
                     "maxConcurrency": rule.max_concurrency,
-                    "compatibilitySource": rule.compatibility_source,
                 },
             )
             placement = None
@@ -3342,8 +3346,15 @@ class ExecutionRuntime:
     ) -> None:
         """让 RuntimeRunRecord 的步骤列表与最终 ACG 蓝图保持一致。"""
         existing = {step.step_id: step for step in run.steps}
+        agents_by_step = blueprint.agent_bindings_by_step()
         synced: list[WorkflowStep] = []
         for node in blueprint.step_nodes():
+            agents = agents_by_step.get(node.node_id, [])
+            if len(agents) != 1:
+                raise ValueError(
+                    f"ACG step {node.node_id} requires exactly one AgentNode + EXECUTION binding"
+                )
+            agent_name = agents[0].name
             # Blueprint 是规划期唯一真源。这里把记忆策略复制到本次运行步骤，后续
             # 即使蓝图对象被修改，也不能反向改变已创建 run 的读取、写入和预算边界。
             node_input = dict(node.input_spec)
@@ -3393,7 +3404,7 @@ class ExecutionRuntime:
                 step = WorkflowStep(
                     stepId=node.node_id,
                     name=node.name or node.node_id,
-                    agentName=node.agent_name or node.node_id,
+                    agentName=agent_name,
                     capability=node.capability,
                     goal=node.goal,
                     acceptanceCriteria=list(node.acceptance_criteria),
@@ -3408,7 +3419,7 @@ class ExecutionRuntime:
                 )
             else:
                 step.name = node.name or step.name
-                step.agent_name = node.agent_name or step.agent_name
+                step.agent_name = agent_name
                 step.capability = node.capability
                 step.goal = node.goal
                 step.acceptance_criteria = list(node.acceptance_criteria)
@@ -4232,7 +4243,6 @@ class ExecutionRuntime:
                 "compiledPackageChecksum": compiled_package.checksum,
                 "compiledPackageVersion": compiled_package.package_version,
                 "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
-                "compilerWarnings": list(compiled_package.compatibility_warnings),
             })
             run.status = WorkflowStatus.SUPERSEDED
             run.execution_state["supersededByRunId"] = new_run.run_id

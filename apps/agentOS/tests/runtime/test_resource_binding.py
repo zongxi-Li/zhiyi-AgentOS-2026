@@ -104,7 +104,6 @@ def test_prepare_run_freezes_resource_bindings() -> None:
                     "stepId": "analyse",
                     "agentNodeIds": ["agent::analyse"],
                     "maxConcurrency": 1,
-                    "compatibilitySource": False,
             },
         }
     }

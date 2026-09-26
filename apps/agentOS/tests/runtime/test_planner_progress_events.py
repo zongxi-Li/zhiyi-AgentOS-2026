@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+
 import asyncio
 
 import pytest
@@ -21,7 +22,7 @@ from service.agents import AgentRegistry, AgentProfile, BaseAgent, AgentOutput
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
 
 
 class Runner(BaseAgent):
@@ -136,11 +137,11 @@ def test_explicit_blueprint_path_never_fakes_planner_events() -> None:
     runtime = _runtime()
     task = runtime.create_mission("explicit run", workflow_id="acg-run")
 
-    step = StepNode(nodeId="node-1", key="extract", agentName="runner", capability="analysis")
+    step = StepNode(nodeId="node-1", key="extract", capability="analysis")
     blueprint = ACGBlueprint(
         missionId=task.mission_id, graphId="graph-explicit",
-        nodes=[step],
-        edges=[],
+        nodes=[step, AgentNode(nodeId="agent::node-1", name="runner")],
+        edges=[ACGEdge(sourceId="agent::node-1", targetId="node-1", edgeType=EdgeType.EXECUTION)],
     )
     task_plan = TaskPlan(
         missionId=task.mission_id, planVersion=1,

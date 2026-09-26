@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from support.acg.models import ACGEdge, EdgeType, AgentNode
+
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -602,10 +605,10 @@ def test_parallel_runtime_nodes_keep_attempt_and_execution_identity_isolated() -
     blueprint = ACGBlueprint(
         graphId="identity-parallel-graph",
         nodes=[
-            StepNode(nodeId="left", agentName="identity-agent", capability="analysis"),
-            StepNode(nodeId="right", agentName="identity-agent", capability="analysis"),
-        ],
-    )
+            StepNode(nodeId="left",  capability="analysis"),
+            StepNode(nodeId="right",  capability="analysis"),
+        AgentNode(nodeId="fixture-agent::left", name="identity-agent"), AgentNode(nodeId="fixture-agent::right", name="identity-agent")],
+    edges=[ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION)])
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     try:
         _, run = runtime.prepare_run(task.mission_id)
@@ -633,8 +636,8 @@ def test_parallel_runtime_nodes_keep_attempt_and_execution_identity_isolated() -
 def test_explicit_blueprint_without_task_plan_is_rejected() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-unplanned-graph",
-        nodes=[StepNode(nodeId="analyse", agentName="identity-agent")],
-    )
+        nodes=[StepNode(nodeId="analyse"), AgentNode(nodeId="fixture-agent::analyse", name="identity-agent")],
+    edges=[ACGEdge(sourceId="fixture-agent::analyse", targetId="analyse", edgeType=EdgeType.EXECUTION)])
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     task.input.pop("taskPlan")
     task.input.pop("taskBindings")
@@ -649,8 +652,8 @@ def test_explicit_blueprint_without_task_plan_is_rejected() -> None:
 def test_invalid_explicit_bindings_do_not_persist_partial_semantic_tasks() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-invalid-bindings-graph",
-        nodes=[StepNode(nodeId="analyse", agentName="identity-agent")],
-    )
+        nodes=[StepNode(nodeId="analyse"), AgentNode(nodeId="fixture-agent::analyse", name="identity-agent")],
+    edges=[ACGEdge(sourceId="fixture-agent::analyse", targetId="analyse", edgeType=EdgeType.EXECUTION)])
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     task.input["taskBindings"] = []
     runtime.workflow_store.save_mission(task)
@@ -706,10 +709,13 @@ def test_runtime_graph_revision_rejects_unplanned_executable_node() -> None:
         revised.nodes.append(
             StepNode(
                 nodeId="verify",
-                agentName="identity-agent",
                 capability="analysis",
             )
         )
+        revised.nodes.append(AgentNode(nodeId="agent::verify", name="identity-agent"))
+        revised.edges.append(ACGEdge(
+            sourceId="agent::verify", targetId="verify", edgeType=EdgeType.EXECUTION,
+        ))
 
         with pytest.raises(Exception, match="TaskPlanPatch"):
             bridge.on_blueprint_revised(run, revised)
@@ -733,10 +739,13 @@ def test_runtime_graph_revision_accepts_explicit_task_plan_patch() -> None:
                 nodeId="verify",
                 name="复核结果",
                 goal="复核分析结果",
-                agentName="identity-agent",
                 capability="analysis",
             )
         )
+        revised.nodes.append(AgentNode(nodeId="agent::verify", name="identity-agent"))
+        revised.edges.append(ACGEdge(
+            sourceId="agent::verify", targetId="verify", edgeType=EdgeType.EXECUTION,
+        ))
         plan_patch = TaskPlanPatch(
             missionId=task.mission_id,
             basePlanVersion=1,

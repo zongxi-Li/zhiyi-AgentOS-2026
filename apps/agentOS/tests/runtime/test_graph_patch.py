@@ -23,7 +23,7 @@ from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import (
     ACGBlueprint, ACGEdge, CapabilityCatalog, ControlNode, ControlType, EdgeType,
-    PlanningCapabilityDescriptor, StepNode,
+    AgentNode, PlanningCapabilityDescriptor, StepNode,
     build_default_capability_catalog,
 )
 from components.planner.topology import catalog_fingerprint
@@ -161,9 +161,10 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
                 nodeId="enrich",
                 name="enrich",
                 goal="enrich result",
-                agentName="runner",
-            ).model_dump(by_alias=True, mode="json")],
+            ).model_dump(by_alias=True, mode="json"),
+                AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json")],
             addEdges=[
+                ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
                 ACGEdge(
                     edgeId="identity-review-to-enrich",
                     sourceId="review",
@@ -295,9 +296,12 @@ def test_runtime_patch_audit_uses_injected_custom_catalog(tmp_path):
             patchId="patch-custom-catalog", idempotencyKey="patch-custom-catalog:v1",
             runId=paused.run_id, graphId=blueprint.graph_id, baseGraphVersion=blueprint.version,
             removeEdgeIds=[edge.edge_id],
-            addNodes=[StepNode(nodeId="enrich", name="enrich", goal="enrich",
-                               agentName="runner").model_dump(by_alias=True, mode="json")],
+            addNodes=[
+                StepNode(nodeId="enrich", name="enrich", goal="enrich").model_dump(by_alias=True, mode="json"),
+                AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json"),
+            ],
             addEdges=[
+                ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
                 ACGEdge(sourceId="review", targetId="enrich").model_dump(by_alias=True, mode="json"),
                 ACGEdge(sourceId="enrich", targetId="deliver").model_dump(by_alias=True, mode="json"),
             ],
@@ -344,11 +348,12 @@ def test_graph_patch_without_identity_lifecycle_is_rejected_without_mutation(tmp
         addNodes=[
             StepNode(
                 nodeId="enrich",
-                agentName="runner",
                 outputSpec={"type": "object", "properties": {"value": {"type": "string"}}},
-            ).model_dump(by_alias=True, mode="json")
+            ).model_dump(by_alias=True, mode="json"),
+            AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json"),
         ],
         addEdges=[
+            ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
             ACGEdge(edgeId="review-to-enrich", sourceId="review", targetId="enrich").model_dump(by_alias=True, mode="json"),
             ACGEdge(edgeId="enrich-to-deliver", sourceId="enrich", targetId="deliver").model_dump(by_alias=True, mode="json"),
         ],
@@ -390,9 +395,10 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
                 nodeId="enrich",
                 name="enrich",
                 goal="enrich result",
-                agentName="runner",
-            ).model_dump(by_alias=True, mode="json")],
+            ).model_dump(by_alias=True, mode="json"),
+                AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json")],
             addEdges=[
+                ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
                 ACGEdge(
                     edgeId="rollback-review-to-enrich",
                     sourceId="review",
@@ -464,7 +470,7 @@ def test_graph_patch_rejects_stale_version(tmp_path):
                     runId=paused.run_id,
                     graphId=blueprint.graph_id,
                     baseGraphVersion=blueprint.version + 1,
-                    addNodes=[StepNode(nodeId="late", agentName="runner").model_dump(by_alias=True, mode="json")],
+                    addNodes=[{"nodeId": "late", "nodeType": "step"}],
                 )
             )
         )

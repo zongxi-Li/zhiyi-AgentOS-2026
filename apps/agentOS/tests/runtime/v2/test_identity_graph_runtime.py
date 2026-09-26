@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import pytest
 
 from components.executor.graph import ACGExecutionGraph
@@ -15,7 +16,7 @@ from runtime.v2 import (
     IdentityProjectionBridge,
 )
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
 
 
 @pytest.fixture
@@ -47,20 +48,20 @@ def _registered_chain(
         missionId=task.mission_id,
         nodes=[
             StepNode(
-                nodeId="extract", name="提取条款", agentName="合同智能体",
+                nodeId="extract", name="提取条款",
                 capability="contract.extract",
             ),
             StepNode(
-                nodeId="risk", name="分析风险", agentName="合同智能体",
+                nodeId="risk", name="分析风险",
                 capability="contract.risk",
             ),
-        ],
+        AgentNode(nodeId="fixture-agent::extract", name="合同智能体"), AgentNode(nodeId="fixture-agent::risk", name="合同智能体")],
         edges=[ACGEdge(
             edgeId="edge_extract_risk",
             sourceId="extract",
             targetId="risk",
             edgeType=EdgeType.DEPENDENCY,
-        )],
+        ), ACGEdge(sourceId="fixture-agent::extract", targetId="extract", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::risk", targetId="risk", edgeType=EdgeType.EXECUTION)],
     )
     blueprint = bridge.register_blueprint(
         mission_id=task.mission_id,
@@ -189,8 +190,8 @@ def test_run_creation_is_idempotent_but_rejects_identity_redefinition(foundation
         runtime_blueprint=ACGBlueprint(
             graphId="acg_other_identity",
             missionId=other_task.mission_id,
-            nodes=[StepNode(nodeId="other", name="执行", agentName="通用智能体")],
-        ),
+            nodes=[StepNode(nodeId="other", name="执行"), AgentNode(nodeId="fixture-agent::other", name="通用智能体")],
+        edges=[ACGEdge(sourceId="fixture-agent::other", targetId="other", edgeType=EdgeType.EXECUTION)]),
         task_bindings={other_node.task_id: "other"},
     )
     with pytest.raises(IdentityConflictError, match="another Mission"):
@@ -285,8 +286,8 @@ def test_bridge_rejects_compiling_blueprint_for_another_run(foundation) -> None:
         runtime_blueprint=ACGBlueprint(
             graphId="acg_222222222222",
             missionId=task.mission_id,
-            nodes=[StepNode(nodeId="report", name="输出报告", agentName="合同智能体")],
-        ),
+            nodes=[StepNode(nodeId="report", name="输出报告"), AgentNode(nodeId="fixture-agent::report", name="合同智能体")],
+        edges=[ACGEdge(sourceId="fixture-agent::report", targetId="report", edgeType=EdgeType.EXECUTION)]),
         task_bindings={extra.task_id: "report"},
     )
     run = runtime.create_run(mission_id=task.mission_id, blueprint_id=blueprint_v1.blueprint_id)
@@ -302,8 +303,8 @@ def test_bridge_rejects_semantic_task_substitution_for_execution_node(foundation
     runtime_blueprint = ACGBlueprint(
         graphId="acg_abcdefabcdef",
         missionId=task.mission_id,
-        nodes=[StepNode(nodeId=node.task_id, name="错误复用", agentName="合同智能体")],
-    )
+        nodes=[StepNode(nodeId=node.task_id, name="错误复用"), AgentNode(nodeId=f"fixture-agent::{node.task_id}", name="合同智能体")],
+    edges=[ACGEdge(sourceId=f"fixture-agent::{node.task_id}", targetId=node.task_id, edgeType=EdgeType.EXECUTION)])
 
     with pytest.raises(IdentityConflictError, match="remain distinct"):
         bridge.register_blueprint(

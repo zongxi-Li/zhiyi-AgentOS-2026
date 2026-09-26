@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import asyncio
 
 import pytest
@@ -31,6 +32,7 @@ from support.acg.models import (
     ControlType,
     EdgeType,
     StepNode,
+    AgentNode,
 )
 
 
@@ -162,8 +164,8 @@ def test_output_exhaustion_failure_event_preserves_safe_model_audit() -> None:
 def test_compiler_preserves_blackboard_communication_mode() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-test",
-        nodes=[StepNode(nodeId="one", agentName="agent", metadata={"communicationMode": "BLACKBOARD"})],
-    )
+        nodes=[StepNode(nodeId="one",  metadata={"communicationMode": "BLACKBOARD"}), AgentNode(nodeId="fixture-agent::one", name="agent")],
+    edges=[ACGEdge(sourceId="fixture-agent::one", targetId="one", edgeType=EdgeType.EXECUTION)])
 
     graph = ACGGraphCompiler().compile(blueprint)
 
@@ -173,8 +175,8 @@ def test_compiler_preserves_blackboard_communication_mode() -> None:
 def test_compiler_accepts_event_mode_without_downgrading_it() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-event",
-        nodes=[StepNode(nodeId="signal", agentName="agent", metadata={"communicationMode": "EVENT"})],
-    )
+        nodes=[StepNode(nodeId="signal",  metadata={"communicationMode": "EVENT"}), AgentNode(nodeId="fixture-agent::signal", name="agent")],
+    edges=[ACGEdge(sourceId="fixture-agent::signal", targetId="signal", edgeType=EdgeType.EXECUTION)])
 
     graph = ACGGraphCompiler().compile(blueprint)
 
@@ -184,11 +186,19 @@ def test_compiler_accepts_event_mode_without_downgrading_it() -> None:
 def test_compiler_uses_dependency_edges_only() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-test",
-        nodes=[StepNode(nodeId=node_id, agentName="runner") for node_id in ("one", "two", "three")],
+        nodes=[
+            *(StepNode(nodeId=node_id) for node_id in ("one", "two", "three")),
+            *(AgentNode(nodeId=f"fixture-agent::{node_id}", name="runner")
+              for node_id in ("one", "two", "three")),
+        ],
         edges=[
             ACGEdge(sourceId="one", targetId="two", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="two", targetId="three", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="one", targetId="three", edgeType=EdgeType.COMMUNICATION),
+            *(ACGEdge(
+                sourceId=f"fixture-agent::{node_id}", targetId=node_id,
+                edgeType=EdgeType.EXECUTION,
+            ) for node_id in ("one", "two", "three")),
         ],
     )
 
@@ -202,8 +212,8 @@ def test_compiler_maps_blueprint_budget_to_manifest_run_budget() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-budget",
         metadata={"communicationBudget": 120},
-        nodes=[StepNode(nodeId="produce", agentName="agent"), StepNode(nodeId="consume", agentName="agent")],
-        edges=[ACGEdge(sourceId="produce", targetId="consume", edgeType=EdgeType.DEPENDENCY)],
+        nodes=[StepNode(nodeId="produce"), StepNode(nodeId="consume"), AgentNode(nodeId="fixture-agent::produce", name="agent"), AgentNode(nodeId="fixture-agent::consume", name="agent")],
+        edges=[ACGEdge(sourceId="produce", targetId="consume", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::produce", targetId="produce", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::consume", targetId="consume", edgeType=EdgeType.EXECUTION)],
     )
 
     graph = ACGGraphCompiler().compile(blueprint, run_id="run-budget")
@@ -217,14 +227,14 @@ def test_compiler_leaves_fan_in_unbounded_without_an_explicit_policy() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-fan-in-budget",
         nodes=[
-            StepNode(nodeId="left", agentName="agent"),
-            StepNode(nodeId="right", agentName="agent"),
-            StepNode(nodeId="join", agentName="agent"),
-        ],
+            StepNode(nodeId="left"),
+            StepNode(nodeId="right"),
+            StepNode(nodeId="join"),
+        AgentNode(nodeId="fixture-agent::left", name="agent"), AgentNode(nodeId="fixture-agent::right", name="agent"), AgentNode(nodeId="fixture-agent::join", name="agent")],
         edges=[
             ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
-        ],
+        ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::join", targetId="join", edgeType=EdgeType.EXECUTION)],
     )
 
     graph = ACGGraphCompiler().compile(blueprint, run_id="run-fan-in")
@@ -239,10 +249,10 @@ def test_compiler_maps_step_dependencies_and_review_interrupt() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-review",
         nodes=[
-            StepNode(nodeId="draft", agentName="agent"),
-            StepNode(nodeId="approve", agentName="agent", reviewRequired=True),
-        ],
-        edges=[ACGEdge(sourceId="draft", targetId="approve", edgeType=EdgeType.DEPENDENCY)],
+            StepNode(nodeId="draft"),
+            StepNode(nodeId="approve",  reviewRequired=True),
+        AgentNode(nodeId="fixture-agent::draft", name="agent"), AgentNode(nodeId="fixture-agent::approve", name="agent")],
+        edges=[ACGEdge(sourceId="draft", targetId="approve", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::draft", targetId="draft", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::approve", targetId="approve", edgeType=EdgeType.EXECUTION)],
     )
 
     graph = ACGGraphCompiler().compile(blueprint)
@@ -258,7 +268,7 @@ def test_compiler_maps_if_control_to_conditional_route() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-route",
         nodes=[
-            StepNode(nodeId="source", agentName="agent"),
+            StepNode(nodeId="source"),
             ControlNode(
                 nodeId="if",
                 controlType=ControlType.IF,
@@ -271,17 +281,17 @@ def test_compiler_maps_if_control_to_conditional_route() -> None:
                 branchEdgeIds=["to-true", "to-false"],
                 joinNodeId="join",
             ),
-            StepNode(nodeId="true", agentName="agent"),
-            StepNode(nodeId="false", agentName="agent"),
+            StepNode(nodeId="true"),
+            StepNode(nodeId="false"),
             ControlNode(nodeId="join", controlType=ControlType.CONSENSUS),
-        ],
+        AgentNode(nodeId="fixture-agent::source", name="agent"), AgentNode(nodeId="fixture-agent::true", name="agent"), AgentNode(nodeId="fixture-agent::false", name="agent")],
         edges=[
             ACGEdge(sourceId="source", targetId="if", edgeType=EdgeType.DEPENDENCY),
             true_edge,
             false_edge,
             ACGEdge(sourceId="true", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="false", targetId="join", edgeType=EdgeType.DEPENDENCY),
-        ],
+        ACGEdge(sourceId="fixture-agent::source", targetId="source", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::true", targetId="true", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::false", targetId="false", edgeType=EdgeType.EXECUTION)],
     )
 
     graph = ACGGraphCompiler().compile(blueprint)
@@ -294,23 +304,23 @@ def test_pregel_loop_executes_only_selected_conditional_branch() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-route-run",
         nodes=[
-            StepNode(nodeId="source", agentName="agent"),
+            StepNode(nodeId="source"),
             ControlNode(
                 nodeId="if", controlType=ControlType.IF,
                 conditionSpec=ConditionSpec(sourceNodeId="source", jsonPointer="/approved", operator=ConditionOperator.BOOLEAN, cases={"true": "to-true", "false": "to-false"}),
                 branchEdgeIds=["to-true", "to-false"], joinNodeId="join",
             ),
-            StepNode(nodeId="true", agentName="agent"),
-            StepNode(nodeId="false", agentName="agent"),
+            StepNode(nodeId="true"),
+            StepNode(nodeId="false"),
             ControlNode(nodeId="join", controlType=ControlType.CONSENSUS),
-        ],
+        AgentNode(nodeId="fixture-agent::source", name="agent"), AgentNode(nodeId="fixture-agent::true", name="agent"), AgentNode(nodeId="fixture-agent::false", name="agent")],
         edges=[
             ACGEdge(sourceId="source", targetId="if", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(edgeId="to-true", sourceId="if", targetId="true", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(edgeId="to-false", sourceId="if", targetId="false", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="true", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="false", targetId="join", edgeType=EdgeType.DEPENDENCY),
-        ],
+        ACGEdge(sourceId="fixture-agent::source", targetId="source", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::true", targetId="true", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::false", targetId="false", edgeType=EdgeType.EXECUTION)],
     )
     graph = ACGGraphCompiler().compile(blueprint)
     observed = []
@@ -383,8 +393,8 @@ def test_auditor_consensus_accepts_committed_participants_without_vote_fields() 
     blueprint = ACGBlueprint(
         graphId="acg-auditor-consensus",
         nodes=[
-            StepNode(nodeId="left", agentName="agent"),
-            StepNode(nodeId="right", agentName="agent"),
+            StepNode(nodeId="left"),
+            StepNode(nodeId="right"),
             ControlNode(
                 nodeId="join",
                 controlType=ControlType.CONSENSUS,
@@ -394,13 +404,13 @@ def test_auditor_consensus_accepts_committed_participants_without_vote_fields() 
                     strategy="auditor",
                 ),
             ),
-            StepNode(nodeId="deliver", agentName="agent"),
-        ],
+            StepNode(nodeId="deliver"),
+        AgentNode(nodeId="fixture-agent::left", name="agent"), AgentNode(nodeId="fixture-agent::right", name="agent"), AgentNode(nodeId="fixture-agent::deliver", name="agent")],
         edges=[
             ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY),
-        ],
+        ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::deliver", targetId="deliver", edgeType=EdgeType.EXECUTION)],
     )
     graph = ACGGraphCompiler().compile(blueprint)
 
@@ -425,8 +435,8 @@ def test_majority_tie_resumes_once_after_control_review_approval() -> None:
     blueprint = ACGBlueprint(
         graphId="acg-majority-review",
         nodes=[
-            StepNode(nodeId="left", agentName="agent"),
-            StepNode(nodeId="right", agentName="agent"),
+            StepNode(nodeId="left"),
+            StepNode(nodeId="right"),
             ControlNode(
                 nodeId="join",
                 controlType=ControlType.CONSENSUS,
@@ -436,13 +446,13 @@ def test_majority_tie_resumes_once_after_control_review_approval() -> None:
                     strategy="majority",
                 ),
             ),
-            StepNode(nodeId="deliver", agentName="agent"),
-        ],
+            StepNode(nodeId="deliver"),
+        AgentNode(nodeId="fixture-agent::left", name="agent"), AgentNode(nodeId="fixture-agent::right", name="agent"), AgentNode(nodeId="fixture-agent::deliver", name="agent")],
         edges=[
             ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY),
-        ],
+        ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::deliver", targetId="deliver", edgeType=EdgeType.EXECUTION)],
     )
     graph = ACGGraphCompiler().compile(blueprint)
     state = ACGExecutionState(runId="run-majority")

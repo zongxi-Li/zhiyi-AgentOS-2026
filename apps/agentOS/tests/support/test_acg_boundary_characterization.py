@@ -2,7 +2,10 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
+from support.acg.validation import ACGValidationError
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
@@ -33,9 +36,7 @@ def test_blueprint_serialization_contract_snapshot() -> None:
         updatedAt=timestamp,
         nodes=[
             StepNode(
-                nodeId="step-1", name="Execute", agentName="agent",
-                assignedAgentId="agent-1", skillIds=["skill-1"],
-                memoryIds=["memory-1"], evidenceIds=["evidence-1"],
+                nodeId="step-1", name="Execute",
             ),
             AgentNode(nodeId="agent-1", name="Agent"),
             SkillNode(nodeId="skill-1", name="Skill"),
@@ -70,9 +71,7 @@ def test_blueprint_serialization_contract_snapshot() -> None:
         "nodeId": "step-1", "nodeType": "step", "name": "Execute",
         "description": "", "metadata": {}, "stepType": "agent", "goal": "",
         "acceptanceCriteria": [], "sourceRefs": [], "logicalRole": "task",
-        "inputSpec": {}, "outputSpec": {}, "assignedAgentId": "agent-1",
-        "agentName": "agent", "capability": None, "skillIds": ["skill-1"],
-        "memoryIds": ["memory-1"], "evidenceIds": ["evidence-1"],
+        "inputSpec": {}, "outputSpec": {}, "capability": None,
         "timeout": 0, "retryLimit": 0, "priority": 0, "status": "draft",
         "reviewRequired": False, "stepId": "step-1", "stepName": "Execute",
     }
@@ -113,11 +112,35 @@ def test_workflow_promotion_legacy_and_canonical_modes_snapshot() -> None:
         EdgeType.COMMUNICATION
     )] == [("a", "b")]
     for blueprint in (legacy, canonical):
+        agent_edges = [
+            edge for edge in blueprint.edges_of_type(EdgeType.EXECUTION)
+            if isinstance(blueprint.get_node(edge.source_id), AgentNode)
+        ]
+        assert len(agent_edges) == len(blueprint.step_nodes())
         assert blueprint.metadata == {
             "sourceWorkflowId": "workflow-1", "sourceWorkflowVersion": "1.0.0",
             "promotedFromLinear": True, "enriched": True, "runtimeEngine": "acg",
             "nodeCount": len(blueprint.nodes), "edgeCount": len(blueprint.edges),
         }
+
+
+def test_workflow_promotion_keeps_agent_bindings_when_cognitive_enrichment_is_disabled() -> None:
+    workflow = WorkflowDefinition(
+        workflowId="workflow-plain", name="Workflow", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(
+            stepId="a", name="Analysis", agentName="analyst", capability="analysis",
+        )],
+    )
+
+    blueprint = promote_workflow_to_acg(workflow, enrich=False)
+
+    agent_edges = [
+        edge for edge in blueprint.edges_of_type(EdgeType.EXECUTION)
+        if isinstance(blueprint.get_node(edge.source_id), AgentNode)
+    ]
+    assert len(agent_edges) == 1
+    assert blueprint.get_node(agent_edges[0].source_id).name == "analyst"
+    assert not any(isinstance(node, (MemoryNode, EvidenceNode)) for node in blueprint.nodes)
 
 
 def test_capability_catalog_and_semantic_profile_snapshot() -> None:
@@ -141,8 +164,15 @@ def test_capability_catalog_and_semantic_profile_snapshot() -> None:
 def test_blueprint_graph_algorithm_snapshot() -> None:
     blueprint = ACGBlueprint(
         graphId="graph-1",
-        nodes=[StepNode(nodeId="a", agentName="agent"), StepNode(nodeId="b", agentName="agent")],
-        edges=[ACGEdge(edgeId="a-b", sourceId="a", targetId="b")],
+        nodes=[
+            StepNode(nodeId="a"), StepNode(nodeId="b"),
+            AgentNode(nodeId="agent", name="agent"),
+        ],
+        edges=[
+            ACGEdge(edgeId="agent-a", sourceId="agent", targetId="a", edgeType=EdgeType.EXECUTION),
+            ACGEdge(edgeId="agent-b", sourceId="agent", targetId="b", edgeType=EdgeType.EXECUTION),
+            ACGEdge(edgeId="a-b", sourceId="a", targetId="b"),
+        ],
     )
 
     validate_blueprint(blueprint)
@@ -150,3 +180,22 @@ def test_blueprint_graph_algorithm_snapshot() -> None:
     assert topological_order(blueprint) == ["a", "b"]
     assert ready_steps(blueprint, set()) == ["a"]
     assert ready_steps(blueprint, {"a"}) == ["b"]
+
+
+@pytest.mark.parametrize("agent_count", [0, 2])
+def test_validator_requires_exactly_one_canonical_agent_binding(agent_count: int) -> None:
+    agents = [AgentNode(nodeId=f"agent-{index}", name="agent") for index in range(agent_count)]
+    edges = [
+        ACGEdge(
+            edgeId=f"bind-{index}", sourceId=agent.node_id, targetId="step",
+            edgeType=EdgeType.EXECUTION,
+        )
+        for index, agent in enumerate(agents)
+    ]
+    blueprint = ACGBlueprint(
+        nodes=[StepNode(nodeId="step"), *agents],
+        edges=edges,
+    )
+
+    with pytest.raises(ACGValidationError, match="exactly one AgentNode"):
+        validate_blueprint(blueprint)

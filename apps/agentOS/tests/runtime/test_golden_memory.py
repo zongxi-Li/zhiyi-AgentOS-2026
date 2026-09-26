@@ -12,7 +12,7 @@ from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRela
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, EvidenceNode, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, AgentNode, EdgeType, EvidenceNode, StepNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -49,11 +49,10 @@ def _memory_policy() -> dict:
     }
 
 
-def _node(step_id: str, stage: str, agent_name: str) -> StepNode:
+def _node(step_id: str, stage: str) -> StepNode:
     return StepNode(
         nodeId=step_id,
         name=step_id,
-        agentName=agent_name,
         capability="analysis",
         outputSpec={
             "type": "object",
@@ -89,9 +88,11 @@ def _run(tmp_path):
         taskId="",
         objective="prove structured runtime memory",
         nodes=[
-            _node("research-a", "research", "golden-memory-a"),
-            _node("research-b", "research", "golden-memory-b"),
-            _node("synthesize", "synthesize", "golden-memory-a"),
+            _node("research-a", "research"),
+            _node("research-b", "research"),
+            _node("synthesize", "synthesize"),
+            AgentNode(nodeId="agent::golden-memory-a", name="golden-memory-a"),
+            AgentNode(nodeId="agent::golden-memory-b", name="golden-memory-b"),
             EvidenceNode(
                 nodeId="evidence-node:research-a",
                 name="research-a evidence",
@@ -115,6 +116,9 @@ def _run(tmp_path):
             ),
         ],
         edges=[
+            ACGEdge(sourceId="agent::golden-memory-a", targetId="research-a", edgeType=EdgeType.EXECUTION),
+            ACGEdge(sourceId="agent::golden-memory-b", targetId="research-b", edgeType=EdgeType.EXECUTION),
+            ACGEdge(sourceId="agent::golden-memory-a", targetId="synthesize", edgeType=EdgeType.EXECUTION),
             ACGEdge(sourceId="research-a", targetId="synthesize", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="research-b", targetId="synthesize", edgeType=EdgeType.DEPENDENCY),
         ],

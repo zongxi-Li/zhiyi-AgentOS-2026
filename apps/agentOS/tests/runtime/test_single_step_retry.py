@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import asyncio
 
 import pytest
@@ -21,7 +22,7 @@ from runtime.v2.resume_projection import build_reused_step_projection_events
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -96,7 +97,7 @@ def _retry_runtime(
             StepNode(
                 nodeId="source",
                 name="source",
-                agentName="retry-agent",
+
                 capability="analysis",
                 outputSpec={
                     "type": "object",
@@ -107,7 +108,7 @@ def _retry_runtime(
             StepNode(
                 nodeId="final",
                 name="final",
-                agentName="retry-agent",
+
                 capability="artifact_generation",
                 logicalRole="finalization",
                 inputSpec={"from": {"source": ["source"]}},
@@ -117,8 +118,8 @@ def _retry_runtime(
                     "properties": {"artifacts": {"type": "array"}},
                 },
             ),
-        ],
-        edges=[ACGEdge(sourceId="source", targetId="final", edgeType=EdgeType.DEPENDENCY)],
+        AgentNode(nodeId="fixture-agent::source", name="retry-agent"), AgentNode(nodeId="fixture-agent::final", name="retry-agent")],
+        edges=[ACGEdge(sourceId="source", targetId="final", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::source", targetId="source", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::final", targetId="final", edgeType=EdgeType.EXECUTION)],
     )
     content_manifest_store = SQLiteContentManifestStore(tmp_path / "content.sqlite3")
     identity_lifecycle = None
@@ -266,13 +267,13 @@ def test_checkpoint_resume_can_retry_failed_step_in_the_same_run(
             agentName="checkpoint-agent",
         )],
     ))
+    step_ids = ("source", "design", "final")
     blueprint = ACGBlueprint(
         graphId="checkpoint-resume-graph",
         nodes=[
             StepNode(
                 nodeId=step_id,
                 name=step_id,
-                agentName="checkpoint-agent",
                 capability="analysis",
                 outputSpec={
                     "type": "object",
@@ -280,12 +281,20 @@ def test_checkpoint_resume_can_retry_failed_step_in_the_same_run(
                     "properties": {step_id: {"type": "string"}},
                 },
             )
-            for step_id in ("source", "design", "final")
+            for step_id in step_ids
         ],
         edges=[
             ACGEdge(sourceId="source", targetId="design", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="design", targetId="final", edgeType=EdgeType.DEPENDENCY),
+            *(ACGEdge(
+                sourceId=f"fixture-agent::{step_id}", targetId=step_id,
+                edgeType=EdgeType.EXECUTION,
+            ) for step_id in step_ids),
         ],
+    )
+    blueprint.nodes.extend(
+        AgentNode(nodeId=f"fixture-agent::{step_id}", name="checkpoint-agent")
+        for step_id in step_ids
     )
     identity_service = (
         AcgIdentityLifecycleService(SQLiteV2Repositories(SQLiteV2Storage(":memory:")))
@@ -424,13 +433,13 @@ def _twice_failure_runtime(tmp_path):
             agentName="checkpoint-agent",
         )],
     ))
+    step_ids = ("source", "design", "final")
     blueprint = ACGBlueprint(
         graphId="checkpoint-resume-graph",
         nodes=[
             StepNode(
                 nodeId=step_id,
                 name=step_id,
-                agentName="checkpoint-agent",
                 capability="analysis",
                 outputSpec={
                     "type": "object",
@@ -438,12 +447,20 @@ def _twice_failure_runtime(tmp_path):
                     "properties": {step_id: {"type": "string"}},
                 },
             )
-            for step_id in ("source", "design", "final")
+            for step_id in step_ids
         ],
         edges=[
             ACGEdge(sourceId="source", targetId="design", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="design", targetId="final", edgeType=EdgeType.DEPENDENCY),
+            *(ACGEdge(
+                sourceId=f"fixture-agent::{step_id}", targetId=step_id,
+                edgeType=EdgeType.EXECUTION,
+            ) for step_id in step_ids),
         ],
+    )
+    blueprint.nodes.extend(
+        AgentNode(nodeId=f"fixture-agent::{step_id}", name="checkpoint-agent")
+        for step_id in step_ids
     )
     identity_service = AcgIdentityLifecycleService(
         SQLiteV2Repositories(SQLiteV2Storage(":memory:"))

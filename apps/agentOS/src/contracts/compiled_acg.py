@@ -54,7 +54,6 @@ class BindingRule(FrozenContract):
     )
     domain: StrictStr | None = None
     max_concurrency: int = Field(default=1, alias="maxConcurrency", ge=1)
-    compatibility_source: bool = Field(default=False, alias="compatibilitySource")
 
 
 class BindingManifest(FrozenContract):
@@ -74,7 +73,6 @@ class SkillRule(FrozenContract):
     version: StrictStr = "1.0.0"
     input_spec: dict[str, Any] = Field(default_factory=dict, alias="inputSpec")
     output_spec: dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
-    compatibility_source: bool = Field(default=False, alias="compatibilitySource")
 
 
 class SkillManifest(FrozenContract):
@@ -92,7 +90,6 @@ class MemoryRule(FrozenContract):
     storage_type: StrictStr = Field(alias="storageType", min_length=1)
     retention_policy: StrictStr = Field(alias="retentionPolicy", min_length=1)
     schema_: dict[str, Any] = Field(default_factory=dict, alias="schema")
-    compatibility_source: bool = Field(default=False, alias="compatibilitySource")
 
 
 class MemoryManifest(FrozenContract):
@@ -112,7 +109,6 @@ class EvidenceRule(FrozenContract):
     evidence_type: StrictStr = Field(alias="evidenceType", min_length=1)
     source: StrictStr
     schema_: dict[str, Any] = Field(default_factory=dict, alias="schema")
-    compatibility_source: bool = Field(default=False, alias="compatibilitySource")
 
 
 class EvidenceManifest(FrozenContract):
@@ -220,7 +216,6 @@ class CompiledACGPackage(FrozenContract):
     memory_manifest: MemoryManifest = Field(alias="memoryManifest")
     evidence_manifest: EvidenceManifest = Field(alias="evidenceManifest")
     communication_manifest: CommunicationManifestSpec = Field(alias="communicationManifest")
-    compatibility_warnings: tuple[StrictStr, ...] = Field(default=(), alias="compatibilityWarnings")
     checksum: StrictStr = Field(min_length=64, max_length=64)
 
     @model_validator(mode="after")

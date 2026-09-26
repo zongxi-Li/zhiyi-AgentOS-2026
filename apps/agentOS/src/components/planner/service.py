@@ -568,15 +568,21 @@ class PlanningEngine:
 
     def _validate_agents(self, blueprint: ACGBlueprint, *, domain: str) -> None:
         missing: list[str] = []
+        agents_by_step = blueprint.agent_bindings_by_step()
         for step in blueprint.step_nodes():
+            agents = agents_by_step.get(step.node_id, [])
+            if len(agents) != 1:
+                missing.append(step.node_id)
+                continue
+            agent = agents[0]
             try:
                 self.cognitive_router.agent_registry.resolve(
                     domain=domain,
-                    agent_name=step.agent_name,
+                    agent_name=agent.name,
                     capability=step.capability,
                 )
             except KeyError:
-                missing.append(step.agent_name or step.node_id)
+                missing.append(agent.name or step.node_id)
         if missing:
             raise ACGPlanningError("ACG references unregistered Agents: " + ", ".join(sorted(set(missing))))
 

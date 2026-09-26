@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+
 import asyncio
 import threading
 
@@ -26,7 +27,7 @@ from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowDefin
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
 
 
 class _GatedAgent(BaseAgent):
@@ -83,12 +84,12 @@ def test_cancel_midstream_stops_graph_and_returns_cancelled(monkeypatch) -> None
             nodes=[
                 StepNode(
                     nodeId="blocker",
-                    agentName="gated",
+
                     outputSpec={"type": "object", "properties": {"title": {"type": "string"}}},
                 ),
                 StepNode(
                     nodeId="follower",
-                    agentName="gated",
+
                     input={"from": {"blocker": ["title"]}},
                     outputSpec={
                         "type": "object",
@@ -96,8 +97,8 @@ def test_cancel_midstream_stops_graph_and_returns_cancelled(monkeypatch) -> None
                         "required": ["summary"],
                     },
                 ),
-            ],
-            edges=[ACGEdge(sourceId="blocker", targetId="follower", edgeType=EdgeType.DEPENDENCY)],
+            AgentNode(nodeId="fixture-agent::blocker", name="gated"), AgentNode(nodeId="fixture-agent::follower", name="gated")],
+            edges=[ACGEdge(sourceId="blocker", targetId="follower", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::blocker", targetId="blocker", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::follower", targetId="follower", edgeType=EdgeType.EXECUTION)],
         )
         monkeypatch.setattr(
             runtime,
@@ -139,11 +140,11 @@ def test_cancel_during_deferred_planning_does_not_materialize_or_restart(monkeyp
         nodes=[
             StepNode(
                 nodeId="only-step",
-                agentName="gated",
+
                 outputSpec={"type": "object", "properties": {"summary": {"type": "string"}}},
             )
-        ],
-    )
+        , AgentNode(nodeId="fixture-agent::only-step", name="gated")],
+    edges=[ACGEdge(sourceId="fixture-agent::only-step", targetId="only-step", edgeType=EdgeType.EXECUTION)])
     planner_started = threading.Event()
     release_planner = threading.Event()
 
@@ -204,7 +205,7 @@ def test_concurrent_checkpoint_resume_allows_exactly_one_executor(monkeypatch) -
             nodes=[
                 StepNode(
                     nodeId="bootstrap",
-                    agentName="voter",
+
                     reviewRequired=True,
                     outputSpec={
                         "type": "object",
@@ -214,7 +215,7 @@ def test_concurrent_checkpoint_resume_allows_exactly_one_executor(monkeypatch) -
                 ),
                 StepNode(
                     nodeId="deliver",
-                    agentName="voter",
+
                     input={"from": {"bootstrap": ["summary"]}},
                     outputSpec={
                         "type": "object",
@@ -222,8 +223,8 @@ def test_concurrent_checkpoint_resume_allows_exactly_one_executor(monkeypatch) -
                         "required": ["summary"],
                     },
                 ),
-            ],
-            edges=[ACGEdge(sourceId="bootstrap", targetId="deliver", edgeType=EdgeType.DEPENDENCY)],
+            AgentNode(nodeId="fixture-agent::bootstrap", name="voter"), AgentNode(nodeId="fixture-agent::deliver", name="voter")],
+            edges=[ACGEdge(sourceId="bootstrap", targetId="deliver", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::bootstrap", targetId="bootstrap", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::deliver", targetId="deliver", edgeType=EdgeType.EXECUTION)],
         )
         monkeypatch.setattr(
             runtime,
