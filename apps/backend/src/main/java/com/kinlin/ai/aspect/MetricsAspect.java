@@ -9,6 +9,7 @@ import org.aspectj.lang.annotation.Aspect;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.servlet.HandlerMapping;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.concurrent.TimeUnit;
@@ -33,7 +34,8 @@ public class MetricsAspect {
             // 记录请求
             HttpServletRequest request = ((ServletRequestAttributes) 
                     RequestContextHolder.currentRequestAttributes()).getRequest();
-            String endpoint = request.getRequestURI();
+            Object pattern = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+            String endpoint = pattern != null ? pattern.toString() : request.getRequestURI();
             String method = request.getMethod();
             
             metricsService.recordApiRequest(endpoint, method);
