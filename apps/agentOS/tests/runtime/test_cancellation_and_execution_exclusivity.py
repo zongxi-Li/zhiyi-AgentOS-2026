@@ -27,7 +27,8 @@ from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowDefin
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 class _GatedAgent(BaseAgent):
@@ -96,9 +97,9 @@ def test_cancel_midstream_stops_graph_and_returns_cancelled(monkeypatch) -> None
                         "properties": {"summary": {"type": "string"}},
                         "required": ["summary"],
                     },
-                ),
-            AgentNode(nodeId="fixture-agent::blocker", name="gated"), AgentNode(nodeId="fixture-agent::follower", name="gated")],
-            edges=[ACGEdge(sourceId="blocker", targetId="follower", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::blocker", targetId="blocker", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::follower", targetId="follower", edgeType=EdgeType.EXECUTION)],
+                )],
+            resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="blocker", plannedAgentId="gated"), AgentBindingSpec(stepId="follower", plannedAgentId="gated"),)),
+        edges=[ACGEdge(sourceId="blocker", targetId="follower", edgeType=EdgeType.DEPENDENCY)],
         )
         monkeypatch.setattr(
             runtime,
@@ -143,8 +144,9 @@ def test_cancel_during_deferred_planning_does_not_materialize_or_restart(monkeyp
 
                 outputSpec={"type": "object", "properties": {"summary": {"type": "string"}}},
             )
-        , AgentNode(nodeId="fixture-agent::only-step", name="gated")],
-    edges=[ACGEdge(sourceId="fixture-agent::only-step", targetId="only-step", edgeType=EdgeType.EXECUTION)])
+        ],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="only-step", plannedAgentId="gated"),)),
+        edges=[])
     planner_started = threading.Event()
     release_planner = threading.Event()
 
@@ -222,9 +224,9 @@ def test_concurrent_checkpoint_resume_allows_exactly_one_executor(monkeypatch) -
                         "properties": {"summary": {"type": "string"}},
                         "required": ["summary"],
                     },
-                ),
-            AgentNode(nodeId="fixture-agent::bootstrap", name="voter"), AgentNode(nodeId="fixture-agent::deliver", name="voter")],
-            edges=[ACGEdge(sourceId="bootstrap", targetId="deliver", edgeType=EdgeType.DEPENDENCY), ACGEdge(sourceId="fixture-agent::bootstrap", targetId="bootstrap", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::deliver", targetId="deliver", edgeType=EdgeType.EXECUTION)],
+                )],
+            resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="bootstrap", plannedAgentId="voter"), AgentBindingSpec(stepId="deliver", plannedAgentId="voter"),)),
+        edges=[ACGEdge(sourceId="bootstrap", targetId="deliver", edgeType=EdgeType.DEPENDENCY)],
         )
         monkeypatch.setattr(
             runtime,

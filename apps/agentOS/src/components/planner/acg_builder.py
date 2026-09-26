@@ -10,18 +10,21 @@ from contracts.planning import SemanticTaskRelationType, TaskImplementationBindi
 from support.acg.schema import (
     ACGBlueprint,
     ACGEdge,
-    AgentNode,
     ControlNode,
     ControlType,
     ConditionOperator,
     ConditionSpec,
     EdgeType,
-    EvidenceNode,
-    MemoryNode,
     ParallelSpec,
     LoopSpec,
     ConsensusSpec,
     StepNode,
+)
+from support.acg.planning import (
+    AgentBindingSpec,
+    CommunicationSpec,
+    EvidenceSpec,
+    MemoryAccessSpec,
 )
 from support.acg.capabilities import CapabilityCatalog
 from support.acg.legacy.workflow_adapter import promote_workflow_to_acg
@@ -204,15 +207,13 @@ class ACGBuilder:
                     "Template nextStepId requires a TaskPlan semantic dependency: "
                     f"{definition.step_id} -> {target_id}"
                 )
-        for edge in blueprint.edges_of_type(EdgeType.COMMUNICATION):
-            if edge.metadata.get("contract") != "input.from":
-                continue
+        for spec in blueprint.resource_plan.communication:
             if not authorized_order(
-                key_by_step_id[edge.source_id], key_by_step_id[edge.target_id],
+                key_by_step_id[spec.producer_step_id], key_by_step_id[spec.consumer_step_id],
             ):
                 raise ValueError(
                     "Template input.from requires a TaskPlan semantic dependency: "
-                    f"{edge.source_id} -> {edge.target_id}"
+                    f"{spec.producer_step_id} -> {spec.consumer_step_id}"
                 )
         return self.finalize(blueprint=blueprint, task_plan=task_plan)
 
@@ -259,7 +260,6 @@ class ACGBuilder:
         data_dependencies,
     ) -> tuple[list[StepNode], dict[str, StepNode]]:
         used_ids: set[str] = set()
-        agent_nodes: dict[str, str] = {}
         steps: list[StepNode] = []
         step_by_capability: dict[str, StepNode] = {}
         binding_by_capability = {binding.capability: binding for binding in network.bindings}
@@ -349,50 +349,32 @@ class ACGBuilder:
             steps.append(step)
             step_by_capability[task.key] = step
 
-            if binding.agent_name not in agent_nodes:
-                agent_id = f"agent::{binding.agent_name}"
-                agent_nodes[binding.agent_name] = agent_id
-                blueprint.nodes.append(
-                    AgentNode(
-                        nodeId=agent_id,
-                        name=binding.agent_name,
-                        role=descriptor.display_name,
-                        capabilityTags=[descriptor.capability_id],
-                        ephemeral=binding.ephemeral,
-                    )
-                )
-            else:
-                agent_node = blueprint.get_node(agent_nodes[binding.agent_name])
-                if descriptor.capability_id not in agent_node.capability_tags:
-                    agent_node.capability_tags.append(descriptor.capability_id)
-            blueprint.edges.append(
-                ACGEdge(
-                    sourceId=agent_nodes[binding.agent_name],
-                    targetId=node_id,
-                    edgeType=EdgeType.EXECUTION,
-                )
-            )
+            blueprint.resource_plan.bindings += (AgentBindingSpec(
+                stepId=node_id,
+                plannedAgentId=binding.agent_name,
+                role=descriptor.display_name,
+                requiredCapabilities=(descriptor.capability_id,),
+                ephemeral=binding.ephemeral,
+            ),)
 
             if descriptor.requires_evidence:
-                evidence = EvidenceNode(
-                    nodeId=f"evidence::{node_id}",
-                    name=f"Evidence:{descriptor.display_name}",
+                blueprint.resource_plan.evidence += (EvidenceSpec(
+                    evidenceId=f"evidence::{node_id}",
                     evidenceType="retrieved",
                     producerStepId=node_id,
-                    metadata={"capabilityId": descriptor.capability_id},
-                )
-                blueprint.nodes.append(evidence)
+                    source="planner",
+                    schema={"capabilityId": descriptor.capability_id},
+                ),)
             if descriptor.writes_memory:
-                memory = MemoryNode(
-                    nodeId=f"memory::{node_id}",
-                    name=f"Memory:{descriptor.display_name}",
+                blueprint.resource_plan.memory += (MemoryAccessSpec(
+                    stepId=node_id,
+                    memoryId=f"memory::{node_id}",
+                    access="write",
                     memoryType="episodic",
-                    metadata={"capabilityId": descriptor.capability_id},
-                )
-                blueprint.nodes.append(memory)
-                blueprint.edges.append(
-                    ACGEdge(sourceId=node_id, targetId=memory.node_id, edgeType=EdgeType.WRITE)
-                )
+                    storageType="inline",
+                    retentionPolicy="task",
+                    schema={"capabilityId": descriptor.capability_id},
+                ),)
 
         return steps, step_by_capability
 
@@ -579,45 +561,49 @@ class ACGBuilder:
         dependencies,
     ) -> None:
         evidence_by_producer = {
-            node.producer_step_id: node.node_id
-            for node in blueprint.nodes
-            if isinstance(node, EvidenceNode) and node.producer_step_id
+            spec.producer_step_id: spec.evidence_id
+            for spec in blueprint.resource_plan.evidence
+            if spec.producer_step_id
         }
-        memory_by_producer: dict[str, str] = {}
-        for edge in blueprint.edges_of_type(EdgeType.WRITE):
-            memory_by_producer.setdefault(edge.source_id, edge.target_id)
+        memory_by_producer = {
+            spec.step_id: spec.memory_id
+            for spec in blueprint.resource_plan.memory
+            if spec.access == "write"
+        }
+        evidence_consumers: dict[str, list[str]] = {
+            spec.evidence_id: list(spec.consumer_step_ids)
+            for spec in blueprint.resource_plan.evidence
+        }
+        memory_reads = list(blueprint.resource_plan.memory)
         for target_capability in selected:
             target = step_by_capability[target_capability]
             for source_capability in dependencies[target_capability]:
                 source = step_by_capability[source_capability]
                 fields = self._output_fields(descriptors[source_capability].output_contract)
-                blueprint.edges.append(
-                    ACGEdge(
-                        sourceId=source.node_id,
-                        targetId=target.node_id,
-                        edgeType=EdgeType.COMMUNICATION,
-                        dataFields=fields,
-                        metadata={"mode": "catalog_contract"},
-                    )
-                )
+                blueprint.resource_plan.communication += (CommunicationSpec(
+                    producerStepId=source.node_id,
+                    consumerStepId=target.node_id,
+                    allowedFields=tuple(fields),
+                    channel=f"{source.node_id}:{target.node_id}",
+                    mode=str(target.metadata.get("communicationMode", "STRICT_CONTRACT")),
+                ),)
                 source_evidence_id = evidence_by_producer.get(source.node_id)
                 if source_evidence_id:
-                    blueprint.edges.append(
-                        ACGEdge(
-                            sourceId=source_evidence_id,
-                            targetId=target.node_id,
-                            edgeType=EdgeType.SUPPORT,
-                        )
-                    )
+                    evidence_consumers.setdefault(source_evidence_id, []).append(target.node_id)
                 memory_id = memory_by_producer.get(source.node_id)
                 if memory_id:
-                    blueprint.edges.append(
-                        ACGEdge(
-                            sourceId=memory_id,
-                            targetId=target.node_id,
-                            edgeType=EdgeType.READ,
-                        )
-                    )
+                    memory_reads.append(MemoryAccessSpec(
+                        stepId=target.node_id,
+                        memoryId=memory_id,
+                        access="read",
+                    ))
+        blueprint.resource_plan.memory = tuple(memory_reads)
+        blueprint.resource_plan.evidence = tuple(
+            spec.model_copy(update={"consumer_step_ids": tuple(dict.fromkeys(
+                evidence_consumers.get(spec.evidence_id, spec.consumer_step_ids)
+            ))})
+            for spec in blueprint.resource_plan.evidence
+        )
 
     def _selected_dependencies(
         self,

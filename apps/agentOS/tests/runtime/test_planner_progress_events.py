@@ -22,7 +22,8 @@ from service.agents import AgentRegistry, AgentProfile, BaseAgent, AgentOutput
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 class Runner(BaseAgent):
@@ -140,8 +141,9 @@ def test_explicit_blueprint_path_never_fakes_planner_events() -> None:
     step = StepNode(nodeId="node-1", key="extract", capability="analysis")
     blueprint = ACGBlueprint(
         missionId=task.mission_id, graphId="graph-explicit",
-        nodes=[step, AgentNode(nodeId="agent::node-1", name="runner")],
-        edges=[ACGEdge(sourceId="agent::node-1", targetId="node-1", edgeType=EdgeType.EXECUTION)],
+        nodes=[step],
+        resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="node-1", plannedAgentId="runner"),)),
+        edges=[],
     )
     task_plan = TaskPlan(
         missionId=task.mission_id, planVersion=1,

@@ -9,7 +9,7 @@ from components.planner.semantic_planner import SemanticPlanner, SemanticPlannin
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from support.acg.models import (
-    AgentNode, CapabilityCatalog, EdgeType, PlanningCapabilityDescriptor,
+    CapabilityCatalog, EdgeType, PlanningCapabilityDescriptor,
     build_default_capability_catalog,
 )
 
@@ -128,13 +128,10 @@ def test_template_lowers_authorized_task_plan_dependency() -> None:
         EdgeType.DEPENDENCY
     )] == [("a", "b")]
 
-    agent_bindings = [
-        edge for edge in built.blueprint.edges_of_type(EdgeType.EXECUTION)
-        if isinstance(built.blueprint.get_node(edge.source_id), AgentNode)
-    ]
-    assert {(edge.source_id, edge.target_id) for edge in agent_bindings} == {
-        ("agent::agent", "a"), ("agent::agent", "b"),
-    }
+    assert {
+        (binding.planned_agent_id, binding.step_id)
+        for binding in built.blueprint.resource_plan.bindings
+    } == {("agent", "a"), ("agent", "b")}
     assert all(
         not ({"agentName", "assignedAgentId", "skillIds", "memoryIds", "evidenceIds"}
              & node.model_dump(by_alias=True).keys())

@@ -102,7 +102,7 @@ def test_prepare_run_freezes_resource_bindings() -> None:
             "policyMetadata": {
                     "source": "compiled-binding-manifest",
                     "stepId": "analyse",
-                    "agentNodeIds": ["agent::analyse"],
+                    "agentNodeIds": ["analyse"],
                     "maxConcurrency": 1,
             },
         }

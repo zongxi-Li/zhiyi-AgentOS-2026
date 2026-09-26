@@ -12,7 +12,8 @@ from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRela
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.models import ACGBlueprint, ACGEdge, AgentNode, EdgeType, EvidenceNode, StepNode
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, EvidenceSpec
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -91,37 +92,32 @@ def _run(tmp_path):
             _node("research-a", "research"),
             _node("research-b", "research"),
             _node("synthesize", "synthesize"),
-            AgentNode(nodeId="agent::golden-memory-a", name="golden-memory-a"),
-            AgentNode(nodeId="agent::golden-memory-b", name="golden-memory-b"),
-            EvidenceNode(
-                nodeId="evidence-node:research-a",
-                name="research-a evidence",
-                evidenceType="test",
-                source="golden-memory-fixture",
-                producerStepId="research-a",
-            ),
-            EvidenceNode(
-                nodeId="evidence-node:research-b",
-                name="research-b evidence",
-                evidenceType="test",
-                source="golden-memory-fixture",
-                producerStepId="research-b",
-            ),
-            EvidenceNode(
-                nodeId="evidence-node:synthesize",
-                name="synthesize evidence",
-                evidenceType="test",
-                source="golden-memory-fixture",
-                producerStepId="synthesize",
-            ),
         ],
         edges=[
-            ACGEdge(sourceId="agent::golden-memory-a", targetId="research-a", edgeType=EdgeType.EXECUTION),
-            ACGEdge(sourceId="agent::golden-memory-b", targetId="research-b", edgeType=EdgeType.EXECUTION),
-            ACGEdge(sourceId="agent::golden-memory-a", targetId="synthesize", edgeType=EdgeType.EXECUTION),
             ACGEdge(sourceId="research-a", targetId="synthesize", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="research-b", targetId="synthesize", edgeType=EdgeType.DEPENDENCY),
         ],
+        resourcePlan=ACGResourcePlan(
+            bindings=(
+                AgentBindingSpec(stepId="research-a", plannedAgentId="golden-memory-a"),
+                AgentBindingSpec(stepId="research-b", plannedAgentId="golden-memory-b"),
+                AgentBindingSpec(stepId="synthesize", plannedAgentId="golden-memory-a"),
+            ),
+            evidence=(
+                EvidenceSpec(
+                    evidenceId="evidence-node:research-a", evidenceType="test",
+                    source="golden-memory-fixture", producerStepId="research-a",
+                ),
+                EvidenceSpec(
+                    evidenceId="evidence-node:research-b", evidenceType="test",
+                    source="golden-memory-fixture", producerStepId="research-b",
+                ),
+                EvidenceSpec(
+                    evidenceId="evidence-node:synthesize", evidenceType="test",
+                    source="golden-memory-fixture", producerStepId="synthesize",
+                ),
+            ),
+        ),
     )
     task = runtime.create_mission(
         "Golden memory integration",

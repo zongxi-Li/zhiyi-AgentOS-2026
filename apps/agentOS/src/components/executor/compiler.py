@@ -30,15 +30,18 @@ from components.communicator.manifest import CommunicationManifest, Communicatio
 from components.executor.graph import ACGConditionalRoute, ACGExecutionGraph, ACGNodeSpec
 from support.acg.schema import (
     ACGBlueprint,
-    AgentNode,
     ControlNode,
     ControlType,
     EdgeType,
-    EvidenceNode,
-    MemoryNode,
     NodeType,
-    SkillNode,
     StepNode,
+)
+from support.acg.planning import (
+    AgentBindingSpec,
+    CommunicationSpec,
+    EvidenceSpec,
+    MemoryAccessSpec,
+    SkillRequirementSpec,
 )
 from support.acg.validation import validate_blueprint
 
@@ -66,7 +69,6 @@ class ACGGraphCompiler:
         """Validate and lower every node and edge into immutable manifests."""
         validate_blueprint(blueprint)
         self._assert_enum_coverage()
-        nodes_by_id = {node.node_id: node for node in blueprint.nodes}
         steps = {
             node.node_id: node
             for node in blueprint.step_nodes()
@@ -104,12 +106,12 @@ class ACGGraphCompiler:
             if edge.source_id in executable_ids and edge.target_id in executable_ids
         )
 
-        binding_manifest = self._compile_bindings(blueprint, steps, nodes_by_id)
-        skill_manifest = self._compile_skills(blueprint, steps, nodes_by_id)
-        memory_manifest = self._compile_memory(blueprint, steps, nodes_by_id)
-        evidence_manifest = self._compile_evidence(blueprint, steps, nodes_by_id)
+        binding_manifest = self._compile_bindings(blueprint.resource_plan.bindings, steps)
+        skill_manifest = self._compile_skills(blueprint.resource_plan.skills, steps)
+        memory_manifest = self._compile_memory(blueprint.resource_plan.memory, steps)
+        evidence_manifest = self._compile_evidence(blueprint.resource_plan.evidence, steps)
         communication_manifest = self._compile_communication(
-            blueprint, steps, run_id=run_id
+            blueprint, blueprint.resource_plan.communication, steps, run_id=run_id
         )
         control_manifest = self._compile_controls(blueprint, node_specs)
 
@@ -192,12 +194,10 @@ class ACGGraphCompiler:
     @staticmethod
     def _assert_enum_coverage() -> None:
         handled_nodes = {
-            NodeType.STEP, NodeType.AGENT, NodeType.SKILL, NodeType.MEMORY,
-            NodeType.EVIDENCE, NodeType.CONTROL,
+            NodeType.STEP, NodeType.CONTROL,
         }
         handled_edges = {
-            EdgeType.DEPENDENCY, EdgeType.COMMUNICATION, EdgeType.CONTROL_FLOW,
-            EdgeType.EXECUTION, EdgeType.WRITE, EdgeType.READ, EdgeType.SUPPORT,
+            EdgeType.DEPENDENCY, EdgeType.CONTROL_FLOW,
         }
         handled_controls = {
             ControlType.START, ControlType.END, ControlType.IF, ControlType.LOOP,
@@ -218,26 +218,25 @@ class ACGGraphCompiler:
         return mode
 
     @staticmethod
-    def _compile_bindings(blueprint, steps, nodes_by_id):
-        explicit: dict[str, list[AgentNode]] = {step_id: [] for step_id in steps}
-        for edge in blueprint.edges_of_type(EdgeType.EXECUTION):
-            source = nodes_by_id[edge.source_id]
-            if isinstance(source, AgentNode) and edge.target_id in explicit:
-                explicit[edge.target_id].append(source)
+    def _compile_bindings(bindings: tuple[AgentBindingSpec, ...], steps):
+        explicit = {step_id: [] for step_id in steps}
+        for binding in bindings:
+            if binding.step_id in explicit:
+                explicit[binding.step_id].append(binding)
         rules: list[BindingRule] = []
         for step_id, step in steps.items():
             agents = explicit[step_id]
             capabilities = {str(step.capability)} if step.capability else set()
             if not capabilities:
                 for agent in agents:
-                    capabilities.update(str(item) for item in agent.capability_tags)
+                    capabilities.update(str(item) for item in agent.required_capabilities)
             if not capabilities:
                 capabilities.add(
-                    f"agent:{agents[0].name.lower()}" if len(agents) == 1 else "general"
+                    f"agent:{agents[0].planned_agent_id.lower()}" if len(agents) == 1 else "general"
                 )
             rules.append(BindingRule(
                 stepId=step_id,
-                agentNodeIds=tuple(agent.node_id for agent in agents),
+                agentNodeIds=tuple(agent.planned_agent_id for agent in agents),
                 requiredCapabilities=tuple(sorted(capabilities)),
                 allowedResourceIds=(),
                 maxConcurrency=min((agent.max_concurrency for agent in agents), default=1),
@@ -245,76 +244,57 @@ class ACGGraphCompiler:
         return BindingManifest(rules=tuple(rules))
 
     @staticmethod
-    def _compile_skills(blueprint, steps, nodes_by_id):
+    def _compile_skills(skills: tuple[SkillRequirementSpec, ...], steps):
         rules: list[SkillRule] = []
-        explicit_pairs = {
-            (edge.target_id, edge.source_id)
-            for edge in blueprint.edges_of_type(EdgeType.EXECUTION)
-            if isinstance(nodes_by_id[edge.source_id], SkillNode)
-        }
-        for step_id, step in steps.items():
-            ids = [skill_id for target, skill_id in explicit_pairs if target == step_id]
-            for skill_id in ids:
-                node = nodes_by_id.get(skill_id)
-                if isinstance(node, SkillNode):
-                    rules.append(SkillRule(
-                        stepId=step_id, skillNodeId=skill_id, toolName=node.tool_name,
-                        version=node.version, inputSpec=node.input_spec, outputSpec=node.output_spec,
-                    ))
+        for spec in skills:
+            if spec.step_id in steps:
+                rules.append(SkillRule(
+                    stepId=spec.step_id, skillNodeId=spec.skill_id,
+                    toolName=spec.tool_name, version=spec.version,
+                    inputSpec=spec.input_spec, outputSpec=spec.output_spec,
+                ))
         return SkillManifest(rules=tuple(rules))
 
     @staticmethod
-    def _compile_memory(blueprint, steps, nodes_by_id):
+    def _compile_memory(memory: tuple[MemoryAccessSpec, ...], steps):
         rules: list[MemoryRule] = []
-        explicit_pairs: set[tuple[str, str, str]] = set()
-        for edge in blueprint.edges:
-            if edge.edge_type is EdgeType.READ:
-                explicit_pairs.add((edge.target_id, edge.source_id, "read"))
-            elif edge.edge_type is EdgeType.WRITE:
-                explicit_pairs.add((edge.source_id, edge.target_id, "write"))
-        for step_id, step in steps.items():
-            pairs = [(memory_id, access) for target, memory_id, access in explicit_pairs if target == step_id]
-            for memory_id, access in pairs:
-                node = nodes_by_id.get(memory_id)
-                if isinstance(node, MemoryNode):
-                    rules.append(MemoryRule(
-                        stepId=step_id, memoryNodeId=memory_id, access=access,
-                        memoryType=node.memory_type, storageType=node.storage_type,
-                        retentionPolicy=node.retention_policy, schema=node.schema_,
-                    ))
+        for spec in memory:
+            if spec.step_id in steps:
+                rules.append(MemoryRule(
+                    stepId=spec.step_id, memoryNodeId=spec.memory_id,
+                    access=spec.access, memoryType=spec.memory_type,
+                    storageType=spec.storage_type,
+                    retentionPolicy=spec.retention_policy, schema=spec.schema_,
+                ))
         return MemoryManifest(rules=tuple(rules))
 
     @staticmethod
-    def _compile_evidence(blueprint, steps, nodes_by_id):
+    def _compile_evidence(evidence: tuple[EvidenceSpec, ...], steps):
         rules: list[EvidenceRule] = []
-        consume_pairs = {
-            (edge.target_id, edge.source_id)
-            for edge in blueprint.edges_of_type(EdgeType.SUPPORT)
-        }
-        produce_pairs: set[tuple[str, str]] = set()
-        for node in nodes_by_id.values():
-            if not isinstance(node, EvidenceNode):
-                continue
-            producer_step_id = node.producer_step_id
-            if producer_step_id in steps:
-                produce_pairs.add((producer_step_id, node.node_id))
-        for step_id, step in steps.items():
-            consume_ids = [evidence_id for target, evidence_id in consume_pairs if target == step_id]
-            produce_ids = [evidence_id for producer, evidence_id in produce_pairs if producer == step_id]
-            for evidence_id, access in [
-                *((item, "produce") for item in produce_ids),
-                *((item, "consume") for item in consume_ids),
-            ]:
-                node = nodes_by_id.get(evidence_id)
-                if isinstance(node, EvidenceNode):
+        for spec in evidence:
+            if spec.producer_step_id in steps:
+                rules.append(EvidenceRule(
+                    stepId=spec.producer_step_id, evidenceNodeId=spec.evidence_id,
+                    access="produce", evidenceType=spec.evidence_type,
+                    source=spec.source, schema=spec.schema_,
+                ))
+            for consumer in spec.consumer_step_ids:
+                if consumer in steps:
                     rules.append(EvidenceRule(
-                        stepId=step_id, evidenceNodeId=evidence_id, access=access,
-                        evidenceType=node.evidence_type, source=node.source,
-                        schema=node.schema_,
+                        stepId=consumer, evidenceNodeId=spec.evidence_id,
+                        access="consume", evidenceType=spec.evidence_type,
+                        source=spec.source, schema=spec.schema_,
                     ))
         return EvidenceManifest(rules=tuple(rules))
 
-    def _compile_communication(self, blueprint, steps, *, run_id):
+    def _compile_communication(
+        self,
+        blueprint,
+        communication: tuple[CommunicationSpec, ...],
+        steps,
+        *,
+        run_id,
+    ):
         metadata = blueprint.metadata if isinstance(blueprint.metadata, dict) else {}
         run_budget = self._budget(metadata.get("communicationBudget"), "communication budget")
         topology: dict[tuple[str, str], list[str] | None] = {
@@ -322,8 +302,12 @@ class ACGGraphCompiler:
             for edge in blueprint.edges_of_type(EdgeType.DEPENDENCY)
             if edge.source_id in steps and edge.target_id in steps
         }
-        for edge in blueprint.edges_of_type(EdgeType.COMMUNICATION):
-            topology[(edge.source_id, edge.target_id)] = list(edge.data_fields)
+        communication_by_pair = {
+            (spec.producer_step_id, spec.consumer_step_id): spec
+            for spec in communication
+        }
+        for pair, spec in communication_by_pair.items():
+            topology[pair] = list(spec.allowed_fields)
         rules: list[CommunicationRuleSpec] = []
         step_budgets: dict[str, int] = {}
         channel_budgets: dict[str, int] = {}
@@ -349,12 +333,24 @@ class ACGGraphCompiler:
                 target_metadata.get("communicationBudget"),
                 f"communication budget for {target_id}",
             )
-            max_tokens = explicit_step_budget
-            channel = f"{source_id}:{target_id}"
+            planned = communication_by_pair.get((source_id, target_id))
+            max_tokens = planned.max_tokens if planned and planned.max_tokens is not None else explicit_step_budget
+            channel = planned.channel if planned is not None else f"{source_id}:{target_id}"
             mode = self._communication_mode(target)
+            if planned is not None:
+                try:
+                    mode = CommunicationMode(planned.mode)
+                except ValueError as exc:
+                    raise UnsupportedCommunicationModeError(
+                        f"unsupported communication mode: {planned.mode}"
+                    ) from exc
             participants: tuple[str, ...] = ()
             max_rounds = None
             quorum = None
+            if planned is not None:
+                participants = tuple(planned.participant_step_ids)
+                max_rounds = planned.max_rounds
+                quorum = planned.quorum
             if mode is CommunicationMode.DEBATE:
                 raw_participants = target_metadata.get("debateParticipants")
                 if raw_participants is None:
@@ -373,9 +369,9 @@ class ACGGraphCompiler:
                 producerStepId=source_id, consumerStepId=target_id,
                 mode=mode, allowedFields=tuple(str(item) for item in declared),
                 channel=channel, maxTokens=max_tokens,
-                schemaHash=stable_checksum(source.output_spec),
-                backlogLimit=int(target_metadata.get("communicationBacklogLimit", 1000)),
-                partition=(str(target_metadata["blackboardPartition"]) if target_metadata.get("blackboardPartition") else None),
+                schemaHash=(planned.schema_hash if planned and planned.schema_hash else stable_checksum(source.output_spec)),
+                backlogLimit=(planned.backlog_limit if planned else int(target_metadata.get("communicationBacklogLimit", 1000))),
+                partition=(planned.partition if planned else (str(target_metadata["blackboardPartition"]) if target_metadata.get("blackboardPartition") else None)),
                 maxRounds=max_rounds,
                 quorum=quorum,
                 participantStepIds=participants,

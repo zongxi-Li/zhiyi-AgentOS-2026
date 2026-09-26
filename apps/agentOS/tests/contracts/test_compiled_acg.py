@@ -15,14 +15,18 @@ from contracts.compiled_acg import (
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
-    AgentNode,
     ControlNode,
     ControlType,
     EdgeType,
-    EvidenceNode,
-    MemoryNode,
-    SkillNode,
     StepNode,
+)
+from support.acg.planning import (
+    ACGResourcePlan,
+    AgentBindingSpec,
+    CommunicationSpec,
+    EvidenceSpec,
+    MemoryAccessSpec,
+    SkillRequirementSpec,
 )
 
 
@@ -33,25 +37,29 @@ def _resource_rich_blueprint() -> ACGBlueprint:
             ControlNode(nodeId="start", controlType=ControlType.START),
             StepNode(nodeId="a", outputSpec={"properties": {"result": {}}}),
             StepNode(nodeId="b", inputSpec={"from": {"a": ["result"]}}),
-            AgentNode(nodeId="agent", name="Agent", capabilityTags=["analysis"]),
-            SkillNode(nodeId="skill", name="Skill", toolName="tool"),
-            MemoryNode(nodeId="memory", name="Memory"),
-            EvidenceNode(nodeId="evidence", name="Evidence", producerStepId="a"),
         ],
         edges=[
             ACGEdge(edgeId="start-a", sourceId="start", targetId="a"),
             ACGEdge(edgeId="a-b", sourceId="a", targetId="b"),
-            ACGEdge(
-                edgeId="a-b-communication", sourceId="a", targetId="b",
-                edgeType=EdgeType.COMMUNICATION, dataFields=["result"],
-            ),
-            ACGEdge(edgeId="agent-a", sourceId="agent", targetId="a", edgeType=EdgeType.EXECUTION),
-            ACGEdge(edgeId="agent-b", sourceId="agent", targetId="b", edgeType=EdgeType.EXECUTION),
-            ACGEdge(edgeId="skill-a", sourceId="skill", targetId="a", edgeType=EdgeType.EXECUTION),
-            ACGEdge(edgeId="memory-a", sourceId="memory", targetId="a", edgeType=EdgeType.READ),
-            ACGEdge(edgeId="a-memory", sourceId="a", targetId="memory", edgeType=EdgeType.WRITE),
-            ACGEdge(edgeId="evidence-b", sourceId="evidence", targetId="b", edgeType=EdgeType.SUPPORT),
         ],
+        resourcePlan=ACGResourcePlan(
+            bindings=(
+                AgentBindingSpec(stepId="a", plannedAgentId="agent", requiredCapabilities=("analysis",)),
+                AgentBindingSpec(stepId="b", plannedAgentId="agent", requiredCapabilities=("analysis",)),
+            ),
+            skills=(SkillRequirementSpec(stepId="a", skillId="skill", toolName="tool"),),
+            memory=(
+                MemoryAccessSpec(stepId="a", memoryId="memory", access="read"),
+                MemoryAccessSpec(stepId="a", memoryId="memory", access="write"),
+            ),
+            evidence=(EvidenceSpec(
+                evidenceId="evidence", producerStepId="a", consumerStepIds=("b",),
+                evidenceType="document", source="test",
+            ),),
+            communication=(CommunicationSpec(
+                producerStepId="a", consumerStepId="b", allowedFields=("result",), channel="a:b",
+            ),),
+        ),
     )
 
 
@@ -116,39 +124,13 @@ def test_step_node_rejects_removed_inline_resource_fields(field: str) -> None:
         StepNode.model_validate({"nodeId": "step", field: "legacy"})
 
 
-@pytest.mark.parametrize("field", ["skillIds", "skill_ids", "memoryIds", "memory_ids"])
-def test_agent_node_rejects_removed_inline_resource_fields(field: str) -> None:
-    with pytest.raises(ValidationError, match="legacy resource fields"):
-        AgentNode.model_validate({"nodeId": "agent", "name": "Agent", field: ["legacy"]})
-
-
-@pytest.mark.parametrize("field", ["producerStepId", "producer_step_id"])
-def test_evidence_metadata_cannot_supply_producer_identity(field: str) -> None:
-    with pytest.raises(ValidationError, match="typed producerStepId"):
-        EvidenceNode.model_validate({
-            "nodeId": "evidence", "metadata": {field: "step"},
-        })
-
-
-@pytest.mark.parametrize("model,field", [
-    (StepNode, "agentName"),
-    (StepNode, "agent_name"),
-    (StepNode, "assignedAgentId"),
-    (StepNode, "assigned_agent_id"),
-    (StepNode, "skillIds"),
-    (StepNode, "skill_ids"),
-    (StepNode, "memoryIds"),
-    (StepNode, "memory_ids"),
-    (StepNode, "evidenceIds"),
-    (StepNode, "evidence_ids"),
-    (AgentNode, "skillIds"),
-    (AgentNode, "skill_ids"),
-    (AgentNode, "memoryIds"),
-    (AgentNode, "memory_ids"),
+@pytest.mark.parametrize("field", [
+    "agentName", "agent_name", "assignedAgentId", "assigned_agent_id",
+    "skillIds", "skill_ids", "memoryIds", "memory_ids", "evidenceIds", "evidence_ids",
 ])
-def test_removed_resource_fields_cannot_be_hidden_in_metadata(model, field: str) -> None:
+def test_removed_resource_fields_cannot_be_hidden_in_metadata(field: str) -> None:
     with pytest.raises(ValidationError, match="legacy resource fields"):
-        model.model_validate({"nodeId": "node", "metadata": {field: "legacy"}})
+        StepNode.model_validate({"nodeId": "node", "metadata": {field: "legacy"}})
 
 
 def test_package_rejects_duplicate_identities_and_dangling_edges() -> None:

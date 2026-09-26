@@ -29,7 +29,8 @@ from components.executor.value_store import (
 from components.memory import MemoryService
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode, AgentNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 class _Agent(BaseAgent):
@@ -143,14 +144,30 @@ def test_compiler_freezes_debate_participants_rounds_and_quorum() -> None:
                     "debateMaxRounds": 2,
                     "debateQuorum": 2,
                 },
+            ), ],
+        resourcePlan=ACGResourcePlan(
+            bindings=(
+                AgentBindingSpec(stepId="left", plannedAgentId="advanced-agent"),
+                AgentBindingSpec(stepId="right", plannedAgentId="advanced-agent"),
+                AgentBindingSpec(stepId="judge", plannedAgentId="advanced-agent"),
             ),
-        AgentNode(nodeId="fixture-agent::left", name="advanced-agent"), AgentNode(nodeId="fixture-agent::right", name="advanced-agent"), AgentNode(nodeId="fixture-agent::judge", name="advanced-agent")],
+            communication=(
+                CommunicationSpec(
+                    producerStepId="left", consumerStepId="judge", channel="left:judge",
+                    mode="DEBATE", participantStepIds=("left", "right"),
+                    maxRounds=2, quorum=2,
+                ),
+                CommunicationSpec(
+                    producerStepId="right", consumerStepId="judge", channel="right:judge",
+                    mode="DEBATE", participantStepIds=("left", "right"),
+                    maxRounds=2, quorum=2,
+                ),
+            ),
+        ),
         edges=[
             ACGEdge(sourceId="left", targetId="judge", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="right", targetId="judge", edgeType=EdgeType.DEPENDENCY),
-            ACGEdge(sourceId="left", targetId="judge", edgeType=EdgeType.COMMUNICATION),
-            ACGEdge(sourceId="right", targetId="judge", edgeType=EdgeType.COMMUNICATION),
-        ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::judge", targetId="judge", edgeType=EdgeType.EXECUTION)],
+        ],
     )
 
     package = ACGGraphCompiler().compile_package(blueprint, run_id="run-1")
@@ -184,12 +201,20 @@ def test_blackboard_snapshot_is_frozen_before_sibling_writes(tmp_path) -> None:
                     "communicationMode": "BLACKBOARD",
                     "blackboardPartition": "shared",
                 },
+            )],
+        resourcePlan=ACGResourcePlan(
+            bindings=(
+                AgentBindingSpec(stepId="source", plannedAgentId="advanced-agent"),
+                AgentBindingSpec(stepId="sink", plannedAgentId="advanced-agent"),
             ),
-        AgentNode(nodeId="fixture-agent::source", name="advanced-agent"), AgentNode(nodeId="fixture-agent::sink", name="advanced-agent")],
+            communication=(CommunicationSpec(
+                producerStepId="source", consumerStepId="sink", channel="source:sink",
+                mode="BLACKBOARD", partition="shared",
+            ),),
+        ),
         edges=[
             ACGEdge(sourceId="source", targetId="sink", edgeType=EdgeType.DEPENDENCY),
-            ACGEdge(sourceId="source", targetId="sink", edgeType=EdgeType.COMMUNICATION),
-        ACGEdge(sourceId="fixture-agent::source", targetId="source", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::sink", targetId="sink", edgeType=EdgeType.EXECUTION)],
+        ],
     )
     package = ACGGraphCompiler().compile_package(blueprint, run_id="run-1")
     communication = SQLiteReliableCommunicationStore(tmp_path / "snapshot.sqlite3")

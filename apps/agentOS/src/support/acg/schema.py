@@ -9,25 +9,19 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
+from .planning import (
+    ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec,
+    MemoryAccessSpec, SkillRequirementSpec,
+)
+
 class NodeType(str, Enum):
-    """ACG 节点类别；决定节点的序列化模型与下游消费语义。"""
     STEP = "step"
-    AGENT = "agent"
-    SKILL = "skill"
-    MEMORY = "memory"
-    EVIDENCE = "evidence"
     CONTROL = "control"
 
 
 class EdgeType(str, Enum):
-    """ACG 有向边类别；只有 ``DEPENDENCY`` 定义执行就绪关系。"""
     DEPENDENCY = "dependency"
-    COMMUNICATION = "communication"
     CONTROL_FLOW = "control_flow"
-    EXECUTION = "execution"
-    WRITE = "write"
-    READ = "read"
-    SUPPORT = "support"
 
 
 class ControlType(str, Enum):
@@ -132,26 +126,14 @@ class ACGNodeBase(BaseModel):
             node_kind = node_kind.value
         node_kind = node_kind or {
             "StepNode": "step",
-            "AgentNode": "agent",
-            "SkillNode": "skill",
-            "MemoryNode": "memory",
-            "EvidenceNode": "evidence",
             "ControlNode": "control",
         }.get(cls.__name__)
         appendix_id = {
             "step": "stepId",
-            "agent": "agentId",
-            "skill": "skillId",
-            "memory": "memoryId",
-            "evidence": "evidenceId",
             "control": "controlId",
         }.get(node_kind)
         appendix_name = {
             "step": "stepName",
-            "agent": "agentName",
-            "skill": "skillName",
-            "memory": "memoryName",
-            "evidence": "evidenceName",
         }.get(node_kind)
         if "nodeId" not in data and "node_id" not in data and appendix_id in data:
             data["nodeId"] = data[appendix_id]
@@ -185,7 +167,7 @@ class StepNode(ACGNodeBase):
     logical_role: str = Field(default="task", alias="logicalRole")
     input_spec: Dict[str, Any] = Field(default_factory=dict, alias="inputSpec")
     output_spec: Dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
-    # Execution capability requirement. The Agent binding is represented by an EXECUTION edge.
+    # Execution capability requirement. Logical agent binding lives in resourcePlan.
     capability: Optional[str] = None
     timeout: int = 0
     retry_limit: int = Field(default=0, alias="retryLimit")
@@ -219,117 +201,6 @@ class StepNode(ACGNodeBase):
         return self.name
 
 
-class AgentNode(ACGNodeBase):
-    """智能体节点"""
-
-    node_type: Literal[NodeType.AGENT] = Field(default=NodeType.AGENT, alias="nodeType")
-    role: str = ""
-    model_name: Optional[str] = Field(default=None, alias="modelName")
-    capability_tags: List[str] = Field(default_factory=list, alias="capabilityTags")
-    max_concurrency: int = Field(default=1, alias="maxConcurrency")
-    status: BlueprintStatus = BlueprintStatus.DRAFT
-    ephemeral: bool = False  # 动态角色生成器产出的临时角色标记
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_inline_resource_lists(cls, value: Any) -> Any:
-        return _reject_removed_resource_fields(
-            value, {"skillIds", "skill_ids", "memoryIds", "memory_ids"}, "AgentNode"
-        )
-
-    @computed_field(alias="agentId", return_type=str)
-    @property
-    def agent_id(self) -> str:
-        """返回节点标识作为 ``agentId`` 的计算字段。"""
-        return self.node_id
-
-    @computed_field(alias="agentName", return_type=str)
-    @property
-    def agent_name(self) -> str:
-        """返回节点名称作为 ``agentName`` 的计算字段。"""
-        return self.name
-
-
-class SkillNode(ACGNodeBase):
-    """技能节点"""
-
-    node_type: Literal[NodeType.SKILL] = Field(default=NodeType.SKILL, alias="nodeType")
-    skill_type: str = Field(default="generic", alias="skillType")
-    input_spec: Dict[str, Any] = Field(default_factory=dict, alias="inputSpec")
-    output_spec: Dict[str, Any] = Field(default_factory=dict, alias="outputSpec")
-    tool_name: Optional[str] = Field(default=None, alias="toolName")
-    version: str = "1.0.0"
-
-    @computed_field(alias="skillId", return_type=str)
-    @property
-    def skill_id(self) -> str:
-        """返回节点标识作为 ``skillId`` 的计算字段。"""
-        return self.node_id
-
-    @computed_field(alias="skillName", return_type=str)
-    @property
-    def skill_name(self) -> str:
-        """返回节点名称作为 ``skillName`` 的计算字段。"""
-        return self.name
-
-
-class MemoryNode(ACGNodeBase):
-    """记忆节点 提供长程上下文连续性。"""
-
-    node_type: Literal[NodeType.MEMORY] = Field(default=NodeType.MEMORY, alias="nodeType")
-    memory_type: str = Field(default="working", alias="memoryType")
-    storage_type: str = Field(default="inline", alias="storageType")
-    schema_: Dict[str, Any] = Field(default_factory=dict, alias="schema")
-    retention_policy: str = Field(default="task", alias="retentionPolicy")
-
-    @computed_field(alias="memoryId", return_type=str)
-    @property
-    def memory_id(self) -> str:
-        """返回节点标识作为 ``memoryId`` 的计算字段。"""
-        return self.node_id
-
-    @computed_field(alias="memoryName", return_type=str)
-    @property
-    def memory_name(self) -> str:
-        """返回节点名称作为 ``memoryName`` 的计算字段。"""
-        return self.name
-
-
-class EvidenceNode(ACGNodeBase):
-    """证据节点 承载可信交付与审计依据。"""
-
-    node_type: Literal[NodeType.EVIDENCE] = Field(default=NodeType.EVIDENCE, alias="nodeType")
-    evidence_type: str = Field(default="document", alias="evidenceType")
-    source: str = ""
-    schema_: Dict[str, Any] = Field(default_factory=dict, alias="schema")
-    producer_step_id: Optional[str] = Field(default=None, alias="producerStepId")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_metadata_producer_fallback(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            metadata = value.get("metadata")
-            if isinstance(metadata, dict) and (
-                "producerStepId" in metadata or "producer_step_id" in metadata
-            ):
-                raise ValueError(
-                    "EvidenceNode producer must use the typed producerStepId field"
-                )
-        return value
-
-    @computed_field(alias="evidenceId", return_type=str)
-    @property
-    def evidence_id(self) -> str:
-        """返回节点标识作为 ``evidenceId`` 的计算字段。"""
-        return self.node_id
-
-    @computed_field(alias="evidenceName", return_type=str)
-    @property
-    def evidence_name(self) -> str:
-        """返回节点名称作为 ``evidenceName`` 的计算字段。"""
-        return self.name
-
-
 class ControlNode(ACGNodeBase):
     """控制节点 实现条件/循环/并行/共识。"""
 
@@ -350,14 +221,10 @@ class ControlNode(ACGNodeBase):
         return self.node_id
 
 
-ACGNode = Union[StepNode, AgentNode, SkillNode, MemoryNode, EvidenceNode, ControlNode]
+ACGNode = Union[StepNode, ControlNode]
 
 _NODE_MODEL_BY_TYPE = {
     NodeType.STEP: StepNode,
-    NodeType.AGENT: AgentNode,
-    NodeType.SKILL: SkillNode,
-    NodeType.MEMORY: MemoryNode,
-    NodeType.EVIDENCE: EvidenceNode,
     NodeType.CONTROL: ControlNode,
 }
 
@@ -449,6 +316,7 @@ class RuntimeBlueprintSpec(BaseModel):
     priority: int = 0
     nodes: List[ACGNode] = Field(default_factory=list)
     edges: List[ACGEdge] = Field(default_factory=list)
+    resource_plan: ACGResourcePlan = Field(default_factory=ACGResourcePlan, alias="resourcePlan")
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
     updated_at: datetime = Field(default_factory=_utc_now, alias="updatedAt")
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -495,15 +363,6 @@ class RuntimeBlueprintSpec(BaseModel):
     def edges_of_type(self, edge_type: EdgeType) -> List[ACGEdge]:
         """按原始顺序筛选指定类别边，复杂度 ``O(E)``。"""
         return [e for e in self.edges if e.edge_type == edge_type]
-
-    def agent_bindings_by_step(self) -> Dict[str, List[AgentNode]]:
-        """Return canonical AgentNode bindings declared by EXECUTION edges."""
-        bindings: Dict[str, List[AgentNode]] = {}
-        for edge in self.edges_of_type(EdgeType.EXECUTION):
-            agent = self.get_node(edge.source_id)
-            if isinstance(agent, AgentNode):
-                bindings.setdefault(edge.target_id, []).append(agent)
-        return bindings
 
     def incoming(self, node_id: str, edge_type: Optional[EdgeType] = None) -> List[ACGEdge]:
         """返回指向节点的边，可按类别过滤，结果保持边列表顺序，复杂度 ``O(E)``。"""
@@ -555,8 +414,10 @@ class ACGValidationError(ValueError):
 
 __all__ = [
     "ACGBlueprint", "RuntimeBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase",
-    "ACGValidationError", "AgentNode", "BlueprintStatus", "ComplexityLevel",
+    "ACGValidationError", "BlueprintStatus", "ComplexityLevel",
     "ConditionOperator", "ConditionSpec", "ControlNode", "ControlType",
-    "EdgeActivation", "EdgeType", "EvidenceNode", "MemoryNode", "NodeType",
-    "LoopSpec", "ParallelSpec", "ConsensusSpec", "SkillNode", "StepNode", "parse_node",
+    "EdgeActivation", "EdgeType", "NodeType",
+    "LoopSpec", "ParallelSpec", "ConsensusSpec", "StepNode", "parse_node",
+    "ACGResourcePlan", "AgentBindingSpec", "CommunicationSpec", "EvidenceSpec",
+    "MemoryAccessSpec", "SkillRequirementSpec",
 ]

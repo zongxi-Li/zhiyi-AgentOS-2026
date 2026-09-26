@@ -381,20 +381,15 @@ doc.add_paragraph(
     '是整个系统的"统一计算模型"。'
 )
 
-doc.add_heading('4.2.1 节点体系（6 种类型）', level=3)
+doc.add_heading('4.2.1 节点体系（2 种类型）', level=3)
 doc.add_paragraph(
-    'ACG 定义 6 种节点类型，每种节点有明确的语义和用途：'
+    '纯 ACG Kernel 只定义 2 种可执行节点类型；资源和上下文语义由独立的 typed planning spec 表达：'
 )
 nodes = [
     ('StepNode', '最小执行单元。包含 step_type、goal、input_spec、output_spec、'
-     'assigned_agent_id、review_required、retry_limit 等字段。执行器只调度 StepNode。'),
-    ('AgentNode', '智能体能力标签。包含 role、model_name、capability_tags、max_concurrency。'
-     '一个 Agent 可执行多个 Step（通过 EXECUTION 边绑定）。'),
-    ('SkillNode', '工具能力描述。包含 skill_type、tool_name。'),
-    ('MemoryNode', '上下文存储节点。包含 memory_type、storage_type、retention_policy。'
-     'Step 通过 WRITE/READ 边与其交互。'),
-    ('EvidenceNode', '审计痕迹节点。包含 evidence_type、source。'
-     'Step 通过 SUPPORT 边引用证据。'),
+     'review_required、retry_limit 等字段。执行器只调度 StepNode。'),
+    ('ResourcePlan', '独立的 typed planning spec，包含 AgentBindingSpec、SkillRequirementSpec、'
+     'MemoryAccessSpec、EvidenceSpec 和 CommunicationSpec；Compiler 将其转换为运行时 Manifest。'),
     ('ControlNode', '流程控制节点。支持 START、END、IF、LOOP、PARALLEL、CONSENSUS。'
      '已满足前置依赖的控制节点会被执行器自动并入完成集。'),
 ]
@@ -404,19 +399,13 @@ for name, desc in nodes:
     run.bold = True
     p.add_run(desc)
 
-doc.add_heading('4.2.2 边体系（7 种类型）', level=3)
+doc.add_heading('4.2.2 边体系（2 种类型）', level=3)
 doc.add_paragraph(
-    '边定义了节点之间的关系，但只有 DEPENDENCY 边参与执行 DAG 构建，'
-    '其余边由通信器、记忆器、审计器分别消费。这种"执行先后与数据/记忆/证据关系解耦"'
-    '的设计是 ACG 的核心洞察。'
+    'Kernel 图只保留 DEPENDENCY 和 CONTROL_FLOW；资源、记忆、证据、通信关系由 ResourcePlan 中的 typed spec 表达。'
 )
 edges = [
     ('DEPENDENCY（任务依赖）', '定义执行先后顺序，执行器据此计算就绪集。'),
-    ('COMMUNICATION（数据流）', '定义数据传递关系，通信器据此装配 ContextPack。'),
     ('CONTROL_FLOW（控制流）', '定义条件分支和流程控制路径。'),
-    ('EXECUTION（Agent→Step）', '定义智能体到执行步骤的绑定关系。'),
-    ('WRITE / READ（Step↔Memory）', '定义记忆读写，记忆器据此管理上下文持久化。'),
-    ('SUPPORT（Evidence→Step）', '定义证据支撑关系，审计器据此追溯依据链。'),
 ]
 for name, desc in edges:
     p = doc.add_paragraph()
@@ -479,9 +468,7 @@ add_code_block(doc, '''def promote_workflow_to_acg(workflow, *, task_id=None, en
     return blueprint''')
 doc.add_paragraph(
     'enrich=True（默认）时，升格过程还会自动注入认知协作节点：为每个 Step 创建同名 '
-    'AgentNode 并通过 EXECUTION 边绑定，为产出结论的 Step 注入 MemoryNode 和 WRITE 边，'
-    '为需要外部依据的 Step 注入 EvidenceNode 和 SUPPORT 边。这些注入节点不参与执行调度，'
-    '仅丰富拓扑的认知协作语义和可视化表达。'
+    'ResourcePlan 的 typed spec；这些 spec 由 Compiler 转换为运行时 Manifest，不会注入 Kernel 图节点或边。'
 )
 
 doc.add_heading('4.4 ACG 执行器 — 就绪集并行调度', level=2)
@@ -651,14 +638,14 @@ doc.add_heading('5.1 架构创新：ACG + 低熵通信 — 多智能体的结构
 doc.add_paragraph(
     '传统多智能体框架中，Agent 之间通过自然语言全量对话通信，导致 Token 浪费、'
     '上下文污染和数据血缘不清。本系统将多智能体协作建模为有类型的计算图（ACG），'
-    '定义了 6 种节点类型和 7 种边类型来承载不同语义的协作关系。COMMUNICATION 边'
+    'Kernel 定义 2 种节点类型和 2 种边类型；资源和上下文语义由 ResourcePlan 的 typed spec 承载。'
     '携带 input_spec 契约声明——下游通过 fields 和 from 明确列出自己需要哪些字段，'
     'ContextAssembler 在运行时按契约精准提取投递，而非将上游全部输出倾倒给下游。'
 )
 doc.add_paragraph(
     '这相当于在多智能体系统中引入了"类型系统"——在自由流动的信息中引入了结构和约束，'
-    '而正是这些约束让系统变得可预测、可优化、可治理。类比 HTTP 的 RESTful API 之于'
-    '原始 TCP 字节流：ACG 的 COMMUNICATION 契约就是多智能体之间的 API 接口定义。'
+    '而正是这些约束让系统变得可预测、可优化、可治理。ResourcePlan 中的 CommunicationSpec '
+    '为多智能体之间提供字段级 API 契约。'
 )
 doc.add_paragraph(
     '同时，ProvenanceLedger 记录每一步消费了上游的哪些字段，生成完整的数据血缘图谱。'

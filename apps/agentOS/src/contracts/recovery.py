@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
 from .planning import TaskBindingPatch, TaskPlanPatch
+from support.acg.planning import ACGResourcePlan
 from .workflow import GraphRef
 
 
@@ -114,6 +115,7 @@ class GraphPatch(BaseModel):
     replace_nodes: dict[StrictStr, dict[str, Any]] = Field(default_factory=dict, alias="replaceNodes")
     task_plan_patch: TaskPlanPatch | None = Field(default=None, alias="taskPlanPatch")
     task_binding_patch: TaskBindingPatch | None = Field(default=None, alias="taskNodeBindingPatch")
+    resource_plan_patch: ACGResourcePlan | None = Field(default=None, alias="resourcePlanPatch")
     reason: str = ""
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
 

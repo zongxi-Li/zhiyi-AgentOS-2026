@@ -25,7 +25,8 @@ from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
-from support.acg.models import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode, AgentNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from support.acg.models import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
 
 
 class _RunAgent(BaseAgent):
@@ -98,8 +99,9 @@ def test_explicit_blueprint_reversal_fails_before_materialization() -> None:
     blueprint = ACGBlueprint(
         graphId="explicit-runtime-mismatch",
         nodes=[StepNode(nodeId="step-a"),
-               StepNode(nodeId="step-b"), AgentNode(nodeId="fixture-agent::step-a", name="runner"), AgentNode(nodeId="fixture-agent::step-b", name="runner")],
-        edges=[ACGEdge(sourceId="step-b", targetId="step-a"), ACGEdge(sourceId="fixture-agent::step-a", targetId="step-a", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::step-b", targetId="step-b", edgeType=EdgeType.EXECUTION)],
+               StepNode(nodeId="step-b")],
+        resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="step-a", plannedAgentId="runner"), AgentBindingSpec(stepId="step-b", plannedAgentId="runner"),)),
+        edges=[ACGEdge(sourceId="step-b", targetId="step-a")],
     )
     plan = TaskPlan(
         missionId=mission.mission_id,
@@ -216,13 +218,12 @@ def test_runtime_persists_and_resumes_control_review_barrier(monkeypatch) -> Non
             StepNode(
                 nodeId="deliver",
                 outputSpec={"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]},
-            ),
-        AgentNode(nodeId="fixture-agent::left", name="voter"), AgentNode(nodeId="fixture-agent::right", name="voter"), AgentNode(nodeId="fixture-agent::deliver", name="voter")],
+            ), ],
+        resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="left", plannedAgentId="voter"), AgentBindingSpec(stepId="right", plannedAgentId="voter"), AgentBindingSpec(stepId="deliver", plannedAgentId="voter"),)),
         edges=[
             ACGEdge(sourceId="left", targetId="join", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(sourceId="right", targetId="join", edgeType=EdgeType.DEPENDENCY),
-            ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY),
-        ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::deliver", targetId="deliver", edgeType=EdgeType.EXECUTION)],
+            ACGEdge(sourceId="join", targetId="deliver", edgeType=EdgeType.DEPENDENCY), ],
     )
     monkeypatch.setattr(
         runtime,
@@ -850,9 +851,9 @@ def test_runtime_projects_real_parallel_failure_and_sibling_cancellation() -> No
         graphId="parallel-graph",
         nodes=[
             StepNode(nodeId="fail"),
-            StepNode(nodeId="slow"),
-        AgentNode(nodeId="fixture-agent::fail", name="parallel"), AgentNode(nodeId="fixture-agent::slow", name="parallel")],
-    edges=[ACGEdge(sourceId="fixture-agent::fail", targetId="fail", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::slow", targetId="slow", edgeType=EdgeType.EXECUTION)])
+            StepNode(nodeId="slow")],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="fail", plannedAgentId="parallel"), AgentBindingSpec(stepId="slow", plannedAgentId="parallel"),)),
+        edges=[ ])
     task = runtime.create_mission("parallel", workflow_id="parallel-run")
     task_plan = TaskPlan(
         missionId=task.mission_id,
@@ -1145,8 +1146,9 @@ def test_sync_acg_step_freezes_blueprint_memory_policy() -> None:
                     }
                 },
             )
-        , AgentNode(nodeId="fixture-agent::extract", name="runner")],
-    edges=[ACGEdge(sourceId="fixture-agent::extract", targetId="extract", edgeType=EdgeType.EXECUTION)])
+        ],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="extract", plannedAgentId="runner"),)),
+        edges=[])
 
     runtime._sync_run_steps_to_acg(run, blueprint)
 
@@ -1175,8 +1177,9 @@ def test_prepare_run_rejects_invalid_new_memory_policy_before_persistence() -> N
 
                 metadata={"memoryPolicy": {"read": True, "readTypes": ["episodic"], "write": True}},
             )
-        , AgentNode(nodeId="fixture-agent::extract", name="runner")],
-    edges=[ACGEdge(sourceId="fixture-agent::extract", targetId="extract", edgeType=EdgeType.EXECUTION)])
+        ],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="extract", plannedAgentId="runner"),)),
+        edges=[])
     task_plan = TaskPlan(missionId=task.mission_id, nodes=(PlannedTask(key="step:extract", title="extract", objective="extract"),))
     bindings = (TaskImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
     runtime._build_acg_blueprint = lambda *_args, **_kwargs: (
@@ -1209,8 +1212,9 @@ def test_prepare_run_rejects_null_write_type_when_memory_write_is_enabled() -> N
                     "writeType": None,
                 }},
             )
-        , AgentNode(nodeId="fixture-agent::extract", name="runner")],
-    edges=[ACGEdge(sourceId="fixture-agent::extract", targetId="extract", edgeType=EdgeType.EXECUTION)])
+        ],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="extract", plannedAgentId="runner"),)),
+        edges=[])
     task_plan = TaskPlan(missionId=task.mission_id, nodes=(PlannedTask(key="step:extract", title="extract", objective="extract"),))
     bindings = (TaskImplementationBinding(planNodeKey="step:extract", acgNodeId="extract"),)
     runtime._build_acg_blueprint = lambda *_args, **_kwargs: (
@@ -1247,13 +1251,12 @@ def test_runtime_marks_unselected_acg_branch_skipped() -> None:
                         conditionSpec=ConditionSpec(sourceNodeId="source", jsonPointer="/approved", operator=ConditionOperator.BOOLEAN, cases={"true": "yes-edge", "false": "no-edge"}),
                         branchEdgeIds=["yes-edge", "no-edge"]),
             StepNode(nodeId="yes"),
-            StepNode(nodeId="no"),
-        AgentNode(nodeId="fixture-agent::source", name="runner"), AgentNode(nodeId="fixture-agent::yes", name="runner"), AgentNode(nodeId="fixture-agent::no", name="runner")],
+            StepNode(nodeId="no"), ],
+        resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="source", plannedAgentId="runner"), AgentBindingSpec(stepId="yes", plannedAgentId="runner"), AgentBindingSpec(stepId="no", plannedAgentId="runner"),)),
         edges=[
             ACGEdge(sourceId="source", targetId="if", edgeType=EdgeType.DEPENDENCY),
             ACGEdge(edgeId="yes-edge", sourceId="if", targetId="yes", edgeType=EdgeType.DEPENDENCY),
-            ACGEdge(edgeId="no-edge", sourceId="if", targetId="no", edgeType=EdgeType.DEPENDENCY),
-        ACGEdge(sourceId="fixture-agent::source", targetId="source", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::yes", targetId="yes", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::no", targetId="no", edgeType=EdgeType.EXECUTION)],
+            ACGEdge(edgeId="no-edge", sourceId="if", targetId="no", edgeType=EdgeType.DEPENDENCY), ],
     )
     runtime = ExecutionRuntime(agent_registry=agents, workflow_registry=workflows, workflow_store=MemoryWorkflowStore())
     task = runtime.create_mission("route", workflow_id="route-run")

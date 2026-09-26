@@ -13,24 +13,27 @@ from .native_capabilities import (
     NATIVE_CAPABILITY_IDS, build_default_capability_catalog,
     native_capability_descriptors, register_native_capabilities,
 )
+from .planning import (
+    ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec,
+    MemoryAccessSpec, SkillRequirementSpec,
+)
 from .schema import (
     ACGBlueprint, RuntimeBlueprintSpec, ACGEdge, ACGNode, ACGNodeBase,
-    AgentNode, BlueprintStatus, ComplexityLevel,
-    ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType,
-    EdgeActivation, EdgeType, EvidenceNode, LoopSpec, MemoryNode, NodeType,
-    ParallelSpec, SkillNode, StepNode, parse_node,
+    BlueprintStatus, ComplexityLevel, ConditionOperator, ConditionSpec,
+    ConsensusSpec, ControlNode, ControlType, EdgeActivation, EdgeType,
+    LoopSpec, NodeType, ParallelSpec, StepNode, parse_node,
 )
 from .semantic_profile import CapabilityCandidate, ComplexityAssessment, TaskSemanticProfile
 from .validation import ACGValidationError, validate_blueprint
 
 __all__ = [
     "ACGBlueprint", "RuntimeBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",
-    "AgentNode", "BlueprintStatus", "CapabilityCandidate", "CapabilityCatalog",
+    "ACGResourcePlan", "AgentBindingSpec", "BlueprintStatus", "CapabilityCandidate", "CapabilityCatalog",
     "CapabilityPromptProfile", "ComplexityAssessment",
-    "ComplexityLevel", "ConditionEvaluationError", "ConditionOperator", "ConditionSpec",
-    "ControlNode", "ControlType", "EdgeActivation", "EdgeType", "EvidenceNode",
-    "MemoryNode", "NATIVE_CAPABILITY_IDS", "NodeType", "PlanningCapabilityDescriptor",
-    "PlanningRiskLevel", "SkillNode", "StepNode", "TaskSemanticProfile",
+    "ComplexityLevel", "CommunicationSpec", "ConditionEvaluationError", "ConditionOperator", "ConditionSpec",
+    "ControlNode", "ControlType", "EdgeActivation", "EdgeType", "EvidenceSpec",
+    "MemoryAccessSpec", "NATIVE_CAPABILITY_IDS", "NodeType", "PlanningCapabilityDescriptor",
+    "PlanningRiskLevel", "SkillRequirementSpec", "StepNode", "TaskSemanticProfile",
     "build_default_capability_catalog", "detect_cycle", "find_dangling_dependencies",
     "highest_planning_risk_level", "native_capability_descriptors", "parse_node",
     "promote_workflow_to_acg", "ready_steps", "register_native_capabilities",

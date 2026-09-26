@@ -9,13 +9,9 @@ from support.acg.validation import ACGValidationError
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
-    AgentNode,
     ControlNode,
     ControlType,
     EdgeType,
-    EvidenceNode,
-    MemoryNode,
-    SkillNode,
     StepNode,
     TaskSemanticProfile,
     build_default_capability_catalog,
@@ -25,6 +21,7 @@ from support.acg.models import (
     topological_order,
     validate_blueprint,
 )
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec, MemoryAccessSpec
 
 
 def test_blueprint_serialization_contract_snapshot() -> None:
@@ -38,24 +35,20 @@ def test_blueprint_serialization_contract_snapshot() -> None:
             StepNode(
                 nodeId="step-1", name="Execute",
             ),
-            AgentNode(nodeId="agent-1", name="Agent"),
-            SkillNode(nodeId="skill-1", name="Skill"),
-            MemoryNode(nodeId="memory-1", name="Memory"),
-            EvidenceNode(nodeId="evidence-1", name="Evidence"),
             ControlNode(nodeId="start", controlType=ControlType.START),
         ],
         edges=[
             ACGEdge(edgeId="edge-1", sourceId="start", targetId="step-1"),
-            ACGEdge(
-                edgeId="edge-2", sourceId="agent-1", targetId="step-1",
-                edgeType=EdgeType.EXECUTION,
-            ),
-            ACGEdge(edgeId="edge-3", sourceId="step-1", targetId="memory-1", edgeType=EdgeType.WRITE),
-            ACGEdge(edgeId="edge-4", sourceId="memory-1", targetId="step-1", edgeType=EdgeType.READ),
-            ACGEdge(edgeId="edge-5", sourceId="evidence-1", targetId="step-1", edgeType=EdgeType.SUPPORT),
-            ACGEdge(edgeId="edge-6", sourceId="step-1", targetId="skill-1", edgeType=EdgeType.COMMUNICATION),
             ACGEdge(edgeId="edge-7", sourceId="start", targetId="step-1", edgeType=EdgeType.CONTROL_FLOW),
         ],
+        resourcePlan=ACGResourcePlan(
+            bindings=(AgentBindingSpec(stepId="step-1", plannedAgentId="Agent"),),
+            memory=(MemoryAccessSpec(stepId="step-1", memoryId="memory-1", access="read"),),
+            evidence=(EvidenceSpec(evidenceId="evidence-1", source="test"),),
+            communication=(CommunicationSpec(
+                producerStepId="start", consumerStepId="step-1", channel="start:step-1",
+            ),),
+        ),
         metadata={"source": "characterization"},
     )
 
@@ -64,9 +57,7 @@ def test_blueprint_serialization_contract_snapshot() -> None:
     assert payload["graphId"] == "graph-1"
     assert payload["createdAt"] == "2026-01-02T03:04:05Z"
     assert payload["updatedAt"] == "2026-01-02T03:04:05Z"
-    assert [node["nodeType"] for node in payload["nodes"]] == [
-        "step", "agent", "skill", "memory", "evidence", "control",
-    ]
+    assert [node["nodeType"] for node in payload["nodes"]] == ["step", "control"]
     assert payload["nodes"][0] == {
         "nodeId": "step-1", "nodeType": "step", "name": "Execute",
         "description": "", "metadata": {}, "stepType": "agent", "goal": "",
@@ -75,9 +66,8 @@ def test_blueprint_serialization_contract_snapshot() -> None:
         "timeout": 0, "retryLimit": 0, "priority": 0, "status": "draft",
         "reviewRequired": False, "stepId": "step-1", "stepName": "Execute",
     }
-    assert [edge["edgeType"] for edge in payload["edges"]] == [
-        "dependency", "execution", "write", "read", "support", "communication", "control_flow",
-    ]
+    assert [edge["edgeType"] for edge in payload["edges"]] == ["dependency", "control_flow"]
+    assert payload["resourcePlan"]["bindings"][0]["plannedAgentId"] == "Agent"
     assert {edge["activation"] for edge in payload["edges"]} == {"active"}
     assert payload["metadata"] == {"source": "characterization"}
 
@@ -108,15 +98,10 @@ def test_workflow_promotion_legacy_and_canonical_modes_snapshot() -> None:
         EdgeType.DEPENDENCY
     )] == [("a", "b")]
     assert canonical.edges_of_type(EdgeType.DEPENDENCY) == []
-    assert [(edge.source_id, edge.target_id) for edge in canonical.edges_of_type(
-        EdgeType.COMMUNICATION
-    )] == [("a", "b")]
+    assert [(spec.producer_step_id, spec.consumer_step_id)
+            for spec in canonical.resource_plan.communication] == [("a", "b")]
     for blueprint in (legacy, canonical):
-        agent_edges = [
-            edge for edge in blueprint.edges_of_type(EdgeType.EXECUTION)
-            if isinstance(blueprint.get_node(edge.source_id), AgentNode)
-        ]
-        assert len(agent_edges) == len(blueprint.step_nodes())
+        assert len(blueprint.resource_plan.bindings) == len(blueprint.step_nodes())
         assert blueprint.metadata == {
             "sourceWorkflowId": "workflow-1", "sourceWorkflowVersion": "1.0.0",
             "promotedFromLinear": True, "enriched": True, "runtimeEngine": "acg",
@@ -134,13 +119,9 @@ def test_workflow_promotion_keeps_agent_bindings_when_cognitive_enrichment_is_di
 
     blueprint = promote_workflow_to_acg(workflow, enrich=False)
 
-    agent_edges = [
-        edge for edge in blueprint.edges_of_type(EdgeType.EXECUTION)
-        if isinstance(blueprint.get_node(edge.source_id), AgentNode)
-    ]
-    assert len(agent_edges) == 1
-    assert blueprint.get_node(agent_edges[0].source_id).name == "analyst"
-    assert not any(isinstance(node, (MemoryNode, EvidenceNode)) for node in blueprint.nodes)
+    assert len(blueprint.resource_plan.bindings) == 1
+    assert blueprint.resource_plan.bindings[0].planned_agent_id == "analyst"
+    assert len(blueprint.nodes) == 1
 
 
 def test_capability_catalog_and_semantic_profile_snapshot() -> None:
@@ -166,13 +147,14 @@ def test_blueprint_graph_algorithm_snapshot() -> None:
         graphId="graph-1",
         nodes=[
             StepNode(nodeId="a"), StepNode(nodeId="b"),
-            AgentNode(nodeId="agent", name="agent"),
         ],
         edges=[
-            ACGEdge(edgeId="agent-a", sourceId="agent", targetId="a", edgeType=EdgeType.EXECUTION),
-            ACGEdge(edgeId="agent-b", sourceId="agent", targetId="b", edgeType=EdgeType.EXECUTION),
             ACGEdge(edgeId="a-b", sourceId="a", targetId="b"),
         ],
+        resourcePlan=ACGResourcePlan(bindings=(
+            AgentBindingSpec(stepId="a", plannedAgentId="agent"),
+            AgentBindingSpec(stepId="b", plannedAgentId="agent"),
+        )),
     )
 
     validate_blueprint(blueprint)
@@ -183,19 +165,15 @@ def test_blueprint_graph_algorithm_snapshot() -> None:
 
 
 @pytest.mark.parametrize("agent_count", [0, 2])
-def test_validator_requires_exactly_one_canonical_agent_binding(agent_count: int) -> None:
-    agents = [AgentNode(nodeId=f"agent-{index}", name="agent") for index in range(agent_count)]
-    edges = [
-        ACGEdge(
-            edgeId=f"bind-{index}", sourceId=agent.node_id, targetId="step",
-            edgeType=EdgeType.EXECUTION,
-        )
-        for index, agent in enumerate(agents)
-    ]
+def test_validator_requires_exactly_one_agent_binding_spec(agent_count: int) -> None:
+    bindings = tuple(
+        AgentBindingSpec(stepId="step", plannedAgentId=f"agent-{index}")
+        for index in range(agent_count)
+    )
     blueprint = ACGBlueprint(
-        nodes=[StepNode(nodeId="step"), *agents],
-        edges=edges,
+        nodes=[StepNode(nodeId="step")],
+        resourcePlan=ACGResourcePlan(bindings=bindings),
     )
 
-    with pytest.raises(ACGValidationError, match="exactly one AgentNode"):
+    with pytest.raises(ACGValidationError, match="exactly one AgentBindingSpec"):
         validate_blueprint(blueprint)

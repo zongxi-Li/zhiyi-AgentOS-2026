@@ -23,7 +23,7 @@ from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import (
     ACGBlueprint, ACGEdge, CapabilityCatalog, ControlNode, ControlType, EdgeType,
-    AgentNode, PlanningCapabilityDescriptor, StepNode,
+    AgentBindingSpec, ACGResourcePlan, PlanningCapabilityDescriptor, StepNode,
     build_default_capability_catalog,
 )
 from components.planner.topology import catalog_fingerprint
@@ -162,9 +162,8 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
                 name="enrich",
                 goal="enrich result",
             ).model_dump(by_alias=True, mode="json"),
-                AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json")],
+            ],
             addEdges=[
-                ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
                 ACGEdge(
                     edgeId="identity-review-to-enrich",
                     sourceId="review",
@@ -190,11 +189,14 @@ def test_runtime_graph_patch_carries_explicit_task_plan_binding(tmp_path):
                     TaskPlanRelation(sourceKey="step:enrich", targetKey="step:deliver", relationType="depends_on"),
                 ),
             ),
-            taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
-                    planNodeKey="step:enrich",
-                    acgNodeId="enrich",
+                taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
+                        planNodeKey="step:enrich",
+                        acgNodeId="enrich",
+                    ),)),
+                resourcePlanPatch=ACGResourcePlan(bindings=(AgentBindingSpec(
+                    stepId="enrich", plannedAgentId="runner",
                 ),)),
-            )
+                )
 
         applied = asyncio.run(runtime.apply_graph_patch(patch))
         old_domain_run = identity.repositories.runs.get(paused.run_id)
@@ -298,10 +300,8 @@ def test_runtime_patch_audit_uses_injected_custom_catalog(tmp_path):
             removeEdgeIds=[edge.edge_id],
             addNodes=[
                 StepNode(nodeId="enrich", name="enrich", goal="enrich").model_dump(by_alias=True, mode="json"),
-                AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json"),
             ],
             addEdges=[
-                ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
                 ACGEdge(sourceId="review", targetId="enrich").model_dump(by_alias=True, mode="json"),
                 ACGEdge(sourceId="enrich", targetId="deliver").model_dump(by_alias=True, mode="json"),
             ],
@@ -313,10 +313,13 @@ def test_runtime_patch_audit_uses_injected_custom_catalog(tmp_path):
                     TaskPlanRelation(sourceKey="step:enrich", targetKey="step:deliver", relationType="depends_on"),
                 ),
             ),
-            taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
-                planNodeKey="step:enrich", acgNodeId="enrich"
-            ),)),
-        )
+                taskNodeBindingPatch=TaskBindingPatch(bindings=(TaskImplementationBinding(
+                    planNodeKey="step:enrich", acgNodeId="enrich"
+                ),)),
+                resourcePlanPatch=ACGResourcePlan(bindings=(AgentBindingSpec(
+                    stepId="enrich", plannedAgentId="runner",
+                ),)),
+            )
         applied = asyncio.run(runtime.apply_graph_patch(patch))
         audit = runtime.workflow_store.get_run(applied.run_id).execution_state["topologyAudit"]
         assert audit["catalogSource"] == "injected"
@@ -350,14 +353,15 @@ def test_graph_patch_without_identity_lifecycle_is_rejected_without_mutation(tmp
                 nodeId="enrich",
                 outputSpec={"type": "object", "properties": {"value": {"type": "string"}}},
             ).model_dump(by_alias=True, mode="json"),
-            AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json"),
         ],
-        addEdges=[
-            ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
-            ACGEdge(edgeId="review-to-enrich", sourceId="review", targetId="enrich").model_dump(by_alias=True, mode="json"),
-            ACGEdge(edgeId="enrich-to-deliver", sourceId="enrich", targetId="deliver").model_dump(by_alias=True, mode="json"),
-        ],
-        reason="insert deterministic enrichment before delivery",
+            addEdges=[
+                ACGEdge(edgeId="review-to-enrich", sourceId="review", targetId="enrich").model_dump(by_alias=True, mode="json"),
+                ACGEdge(edgeId="enrich-to-deliver", sourceId="enrich", targetId="deliver").model_dump(by_alias=True, mode="json"),
+            ],
+            resourcePlanPatch=ACGResourcePlan(bindings=(AgentBindingSpec(
+                stepId="enrich", plannedAgentId="runner",
+            ),)),
+            reason="insert deterministic enrichment before delivery",
     )
     old_checkpoint = paused.execution_state["checkpointId"]
 
@@ -396,9 +400,8 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
                 name="enrich",
                 goal="enrich result",
             ).model_dump(by_alias=True, mode="json"),
-                AgentNode(nodeId="agent::enrich", name="runner").model_dump(by_alias=True, mode="json")],
+            ],
             addEdges=[
-                ACGEdge(sourceId="agent::enrich", targetId="enrich", edgeType=EdgeType.EXECUTION).model_dump(by_alias=True, mode="json"),
                 ACGEdge(
                     edgeId="rollback-review-to-enrich",
                     sourceId="review",
@@ -424,13 +427,16 @@ def test_graph_patch_identity_transaction_rolls_back_replacement_run(tmp_path, m
                     TaskPlanRelation(sourceKey="step:enrich", targetKey="step:deliver", relationType="depends_on"),
                 ),
             ),
-            taskNodeBindingPatch=TaskBindingPatch(bindings=(
-                TaskImplementationBinding(
-                    planNodeKey="step:enrich",
-                    acgNodeId="enrich",
-                ),
-            )),
-        )
+                taskNodeBindingPatch=TaskBindingPatch(bindings=(
+                    TaskImplementationBinding(
+                        planNodeKey="step:enrich",
+                        acgNodeId="enrich",
+                    ),
+                )),
+                resourcePlanPatch=ACGResourcePlan(bindings=(AgentBindingSpec(
+                    stepId="enrich", plannedAgentId="runner",
+                ),)),
+            )
         original_finish = identity.finish_run
 
         def fail_supersede(run_id, status):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from support.acg.models import ACGEdge, EdgeType, AgentNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from support.acg.models import ACGEdge, EdgeType
 
 
 import sqlite3
@@ -102,8 +103,9 @@ def _prepare_identity_chain(service, bridge):
                 name="设备人员规划",
 
                 capability="planning",
-            ), AgentNode(nodeId="fixture-agent::equipment-node", name="planning-agent")],
-        edges=[ACGEdge(sourceId="fixture-agent::equipment-node", targetId="equipment-node", edgeType=EdgeType.EXECUTION)]),
+            )],
+        resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="equipment-node", plannedAgentId="planning-agent"),)),
+        edges=[]),
         task_bindings={changed.task_id: "equipment-node"},
     )
     return mission, changed, blueprint
@@ -267,8 +269,9 @@ def test_run_preparation_allocates_snapshot_version_without_changing_logical_key
         blueprint = ACGBlueprint(
             graphId="acg_stable_task",
             missionId=mission.mission_id,
-            nodes=[StepNode(nodeId="stable-node", name="稳定步骤"), AgentNode(nodeId="fixture-agent::stable-node", name="agent")],
-        edges=[ACGEdge(sourceId="fixture-agent::stable-node", targetId="stable-node", edgeType=EdgeType.EXECUTION)])
+            nodes=[StepNode(nodeId="stable-node", name="稳定步骤")],
+        resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="stable-node", plannedAgentId="agent"),)),
+        edges=[])
         binding = TaskImplementationBinding(
             planNodeKey="stable_logical_step", acgNodeId="stable-node"
         )

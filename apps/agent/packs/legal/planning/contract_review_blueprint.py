@@ -13,10 +13,16 @@ from support.acg.models import (
     ControlNode,
     ControlType,
     EdgeType,
-    EvidenceNode,
     ParallelSpec,
     StepNode,
     validate_blueprint,
+)
+from support.acg.planning import (
+    ACGResourcePlan,
+    AgentBindingSpec,
+    CommunicationSpec,
+    EvidenceSpec,
+    MemoryAccessSpec,
 )
 
 
@@ -25,7 +31,6 @@ def _step(definition: WorkflowStepDefinition, **updates) -> StepNode:
         "nodeId": definition.step_id,
         "name": definition.name,
         "goal": definition.name,
-        "agentName": definition.agent_name,
         "capability": definition.capability,
         "inputSpec": deepcopy(definition.input),
         "outputSpec": deepcopy(definition.output_spec),
@@ -100,12 +105,11 @@ def build_contract_review_blueprint(
             ),
         ),
         _step(definitions["classify_clauses"]),
-        StepNode(
-            nodeId="statute_retrieve",
-            name="Legal basis retrieval",
-            goal="Retrieve bounded legal sources through the injected Tool Runtime",
-            agentName="statute",
-            # The retrieval agent is an application-owned helper in this fixed
+            StepNode(
+                nodeId="statute_retrieve",
+                name="Legal basis retrieval",
+                goal="Retrieve bounded legal sources through the injected Tool Runtime",
+                # The retrieval agent is an application-owned helper in this fixed
             # vertical slice; it is selected by its frozen agent identity and
             # is not advertised as a planner capability.
             capability=None,
@@ -123,20 +127,6 @@ def build_contract_review_blueprint(
                     "evidence_refs": {"type": "array"},
                 },
             },
-        ),
-        EvidenceNode(
-            nodeId="legal_source_evidence",
-            name="Retrieved legal source evidence",
-            evidenceType="legal-source",
-            source="tool-runtime-or-task-input",
-            producerStepId="statute_retrieve",
-        ),
-        EvidenceNode(
-            nodeId="matched_legal_evidence",
-            name="Matched legal evidence",
-            evidenceType="legal-analysis",
-            source="legal-evidence-match",
-            producerStepId="legal_evidence_match",
         ),
         ControlNode(nodeId="join_legal_analysis", name="Legal analysis barrier", controlType=ControlType.CONSENSUS),
         _step(definitions["risk_detect"]),
@@ -188,11 +178,6 @@ def build_contract_review_blueprint(
     edges.extend(
         [
             ACGEdge(
-                sourceId="legal_source_evidence",
-                targetId="legal_evidence_match",
-                edgeType=EdgeType.SUPPORT,
-            ),
-            ACGEdge(
                 edgeId="route_to_human_review",
                 sourceId="route_high_risk_review",
                 targetId="human_review",
@@ -232,17 +217,57 @@ def build_contract_review_blueprint(
         },
         "report_generate": report_input["from"],
     }
-    for target, sources in communication.items():
-        for source, fields in sources.items():
-            edges.append(
-                ACGEdge(
-                    sourceId=source,
-                    targetId=target,
-                    edgeType=EdgeType.COMMUNICATION,
-                    dataFields=list(fields),
-                    metadata={"contract": "input.from"},
-                )
-            )
+    step_nodes = [node for node in nodes if isinstance(node, StepNode)]
+    bindings = []
+    memory_specs = []
+    for node in step_nodes:
+        definition = definitions.get(node.node_id) or definitions.get("human_review")
+        planned_agent_id = (definition.agent_name if definition is not None else None) or node.node_id
+        bindings.append(AgentBindingSpec(
+            stepId=node.node_id,
+            plannedAgentId=planned_agent_id,
+            role=node.logical_role,
+            requiredCapabilities=((node.capability,) if node.capability else ()),
+        ))
+        policy = node.input_spec.get("memoryPolicy") if isinstance(node.input_spec, dict) else None
+        if isinstance(policy, dict) and policy.get("write") is True:
+            memory_specs.append(MemoryAccessSpec(
+                stepId=node.node_id,
+                memoryId=f"memory::{node.node_id}",
+                access="write",
+                memoryType=str(policy.get("writeType") or "episodic"),
+            ))
+
+    communication_specs = tuple(
+        CommunicationSpec(
+            producerStepId=source,
+            consumerStepId=target,
+            allowedFields=tuple(str(field) for field in fields),
+            channel=f"{source}:{target}",
+        )
+        for target, sources in communication.items()
+        for source, fields in sources.items()
+    )
+    resource_plan = ACGResourcePlan(
+        bindings=tuple(bindings),
+        memory=tuple(memory_specs),
+        evidence=(
+            EvidenceSpec(
+                evidenceId="legal_source_evidence",
+                evidenceType="legal-source",
+                source="tool-runtime-or-task-input",
+                producerStepId="statute_retrieve",
+                consumerStepIds=("legal_evidence_match",),
+            ),
+            EvidenceSpec(
+                evidenceId="matched_legal_evidence",
+                evidenceType="legal-analysis",
+                source="legal-evidence-match",
+                producerStepId="legal_evidence_match",
+            ),
+        ),
+        communication=communication_specs,
+    )
 
     blueprint = ACGBlueprint(
         taskId=task_id,
@@ -256,6 +281,7 @@ def build_contract_review_blueprint(
         },
         nodes=nodes,
         edges=edges,
+        resourcePlan=resource_plan,
     )
     blueprint.touch()
     validate_blueprint(blueprint)

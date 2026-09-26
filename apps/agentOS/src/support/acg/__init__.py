@@ -4,13 +4,16 @@ from .capabilities import CapabilityCatalog, CapabilityPromptProfile, PlanningCa
 from .graph import ready_steps
 from .legacy.workflow_adapter import promote_workflow_to_acg
 from .native_capabilities import build_default_capability_catalog
+from .planning import (
+    ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec,
+    MemoryAccessSpec, SkillRequirementSpec,
+)
 from .schema import (
     ACGBlueprint,
     RuntimeBlueprintSpec,
     ACGEdge,
     ACGNode,
     ACGNodeBase,
-    AgentNode,
     BlueprintStatus,
     ComplexityLevel,
     ConditionOperator,
@@ -19,10 +22,7 @@ from .schema import (
     ControlType,
     EdgeActivation,
     EdgeType,
-    EvidenceNode,
-    MemoryNode,
     NodeType,
-    SkillNode,
     StepNode,
     parse_node,
 )
@@ -35,8 +35,9 @@ __all__ = [
     "ACGEdge",
     "ACGNode",
     "ACGNodeBase",
+    "ACGResourcePlan",
     "ACGValidationError",
-    "AgentNode",
+    "AgentBindingSpec",
     "BlueprintStatus",
     "CapabilityCandidate",
     "CapabilityCatalog",
@@ -47,13 +48,14 @@ __all__ = [
     "ConditionSpec",
     "ControlNode",
     "ControlType",
+    "CommunicationSpec",
     "EdgeActivation",
     "EdgeType",
-    "EvidenceNode",
-    "MemoryNode",
+    "EvidenceSpec",
+    "MemoryAccessSpec",
     "NodeType",
     "PlanningCapabilityDescriptor",
-    "SkillNode",
+    "SkillRequirementSpec",
     "StepNode",
     "TaskSemanticProfile",
     "build_default_capability_catalog",

@@ -64,20 +64,18 @@ ACGBlueprint（节点+边+约束的统一计算图）
 
 ## 2. ACG 计算图模型（脊椎）
 
-`ACGBlueprint` 是规划器的产物、执行器的输入，统一描述任务步骤依赖、智能体
-协作、记忆流动与证据传播。严格对应设计书附件一字段。
+`ACGBlueprint` 是规划器的产物、执行器的输入。它只描述可执行步骤、控制节点和
+执行拓扑；Agent、Skill、Memory、Evidence、Communication 语义由独立的
+`ACGResourcePlan` typed specs 表达，Compiler 再将这些 planning specs 降低为运行时 Manifest。
 
-**节点（6 类）**：`StepNode`（最小执行单元）、`AgentNode`（智能体）、
-`SkillNode`（技能）、`MemoryNode`（记忆）、`EvidenceNode`（证据）、
-`ControlNode`（START/END/IF/LOOP/PARALLEL/CONSENSUS）。
+**节点（2 类）**：`StepNode`（最小执行单元）和 `ControlNode`
+（START/END/IF/LOOP/PARALLEL/CONSENSUS）。
 
-**边（7 类）**：`DEPENDENCY`（任务依赖，执行器据此算就绪集）、`COMMUNICATION`
-（数据流）、`CONTROL_FLOW`、`EXECUTION`（Agent→Step）、`WRITE`/`READ`（Step↔Memory）、
-`SUPPORT`（Evidence→Step）。
+**边（2 类）**：`DEPENDENCY`（任务依赖，执行器据此算就绪集）和 `CONTROL_FLOW`。
 
-设计关键：**只有 DEPENDENCY 边参与执行 DAG 构建**，其余边由通信器/记忆器/
-审计器分别消费。这使「执行先后」与「数据/记忆/证据关系」解耦——同一张图既是
-执行计划，又是数据血缘图谱。
+设计关键：Kernel 图只承载执行语义；通信、记忆、证据和逻辑 Agent 绑定不再伪装成
+图节点或图边。这使「执行先后」与资源/上下文合同物理解耦，同时保留相同的 V4
+运行时 Manifest。
 
 ### 2.1 线性工作流自动升格（向下兼容基石）
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Set
 
-from .schema import ACGBlueprint, ACGValidationError, EdgeType, NodeType
+from .schema import ACGBlueprint, ACGValidationError, EdgeType
 
 
 class ConditionEvaluationError(ValueError):
@@ -49,10 +49,7 @@ def conditional_branch_exclusive_nodes(graph: Any, control_node: Any) -> dict[st
 
 def _dependency_adjacency(blueprint: ACGBlueprint) -> Dict[str, List[str]]:
     """构建仅含 STEP/CONTROL 节点的 DEPENDENCY 邻接表（source -> [targets]）。"""
-    executable_ids = {
-        n.node_id for n in blueprint.nodes
-        if n.node_type in {NodeType.STEP, NodeType.CONTROL}
-    }
+    executable_ids = {n.node_id for n in blueprint.nodes}
     adjacency: Dict[str, List[str]] = {nid: [] for nid in executable_ids}
     for edge in blueprint.edges_of_type(EdgeType.DEPENDENCY):
         if edge.source_id in executable_ids and edge.target_id in executable_ids:

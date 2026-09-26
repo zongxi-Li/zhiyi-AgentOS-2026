@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from support.acg.models import ACGEdge, EdgeType, AgentNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from support.acg.models import ACGEdge, EdgeType
 
 
 import asyncio
@@ -606,9 +607,9 @@ def test_parallel_runtime_nodes_keep_attempt_and_execution_identity_isolated() -
         graphId="identity-parallel-graph",
         nodes=[
             StepNode(nodeId="left",  capability="analysis"),
-            StepNode(nodeId="right",  capability="analysis"),
-        AgentNode(nodeId="fixture-agent::left", name="identity-agent"), AgentNode(nodeId="fixture-agent::right", name="identity-agent")],
-    edges=[ACGEdge(sourceId="fixture-agent::left", targetId="left", edgeType=EdgeType.EXECUTION), ACGEdge(sourceId="fixture-agent::right", targetId="right", edgeType=EdgeType.EXECUTION)])
+            StepNode(nodeId="right",  capability="analysis")],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="left", plannedAgentId="identity-agent"), AgentBindingSpec(stepId="right", plannedAgentId="identity-agent"),)),
+        edges=[ ])
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     try:
         _, run = runtime.prepare_run(task.mission_id)
@@ -636,8 +637,9 @@ def test_parallel_runtime_nodes_keep_attempt_and_execution_identity_isolated() -
 def test_explicit_blueprint_without_task_plan_is_rejected() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-unplanned-graph",
-        nodes=[StepNode(nodeId="analyse"), AgentNode(nodeId="fixture-agent::analyse", name="identity-agent")],
-    edges=[ACGEdge(sourceId="fixture-agent::analyse", targetId="analyse", edgeType=EdgeType.EXECUTION)])
+        nodes=[StepNode(nodeId="analyse")],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="analyse", plannedAgentId="identity-agent"),)),
+        edges=[])
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     task.input.pop("taskPlan")
     task.input.pop("taskBindings")
@@ -652,8 +654,9 @@ def test_explicit_blueprint_without_task_plan_is_rejected() -> None:
 def test_invalid_explicit_bindings_do_not_persist_partial_semantic_tasks() -> None:
     blueprint = ACGBlueprint(
         graphId="identity-invalid-bindings-graph",
-        nodes=[StepNode(nodeId="analyse"), AgentNode(nodeId="fixture-agent::analyse", name="identity-agent")],
-    edges=[ACGEdge(sourceId="fixture-agent::analyse", targetId="analyse", edgeType=EdgeType.EXECUTION)])
+        nodes=[StepNode(nodeId="analyse")],
+    resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="analyse", plannedAgentId="identity-agent"),)),
+        edges=[])
     runtime, identity_runtime, _bridge, task = _runtime(blueprint=blueprint)
     task.input["taskBindings"] = []
     runtime.workflow_store.save_mission(task)
@@ -712,10 +715,9 @@ def test_runtime_graph_revision_rejects_unplanned_executable_node() -> None:
                 capability="analysis",
             )
         )
-        revised.nodes.append(AgentNode(nodeId="agent::verify", name="identity-agent"))
-        revised.edges.append(ACGEdge(
-            sourceId="agent::verify", targetId="verify", edgeType=EdgeType.EXECUTION,
-        ))
+        revised.resource_plan.bindings += (
+            AgentBindingSpec(stepId="verify", plannedAgentId="identity-agent"),
+        )
 
         with pytest.raises(Exception, match="TaskPlanPatch"):
             bridge.on_blueprint_revised(run, revised)
@@ -742,10 +744,9 @@ def test_runtime_graph_revision_accepts_explicit_task_plan_patch() -> None:
                 capability="analysis",
             )
         )
-        revised.nodes.append(AgentNode(nodeId="agent::verify", name="identity-agent"))
-        revised.edges.append(ACGEdge(
-            sourceId="agent::verify", targetId="verify", edgeType=EdgeType.EXECUTION,
-        ))
+        revised.resource_plan.bindings += (
+            AgentBindingSpec(stepId="verify", plannedAgentId="identity-agent"),
+        )
         plan_patch = TaskPlanPatch(
             missionId=task.mission_id,
             basePlanVersion=1,

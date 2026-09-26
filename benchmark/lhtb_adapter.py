@@ -29,13 +29,11 @@ from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime import ExecutionRuntime
 from support.acg.models import (
-    ACGEdge,
-    AgentNode,
-    EdgeType,
     PlanningCapabilityDescriptor,
     RuntimeBlueprintSpec,
     StepNode,
 )
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec
 
 
 WORKFLOW_ID = "lhtb-terminal-v1"
@@ -156,27 +154,24 @@ def _plan_and_blueprint(mission_id: str, instruction: str) -> tuple[TaskPlan, Ru
             StepNode(
                 nodeId=STEP_ID,
                 name="Execute the long-running terminal migration",
-                agentName=AGENT_NAME,
                 capability=CAPABILITY_ID,
                 logicalRole="task",
                 goal="Complete the supplied task instruction in the persistent container workspace.",
                 timeout=0,
                 retryLimit=0,
             ),
-            AgentNode(
-                nodeId=f"agent::{AGENT_NAME}",
-                name=AGENT_NAME,
-                role="long-running terminal agent",
-                capabilityTags=[CAPABILITY_ID],
+        ],
+        edges=[],
+        resourcePlan=ACGResourcePlan(
+            bindings=(
+                AgentBindingSpec(
+                    stepId=STEP_ID,
+                    plannedAgentId=AGENT_NAME,
+                    role="long-running terminal agent",
+                    requiredCapabilities=(CAPABILITY_ID,),
+                ),
             ),
-        ],
-        edges=[
-            ACGEdge(
-                sourceId=f"agent::{AGENT_NAME}",
-                targetId=STEP_ID,
-                edgeType=EdgeType.EXECUTION,
-            )
-        ],
+        ),
         metadata={"communicationBudget": 0, "benchmarkScoped": True},
     )
     blueprint.touch()

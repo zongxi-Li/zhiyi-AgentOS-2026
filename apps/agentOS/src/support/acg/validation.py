@@ -10,7 +10,7 @@ from .graph import (
 )
 from .schema import (
     ACGBlueprint, ACGValidationError, ControlNode, ControlType, EdgeType,
-    EvidenceNode, NodeType, StepNode,
+    NodeType, StepNode,
 )
 
 def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
@@ -27,12 +27,7 @@ def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
 def _validate_edge_endpoints(blueprint: ACGBlueprint) -> None:
     allowed = {
         EdgeType.DEPENDENCY: ({NodeType.STEP, NodeType.CONTROL}, {NodeType.STEP, NodeType.CONTROL}),
-        EdgeType.COMMUNICATION: ({NodeType.STEP}, {NodeType.STEP}),
         EdgeType.CONTROL_FLOW: ({NodeType.CONTROL}, {NodeType.STEP, NodeType.CONTROL}),
-        EdgeType.EXECUTION: ({NodeType.AGENT, NodeType.SKILL}, {NodeType.STEP}),
-        EdgeType.WRITE: ({NodeType.STEP}, {NodeType.MEMORY}),
-        EdgeType.READ: ({NodeType.MEMORY}, {NodeType.STEP}),
-        EdgeType.SUPPORT: ({NodeType.EVIDENCE}, {NodeType.STEP}),
     }
     node_types = {node.node_id: node.node_type for node in blueprint.nodes}
     for edge in blueprint.edges:
@@ -128,7 +123,18 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
     if cycle:
         raise ACGValidationError(f"ACG contains a cycle: {' -> '.join(cycle)}")
 
-    agent_bindings_by_step = blueprint.agent_bindings_by_step()
+    step_ids = {node.node_id for node in blueprint.step_nodes()}
+    bindings_by_step: dict[str, list] = {}
+    for binding in blueprint.resource_plan.bindings:
+        if binding.step_id not in step_ids:
+            raise ACGValidationError(
+                f"Agent binding references missing Step: {binding.step_id}"
+            )
+        bindings_by_step.setdefault(binding.step_id, []).append(binding)
+    if any(len(bindings) != 1 for bindings in bindings_by_step.values()):
+        raise ACGValidationError("Each Step requires exactly one AgentBindingSpec")
+    if any(step_id not in bindings_by_step for step_id in step_ids):
+        raise ACGValidationError("Each Step requires exactly one AgentBindingSpec")
     for node in blueprint.nodes:
         if isinstance(node, ControlNode) and node.control_type == ControlType.LOOP:
             if node.loop_spec is None:
@@ -153,11 +159,6 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
             _validate_conditional_control(blueprint, node)
         if not isinstance(node, StepNode):
             continue
-        agent_bindings = agent_bindings_by_step.get(node.node_id, [])
-        if len(agent_bindings) != 1:
-            raise ACGValidationError(
-                f"Step node {node.node_id} requires exactly one AgentNode + EXECUTION binding"
-            )
         try:
             check_contract_schema(node.output_spec, label=f"{node.node_id}.outputSpec")
         except ValueError as exc:
@@ -182,20 +183,36 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
                         f"Step {node.node_id} consumes {source} without an execution dependency path"
                     )
 
-    step_ids = {node.node_id for node in blueprint.step_nodes()}
-    for node in blueprint.nodes:
-        if isinstance(node, EvidenceNode) and node.producer_step_id:
-            if node.producer_step_id not in step_ids:
-                raise ACGValidationError(
-                    f"Evidence node {node.node_id} references missing producer Step: "
-                    f"{node.producer_step_id}"
-                )
-
-    for edge in blueprint.edges_of_type(EdgeType.COMMUNICATION):
-        if not _has_dependency_path(blueprint, edge.source_id, edge.target_id):
+    for spec in blueprint.resource_plan.memory:
+        if spec.step_id not in step_ids:
+            raise ACGValidationError(f"Memory access references missing Step: {spec.step_id}")
+    for spec in blueprint.resource_plan.skills:
+        if spec.step_id not in step_ids:
+            raise ACGValidationError(f"Skill requirement references missing Step: {spec.step_id}")
+    for spec in blueprint.resource_plan.evidence:
+        if spec.producer_step_id and spec.producer_step_id not in step_ids:
             raise ACGValidationError(
-                f"Communication edge {edge.edge_id} has no execution dependency path: "
-                f"{edge.source_id} -> {edge.target_id}"
+                f"Evidence spec {spec.evidence_id} references missing producer Step: "
+                f"{spec.producer_step_id}"
+            )
+        if any(consumer not in step_ids for consumer in spec.consumer_step_ids):
+            raise ACGValidationError(
+                f"Evidence spec {spec.evidence_id} references missing consumer Step"
+            )
+    for spec in blueprint.resource_plan.communication:
+        if spec.producer_step_id not in step_ids or spec.consumer_step_id not in step_ids:
+            raise ACGValidationError(
+                f"Communication spec references missing Step: "
+                f"{spec.producer_step_id} -> {spec.consumer_step_id}"
+            )
+        if spec.producer_step_id == spec.consumer_step_id:
+            raise ACGValidationError("Communication spec cannot target its producer Step")
+        if not _has_dependency_path(
+            blueprint, spec.producer_step_id, spec.consumer_step_id
+        ):
+            raise ACGValidationError(
+                f"Communication spec has no execution dependency path: "
+                f"{spec.producer_step_id} -> {spec.consumer_step_id}"
             )
 
 

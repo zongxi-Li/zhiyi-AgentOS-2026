@@ -123,6 +123,14 @@ class GraphPatchService:
                 "graph patch contains duplicate edge ids: " + ", ".join(duplicates)
             )
         result.edges.extend(new_edges)
+        if patch.resource_plan_patch is not None:
+            plan = result.resource_plan
+            delta = patch.resource_plan_patch
+            plan.bindings += delta.bindings
+            plan.skills += delta.skills
+            plan.memory += delta.memory
+            plan.evidence += delta.evidence
+            plan.communication += delta.communication
         retired_executable_ids = {
             node.node_id
             for node in result.step_nodes()
