@@ -53,6 +53,7 @@ from contracts.evolution import (
 from components.memory.store import SQLiteMemoryStore
 from components.content import ContentManifestStore, SQLiteContentManifestStore
 from contracts.memory import MemoryPolicy, MemoryType
+from contracts.authority import RuntimeResourceId
 from contracts.resource import BindingRequirement, DeploymentTier, ResourceType
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
@@ -1113,7 +1114,7 @@ class ExecutionRuntime:
                 "nodeCount": len(compiled_package.nodes),
                 "edgeCount": len(compiled_package.edges),
             })
-        self._register_and_freeze_resources(
+        self._register_runtime_resources(
             run=run,
             workflow=workflow,
             scope=scope,
@@ -1684,11 +1685,10 @@ class ExecutionRuntime:
                     if profile.deployment_tier is DeploymentTier.LOCAL:
                         self.legacy_resource_service.heartbeat(resource_id, source="local")
                 decision = self._schedule_ready(
-                    use_two_layer=bool(
-                        isinstance(
-                            run.execution_state.get("nodeAgentBindings"), dict
-                        )
-                        and step_id in run.execution_state["nodeAgentBindings"]
+                    use_two_layer=(
+                        isinstance(self.scheduler_service, TwoLayerSchedulerService)
+                        and bool(self.agent_service.profiles())
+                        and bool(self.node_service.profiles())
                     ),
                     run_id=run.run_id,
                     step_id=step_id,
@@ -1721,8 +1721,17 @@ class ExecutionRuntime:
             selected_resource_id = decision.binding.resource_id
             node_binding = run.execution_state.get("nodeAgentBindings")
             node_binding = node_binding.get(step_id) if isinstance(node_binding, dict) else None
-            node_id = str(node_binding.get("nodeId") or "") if isinstance(node_binding, dict) else ""
-            agent_id = str(node_binding.get("agentId") or selected_resource_id) if isinstance(node_binding, dict) else selected_resource_id
+            binding_metadata = decision.binding.metadata
+            node_id = (
+                str(node_binding.get("nodeId") or "")
+                if isinstance(node_binding, dict)
+                else str(binding_metadata.get("nodeId") or "")
+            )
+            agent_id = (
+                str(node_binding.get("agentId") or selected_resource_id)
+                if isinstance(node_binding, dict)
+                else str(binding_metadata.get("agentId") or selected_resource_id)
+            )
             remote_adapter = self._node_execution_adapter(node_id) if node_id else None
             if remote_adapter is None:
                 remote_adapter = self._resource_execution_adapter(selected_resource_id)
@@ -1761,6 +1770,15 @@ class ExecutionRuntime:
                 )
                 runner.agents[step_id] = selected_agent
                 selected_profile = selected_agent.profile
+            model_binding = self._freeze_model_binding(
+                step_id=step_id,
+                profile=selected_profile,
+            )
+            run.execution_state.setdefault("modelBindings", {})[step_id] = model_binding
+            if model_binding is not None:
+                model_runtime = self._model_runtime_from_binding(model_binding)
+                if model_runtime is not None:
+                    runner.model_runtimes[step_id] = model_runtime
             runner.attempt_ids[step_id] = attempt_id
             step_execution_id = (
                 run.execution_state.setdefault("stepExecutionIds", {}).setdefault(
@@ -2144,13 +2162,17 @@ class ExecutionRuntime:
         allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
         bindings = run.execution_state.get("resourceBindings")
         if not isinstance(bindings, dict):
-            raise ValueError("ACG run has no frozen resource bindings")
+            bindings = {}
         node_agent_bindings = run.execution_state.get("nodeAgentBindings")
         node_agent_bindings = node_agent_bindings if isinstance(node_agent_bindings, dict) else {}
         agents = {}
         resource_adapters = {}
         for step_id, step in steps.items():
-            resource_id = str(bindings[step_id])
+            resource_id = str(bindings.get(step_id) or "")
+            if not resource_id:
+                # The READY wrapper will populate this step after Scheduler
+                # allocation. Preparation must not force a concrete resource.
+                continue
             node_binding = node_agent_bindings.get(step_id)
             node_id = str(node_binding.get("nodeId") or "") if isinstance(node_binding, dict) else ""
             agent_id = str(node_binding.get("agentId") or resource_id) if isinstance(node_binding, dict) else resource_id
@@ -2197,9 +2219,11 @@ class ExecutionRuntime:
             )
             for node_id in steps
         }
+        allowed_agent_set = set(allowed_agent_ids) if allowed_agent_ids is not None else None
         allowed_tools = {
             tool_name
-            for agent in agents.values()
+            for agent in self.agent_registry.all()
+            if allowed_agent_set is None or self.agent_registry.agent_id(agent) in allowed_agent_set
             for tool_name in agent.profile.allowed_tools
         }
         delegate = self.tool_runtime or configured_tool_runtime()
@@ -2233,7 +2257,7 @@ class ExecutionRuntime:
             state.communication_usage = communication_broker.usage_snapshot()
         model_bindings = run.execution_state.get("modelBindings")
         if not isinstance(model_bindings, dict):
-            raise ValueError("ACG run has no frozen model bindings")
+            model_bindings = {}
         # Steps frozen to the same provider/model must share one guard. Creating
         # one guard per step makes every semaphore independent and allows a
         # parallel superstep to burst past the provider quota.
@@ -2779,7 +2803,7 @@ class ExecutionRuntime:
             and (not step.capability or step.capability in profile.capabilities)
         )
 
-    def _register_and_freeze_resources(
+    def _register_runtime_resources(
         self,
         *,
         run: RuntimeRunRecord,
@@ -2787,13 +2811,25 @@ class ExecutionRuntime:
         scope: RunExecutionScope,
         binding_manifest,
     ) -> None:
-        """登记当前可见 Agent，并将每个 ACG Step 选择结果冻结到运行状态。"""
+        """Register runtime candidates and persist eligibility requirements only.
+
+        The Scheduler creates the concrete binding after a step becomes READY.
+        Preparation must not choose a resource, node placement, lease, or
+        model instance.
+        """
         directory = AgentDirectory(self.agent_service)
+        scoped_agent_ids = set(scope.agent_ids)
+        local_resource_ids: list[RuntimeResourceId] = []
         for agent in self.agent_registry.all():
+            agent_id = self.agent_registry.agent_id(agent)
+            if scoped_agent_ids and agent_id not in scoped_agent_ids:
+                continue
             self.resource_directory.register_agent(agent.profile)
             directory.register_agent(agent.profile)
-        bindings: dict[str, str] = {}
-        node_agent_bindings: dict[str, dict[str, Any]] = {}
+            # The local Agent identity is converted explicitly at the runtime
+            # resource boundary; the two IDs may share a string value but have
+            # different authority.
+            local_resource_ids.append(RuntimeResourceId(str(agent_id)))
         requirements: dict[str, dict[str, object]] = {}
         model_bindings: dict[str, dict[str, Any] | None] = {}
         two_layer_scheduler = (
@@ -2814,21 +2850,17 @@ class ExecutionRuntime:
                     f"BindingManifest has no capability requirement: {step.step_id}"
                 )
             allowed_resource_ids = list(dict.fromkeys(
-                [*scope.agent_ids, *self.resource_execution_adapters.keys()]
+                [
+                    *local_resource_ids,
+                    *(RuntimeResourceId(item) for item in sorted(self._known_remote_resource_ids())),
+                ]
             ))
-            if rule.allowed_resource_ids:
+            allowed_manifest_ids = set(rule.allowed_resource_ids)
+            if allowed_manifest_ids:
                 allowed_resource_ids = [
                     item for item in allowed_resource_ids
-                    if item in set(rule.allowed_resource_ids)
+                    if item in allowed_manifest_ids
                 ]
-            ledger_agent_ids = {
-                profile.agent_id for profile in self.agent_service.profiles()
-            }
-            allowed_agent_ids = (
-                [item for item in allowed_resource_ids if item in ledger_agent_ids]
-                if allowed_resource_ids
-                else None
-            )
             requirement = BindingRequirement(
                 requiredCapabilities=required_capabilities,
                 domain=rule.domain or workflow.domain,
@@ -2842,78 +2874,12 @@ class ExecutionRuntime:
                     "maxConcurrency": rule.max_concurrency,
                 },
             )
-            placement = None
-            selected_agent = None
-            selected_profile = None
-            selected_id = None
-            if two_layer_scheduler is not None:
-                placement = two_layer_scheduler.schedule(
-                    capabilities=required_capabilities,
-                    allowed_agent_ids=allowed_agent_ids,
-                    required_model_ids=requirement.required_model_ids,
-                    min_gpu_memory_mb=requirement.min_gpu_memory_mb,
-                    min_privacy_level=requirement.privacy_level,
-                )
-                if placement is not None:
-                    selected_id = placement.agent.agent_id
-                    try:
-                        selected_agent = self.agent_registry.resolve_by_id(
-                            selected_id,
-                            allowed_agent_ids=scope.agent_ids,
-                        )
-                    except KeyError:
-                        selected_agent = None
-            if selected_id is None:
-                try:
-                    selected = self.resource_directory.resolve_agent(
-                        domain=rule.domain or workflow.domain,
-                        agent_name=step.agent_name,
-                        capability=required_capabilities[0],
-                        allowed_agent_ids=allowed_resource_ids,
-                    )
-                except ResourceNotFoundError as exc:
-                    remote_ids = self._known_remote_resource_ids().intersection(allowed_resource_ids)
-                    remote_requirement = BindingRequirement(
-                        requiredCapabilities=required_capabilities,
-                        domain=rule.domain or workflow.domain,
-                        allowedResourceIds=sorted(remote_ids),
-                    )
-                    candidates = [
-                        item
-                        for item in self.legacy_resource_service.find_candidates(remote_requirement)
-                        if item.profile.resource_id in remote_ids
-                    ]
-                    if not candidates:
-                        raise ValueError(f"ACG step has no eligible resource: {step.step_id}") from exc
-                    selected_profile = candidates[0].profile
-                    selected_id = selected_profile.resource_id
-                else:
-                    selected_id = selected.agent_id
-                    selected_agent = self.agent_registry.resolve_by_id(
-                        selected_id,
-                        allowed_agent_ids=scope.agent_ids,
-                    )
-            bindings[step.step_id] = selected_id
-            requirement.preferences["resourceId"] = selected_id
-            if selected_agent is not None:
-                requirement.resource_types.append(ResourceType.AGENT)
-            if placement is not None:
-                requirement.preferences["agentId"] = placement.agent.agent_id
-                requirement.preferences["nodeId"] = placement.node.node_id
-                node_agent_bindings[step.step_id] = {
-                    "agentId": placement.agent.agent_id,
-                    "nodeId": placement.node.node_id,
-                    "resourceId": placement.node.node_id,
-                }
             requirements[step.step_id] = requirement.model_dump(by_alias=True, mode="json")
-            model_bindings[step.step_id] = (
-                self._freeze_model_binding(step_id=step.step_id, profile=selected_agent.profile)
-                if selected_agent is not None
-                else None
-            )
-        run.execution_state["resourceBindings"] = bindings
-        if node_agent_bindings:
-            run.execution_state["nodeAgentBindings"] = node_agent_bindings
+            # The concrete model is frozen only after the Scheduler has chosen
+            # the resource for this step. Keep a complete shape for recovery.
+            model_bindings[step.step_id] = None
+        run.execution_state["resourceBindings"] = {}
+        run.execution_state.pop("nodeAgentBindings", None)
         run.execution_state["bindingRequirements"] = requirements
         run.execution_state["modelBindings"] = model_bindings
 

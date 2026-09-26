@@ -67,6 +67,7 @@ def stable_checksum(value: Any) -> str:
 
 
 from .acg_lifecycle import AcgIdentityLifecyclePort
+from .authority import LogicalAgentId, RuntimeResourceId
 from .communication import ContextPackRef, MessageEnvelope
 from .content import (
     ContentFragmentRef, ContentKind, ContentManifest, FragmentEnvelope,
@@ -186,6 +187,7 @@ __all__ = [
     "LocalRuntimeExecutionCancelRequest",
     "LocalRuntimeExecutionRequest", "LocalRuntimeExecutionResult",
     "AcgIdentityLifecyclePort", "AgentArchitecture", "AgentFramework", "AuditFinding", "AuditRequest",
+    "LogicalAgentId", "RuntimeResourceId",
     "CapabilityInvocation", "CapabilityInvocationResult", "CapabilityKind", "CompiledACGPackage",
     "ContentFragmentRef", "ContentKind", "ContentManifest", "FragmentEnvelope",
     "CompiledEdge", "CompiledNodeKind", "CompiledNodeSpec", "BindingManifest", "BindingRule",

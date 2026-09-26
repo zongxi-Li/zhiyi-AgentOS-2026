@@ -73,7 +73,7 @@ def build_acg_lowering_input(
     for task in task_plan.nodes:
         capability = task.capability_requirements[0]
         binding = binding_by_capability[capability]
-        node_id = _step_id(binding.agent_name, capability, used_ids)
+        node_id = _step_id(binding.logical_agent_id, capability, used_ids)
         used_ids.add(node_id)
         node_id_by_task[task.key] = node_id
 
@@ -84,7 +84,7 @@ def build_acg_lowering_input(
     agent_bindings = tuple(
         AgentBindingSpec(
             stepId=node_id_by_task[task.key],
-            plannedAgentId=binding_by_capability[task.capability_requirements[0]].agent_name,
+            plannedAgentId=binding_by_capability[task.capability_requirements[0]].logical_agent_id,
             role=descriptors[task.key].display_name,
             requiredCapabilities=(descriptors[task.key].capability_id,),
             ephemeral=binding_by_capability[task.capability_requirements[0]].ephemeral,

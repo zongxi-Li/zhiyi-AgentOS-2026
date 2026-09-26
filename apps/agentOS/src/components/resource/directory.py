@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from contracts.authority import LogicalAgentId, RuntimeResourceId
 from contracts.capability import CapabilityKind, CapabilityManifest
 from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
 from service.agents.base import AgentProfile
@@ -24,14 +25,14 @@ class ResourceNotFoundError(KeyError):
 class AgentResource:
     """Legacy Agent projection retained for runtime compatibility."""
 
-    agent_id: str
+    agent_id: LogicalAgentId
     agent_name: str
     domain: str
     capabilities: tuple[str, ...]
     version: str
     priority: int
     enabled: bool
-    resource_id: str | None = None
+    resource_id: RuntimeResourceId | None = None
     labels: tuple[tuple[str, str], ...] = ()
 
 

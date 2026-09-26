@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, Optional, Tuple
 
+from contracts.authority import LogicalAgentId
 from .base import BaseAgent
 
 
@@ -77,9 +78,9 @@ class AgentRegistry:
         return tuple(self._agents.values())
 
     @staticmethod
-    def agent_id(agent: BaseAgent) -> str:
+    def agent_id(agent: BaseAgent) -> LogicalAgentId:
         """优先返回显式 Agent 标识，缺失时回退到名称。"""
-        return str(agent.profile.agent_id or agent.profile.agent_name)
+        return LogicalAgentId(str(agent.profile.agent_id or agent.profile.agent_name))
 
     def scoped(self, agent_ids: Iterable[str]) -> "ScopedAgentRegistry":
         """创建仅包含指定标识的只读运行范围视图。"""

@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
+from .authority import LogicalAgentId, RuntimeResourceId
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -79,7 +81,7 @@ class ResourceProfile(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="资源唯一标识。")
+    resource_id: RuntimeResourceId = Field(alias="resourceId", min_length=1, description="资源唯一标识。")
     resource_type: ResourceType = Field(default=ResourceType.AGENT, alias="resourceType")
     deployment_tier: DeploymentTier = Field(default=DeploymentTier.LOCAL, alias="deploymentTier")
     capabilities: list[StrictStr] = Field(min_length=1, description="资源可提供的能力，不能为空。")
@@ -104,7 +106,7 @@ class ResourceSnapshot(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="被观测资源标识。")
+    resource_id: RuntimeResourceId = Field(alias="resourceId", min_length=1, description="被观测资源标识。")
     observation_sequence: int = Field(default=0, ge=0, alias="observationSequence", description="资源节点单调递增的观测序号。")
     observed_at: datetime = Field(default_factory=_utc_now, alias="observedAt", description="观测发生的 UTC 时间。")
     available_slots: int = Field(ge=0, alias="availableSlots", description="当前可供分配的空闲槽位数。")
@@ -124,8 +126,8 @@ class BindingRequirement(BaseModel):
     domain: StrictStr | None = None
     resource_types: list[ResourceType] = Field(default_factory=list, alias="resourceTypes")
     allowed_deployment_tiers: list[DeploymentTier] = Field(default_factory=list, alias="allowedDeploymentTiers")
-    allowed_resource_ids: list[StrictStr] = Field(default_factory=list, alias="allowedResourceIds")
-    excluded_resource_ids: list[StrictStr] = Field(default_factory=list, alias="excludedResourceIds")
+    allowed_resource_ids: list[RuntimeResourceId] = Field(default_factory=list, alias="allowedResourceIds")
+    excluded_resource_ids: list[RuntimeResourceId] = Field(default_factory=list, alias="excludedResourceIds")
     data_zone: StrictStr | None = Field(default=None, alias="dataZone")
     owner_scope: StrictStr | None = Field(default=None, alias="ownerScope")
     labels: dict[str, str] = Field(default_factory=dict)
@@ -148,7 +150,7 @@ class ExecutionBinding(BaseModel):
     run_id: StrictStr = Field(alias="runId", min_length=1)
     step_id: StrictStr = Field(alias="stepId", min_length=1)
     attempt_id: StrictStr = Field(alias="attemptId", min_length=1)
-    resource_id: StrictStr = Field(alias="resourceId", min_length=1)
+    resource_id: RuntimeResourceId = Field(alias="resourceId", min_length=1)
     resource_type: ResourceType = Field(alias="resourceType")
     snapshot_version: int = Field(alias="snapshotVersion", ge=1)
     bound_at: datetime = Field(default_factory=_utc_now, alias="boundAt")
@@ -161,7 +163,7 @@ class ResourceLease(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     lease_id: StrictStr = Field(alias="leaseId", min_length=1, description="租约唯一标识。")
-    resource_id: StrictStr = Field(alias="resourceId", min_length=1, description="被租用资源标识。")
+    resource_id: RuntimeResourceId = Field(alias="resourceId", min_length=1, description="被租用资源标识。")
     agent_id: StrictStr | None = Field(default=None, alias="agentId", description="新账本中被租用的 Agent。")
     node_id: StrictStr | None = Field(default=None, alias="nodeId", description="新账本中承载执行的 Node。")
     owner_id: StrictStr | None = Field(default=None, alias="ownerId", description="获得使用权的任务或执行标识。")
@@ -209,7 +211,7 @@ class SchedulingDecision(BaseModel):
 
     request_id: StrictStr = Field(alias="requestId", min_length=1, description="对应的调度请求标识。")
     decision: Literal["allocated", "queued", "rejected"] = Field(description="标准化调度决定。")
-    resource_id: StrictStr | None = Field(default=None, alias="resourceId", description="已分配时的资源标识。")
+    resource_id: RuntimeResourceId | None = Field(default=None, alias="resourceId", description="已分配时的资源标识。")
     lease: ResourceLease | None = Field(default=None, description="已分配时产生的资源租约。")
     reason: StrictStr | None = Field(default=None, description="排队或拒绝时的可读原因。")
     decided_at: datetime = Field(default_factory=_utc_now, alias="decidedAt", description="决定产生的 UTC 时间。")
@@ -304,7 +306,7 @@ class AgentProfile(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    agent_id: StrictStr = Field(alias="agentId", min_length=1)
+    agent_id: LogicalAgentId = Field(alias="agentId", min_length=1)
     capabilities: list[StrictStr] = Field(min_length=1, description="能力标签（含 skill）。")
     required_model_ids: list[StrictStr] = Field(default_factory=list, alias="requiredModelIds", description="所需模型。")
     required_gpu_memory_mb: int = Field(default=0, ge=0, alias="requiredGpuMemoryMb", description="所需显存。")

@@ -490,7 +490,7 @@ def test_graph_patch_rejects_stale_version(tmp_path):
         )
 
 
-def test_runtime_rebinds_pending_step_to_scoped_healthy_alternate(tmp_path):
+def test_runtime_requires_a_bound_step_before_manual_rebind(tmp_path):
     calls: list[str] = []
     agents = AgentRegistry()
     review_agent = _PatchAgent()
@@ -528,9 +528,20 @@ def test_runtime_rebinds_pending_step_to_scoped_healthy_alternate(tmp_path):
     )
     task = runtime.create_mission("rebind", workflow_id="rebindable")
     paused = asyncio.run(runtime.start(task.mission_id, workflow_id="rebindable"))
-    assert paused.execution_state["resourceBindings"]["deliver"] == "primary"
+    assert "deliver" not in paused.execution_state["resourceBindings"]
     assert calls == []
+    with pytest.raises(ValueError, match="no frozen resource binding"):
+        asyncio.run(
+            runtime.rebind_step(run_id=paused.run_id, step_id="deliver", reason="primary unavailable")
+        )
 
+    # A review-time rebind is still a Runtime operation once a concrete
+    # binding exists; preparation itself must not create that binding.
+    paused.execution_state["resourceBindings"]["deliver"] = "primary"
+    paused.execution_state["bindingRequirements"]["deliver"]["preferences"] = {
+        "resourceId": "primary"
+    }
+    runtime.workflow_store.save_run(paused)
     selected = asyncio.run(
         runtime.rebind_step(run_id=paused.run_id, step_id="deliver", reason="primary unavailable")
     )

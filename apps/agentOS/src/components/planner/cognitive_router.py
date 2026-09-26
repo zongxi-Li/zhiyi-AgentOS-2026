@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from contracts.authority import LogicalAgentId
 from service.agents import AgentRegistry
 from service.agents.base import BaseAgent
 from support.acg.capabilities import CapabilityCatalog, PlanningCapabilityDescriptor
@@ -16,10 +17,15 @@ from support.acg.semantic_profile import TaskSemanticProfile
 class CapabilityBinding:
     """一个能力到智能体的候选绑定；``score`` 仅用于同次路由的稳定排序。"""
     capability: str
-    agent_name: str
+    agent_name: LogicalAgentId
     score: float
     ephemeral: bool = False
     plan_node_key: str | None = None
+
+    @property
+    def logical_agent_id(self) -> LogicalAgentId:
+        """The planning identity; never a worker, endpoint, or resource id."""
+        return self.agent_name
 
 
 @dataclass
@@ -38,7 +44,7 @@ class CollaborationNetwork:
     @property
     def agent_names(self) -> List[str]:
         """按首次绑定顺序返回去重智能体名称，不修改绑定集合。"""
-        return list(dict.fromkeys(binding.agent_name for binding in self.bindings))
+        return list(dict.fromkeys(binding.logical_agent_id for binding in self.bindings))
 
     @property
     def over_budget(self) -> bool:

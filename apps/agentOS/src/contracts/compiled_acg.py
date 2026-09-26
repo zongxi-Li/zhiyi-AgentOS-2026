@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
+from .authority import LogicalAgentId, RuntimeResourceId
+
 
 class FrozenContract(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
@@ -45,11 +47,11 @@ class CompiledEdge(FrozenContract):
 
 class BindingRule(FrozenContract):
     step_id: StrictStr = Field(alias="stepId", min_length=1)
-    agent_node_ids: tuple[StrictStr, ...] = Field(default=(), alias="agentNodeIds")
+    agent_node_ids: tuple[LogicalAgentId, ...] = Field(default=(), alias="agentNodeIds")
     required_capabilities: tuple[StrictStr, ...] = Field(
         default=(), alias="requiredCapabilities"
     )
-    allowed_resource_ids: tuple[StrictStr, ...] = Field(
+    allowed_resource_ids: tuple[RuntimeResourceId, ...] = Field(
         default=(), alias="allowedResourceIds"
     )
     domain: StrictStr | None = None

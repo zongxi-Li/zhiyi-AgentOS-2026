@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 from contracts.execution import StepStatus, WorkflowProgressPhase
 from contracts.identity import generate_identity
 from contracts.planning import PlannedTask, TaskPlanRelation
+from contracts.authority import LogicalAgentId
 
 
 def utc_now() -> datetime:
@@ -63,7 +64,7 @@ class RunExecutionScope(CoreModel):
         default_factory=tuple, alias="enabledPluginIds"
     )
     capability_ids: tuple[str, ...] = Field(default_factory=tuple, alias="capabilityIds")
-    agent_ids: tuple[str, ...] = Field(default_factory=tuple, alias="agentIds")
+    agent_ids: tuple[LogicalAgentId, ...] = Field(default_factory=tuple, alias="agentIds")
     workflow_ids: tuple[str, ...] = Field(default_factory=tuple, alias="workflowIds")
     plugin_snapshots: tuple[PluginSnapshot, ...] = Field(
         default_factory=tuple, alias="pluginSnapshots"

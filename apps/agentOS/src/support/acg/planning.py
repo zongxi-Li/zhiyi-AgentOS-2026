@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from contracts.authority import LogicalAgentId
+
 
 class PlanningSpec(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
@@ -15,7 +17,7 @@ class AgentBindingSpec(PlanningSpec):
     """Logical planner assignment; it is not a runtime resource identifier."""
 
     step_id: str = Field(alias="stepId", min_length=1)
-    planned_agent_id: str = Field(alias="plannedAgentId", min_length=1)
+    planned_agent_id: LogicalAgentId = Field(alias="plannedAgentId", min_length=1)
     role: str = ""
     required_capabilities: tuple[str, ...] = Field(
         default=(), alias="requiredCapabilities"

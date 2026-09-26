@@ -19,6 +19,7 @@ from contracts.identity import (
     TaskId,
     new_binding_id,
 )
+from contracts.authority import LogicalAgentId, RuntimeResourceId
 from domain.models import DomainModel, utc_now
 
 from .relations import BlueprintRelationType, IdentityRelation, TaskBindingType
@@ -61,8 +62,8 @@ class ExecutionBinding(DomainModel):
     binding_id: BindingId = Field(default_factory=new_binding_id, alias="bindingId")
     attempt_id: AttemptId = Field(alias="attemptId")
     acg_node_id: str = Field(alias="acgNodeId", min_length=1)
-    resource_id: str = Field(alias="resourceId", min_length=1)
-    agent_id: str = Field(alias="agentId", min_length=1)
+    resource_id: RuntimeResourceId = Field(alias="resourceId", min_length=1)
+    agent_id: LogicalAgentId = Field(alias="agentId", min_length=1)
     model_id: str = Field(alias="modelId", min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")

@@ -73,19 +73,19 @@ def _runtime(calls: list[str]) -> tuple[ExecutionRuntime, AgentRegistry]:
     ), agents
 
 
-def test_prepare_run_freezes_resource_bindings() -> None:
-    """每个 ACG Step 必须在准备期固定对应的 agentId。"""
+def test_prepare_run_defers_concrete_resource_binding_to_scheduler() -> None:
+    """Preparation persists eligibility; Scheduler creates the binding at READY."""
     runtime, _ = _runtime([])
     task = runtime.create_mission("resource", workflow_id="resource-run")
 
     _, run = runtime.prepare_run(task.mission_id)
 
-    assert run.execution_state["resourceBindings"] == {"analyse": "agent-primary"}
+    assert run.execution_state["resourceBindings"] == {}
     assert run.execution_state["bindingRequirements"] == {
         "analyse": {
                 "requiredCapabilities": ["analysis"],
                 "domain": "general",
-                "resourceTypes": ["agent"],
+                "resourceTypes": [],
                 "allowedDeploymentTiers": [],
                 "allowedResourceIds": ["agent-primary"],
             "excludedResourceIds": [],
@@ -98,7 +98,7 @@ def test_prepare_run_freezes_resource_bindings() -> None:
                 "requiredModelIds": [],
                 "minGpuMemoryMb": 0,
                 "allowRemoteExecution": True,
-            "preferences": {"resourceId": "agent-primary"},
+            "preferences": {},
             "policyMetadata": {
                     "source": "compiled-binding-manifest",
                     "stepId": "analyse",
@@ -109,7 +109,7 @@ def test_prepare_run_freezes_resource_bindings() -> None:
     }
 
 
-def test_prepare_run_freezes_node_agent_binding_from_new_ledgers() -> None:
+def test_prepare_run_does_not_freeze_node_placement_from_new_ledgers() -> None:
     calls: list[str] = []
     runtime, _ = _runtime(calls)
     runtime.agent_service = AgentService()
@@ -130,16 +130,8 @@ def test_prepare_run_freezes_node_agent_binding_from_new_ledgers() -> None:
 
     _, run = runtime.prepare_run(task.mission_id)
 
-    assert run.execution_state["nodeAgentBindings"]["analyse"] == {
-        "agentId": "agent-primary",
-        "nodeId": "edge-node-1",
-        "resourceId": "edge-node-1",
-    }
-    assert run.execution_state["bindingRequirements"]["analyse"]["preferences"] == {
-        "resourceId": "agent-primary",
-        "agentId": "agent-primary",
-        "nodeId": "edge-node-1",
-    }
+    assert "nodeAgentBindings" not in run.execution_state
+    assert run.execution_state["bindingRequirements"]["analyse"]["preferences"] == {}
 
 
 def test_runtime_accepts_resource_execution_adapters_by_resource_id() -> None:
@@ -155,7 +147,7 @@ def test_runtime_accepts_resource_execution_adapters_by_resource_id() -> None:
     assert runtime_with_adapter.resource_execution_adapters == {"edge-01": adapter}
 
 
-def test_prepare_run_can_freeze_a_registered_remote_execution_resource() -> None:
+def test_prepare_run_keeps_registered_remote_resource_eligible_without_binding() -> None:
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     workflows.register(WorkflowDefinition(
@@ -189,7 +181,9 @@ def test_prepare_run_can_freeze_a_registered_remote_execution_resource() -> None
     task = runtime.create_mission("remote", workflow_id="remote-resource-run")
     _, run = runtime.prepare_run(task.mission_id)
 
-    assert run.execution_state["resourceBindings"] == {"infer": "edge-01"}
+    assert run.execution_state["resourceBindings"] == {}
+    assert run.execution_state["bindingRequirements"]["infer"]["allowedResourceIds"] == ["edge-01"]
+    assert run.execution_state["bindingRequirements"]["infer"]["preferences"] == {}
 
 
 def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatch) -> None:
@@ -303,7 +297,8 @@ def test_acg_execution_uses_node_adapter_from_node_agent_binding(monkeypatch) ->
     assert adapter.calls == 1
     assert local_calls == []
     assert completed.status.value == "completed"
-    assert completed.execution_state["nodeAgentBindings"]["analyse"]["nodeId"] == "edge-node-01"
+    assert completed.execution_state["executionBindings"]["analyse"]["resourceId"] == "edge-node-01"
+    assert completed.execution_state["executionBindings"]["analyse"]["metadata"]["agentId"] == "agent-primary"
     assert completed.execution_state["schedulingDecisions"][0]["lease"]["agentId"] == "agent-primary"
     assert completed.execution_state["schedulingDecisions"][0]["lease"]["nodeId"] == "edge-node-01"
 
