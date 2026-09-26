@@ -2,6 +2,7 @@ package com.kinlin.ai.service;
 
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.exception.ResourceNotFoundException;
 import com.kinlin.ai.repository.ConversationRepository;
 import com.kinlin.ai.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
@@ -87,6 +88,20 @@ public class ConversationService {
     }
 
     /**
+     * 按属主获取对话（contextId + userId）
+     */
+    public Optional<Conversation> getConversationByContextIdForUser(String contextId, UUID userId) {
+        return conversationRepository.findByContextIdAndUserId(contextId, userId);
+    }
+
+    /**
+     * 按属主获取对话（conversationId + userId）
+     */
+    public Optional<Conversation> getConversationByIdForUser(UUID conversationId, UUID userId) {
+        return conversationRepository.findByIdAndUserId(conversationId, userId);
+    }
+
+    /**
      * 根据ID获取对话
      */
     public Optional<Conversation> getConversationById(UUID conversationId) {
@@ -133,12 +148,12 @@ public class ConversationService {
     }
 
     /**
-     * 更新对话标题
+     * 更新对话标题（仅属主可操作）
      */
     @Transactional
-    public Conversation updateTitle(UUID conversationId, String title) {
-        Conversation conversation = conversationRepository.findById(conversationId)
-                .orElseThrow(() -> new RuntimeException("对话不存在"));
+    public Conversation updateTitle(UUID conversationId, UUID userId, String title) {
+        Conversation conversation = conversationRepository.findByIdAndUserId(conversationId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
         conversation.setTitle(title);
         return conversationRepository.save(conversation);
     }

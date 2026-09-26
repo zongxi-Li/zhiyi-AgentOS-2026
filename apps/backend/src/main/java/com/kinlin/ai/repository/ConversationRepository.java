@@ -24,6 +24,10 @@ public interface ConversationRepository extends JpaRepository<Conversation, UUID
 
     List<Conversation> findByUserId(UUID userId);
 
+    Optional<Conversation> findByContextIdAndUserId(String contextId, UUID userId);
+
+    Optional<Conversation> findByIdAndUserId(UUID id, UUID userId);
+
     @Query("SELECT c FROM Conversation c WHERE c.userId = :userId ORDER BY c.updatedAt DESC")
     List<Conversation> findRecentConversationsByUserId(@Param("userId") UUID userId);
 

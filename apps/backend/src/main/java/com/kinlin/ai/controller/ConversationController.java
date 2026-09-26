@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.Conversation;
+import com.kinlin.ai.exception.ResourceNotFoundException;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ConversationService;
 import lombok.Data;
@@ -42,13 +43,17 @@ public class ConversationController {
     }
 
     /**
-     * 获取对话详情
+     * 获取对话详情（仅属主可见）
      */
     @GetMapping("/{contextId}")
-    public ResponseEntity<Conversation> getConversation(@PathVariable String contextId) {
-        return conversationService.getConversationByContextId(contextId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<Conversation> getConversation(
+            @PathVariable String contextId,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+    ) {
+        Conversation conversation = conversationService
+                .getConversationByContextIdForUser(contextId, requireUserId(userId))
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
+        return ResponseEntity.ok(conversation);
     }
 
     /**
@@ -69,35 +74,31 @@ public class ConversationController {
     }
 
     /**
-     * 更新对话标题
+     * 更新对话标题（仅属主可操作）
      */
     @PutMapping("/{conversationId}/title")
     public ResponseEntity<Conversation> updateTitle(
             @PathVariable UUID conversationId,
-            @RequestBody UpdateTitleRequest request
+            @RequestBody UpdateTitleRequest request,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId
     ) {
-        Conversation conversation = conversationService.updateTitle(conversationId, request.getTitle());
+        Conversation conversation = conversationService
+                .updateTitle(conversationId, requireUserId(userId), request.getTitle());
         return ResponseEntity.ok(conversation);
     }
 
     /**
-     * 获取对话详情（包含预览内容）
+     * 获取对话详情（包含预览内容，仅属主可见）
      */
     @GetMapping("/{conversationId}/detail")
-    public ResponseEntity<Map<String, Object>> getConversationDetail(@PathVariable UUID conversationId) {
-        Conversation conversation = conversationService.getConversationByContextId("")
-                .orElse(null);
-        
-        // 如果通过contextId找不到，尝试通过ID查找
-        if (conversation == null) {
-            conversation = conversationService.getConversationById(conversationId)
-                    .orElse(null);
-        }
-        
-        if (conversation == null) {
-            return ResponseEntity.notFound().build();
-        }
-        
+    public ResponseEntity<Map<String, Object>> getConversationDetail(
+            @PathVariable UUID conversationId,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+    ) {
+        Conversation conversation = conversationService
+                .getConversationByIdForUser(conversationId, requireUserId(userId))
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
+
         // 自动生成标题（如果还没有）
         if (conversation.getTitle() == null || conversation.getTitle().isEmpty()) {
             conversation = conversationService.autoGenerateTitle(conversationId);
@@ -134,6 +135,11 @@ public class ConversationController {
 
     private UUID resolveUserId(UUID userIdHeader) {
         return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+    }
+
+    private UUID requireUserId(UUID userIdHeader) {
+        return AuthenticatedUser.currentUserId()
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
     }
 
     @Data

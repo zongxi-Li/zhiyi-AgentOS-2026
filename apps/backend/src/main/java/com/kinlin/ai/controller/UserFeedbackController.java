@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.UserFeedback;
+import com.kinlin.ai.exception.ResourceNotFoundException;
+import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.UserFeedbackService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -44,23 +46,23 @@ public class UserFeedbackController {
     }
 
     /**
-     * 获取用户反馈列表
+     * 获取用户反馈列表（路径参数仅为兼容保留，实际以认证身份为准）
      */
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<UserFeedback>> getUserFeedbacks(@PathVariable UUID userId) {
-        List<UserFeedback> feedbacks = feedbackService.getUserFeedbacks(userId);
+        List<UserFeedback> feedbacks = feedbackService.getUserFeedbacks(requireCurrentUserId());
         return ResponseEntity.ok(feedbacks);
     }
 
     /**
-     * 获取用户反馈统计
+     * 获取用户反馈统计（路径参数仅为兼容保留，实际以认证身份为准）
      */
     @GetMapping("/user/{userId}/statistics")
     public ResponseEntity<UserFeedbackService.FeedbackStatistics> getUserFeedbackStatistics(
             @PathVariable UUID userId
     ) {
         UserFeedbackService.FeedbackStatistics statistics =
-                feedbackService.getFeedbackStatistics(userId);
+                feedbackService.getFeedbackStatistics(requireCurrentUserId());
         return ResponseEntity.ok(statistics);
     }
 
@@ -86,6 +88,11 @@ public class UserFeedbackController {
         private String feedbackType; // quality, relevance, helpfulness, other
         private Integer rating; // 1-5
         private String content;
+    }
+
+    private UUID requireCurrentUserId() {
+        return AuthenticatedUser.currentUserId()
+                .orElseThrow(() -> new ResourceNotFoundException("未认证，无法获取反馈数据"));
     }
 }
 

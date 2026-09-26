@@ -5,6 +5,7 @@ import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.exception.ResourceNotFoundException;
 import com.kinlin.ai.repository.ConversationRepository;
 import com.kinlin.ai.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
@@ -233,25 +234,24 @@ public class ChatService {
     }
 
     /**
-     * 获取对话历史
+     * 获取对话历史（仅属主可见，会话不存在或非本人时抛 ResourceNotFoundException）
      */
-    public List<Message> getHistory(String contextId) {
-        return conversationRepository.findByContextId(contextId)
+    public List<Message> getHistory(String contextId, UUID userId) {
+        return conversationRepository.findByContextIdAndUserId(contextId, userId)
                 .map(conversation -> messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId()))
-                .orElse(Collections.emptyList());
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
     }
 
     /**
-     * 清除对话历史
+     * 清除对话历史（仅属主可操作）
      */
     @Transactional
-    public void clearHistory(String contextId) {
-        conversationRepository.findByContextId(contextId)
-                .ifPresent(conversation -> {
-                    messageRepository.deleteAll(
-                            messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId())
-                    );
-                    conversationRepository.delete(conversation);
-                });
+    public void clearHistory(String contextId, UUID userId) {
+        Conversation conversation = conversationRepository.findByContextIdAndUserId(contextId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
+        messageRepository.deleteAll(
+                messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId())
+        );
+        conversationRepository.delete(conversation);
     }
 }

@@ -5,7 +5,6 @@ import com.kinlin.ai.dto.LoginRequest;
 import com.kinlin.ai.dto.LoginResponse;
 import com.kinlin.ai.entity.User;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
-import com.kinlin.ai.interceptor.UserContextInterceptor;
 import com.kinlin.ai.service.UserService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,9 +47,6 @@ class AuthControllerTest {
     private RateLimitInterceptor rateLimitInterceptor;
 
     @MockBean
-    private UserContextInterceptor userContextInterceptor;
-
-    @MockBean
     private JpaMetamodelMappingContext jpaMetamodelMappingContext;
 
     @Autowired
@@ -74,7 +70,6 @@ class AuthControllerTest {
         testUser.setUsername(username);
 
         when(rateLimitInterceptor.preHandle(any(), any(), any())).thenReturn(true);
-        when(userContextInterceptor.preHandle(any(), any(), any())).thenReturn(true);
     }
 
     @Test

@@ -32,8 +32,11 @@ public class SearchController {
             @RequestHeader(value = "X-User-Id", required = false) UUID userId
     ) {
         userId = resolveUserId(userId);
+        if (userId == null) {
+            return ResponseEntity.badRequest().build();
+        }
         if (contextId != null && !contextId.isEmpty()) {
-            List<Message> messages = chatService.getHistory(contextId);
+            List<Message> messages = chatService.getHistory(contextId, userId);
             List<Message> results = messages.stream()
                     .filter(msg -> msg.getContent().toLowerCase().contains(keyword.toLowerCase()))
                     .toList();
@@ -61,8 +64,11 @@ public class SearchController {
         return ResponseEntity.ok(results);
     }
 
+    /**
+     * X-User-Id 请求头已被 SensitiveIdentityHeaderFilter 剥离，一律以认证身份为准。
+     */
     private UUID resolveUserId(UUID userIdHeader) {
-        return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+        return AuthenticatedUser.currentUserId().orElse(null);
     }
 }
 

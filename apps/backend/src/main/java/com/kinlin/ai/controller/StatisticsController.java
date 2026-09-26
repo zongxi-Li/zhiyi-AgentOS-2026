@@ -1,5 +1,7 @@
 package com.kinlin.ai.controller;
 
+import com.kinlin.ai.exception.ResourceNotFoundException;
+import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.StatisticsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,11 +21,12 @@ public class StatisticsController {
     private final StatisticsService statisticsService;
 
     /**
-     * 获取用户统计
+     * 获取用户统计（路径参数仅为兼容保留，实际以认证身份为准）
      */
     @GetMapping("/user/{userId}")
     public ResponseEntity<Map<String, Object>> getUserStatistics(@PathVariable UUID userId) {
-        Map<String, Object> stats = statisticsService.getUserStatistics(userId);
+        UUID currentUserId = requireCurrentUserId();
+        Map<String, Object> stats = statisticsService.getUserStatistics(currentUserId);
         return ResponseEntity.ok(stats);
     }
 
@@ -37,12 +40,18 @@ public class StatisticsController {
     }
 
     /**
-     * 获取角色使用统计
+     * 获取角色使用统计（路径参数仅为兼容保留，实际以认证身份为准）
      */
     @GetMapping("/user/{userId}/roles")
     public ResponseEntity<Map<String, Object>> getRoleStatistics(@PathVariable UUID userId) {
-        Map<String, Object> stats = statisticsService.getRoleStatistics(userId);
+        UUID currentUserId = requireCurrentUserId();
+        Map<String, Object> stats = statisticsService.getRoleStatistics(currentUserId);
         return ResponseEntity.ok(stats);
+    }
+
+    private UUID requireCurrentUserId() {
+        return AuthenticatedUser.currentUserId()
+                .orElseThrow(() -> new ResourceNotFoundException("未认证，无法获取用户统计"));
     }
 }
 
