@@ -189,7 +189,7 @@ modules = [
      '代码入口：agentOS/src/agentos/core/communication/'),
     ('Cognitive Planning Engine（认知规划引擎）',
      '"静态优先，动态补位"混合策略。IntentParser 解析意图、TemplateMatcher 匹配既有模板、'
-     'CognitiveRouter 完成能力-智能体绑定、ACGBuilder 动态构建 ACG 蓝图。'
+     'CognitiveRouter 完成能力-智能体绑定、ACGLowerer 将冻结决策降低为 ACG 蓝图。'
      '代码入口：agentOS/src/agentos/core/planning/'),
 ]
 for title, desc in modules:
@@ -575,7 +575,8 @@ add_code_block(doc, '''def plan(self, *, task_id, intent, domain, task_type):
 
     # 3) 动态补位 — 认知路由 + ACG 构建
     network = self.cognitive_router.route(profile, domain=domain)
-    blueprint = self.acg_builder.build(task_id, profile, network)
+    lowering_input = planning_result.lowering_input
+    blueprint = ACGLowerer().lower(lowering_input)
     return PlanResult(blueprint, strategy="dynamic_generation", ...)''')
 doc.add_paragraph(
     '意图解析采用分层设计：Core 定义 IntentLLM 协议，app 层注入真实 DeepSeek 网关；'

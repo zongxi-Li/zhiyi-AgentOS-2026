@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from components.planner.acg_builder import ACGBuilder
+from components.planner.acg_lowerer import ACGLowerer
+from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.semantic_planner import SemanticPlanner
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from components.executor.compiler import ACGGraphCompiler
@@ -13,7 +14,7 @@ from support.acg.models import (
 )
 
 
-def test_builder_derives_memory_write_policy_from_capability() -> None:
+def test_lowering_derives_memory_write_policy_from_capability() -> None:
     """能力目录的 writesMemory 必须转换成可冻结、可执行的步骤策略。"""
     catalog = CapabilityCatalog([
         PlanningCapabilityDescriptor(
@@ -40,7 +41,7 @@ def test_builder_derives_memory_write_policy_from_capability() -> None:
         capabilities=["analyze", "conclude"],
         strategy="test",
     )
-    blueprint = ACGBuilder(catalog).build(
+    lowering_input = build_acg_lowering_input(
         mission_id=mission_id,
         profile=TaskSemanticProfile(
             primaryGoal="test",
@@ -48,7 +49,9 @@ def test_builder_derives_memory_write_policy_from_capability() -> None:
         ),
         network=network,
         task_plan=task_plan,
+        capability_catalog=catalog,
     )
+    blueprint = ACGLowerer().lower(lowering_input)
 
     policies = {
         node.capability: node.metadata["memoryPolicy"]
@@ -68,7 +71,7 @@ def test_builder_derives_memory_write_policy_from_capability() -> None:
     assert policies["conclude"]["requireAudit"] is True
 
 
-def test_builder_compiles_evidence_producer_and_consumer_permissions() -> None:
+def test_lowering_compiles_evidence_producer_and_consumer_permissions() -> None:
     catalog = CapabilityCatalog([
         PlanningCapabilityDescriptor(
             capabilityId="retrieve",
@@ -94,7 +97,7 @@ def test_builder_compiles_evidence_producer_and_consumer_permissions() -> None:
         capabilities=["retrieve", "analyze"],
         strategy="test",
     )
-    blueprint = ACGBuilder(catalog).build(
+    lowering_input = build_acg_lowering_input(
         mission_id=mission_id,
         profile=TaskSemanticProfile(
             primaryGoal="test",
@@ -102,7 +105,9 @@ def test_builder_compiles_evidence_producer_and_consumer_permissions() -> None:
         ),
         network=network,
         task_plan=task_plan,
+        capability_catalog=catalog,
     )
+    blueprint = ACGLowerer().lower(lowering_input)
 
     package = ACGGraphCompiler().compile_package(blueprint)
     retrieve_step = next(node for node in blueprint.step_nodes() if node.capability == "retrieve")

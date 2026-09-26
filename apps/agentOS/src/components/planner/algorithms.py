@@ -54,7 +54,7 @@ def normalize_planning_seed(value: object | None) -> int | None:
 @dataclass(frozen=True)
 class PlanningVariant:
     """表示一个由种子候选集确定的规划变体及其可审计输入。"""
-    """One deterministic builder input selected from a seeded candidate set."""
+    """One deterministic planning candidate selected from a seeded candidate set."""
 
     variant_id: str
     network: CollaborationNetwork

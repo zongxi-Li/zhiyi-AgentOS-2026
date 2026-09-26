@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from components.planner.acg_builder import ACGBuilder
+from components.planner.acg_lowerer import ACGLowerer
+from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.acg_semantic_validator import (
     ACGSemanticPreservationError, semantic_reachability_projection,
     validate_acg_semantic_preservation, validate_bound_acg_semantics,
@@ -38,14 +39,16 @@ def _build(plan: TaskPlan) -> ACGBlueprint:
         CapabilityBinding(capability=node.capability_requirements[0], agent_name="agent", score=1.0)
         for node in plan.nodes
     ]
-    return ACGBuilder(_catalog()).build(
+    lowering_input = build_acg_lowering_input(
         mission_id=plan.mission_id,
         profile=TaskSemanticProfile(
             primaryGoal="prove lowering",
             requiredCapabilities=[item.capability for item in bindings],
         ),
         network=CollaborationNetwork(bindings=bindings), task_plan=plan,
+        capability_catalog=_catalog(),
     )
+    return ACGLowerer().lower(lowering_input)
 
 
 def _plan(*pairs: tuple[str, str], policies=()) -> TaskPlan:
@@ -176,17 +179,17 @@ def test_preservation_validator_rejects_a_dropped_semantic_dependency() -> None:
         validate_acg_semantic_preservation(plan, blueprint)
 
 
-def test_builder_always_invokes_semantic_preservation_guard(monkeypatch) -> None:
-    import components.planner.acg_builder as builder_module
+def test_lowerer_always_invokes_semantic_preservation_guard(monkeypatch) -> None:
+    import components.planner.acg_lowerer as lowerer_module
 
     calls = []
-    original = builder_module.validate_acg_semantic_preservation
+    original = lowerer_module.validate_acg_semantic_preservation
 
     def spy(plan, blueprint):
         calls.append((plan, blueprint))
         return original(plan, blueprint)
 
-    monkeypatch.setattr(builder_module, "validate_acg_semantic_preservation", spy)
+    monkeypatch.setattr(lowerer_module, "validate_acg_semantic_preservation", spy)
     plan = _plan(("A", "B"))
     blueprint = _build(plan)
     assert calls == [(plan, blueprint)]

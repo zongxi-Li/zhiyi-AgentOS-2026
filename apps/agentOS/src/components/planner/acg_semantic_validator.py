@@ -11,7 +11,7 @@ class ACGSemanticPreservationError(ValueError):
 
 
 def validate_acg_semantic_preservation(task_plan: TaskPlan, blueprint: ACGBlueprint) -> None:
-    """Prove that Builder lowering preserves semantic happens-before relations."""
+    """Prove that lowering preserves semantic happens-before relations."""
     by_key: dict[str, StepNode] = {}
     for step in blueprint.step_nodes():
         key = step.metadata.get("taskPlanKey")

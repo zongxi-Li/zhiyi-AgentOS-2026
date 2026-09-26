@@ -1,10 +1,11 @@
-"""Planner and ACG Builder ownership boundary regression tests."""
+"""Planner and ACG Lowerer ownership boundary regression tests."""
 
 from __future__ import annotations
 
 import pytest
 
-from components.planner.acg_builder import ACGBuilder
+from components.planner.acg_lowerer import ACGLowerer
+from components.planner.lowering_input import build_template_lowering_input
 from components.planner.semantic_planner import SemanticPlanner, SemanticPlanningError
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
@@ -57,11 +58,12 @@ def test_template_planner_does_not_derive_semantics_from_workflow_steps() -> Non
         workflow=workflow,
         strategy="static_template",
     )
-    built = ACGBuilder().build_template(workflow=workflow, task_plan=task_plan)
+    lowering_input = build_template_lowering_input(workflow=workflow, task_plan=task_plan)
+    blueprint = ACGLowerer().lower(lowering_input)
 
     assert [node.key for node in task_plan.nodes] == ["semantic-outcome"]
-    assert built.bindings[0].plan_node_key == "semantic-outcome"
-    assert built.bindings[0].acg_node_id == "execute"
+    assert lowering_input.implementation_bindings[0].plan_node_key == "semantic-outcome"
+    assert lowering_input.implementation_bindings[0].acg_node_id == "execute"
 
 
 def _two_step_template(*, input_from: bool = False, next_step: bool = False) -> WorkflowDefinition:
@@ -97,43 +99,45 @@ def _two_task_plan(*, dependency: bool = False) -> TaskPlan:
 
 
 def test_template_order_does_not_create_undeclared_semantic_dependency() -> None:
-    built = ACGBuilder().build_template(
+    lowering_input = build_template_lowering_input(
         workflow=_two_step_template(), task_plan=_two_task_plan(),
     )
+    blueprint = ACGLowerer().lower(lowering_input)
 
-    assert built.blueprint.edges_of_type(EdgeType.DEPENDENCY) == []
+    assert blueprint.edges_of_type(EdgeType.DEPENDENCY) == []
 
 
 def test_template_input_from_without_task_plan_dependency_fails_closed() -> None:
     with pytest.raises(ValueError, match="input.from requires a TaskPlan semantic dependency"):
-        ACGBuilder().build_template(
+        build_template_lowering_input(
             workflow=_two_step_template(input_from=True), task_plan=_two_task_plan(),
         )
 
 
 def test_template_explicit_next_step_without_task_plan_dependency_fails_closed() -> None:
     with pytest.raises(ValueError, match="nextStepId requires a TaskPlan semantic dependency"):
-        ACGBuilder().build_template(
+        build_template_lowering_input(
             workflow=_two_step_template(next_step=True), task_plan=_two_task_plan(),
         )
 
 
 def test_template_lowers_authorized_task_plan_dependency() -> None:
-    built = ACGBuilder().build_template(
+    lowering_input = build_template_lowering_input(
         workflow=_two_step_template(input_from=True),
         task_plan=_two_task_plan(dependency=True),
     )
+    blueprint = ACGLowerer().lower(lowering_input)
 
-    assert [(edge.source_id, edge.target_id) for edge in built.blueprint.edges_of_type(
+    assert [(edge.source_id, edge.target_id) for edge in blueprint.edges_of_type(
         EdgeType.DEPENDENCY
     )] == [("a", "b")]
 
     assert {
         (binding.planned_agent_id, binding.step_id)
-        for binding in built.blueprint.resource_plan.bindings
+        for binding in blueprint.resource_plan.bindings
     } == {("agent", "a"), ("agent", "b")}
     assert all(
         not ({"agentName", "assignedAgentId", "skillIds", "memoryIds", "evidenceIds"}
              & node.model_dump(by_alias=True).keys())
-        for node in built.blueprint.step_nodes()
+        for node in blueprint.step_nodes()
     )

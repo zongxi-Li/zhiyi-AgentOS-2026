@@ -1,11 +1,12 @@
 from components.executor.compiler import ACGGraphCompiler
-from components.planner.acg_builder import ACGBuilder
+from components.planner.acg_lowerer import ACGLowerer
+from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
 from support.acg.models import ControlNode, ControlType, TaskSemanticProfile, build_default_capability_catalog
 
 
-def test_builder_freezes_reasoning_tiers_and_compiles_bounded_verification_loop() -> None:
+def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop() -> None:
     catalog = build_default_capability_catalog()
     tasks = (
         PlannedTask(
@@ -41,7 +42,7 @@ def test_builder_freezes_reasoning_tiers_and_compiles_bounded_verification_loop(
         bindings=[CapabilityBinding(capability=item, agent_name="native_general_agent", score=4.0) for item in capabilities],
         entropy_budget=1024,
     )
-    blueprint = ACGBuilder(catalog).build(
+    lowering_input = build_acg_lowering_input(
         mission_id=plan.mission_id,
         profile=TaskSemanticProfile(
             primaryGoal="Design and verify", requiredCapabilities=capabilities,
@@ -49,7 +50,9 @@ def test_builder_freezes_reasoning_tiers_and_compiles_bounded_verification_loop(
         ),
         network=network,
         task_plan=plan,
+        capability_catalog=catalog,
     )
+    blueprint = ACGLowerer().lower(lowering_input)
 
     reasoning = {step.metadata["taskPlanKey"]: step.metadata["reasoningEffort"] for step in blueprint.step_nodes()}
     assert reasoning == {"understand": "high", "refine": "max", "verify": "max"}

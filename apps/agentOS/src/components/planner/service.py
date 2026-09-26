@@ -26,7 +26,11 @@ from contracts.planning import (
 from service.agents import AgentRegistry
 from support.acg.schema import ACGBlueprint, ControlNode
 from support.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
-from .acg_builder import ACGBuilder
+from .acg_lowerer import ACGLowerer
+from .lowering_input import (
+    build_acg_lowering_input,
+    build_template_lowering_input,
+)
 from .semantic_planner import SemanticPlanner
 from support.acg.capabilities import CapabilityCatalog
 from .cognitive_router import CognitiveRouter
@@ -171,7 +175,7 @@ class PlanningEngine:
         self.intent_parser = IntentParser(intent_llm, self.capability_catalog)
         self.template_matcher = TemplateMatcher(workflow_registry, threshold=template_threshold)
         self.cognitive_router = CognitiveRouter(agent_registry, self.capability_catalog)
-        self.acg_builder = ACGBuilder(self.capability_catalog)
+        self.acg_lowerer = ACGLowerer()
         self.semantic_planner = SemanticPlanner(self.capability_catalog, intent_llm)
         self.variant_generator = PlanningVariantGenerator(
             capability_catalog=self.capability_catalog,
@@ -276,22 +280,22 @@ class PlanningEngine:
                     workflow=match.workflow,
                     strategy="static_template",
                 )
-                built = self.acg_builder.build_template(
+                lowering_input = build_template_lowering_input(
                     workflow=match.workflow,
                     task_plan=task_plan,
                 )
-                built.blueprint.metadata["topologyAudit"] = dict(
+                blueprint = self.acg_lowerer.lower(lowering_input)
+                blueprint.metadata["topologyAudit"] = dict(
                     self.semantic_planner.last_topology_audit
                 )
                 if progress_callback:
                     progress_callback(self._plan_progress_payload(task_plan))
-                blueprint = built.blueprint
                 blueprint.objective = profile.primary_goal or blueprint.objective
                 return PlanResult(
                     blueprint=blueprint,
                     profile=profile,
                     task_plan=task_plan,
-                    task_bindings=built.bindings,
+                    task_bindings=lowering_input.implementation_bindings,
                     strategy="static_template",
                     template_id=match.workflow.workflow_id,
                     template_score=match.score,
@@ -360,36 +364,38 @@ class PlanningEngine:
             diversity=diversity,
             seed=resolved_seed,
         )
-        valid: list[tuple[Any, ACGBlueprint]] = []
+        valid: list[tuple[Any, ACGBlueprint, Any]] = []
         rejected: list[str] = []
         for variant in variant_set.variants:
             if variant.network.unresolved_capabilities or variant.network.over_budget:
                 rejected.append(f"{variant.variant_id}: unresolved capability or entropy budget")
                 continue
             try:
-                candidate = self.acg_builder.build(
+                lowering_input = build_acg_lowering_input(
                     mission_id=mission_id,
                     profile=profile,
                     network=variant.network,
                     task_plan=task_plan,
-                    variant=variant,
+                    capability_catalog=self.capability_catalog,
+                    variant_id=variant.variant_id,
                 )
+                candidate = self.acg_lowerer.lower(lowering_input)
                 self._validate_agents(candidate, domain=domain)
             except (KeyError, ValueError) as exc:
                 rejected.append(f"{variant.variant_id}: {exc}")
                 continue
-            valid.append((variant, candidate))
+            valid.append((variant, candidate, lowering_input))
 
         stochastic_fallback = False
         if valid:
             scored = [
-                (self._score_candidate(task_plan, candidate), variant, candidate)
-                for variant, candidate in valid
+                (self._score_candidate(task_plan, candidate), variant, candidate, lowering_input)
+                for variant, candidate, lowering_input in valid
             ]
             best_score = max(item[0] for item in scored)
             tied = [item for item in scored if item[0] == best_score]
             selection_random = random.Random(resolved_seed)
-            _, selected_variant, blueprint = (
+            _, selected_variant, blueprint, selected_lowering_input = (
                 tied[selection_random.randrange(len(tied))] if len(tied) > 1 else tied[0]
             )
         else:
@@ -401,15 +407,17 @@ class PlanningEngine:
                 seed=None,
             )
             selected_variant = stable_set.variants[0]
-            blueprint = self.acg_builder.build(
+            selected_lowering_input = build_acg_lowering_input(
                 mission_id=mission_id,
                 profile=profile,
                 network=selected_variant.network,
                 task_plan=task_plan,
-                variant=selected_variant,
+                capability_catalog=self.capability_catalog,
+                variant_id=selected_variant.variant_id,
             )
+            blueprint = self.acg_lowerer.lower(selected_lowering_input)
             self._validate_agents(blueprint, domain=domain)
-            valid = [(selected_variant, blueprint)]
+            valid = [(selected_variant, blueprint, selected_lowering_input)]
 
         blueprint.metadata.update(
             {
@@ -447,15 +455,11 @@ class PlanningEngine:
         notes.extend(rejected)
         if task_plan.metadata.get("degraded"):
             notes.append(str(task_plan.metadata.get("degradationReason") or "v2 decomposition used explicit degraded plan"))
-        built = self.acg_builder.finalize(
-            task_plan=task_plan,
-            blueprint=blueprint,
-        )
         return PlanResult(
             blueprint=blueprint,
             profile=profile,
             task_plan=task_plan,
-            task_bindings=built.bindings,
+            task_bindings=selected_lowering_input.implementation_bindings,
             strategy="dynamic_generation",
             template_score=match.score if match else 0.0,
             thinking_mode=thinking_mode,
@@ -504,7 +508,7 @@ class PlanningEngine:
 
         Intent analysis is deliberately broad and the decomposer can add
         catalog-required tasks. Binding the pre-decomposition profile leaves
-        those valid tasks without an Agent, so the ACG builder rejects an
+        those valid tasks without an Agent, so the lowering boundary rejects an
         otherwise valid plan. Recompute the dependency closure and route it
         after decomposition instead.
         """

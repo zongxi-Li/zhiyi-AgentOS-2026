@@ -417,7 +417,7 @@ planning_cards = [
     ("plan_template", 464, 130, "TemplateMatcher", "静态优选 · 线性升格", "done"),
     ("plan_router", 614, 122, "CognitiveRouter", "能力路由 · 效用评分", "evolving"),
     ("plan_role", 752, 121, "Role / Skill Matcher", "角色绑定 · 能力画像", "evolving"),
-    ("plan_builder", 891, 118, "ACGBuilder", "构建/校验 · 线性升格", "done"),
+    ("plan_builder", 891, 118, "ACGLowerer", "冻结决策 · 确定性降级", "done"),
 ]
 for cell_id, x, width, title, subtitle, status in planning_cards:
     vertex(

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from components.planner.acg_builder import ACGBuilder
+from components.planner.acg_lowerer import ACGLowerer
+from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.service import PlanningEngine
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from components.planner.task_decomposer import TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer, TaskDecompositionError
@@ -83,18 +84,21 @@ def test_repeated_capability_instances_survive_taskplan_and_acg_build() -> None:
         CapabilityBinding(capability=capability, agent_name="native_general_agent", score=1)
         for capability in _profile().required_capabilities
     ])
-    blueprint = ACGBuilder(catalog).build(
+    lowering_input = build_acg_lowering_input(
         mission_id="mission_0123456789ab",
         profile=_profile(),
         network=network,
         task_plan=plan,
+        capability_catalog=catalog,
     )
-    built = ACGBuilder(catalog).finalize(blueprint=blueprint, task_plan=plan)
+    blueprint = ACGLowerer().lower(lowering_input)
 
     assert [node.capability_requirements[0] for node in plan.nodes].count("solution_design") == 3
     assert [step.name for step in blueprint.step_nodes()][-4:] == ["Candidate A", "Candidate B", "Candidate C", "Compare candidates"]
     assert next(step for step in blueprint.step_nodes() if step.name == "Candidate A").goal.startswith("Design candidate A")
-    assert {item.plan_node_key for item in built.bindings} == {node.key for node in plan.nodes}
+    assert {item.plan_node_key for item in lowering_input.implementation_bindings} == {
+        node.key for node in plan.nodes
+    }
     assert llm.calls[0]["prompt_version"] == TASK_DECOMPOSITION_PROMPT_VERSION
     assert llm.calls[0]["reasoning_effort"] == "high"
 
@@ -937,12 +941,14 @@ def test_expected_artifact_omission_is_completed_before_acg_build() -> None:
         )
         for node in plan.nodes
     ])
-    blueprint = ACGBuilder(catalog).build(
+    lowering_input = build_acg_lowering_input(
         mission_id=plan.mission_id,
         profile=profile,
         network=network,
         task_plan=plan,
+        capability_catalog=catalog,
     )
+    blueprint = ACGLowerer().lower(lowering_input)
     terminal = next(
         step for step in blueprint.step_nodes()
         if step.metadata["taskPlanKey"] == producer.key
