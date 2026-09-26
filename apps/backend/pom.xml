@@ -91,19 +91,6 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- MapStruct (DTO转换) -->
-        <dependency>
-            <groupId>org.mapstruct</groupId>
-            <artifactId>mapstruct</artifactId>
-            <version>1.5.5.Final</version>
-        </dependency>
-        <dependency>
-            <groupId>org.mapstruct</groupId>
-            <artifactId>mapstruct-processor</artifactId>
-            <version>1.5.5.Final</version>
-            <scope>provided</scope>
-        </dependency>
-
         <!-- HTTP Client (调用AI服务) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -153,12 +140,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
-        </dependency>
-
-        <!-- JPA Auditing -->
-        <dependency>
-            <groupId>org.springframework.data</groupId>
-            <artifactId>spring-data-jpa</artifactId>
         </dependency>
 
         <!-- Guava (用于限流) -->
@@ -225,12 +206,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Hibernate Types for JSONB (Hibernate 6.x) -->
-        <dependency>
-            <groupId>com.vladmihalcea</groupId>
-            <artifactId>hibernate-types-60</artifactId>
-            <version>2.21.1</version>
-        </dependency>
     </dependencies>
 
     <build>
