@@ -62,5 +62,11 @@ public interface UserFeedbackRepository extends JpaRepository<UserFeedback, UUID
      */
     @Query("SELECT f.feedbackType, COUNT(f) FROM UserFeedback f GROUP BY f.feedbackType")
     List<Object[]> countByFeedbackType();
+
+    /**
+     * 计算全局平均评分
+     */
+    @Query("SELECT AVG(f.rating) FROM UserFeedback f WHERE f.rating IS NOT NULL")
+    Double getAverageRating();
 }
 

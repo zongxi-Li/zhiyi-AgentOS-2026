@@ -76,21 +76,16 @@ public class MetricsService {
         Map<String, Object> metrics = new HashMap<>();
         
         try {
-            // 获取请求总数
-            Counter totalRequestsCounter = meterRegistry.find("api.requests").counter();
-            double totalRequests = totalRequestsCounter != null ? totalRequestsCounter.count() : 0.0;
+            double totalRequests = meterRegistry.find("api.requests").counters()
+                    .stream().mapToDouble(Counter::count).sum();
             metrics.put("totalRequests", (long) totalRequests);
-
-            // 获取错误数
-            Counter errorCountCounter = meterRegistry.find("api.errors").counter();
-            double errorCount = errorCountCounter != null ? errorCountCounter.count() : 0.0;
+            double errorCount = meterRegistry.find("api.errors").counters()
+                    .stream().mapToDouble(Counter::count).sum();
             metrics.put("errorCount", (long) errorCount);
-
-            // 获取平均响应时间（毫秒）
-            Timer responseTimeTimer = meterRegistry.find("api.response.time").timer();
-            double avgResponseTime = responseTimeTimer != null 
-                ? responseTimeTimer.mean(TimeUnit.MILLISECONDS) 
-                : 0.0;
+            java.util.Collection<Timer> timers = meterRegistry.find("api.response.time").timers();
+            long timerCount = timers.stream().mapToLong(Timer::count).sum();
+            double avgResponseTime = timerCount == 0 ? 0.0
+                    : timers.stream().mapToDouble(t -> t.totalTime(TimeUnit.MILLISECONDS)).sum() / timerCount;
             metrics.put("avgResponseTime", avgResponseTime);
 
             // 计算每分钟请求数（简化实现）

@@ -110,12 +110,8 @@ public class UserFeedbackService {
         stats.setFeedbackTypeCount(typeCountMap);
 
         // 计算平均评分
-        List<UserFeedback> allFeedbacks = feedbackRepository.findAll();
-        OptionalDouble avgRating = allFeedbacks.stream()
-                .filter(f -> f.getRating() != null)
-                .mapToInt(UserFeedback::getRating)
-                .average();
-        stats.setAverageRating(avgRating.isPresent() ? avgRating.getAsDouble() : 0.0);
+        Double avgRating = feedbackRepository.getAverageRating();
+        stats.setAverageRating(avgRating != null ? avgRating : 0.0);
 
         return stats;
     }

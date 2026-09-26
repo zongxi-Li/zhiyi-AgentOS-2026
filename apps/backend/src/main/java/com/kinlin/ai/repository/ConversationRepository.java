@@ -4,8 +4,10 @@ import com.kinlin.ai.entity.Conversation;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,6 +24,10 @@ public interface ConversationRepository extends JpaRepository<Conversation, UUID
 
     List<Conversation> findByUserId(UUID userId);
 
+    Optional<Conversation> findByContextIdAndUserId(String contextId, UUID userId);
+
+    Optional<Conversation> findByIdAndUserId(UUID id, UUID userId);
+
     @Query("SELECT c FROM Conversation c WHERE c.userId = :userId ORDER BY c.updatedAt DESC")
     List<Conversation> findRecentConversationsByUserId(@Param("userId") UUID userId);
 
@@ -30,5 +36,8 @@ public interface ConversationRepository extends JpaRepository<Conversation, UUID
             @Param("userId") UUID userId,
             @Param("workspaceMode") String workspaceMode
     );
+
+    @Query("select distinct c.userId from Conversation c where c.createdAt > :since and c.userId is not null")
+    List<UUID> findActiveUserIdsSince(@NonNull @Param("since") LocalDateTime since);
 }
 

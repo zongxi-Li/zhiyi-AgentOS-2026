@@ -3,6 +3,7 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.exception.ResourceNotFoundException;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ChatService;
 import jakarta.validation.Valid;
@@ -36,25 +37,36 @@ public class ChatController {
     }
 
     /**
-     * 获取对话历史
+     * 获取对话历史（仅属主可见）
      */
     @GetMapping("/history/{contextId}")
-    public ResponseEntity<List<Message>> getHistory(@PathVariable String contextId) {
-        List<Message> history = chatService.getHistory(contextId);
+    public ResponseEntity<List<Message>> getHistory(
+            @PathVariable String contextId,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+    ) {
+        List<Message> history = chatService.getHistory(contextId, requireUserId(userId));
         return ResponseEntity.ok(history);
     }
 
     /**
-     * 清除对话历史
+     * 清除对话历史（仅属主可操作）
      */
     @DeleteMapping("/history/{contextId}")
-    public ResponseEntity<Void> clearHistory(@PathVariable String contextId) {
-        chatService.clearHistory(contextId);
+    public ResponseEntity<Void> clearHistory(
+            @PathVariable String contextId,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+    ) {
+        chatService.clearHistory(contextId, requireUserId(userId));
         return ResponseEntity.ok().build();
     }
 
     private UUID resolveUserId(UUID userIdHeader) {
         return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+    }
+
+    private UUID requireUserId(UUID userIdHeader) {
+        return AuthenticatedUser.currentUserId()
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
     }
 }
 

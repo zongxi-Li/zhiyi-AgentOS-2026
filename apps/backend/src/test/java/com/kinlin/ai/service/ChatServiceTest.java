@@ -4,6 +4,7 @@ import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.exception.ResourceNotFoundException;
 import com.kinlin.ai.repository.ConversationRepository;
 import com.kinlin.ai.repository.MessageRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,9 +12,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.*;
 
@@ -36,6 +40,10 @@ class ChatServiceTest {
 
     @Mock
     private AiService aiService;
+
+    @Spy
+    private TransactionTemplate transactionTemplate =
+            new TransactionTemplate(mock(PlatformTransactionManager.class));
 
     @InjectMocks
     private ChatService chatService;
@@ -192,13 +200,13 @@ class ChatServiceTest {
         Message message = new Message();
         message.setContent("测试消息");
 
-        when(conversationRepository.findByContextId(contextId))
+        when(conversationRepository.findByContextIdAndUserId(contextId, userId))
                 .thenReturn(Optional.of(conversation));
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId()))
                 .thenReturn(List.of(message));
 
         // When
-        List<Message> history = chatService.getHistory(contextId);
+        List<Message> history = chatService.getHistory(contextId, userId);
 
         // Then
         assertNotNull(history);
@@ -216,13 +224,13 @@ class ChatServiceTest {
         Message message = new Message();
         message.setContent("测试消息");
 
-        when(conversationRepository.findByContextId(contextId))
+        when(conversationRepository.findByContextIdAndUserId(contextId, userId))
                 .thenReturn(Optional.of(conversation));
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId()))
                 .thenReturn(List.of(message));
 
         // When
-        chatService.clearHistory(contextId);
+        chatService.clearHistory(contextId, userId);
 
         // Then
         verify(messageRepository).deleteAll(anyList());
@@ -314,13 +322,13 @@ class ChatServiceTest {
         Conversation conversation = new Conversation();
         conversation.setId(UUID.randomUUID());
 
-        when(conversationRepository.findByContextId(contextId))
+        when(conversationRepository.findByContextIdAndUserId(contextId, userId))
                 .thenReturn(Optional.of(conversation));
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId()))
                 .thenReturn(Collections.emptyList());
 
         // When
-        List<Message> history = chatService.getHistory(contextId);
+        List<Message> history = chatService.getHistory(contextId, userId);
 
         // Then
         assertNotNull(history);
@@ -332,15 +340,12 @@ class ChatServiceTest {
         // Given
         String contextId = UUID.randomUUID().toString();
 
-        when(conversationRepository.findByContextId(contextId))
+        when(conversationRepository.findByContextIdAndUserId(contextId, userId))
                 .thenReturn(Optional.empty());
 
-        // When
-        List<Message> history = chatService.getHistory(contextId);
-
-        // Then
-        assertNotNull(history);
-        assertTrue(history.isEmpty());
+        // When & Then：会话不存在或非本人时应抛 404 语义异常
+        assertThrows(ResourceNotFoundException.class,
+                () -> chatService.getHistory(contextId, userId));
     }
 
     @Test

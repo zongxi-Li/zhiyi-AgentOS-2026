@@ -8,7 +8,7 @@ import com.kinlin.ai.repository.ConversationRepository;
 import com.kinlin.ai.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
 
@@ -23,48 +23,54 @@ public class VoiceService {
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
     private final AiService aiService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 处理语音消息
      */
-    @Transactional
     public ChatResponse processVoiceMessage(
             byte[] audioData,
             UUID roleId,
             String contextId,
             UUID userId
     ) {
-        // 获取或创建对话
-        Conversation conversation = getOrCreateConversation(contextId, userId, roleId);
+        // 短事务一：获取或创建对话（阻塞HTTP调用不得进入事务）
+        Conversation conversation = transactionTemplate.execute(tx ->
+                getOrCreateConversation(contextId, userId, roleId));
 
         // 调用AI服务进行语音识别和生成回复（Python端会一次性处理）
         ChatResponse aiResponse = aiService.sendVoiceMessage(
-                audioData, 
+                audioData,
                 roleId != null ? roleId.toString() : null
         );
 
         // 从响应中提取识别的文本
-        String recognizedText = aiResponse.getRecognizedText();
-        if (recognizedText == null || recognizedText.isEmpty()) {
+        String recognized = aiResponse.getRecognizedText();
+        if (recognized == null || recognized.isEmpty()) {
             // 如果没有recognizedText，尝试从text中获取（作为fallback）
-            recognizedText = aiResponse.getText();
+            recognized = aiResponse.getText();
         }
+        String recognizedText = recognized;
 
-        // 保存识别的文本（用户消息）
-        Message userMessage = new Message();
-        userMessage.setConversationId(conversation.getId());
-        userMessage.setRole(Message.MessageRole.USER);
-        userMessage.setContent(recognizedText);
-        userMessage.setMessageType(Message.MessageType.VOICE);
-        messageRepository.save(userMessage);
+        // 短事务二：保存用户消息与AI回复
+        transactionTemplate.execute(tx -> {
+            // 保存识别的文本（用户消息）
+            Message userMessage = new Message();
+            userMessage.setConversationId(conversation.getId());
+            userMessage.setRole(Message.MessageRole.USER);
+            userMessage.setContent(recognizedText);
+            userMessage.setMessageType(Message.MessageType.VOICE);
+            messageRepository.save(userMessage);
 
-        // 保存AI回复
-        Message assistantMessage = new Message();
-        assistantMessage.setConversationId(conversation.getId());
-        assistantMessage.setRole(Message.MessageRole.ASSISTANT);
-        assistantMessage.setContent(aiResponse.getText());
-        assistantMessage.setMessageType(Message.MessageType.TEXT);
-        messageRepository.save(assistantMessage);
+            // 保存AI回复
+            Message assistantMessage = new Message();
+            assistantMessage.setConversationId(conversation.getId());
+            assistantMessage.setRole(Message.MessageRole.ASSISTANT);
+            assistantMessage.setContent(aiResponse.getText());
+            assistantMessage.setMessageType(Message.MessageType.TEXT);
+            messageRepository.save(assistantMessage);
+            return null;
+        });
 
         aiResponse.setContextId(conversation.getContextId());
         // 确保recognizedText被设置

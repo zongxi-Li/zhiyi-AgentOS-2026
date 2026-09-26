@@ -10,9 +10,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -36,6 +39,10 @@ class VoiceServiceTest {
 
     @Mock
     private AiService aiService;
+
+    @Spy
+    private TransactionTemplate transactionTemplate =
+            new TransactionTemplate(mock(PlatformTransactionManager.class));
 
     @InjectMocks
     private VoiceService voiceService;

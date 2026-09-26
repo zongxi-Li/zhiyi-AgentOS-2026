@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
-import com.kinlin.ai.interceptor.UserContextInterceptor;
 import com.kinlin.ai.service.ChatService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,9 +40,6 @@ class ChatControllerTest {
     private RateLimitInterceptor rateLimitInterceptor;
 
     @MockBean
-    private UserContextInterceptor userContextInterceptor;
-
-    @MockBean
     private JwtUtil jwtUtil;
 
     @MockBean
@@ -55,7 +51,6 @@ class ChatControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         when(rateLimitInterceptor.preHandle(any(), any(), any())).thenReturn(true);
-        when(userContextInterceptor.preHandle(any(), any(), any())).thenReturn(true);
     }
 
     @Test

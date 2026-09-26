@@ -40,11 +40,9 @@ public class StatisticsService {
         List<UUID> conversationIds = conversations.stream()
                 .map(Conversation::getId)
                 .toList();
-        List<Message> messages = conversationIds.isEmpty() ? 
-                List.of() : 
-                messageRepository.findAll().stream()
-                        .filter(msg -> conversationIds.contains(msg.getConversationId()))
-                        .toList();
+        List<Message> messages = conversationIds.isEmpty()
+                ? List.of()
+                : messageRepository.findByConversationIdIn(conversationIds);
         stats.put("totalMessages", messages.size());
         
         // 计算平均对话长度
@@ -93,12 +91,7 @@ public class StatisticsService {
         
         // 活跃用户数（最近7天有对话的用户）
         LocalDateTime sevenDaysAgo = LocalDateTime.now().minusDays(7);
-        long activeUsers = conversationRepository.findAll().stream()
-                .filter(conv -> conv.getCreatedAt() != null && 
-                        conv.getCreatedAt().isAfter(sevenDaysAgo))
-                .map(Conversation::getUserId)
-                .distinct()
-                .count();
+        long activeUsers = conversationRepository.findActiveUserIdsSince(sevenDaysAgo).size();
         stats.put("activeUsers", activeUsers);
         
         // 平均对话长度
