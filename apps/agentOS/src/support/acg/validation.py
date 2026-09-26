@@ -27,7 +27,6 @@ def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
 def _validate_edge_endpoints(blueprint: ACGBlueprint) -> None:
     allowed = {
         EdgeType.DEPENDENCY: ({NodeType.STEP, NodeType.CONTROL}, {NodeType.STEP, NodeType.CONTROL}),
-        EdgeType.CONTROL_FLOW: ({NodeType.CONTROL}, {NodeType.STEP, NodeType.CONTROL}),
     }
     node_types = {node.node_id: node.node_type for node in blueprint.nodes}
     for edge in blueprint.edges:
@@ -70,11 +69,7 @@ def _validate_conditional_control(blueprint: ACGBlueprint, node: ControlNode) ->
     incoming = blueprint.incoming(node.node_id, EdgeType.DEPENDENCY)
     if len(incoming) != 1 or incoming[0].source_id != node.condition_spec.source_node_id:
         raise ACGValidationError(f"IF control {node.node_id} requires its single declared source")
-    outgoing = [
-        edge
-        for edge in blueprint.outgoing(node.node_id)
-        if edge.edge_type in {EdgeType.DEPENDENCY, EdgeType.CONTROL_FLOW}
-    ]
+    outgoing = list(blueprint.outgoing(node.node_id, EdgeType.DEPENDENCY))
     if {edge.edge_id for edge in outgoing} != set(node.branch_edge_ids):
         raise ACGValidationError(f"IF control {node.node_id} has undeclared branch edges")
     declared = set(node.branch_edge_ids)
@@ -143,18 +138,20 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
                 if not blueprint.has_node(ref):
                     raise ACGValidationError(f"LOOP control {node.node_id} references missing node: {ref}")
         if isinstance(node, ControlNode) and node.control_type == ControlType.PARALLEL:
-            if node.parallel_spec is not None:
-                refs = [*node.parallel_spec.branch_entry_ids, node.parallel_spec.join_node_id]
-                if len(set(node.parallel_spec.branch_entry_ids)) != len(node.parallel_spec.branch_entry_ids):
-                    raise ACGValidationError(f"PARALLEL control {node.node_id} has duplicate branches")
-                if any(not blueprint.has_node(ref) for ref in refs):
-                    raise ACGValidationError(f"PARALLEL control {node.node_id} references missing nodes")
+            if node.parallel_spec is None:
+                raise ACGValidationError(f"PARALLEL control {node.node_id} requires parallelSpec")
+            refs = [*node.parallel_spec.branch_entry_ids, node.parallel_spec.join_node_id]
+            if len(set(node.parallel_spec.branch_entry_ids)) != len(node.parallel_spec.branch_entry_ids):
+                raise ACGValidationError(f"PARALLEL control {node.node_id} has duplicate branches")
+            if any(not blueprint.has_node(ref) for ref in refs):
+                raise ACGValidationError(f"PARALLEL control {node.node_id} references missing nodes")
         if isinstance(node, ControlNode) and node.control_type == ControlType.CONSENSUS:
-            if node.consensus_spec is not None:
-                if node.consensus_spec.quorum > len(node.consensus_spec.participant_step_ids):
-                    raise ACGValidationError(f"CONSENSUS control {node.node_id} quorum exceeds participants")
-                if any(not blueprint.has_node(ref) for ref in node.consensus_spec.participant_step_ids):
-                    raise ACGValidationError(f"CONSENSUS control {node.node_id} references missing participants")
+            if node.consensus_spec is None:
+                raise ACGValidationError(f"CONSENSUS control {node.node_id} requires consensusSpec")
+            if node.consensus_spec.quorum > len(node.consensus_spec.participant_step_ids):
+                raise ACGValidationError(f"CONSENSUS control {node.node_id} quorum exceeds participants")
+            if any(not blueprint.has_node(ref) for ref in node.consensus_spec.participant_step_ids):
+                raise ACGValidationError(f"CONSENSUS control {node.node_id} references missing participants")
         if isinstance(node, ControlNode) and node.control_type == ControlType.IF:
             _validate_conditional_control(blueprint, node)
         if not isinstance(node, StepNode):

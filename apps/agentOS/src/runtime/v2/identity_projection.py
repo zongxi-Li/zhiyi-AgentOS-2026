@@ -66,7 +66,6 @@ DEAD_LETTER_MAX_ATTEMPTS = 5
 
 _EDGE_RELATIONS = {
     EdgeType.DEPENDENCY: BlueprintRelationType.DEPENDENCY,
-    EdgeType.CONTROL_FLOW: BlueprintRelationType.CONTROL,
 }
 
 

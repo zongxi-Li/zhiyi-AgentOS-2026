@@ -21,13 +21,10 @@ class NodeType(str, Enum):
 
 class EdgeType(str, Enum):
     DEPENDENCY = "dependency"
-    CONTROL_FLOW = "control_flow"
 
 
 class ControlType(str, Enum):
-    """控制节点的结构类型，用于表达起止、分支、循环、并行或共识。"""
-    START = "start"
-    END = "end"
+    """Explicit control semantics: branching, looping, parallelism, or consensus."""
     IF = "if"
     LOOP = "loop"
     PARALLEL = "parallel"
@@ -202,10 +199,10 @@ class StepNode(ACGNodeBase):
 
 
 class ControlNode(ACGNodeBase):
-    """控制节点 实现条件/循环/并行/共识。"""
+    """Kernel control node for an explicit branch, loop, parallel region, or consensus barrier."""
 
     node_type: Literal[NodeType.CONTROL] = Field(default=NodeType.CONTROL, alias="nodeType")
-    control_type: ControlType = Field(default=ControlType.START, alias="controlType")
+    control_type: ControlType = Field(alias="controlType")
     condition: str = ""
     condition_spec: Optional[ConditionSpec] = Field(default=None, alias="conditionSpec")
     branch_edge_ids: List[str] = Field(default_factory=list, alias="branchEdgeIds")
@@ -264,12 +261,7 @@ def _edge_id() -> str:
 
 
 class ACGEdge(BaseModel):
-    """ACG 边。统一描述依赖、通信、控制流等多种关系。
-
-    - DEPENDENCY 边：执行器据此计算就绪集（source 完成后 target 才可执行）。
-    - COMMUNICATION 边：通信器据此装配下游输入上下文。
-    - CONTROL_FLOW 边：由 Control 节点驱动，可携带激活 condition。
-    """
+    """Executable dependency edge between Kernel nodes."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 

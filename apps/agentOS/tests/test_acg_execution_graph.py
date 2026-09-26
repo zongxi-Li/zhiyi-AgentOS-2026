@@ -288,7 +288,15 @@ def test_compiler_maps_if_control_to_conditional_route() -> None:
             ),
             StepNode(nodeId="true"),
             StepNode(nodeId="false"),
-            ControlNode(nodeId="join", controlType=ControlType.CONSENSUS), ],
+            ControlNode(
+                nodeId="join",
+                controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=["true", "false"],
+                    quorum=1,
+                    strategy="auditor",
+                ),
+            ), ],
         resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="source", plannedAgentId="agent"), AgentBindingSpec(stepId="true", plannedAgentId="agent"), AgentBindingSpec(stepId="false", plannedAgentId="agent"),)),
         edges=[
             ACGEdge(sourceId="source", targetId="if", edgeType=EdgeType.DEPENDENCY),
@@ -316,7 +324,15 @@ def test_pregel_loop_executes_only_selected_conditional_branch() -> None:
             ),
             StepNode(nodeId="true"),
             StepNode(nodeId="false"),
-            ControlNode(nodeId="join", controlType=ControlType.CONSENSUS), ],
+            ControlNode(
+                nodeId="join",
+                controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=["true", "false"],
+                    quorum=1,
+                    strategy="auditor",
+                ),
+            ), ],
         resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(stepId="source", plannedAgentId="agent"), AgentBindingSpec(stepId="true", plannedAgentId="agent"), AgentBindingSpec(stepId="false", plannedAgentId="agent"),)),
         edges=[
             ACGEdge(sourceId="source", targetId="if", edgeType=EdgeType.DEPENDENCY),

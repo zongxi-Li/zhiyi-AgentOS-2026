@@ -323,7 +323,7 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
         PlanningCapabilityDescriptor(
             capabilityId="task_understanding", displayName="任务理解",
             aliases=["理解任务", "任务目标", "目标", "约束"], planningStage="understand",
-            outputContract=_output_schema("task_understanding"), parallelizable=False,
+            outputContract=_output_schema("task_understanding"),
             domainHints=general, priority=10,
         ),
         PlanningCapabilityDescriptor(
@@ -416,7 +416,7 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
             dependsOn=["task_understanding"],
             optionalDependencies=["requirement_analysis", "process_decomposition", "resource_planning", "architecture_design", "analysis", "comparative_analysis", "evidence_analysis", "cost_analysis", "risk_analysis", "solution_design"],
             inputContract=_schema("task_summary"), outputContract=_output_schema("verification"),
-            parallelizable=False, domainHints=general, priority=50,
+            domainHints=general, priority=50,
         ),
         PlanningCapabilityDescriptor(
             capabilityId="artifact_generation", displayName="成果生成",
@@ -428,7 +428,7 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
             # in the runtime request, so no single upstream field is mandatory.
             inputContract=_schema(),
             outputContract=_output_schema("artifact_generation"),
-            producesArtifact=True, writesMemory=True, parallelizable=False,
+            producesArtifact=True, writesMemory=True,
             domainHints=general, priority=60,
         ),
     )

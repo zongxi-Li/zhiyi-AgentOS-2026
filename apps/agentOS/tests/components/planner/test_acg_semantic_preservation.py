@@ -11,7 +11,7 @@ from components.planner.cognitive_router import CapabilityBinding, Collaboration
 from components.planner.topology.compiler import TaskPlanTopologyCompiler
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
 from support.acg.models import (
-    ACGBlueprint, ACGEdge, CapabilityCatalog, ControlNode, ControlType, EdgeType, StepNode,
+    ACGBlueprint, ACGEdge, CapabilityCatalog, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode,
     PlanningCapabilityDescriptor, TaskSemanticProfile,
 )
 
@@ -27,7 +27,6 @@ def _catalog() -> CapabilityCatalog:
     return CapabilityCatalog([
         PlanningCapabilityDescriptor(
             capabilityId=key.lower(), displayName=key, planningStage=stage,
-            parallelizable=key in {"B", "C"},
         )
         for key, stage in (("A", "source"), ("B", "branch"),
                            ("C", "branch"), ("D", "sink"))
@@ -69,7 +68,7 @@ def test_direct_and_chain_semantic_dependencies_survive_lowering(pairs) -> None:
     validate_acg_semantic_preservation(plan, blueprint)
 
 
-def test_parallel_join_preserves_dependencies_without_serializing_siblings() -> None:
+def test_ready_set_preserves_dependencies_without_synthetic_controls() -> None:
     plan = _plan(("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"))
     blueprint = _build(plan)
     by_key = {step.metadata["taskPlanKey"]: step.node_id for step in blueprint.step_nodes()}
@@ -78,10 +77,30 @@ def test_parallel_join_preserves_dependencies_without_serializing_siblings() -> 
     validate_acg_semantic_preservation(plan, blueprint)
     assert (by_key["B"], by_key["C"]) not in dependencies
     assert (by_key["C"], by_key["B"]) not in dependencies
-    assert any(
-        isinstance(node, ControlNode) and node.control_type is ControlType.PARALLEL
-        for node in blueprint.nodes
-    )
+    assert all(isinstance(node, StepNode) for node in blueprint.nodes)
+    assert {step.node_id for step in blueprint.step_nodes()
+            if set(blueprint.dependency_sources(step.node_id)) == {by_key["A"]}} == {
+                by_key["B"], by_key["C"]
+            }
+
+
+def test_independent_roots_have_ready_set_without_start_control() -> None:
+    blueprint = _build(TaskPlan(
+        missionId="mission_0123456789ab",
+        nodes=(_task("A"), _task("B")),
+    ))
+    assert all(isinstance(node, StepNode) for node in blueprint.nodes)
+    assert blueprint.edges == []
+
+
+def test_fan_in_uses_direct_dependency_without_join_control() -> None:
+    plan = _plan(("A", "D"), ("B", "D"))
+    blueprint = _build(plan)
+    by_key = {step.metadata["taskPlanKey"]: step.node_id for step in blueprint.step_nodes()}
+    assert all(isinstance(node, StepNode) for node in blueprint.nodes)
+    assert {(edge.source_id, edge.target_id) for edge in blueprint.edges} == {
+        (by_key["A"], by_key["D"]), (by_key["B"], by_key["D"]),
+    }
 
 
 def test_parallel_join_does_not_make_unrelated_sibling_precede_consumer() -> None:
@@ -192,7 +211,13 @@ def test_explicit_bindings_accept_dependency_through_control() -> None:
     plan = _plan(("A", "B"))
     blueprint = ACGBlueprint(
         graphId="explicit-control",
-        nodes=[StepNode(nodeId="step-b"), ControlNode(nodeId="control-x", controlType=ControlType.START),
+        nodes=[StepNode(nodeId="step-b"), ControlNode(
+                   nodeId="control-x",
+                   controlType=ControlType.CONSENSUS,
+                   consensusSpec=ConsensusSpec(
+                       participantStepIds=["step-a"], quorum=1, strategy="auditor",
+                   ),
+               ),
                StepNode(nodeId="step-a")],
         edges=[ACGEdge(sourceId="step-a", targetId="control-x"),
                ACGEdge(sourceId="control-x", targetId="step-b")],

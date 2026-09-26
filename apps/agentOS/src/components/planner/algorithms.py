@@ -59,7 +59,6 @@ class PlanningVariant:
     variant_id: str
     network: CollaborationNetwork
     optional_dependencies: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    enable_parallel_controls: bool = True
     selection_reasons: tuple[str, ...] = ()
 
     def optional_for(self, capability_id: str) -> tuple[str, ...]:
@@ -80,7 +79,6 @@ class PlanningVariant:
                 capability_id: list(dependencies)
                 for capability_id, dependencies in self.optional_dependencies
             },
-            "enableParallelControls": self.enable_parallel_controls,
         }
 
 
@@ -193,16 +191,6 @@ class PlanningVariantGenerator:
                     f"{capability_id}: retained {len(included)}/{len(available)} optional dependencies"
                 )
 
-        enable_parallel_controls = True
-        if randomizer is not None:
-            threshold = 0.75 if diversity == "balanced" else 0.5
-            enable_parallel_controls = randomizer.random() < threshold
-            reasons.append(
-                "parallel control nodes enabled"
-                if enable_parallel_controls
-                else "independent ready nodes left without explicit parallel controls"
-            )
-
         network = CollaborationNetwork(
             bindings=bindings,
             entropy_budget=profile.entropy_budget,
@@ -221,7 +209,6 @@ class PlanningVariantGenerator:
                 [binding.capability, binding.agent_name] for binding in bindings
             ],
             "optionalDependencies": optional_dependencies,
-            "enableParallelControls": enable_parallel_controls,
         }
         digest = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
@@ -232,7 +219,6 @@ class PlanningVariantGenerator:
             variant_id=f"variant_{digest}",
             network=network,
             optional_dependencies=tuple(optional_dependencies),
-            enable_parallel_controls=enable_parallel_controls,
             selection_reasons=tuple(reasons),
         )
 

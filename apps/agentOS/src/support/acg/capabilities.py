@@ -61,7 +61,6 @@ class PlanningCapabilityDescriptor(BaseModel):
     writes_memory: bool = Field(default=False, alias="writesMemory")
     requires_review: bool = Field(default=False, alias="requiresReview")
     risk_level_hint: PlanningRiskLevel = Field(default="normal", alias="riskLevelHint")
-    parallelizable: bool = True
     domain_hints: list[str] = Field(default_factory=list, alias="domainHints")
     priority: int = 100
     source: Literal["native", "plugin"] = "native"

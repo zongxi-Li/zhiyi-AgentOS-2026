@@ -9,8 +9,6 @@ from support.acg.validation import ACGValidationError
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
-    ControlNode,
-    ControlType,
     EdgeType,
     StepNode,
     TaskSemanticProfile,
@@ -35,19 +33,19 @@ def test_blueprint_serialization_contract_snapshot() -> None:
             StepNode(
                 nodeId="step-1", name="Execute",
             ),
-            ControlNode(nodeId="start", controlType=ControlType.START),
+            StepNode(nodeId="step-2", name="Finish"),
         ],
         edges=[
-            ACGEdge(edgeId="edge-1", sourceId="start", targetId="step-1"),
-            ACGEdge(edgeId="edge-7", sourceId="start", targetId="step-1", edgeType=EdgeType.CONTROL_FLOW),
+            ACGEdge(edgeId="edge-1", sourceId="step-1", targetId="step-2"),
         ],
         resourcePlan=ACGResourcePlan(
-            bindings=(AgentBindingSpec(stepId="step-1", plannedAgentId="Agent"),),
+            bindings=(
+                AgentBindingSpec(stepId="step-1", plannedAgentId="Agent"),
+                AgentBindingSpec(stepId="step-2", plannedAgentId="Agent"),
+            ),
             memory=(MemoryAccessSpec(stepId="step-1", memoryId="memory-1", access="read"),),
             evidence=(EvidenceSpec(evidenceId="evidence-1", source="test"),),
-            communication=(CommunicationSpec(
-                producerStepId="start", consumerStepId="step-1", channel="start:step-1",
-            ),),
+            communication=(),
         ),
         metadata={"source": "characterization"},
     )
@@ -57,7 +55,7 @@ def test_blueprint_serialization_contract_snapshot() -> None:
     assert payload["graphId"] == "graph-1"
     assert payload["createdAt"] == "2026-01-02T03:04:05Z"
     assert payload["updatedAt"] == "2026-01-02T03:04:05Z"
-    assert [node["nodeType"] for node in payload["nodes"]] == ["step", "control"]
+    assert [node["nodeType"] for node in payload["nodes"]] == ["step", "step"]
     assert payload["nodes"][0] == {
         "nodeId": "step-1", "nodeType": "step", "name": "Execute",
         "description": "", "metadata": {}, "stepType": "agent", "goal": "",
@@ -66,7 +64,7 @@ def test_blueprint_serialization_contract_snapshot() -> None:
         "timeout": 0, "retryLimit": 0, "priority": 0, "status": "draft",
         "reviewRequired": False, "stepId": "step-1", "stepName": "Execute",
     }
-    assert [edge["edgeType"] for edge in payload["edges"]] == ["dependency", "control_flow"]
+    assert [edge["edgeType"] for edge in payload["edges"]] == ["dependency"]
     assert payload["resourcePlan"]["bindings"][0]["plannedAgentId"] == "Agent"
     assert {edge["activation"] for edge in payload["edges"]} == {"active"}
     assert payload["metadata"] == {"source": "characterization"}

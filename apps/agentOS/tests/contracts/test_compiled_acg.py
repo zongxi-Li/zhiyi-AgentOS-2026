@@ -15,8 +15,6 @@ from contracts.compiled_acg import (
 from support.acg.models import (
     ACGBlueprint,
     ACGEdge,
-    ControlNode,
-    ControlType,
     EdgeType,
     StepNode,
 )
@@ -34,12 +32,10 @@ def _resource_rich_blueprint() -> ACGBlueprint:
     return ACGBlueprint(
         graphId="resource-rich",
         nodes=[
-            ControlNode(nodeId="start", controlType=ControlType.START),
             StepNode(nodeId="a", outputSpec={"properties": {"result": {}}}),
             StepNode(nodeId="b", inputSpec={"from": {"a": ["result"]}}),
         ],
         edges=[
-            ACGEdge(edgeId="start-a", sourceId="start", targetId="a"),
             ACGEdge(edgeId="a-b", sourceId="a", targetId="b"),
         ],
         resourcePlan=ACGResourcePlan(
@@ -75,10 +71,10 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
 
     node_ids = {node.node_id for node in package.nodes}
     assert {(node.node_id, node.kind.value) for node in package.nodes} == {
-        ("start", "control"), ("a", "step"), ("b", "step"),
+        ("a", "step"), ("b", "step"),
     }
     assert [(edge.source_id, edge.target_id, edge.edge_type) for edge in package.edges] == [
-        ("start", "a", "dependency"), ("a", "b", "dependency"),
+        ("a", "b", "dependency"),
     ]
     assert all(edge.source_id in node_ids and edge.target_id in node_ids for edge in package.edges)
     assert "compatibilityWarnings" not in package_payload
@@ -103,15 +99,15 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
     ]
 
     graph = compiler.compile(blueprint, run_id="run-1", package=package)
-    assert graph.nodes == ("start", "a", "b")
-    assert graph.edges == (("start", "a"), ("a", "b"))
-    assert package.control_manifest.entry_node_ids == ("start",)
+    assert graph.nodes == ("a", "b")
+    assert graph.edges == (("a", "b"),)
+    assert package.control_manifest.entry_node_ids == ("a",)
     assert package.control_manifest.exit_node_ids == ("b",)
     assert graph.ready_steps(ACGExecutionState(
-        runId="run-1", completedStepIds=("start",),
+        runId="run-1", completedStepIds=(),
     )) == ("a",)
     assert graph.ready_steps(ACGExecutionState(
-        runId="run-1", completedStepIds=("start", "a"),
+        runId="run-1", completedStepIds=("a",),
     )) == ("b",)
 
 

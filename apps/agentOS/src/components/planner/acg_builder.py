@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -15,9 +14,7 @@ from support.acg.schema import (
     ConditionOperator,
     ConditionSpec,
     EdgeType,
-    ParallelSpec,
     LoopSpec,
-    ConsensusSpec,
     StepNode,
 )
 from support.acg.planning import (
@@ -110,14 +107,6 @@ class ACGBuilder:
         for relation in task_plan.relations:
             if relation.relation_type == SemanticTaskRelationType.DEPENDS_ON:
                 data_dependencies[relation.target_key].append(relation.source_key)
-        control_dependencies = {
-            task_key: self._minimal_dependencies(
-                data_dependencies[task_key],
-                data_dependencies,
-            )
-            for task_key in selected
-        }
-
         steps, step_by_capability = self._build_steps(
             blueprint,
             network,
@@ -128,13 +117,8 @@ class ACGBuilder:
         self._wire_execution_graph(
             blueprint,
             selected,
-            steps,
             step_by_capability,
-            descriptors,
-            control_dependencies,
-            enable_parallel_controls=(
-                variant.enable_parallel_controls if variant else True
-            ),
+            data_dependencies,
         )
         self._wire_data_contracts(
             blueprint,
@@ -313,7 +297,6 @@ class ACGBuilder:
                     "planningStage": descriptor.planning_stage,
                     "role": descriptor.planning_stage,
                     "dependsOn": list(data_dependencies[task.key]),
-                    "parallelizable": descriptor.parallelizable,
                     "producesArtifact": descriptor.produces_artifact,
                     "requiresEvidence": descriptor.requires_evidence,
                     "writesMemory": descriptor.writes_memory,
@@ -424,7 +407,7 @@ class ACGBuilder:
             edge = ACGEdge(
                 sourceId=control_id,
                 targetId=entry,
-                edgeType=EdgeType.CONTROL_FLOW,
+                edgeType=EdgeType.DEPENDENCY,
             )
             cases = {value: edge.edge_id for value in policy.repeat_values}
             blueprint.nodes.append(
@@ -457,100 +440,14 @@ class ACGBuilder:
         self,
         blueprint,
         selected,
-        steps,
         step_by_capability,
-        descriptors,
         dependencies,
-        *,
-        enable_parallel_controls: bool,
     ) -> None:
-        start = ControlNode(nodeId="ctrl_start", name="START", controlType=ControlType.START)
-        end = ControlNode(nodeId="ctrl_end", name="END", controlType=ControlType.END)
-        blueprint.nodes.extend([start, end])
-
-        groups: dict[tuple[str, tuple[str, ...]], list[str]] = defaultdict(list)
         for capability_id in selected:
-            descriptor = descriptors[capability_id]
-            if descriptor.parallelizable:
-                groups[(descriptor.planning_stage, tuple(dependencies[capability_id]))].append(
-                    capability_id
-                )
-        parallel_groups = (
-            [items for items in groups.values() if len(items) > 1]
-            if enable_parallel_controls
-            else []
-        )
-        group_for = {
-            capability_id: group_index
-            for group_index, group in enumerate(parallel_groups, start=1)
-            for capability_id in group
-        }
-        controls: dict[int, tuple[ControlNode, ControlNode]] = {}
-        for group_index, group in enumerate(parallel_groups, start=1):
-            branch_ids = [step_by_capability[item].node_id for item in group]
-            join_id = f"ctrl_join_{group_index}"
-            parallel = ControlNode(
-                nodeId=f"ctrl_parallel_{group_index}",
-                name=f"PARALLEL:{descriptors[group[0]].planning_stage}",
-                controlType=ControlType.PARALLEL,
-                parallelSpec=ParallelSpec(
-                    branchEntryIds=branch_ids,
-                    joinNodeId=join_id,
-                ),
-            )
-            join = ControlNode(
-                nodeId=join_id,
-                name=f"JOIN:{descriptors[group[0]].planning_stage}",
-                controlType=ControlType.CONSENSUS,
-                consensusSpec=ConsensusSpec(
-                    participantStepIds=branch_ids,
-                    quorum=len(branch_ids),
-                    strategy="auditor",
-                ),
-            )
-            controls[group_index] = (parallel, join)
-            blueprint.nodes.extend([parallel, join])
-            for capability_id in group:
-                self._add_dependency(blueprint, parallel.node_id, step_by_capability[capability_id].node_id)
-                self._add_dependency(blueprint, step_by_capability[capability_id].node_id, join.node_id)
-
-        wired_groups: set[int] = set()
-        for capability_id in selected:
-            group_index = group_for.get(capability_id)
-            if group_index is not None:
-                if group_index in wired_groups:
-                    continue
-                wired_groups.add(group_index)
-                parallel, _ = controls[group_index]
-                group_dependencies = dependencies[capability_id]
-                if not group_dependencies:
-                    self._add_dependency(blueprint, start.node_id, parallel.node_id)
-                for dependency in group_dependencies:
-                    source = self._execution_source(dependency, step_by_capability)
-                    self._add_dependency(blueprint, source, parallel.node_id)
-                continue
-
             target = step_by_capability[capability_id].node_id
-            if not dependencies[capability_id]:
-                self._add_dependency(blueprint, start.node_id, target)
             for dependency in dependencies[capability_id]:
-                source = self._execution_source(dependency, step_by_capability)
+                source = step_by_capability[dependency].node_id
                 self._add_dependency(blueprint, source, target)
-
-        consumed = {dependency for values in dependencies.values() for dependency in values}
-        terminal_sources: set[str] = set()
-        for capability_id in selected:
-            if capability_id in consumed:
-                continue
-            group_index = group_for.get(capability_id)
-            source = (
-                controls[group_index][1].node_id
-                if group_index is not None
-                else step_by_capability[capability_id].node_id
-            )
-            terminal_sources.add(source)
-        for source in terminal_sources:
-            self._add_dependency(blueprint, source, end.node_id)
 
     def _wire_data_contracts(
         self,
@@ -628,45 +525,6 @@ class ACGBuilder:
                 if dependency in selected and dependency in declared
             )
         return list(dict.fromkeys(dependency for dependency in dependencies if dependency in selected))
-
-    @staticmethod
-    def _minimal_dependencies(dependencies: list[str], all_dependencies: dict[str, list[str]]) -> list[str]:
-        def ancestors(capability_id: str) -> set[str]:
-            found: set[str] = set()
-            pending = list(all_dependencies.get(capability_id, []))
-            while pending:
-                current = pending.pop()
-                if current in found:
-                    continue
-                found.add(current)
-                pending.extend(all_dependencies.get(current, []))
-            return found
-
-        return [
-            dependency
-            for dependency in dependencies
-            if not any(
-                dependency in ancestors(other)
-                for other in dependencies
-                if other != dependency
-            )
-        ]
-
-    @staticmethod
-    def _execution_source(dependency, step_by_capability) -> str:
-        # A shared JOIN would make every sibling precede the consumer, including
-        # siblings absent from its TaskPlan dependencies.
-        return step_by_capability[dependency].node_id
-
-    @staticmethod
-    def _dependency_node_id(network: CollaborationNetwork, dependency: str) -> str:
-        used: set[str] = set()
-        for binding in network.bindings:
-            node_id = ACGBuilder._step_id(binding.agent_name, binding.capability, used)
-            used.add(node_id)
-            if binding.capability == dependency:
-                return node_id
-        raise KeyError(dependency)
 
     @staticmethod
     def _step_id(agent_name: str, capability_id: str, used_ids: set[str]) -> str:

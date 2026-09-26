@@ -73,7 +73,9 @@ def test_core_general_evidence_template_builds_required_dynamic_acg() -> None:
     assert steps["verification"].review_required is True
     assert steps["verification"].metadata["reviewBarrier"] is True
     assert blueprint.metadata["reviewCapability"] == "verification"
-    assert any(node.name.startswith("PARALLEL:") for node in blueprint.nodes)
+    # Ordinary fan-out remains direct TaskPlan topology; Builder no longer
+    # invents PARALLEL/CONSENSUS controls from capability metadata.
+    assert blueprint.nodes == blueprint.step_nodes()
     assert run.execution_state["selectedCapabilities"] == [
         node.capability for node in blueprint.step_nodes()
     ]

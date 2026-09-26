@@ -13,7 +13,6 @@ from support.acg.models import (
     ControlNode,
     ControlType,
     EdgeType,
-    ParallelSpec,
     StepNode,
     validate_blueprint,
 )
@@ -52,7 +51,8 @@ def build_contract_review_blueprint(
 
     The function lives in the domain Pack: it declares Legal ordering and data
     contracts while the execution runtime remains the sole scheduler. It adds one
-    real tool-backed retrieval step, a parallel barrier, and a bounded IF route.
+    real tool-backed retrieval step and a bounded IF route; ordinary fan-out/fan-in
+    remains direct TaskPlan dependency topology.
     """
 
     definitions = {item.step_id: item for item in workflow.steps}
@@ -95,15 +95,6 @@ def build_contract_review_blueprint(
 
     nodes = [
         _step(definitions["parse_contract"]),
-        ControlNode(
-            nodeId="parallel_legal_analysis",
-            name="Parallel legal analysis",
-            controlType=ControlType.PARALLEL,
-            parallelSpec=ParallelSpec(
-                branchEntryIds=["classify_clauses", "statute_retrieve"],
-                joinNodeId="join_legal_analysis",
-            ),
-        ),
         _step(definitions["classify_clauses"]),
             StepNode(
                 nodeId="statute_retrieve",
@@ -128,7 +119,6 @@ def build_contract_review_blueprint(
                 },
             },
         ),
-        ControlNode(nodeId="join_legal_analysis", name="Legal analysis barrier", controlType=ControlType.CONSENSUS),
         _step(definitions["risk_detect"]),
         _step(definitions["legal_evidence_match"], inputSpec=evidence_input),
         _step(definitions["suggestion_generate"]),
@@ -144,7 +134,6 @@ def build_contract_review_blueprint(
                 defaultEdgeId="route_to_auto_review",
             ),
             branchEdgeIds=["route_to_human_review", "route_to_auto_review"],
-            joinNodeId="join_review_route",
         ),
         _step(definitions["human_review"]),
         _step(
@@ -153,23 +142,20 @@ def build_contract_review_blueprint(
             name="Automatic low-risk review",
             reviewRequired=False,
         ),
-        ControlNode(nodeId="join_review_route", name="Review route barrier", controlType=ControlType.CONSENSUS),
         _step(definitions["report_generate"], inputSpec=report_input),
     ]
 
     dependency_pairs = [
-        ("parse_contract", "parallel_legal_analysis"),
-        ("parallel_legal_analysis", "classify_clauses"),
-        ("parallel_legal_analysis", "statute_retrieve"),
-        ("classify_clauses", "join_legal_analysis"),
-        ("statute_retrieve", "join_legal_analysis"),
-        ("join_legal_analysis", "risk_detect"),
+        ("parse_contract", "classify_clauses"),
+        ("parse_contract", "statute_retrieve"),
+        ("classify_clauses", "risk_detect"),
+        ("statute_retrieve", "risk_detect"),
         ("risk_detect", "legal_evidence_match"),
+        ("statute_retrieve", "legal_evidence_match"),
         ("legal_evidence_match", "suggestion_generate"),
         ("suggestion_generate", "route_high_risk_review"),
-        ("human_review", "join_review_route"),
-        ("auto_review", "join_review_route"),
-        ("join_review_route", "report_generate"),
+        ("human_review", "report_generate"),
+        ("auto_review", "report_generate"),
     ]
     edges = [
         ACGEdge(sourceId=source, targetId=target, edgeType=EdgeType.DEPENDENCY)

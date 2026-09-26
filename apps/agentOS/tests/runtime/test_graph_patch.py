@@ -23,7 +23,7 @@ from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from support.acg.models import (
     ACGBlueprint, ACGEdge, CapabilityCatalog, ControlNode, ControlType, EdgeType,
-    AgentBindingSpec, ACGResourcePlan, PlanningCapabilityDescriptor, StepNode,
+    AgentBindingSpec, ACGResourcePlan, ConsensusSpec, PlanningCapabilityDescriptor, StepNode,
     build_default_capability_catalog,
 )
 from components.planner.topology import catalog_fingerprint
@@ -263,7 +263,15 @@ def test_control_only_patch_preserves_semantic_reachability(tmp_path):
             patchId="control-only", idempotencyKey="control-only:v1",
             runId=paused.run_id, graphId=blueprint.graph_id,
             baseGraphVersion=blueprint.version, removeEdgeIds=[dependency.edge_id],
-            addNodes=[ControlNode(nodeId="control-x", controlType=ControlType.CONSENSUS).model_dump(by_alias=True)],
+            addNodes=[ControlNode(
+                nodeId="control-x",
+                controlType=ControlType.CONSENSUS,
+                consensusSpec=ConsensusSpec(
+                    participantStepIds=["review"],
+                    quorum=1,
+                    strategy="auditor",
+                ),
+            ).model_dump(by_alias=True)],
             addEdges=[
                 ACGEdge(sourceId="review", targetId="control-x").model_dump(by_alias=True),
                 ACGEdge(sourceId="control-x", targetId="deliver").model_dump(by_alias=True),

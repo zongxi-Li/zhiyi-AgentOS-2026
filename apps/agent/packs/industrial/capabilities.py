@@ -60,7 +60,6 @@ def _descriptor(
         writesMemory=True,
         requiresReview=review,
         riskLevelHint=risk,
-        parallelizable=parallel,
         domainHints=["industrial"],
         priority=40,
     )

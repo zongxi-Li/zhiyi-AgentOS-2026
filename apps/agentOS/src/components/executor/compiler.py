@@ -197,10 +197,10 @@ class ACGGraphCompiler:
             NodeType.STEP, NodeType.CONTROL,
         }
         handled_edges = {
-            EdgeType.DEPENDENCY, EdgeType.CONTROL_FLOW,
+            EdgeType.DEPENDENCY,
         }
         handled_controls = {
-            ControlType.START, ControlType.END, ControlType.IF, ControlType.LOOP,
+            ControlType.IF, ControlType.LOOP,
             ControlType.PARALLEL, ControlType.CONSENSUS,
         }
         if handled_nodes != set(NodeType) or handled_edges != set(EdgeType) or handled_controls != set(ControlType):
@@ -417,14 +417,8 @@ class ACGGraphCompiler:
             if isinstance(node, ControlNode)
             and str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
         ]
-        explicit_starts = tuple(node.node_id for node in controls if node.control_type is ControlType.START)
-        explicit_ends = tuple(node.node_id for node in controls if node.control_type is ControlType.END)
-        if len(explicit_starts) > 1:
-            raise IncompleteACGCompilationError("ACG requires a unique START control")
-        if len(explicit_ends) > 1:
-            raise IncompleteACGCompilationError("ACG requires a unique END control")
-        entry_ids = explicit_starts or tuple(sorted(node_id for node_id in executable if not predecessors[node_id]))
-        exit_ids = explicit_ends or tuple(sorted(node_id for node_id in executable if not successors[node_id]))
+        entry_ids = tuple(sorted(node_id for node_id in executable if not predecessors[node_id]))
+        exit_ids = tuple(sorted(node_id for node_id in executable if not successors[node_id]))
         rules: list[ControlRule] = []
         for control in controls:
             condition = self._compiled_condition(blueprint, control)

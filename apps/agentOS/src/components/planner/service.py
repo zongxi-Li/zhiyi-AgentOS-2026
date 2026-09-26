@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import random
 import secrets
 from time import monotonic
@@ -363,12 +363,6 @@ class PlanningEngine:
         valid: list[tuple[Any, ACGBlueprint]] = []
         rejected: list[str] = []
         for variant in variant_set.variants:
-            if effective_profile == "full" and not variant.enable_parallel_controls:
-                variant = replace(
-                    variant,
-                    enable_parallel_controls=True,
-                    selection_reasons=(*variant.selection_reasons, "full profile requires explicit parallel controls"),
-                )
             if variant.network.unresolved_capabilities or variant.network.over_budget:
                 rejected.append(f"{variant.variant_id}: unresolved capability or entropy budget")
                 continue

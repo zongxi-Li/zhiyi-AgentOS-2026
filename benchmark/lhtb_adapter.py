@@ -98,7 +98,6 @@ def _capability_descriptor() -> PlanningCapabilityDescriptor:
         producesArtifact=True,
         requiresReview=False,
         riskLevelHint="elevated",
-        parallelizable=False,
         domainHints=["software-engineering"],
         source="native",
     )
