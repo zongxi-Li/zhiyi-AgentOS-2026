@@ -155,6 +155,7 @@ from .planning import (
 from .recovery import (
     FailureEvent, FailureSource, FailureType, GraphPatch, GraphPatchRef, GraphPatchResult,
     RecoveryAction, RecoveryNodeTemplate, RecoveryPlan, RecoveryRecipe,
+    SemanticPatchRequest,
 )
 from .resource import (
     AgentProfile,
@@ -201,7 +202,7 @@ __all__ = [
     "MemoryRecord", "MemoryType", "MemoryWriteBatch", "MessageEnvelope",
     "ModelCapabilityEnvelope", "ModelCapabilitySource", "ModelFeatureSet",
     "ModelInvocationRequest", "ModelInvocationResponse", "ModelProvider", "ModelOutputPolicy", "ModelStreamEvent", "PolicyDecision",
-    "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "BindingRequirement", "ExecutionBinding",
+    "RecoveryNodeTemplate", "RecoveryPlan", "RecoveryRecipe", "SemanticPatchRequest", "BindingRequirement", "ExecutionBinding",
     "ComputeCapacity", "DeploymentTier", "ResourceEndpoint", "ResourceHealthStatus", "ResourceLease", "ResourceProfile", "ResourceSnapshot", "ResourceType",
     "AgentProfile", "AgentSnapshot", "AgentState", "NodeHealthStatus", "NodeProfile", "NodeSnapshot", "NodeType",
     "RunId", "SchedulingDecision", "SchedulingRequest", "SkillCandidate", "SkillEvolutionProposal",

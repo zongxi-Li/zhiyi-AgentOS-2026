@@ -205,6 +205,9 @@ def test_single_step_retry_reuses_committed_upstream_and_runs_only_final(
 
         assert retry.run_id != failed.run_id
         assert retry.status is WorkflowStatus.PENDING
+        assert retry.execution_state["graphVersion"] == failed.execution_state["graphVersion"]
+        assert retry.execution_state["taskPlan"] == failed.execution_state["taskPlan"]
+        assert retry.acg_blueprint == failed.acg_blueprint
         assert retry.execution_state["compiledACGPackage"]["packageVersion"] == 4
         assert retry.current_step_id == "final"
         assert retry.completed_step_ids == ["source"]

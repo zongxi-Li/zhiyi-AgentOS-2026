@@ -98,8 +98,13 @@ class GraphPatchRef(BaseModel):
     checksum: StrictStr = Field(min_length=1)
 
 
-class GraphPatch(BaseModel):
-    """A bounded mutation that always creates a new immutable graph revision."""
+class SemanticPatchRequest(BaseModel):
+    """A TaskPlan-first request for a new canonical graph revision.
+
+    The request contains no graph operations.  Executable graph changes are
+    derived only after the revised TaskPlan has passed planning validation and
+    deterministic lowering.
+    """
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -108,16 +113,52 @@ class GraphPatch(BaseModel):
     run_id: StrictStr = Field(alias="runId", min_length=1)
     graph_id: StrictStr = Field(alias="graphId", min_length=1)
     base_graph_version: int = Field(alias="baseGraphVersion", ge=1)
-    add_nodes: list[dict[str, Any]] = Field(default_factory=list, alias="addNodes")
-    add_edges: list[dict[str, Any]] = Field(default_factory=list, alias="addEdges")
-    remove_edge_ids: list[StrictStr] = Field(default_factory=list, alias="removeEdgeIds")
-    retire_node_ids: list[StrictStr] = Field(default_factory=list, alias="retireNodeIds")
-    replace_nodes: dict[StrictStr, dict[str, Any]] = Field(default_factory=dict, alias="replaceNodes")
-    task_plan_patch: TaskPlanPatch | None = Field(default=None, alias="taskPlanPatch")
+    task_plan_patch: TaskPlanPatch = Field(alias="taskPlanPatch")
     task_binding_patch: TaskBindingPatch | None = Field(default=None, alias="taskNodeBindingPatch")
     resource_plan_patch: ACGResourcePlan | None = Field(default=None, alias="resourcePlanPatch")
     reason: str = ""
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
+
+    @model_validator(mode="after")
+    def require_semantic_change(self) -> "SemanticPatchRequest":
+        patch = self.task_plan_patch
+        if not any((
+            patch.add_nodes,
+            patch.retire_keys,
+            patch.replace_keys,
+            patch.remove_relations,
+            patch.relations,
+            patch.control_policies is not None,
+        )):
+            raise ValueError("SemanticPatchRequest requires a semantic TaskPlan change")
+        return self
+
+    def checksum(self) -> str:
+        payload = self.model_dump(by_alias=True, mode="json")
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+class GraphPatch(BaseModel):
+    """Deterministic diff between two already-valid canonical ACG revisions."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    patch_id: StrictStr = Field(alias="patchId", min_length=1)
+    graph_id: StrictStr = Field(alias="graphId", min_length=1)
+    base_graph_version: int = Field(alias="baseGraphVersion", ge=1)
+    graph_version: int = Field(alias="graphVersion", ge=2)
+    added_nodes: tuple[dict[str, Any], ...] = Field(default_factory=tuple, alias="addedNodes")
+    removed_node_ids: tuple[StrictStr, ...] = Field(default_factory=tuple, alias="removedNodeIds")
+    added_edges: tuple[dict[str, Any], ...] = Field(default_factory=tuple, alias="addedEdges")
+    removed_edges: tuple[dict[str, Any], ...] = Field(default_factory=tuple, alias="removedEdges")
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_revision(self) -> "GraphPatch":
+        if self.graph_version != self.base_graph_version + 1:
+            raise ValueError("GraphPatch graphVersion must increment baseGraphVersion by one")
+        return self
 
     def checksum(self) -> str:
         payload = self.model_dump(by_alias=True, mode="json")
@@ -181,5 +222,5 @@ class RecoveryPlan(BaseModel):
 __all__ = [
     "FailureEvent", "FailureSource", "FailureType", "GraphPatch", "GraphPatchRef",
     "GraphPatchResult", "RecoveryAction", "RecoveryNodeTemplate", "RecoveryPlan",
-    "RecoveryRecipe",
+    "RecoveryRecipe", "SemanticPatchRequest",
 ]

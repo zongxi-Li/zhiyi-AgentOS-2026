@@ -39,7 +39,6 @@ from components.executor import (
     ExecutionValueStore,
     SQLiteExecutionValueStore,
     GraphPatchConflictError,
-    GraphPatchService,
 )
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
@@ -57,12 +56,10 @@ from contracts.authority import RuntimeResourceId
 from contracts.resource import BindingRequirement, DeploymentTier, ResourceType
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
-    TaskBindingPatch,
     TaskImplementationBinding,
     TaskPlan,
 )
 from components.planner.acg_semantic_validator import (
-    semantic_reachability_projection,
     validate_bound_acg_semantics,
 )
 from components.resource.agent_service import AgentService
@@ -112,7 +109,7 @@ from contracts.workflow import (
     utc_now,
 )
 from contracts.execution import WorkflowProgressPhase
-from contracts.recovery import GraphPatch, GraphPatchRef, GraphPatchResult
+from contracts.recovery import GraphPatchRef, GraphPatchResult, SemanticPatchRequest
 from contracts.workflow import GraphRef
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from runtime.execution_migration import ExecutionEngineMigratingError
@@ -125,9 +122,9 @@ from components.planner.algorithms import (
 )
 from components.planner.complexity import transport_error_code
 from components.planner.service import (
-    apply_task_plan_patch,
     normalize_capability_profile,
 )
+from runtime.semantic_patch import SemanticGraphPatchService, derive_graph_patch
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
 from adapters.model.native import register_native_runtime
@@ -3966,20 +3963,22 @@ class ExecutionRuntime:
         adapter = self._workflow_adapter(workflow)
         return await adapter.apply_review(decision)
 
-    async def apply_graph_patch(self, patch: GraphPatch) -> GraphPatchResult:
-        """Apply one audited graph revision at a persisted review barrier.
+    async def apply_semantic_patch(
+        self, request: SemanticPatchRequest
+    ) -> GraphPatchResult:
+        """Create a replacement Run from a validated TaskPlan revision.
 
-        Patch bodies live in ``ExecutionValueStore``; RuntimeRunRecord and the
-        checkpoint retain only the resulting revision and patch reference.
-        Running or terminal graphs are never mutated in place.
+        The request has no executable graph operations.  Runtime derives the
+        new Blueprint through the planning topology compiler and ACGLowerer,
+        then stores a GraphPatch only as an audit diff.
         """
-        async with self.run_lock_manager.lock_for(patch.run_id):
-            run = self.workflow_store.get_run(patch.run_id)
+        async with self.run_lock_manager.lock_for(request.run_id):
+            run = self.workflow_store.get_run(request.run_id)
             if self._normalize_runtime_engine(run.runtime_engine) != "acg":
-                raise ValueError("graph patching is only available for ACG runs")
+                raise ValueError("semantic patching is only available for ACG runs")
             if run.status is not WorkflowStatus.WAITING_REVIEW:
                 raise GraphPatchConflictError(
-                    "graph patches require a persisted WAITING_REVIEW barrier"
+                    "semantic patches require a persisted WAITING_REVIEW barrier"
                 )
             if not isinstance(run.acg_blueprint, dict):
                 raise ValueError("ACG run has no persisted blueprint")
@@ -3989,116 +3988,99 @@ class ExecutionRuntime:
                 checkpoint_id=checkpoint_id,
             )
             if checkpoint_data is None:
-                raise ValueError("graph patch requires a persisted checkpoint")
+                raise ValueError("semantic patch requires a persisted checkpoint")
             state = ACGExecutionState.model_validate(checkpoint_data)
             blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
-            outcome = GraphPatchService().apply(
-                blueprint,
-                patch,
-                completed_step_ids=set(state.completed_step_ids),
-                active_step_ids=set(state.active_step_ids),
-            )
+
+            applied_log = list(blueprint.metadata.get("appliedGraphPatches") or [])
             previous = next(
                 (
-                    item
-                    for item in outcome.blueprint.metadata.get("appliedGraphPatches", [])
-                    if isinstance(item, dict) and item.get("patchId") == patch.patch_id
+                    item for item in applied_log
+                    if isinstance(item, dict) and item.get("patchId") == request.patch_id
                 ),
-                {},
+                None,
             )
-            if outcome.idempotent_replay:
+            request_checksum = request.checksum()
+            if previous is not None:
+                if str(previous.get("requestChecksum") or "") != request_checksum:
+                    raise GraphPatchConflictError(
+                        "semantic patch id already exists with different content: "
+                        f"{request.patch_id}"
+                    )
                 uri = str(previous.get("patchRef") or "")
                 if not uri:
                     raise ValueError("persisted graph patch is missing its reference")
                 return GraphPatchResult(
                     applied=False,
                     idempotentReplay=True,
-                    graphVersion=outcome.blueprint.version,
+                    graphVersion=int(previous["graphVersion"]),
                     runId=str(previous.get("newRunId") or "") or None,
                     patchRef=GraphPatchRef(
-                        patchId=patch.patch_id,
+                        patchId=request.patch_id,
                         graph=GraphRef(
-                            graphId=outcome.blueprint.graph_id,
-                            version=str(outcome.blueprint.version),
+                            graphId=blueprint.graph_id,
+                            version=str(previous["graphVersion"]),
                         ),
                         uri=uri,
-                        checksum=outcome.checksum,
+                        checksum=str(previous["checksum"]),
                     ),
+                )
+            if request.graph_id != blueprint.graph_id:
+                raise GraphPatchConflictError(
+                    "semantic patch graphId does not match blueprint"
+                )
+            if request.base_graph_version != blueprint.version:
+                raise GraphPatchConflictError(
+                    f"semantic patch version {request.base_graph_version} does not "
+                    f"match current version {blueprint.version}"
+                )
+            if set(state.active_step_ids):
+                raise GraphPatchConflictError(
+                    "semantic patch cannot be applied while nodes are active"
                 )
 
             task = self.mission_manager.get_mission(run.mission_id)
             workflow = self._workflow_for_run(run)
             scope = run.execution_scope
             if scope is None:
-                raise ValueError("graph patch requires a frozen execution scope")
-            self._validate_blueprint_agents(
-                outcome.blueprint,
-                domain=workflow.domain or task.domain,
-                scope=scope,
-            )
+                raise ValueError("semantic patch requires a frozen execution scope")
             if self.identity_lifecycle is None:
                 raise ValueError(
-                    "graph patch requires the identity lifecycle adapter"
+                    "semantic patch requires the identity lifecycle adapter"
                 )
-            old_step_ids = {step.step_id for step in run.steps}
             raw_plan = run.execution_state.get("taskPlan")
             raw_bindings = run.execution_state.get("taskBindings")
             if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
-                raise ValueError("graph patch requires persisted Planner identity data")
+                raise ValueError("semantic patch requires persisted Planner identity data")
             current_plan = TaskPlan.model_validate(raw_plan)
-            active_old_step_ids = {
-                node.node_id for node in blueprint.step_nodes()
-                if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
-            }
-            active_new_step_ids = {
-                node.node_id for node in outcome.blueprint.step_nodes()
-                if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
-            }
             base_bindings = tuple(
                 TaskImplementationBinding.model_validate(item)
                 for item in raw_bindings
             )
-            semantic_execution_change = active_old_step_ids != active_new_step_ids
-            if not semantic_execution_change:
-                semantic_execution_change = (
-                    semantic_reachability_projection(blueprint, base_bindings)
-                    != semantic_reachability_projection(outcome.blueprint, base_bindings)
-                )
-            if semantic_execution_change and patch.task_plan_patch is None:
-                raise ValueError(
-                    "executable Graph Patch changes require Planner TaskPlanPatch"
-                )
-            if not semantic_execution_change and (
-                patch.task_plan_patch is not None
-                or patch.task_binding_patch is not None
-            ):
-                raise ValueError(
-                    "pure control Graph Patch cannot change TaskPlan or SemanticTask bindings"
-                )
-            if patch.task_plan_patch is not None:
-                topology_audits: list[dict[str, Any]] = []
-                next_plan = apply_task_plan_patch(
-                    current_plan, patch.task_plan_patch, self.capability_catalog,
-                    audit_sink=topology_audits.append,
-                )
-            else:
-                next_plan = current_plan
-                topology_audits = []
-            binding_patch = patch.task_binding_patch
-            added_step_ids = active_new_step_ids - active_old_step_ids
-            if added_step_ids and binding_patch is None:
-                raise ValueError("new executable Graph Patch nodes require TaskBindingPatch")
-            removed_plan_keys = (
-                set(patch.task_plan_patch.retire_keys)
-                | set(patch.task_plan_patch.replace_keys)
-                if patch.task_plan_patch is not None
-                else set()
+            topology_audits: list[dict[str, Any]] = []
+            semantic_result = SemanticGraphPatchService().apply(
+                blueprint=blueprint,
+                request=request,
+                current_plan=current_plan,
+                base_bindings=base_bindings,
+                capability_catalog=self.capability_catalog,
+                audit_sink=topology_audits.append,
             )
-            next_bindings = tuple(
-                item for item in base_bindings
-                if item.plan_node_key not in removed_plan_keys
-                and item.acg_node_id in active_new_step_ids
-            ) + (binding_patch.bindings if binding_patch is not None else ())
+            outcome_blueprint = semantic_result.blueprint
+            next_plan = semantic_result.next_plan
+            next_bindings = semantic_result.next_bindings
+            active_new_step_ids = {
+                node.node_id for node in outcome_blueprint.step_nodes()
+                if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
+            }
+
+            self._validate_blueprint_agents(
+                outcome_blueprint,
+                domain=workflow.domain or task.domain,
+                scope=scope,
+            )
+
+            # Final binding integrity guard.
             if len({item.plan_node_key for item in next_bindings}) != len(next_bindings):
                 raise ValueError("Graph Patch contains duplicate semantic bindings")
             if len({item.acg_node_id for item in next_bindings}) != len(next_bindings):
@@ -4112,7 +4094,7 @@ class ExecutionRuntime:
                     "Graph Patch bindings must cover every active executable node"
                 )
             validate_bound_acg_semantics(
-                next_plan, outcome.blueprint, next_bindings, require_exact=True,
+                next_plan, outcome_blueprint, next_bindings, require_exact=True,
             )
 
             new_run_id = (
@@ -4133,64 +4115,80 @@ class ExecutionRuntime:
                 "error": None,
                 "completedStepIds": [],
                 "activeStepIds": [],
-                "acgBlueprint": outcome.blueprint.model_dump(by_alias=True, mode="json"),
+                "acgBlueprint": outcome_blueprint.model_dump(by_alias=True, mode="json"),
                 "createdAt": utc_now().isoformat(),
                 "updatedAt": utc_now().isoformat(),
             })
             new_run = RuntimeRunRecord.model_validate(new_payload)
-            self._sync_run_steps_to_acg(new_run, outcome.blueprint)
+            self._sync_run_steps_to_acg(new_run, outcome_blueprint)
             for agent in self.agent_registry.all():
                 self.resource_directory.register_agent(agent.profile)
-            bindings = dict(run.execution_state.get("resourceBindings") or {})
-            requirements = dict(run.execution_state.get("bindingRequirements") or {})
+            bindings: dict[str, str] = {}
+            requirements: dict[str, dict[str, Any]] = {}
             for step in new_run.steps:
-                if step.step_id in old_step_ids:
-                    continue
-                selected = self.resource_directory.resolve_agent(
-                    domain=workflow.domain,
-                    agent_name=step.agent_name,
-                    capability=step.capability,
-                    allowed_agent_ids=scope.agent_ids,
-                )
-                bindings[step.step_id] = selected.agent_id
                 requirements[step.step_id] = BindingRequirement(
                     requiredCapabilities=[
                         step.capability or f"agent:{step.agent_name.lower()}"
                     ],
                     domain=workflow.domain,
-                    resourceTypes=[ResourceType.AGENT],
                     allowedResourceIds=list(scope.agent_ids),
-                    preferences={"resourceId": selected.agent_id},
-                    policyMetadata={"source": "graph-patch", "stepId": step.step_id},
+                    policyMetadata={"source": "semantic-patch", "stepId": step.step_id},
                 ).model_dump(by_alias=True, mode="json")
+
+            graph_patch = derive_graph_patch(
+                blueprint,
+                outcome_blueprint,
+                patch_id=request.patch_id,
+                reason=request.reason,
+            )
+            patch_checksum = graph_patch.checksum()
 
             patch_uri = self.execution_value_store.put_graph_patch(
                 run_id=new_run.run_id,
-                payload=patch.model_dump(by_alias=True, mode="json"),
+                payload=graph_patch.model_dump(by_alias=True, mode="json"),
             )
             patch_ref = GraphPatchRef(
-                patchId=patch.patch_id,
+                patchId=request.patch_id,
                 graph=GraphRef(
-                    graphId=outcome.blueprint.graph_id,
-                    version=str(outcome.blueprint.version),
+                    graphId=outcome_blueprint.graph_id,
+                    version=str(outcome_blueprint.version),
                 ),
                 uri=patch_uri,
-                checksum=outcome.checksum,
+                checksum=patch_checksum,
             )
-            applied_metadata = list(outcome.blueprint.metadata["appliedGraphPatches"])
-            applied_metadata[-1] = {
-                **applied_metadata[-1],
+            applied_metadata = list(
+                outcome_blueprint.metadata.get("appliedGraphPatches") or []
+            )
+            # Record the patch lineage in the blueprint metadata.
+            patch_entry = {
+                "patchId": request.patch_id,
+                "idempotencyKey": request.idempotency_key,
+                "requestChecksum": request_checksum,
+                "checksum": patch_checksum,
+                "baseGraphVersion": request.base_graph_version,
+                "graphVersion": outcome_blueprint.version,
+                "reason": request.reason,
                 "patchRef": patch_uri,
                 "sourceRunId": run.run_id,
                 "newRunId": new_run.run_id,
             }
-            outcome.blueprint.metadata["appliedGraphPatches"] = applied_metadata
-            new_run.acg_blueprint = outcome.blueprint.model_dump(by_alias=True, mode="json")
+            existing_entry = next(
+                (i for i, e in enumerate(applied_metadata)
+                 if isinstance(e, dict) and e.get("patchId") == request.patch_id),
+                None,
+            )
+            if existing_entry is not None:
+                applied_metadata[existing_entry] = patch_entry
+            else:
+                applied_metadata.append(patch_entry)
+            outcome_blueprint.metadata["appliedGraphPatches"] = applied_metadata
+            new_run.acg_blueprint = outcome_blueprint.model_dump(by_alias=True, mode="json")
             new_run.execution_state.update({
                 "resourceBindings": bindings,
                 "bindingRequirements": requirements,
-                "sourceBlueprintVersion": outcome.blueprint.version,
-                "graphVersion": outcome.blueprint.version,
+                "sourceBlueprintVersion": outcome_blueprint.version,
+                "graphVersion": outcome_blueprint.version,
+                "graphDiff": graph_patch.model_dump(by_alias=True, mode="json"),
                 "taskPlanVersion": next_plan.plan_version,
                 "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
                 "taskBindings": [
@@ -4198,12 +4196,12 @@ class ExecutionRuntime:
                 ],
                 "parentRunId": run.run_id,
                 "supersedesRunId": run.run_id,
-                "sourcePatchId": patch.patch_id,
+                "sourcePatchId": request.patch_id,
                 **({"topologyAudit": topology_audits[-1]} if topology_audits else {}),
                 "graphPatchRefs": [patch_uri],
             })
             compiled_package = ACGGraphCompiler().compile_package(
-                outcome.blueprint, run_id=new_run.run_id
+                outcome_blueprint, run_id=new_run.run_id
             )
             new_run.execution_state.update({
                 "compiledACGPackage": compiled_package.model_dump(
@@ -4226,10 +4224,10 @@ class ExecutionRuntime:
                 TraceEventType.GRAPH_PATCH_APPLIED,
                 observation="ACG graph patch applied",
                 payload={
-                    "patchId": patch.patch_id,
+                    "patchId": request.patch_id,
                     "patchRef": patch_uri,
-                    "baseGraphVersion": patch.base_graph_version,
-                    "graphVersion": outcome.blueprint.version,
+                    "baseGraphVersion": request.base_graph_version,
+                    "graphVersion": outcome_blueprint.version,
                     "newRunId": new_run.run_id,
                 },
             )
@@ -4237,7 +4235,7 @@ class ExecutionRuntime:
                 run,
                 new_run,
                 {
-                    "eventId": f"graph.patch.prepared:{run.run_id}:{patch.patch_id}",
+                    "eventId": f"graph.patch.prepared:{run.run_id}:{request.patch_id}",
                     "eventType": "graph.patch.prepared",
                     "aggregateId": run.run_id,
                     "payload": {
@@ -4245,8 +4243,8 @@ class ExecutionRuntime:
                         "oldRunId": run.run_id,
                         "newRunId": new_run.run_id,
                         "workflowId": new_run.workflow_id,
-                        "patchId": patch.patch_id,
-                        "blueprint": outcome.blueprint.model_dump(
+                        "patchId": request.patch_id,
+                        "blueprint": outcome_blueprint.model_dump(
                             by_alias=True, mode="json"
                         ),
                         "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
@@ -4261,7 +4259,7 @@ class ExecutionRuntime:
             self._flush_identity_outbox()
             return GraphPatchResult(
                 applied=True,
-                graphVersion=outcome.blueprint.version,
+                graphVersion=outcome_blueprint.version,
                 runId=new_run.run_id,
                 patchRef=patch_ref,
             )

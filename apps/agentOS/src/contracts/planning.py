@@ -249,7 +249,13 @@ class TaskPlanPatch(BaseModel):
     add_nodes: tuple[PlannedTask, ...] = Field(default_factory=tuple, alias="addNodes")
     retire_keys: tuple[SemanticTaskKey, ...] = Field(default_factory=tuple, alias="retireKeys")
     replace_keys: tuple[SemanticTaskKey, ...] = Field(default_factory=tuple, alias="replaceKeys")
+    remove_relations: tuple[TaskPlanRelation, ...] = Field(
+        default_factory=tuple, alias="removeRelations"
+    )
     relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
+    control_policies: tuple[VerificationLoopPolicy, ...] | None = Field(
+        default=None, alias="controlPolicies"
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -263,6 +269,20 @@ class TaskPlanPatch(BaseModel):
             raise ValueError("TaskPlanPatch cannot add and retire the same semantic key")
         if set(self.replace_keys).intersection(self.retire_keys):
             raise ValueError("TaskPlanPatch cannot replace and retire the same semantic key")
+        replaced = set(self.replace_keys)
+        added = set(keys)
+        if replaced - added:
+            raise ValueError("TaskPlanPatch replaceKeys must have matching addNodes")
+        remove_relations = {
+            (item.source_key, item.target_key, item.relation_type)
+            for item in self.remove_relations
+        }
+        add_relations = {
+            (item.source_key, item.target_key, item.relation_type)
+            for item in self.relations
+        }
+        if remove_relations & add_relations:
+            raise ValueError("TaskPlanPatch cannot add and remove the same relation")
         _reject_execution_identity(self.metadata)
         return self
 

@@ -653,6 +653,15 @@ def apply_task_plan_patch(
         relation for relation in current.relations
         if relation.source_key in nodes and relation.target_key in nodes
     ]
+    removed_relations = {
+        (relation.source_key, relation.target_key, relation.relation_type)
+        for relation in patch.remove_relations
+    }
+    relations = [
+        relation for relation in relations
+        if (relation.source_key, relation.target_key, relation.relation_type)
+        not in removed_relations
+    ]
     relations.extend(patch.relations)
     normalized_nodes = canonicalize_final_synthesis_nodes(tuple(nodes.values()), relations)
     catalog = capability_catalog or build_default_capability_catalog()
@@ -662,7 +671,11 @@ def apply_task_plan_patch(
         plan_version=patch.plan_version,
         nodes=tuple(normalized_nodes),
         relations=relations,
-        control_policies=current.control_policies,
+        control_policies=(
+            patch.control_policies
+            if patch.control_policies is not None
+            else current.control_policies
+        ),
         expected_artifacts=current.expected_artifacts,
         relation_origin=EdgeOrigin.PLAN_PATCH,
         producer_kind="patch",
