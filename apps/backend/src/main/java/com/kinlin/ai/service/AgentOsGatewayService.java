@@ -3,6 +3,8 @@ package com.kinlin.ai.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.config.AgentProperties;
+import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
+import com.kinlin.ai.dto.agentos.AgentOsErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,11 @@ public class AgentOsGatewayService {
     public static final String INTERNAL_HTTP_STATUS_KEY = "_httpStatus";
 
     public record BinaryResponse(int status, byte[] body, String contentType, String contentDisposition) { }
+    public record TypedResponse<T extends AgentOsApiResponse>(
+            int status,
+            T body,
+            AgentOsErrorResponse error
+    ) { }
 
     private final WebClient webClient;
     private final AgentProperties properties;
@@ -69,6 +76,30 @@ public class AgentOsGatewayService {
                     .block();
         } catch (Exception failure) {
             return unavailable(path, failure);
+        }
+    }
+
+    public <T extends AgentOsApiResponse> TypedResponse<T> postTyped(
+            String path,
+            Object body,
+            Class<T> responseType
+    ) {
+        if (!properties.isEnabled()) {
+            return typedError(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
+                    "AgentOS gateway is disabled.", null);
+        }
+        try {
+            return webClient.post().uri(path).bodyValue(body == null ? Map.of() : body)
+                    .exchangeToMono(response -> typedResponse(
+                            response.statusCode().value(),
+                            response.bodyToMono(String.class),
+                            responseType
+                    ))
+                    .timeout(Duration.ofMillis(postTimeoutMs(path)))
+                    .onErrorResume(failure -> Mono.just(typedUnavailable(path, failure)))
+                    .block();
+        } catch (Exception failure) {
+            return typedUnavailable(path, failure);
         }
     }
 
@@ -195,15 +226,15 @@ public class AgentOsGatewayService {
             }
             if (upstreamStatus >= 400 && upstreamStatus < 500) {
                 Map<String, Object> parsed = parseObject(body);
-                Object detail = parsed.get("detail");
-                if (detail instanceof Map<?, ?> values) {
-                    Object nestedCode = values.get("code");
-                    Object nestedMessage = values.get("message");
-                    if (nestedCode instanceof String code && nestedMessage instanceof String message) {
-                        return error(upstreamStatus, code, sanitize(message));
-                    }
+                Object code = parsed.get("code");
+                Object message = parsed.get("message");
+                Object requestId = parsed.get("requestId");
+                if (code instanceof String stableCode && message instanceof String stableMessage) {
+                    return error(upstreamStatus, stableCode, sanitize(stableMessage),
+                            requestId instanceof String value ? value : null);
                 }
-                return error(upstreamStatus, "AGENTOS_REQUEST_REJECTED", safeMessage(body, upstreamStatus));
+                return error(upstreamStatus, "AGENTOS_REQUEST_REJECTED",
+                        "AgentOS request was rejected (HTTP " + upstreamStatus + ").", null);
             }
             return error(HttpStatus.BAD_GATEWAY.value(), "AGENTOS_UPSTREAM_ERROR",
                     "AgentOS service returned an error.");
@@ -216,24 +247,69 @@ public class AgentOsGatewayService {
                 "AgentOS gateway unavailable.");
     }
 
-    private Map<String, Object> error(int status, String code, String message) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("error", code);
-        result.put("message", message);
-        result.put(INTERNAL_HTTP_STATUS_KEY, status);
-        return result;
+    private <T extends AgentOsApiResponse> Mono<TypedResponse<T>> typedResponse(
+            int upstreamStatus,
+            Mono<String> responseBody,
+            Class<T> responseType
+    ) {
+        return responseBody.defaultIfEmpty("").map(body -> {
+            if (upstreamStatus >= 200 && upstreamStatus < 300) {
+                try {
+                    return new TypedResponse<>(
+                            upstreamStatus,
+                            OBJECT_MAPPER.readValue(body, responseType),
+                            null
+                    );
+                } catch (Exception failure) {
+                    log.error("Invalid AgentOS success contract. type={}", responseType.getSimpleName());
+                    return typedError(HttpStatus.BAD_GATEWAY.value(), "AGENTOS_CONTRACT_INVALID",
+                            "AgentOS service returned an invalid response.", null);
+                }
+            }
+            if (upstreamStatus >= 400 && upstreamStatus < 500) {
+                try {
+                    AgentOsErrorResponse error = OBJECT_MAPPER.readValue(body, AgentOsErrorResponse.class);
+                    if (error.code() == null || error.message() == null) {
+                        throw new IllegalArgumentException("missing stable error fields");
+                    }
+                    return new TypedResponse<>(upstreamStatus, null, new AgentOsErrorResponse(
+                            error.code(), sanitize(error.message()), error.requestId()
+                    ));
+                } catch (Exception ignored) {
+                    return typedError(upstreamStatus, "AGENTOS_REQUEST_REJECTED",
+                            "AgentOS request was rejected (HTTP " + upstreamStatus + ").", null);
+                }
+            }
+            return typedError(HttpStatus.BAD_GATEWAY.value(), "AGENTOS_UPSTREAM_ERROR",
+                    "AgentOS service returned an error.", null);
+        });
     }
 
-    private String safeMessage(String body, int status) {
-        Map<String, Object> parsed = parseObject(body);
-        for (String key : java.util.List.of("message", "detail", "error")) {
-            Object value = parsed.get(key);
-            if (value instanceof String text && !text.isBlank()) {
-                String sanitized = text.replaceAll("[\\r\\n\\t]", " ").trim();
-                return sanitized.substring(0, Math.min(sanitized.length(), 300));
-            }
+    private <T extends AgentOsApiResponse> TypedResponse<T> typedUnavailable(String path, Throwable failure) {
+        log.error("AgentOS gateway unavailable. path={}, type={}", path, failure.getClass().getSimpleName());
+        return typedError(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_UPSTREAM_UNAVAILABLE",
+                "AgentOS gateway unavailable.", null);
+    }
+
+    private <T extends AgentOsApiResponse> TypedResponse<T> typedError(
+            int status, String code, String message, String requestId
+    ) {
+        return new TypedResponse<>(status, null, new AgentOsErrorResponse(code, message, requestId));
+    }
+
+    private Map<String, Object> error(int status, String code, String message) {
+        return error(status, code, message, null);
+    }
+
+    private Map<String, Object> error(int status, String code, String message, String requestId) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", code);
+        result.put("message", message);
+        if (requestId != null && !requestId.isBlank()) {
+            result.put("requestId", requestId);
         }
-        return "AgentOS request was rejected (HTTP " + status + ").";
+        result.put(INTERNAL_HTTP_STATUS_KEY, status);
+        return result;
     }
 
     private String sanitize(String value) {

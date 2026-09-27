@@ -1,5 +1,6 @@
 package com.kinlin.ai.dto.agentos;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -31,5 +32,10 @@ public record AgentOsMissionCreateRequest(
         enabledPluginIds = enabledPluginIds == null ? null : List.copyOf(enabledPluginIds);
         materialRefs = materialRefs == null ? null : List.copyOf(materialRefs);
         attachmentIds = attachmentIds == null ? null : List.copyOf(attachmentIds);
+    }
+
+    @JsonAnySetter
+    public void rejectUnknownField(String name, Object value) {
+        throw new IllegalArgumentException("Unsupported mission field: " + name);
     }
 }

@@ -1,6 +1,12 @@
 package com.kinlin.ai.controller;
 
+import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
+import com.kinlin.ai.dto.agentos.AgentOsMissionResponse;
+import com.kinlin.ai.dto.agentos.AgentOsOperationResponse;
 import com.kinlin.ai.dto.agentos.AgentOsReviewRequest;
+import com.kinlin.ai.dto.agentos.AgentOsReviewResponse;
+import com.kinlin.ai.dto.agentos.AgentOsRetryRequest;
+import com.kinlin.ai.dto.agentos.AgentOsRunResponse;
 import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
@@ -48,8 +54,12 @@ public class AgentOsGatewayController {
     }
 
     @PostMapping("/missions")
-    public ResponseEntity<Map<String, Object>> createMission(@Valid @RequestBody AgentOsMissionCreateRequest body) {
-        return response(gateway.post(UPSTREAM_ROOT + "/missions", body));
+    public ResponseEntity<? extends AgentOsApiResponse> createMission(
+            @Valid @RequestBody AgentOsMissionCreateRequest body
+    ) {
+        return typedResponse(gateway.postTyped(
+                UPSTREAM_ROOT + "/missions", body, AgentOsMissionResponse.class
+        ));
     }
 
     @PostMapping("/materials")
@@ -98,11 +108,13 @@ public class AgentOsGatewayController {
     }
 
     @PostMapping("/missions/{missionId}/runs")
-    public ResponseEntity<Map<String, Object>> createMissionRun(
+    public ResponseEntity<? extends AgentOsApiResponse> createMissionRun(
             @PathVariable String missionId,
             @Valid @RequestBody AgentOsMissionRunCreateRequest body
     ) {
-        return response(gateway.post(missionPath(missionId) + "/runs", body));
+        return typedResponse(gateway.postTyped(
+                missionPath(missionId) + "/runs", body, AgentOsRunResponse.class
+        ));
     }
 
     @GetMapping("/missions/{missionId}/workspace")
@@ -303,16 +315,20 @@ public class AgentOsGatewayController {
     }
 
     @PostMapping("/runs/{runId}/reviews")
-    public ResponseEntity<Map<String, Object>> applyReview(
+    public ResponseEntity<? extends AgentOsApiResponse> applyReview(
             @PathVariable String runId,
             @Valid @RequestBody AgentOsReviewRequest body
     ) {
-        return response(gateway.post(runPath(runId) + "/reviews", body));
+        return typedResponse(gateway.postTyped(
+                runPath(runId) + "/reviews", body, AgentOsReviewResponse.class
+        ));
     }
 
     @PostMapping("/runs/{runId}/cancel")
-    public ResponseEntity<Map<String, Object>> cancelRun(@PathVariable String runId) {
-        return response(gateway.post(runPath(runId) + "/cancel", Map.of()));
+    public ResponseEntity<? extends AgentOsApiResponse> cancelRun(@PathVariable String runId) {
+        return typedResponse(gateway.postTyped(
+                runPath(runId) + "/cancel", Map.of(), AgentOsOperationResponse.class
+        ));
     }
 
     @PostMapping(value = "/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -333,14 +349,15 @@ public class AgentOsGatewayController {
     }
 
     @PostMapping("/runs/{runId}/steps/{stepId}/retry")
-    public ResponseEntity<Map<String, Object>> retryRunStep(
+    public ResponseEntity<? extends AgentOsApiResponse> retryRunStep(
             @PathVariable String runId,
             @PathVariable String stepId,
-            @RequestBody Map<String, Object> body
+            @Valid @RequestBody AgentOsRetryRequest body
     ) {
-        return response(gateway.post(
+        return typedResponse(gateway.postTyped(
                 runPath(runId) + "/steps/" + segment(stepId) + "/retry",
-                body
+                body,
+                AgentOsRunResponse.class
         ));
     }
 
@@ -380,5 +397,12 @@ public class AgentOsGatewayController {
         Object status = body.remove(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY);
         int code = status instanceof Number number ? number.intValue() : 200;
         return ResponseEntity.status(code).body(body);
+    }
+
+    private <T extends AgentOsApiResponse> ResponseEntity<? extends AgentOsApiResponse> typedResponse(
+            AgentOsGatewayService.TypedResponse<T> response
+    ) {
+        AgentOsApiResponse body = response.error() == null ? response.body() : response.error();
+        return ResponseEntity.status(response.status()).body(body);
     }
 }

@@ -1,6 +1,7 @@
 package com.kinlin.ai.service;
 
 import com.kinlin.ai.config.AgentProperties;
+import com.kinlin.ai.dto.agentos.AgentOsMissionResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -31,12 +32,16 @@ class AgentOsGatewayServiceTest {
     @Test
     void preservesClientStatusButDoesNotRelaySensitiveErrorFields() {
         AgentOsGatewayService service = service(HttpStatus.CONFLICT,
-                "{\"detail\":\"clientRequestId conflict\",\"prompt\":\"PRIVATE\",\"arguments\":{\"secret\":\"x\"}}");
+                "{\"code\":\"AGENTOS_CONFLICT\",\"message\":\"clientRequestId conflict\","
+                        + "\"requestId\":\"trace-1\",\"prompt\":\"PRIVATE\","
+                        + "\"arguments\":{\"secret\":\"x\"}}");
 
         Map<String, Object> result = service.post("/ai/agentos/v2/runs", Map.of());
 
         assertEquals(409, result.get(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY));
+        assertEquals("AGENTOS_CONFLICT", result.get("code"));
         assertEquals("clientRequestId conflict", result.get("message"));
+        assertEquals("trace-1", result.get("requestId"));
         assertFalse(result.toString().contains("PRIVATE"));
         assertFalse(result.toString().contains("secret"));
     }
@@ -49,7 +54,7 @@ class AgentOsGatewayServiceTest {
         Map<String, Object> result = service.get("/ai/agentos/v2/runs/run_1");
 
         assertEquals(502, result.get(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY));
-        assertEquals("AGENTOS_UPSTREAM_ERROR", result.get("error"));
+        assertEquals("AGENTOS_UPSTREAM_ERROR", result.get("code"));
         assertFalse(result.toString().contains("PRIVATE"));
     }
 
@@ -65,7 +70,21 @@ class AgentOsGatewayServiceTest {
         Map<String, Object> result = service.get("/ai/agentos/v2/runs");
 
         assertEquals(503, result.get(AgentOsGatewayService.INTERNAL_HTTP_STATUS_KEY));
-        assertEquals("AGENTOS_UPSTREAM_UNAVAILABLE", result.get("error"));
+        assertEquals("AGENTOS_UPSTREAM_UNAVAILABLE", result.get("code"));
+    }
+
+    @Test
+    void typedSuccessFailsClosedWhenUpstreamContractIsMalformed() {
+        AgentOsGatewayService service = service(HttpStatus.ACCEPTED,
+                "{\"runId\":\"run_1\",\"executionState\":{\"secret\":\"PRIVATE\"}}");
+
+        AgentOsGatewayService.TypedResponse<AgentOsMissionResponse> result = service.postTyped(
+                "/ai/agentos/v2/missions", Map.of("title", "review"), AgentOsMissionResponse.class
+        );
+
+        assertEquals(502, result.status());
+        assertEquals("AGENTOS_CONTRACT_INVALID", result.error().code());
+        assertFalse(result.error().toString().contains("PRIVATE"));
     }
 
     @Test

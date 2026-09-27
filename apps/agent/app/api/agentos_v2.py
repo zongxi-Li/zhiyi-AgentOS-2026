@@ -52,6 +52,13 @@ from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
 from components.attachments import AttachmentError
 from contracts.attachments import InputAttachmentStatus
+from app.api.agentos_contracts import (
+    MissionResponse,
+    OperationResponse,
+    ReviewResponse,
+    RunResponse,
+    project_control_run,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1798,7 +1805,12 @@ def create_router(
         require_mission_access(detail.origin.mission.mission_id)
         return provenance.model_dump(by_alias=True, mode="json")
 
-    @router.post("/missions", status_code=status.HTTP_202_ACCEPTED)
+    @router.post(
+        "/missions",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=MissionResponse,
+        response_model_by_alias=True,
+    )
     async def create_mission(request: MissionCreateRequest):
         key, fingerprint = _idempotency(request)
         if key:
@@ -1807,7 +1819,7 @@ def create_router(
                 _require_access(existing)
                 if existing.idempotency_fingerprint != fingerprint:
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
-                return project(existing)
+                return project_control_run(existing, MissionResponse)
         try:
             mission_input = prepare_execution_input(
                 request.input, request.material_refs, request.attachment_ids
@@ -1833,7 +1845,7 @@ def create_router(
                 defer_acg_planning=True,
             )
             await coordinator.submit(run.run_id)
-            return project(runtime.get_status(run.run_id))
+            return project_control_run(runtime.get_status(run.run_id), MissionResponse)
         except AttachmentError as exc:
             raise HTTPException(
                 status_code=exc.status_code,
@@ -2204,7 +2216,12 @@ def create_router(
             "nextCursor": next_cursor,
         }
 
-    @router.post("/missions/{mission_id}/runs", status_code=status.HTTP_202_ACCEPTED)
+    @router.post(
+        "/missions/{mission_id}/runs",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=RunResponse,
+        response_model_by_alias=True,
+    )
     async def create_mission_run(mission_id: str, request: MissionRunCreateRequest):
         """Create a new Run under an existing Mission using the submitted configuration snapshot."""
 
@@ -2221,7 +2238,7 @@ def create_router(
                 _require_access(existing)
                 if existing.mission_id != mission_id or existing.idempotency_fingerprint != fingerprint:
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
-                return project(existing)
+                return project_control_run(existing)
         try:
             run_input = prepare_execution_input(
                 request.input, request.material_refs, request.attachment_ids
@@ -2239,7 +2256,7 @@ def create_router(
                 rerun_reason=request.rerun_reason,
             )
             await coordinator.submit(run.run_id)
-            return project(runtime.get_status(run.run_id))
+            return project_control_run(runtime.get_status(run.run_id))
         except (KeyError, ValueError) as exc:
             logger.exception(
                 "agentos_v2_run_create_failed",
@@ -2247,7 +2264,12 @@ def create_router(
             )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @router.post("/runs/{run_id}/steps/{step_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+    @router.post(
+        "/runs/{run_id}/steps/{step_id}/retry",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=RunResponse,
+        response_model_by_alias=True,
+    )
     async def retry_failed_step(run_id: str, step_id: str, request: SingleStepRetryRequest):
         """Reuse committed outputs and continue from the selected failed step."""
 
@@ -2262,7 +2284,7 @@ def create_router(
             _require_access(existing)
             if existing.idempotency_fingerprint != fingerprint:
                 raise HTTPException(status_code=409, detail="clientRequestId conflict")
-            return project(existing)
+            return project_control_run(existing)
         try:
             retry_run = runtime.prepare_single_step_retry(
                 source_run_id=source_run.run_id,
@@ -2274,7 +2296,7 @@ def create_router(
                 reuse_source_run=request.mode == "current_run",
             )
             await coordinator.submit(retry_run.run_id)
-            return project(runtime.get_status(retry_run.run_id))
+            return project_control_run(runtime.get_status(retry_run.run_id))
         except (KeyError, ValueError) as exc:
             logger.warning(
                 "agentos_v2_single_step_retry_rejected",
@@ -2489,7 +2511,11 @@ def create_router(
             raise HTTPException(status_code=409, detail="evolution rollback conflict") from exc
         return version.model_dump(by_alias=True, mode="json")
 
-    @router.post("/runs/{run_id}/reviews")
+    @router.post(
+        "/runs/{run_id}/reviews",
+        response_model=ReviewResponse,
+        response_model_by_alias=True,
+    )
     async def apply_review(run_id: str, request: ReviewApplyRequest):
         source_run = load_run(run_id)
         try:
@@ -2527,9 +2553,18 @@ def create_router(
                 await coordinator.submit(run.run_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail="review conflict") from exc
-        return project(run)
+        return project_control_run(
+            run,
+            ReviewResponse,
+            operationId=request.operation_id,
+            decision=request.decision.value,
+        )
 
-    @router.post("/runs/{run_id}/cancel")
+    @router.post(
+        "/runs/{run_id}/cancel",
+        response_model=OperationResponse,
+        response_model_by_alias=True,
+    )
     async def cancel_run(run_id: str):
         """协作式终止一个活跃运行；幂等，且对不可取消的终态返回固定冲突提示。"""
         load_run(run_id)
@@ -2538,7 +2573,7 @@ def create_router(
             await coordinator.cancel(run_id)
         except InvalidStateTransition as exc:
             raise HTTPException(status_code=409, detail="run cannot be cancelled") from exc
-        return project(run)
+        return project_control_run(run, OperationResponse, operation="cancel")
 
     return router
 

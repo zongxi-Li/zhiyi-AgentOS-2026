@@ -4,7 +4,7 @@
 提供AI能力：文本生成、语音识别、语音合成
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -32,6 +32,7 @@ from app.security.internal_auth import (
 )
 from app.utils.logger import setup_logger
 from app.middleware.errorhandler import (
+    agentos_http_exception_handler,
     validation_exception_handler,
     general_exception_handler
 )
@@ -103,6 +104,7 @@ app.add_middleware(TraceIdMiddleware)
 
 # 注册异常处理器
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(HTTPException, agentos_http_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
 # 注册路由

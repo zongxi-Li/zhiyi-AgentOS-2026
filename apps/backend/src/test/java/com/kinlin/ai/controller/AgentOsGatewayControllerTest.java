@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.config.AgentProperties;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
+import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
+import com.kinlin.ai.dto.agentos.AgentOsErrorResponse;
 import com.kinlin.ai.service.AgentOsGatewayService;
+import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -35,7 +38,9 @@ class AgentOsGatewayControllerTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         gateway = new RecordingGateway();
-        mockMvc = MockMvcBuilders.standaloneSetup(new AgentOsGatewayController(gateway)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new AgentOsGatewayController(gateway))
+                .setControllerAdvice(new AgentOsGatewayExceptionHandler())
+                .build();
     }
 
     @Test
@@ -281,7 +286,8 @@ class AgentOsGatewayControllerTest {
         mockMvc.perform(post("/api/agentos/v2/runs/run_001/reviews")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"stepId\":\"review\",\"decision\":\"invented\",\"operationId\":\"op-2\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("AGENTOS_VALIDATION_ERROR"));
     }
 
     @Test
@@ -297,7 +303,8 @@ class AgentOsGatewayControllerTest {
         gateway.postResponses.put(conflictPath, response(409, Map.of("detail", "run cannot be cancelled")));
         mockMvc.perform(post("/api/agentos/v2/runs/{runId}/cancel", "run_002"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.detail").value("run cannot be cancelled"));
+                .andExpect(jsonPath("$.code").value("AGENTOS_REQUEST_REJECTED"))
+                .andExpect(jsonPath("$.message").value("run cannot be cancelled"));
         assertEquals(conflictPath, gateway.lastPostPath);
     }
 
@@ -319,8 +326,22 @@ class AgentOsGatewayControllerTest {
                 .andExpect(jsonPath("$.runId").value("run_002"));
 
         assertEquals(retryPath, gateway.lastPostPath);
-        assertEquals("retry-1", ((Map<?, ?>) gateway.lastPostBody).get("clientRequestId"));
-        assertEquals("successor_run", ((Map<?, ?>) gateway.lastPostBody).get("mode"));
+        com.kinlin.ai.dto.agentos.AgentOsRetryRequest request =
+                (com.kinlin.ai.dto.agentos.AgentOsRetryRequest) gateway.lastPostBody;
+        assertEquals("retry-1", request.clientRequestId());
+        assertEquals("operator_requested", request.reason());
+        assertEquals("successor_run", request.mode());
+    }
+
+    @Test
+    void retryRejectsSemanticAndConcreteResourceOverrides() throws Exception {
+        for (String forbidden : List.of("taskPlanPatch", "graphPatch", "resourceId", "workerId")) {
+            mockMvc.perform(post("/api/agentos/v2/runs/run_1/steps/step_1/retry")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"clientRequestId\":\"retry-1\",\"" + forbidden + "\":{}}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("AGENTOS_INVALID_REQUEST"));
+        }
     }
 
     @Test
@@ -343,6 +364,7 @@ class AgentOsGatewayControllerTest {
     }
 
     private static final class RecordingGateway extends AgentOsGatewayService {
+        private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         private final Map<String, Map<String, Object>> getResponses = new HashMap<>();
         private final Map<String, Map<String, Object>> postResponses = new HashMap<>();
         private final Map<String, Map<String, Object>> deleteResponses = new HashMap<>();
@@ -366,6 +388,43 @@ class AgentOsGatewayControllerTest {
             lastPostPath = path;
             lastPostBody = body;
             return postResponses.getOrDefault(path, response(404, Map.of("message", "not found")));
+        }
+
+        @Override
+        public <T extends AgentOsApiResponse> TypedResponse<T> postTyped(
+                String path, Object body, Class<T> responseType
+        ) {
+            lastPostPath = path;
+            lastPostBody = body;
+            Map<String, Object> configured = postResponses.getOrDefault(
+                    path, response(404, Map.of("code", "NOT_FOUND", "message", "not found"))
+            );
+            int status = ((Number) configured.get(INTERNAL_HTTP_STATUS_KEY)).intValue();
+            if (status < 200 || status >= 300) {
+                return new TypedResponse<>(status, null, new AgentOsErrorResponse(
+                        String.valueOf(configured.getOrDefault("code", "AGENTOS_REQUEST_REJECTED")),
+                        String.valueOf(configured.getOrDefault("message", configured.getOrDefault(
+                                "detail", "AgentOS request was rejected (HTTP " + status + ")."))),
+                        configured.get("requestId") instanceof String value ? value : null
+                ));
+            }
+            Map<String, Object> canonical = new LinkedHashMap<>();
+            canonical.put("runId", configured.getOrDefault("runId", "run_001"));
+            canonical.put("missionId", configured.getOrDefault("missionId", "mission_001"));
+            canonical.put("workflowId", configured.getOrDefault("workflowId", "workflow_001"));
+            canonical.put("status", configured.getOrDefault("status", "pending"));
+            canonical.put("lifecyclePhase", configured.getOrDefault("lifecyclePhase", "planning"));
+            canonical.put("runtimeRevision", configured.getOrDefault("runtimeRevision", 0));
+            canonical.put("createdAt", configured.getOrDefault("createdAt", "2026-09-27T12:00:00Z"));
+            canonical.put("updatedAt", configured.getOrDefault("updatedAt", "2026-09-27T12:00:00Z"));
+            if (responseType.getSimpleName().equals("AgentOsReviewResponse")) {
+                canonical.put("operationId", configured.getOrDefault("operationId", "op-1"));
+                canonical.put("decision", configured.getOrDefault("decision", "approved"));
+            }
+            if (responseType.getSimpleName().equals("AgentOsOperationResponse")) {
+                canonical.put("operation", configured.getOrDefault("operation", "cancel"));
+            }
+            return new TypedResponse<>(status, mapper.convertValue(canonical, responseType), null);
         }
 
 

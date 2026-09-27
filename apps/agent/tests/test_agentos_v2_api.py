@@ -1812,8 +1812,8 @@ async def test_v2_rerun_creates_another_run_under_same_mission(tmp_path) -> None
         body = created.json()
         assert body["missionId"] == task.mission_id
         assert body["runId"] != source.run_id
-        assert body["executionState"]["sourceRunId"] == source.run_id
-        assert body["executionState"]["rerunReason"] == "current_configuration"
+        assert body["sourceRunId"] == source.run_id
+        assert "executionState" not in body
         assert repeated.json()["runId"] == body["runId"]
         rerun = runtime.get_status(body["runId"])
         assert rerun.input["taskGoal"] == "updated run configuration"
