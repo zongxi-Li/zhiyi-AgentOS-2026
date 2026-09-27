@@ -10,8 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
-from .planning import TaskBindingPatch, TaskPlanPatch
-from support.acg.planning import ACGResourcePlan
+from .planning import TaskPlanPatch
 from .workflow import GraphRef
 
 
@@ -114,8 +113,6 @@ class SemanticPatchRequest(BaseModel):
     graph_id: StrictStr = Field(alias="graphId", min_length=1)
     base_graph_version: int = Field(alias="baseGraphVersion", ge=1)
     task_plan_patch: TaskPlanPatch = Field(alias="taskPlanPatch")
-    task_binding_patch: TaskBindingPatch | None = Field(default=None, alias="taskNodeBindingPatch")
-    resource_plan_patch: ACGResourcePlan | None = Field(default=None, alias="resourcePlanPatch")
     reason: str = ""
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
 
@@ -149,6 +146,9 @@ class GraphPatch(BaseModel):
     base_graph_version: int = Field(alias="baseGraphVersion", ge=1)
     graph_version: int = Field(alias="graphVersion", ge=2)
     added_nodes: tuple[dict[str, Any], ...] = Field(default_factory=tuple, alias="addedNodes")
+    updated_nodes: tuple[dict[str, Any], ...] = Field(
+        default_factory=tuple, alias="updatedNodes"
+    )
     removed_node_ids: tuple[StrictStr, ...] = Field(default_factory=tuple, alias="removedNodeIds")
     added_edges: tuple[dict[str, Any], ...] = Field(default_factory=tuple, alias="addedEdges")
     removed_edges: tuple[dict[str, Any], ...] = Field(default_factory=tuple, alias="removedEdges")

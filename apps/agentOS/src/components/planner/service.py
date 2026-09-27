@@ -643,8 +643,41 @@ def apply_task_plan_patch(
     if current.plan_version != patch.base_plan_version:
         raise ACGPlanningError("TaskPlanPatch basePlanVersion is stale")
     nodes = {node.key: node for node in current.nodes}
-    for key in (*patch.retire_keys, *patch.replace_keys):
-        nodes.pop(key, None)
+    current_keys = set(nodes)
+    missing_retire_keys = set(patch.retire_keys) - current_keys
+    if missing_retire_keys:
+        raise ACGPlanningError(
+            "TaskPlanPatch retireKeys reference unknown semantic keys: "
+            + ", ".join(sorted(missing_retire_keys))
+        )
+    missing_replace_keys = set(patch.replace_keys) - current_keys
+    if missing_replace_keys:
+        raise ACGPlanningError(
+            "TaskPlanPatch replaceKeys reference unknown semantic keys: "
+            + ", ".join(sorted(missing_replace_keys))
+        )
+    current_relations = {
+        (relation.source_key, relation.target_key, relation.relation_type)
+        for relation in current.relations
+    }
+    requested_removals = {
+        (relation.source_key, relation.target_key, relation.relation_type)
+        for relation in patch.remove_relations
+    }
+    missing_relations = requested_removals - current_relations
+    if missing_relations:
+        formatted = ", ".join(
+            f"{source}->{target}:{relation_type.value}"
+            for source, target, relation_type in sorted(
+                missing_relations,
+                key=lambda item: (item[0], item[1], item[2].value),
+            )
+        )
+        raise ACGPlanningError(
+            "TaskPlanPatch removeRelations reference unknown relations: " + formatted
+        )
+    for key in sorted({*patch.retire_keys, *patch.replace_keys}):
+        nodes.pop(key)
     for node in patch.add_nodes:
         if node.key in nodes:
             raise ACGPlanningError(f"TaskPlanPatch duplicates active semantic key: {node.key}")

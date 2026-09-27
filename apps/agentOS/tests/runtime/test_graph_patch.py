@@ -11,8 +11,6 @@ from components.mission_manager.store import WorkflowRegistry
 from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.planning import (
     PlannedTask,
-    TaskBindingPatch,
-    TaskImplementationBinding,
     TaskPlanPatch,
     TaskPlanRelation,
 )
@@ -28,7 +26,7 @@ from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, ACGResourcePlan, AgentBindingSpec
+from support.acg.models import ACGBlueprint
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -38,7 +36,10 @@ class _Agent(BaseAgent):
             agentId=agent_id,
             agentName=name,
             domain="general",
-            capabilities=["analysis"],
+            capabilities=[
+                "analysis",
+                *(["task_understanding"] if name == "runner" else []),
+            ],
             bindingPriority=priority,
         ))
         self.calls = calls if calls is not None else []
@@ -55,8 +56,18 @@ def _workflow():
         domain="general",
         runtimeEngine="acg",
         planningNodes=(
-            PlannedTask(key="step:review", title="review", objective="review"),
-            PlannedTask(key="step:deliver", title="deliver", objective="deliver"),
+            PlannedTask(
+                key="step:review",
+                title="review",
+                objective="review",
+                capabilityRequirements=("task_understanding",),
+            ),
+            PlannedTask(
+                key="step:deliver",
+                title="deliver",
+                objective="deliver",
+                capabilityRequirements=("analysis",),
+            ),
         ),
         planningRelations=(TaskPlanRelation(
             sourceKey="step:review",
@@ -68,6 +79,7 @@ def _workflow():
                 stepId="review",
                 name="review",
                 agentName="runner",
+                capability="task_understanding",
                 reviewRequired=True,
             ),
             WorkflowStepDefinition(
@@ -120,7 +132,10 @@ def _add_request(mission_id, paused, blueprint):
             basePlanVersion=1,
             planVersion=2,
             addNodes=(PlannedTask(
-                key="step:enrich", title="enrich", objective="enrich"
+                key="step:enrich",
+                title="enrich",
+                objective="enrich",
+                capabilityRequirements=("analysis",),
             ),),
             removeRelations=(relation,),
             relations=(
@@ -136,12 +151,6 @@ def _add_request(mission_id, paused, blueprint):
                 ),
             ),
         ),
-        taskNodeBindingPatch=TaskBindingPatch(bindings=(
-            TaskImplementationBinding(planNodeKey="step:enrich", acgNodeId="enrich"),
-        )),
-        resourcePlanPatch=ACGResourcePlan(bindings=(
-            AgentBindingSpec(stepId="enrich", plannedAgentId="runner"),
-        )),
     )
 
 

@@ -10,7 +10,7 @@ from components.planner.topology import (
     catalog_fingerprint, is_model_repair_eligible, successful_topology_audit,
 )
 from components.planner.semantic_planner import SemanticPlanner
-from components.planner.service import apply_task_plan_patch
+from components.planner.service import ACGPlanningError, apply_task_plan_patch
 from contracts.planning import (
     PlannedTask, TaskPlan, TaskPlanPatch, TaskPlanRelation, VerificationLoopPolicy,
 )
@@ -406,6 +406,36 @@ def test_valid_patch_is_validated_and_returns_new_immutable_version() -> None:
     }
     assert current.plan_version == 1
     assert [node.key for node in current.nodes] == ["A", "B"]
+
+
+@pytest.mark.parametrize("operation", ["retire", "replace", "remove_relation"])
+def test_patch_rejects_unknown_revision_targets(operation: str) -> None:
+    current = TaskPlan(
+        missionId="mission_0123456789ab",
+        nodes=(_task("A", "cap_a"), _task("B", "cap_c")),
+        relations=(TaskPlanRelation(
+            sourceKey="A", targetKey="B", relationType="depends_on"
+        ),),
+    )
+    kwargs = {}
+    if operation == "retire":
+        kwargs["retireKeys"] = ("missing",)
+    elif operation == "replace":
+        kwargs["replaceKeys"] = ("missing",)
+        kwargs["addNodes"] = (_task("missing", "cap_c"),)
+    else:
+        kwargs["removeRelations"] = (TaskPlanRelation(
+            sourceKey="B", targetKey="A", relationType="depends_on"
+        ),)
+    patch = TaskPlanPatch(
+        missionId=current.mission_id,
+        basePlanVersion=1,
+        planVersion=2,
+        **kwargs,
+    )
+
+    with pytest.raises(ACGPlanningError, match="unknown"):
+        apply_task_plan_patch(current, patch, _catalog())
 
 
 def test_patch_cycle_fails_closed_with_structured_conflict() -> None:

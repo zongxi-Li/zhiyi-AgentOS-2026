@@ -10,16 +10,24 @@ from pydantic import ValidationError
 from components.executor import GraphPatchConflictError, InMemoryExecutionValueStore
 from components.mission_manager.store import WorkflowRegistry
 from components.planner.topology import TopologyCompileError
+from components.resource.service import ResourceService
 from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.planning import (
     PlannedTask,
-    TaskBindingPatch,
     TaskImplementationBinding,
     TaskPlanPatch,
     TaskPlanRelation,
     VerificationLoopPolicy,
 )
 from contracts.recovery import GraphPatch, SemanticPatchRequest
+from contracts.resource import (
+    DeploymentTier,
+    ResourceEndpoint,
+    ResourceHealthStatus,
+    ResourceProfile,
+    ResourceSnapshot,
+    ResourceType,
+)
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime import ExecutionRuntime
 from runtime.semantic_patch import derive_graph_patch
@@ -27,13 +35,17 @@ from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
 from service.agents import AgentRegistry
 from service.agents.base import AgentOutput, AgentProfile, BaseAgent
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, ACGResourcePlan, AgentBindingSpec, EdgeType
+from support.acg.models import ACGBlueprint, EdgeType, StepNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
 class _Agent(BaseAgent):
     def __init__(self) -> None:
-        super().__init__(AgentProfile(agentName="runner", domain="general"))
+        super().__init__(AgentProfile(
+            agentName="runner",
+            domain="general",
+            capabilities=["task_understanding"],
+        ))
 
     async def run(self, context):
         return AgentOutput(output={"value": context.step.step_id})
@@ -82,7 +94,7 @@ def _paused(tmp_path):
     return runtime, lifecycle, mission, run
 
 
-def _request(mission, run, blueprint, plan_patch, *, bindings=None, resources=None, patch_id="p1"):
+def _request(mission, run, blueprint, plan_patch, *, patch_id="p1"):
     return SemanticPatchRequest(
         patchId=patch_id,
         idempotencyKey=f"{patch_id}:v1",
@@ -90,10 +102,6 @@ def _request(mission, run, blueprint, plan_patch, *, bindings=None, resources=No
         graphId=blueprint.graph_id,
         baseGraphVersion=blueprint.version,
         taskPlanPatch=plan_patch,
-        taskNodeBindingPatch=(
-            TaskBindingPatch(bindings=tuple(bindings)) if bindings else None
-        ),
-        resourcePlanPatch=resources,
     )
 
 
@@ -109,7 +117,12 @@ def test_add_task_is_lowered_from_task_plan_and_graph_patch_is_derived(tmp_path)
                 missionId=mission.mission_id,
                 basePlanVersion=1,
                 planVersion=2,
-                addNodes=(PlannedTask(key="step:C", title="C", objective="do C"),),
+                addNodes=(PlannedTask(
+                    key="step:C",
+                    title="C",
+                    objective="do C",
+                    capabilityRequirements=("task_understanding",),
+                ),),
                 removeRelations=(TaskPlanRelation(
                     sourceKey="step:A", targetKey="step:B", relationType="depends_on"
                 ),),
@@ -122,10 +135,6 @@ def test_add_task_is_lowered_from_task_plan_and_graph_patch_is_derived(tmp_path)
                     ),
                 ),
             ),
-            bindings=(TaskImplementationBinding(planNodeKey="step:C", acgNodeId="C"),),
-            resources=ACGResourcePlan(bindings=(
-                AgentBindingSpec(stepId="C", plannedAgentId="runner"),
-            )),
         )
         result = asyncio.run(runtime.apply_semantic_patch(request))
         replacement = runtime.workflow_store.get_run(result.run_id)
@@ -136,11 +145,80 @@ def test_add_task_is_lowered_from_task_plan_and_graph_patch_is_derived(tmp_path)
         }
         assert dependencies == {("A", "C"), ("C", "B")}
         assert replacement.execution_state["resourceBindings"] == {}
+        assert all(
+            item["policyMetadata"]["source"] == "compiled-binding-manifest"
+            for item in replacement.execution_state["bindingRequirements"].values()
+        )
+        for stale_key in (
+            "checkpointId",
+            "outputRefs",
+            "contextRefs",
+            "memoryRefs",
+            "provenanceRefs",
+            "reviewPayload",
+            "executionBindings",
+            "schedulingDecisions",
+            "controlFrames",
+            "loopIterations",
+        ):
+            assert stale_key not in replacement.execution_state
         stored = runtime.execution_value_store.get_graph_patch(
             run_id=result.run_id, patch_ref=result.patch_ref.uri
         )
         assert stored["addedNodes"][0]["nodeId"] == "C"
         assert "taskPlanPatch" not in stored
+    finally:
+        lifecycle.close()
+
+
+def test_semantic_replacement_uses_normal_local_and_remote_candidate_registration(tmp_path):
+    runtime, lifecycle, mission, paused = _paused(tmp_path)
+    try:
+        resources: ResourceService = runtime.legacy_resource_service
+        resources.register(
+            ResourceProfile(
+                resourceId="edge-01",
+                resourceType=ResourceType.WORKER,
+                deploymentTier=DeploymentTier.EDGE,
+                capabilities=["task_understanding"],
+                executionEndpoint=ResourceEndpoint(
+                    protocol="http", address="http://edge-01:9000"
+                ),
+            ),
+            ResourceSnapshot(
+                resourceId="edge-01",
+                availableSlots=1,
+                utilization=0.0,
+                healthStatus=ResourceHealthStatus.UNKNOWN,
+            ),
+        )
+        resources.heartbeat("edge-01", source="external")
+        old = ACGBlueprint.model_validate(paused.acg_blueprint)
+        request = _request(
+            mission,
+            paused,
+            old,
+            TaskPlanPatch(
+                missionId=mission.mission_id,
+                basePlanVersion=1,
+                planVersion=2,
+                addNodes=(PlannedTask(
+                    key="step:C",
+                    title="C",
+                    objective="do C",
+                    capabilityRequirements=("task_understanding",),
+                ),),
+            ),
+            patch_id="remote-candidate",
+        )
+
+        result = asyncio.run(runtime.apply_semantic_patch(request))
+        replacement = runtime.workflow_store.get_run(result.run_id)
+
+        assert replacement.execution_state["resourceBindings"] == {}
+        assert replacement.execution_state["bindingRequirements"]["C"][
+            "allowedResourceIds"
+        ] == ["runner", "edge-01"]
     finally:
         lifecycle.close()
 
@@ -235,7 +313,7 @@ def test_cycle_is_rejected_by_topology_compiler_before_transition(tmp_path):
         lifecycle.close()
 
 
-def test_capability_change_requires_replacement_planning_decisions(tmp_path):
+def test_capability_change_is_planned_before_lowering(tmp_path):
     runtime, lifecycle, mission, paused = _paused(tmp_path)
     try:
         old = ACGBlueprint.model_validate(paused.acg_blueprint)
@@ -251,29 +329,62 @@ def test_capability_change_requires_replacement_planning_decisions(tmp_path):
                 capabilityRequirements=("task_understanding",),
             ),),
         )
-        incomplete = _request(mission, paused, old, plan_patch, patch_id="cap-missing")
-        with pytest.raises(ValueError, match="TaskBindingPatch"):
-            asyncio.run(runtime.apply_semantic_patch(incomplete))
-
-        complete = _request(
+        request = _request(
             mission,
             paused,
             old,
             plan_patch,
-            bindings=(TaskImplementationBinding(planNodeKey="step:B", acgNodeId="B2"),),
-            resources=ACGResourcePlan(bindings=(AgentBindingSpec(
-                stepId="B2",
-                plannedAgentId="runner",
-                requiredCapabilities=("task_understanding",),
-            ),)),
-            patch_id="cap-complete",
+            patch_id="capability-change",
         )
-        result = asyncio.run(runtime.apply_semantic_patch(complete))
-        revised = ACGBlueprint.model_validate(
-            runtime.workflow_store.get_run(result.run_id).acg_blueprint
+        result = asyncio.run(runtime.apply_semantic_patch(request))
+        replacement = runtime.workflow_store.get_run(result.run_id)
+        revised = ACGBlueprint.model_validate(replacement.acg_blueprint)
+        assert next(node for node in revised.step_nodes() if node.node_id == "B").capability == "task_understanding"
+        stored = runtime.execution_value_store.get_graph_patch(
+            run_id=result.run_id, patch_ref=result.patch_ref.uri
         )
-        assert next(node for node in revised.step_nodes() if node.node_id == "B2").capability == "task_understanding"
-        assert not revised.has_node("B")
+        assert stored["updatedNodes"][0]["nodeId"] == "B"
+        assert stored["updatedNodes"][0]["before"]["goal"] != "analyse B"
+        assert stored["updatedNodes"][0]["after"]["goal"] == "analyse B"
+    finally:
+        lifecycle.close()
+
+
+def test_new_semantic_task_does_not_reuse_retired_historical_node_id(tmp_path):
+    runtime, lifecycle, mission, paused = _paused(tmp_path)
+    try:
+        old = ACGBlueprint.model_validate(paused.acg_blueprint)
+        request = _request(
+            mission,
+            paused,
+            old,
+            TaskPlanPatch(
+                missionId=mission.mission_id,
+                basePlanVersion=1,
+                planVersion=2,
+                retireKeys=("step:B",),
+                addNodes=(PlannedTask(
+                    key="replacement:B",
+                    title="replacement B",
+                    objective="replace B",
+                    capabilityRequirements=("task_understanding",),
+                ),),
+            ),
+            patch_id="historical-node-id",
+        )
+
+        result = asyncio.run(runtime.apply_semantic_patch(request))
+        replacement = runtime.workflow_store.get_run(result.run_id)
+        revised = ACGBlueprint.model_validate(replacement.acg_blueprint)
+        node_ids = {node.node_id for node in revised.step_nodes()}
+        stored = runtime.execution_value_store.get_graph_patch(
+            run_id=result.run_id, patch_ref=result.patch_ref.uri
+        )
+
+        assert "B" not in node_ids
+        assert "B_2" in node_ids
+        assert stored["removedNodeIds"] == ["B"]
+        assert stored["addedNodes"][0]["nodeId"] == "B_2"
     finally:
         lifecycle.close()
 
@@ -310,13 +421,42 @@ def test_explicit_control_change_is_lowered_from_task_plan_policy(tmp_path):
 
 
 def test_derived_graph_patch_is_deterministic():
-    old = ACGBlueprint(missionId="m", graphId="g", objective="old", version=1)
+    old = ACGBlueprint(
+        missionId="m",
+        graphId="g",
+        objective="old",
+        version=1,
+        nodes=(StepNode(nodeId="A", name="A", goal="old goal"),),
+    )
     new = old.model_copy(deep=True)
     new.version = 2
+    new.step_nodes()[0].goal = "new goal"
     first = derive_graph_patch(old, new, patch_id="derived")
     second = derive_graph_patch(old, new, patch_id="derived")
     assert first == second
     assert first.checksum() == second.checksum()
+    assert first.updated_nodes[0]["beforeHash"] == second.updated_nodes[0]["beforeHash"]
+    assert first.updated_nodes[0]["afterHash"] == second.updated_nodes[0]["afterHash"]
+
+
+@pytest.mark.parametrize("field", ["taskNodeBindingPatch", "resourcePlanPatch"])
+def test_semantic_patch_request_rejects_implementation_planning_fields(field):
+    payload = {
+        "patchId": "semantic-only",
+        "idempotencyKey": "semantic-only:v1",
+        "runId": "run",
+        "graphId": "graph",
+        "baseGraphVersion": 1,
+        "taskPlanPatch": {
+            "missionId": "mission_0123456789ab",
+            "basePlanVersion": 1,
+            "planVersion": 2,
+            "retireKeys": ["step:A"],
+        },
+        field: {},
+    }
+    with pytest.raises(ValidationError):
+        SemanticPatchRequest.model_validate(payload)
 
 
 def test_legacy_arbitrary_graph_patch_payload_is_rejected():

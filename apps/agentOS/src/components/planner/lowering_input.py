@@ -140,7 +140,7 @@ def build_acg_lowering_input(
             communication.append(CommunicationSpec(
                 producerStepId=source_id,
                 consumerStepId=target_id,
-                allowedFields=tuple(_output_fields(source_descriptor.output_contract)),
+                allowedFields=tuple(output_fields(source_descriptor.output_contract)),
                 channel=f"{source_id}:{target_id}",
                 mode="STRICT_CONTRACT",
             ))
@@ -170,7 +170,7 @@ def build_acg_lowering_input(
     )
 
     steps = tuple(
-        _lowering_step(
+        lowering_step_from_task(
             task=task,
             descriptor=descriptors[task.key],
             node_id=node_id_by_task[task.key],
@@ -321,7 +321,7 @@ def lowering_input_from_blueprint(
     )
 
 
-def _lowering_step(
+def lowering_step_from_task(
     *,
     task,
     descriptor: PlanningCapabilityDescriptor,
@@ -331,10 +331,15 @@ def _lowering_step(
     descriptors: dict[str, PlanningCapabilityDescriptor],
     expected_artifacts: tuple[str, ...],
     router_score: float,
+    dependency_output_contracts: dict[str, dict] | None = None,
 ) -> ACGLoweringStep:
     from_map = {
-        node_id_by_task[dependency]: _output_fields(
-            descriptors[dependency].output_contract
+        node_id_by_task[dependency]: output_fields(
+            (
+                dependency_output_contracts[dependency]
+                if dependency_output_contracts is not None
+                else descriptors[dependency].output_contract
+            )
         )
         for dependency in dependencies
     }
@@ -444,7 +449,7 @@ def _step_id(agent_name: str, capability_id: str, used_ids: set[str]) -> str:
     return node_id
 
 
-def _output_fields(contract: dict) -> list[str]:
+def output_fields(contract: dict) -> list[str]:
     required = contract.get("required") if isinstance(contract, dict) else None
     return [str(item) for item in required] if isinstance(required, list) else []
 
@@ -465,5 +470,7 @@ def _add_dependency(blueprint: ACGBlueprint, source_id: str, target_id: str) -> 
 __all__ = [
     "build_acg_lowering_input",
     "build_template_lowering_input",
+    "lowering_step_from_task",
     "lowering_input_from_blueprint",
+    "output_fields",
 ]

@@ -1068,6 +1068,34 @@ class ExecutionRuntime:
         state_data.setdefault("runId", run.run_id)
         return ACGExecutionState.model_validate(state_data)
 
+    @staticmethod
+    def _fresh_replacement_execution_state(
+        source: RuntimeRunRecord,
+    ) -> dict[str, Any]:
+        """Create a new execution boundary without copying superseded results."""
+
+        source_state = (
+            source.execution_state if isinstance(source.execution_state, dict) else {}
+        )
+        inherited_planning_context = (
+            "pluginScopeResolution",
+            "visibleCapabilityCount",
+            "scopeExcludedAgentCount",
+            "planningDiversity",
+            "requestedCapabilityProfile",
+            "effectiveCapabilityProfile",
+            "capabilityProfileReason",
+            "planningSeed",
+            "plannerAlgorithmVersion",
+            "evolutionPolicyVersion",
+            "evolutionPolicy",
+        )
+        fresh: dict[str, Any] = {"engineMigration": "langgraph_pending"}
+        for key in inherited_planning_context:
+            if key in source_state:
+                fresh[key] = deepcopy(source_state[key])
+        return fresh
+
     def _materialize_acg_run(
         self,
         *,
@@ -4063,6 +4091,8 @@ class ExecutionRuntime:
                 request=request,
                 current_plan=current_plan,
                 base_bindings=base_bindings,
+                agent_registry=self.agent_registry.scoped(scope.agent_ids),
+                domain=workflow.domain or task.domain,
                 capability_catalog=self.capability_catalog,
                 audit_sink=topology_audits.append,
             )
@@ -4113,27 +4143,29 @@ class ExecutionRuntime:
                 "checkpoints": [],
                 "trace": [],
                 "error": None,
+                "recoveryCount": 0,
+                "idempotencyKey": None,
+                "idempotencyFingerprint": None,
                 "completedStepIds": [],
                 "activeStepIds": [],
+                "provenance": None,
+                "executionState": self._fresh_replacement_execution_state(run),
+                "runtimeRevision": 0,
                 "acgBlueprint": outcome_blueprint.model_dump(by_alias=True, mode="json"),
                 "createdAt": utc_now().isoformat(),
                 "updatedAt": utc_now().isoformat(),
             })
             new_run = RuntimeRunRecord.model_validate(new_payload)
             self._sync_run_steps_to_acg(new_run, outcome_blueprint)
-            for agent in self.agent_registry.all():
-                self.resource_directory.register_agent(agent.profile)
-            bindings: dict[str, str] = {}
-            requirements: dict[str, dict[str, Any]] = {}
-            for step in new_run.steps:
-                requirements[step.step_id] = BindingRequirement(
-                    requiredCapabilities=[
-                        step.capability or f"agent:{step.agent_name.lower()}"
-                    ],
-                    domain=workflow.domain,
-                    allowedResourceIds=list(scope.agent_ids),
-                    policyMetadata={"source": "semantic-patch", "stepId": step.step_id},
-                ).model_dump(by_alias=True, mode="json")
+            compiled_package = ACGGraphCompiler().compile_package(
+                outcome_blueprint, run_id=new_run.run_id
+            )
+            self._register_runtime_resources(
+                run=new_run,
+                workflow=workflow,
+                scope=scope,
+                binding_manifest=compiled_package.binding_manifest,
+            )
 
             graph_patch = derive_graph_patch(
                 blueprint,
@@ -4184,8 +4216,8 @@ class ExecutionRuntime:
             outcome_blueprint.metadata["appliedGraphPatches"] = applied_metadata
             new_run.acg_blueprint = outcome_blueprint.model_dump(by_alias=True, mode="json")
             new_run.execution_state.update({
-                "resourceBindings": bindings,
-                "bindingRequirements": requirements,
+                "workflowVersion": workflow.version,
+                "graphId": outcome_blueprint.graph_id,
                 "sourceBlueprintVersion": outcome_blueprint.version,
                 "graphVersion": outcome_blueprint.version,
                 "graphDiff": graph_patch.model_dump(by_alias=True, mode="json"),
@@ -4200,9 +4232,6 @@ class ExecutionRuntime:
                 **({"topologyAudit": topology_audits[-1]} if topology_audits else {}),
                 "graphPatchRefs": [patch_uri],
             })
-            compiled_package = ACGGraphCompiler().compile_package(
-                outcome_blueprint, run_id=new_run.run_id
-            )
             new_run.execution_state.update({
                 "compiledACGPackage": compiled_package.model_dump(
                     by_alias=True, mode="json"
