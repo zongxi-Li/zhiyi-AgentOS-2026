@@ -7,16 +7,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from components.auditor.governance.trace import TraceStore
 from components.executor import (
     ACGExecutionState,
     ACGGraphCompiler,
-    ExecutionValueStore,
     GraphPatchConflictError,
 )
 from components.planner.acg_semantic_validator import validate_bound_acg_semantics
-from components.recovery.checkpoint import ACGCheckpointStore
-from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.compiled_acg import CompiledACGPackage
 from contracts.execution import WorkflowProgressPhase
 from contracts.planning import TaskImplementationBinding, TaskPlan
@@ -35,10 +31,8 @@ from contracts.workflow import (
     WorkflowStatus,
     utc_now,
 )
-from service.agents import AgentRegistry
-from support.acg.capabilities import CapabilityCatalog
 from support.acg.schema import RuntimeBlueprintSpec
-from support.stores.workflow_store import WorkflowStore
+from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 
 from runtime.semantic_patch import SemanticGraphPatchService, derive_graph_patch
 
@@ -59,32 +53,20 @@ class PreparedSemanticRevision:
     topology_audits: tuple[dict[str, Any], ...]
 
 
-class SemanticRevisionService:
+class SemanticRevisionService(CollaboratorAccess):
     """Prepare and atomically persist one canonical semantic revision."""
 
     def __init__(
         self,
         *,
-        workflow_store: WorkflowStore,
-        checkpoint_store: ACGCheckpointStore,
-        execution_value_store: ExecutionValueStore,
-        identity_lifecycle: AcgIdentityLifecyclePort | None,
-        capability_catalog: CapabilityCatalog,
-        agent_registry: AgentRegistry,
-        trace_store: TraceStore,
+        collaborators: RuntimeCollaborators,
         load_mission: Callable[[str], RuntimeMissionRecord],
         load_workflow: Callable[[RuntimeRunRecord], WorkflowDefinition],
         sync_run_steps: Callable[[RuntimeRunRecord, RuntimeBlueprintSpec], None],
         validate_blueprint_agents: Callable[..., None],
         replacement_lifecycle_message: str,
     ) -> None:
-        self.workflow_store = workflow_store
-        self.checkpoint_store = checkpoint_store
-        self.execution_value_store = execution_value_store
-        self.identity_lifecycle = identity_lifecycle
-        self.capability_catalog = capability_catalog
-        self.agent_registry = agent_registry
-        self.trace_store = trace_store
+        self.ports = collaborators
         self.load_mission = load_mission
         self.load_workflow = load_workflow
         self.sync_run_steps = sync_run_steps

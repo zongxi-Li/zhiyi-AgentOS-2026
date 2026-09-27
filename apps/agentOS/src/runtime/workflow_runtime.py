@@ -12,7 +12,6 @@ import os
 import secrets
 import threading
 from time import monotonic
-from contracts.identity import new_attempt_id, new_step_execution_id
 from typing import Any, Callable, Mapping, Optional
 
 from service.agents import AgentRegistry
@@ -36,7 +35,6 @@ from components.executor import (
     ExecutionValueStore,
     SQLiteExecutionValueStore,
 )
-from components.memory import MemoryService, StructuredMemoryEvent
 from components.evolution.service import EvolutionService
 from contracts.evolution import (
     EvolutionPolicyVersion,
@@ -46,8 +44,6 @@ from contracts.evolution import (
 )
 from components.memory.store import SQLiteMemoryStore
 from components.content import ContentManifestStore, SQLiteContentManifestStore
-from contracts.memory import MemoryPolicy, MemoryType
-from contracts.resource import BindingRequirement
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
     TaskImplementationBinding,
@@ -57,7 +53,7 @@ from components.planner.acg_semantic_validator import (
     validate_bound_acg_semantics,
 )
 from components.resource.agent_service import AgentService
-from components.resource.directory import ResourceDirectory, ResourceNotFoundError
+from components.resource.directory import ResourceDirectory
 from components.resource.node_service import NodeService
 from components.resource.service import ResourceService
 from components.scheduler.service import SchedulerService
@@ -75,7 +71,6 @@ from contracts.workflow import (
     Checkpoint,
     EvaluationRun,
     ReviewDecision,
-    ReviewDecisionType,
     ReviewRecord,
     StepStatus,
     TraceEventType,
@@ -103,15 +98,20 @@ from components.planner.service import (
 )
 from runtime.binding import RuntimeBindingService
 from runtime.acg_execution import ACGExecutionService, ExecutionRunCancelled
+from runtime.ports import CollaboratorAccess, RuntimeCollaborators
+from runtime.review import ReviewConflictError, ReviewService
+from runtime.runtime_recovery import RuntimeRecoveryCoordinator
 from runtime.semantic_revision import SemanticRevisionService
-from runtime.state_persistence import ACGStatePersistenceService
+from runtime.state_persistence import (
+    ACGStatePersistenceService,
+    acg_execution_state_from_run,
+)
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
 from adapters.model.native import register_native_runtime
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.workflow_store import WorkflowStore
-from support.stores._policy import acg_review_subject
 
 
 logger = logging.getLogger(__name__)
@@ -217,11 +217,7 @@ def _safe_topology_audit(value: object) -> dict[str, Any]:
     return safe
 
 
-class ReviewConflictError(ValueError):
-    """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
-
-
-class ExecutionRuntime:
+class ExecutionRuntime(CollaboratorAccess):
     """唯一 Execution Runtime 执行内核，串联规划、调度、节点执行、审核与恢复。"""
 
     def __init__(
@@ -267,93 +263,109 @@ class ExecutionRuntime:
             raise ValueError("model_max_concurrency must be at least 1")
         if model_min_interval_seconds < 0:
             raise ValueError("model_min_interval_seconds must not be negative")
-        self.agent_registry = agent_registry or AgentRegistry()
-        self.workflow_registry = workflow_registry or WorkflowRegistry()
-        self.capability_catalog = capability_catalog or build_default_capability_catalog()
+        resolved_agent_registry = agent_registry or AgentRegistry()
+        resolved_capability_catalog = capability_catalog or build_default_capability_catalog()
         if resource_directory is not None:
             directory_service = resource_directory.resource_service
             if resource_service is not None and directory_service is not resource_service:
                 raise ValueError("ResourceDirectory must delegate to the injected ResourceService")
-            self.resource_directory = resource_directory
-            self.resource_service = resource_service or directory_service
+            resolved_resource_directory = resource_directory
+            resolved_resource_service = resource_service or directory_service
         else:
             # 新账本装配下对外 resource_service 可为 None；兼容投影始终由
             # directory 内部自建的 legacy ResourceService 支撑（旧调度器与
             # 旧端点继续可用，旧 Resource 删除工作留待后续阶段）。
-            self.resource_directory = ResourceDirectory(resource_service)
-            self.resource_service = resource_service
+            resolved_resource_directory = ResourceDirectory(resource_service)
+            resolved_resource_service = resource_service
         # 旧 ResourceService 的兼容访问点：对外 resource_service 可为 None，
         # 内部永远保留一个可用源，供旧 SchedulerService 与投影读取。
-        self.legacy_resource_service = self.resource_service or self.resource_directory.resource_service
-        self.node_service = node_service or NodeService()
-        self.agent_service = agent_service or AgentService()
-        self.scheduler_service = scheduler_service or TwoLayerSchedulerService(
-            node_service=self.node_service,
-            agent_service=self.agent_service,
+        resolved_legacy_resource_service = (
+            resolved_resource_service or resolved_resource_directory.resource_service
         )
-        self.legacy_scheduler_service = legacy_scheduler_service or SchedulerService(
-            resource_service=self.legacy_resource_service
+        resolved_node_service = node_service or NodeService()
+        resolved_agent_service = agent_service or AgentService()
+        resolved_scheduler_service = scheduler_service or TwoLayerSchedulerService(
+            node_service=resolved_node_service,
+            agent_service=resolved_agent_service,
         )
-        if self.legacy_scheduler_service.resource_service is None:
+        resolved_legacy_scheduler_service = legacy_scheduler_service or SchedulerService(
+            resource_service=resolved_legacy_resource_service
+        )
+        if resolved_legacy_scheduler_service.resource_service is None:
             # 旧 SchedulerService 依赖 ResourceService；即使调用方只注入了
             # coordinator，也回填兼容投影源，保证 schedule_ready/release 可用。
-            self.legacy_scheduler_service.resource_service = self.legacy_resource_service
-        self.scheduler_wait_timeout = float(scheduler_wait_timeout)
+            resolved_legacy_scheduler_service.resource_service = resolved_legacy_resource_service
+        # 共享协作者上下文：facade 与全部已提取服务按引用共享同一实例，属性
+        # 写入即时可见，取代 PR-8C.2 的派发前逐项重对齐（测试在构造后替换
+        # store、身份生命周期或调度参数时经由属性 setter 落进本上下文）。
+        self.ports = RuntimeCollaborators(
+            workflow_store=workflow_store or MemoryWorkflowStore(),
+            trace_store=trace_store or TraceStore(),
+            # 融合 ACG 使用独立 SQLite 检查点与正文引用仓库。检查点只保存 State
+            # 引用；输出和 ContextPack 正文保存在另一文件，进程重启后仍可安全地
+            # 继续审核流程。
+            checkpoint_store=checkpoint_store or ACGCheckpointStore(),
+            execution_value_store=execution_value_store or SQLiteExecutionValueStore(
+                db_path=os.getenv("AGENTOS_EXECUTION_VALUE_DB", "data/execution_values.sqlite3")
+            ),
+            # L0/L3/L5 共用的内容寻址存储只保存 Manifest 与不可变 Fragment；它是
+            # 当前 ExecutionRuntime 的一个持久化端口，不构成第二套 Runtime 或 Memory。
+            content_manifest_store=content_manifest_store or SQLiteContentManifestStore(
+                os.getenv("AGENTOS_CONTENT_MANIFEST_DB", "data/content_manifests.sqlite3")
+            ),
+            memory_store=memory_store or SQLiteMemoryStore(
+                db_path=os.getenv("AGENTOS_EXECUTION_MEMORY_DB", "data/execution_memory.sqlite3")
+            ),
+            # 血缘账本与 checkpoint、正文仓库分文件保存。每次构建节点运行器前都会
+            # 先重建并验证同 run 哈希链；损坏账本不会被静默绕过。
+            provenance_store=provenance_store or SQLiteProvenanceStore(
+                db_path=os.getenv("AGENTOS_PROVENANCE_DB", "data/provenance.sqlite3")
+            ),
+            # 审计决定独立于 Trace、checkpoint 和输出正文保存。恢复时引用必须从
+            # 这里重新验证 run/step 归属，不能信任检查点或节点提交中的字符串。
+            decision_store=decision_store or SQLiteDecisionStore(
+                db_path=os.getenv("AGENTOS_AUDIT_DB", "data/audit_decisions.sqlite3")
+            ),
+            reliable_communication_store=SQLiteReliableCommunicationStore(
+                os.getenv("AGENTOS_COMMUNICATION_DB", "data/communication.sqlite3")
+            ),
+            capability_catalog=resolved_capability_catalog,
+            agent_registry=resolved_agent_registry,
+            resource_directory=resolved_resource_directory,
+            legacy_resource_service=resolved_legacy_resource_service,
+            node_service=resolved_node_service,
+            agent_service=resolved_agent_service,
+            scheduler_service=resolved_scheduler_service,
+            legacy_scheduler_service=resolved_legacy_scheduler_service,
+            scheduler_wait_timeout=float(scheduler_wait_timeout),
+            resource_execution_adapters=dict(resource_execution_adapters or {}),
+            tool_runtime=tool_runtime,
+            model_registry=model_registry or ModelCompatibilityRegistry(),
+            identity_lifecycle=identity_lifecycle,
+            # Composition installs this optional resolver. Persisted Mission/Run
+            # inputs keep stable refs; bounded text is added only to model-bound
+            # copies. Application composition sets default_model_binding after
+            # model setup parsing; it is read only while a run is prepared and
+            # copied into frozen bindings.
+            attachment_context_builder=None,
+            model_runtime=None,
+            default_model_binding=None,
+            # 测试可临时设置该私有钩子，模拟进程在一个已提交边界后消失。它不属于
+            # 构造参数、环境变量或公开 contracts，生产运行时始终保持 ``None``。
+            fault_hook=None,
+        )
+        self.workflow_registry = workflow_registry or WorkflowRegistry()
+        self.resource_service = resolved_resource_service
         self.model_max_concurrency = int(model_max_concurrency)
         self.model_min_interval_seconds = float(model_min_interval_seconds)
-        self.resource_execution_adapters = dict(resource_execution_adapters or {})
         self.evolution_service = evolution_service or EvolutionService()
-        # 注册表只保存应用层已创建的模型适配器；Runtime 不在内部创建网络客户端。
-        # 调用方可传入 bootstrap 产生的同一实例，使启动装配与工作流执行共享路由。
-        self.model_registry = model_registry or ModelCompatibilityRegistry()
         self.plugin_manifests = tuple(plugin_manifests)
-        self.identity_lifecycle = identity_lifecycle
         self.require_planner_identity = require_planner_identity
-        self.workflow_store = workflow_store or MemoryWorkflowStore()
-        self.trace_store = trace_store or TraceStore()
-        # 融合 ACG 使用独立 SQLite 检查点与正文引用仓库。检查点只保存 State 引用；
-        # 输出和 ContextPack 正文保存在另一文件，进程重启后仍可安全地继续审核流程。
-        self.checkpoint_store = checkpoint_store or ACGCheckpointStore()
-        self.execution_value_store = execution_value_store or SQLiteExecutionValueStore(
-            db_path=os.getenv("AGENTOS_EXECUTION_VALUE_DB", "data/execution_values.sqlite3")
-        )
-        # L0/L3/L5 共用的内容寻址存储只保存 Manifest 与不可变 Fragment；它是
-        # 当前 ExecutionRuntime 的一个持久化端口，不构成第二套 Runtime 或 Memory。
-        self.content_manifest_store = content_manifest_store or SQLiteContentManifestStore(
-            os.getenv("AGENTOS_CONTENT_MANIFEST_DB", "data/content_manifests.sqlite3")
-        )
-        # Composition installs this optional resolver. Persisted Mission/Run
-        # inputs keep stable refs; bounded text is added only to model-bound copies.
-        self.attachment_context_builder = None
         self.attachment_service = None
         self.orphan_cleaner = ExecutionOrphanCleaner(value_store=self.execution_value_store)
-        self.memory_store = memory_store or SQLiteMemoryStore(
-            db_path=os.getenv("AGENTOS_EXECUTION_MEMORY_DB", "data/execution_memory.sqlite3")
-        )
-        # 血缘账本与 checkpoint、正文仓库分文件保存。每次构建节点运行器前都会先
-        # 重建并验证同 run 哈希链；损坏账本不会被静默绕过。
-        self.provenance_store = provenance_store or SQLiteProvenanceStore(
-            db_path=os.getenv("AGENTOS_PROVENANCE_DB", "data/provenance.sqlite3")
-        )
-        # 审计决定独立于 Trace、checkpoint 和输出正文保存。恢复时引用必须从这里
-        # 重新验证 run/step 归属，不能信任检查点或节点提交中的字符串。
-        self.decision_store = decision_store or SQLiteDecisionStore(
-            db_path=os.getenv("AGENTOS_AUDIT_DB", "data/audit_decisions.sqlite3")
-        )
-        self.reliable_communication_store = SQLiteReliableCommunicationStore(
-            os.getenv("AGENTOS_COMMUNICATION_DB", "data/communication.sqlite3")
-        )
-        # 测试可临时设置该私有钩子，模拟进程在一个已提交边界后消失。它不属于构造
-        # 参数、环境变量或公开 contracts，生产运行时始终保持 ``None``。
-        self._fault_hook: Callable[[str], None] | None = None
-        self.tool_runtime = tool_runtime
         self.review_manager = review_manager or ReviewManager(self.trace_store)
         self.evaluator = evaluator or WorkflowEvaluator()
         self.state_machine = StateMachine()
-        self._model_runtime = None
-        # Application composition sets this after model setup parsing. It is
-        # read only while a run is prepared and copied into frozen bindings.
-        self.default_model_binding: dict[str, str] | None = None
         self.mission_manager = mission_manager or MissionManager(
             workflow_store=self.workflow_store,
             workflow_registry=self.workflow_registry,
@@ -367,18 +379,11 @@ class ExecutionRuntime:
             resource_execution_adapters=self.resource_execution_adapters,
         )
         self.acg_state_persistence = ACGStatePersistenceService(
-            checkpoint_store=self.checkpoint_store,
-            workflow_store=self.workflow_store,
+            collaborators=self.ports,
             after_checkpoint_hook=lambda: self._inject_fault("after_checkpoint"),
         )
         self.semantic_revision_service = SemanticRevisionService(
-            workflow_store=self.workflow_store,
-            checkpoint_store=self.checkpoint_store,
-            execution_value_store=self.execution_value_store,
-            identity_lifecycle=self.identity_lifecycle,
-            capability_catalog=self.capability_catalog,
-            agent_registry=self.agent_registry,
-            trace_store=self.trace_store,
+            collaborators=self.ports,
             load_mission=self.mission_manager.get_mission,
             load_workflow=self._workflow_for_run,
             sync_run_steps=self._sync_run_steps_to_acg,
@@ -389,42 +394,40 @@ class ExecutionRuntime:
                 WorkflowProgressPhase.UNDERSTANDING
             ],
         )
+        # 审核边界：ACG 审核决定校验、批准/拒绝迁移与延迟记忆提交已迁入
+        # ReviewService；Run 锁与批准后的续跑仍由本 facade 协调。
+        self.review_service = ReviewService(
+            collaborators=self.ports,
+            state_machine=self.state_machine,
+            set_run_lifecycle=self._set_run_lifecycle,
+            mark_failed=self.mission_manager.mark_failed,
+            validate_state_references=self._validate_acg_state_references,
+        )
+        # 恢复应用边界：retry / rebind / checkpoint resume 校验与失败投影已迁入
+        # RuntimeRecoveryCoordinator；锁、执行槽与语义修订权威不在其中。
+        self.runtime_recovery_coordinator = RuntimeRecoveryCoordinator(
+            collaborators=self.ports,
+            state_machine=self.state_machine,
+            lifecycle_messages=_LIFECYCLE_MESSAGES,
+            load_workflow=self._workflow_for_run,
+            prepare_successor_run=self.prepare_run,
+            mark_retrying=self.mission_manager.mark_retrying,
+            mark_failed=self.mission_manager.mark_failed,
+            set_run_lifecycle=self._set_run_lifecycle,
+            publish_run_terminal_event=self._publish_run_terminal_event,
+            flush_identity_outbox=self._flush_identity_outbox,
+        )
         # 执行边界：ACG stream loop、READY 调度与事件投影已迁入独立服务；锁、
-        # 执行槽与 public 入口仍由本 facade 持有。协作者按引用共享，派发前由
-        # ``_acg_execution_service()`` 重对齐可变项。
+        # 执行槽与 public 入口仍由本 facade 持有。协作者经共享上下文按引用读取。
         self.acg_execution_service = ACGExecutionService(
             load_mission=self.mission_manager.get_mission,
             load_workflow=self._workflow_for_run,
             state_machine=self.state_machine,
             state_persistence=self.acg_state_persistence,
-            checkpoint_store=self.checkpoint_store,
-            workflow_store=self.workflow_store,
-            trace_store=self.trace_store,
-            execution_value_store=self.execution_value_store,
-            memory_store=self.memory_store,
-            provenance_store=self.provenance_store,
-            decision_store=self.decision_store,
-            content_manifest_store=self.content_manifest_store,
-            reliable_communication_store=self.reliable_communication_store,
-            capability_catalog=self.capability_catalog,
-            agent_registry=self.agent_registry,
-            resource_directory=self.resource_directory,
-            legacy_resource_service=self.legacy_resource_service,
-            node_service=self.node_service,
-            agent_service=self.agent_service,
-            scheduler_service=self.scheduler_service,
-            legacy_scheduler_service=self.legacy_scheduler_service,
-            scheduler_wait_timeout=self.scheduler_wait_timeout,
-            resource_execution_adapters=self.resource_execution_adapters,
-            tool_runtime=self.tool_runtime,
-            model_registry=self.model_registry,
+            collaborators=self.ports,
             model_max_concurrency=self.model_max_concurrency,
             model_min_interval_seconds=self.model_min_interval_seconds,
-            identity_lifecycle=self.identity_lifecycle,
-            attachment_context_builder=self.attachment_context_builder,
-            model_runtime=self._model_runtime,
-            default_model_binding=self.default_model_binding,
-            fault_hook=self._fault_hook,
+            record_execution_failure=self.runtime_recovery_coordinator.record_execution_failure,
             terminal_run_statuses=frozenset(_TERMINAL_RUN_STATUSES),
             lifecycle_messages=_LIFECYCLE_MESSAGES,
             cancellation_event=self._cancellation_event,
@@ -457,6 +460,15 @@ class ExecutionRuntime:
         # 让意图解析走 DeepSeek；未注入时规划器用启发式回退。
         self._planning_engine = None
         self._intent_llm = None
+
+    @property
+    def _model_runtime(self):
+        """结构化模型运行时的晚绑定存储；读写直通共享协作者上下文。"""
+        return self.ports.model_runtime
+
+    @_model_runtime.setter
+    def _model_runtime(self, value) -> None:
+        self.ports.model_runtime = value
 
     @property
     def plugin_scope_resolver(self) -> PluginScopeResolver:
@@ -755,369 +767,20 @@ class ExecutionRuntime:
     ) -> RuntimeRunRecord:
         """Prepare a successor Run that resumes from a failed ACG step.
 
-        The source Run remains immutable.  The child Run reuses only committed
-        upstream output references copied through ``ExecutionValueStore`` and
-        seeds the ACG state so the graph scheduler executes the failed step and
-        every still-unsettled downstream step without replaying completed work.
+        Run 锁由本入口持有；继任 Run 的应用逻辑（状态种子、引用复用、投影账
+        目回填）在 RuntimeRecoveryCoordinator 中实现。锁外幂等快路径由锁内的
+        同条件复查覆盖，语义与迁移前一致。
         """
-
-        normalized_reason = str(reason or "").strip()
-        if not normalized_reason:
-            raise ValueError("single-step retry reason must not be empty")
-        if idempotency_key and not reuse_source_run:
-            existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
-            if existing is not None:
-                if existing.idempotency_fingerprint != idempotency_fingerprint:
-                    raise ValueError("idempotency key conflicts with the single-step retry request")
-                return existing
-
         with self.run_lock_manager.lock_for(source_run_id):
-            source = self.workflow_store.get_run(source_run_id)
-            in_place_requests = source.execution_state.get("inPlaceRetryRequests")
-            if reuse_source_run and idempotency_key and isinstance(in_place_requests, dict):
-                previous_fingerprint = in_place_requests.get(idempotency_key)
-                if previous_fingerprint is not None:
-                    if previous_fingerprint != idempotency_fingerprint:
-                        raise ValueError("idempotency key conflicts with the in-place retry request")
-                    return source
-            if idempotency_key and not reuse_source_run:
-                existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
-                if existing is not None:
-                    if existing.idempotency_fingerprint != idempotency_fingerprint:
-                        raise ValueError("idempotency key conflicts with the single-step retry request")
-                    return existing
-            if source.status is not WorkflowStatus.FAILED:
-                raise ValueError("single-step retry requires a failed source Run")
-            if expected_runtime_revision is not None and source.runtime_revision != expected_runtime_revision:
-                raise ValueError("source Run changed after the retry request was prepared")
-            if self._normalize_runtime_engine(source.runtime_engine) != "acg":
-                raise ValueError("single-step retry is only available for ACG Runs")
-            blueprint_data = source.acg_blueprint
-            if not isinstance(blueprint_data, dict):
-                raise ValueError("single-step retry requires a persisted ACG Blueprint")
-            blueprint = RuntimeBlueprintSpec.model_validate(blueprint_data)
-            raw_package = source.execution_state.get("compiledACGPackage")
-            if not isinstance(raw_package, dict):
-                raise ValueError("single-step retry requires a persisted compiled ACG package")
-            from contracts.compiled_acg import load_compiled_acg_package
-
-            package = load_compiled_acg_package(raw_package)
-            graph = ACGGraphCompiler().compile(
-                blueprint,
-                run_id=source.run_id,
-                package=package,
+            return self.runtime_recovery_coordinator.prepare_single_step_retry(
+                source_run_id,
+                step_id,
+                reason=reason,
+                expected_runtime_revision=expected_runtime_revision,
+                idempotency_key=idempotency_key,
+                idempotency_fingerprint=idempotency_fingerprint,
+                reuse_source_run=reuse_source_run,
             )
-            target_spec = graph.node_specs.get(step_id)
-            target_node = next(
-                (node for node in blueprint.step_nodes() if node.node_id == step_id),
-                None,
-            )
-            source_step = source.get_step(step_id)
-            if target_spec is None or target_spec.kind != "step" or target_node is None:
-                raise ValueError("single-step retry target must be an executable ACG step")
-            if target_spec.communication_mode != "STRICT_CONTRACT":
-                raise ValueError("single-step retry target must use STRICT_CONTRACT communication")
-            if source_step.status is not StepStatus.FAILED:
-                raise ValueError("single-step retry target must be failed")
-            source_state = self._acg_execution_state_from_run(source)
-            if source_state.output_refs.get(step_id):
-                raise ValueError("single-step retry target already has a committed output")
-
-            stale_active_step_ids = set(source_state.active_step_ids)
-            if stale_active_step_ids and (
-                stale_active_step_ids != {step_id}
-                or source_step.status is not StepStatus.FAILED
-                or source_state.output_refs.get(step_id)
-            ):
-                raise ValueError("single-step retry requires no active source steps")
-            # A restart can persist the failed target in the ACG state while
-            # the authoritative Run projection has already cleared its active
-            # steps.  Only that exact failed, output-less target is safe to
-            # reconcile here; any other active marker remains a hard reject.
-            if (
-                source_state.control_frames
-                or source_state.loop_iterations
-                or source_state.loop_paths
-                or source_state.blackboard_snapshots
-                or source_state.debate_sessions
-                or source_state.review_payload
-                or source_state.control_review_decisions
-            ):
-                raise ValueError("single-step retry does not support control or review state")
-            settled = set(source_state.completed_step_ids) | set(source_state.skipped_step_ids)
-            resumable_step_ids = {
-                node_id
-                for node_id in graph.nodes
-                if node_id not in settled
-                and (unsettled_spec := graph.node_specs.get(node_id)) is not None
-                and unsettled_spec.kind == "step"
-            }
-            if step_id in settled or step_id not in resumable_step_ids:
-                raise ValueError("single-step retry target is not resumable from persisted state")
-
-            reusable_outputs: list[tuple[str, str, dict[str, Any], str]] = []
-            for reusable_step_id in source_state.completed_step_ids:
-                reusable_spec = graph.node_specs.get(reusable_step_id)
-                if reusable_spec is None:
-                    raise ValueError(
-                        f"single-step retry found an unknown completed graph node: {reusable_step_id}"
-                    )
-                if reusable_spec.kind != "step":
-                    continue
-                source_ref = source_state.output_refs.get(reusable_step_id)
-                if not source_ref:
-                    raise ValueError(
-                        f"single-step retry requires a committed upstream output: {reusable_step_id}"
-                    )
-                payload = self.execution_value_store.get_output(
-                    run_id=source.run_id,
-                    output_ref=source_ref,
-                )
-                reusable_outputs.append((
-                    reusable_step_id,
-                    source_ref,
-                    payload,
-                    source_state.output_summaries.get(reusable_step_id, ""),
-                ))
-
-            copied_refs: dict[str, str] = {}
-            copied_summaries: dict[str, str] = {}
-            if reuse_source_run:
-                retry = source
-                copied_refs = {
-                    reusable_step_id: source_ref
-                    for reusable_step_id, source_ref, _payload, _summary in reusable_outputs
-                }
-                copied_summaries = {
-                    reusable_step_id: summary
-                    for reusable_step_id, _source_ref, _payload, summary in reusable_outputs
-                }
-            else:
-                task_plan = source.execution_state.get("taskPlan")
-                task_bindings = source.execution_state.get("taskBindings")
-                if not isinstance(task_plan, dict) or not isinstance(task_bindings, list):
-                    raise ValueError("single-step retry requires persisted TaskPlan and bindings")
-                _, retry = self.prepare_run(
-                    source.mission_id,
-                    workflow_id=source.workflow_id,
-                    review_mode=source.review_mode,
-                    idempotency_key=idempotency_key,
-                    idempotency_fingerprint=idempotency_fingerprint,
-                    enabled_plugin_ids=list(source.enabled_plugin_ids),
-                    defer_acg_planning=False,
-                    input_override={
-                        "acgBlueprint": deepcopy(source.acg_blueprint),
-                        "taskPlan": deepcopy(task_plan),
-                        "taskBindings": deepcopy(task_bindings),
-                    },
-                    parent_run_id=source.run_id,
-                    rerun_reason="resume_failed",
-                )
-                if retry.run_id == source.run_id:
-                    raise ValueError("single-step retry cannot reuse the source Run")
-                for reusable_step_id, source_ref, payload, summary in reusable_outputs:
-                    commit_id = f"single-step-retry:{retry.run_id}:{reusable_step_id}"
-                    self.execution_value_store.prepare_node_commit(run_id=retry.run_id, commit_id=commit_id)
-                    child_ref = self.execution_value_store.put_output(
-                        run_id=retry.run_id,
-                        step_id=reusable_step_id,
-                        payload=payload,
-                        operation_id=commit_id,
-                    )
-                    self.execution_value_store.complete_node_commit(
-                        run_id=retry.run_id,
-                        commit_id=commit_id,
-                        payload={
-                            "outputRef": child_ref,
-                            "outputSummary": summary,
-                            "reusedFromRunId": source.run_id,
-                            "reusedFromOutputRef": source_ref,
-                        },
-                    )
-                    copied_refs[reusable_step_id] = child_ref
-                    copied_summaries[reusable_step_id] = summary
-
-            state = self._acg_execution_state_from_run(retry)
-            state.completed_step_ids = list(source_state.completed_step_ids)
-            state.skipped_step_ids = list(source_state.skipped_step_ids)
-            state.active_step_ids = []
-            state.current_step_id = step_id
-            state.output_refs = copied_refs
-            state.output_summaries = copied_summaries
-            state.context_refs = {}
-            state.memory_refs = {}
-            state.trace_refs = {}
-            state.provenance_refs = {}
-            state.graph_patch_refs = []
-            state.communication_usage = {}
-            state.checkpoint_id = None
-            state.review_payload = None
-            state.control_review_decisions = {}
-            retry.execution_state.update(state.model_dump(by_alias=True, mode="json"))
-            retry.execution_state.update({
-                "singleStepRetry": {
-                    "sourceRunId": source.run_id,
-                    "targetStepId": step_id,
-                    "reason": normalized_reason[:500],
-                    "reusedStepIds": sorted(copied_refs),
-                },
-                "checkpointResume": {
-                    "sourceRunId": source.run_id,
-                    "failedStepId": step_id,
-                    "reason": normalized_reason[:500],
-                    "reusedStepIds": sorted(copied_refs),
-                    "resumeStepIds": sorted(resumable_step_ids),
-                    "mode": "current_run" if reuse_source_run else "successor_run",
-                },
-                "retryTargetStepId": step_id,
-                "reusedStepIds": sorted(copied_refs),
-            })
-            # A resumed node is a new Attempt even when the operator chooses
-            # to keep the same Run identity.  Retaining the failed attempt's
-            # generated IDs would replay its projection keys with different
-            # scheduling content.
-            for identity_key in ("attemptIds", "stepExecutionIds"):
-                persisted_ids = retry.execution_state.get(identity_key)
-                if isinstance(persisted_ids, dict):
-                    retry.execution_state[identity_key] = {
-                        key: value
-                        for key, value in persisted_ids.items()
-                        if str(key).split(":", 1)[0] not in resumable_step_ids
-                    }
-            reused_projection_events: list[dict] = []
-            if not reuse_source_run and self.identity_lifecycle is not None:
-                # 惰性导入与 _flush_identity_outbox 同理由：不把 runtime.v2 的
-                # 重组件图拖进本模块的包初始化。
-                from runtime.v2.resume_projection import (
-                    build_reused_step_projection_events,
-                )
-
-                source_step_counters = {}
-                for reused_step_id in copied_refs:
-                    source_step = source.get_step(reused_step_id)
-                    source_step_counters[reused_step_id] = (
-                        int(source_step.attempt or 0),
-                        int(source_step.retry_count or 0),
-                    )
-                reused_projection_events, reused_state_updates = (
-                    build_reused_step_projection_events(
-                        run_id=retry.run_id,
-                        mission_id=retry.mission_id,
-                        reused_step_ids=sorted(copied_refs),
-                        copied_refs=copied_refs,
-                        copied_summaries=copied_summaries,
-                        source_run_id=source.run_id,
-                        source_execution_state=source.execution_state or {},
-                        source_step_counters=source_step_counters,
-                        attempt_id_for=lambda _step_id: new_attempt_id(),
-                        step_execution_id_for=lambda _step_id: new_step_execution_id(),
-                    )
-                )
-                # attemptIds/stepExecutionIds/executionBindings 写回继任 Run，
-                # 后续若再从本 Run 发起链式恢复，复用账目可被继续追溯。
-                for state_key, entries in reused_state_updates.items():
-                    retry.execution_state.setdefault(state_key, {}).update(entries)
-            retry.completed_step_ids = list(source_state.completed_step_ids)
-            retry.active_step_ids = []
-            retry.current_step_id = step_id
-            retry.output = {}
-            retry.error = None
-            retry.recovery_count = source.recovery_count + 1
-            if reuse_source_run:
-                retry.status = self.state_machine.transition(retry.status, WorkflowStatus.RETRYING)
-                retry.lifecycle_phase = WorkflowProgressPhase.RECOVERY
-                retry.lifecycle_message = _LIFECYCLE_MESSAGES[WorkflowProgressPhase.RECOVERY]
-                requests = retry.execution_state.setdefault("inPlaceRetryRequests", {})
-                if idempotency_key and isinstance(requests, dict):
-                    requests[idempotency_key] = idempotency_fingerprint
-                retry.execution_state["inPlaceRetry"] = {
-                    "failedStepId": step_id,
-                    "reason": normalized_reason[:500],
-                }
-            persisted_attempt_counts: dict[str, int] = {}
-            if reuse_source_run and self.identity_lifecycle is not None:
-                next_attempt_number = getattr(
-                    self.identity_lifecycle,
-                    "next_attempt_number",
-                    None,
-                )
-                if callable(next_attempt_number):
-                    persisted_attempt_counts = {
-                        resumable_step_id: max(
-                            0,
-                            int(next_attempt_number(retry.run_id, resumable_step_id)) - 1,
-                        )
-                        for resumable_step_id in resumable_step_ids
-                    }
-            for child_step in retry.steps:
-                if child_step.step_id in source_state.completed_step_ids:
-                    source_completed = source.get_step(child_step.step_id)
-                    child_step.status = StepStatus.COMPLETED
-                    child_step.started_at = source_completed.started_at
-                    child_step.completed_at = source_completed.completed_at
-                    child_step.attempt = source_completed.attempt
-                    child_step.retry_count = source_completed.retry_count
-                elif child_step.step_id in source_state.skipped_step_ids:
-                    child_step.status = StepStatus.SKIPPED_BY_CONDITION
-                    child_step.completed_at = source.get_step(child_step.step_id).completed_at
-                else:
-                    source_unsettled = source.get_step(child_step.step_id)
-                    child_step.status = StepStatus.PENDING
-                    child_step.error = None
-                    child_step.started_at = None
-                    child_step.completed_at = None
-                    if child_step.step_id in persisted_attempt_counts:
-                        child_step.attempt = persisted_attempt_counts[child_step.step_id]
-                        child_step.retry_count = persisted_attempt_counts[child_step.step_id]
-                    else:
-                        child_step.attempt = max(
-                            source_unsettled.attempt,
-                            source_unsettled.retry_count,
-                        ) + (1 if reuse_source_run and child_step.step_id == step_id else 0)
-                        child_step.retry_count = (
-                            source_unsettled.retry_count + 1
-                            if reuse_source_run and child_step.step_id == step_id
-                            else source_unsettled.retry_count
-                        )
-            self.trace_store.append(
-                retry,
-                TraceEventType.RUN_RECOVERED,
-                step_id=step_id,
-                observation="Failed Run checkpoint resume prepared",
-                payload={
-                    "sourceRunId": source.run_id,
-                    "failedStepId": step_id,
-                    "reusedStepIds": sorted(copied_refs),
-                    "resumeStepIds": sorted(resumable_step_ids),
-                    "reason": normalized_reason[:500],
-                    "mode": "current_run" if reuse_source_run else "successor_run",
-                },
-            )
-            retry.updated_at = utc_now()
-            if reused_projection_events:
-                self.workflow_store.save_run_with_events(retry, reused_projection_events)
-            else:
-                self.workflow_store.save_run(retry)
-            if reuse_source_run:
-                self.mission_manager.mark_retrying(source.mission_id)
-            if self.identity_lifecycle is not None:
-                self._flush_identity_outbox()
-            return retry
-
-    @staticmethod
-    def _acg_execution_state_from_run(run: RuntimeRunRecord) -> ACGExecutionState:
-        """Read the ACG state subset from a Run snapshot's wider state map."""
-
-        raw = run.execution_state if isinstance(run.execution_state, dict) else {}
-        state_data: dict[str, Any] = {}
-        for field_name, field in ACGExecutionState.model_fields.items():
-            alias = field.alias or field_name
-            if alias in raw:
-                state_data[alias] = raw[alias]
-            elif field_name in raw:
-                state_data[alias] = raw[field_name]
-        state_data.setdefault("runId", run.run_id)
-        return ACGExecutionState.model_validate(state_data)
 
     def _materialize_acg_run(
         self,
@@ -1262,7 +925,7 @@ class ExecutionRuntime:
                     self._discard_run_cancellation(run.run_id)
                     return latest
             retry_state = (
-                self._acg_execution_state_from_run(run)
+                acg_execution_state_from_run(run)
                 if (
                     isinstance(run.execution_state.get("singleStepRetry"), dict)
                     or isinstance(run.execution_state.get("checkpointResume"), dict)
@@ -1327,52 +990,18 @@ class ExecutionRuntime:
         if not self._claim_execution_slot(run.run_id):
             raise ValueError(f"run {run.run_id} already has an active execution")
         try:
-            return await self._acg_execution_service().execute(
+            return await self.acg_execution_service.execute(
                 run, state=state, command=command
             )
         finally:
             self._release_execution_slot(run.run_id)
             self._discard_run_cancellation(run.run_id)
 
-    def _acg_execution_service(self) -> ACGExecutionService:
-        """把 facade 上可能被替换的协作者重对齐到执行服务后再派发。
-
-        测试与应用装配会在构造后替换 store、身份生命周期或调度参数；执行服务
-        通过本入口在每次派发前重新读取当前值，保持与 facade 一致的晚绑定语义。
-        """
-        service = self.acg_execution_service
-        service.workflow_store = self.workflow_store
-        service.checkpoint_store = self.checkpoint_store
-        service.trace_store = self.trace_store
-        service.execution_value_store = self.execution_value_store
-        service.memory_store = self.memory_store
-        service.provenance_store = self.provenance_store
-        service.decision_store = self.decision_store
-        service.content_manifest_store = self.content_manifest_store
-        service.reliable_communication_store = self.reliable_communication_store
-        service.capability_catalog = self.capability_catalog
-        service.agent_registry = self.agent_registry
-        service.resource_directory = self.resource_directory
-        service.legacy_resource_service = self.legacy_resource_service
-        service.node_service = self.node_service
-        service.agent_service = self.agent_service
-        service.scheduler_service = self.scheduler_service
-        service.legacy_scheduler_service = self.legacy_scheduler_service
-        service.scheduler_wait_timeout = self.scheduler_wait_timeout
-        service.tool_runtime = self.tool_runtime
-        service.model_registry = self.model_registry
-        service.identity_lifecycle = self.identity_lifecycle
-        service.attachment_context_builder = self.attachment_context_builder
-        service.model_runtime = self._model_runtime
-        service.default_model_binding = self.default_model_binding
-        service._fault_hook = self._fault_hook
-        return service
-
     def _project_acg_event(
         self, run: RuntimeRunRecord, state: ACGExecutionState, event: dict
     ) -> None:
         """委托执行服务投影单个图事件；保留既有调用点的稳定接缝。"""
-        self._acg_execution_service()._project_event(run, state, event)
+        self.acg_execution_service._project_event(run, state, event)
 
     def _validate_acg_state_references(
         self,
@@ -1382,7 +1011,7 @@ class ExecutionRuntime:
         ledger: ProvenanceLedger | None = None,
     ) -> None:
         """委托执行服务校验引用归属；审核恢复路径与本入口共用同一实现。"""
-        self._acg_execution_service().validate_state_references(
+        self.acg_execution_service.validate_state_references(
             run=run, state=state, ledger=ledger
         )
 
@@ -2051,175 +1680,18 @@ class ExecutionRuntime:
         error_message: str,
         error_metadata: Mapping[str, Any] | None = None,
     ) -> RuntimeRunRecord:
-        """在受管执行边界尽力收敛为失败终态，并写入有界错误信息和追踪事件。"""
-
-        run = self.workflow_store.get_run(run_id)
-        if run.status in _TERMINAL_RUN_STATUSES:
-            return run
-        error = {
-            "code": error_code,
-            "message": error_message[:500],
-        }
-        safe_metadata = {
-            key: value
-            for key, value in dict(error_metadata or {}).items()
-            if key in {
-                "provider", "model", "stage", "attemptCount", "retryCount",
-                "streamUsed", "timeoutSeconds", "elapsedMs", "transportErrorClass",
-            }
-            and isinstance(value, (str, int, float, bool))
-        }
-        error.update(safe_metadata)
-        self._terminalize_active_execution(run, error["message"])
-        run = self._set_run_lifecycle(
-            run,
-            status=WorkflowStatus.FAILED,
-            phase=WorkflowProgressPhase.FAILED,
-            message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.FAILED],
-            error=error,
+        """Delegate terminal failure convergence to the recovery boundary."""
+        return self.runtime_recovery_coordinator.fail_run_safely(
+            run_id,
+            error_code=error_code,
+            error_message=error_message,
+            error_metadata=error_metadata,
         )
-        try:
-            self.mission_manager.mark_failed(run.mission_id)
-        except Exception:
-            logger.exception(
-                "Failed to align task status after run failure",
-                extra={"missionId": run.mission_id, "runId": run.run_id},
-            )
-        self.trace_store.append(
-            run=run,
-            event_type=TraceEventType.RUN_FAILED,
-            observation=error["message"],
-            payload={"errorCode": error_code, **error},
-        )
-        run.updated_at = utc_now()
-        self.workflow_store.save_run(run)
-        self._publish_run_terminal_event(run, "run.failed", {"errorCode": error_code})
-        if (
-            self.identity_lifecycle is not None
-            and self._normalize_runtime_engine(run.runtime_engine) == "acg"
-        ):
-            self._flush_identity_outbox()
-        return run
-
-    @staticmethod
-    def _terminalize_active_execution(
-        run: RuntimeRunRecord,
-        error_message: str,
-        *,
-        include_current_pending: bool = False,
-    ) -> None:
-        """Close active nodes before a failed Run is validated and persisted."""
-
-        active_statuses = {StepStatus.RUNNING, StepStatus.RETRYING}
-        current_step_id = run.current_step_id if include_current_pending else None
-        ended_at = utc_now()
-        for step in run.steps:
-            if step.status in active_statuses or (
-                current_step_id
-                and step.step_id == current_step_id
-                and step.status == StepStatus.PENDING
-            ):
-                step.status = StepStatus.FAILED
-                step.error = error_message
-                step.completed_at = ended_at
-        run.active_step_ids = []
 
     async def close_orphaned_runs(self, *, limit: int = 200) -> list[str]:
-        """关闭重启后失去进程内执行器的未终态运行，返回已关闭标识列表。"""
+        """Delegate restart recovery while retaining the public facade API."""
+        return self.runtime_recovery_coordinator.close_orphaned_runs(limit=limit)
 
-        closed: list[str] = []
-        for run in self.workflow_store.list_non_terminal_runs(limit=limit):
-            if run.status == WorkflowStatus.WAITING_REVIEW:
-                if self._normalize_waiting_review_after_restart(run):
-                    run.updated_at = utc_now()
-                    self.workflow_store.save_run(run)
-                continue
-            if run.status not in {
-                WorkflowStatus.PENDING,
-                WorkflowStatus.PLANNING,
-                WorkflowStatus.RUNNING,
-                WorkflowStatus.RETRYING,
-            }:
-                continue
-            self._fail_interrupted_run_after_restart(run)
-            closed.append(run.run_id)
-            logger.warning(
-                "interrupted_run_closed_after_restart",
-                extra={
-                    "missionId": run.mission_id,
-                    "runId": run.run_id,
-                    "workflowId": run.workflow_id,
-                    "phase": run.lifecycle_phase.value if run.lifecycle_phase else None,
-                },
-            )
-        return closed
-
-    @staticmethod
-    def _normalize_waiting_review_after_restart(run: RuntimeRunRecord) -> bool:
-        """Restore the persisted review subject without inventing a WorkflowStep."""
-
-        changed = False
-        if (run.runtime_engine or "").strip().lower() == "acg":
-            subject_type, subject_id = acg_review_subject(
-                run.execution_state.get("reviewPayload")
-            )
-            if run.current_step_id != subject_id:
-                run.current_step_id = subject_id
-                changed = True
-            if subject_type == "step":
-                step = run.get_step(subject_id)
-                if step.status != StepStatus.WAITING_REVIEW:
-                    step.status = StepStatus.WAITING_REVIEW
-                    changed = True
-        else:
-            waiting_ids = {
-                step.step_id for step in run.steps if step.status == StepStatus.WAITING_REVIEW
-            }
-            if not waiting_ids and run.current_step_id:
-                waiting_ids.add(run.current_step_id)
-            for step in run.steps:
-                if step.step_id in waiting_ids and step.status != StepStatus.WAITING_REVIEW:
-                    step.status = StepStatus.WAITING_REVIEW
-                    changed = True
-        if run.lifecycle_phase != WorkflowProgressPhase.REVIEW:
-            run.lifecycle_phase = WorkflowProgressPhase.REVIEW
-            changed = True
-        if run.lifecycle_message != _LIFECYCLE_MESSAGES[WorkflowProgressPhase.REVIEW]:
-            run.lifecycle_message = _LIFECYCLE_MESSAGES[WorkflowProgressPhase.REVIEW]
-            changed = True
-        return changed
-
-    def _fail_interrupted_run_after_restart(self, run: RuntimeRunRecord) -> None:
-        """Mutate every run projection first, then persist one consistent snapshot."""
-
-        interruption_message = "任务因服务重启而中断。"
-        self._terminalize_active_execution(
-            run,
-            interruption_message,
-            include_current_pending=True,
-        )
-        run.status = WorkflowStatus.FAILED
-        run.lifecycle_phase = WorkflowProgressPhase.FAILED
-        run.lifecycle_message = interruption_message
-        run.error = {
-            "code": "interrupted_after_restart",
-            "message": interruption_message,
-        }
-        try:
-            self.mission_manager.mark_failed(run.mission_id)
-        except Exception:
-            logger.exception(
-                "Failed to align task status after interrupted run",
-                extra={"missionId": run.mission_id, "runId": run.run_id},
-            )
-        self.trace_store.append(
-            run=run,
-            event_type=TraceEventType.RUN_FAILED,
-            observation=interruption_message,
-            payload=dict(run.error),
-        )
-        run.updated_at = utc_now()
-        self.workflow_store.save_run(run)
 
     @staticmethod
     def _safe_error_message(exc: BaseException) -> str:
@@ -2380,10 +1852,23 @@ class ExecutionRuntime:
         """在运行锁内校验并应用审核决定；过期、冲突或终态运行抛出 ``ReviewConflictError``。"""
         initial_run = self.workflow_store.get_run(decision.run_id)
         if self._normalize_runtime_engine(initial_run.runtime_engine) == "acg":
-            return await self._apply_acg_review(decision)
+            # facade 持锁派发 ReviewService；批准路径交还恢复输入后由本层
+            # 调用 ACGExecutionService 续跑（Review → Execution 的唯一接缝）。
+            async with self.run_lock_manager.lock_for(decision.run_id):
+                outcome = self.review_service.apply_acg(decision)
+            if outcome.resume_state is None:
+                return outcome.run
+            return await self._execute_acg(
+                outcome.run,
+                state=outcome.resume_state,
+                command=ExecutionResumeCommand(
+                    runId=outcome.run.run_id,
+                    payload={"decision": decision.decision.value, "operationId": decision.operation_id},
+                ),
+            )
         async with self.run_lock_manager.lock_for(decision.run_id):
             run = self.workflow_store.get_run(decision.run_id)
-            existing = self._find_review_operation(run, decision.operation_id)
+            existing = self.review_service.find_review_operation(run, decision.operation_id)
             if existing is not None:
                 if (
                     existing.get("stepId") == decision.step_id
@@ -2414,25 +1899,13 @@ class ExecutionRuntime:
         adapter = self._workflow_adapter(workflow)
         return await adapter.apply_review(decision)
 
-    def _semantic_revision_service(self) -> SemanticRevisionService:
-        """Keep injected stores and lifecycle adapters aligned with the service."""
-        service = self.semantic_revision_service
-        service.workflow_store = self.workflow_store
-        service.checkpoint_store = self.checkpoint_store
-        service.execution_value_store = self.execution_value_store
-        service.identity_lifecycle = self.identity_lifecycle
-        service.capability_catalog = self.capability_catalog
-        service.agent_registry = self.agent_registry
-        service.trace_store = self.trace_store
-        return service
-
     async def apply_semantic_patch(
         self, request: SemanticPatchRequest
     ) -> GraphPatchResult:
         """Create a replacement Run from a validated TaskPlan revision."""
         async with self.run_lock_manager.lock_for(request.run_id):
             run = self.workflow_store.get_run(request.run_id)
-            service = self._semantic_revision_service()
+            service = self.semantic_revision_service
             prepared = service.prepare(
                 request=request,
                 run=run,
@@ -2457,276 +1930,25 @@ class ExecutionRuntime:
     async def rebind_step(self, *, run_id: str, step_id: str, reason: str) -> str:
         """Select a healthy alternate Agent inside the run's frozen scope.
 
-        Rebinding is intentionally limited to a persisted review barrier and a
-        not-yet-executed step. It changes only the frozen resource projection;
-        no executor, workflow state machine, or graph is duplicated.
+        Run 锁由本入口持有；concrete binding 的应用逻辑在
+        RuntimeRecoveryCoordinator 中实现，TaskPlan / graphVersion 不受影响。
         """
         async with self.run_lock_manager.lock_for(run_id):
             run = self.workflow_store.get_run(run_id)
-            if self._normalize_runtime_engine(run.runtime_engine) != "acg":
-                raise ValueError("resource rebinding is only available for ACG runs")
-            if run.status is not WorkflowStatus.WAITING_REVIEW:
-                raise ValueError("resource rebinding requires a persisted WAITING_REVIEW barrier")
-            step = run.get_step(step_id)
-            if step.status not in {StepStatus.PENDING, StepStatus.RETRYING}:
-                raise ValueError("only a pending or retrying step can be rebound")
-            scope = run.execution_scope
-            if scope is None:
-                raise ValueError("resource rebinding requires a frozen execution scope")
-            bindings = dict(run.execution_state.get("resourceBindings") or {})
-            current_agent_id = str(bindings.get(step_id) or "")
-            if not current_agent_id:
-                raise ValueError(f"ACG step has no frozen resource binding: {step_id}")
-            history = list(run.execution_state.get("bindingHistory") or [])
-            if any(item.get("stepId") == step_id for item in history if isinstance(item, dict)):
-                raise ValueError(f"alternate binding budget exhausted for step: {step_id}")
-            candidates = self.resource_directory.resolve_agent_candidates(
-                domain=self._workflow_for_run(run).domain,
-                capability=step.capability,
-                allowed_agent_ids=scope.agent_ids,
-                excluded_agent_ids=(current_agent_id,),
+            return self.runtime_recovery_coordinator.rebind_step(
+                run=run, step_id=step_id, reason=reason
             )
-            if not candidates:
-                raise ResourceNotFoundError(f"no healthy alternate resource for step: {step_id}")
-            selected = candidates[0]
-            # Resolve the instance now so a stale directory entry cannot enter
-            # persisted state.
-            self.agent_registry.resolve_by_id(selected.agent_id, allowed_agent_ids=scope.agent_ids)
-            bindings[step_id] = selected.agent_id
-            run.execution_state["resourceBindings"] = bindings
-            requirements = dict(run.execution_state.get("bindingRequirements") or {})
-            requirement_payload = requirements.get(step_id)
-            if isinstance(requirement_payload, dict):
-                requirement = BindingRequirement.model_validate(requirement_payload)
-                requirements[step_id] = requirement.model_copy(
-                    update={
-                        "preferences": {
-                            **requirement.preferences,
-                            "resourceId": selected.agent_id,
-                        }
-                    }
-                ).model_dump(by_alias=True, mode="json")
-                run.execution_state["bindingRequirements"] = requirements
-            history.append(
-                {
-                    "stepId": step_id,
-                    "previousAgentId": current_agent_id,
-                    "agentId": selected.agent_id,
-                    "reason": reason,
-                }
-            )
-            run.execution_state["bindingHistory"] = history
-            self.trace_store.append(
-                run,
-                TraceEventType.RUNTIME_PATCH_APPLIED,
-                observation="ACG resource binding changed at review barrier",
-                step_id=step_id,
-                agent_name=selected.agent_name,
-                payload={
-                    "patchType": "alternate_binding",
-                    "previousAgentId": current_agent_id,
-                    "agentId": selected.agent_id,
-                    "reason": reason,
-                },
-            )
-            self.workflow_store.save_run(run)
-            return selected.agent_id
-
-    async def _apply_acg_review(self, decision: ReviewDecision) -> RuntimeRunRecord:
-        """校验审核决定并从同一 run 的 SQLite 检查点恢复融合 ACG。"""
-        async with self.run_lock_manager.lock_for(decision.run_id):
-            run = self.workflow_store.get_run(decision.run_id)
-            existing = self._find_review_operation(run, decision.operation_id)
-            if existing is not None:
-                if existing.get("stepId") == decision.step_id and existing.get("decision") == decision.decision.value:
-                    return run
-                raise ReviewConflictError("review operation id was already used for a different decision")
-            if run.status != WorkflowStatus.WAITING_REVIEW:
-                raise ReviewConflictError("workflow run is no longer waiting for review")
-            checkpoint_id = str(run.execution_state.get("checkpointId") or "")
-            checkpoint_data = self.checkpoint_store.load(run_id=run.run_id, checkpoint_id=checkpoint_id)
-            if checkpoint_data is None:
-                raise ValueError("review checkpoint does not exist for this run")
-            restored = ACGExecutionState.model_validate(checkpoint_data)
-            subject_type, subject_id = acg_review_subject(restored.review_payload)
-            if decision.step_id != subject_id:
-                raise ReviewConflictError("review decision does not match the persisted ACG subject")
-            step = run.get_step(subject_id) if subject_type == "step" else None
-            if (
-                decision.expected_run_updated_at is not None
-                and run.updated_at != decision.expected_run_updated_at
-            ):
-                raise ReviewConflictError("workflow run revision changed")
-            if step is not None and step.status != StepStatus.WAITING_REVIEW:
-                raise ReviewConflictError("workflow step is no longer waiting for review")
-            if (
-                step is not None
-                and decision.expected_step_status is not None
-                and step.status != decision.expected_step_status
-            ):
-                raise ReviewConflictError("workflow step state changed")
-            # 拒绝路径也必须验证 checkpoint 中的审计引用。否则攻击者可借由“直接
-            # 拒绝”绕过归属检查，留下无法解释的审核记录或伪造的待写入意图。
-            self._validate_acg_state_references(run=run, state=restored)
-            if decision.decision is not ReviewDecisionType.APPROVED:
-                if step is not None:
-                    self._transition_step(step, StepStatus.FAILED)
-                run.error = {"code": "review_rejected", "message": decision.comment[:500]}
-                self.trace_store.append(
-                    run,
-                    TraceEventType.REVIEW_DECIDED,
-                    step_id=subject_id,
-                    observation="ACG review rejected",
-                    payload={
-                        "subjectType": subject_type,
-                        "decision": decision.decision.value,
-                        "operationId": decision.operation_id,
-                        "reviewer": decision.reviewer,
-                        "comment": decision.comment,
-                        "deferredMemoryDiscarded": isinstance(
-                            (restored.review_payload or {}).get("pendingMemory"), dict
-                        ),
-                    },
-                )
-                run = self._set_run_lifecycle(run, status=WorkflowStatus.FAILED, phase=WorkflowProgressPhase.FAILED)
-                self.mission_manager.mark_failed(run.mission_id)
-                self.workflow_store.save_run(run)
-                return run
-            if step is not None:
-                self._commit_deferred_memory(run=run, step=step, state=restored)
-            # The node result was committed before the interrupt; approval
-            # resolves the review projection and must not leave a stale
-            # WAITING_REVIEW step in an otherwise completed persisted run.
-            if step is not None:
-                self._transition_step(step, StepStatus.COMPLETED)
-            self.trace_store.append(
-                run,
-                event_type=TraceEventType.REVIEW_DECIDED,
-                step_id=subject_id,
-                observation="ACG review approved",
-                payload={
-                    "subjectType": subject_type,
-                    "decision": decision.decision.value,
-                    "operationId": decision.operation_id,
-                    "reviewer": decision.reviewer,
-                    "comment": decision.comment,
-                },
-            )
-        return await self._execute_acg(
-            run,
-            state=restored,
-            command=ExecutionResumeCommand(
-                runId=run.run_id,
-                payload={"decision": decision.decision.value, "operationId": decision.operation_id},
-            ),
-        )
-
-    def _commit_deferred_memory(
-        self,
-        *,
-        run: RuntimeRunRecord,
-        step: WorkflowStep,
-        state: ACGExecutionState,
-    ) -> None:
-        """在人工批准后按待写入的结构化事件落入正式记忆。
-
-        待写入意图只携带输出引用、策略、审计决定和经过白名单验证的 MemoryEvent；
-        输出引用仍需按 run/step 校验，但完整输出正文不会进入 MemoryStore。
-        """
-        review_payload = state.review_payload or {}
-        pending = review_payload.get("pendingMemory")
-        if pending is None:
-            return
-        if not isinstance(pending, dict):
-            raise ValueError("review pendingMemory must be an object")
-        output_ref = pending.get("outputRef")
-        policy_id = pending.get("policyId")
-        write_type = pending.get("writeType")
-        decision_ref = pending.get("auditDecisionRef")
-        memory_event = pending.get("memoryEvent")
-        if not all(isinstance(value, str) and value for value in (output_ref, policy_id, write_type, decision_ref)):
-            raise ValueError("review pendingMemory is incomplete")
-        if review_payload.get("auditDecisionRef") != decision_ref:
-            raise ValueError("review pendingMemory audit decision does not match review payload")
-        allowed_audit_outcomes = {"review"}
-        if step.requires_review:
-            # A Blueprint-declared review gate is authoritative even when the
-            # generic output-risk audit independently returns ``allow``.
-            allowed_audit_outcomes.add("allow")
-        self.decision_store.assert_decision(
-            run_id=run.run_id,
-            step_id=step.step_id,
-            decision_ref=decision_ref,
-            outcomes=allowed_audit_outcomes,
-        )
-        policy = ACGNodeRunner._memory_policy(step.input)
-        if not policy["write"]:
-            raise ValueError("review pendingMemory exists while step memory write is disabled")
-        if policy["policyId"] != policy_id or policy["writeType"].value != write_type:
-            raise ValueError("review pendingMemory does not match frozen memory policy")
-        self.execution_value_store.assert_reference(
-            kind="output",
-            run_id=run.run_id,
-            step_id=step.step_id,
-            reference=output_ref,
-        )
-        event = StructuredMemoryEvent.model_validate(memory_event)
-        if event.run_id != run.run_id or event.step_id != step.step_id:
-            raise ValueError("review pendingMemory event belongs to a different run or step")
-        record = MemoryService(store=self.memory_store).remember_step_output(
-            run_id=run.run_id,
-            step_id=step.step_id,
-            output=event.model_dump(by_alias=True, mode="json"),
-            memory_type=MemoryType(write_type),
-            policy=MemoryPolicy(
-                policyId=policy_id,
-                allowedTypes=[MemoryType(write_type)],
-                requireAudit=bool(policy["requireAudit"]),
-            ),
-        )
-        if record is None:
-            raise ValueError("review deferred memory was rejected by frozen policy")
-        state.memory_refs[step.step_id] = record.memory_id
-        self.trace_store.append(
-            run,
-            TraceEventType.DATA_CONSUMED,
-            step_id=step.step_id,
-            observation="Deferred memory committed after review approval",
-            payload={
-                "policyId": policy_id,
-                "writeType": write_type,
-                "written": True,
-                "memoryEventRef": event.event_id,
-                "auditDecisionRef": decision_ref,
-            },
-        )
-
-    @staticmethod
-    def _find_review_operation(run: RuntimeRunRecord, operation_id: str | None) -> dict | None:
-        if not operation_id:
-            return None
-        for event in run.trace:
-            if event.event_type != TraceEventType.REVIEW_DECIDED:
-                continue
-            payload = event.payload or {}
-            if payload.get("operationId") == operation_id:
-                return payload
-        return None
 
     async def resume_from_checkpoint(self, *, run_id: str, checkpoint_id: str) -> RuntimeRunRecord:
         """从同版本检查点恢复 ACG 运行；范围、图或工作流版本不匹配时明确拒绝。"""
-        initial_run = self.workflow_store.get_run(run_id)
-        if self._normalize_runtime_engine(initial_run.runtime_engine) == "acg":
-            checkpoint_data = self.checkpoint_store.load(run_id=run_id, checkpoint_id=checkpoint_id)
-            if checkpoint_data is None:
-                raise ValueError("checkpoint does not exist for this run")
-            state = ACGExecutionState.model_validate(checkpoint_data)
-            return await self._execute_acg(
-                initial_run,
-                state=state,
-                command=ExecutionResumeCommand(runId=run_id),
-            )
-        raise ValueError("Checkpoint resume is only available for the ACG execution engine")
+        run, state = self.runtime_recovery_coordinator.load_resume_input(
+            run_id=run_id, checkpoint_id=checkpoint_id
+        )
+        return await self._execute_acg(
+            run,
+            state=state,
+            command=ExecutionResumeCommand(runId=run_id),
+        )
 
     def cancel(self, run_id: str) -> RuntimeRunRecord:
         """在运行锁内取消可继续步骤并持久化终态；已终态的迁移规则由状态机校验。"""

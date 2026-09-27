@@ -6,25 +6,38 @@ from collections.abc import Callable
 from datetime import timedelta
 import hashlib
 import json
+from typing import Any
 
 from components.executor import ACGExecutionState
-from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.workflow import RuntimeRunRecord, utc_now
-from support.stores.workflow_store import WorkflowStore
+from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 
 
-class ACGStatePersistenceService:
+def acg_execution_state_from_run(run: RuntimeRunRecord) -> ACGExecutionState:
+    """Read the ACG state subset from a Run snapshot's wider state map."""
+
+    raw = run.execution_state if isinstance(run.execution_state, dict) else {}
+    state_data: dict[str, Any] = {}
+    for field_name, field in ACGExecutionState.model_fields.items():
+        alias = field.alias or field_name
+        if alias in raw:
+            state_data[alias] = raw[alias]
+        elif field_name in raw:
+            state_data[alias] = raw[field_name]
+    state_data.setdefault("runId", run.run_id)
+    return ACGExecutionState.model_validate(state_data)
+
+
+class ACGStatePersistenceService(CollaboratorAccess):
     """Persist ACG projections and deterministic checkpoints without policy decisions."""
 
     def __init__(
         self,
         *,
-        checkpoint_store: ACGCheckpointStore,
-        workflow_store: WorkflowStore,
+        collaborators: RuntimeCollaborators,
         after_checkpoint_hook: Callable[[], None] | None = None,
     ) -> None:
-        self.checkpoint_store = checkpoint_store
-        self.workflow_store = workflow_store
+        self.ports = collaborators
         self.after_checkpoint_hook = after_checkpoint_hook
 
     def persist(
@@ -93,4 +106,4 @@ class ACGStatePersistenceService:
         run.updated_at = now
 
 
-__all__ = ["ACGStatePersistenceService"]
+__all__ = ["ACGStatePersistenceService", "acg_execution_state_from_run"]

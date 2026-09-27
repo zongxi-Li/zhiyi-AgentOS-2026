@@ -17,29 +17,21 @@ from typing import Any
 
 from contracts.identity import new_attempt_id, new_step_execution_id
 from contracts.artifacts import is_final_synthesis_role
-from service.agents import AgentRegistry
 from support.acg.schema import RuntimeBlueprintSpec
-from components.auditor.governance.trace import TraceStore
 from components.communicator import (
     CommunicationBroker,
     CommunicatorService,
-    SQLiteReliableCommunicationStore,
 )
 from components.communicator.provenance import ProvenanceLedger
-from components.communicator.provenance_store import SQLiteProvenanceStore
-from components.auditor.decision_store import DecisionStore
-from components.content import ContentManifestStore
 from components.executor import (
     ACGExecutionState,
     ACGGraphCompiler,
     ACGNodeRunner,
-    ExecutionValueStore,
 )
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
 from components.mission_manager.state_machine import StateMachine
 from contracts.resource import BindingRequirement, DeploymentTier
-from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.execution import WorkflowProgressPhase
 from contracts.workflow import (
     RuntimeMissionRecord,
@@ -51,12 +43,7 @@ from contracts.workflow import (
     WorkflowStatus,
     utc_now,
 )
-from components.resource.agent_service import AgentService
-from components.resource.directory import ResourceDirectory
-from components.resource.node_service import NodeService
-from components.resource.service import ResourceService
 from components.scheduler.models import SchedulerAllocationTimeout, SchedulerNoEligibleResource
-from components.scheduler.service import SchedulerService
 from components.scheduler.two_layer_service import TwoLayerSchedulerService
 from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCommand
 from adapters.agent_invocation import AgentInvocationAdapter
@@ -71,13 +58,11 @@ from service.agents.base import AgentProfile
 from adapters.audited_tool_runtime import AuditedToolRuntime
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.guarded_tool import GuardedToolRuntime
-from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.tool_adapter import configured_tool_runtime
-from support.acg.capabilities import CapabilityCatalog
-from support.stores.workflow_store import WorkflowStore
 from support.stores._policy import acg_review_subject
 from runtime.execution_migration import ExecutionEngineMigratingError
+from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 from runtime.state_persistence import ACGStatePersistenceService
 
 
@@ -89,7 +74,7 @@ class ExecutionRunCancelled(RuntimeError):
     """
 
 
-class ACGExecutionService:
+class ACGExecutionService(CollaboratorAccess):
     """执行一个已物化的 canonical ACG Run，或从检查点恢复继续推进。
 
     facade（``WorkflowRuntime``）保留 run 锁、执行槽与全部 public 入口；本服务
@@ -105,34 +90,10 @@ class ACGExecutionService:
         load_workflow: Callable[[RuntimeRunRecord], WorkflowDefinition],
         state_machine: StateMachine,
         state_persistence: ACGStatePersistenceService,
-        checkpoint_store: object,
-        workflow_store: WorkflowStore,
-        trace_store: TraceStore,
-        execution_value_store: ExecutionValueStore,
-        memory_store: object,
-        provenance_store: SQLiteProvenanceStore,
-        decision_store: DecisionStore,
-        content_manifest_store: ContentManifestStore,
-        reliable_communication_store: SQLiteReliableCommunicationStore,
-        capability_catalog: CapabilityCatalog,
-        agent_registry: AgentRegistry,
-        resource_directory: ResourceDirectory,
-        legacy_resource_service: ResourceService,
-        node_service: NodeService,
-        agent_service: AgentService,
-        scheduler_service: TwoLayerSchedulerService | SchedulerService,
-        legacy_scheduler_service: SchedulerService,
-        scheduler_wait_timeout: float,
-        resource_execution_adapters: dict[str, ResourceExecutionAdapter],
-        tool_runtime: object | None,
-        model_registry: ModelCompatibilityRegistry,
+        collaborators: RuntimeCollaborators,
         model_max_concurrency: int,
         model_min_interval_seconds: float,
-        identity_lifecycle: AcgIdentityLifecyclePort | None,
-        attachment_context_builder: object | None,
-        model_runtime: object | None,
-        default_model_binding: dict[str, str] | None,
-        fault_hook: Callable[[str], None] | None,
+        record_execution_failure: Callable[[RuntimeRunRecord, ACGExecutionState, BaseException], None],
         terminal_run_statuses: frozenset[WorkflowStatus],
         lifecycle_messages: Mapping[WorkflowProgressPhase, str],
         cancellation_event: Callable[[str], threading.Event],
@@ -161,37 +122,13 @@ class ACGExecutionService:
         self._mark_running_for_new_run = mark_running_for_new_run
         self._mark_completed = mark_completed
         self._mark_waiting_review = mark_waiting_review
-        # 直接协作者：facade 在每次派发前重对齐其中的可变项。
+        self._record_execution_failure = record_execution_failure
+        # 协作者经共享上下文按引用读取：facade 属性写入即时可见，无派发前重对齐。
         self.state_machine = state_machine
         self.state_persistence = state_persistence
-        self.checkpoint_store = checkpoint_store
-        self.workflow_store = workflow_store
-        self.trace_store = trace_store
-        self.execution_value_store = execution_value_store
-        self.memory_store = memory_store
-        self.provenance_store = provenance_store
-        self.decision_store = decision_store
-        self.content_manifest_store = content_manifest_store
-        self.reliable_communication_store = reliable_communication_store
-        self.capability_catalog = capability_catalog
-        self.agent_registry = agent_registry
-        self.resource_directory = resource_directory
-        self.legacy_resource_service = legacy_resource_service
-        self.node_service = node_service
-        self.agent_service = agent_service
-        self.scheduler_service = scheduler_service
-        self.legacy_scheduler_service = legacy_scheduler_service
-        self.scheduler_wait_timeout = scheduler_wait_timeout
-        self.resource_execution_adapters = resource_execution_adapters
-        self.tool_runtime = tool_runtime
-        self.model_registry = model_registry
+        self.ports = collaborators
         self.model_max_concurrency = model_max_concurrency
         self.model_min_interval_seconds = model_min_interval_seconds
-        self.identity_lifecycle = identity_lifecycle
-        self.attachment_context_builder = attachment_context_builder
-        self.model_runtime = model_runtime
-        self.default_model_binding = default_model_binding
-        self._fault_hook = fault_hook
         self._terminal_run_statuses = terminal_run_statuses
         self._lifecycle_messages = lifecycle_messages
 
@@ -284,7 +221,7 @@ class ACGExecutionService:
                 self._project_event(run, execution_state, event)
             if cancel_requested.is_set():
                 return await self._finalize_cancelled_run(run, execution_state)
-            self._state_persistence_service().persist(run, execution_state)
+            self.state_persistence.persist(run, execution_state)
             run.output = self._acg_output(execution_state, blueprint)
             run = self._set_run_lifecycle(
                 run,
@@ -303,11 +240,11 @@ class ACGExecutionService:
             # 节点执行体在调度边界感知到取消；与主循环 break 走同一条收敛路径。
             return await self._finalize_cancelled_run(run, execution_state)
         except ExecutionInterrupt as interrupt:
-            self._state_persistence_service().persist(run, execution_state)
-            checkpoint_id = self._state_persistence_service().save_checkpoint(
+            self.state_persistence.persist(run, execution_state)
+            checkpoint_id = self.state_persistence.save_checkpoint(
                 run, execution_state
             )
-            self._state_persistence_service().persist(run, execution_state)
+            self.state_persistence.persist(run, execution_state)
             subject_type, subject_id = acg_review_subject(interrupt.payload)
             blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
             subject_node = blueprint.get_node(subject_id)
@@ -343,28 +280,9 @@ class ACGExecutionService:
                         run,
                         state=execution_state,
                     )
-            from components.recovery import RecoveryService, failure_event_from_exception
-
-            failure = failure_event_from_exception(
-                exc,
-                subject_ref=(
-                    f"run:{run.run_id}:step:{execution_state.current_step_id}"
-                    if execution_state.current_step_id
-                    else f"run:{run.run_id}"
-                ),
-            )
-            recovery_plan = RecoveryService().propose(failure)
-            run.execution_state.setdefault("failureEvents", []).append(
-                failure.model_dump(by_alias=True, mode="json")
-            )
-            run.execution_state["recoveryOutcome"] = {
-                "failureId": failure.failure_id,
-                "source": failure.source.value,
-                "reasonCode": failure.reason_code,
-                "action": recovery_plan.strategy.value,
-                "status": "proposed",
-            }
-            self.workflow_store.save_run(run)
+            # 失败投影与 recoveryOutcome 持久化归 RuntimeRecoveryCoordinator；
+            # 本服务只负责检测失败并收敛安全终态（端口由 facade 接线）。
+            self._record_execution_failure(run, execution_state, exc)
             await self._fail_run_safely(
                 run.run_id,
                 error_code="acg_execution_failed",
@@ -1219,7 +1137,7 @@ class ACGExecutionService:
             run.current_step_id = step_id
             run.completed_step_ids = list(state.completed_step_ids)
             run.active_step_ids = list(state.active_step_ids)
-            self._state_persistence_service().persist(
+            self.state_persistence.persist(
                 run,
                 state,
                 projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
@@ -1257,7 +1175,7 @@ class ACGExecutionService:
                 ))
         elif event_type == "superstep_completed":
             self._project_completed_phase_capsules(run=run, state=state)
-            checkpoint_id = self._state_persistence_service().save_checkpoint(run, state)
+            checkpoint_id = self.state_persistence.save_checkpoint(run, state)
             state.checkpoint_id = checkpoint_id
             run.execution_state["checkpointId"] = checkpoint_id
             self.trace_store.append_execution_event(
@@ -1440,7 +1358,7 @@ class ACGExecutionService:
             self._inject_fault("after_trace")
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
-        self._state_persistence_service().persist(
+        self.state_persistence.persist(
             run,
             state,
             projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
@@ -1548,12 +1466,6 @@ class ACGExecutionService:
             sort_keys=True,
             separators=(",", ":"),
         )
-
-    def _state_persistence_service(self) -> ACGStatePersistenceService:
-        """Keep injected test/application stores aligned with the extracted service."""
-        self.state_persistence.checkpoint_store = self.checkpoint_store
-        self.state_persistence.workflow_store = self.workflow_store
-        return self.state_persistence
 
     def _inject_fault(self, stage: str) -> None:
         """调用测试专用中断钩子；正常执行没有附加分支或持久化副作用。"""
@@ -1672,7 +1584,7 @@ class ACGExecutionService:
         也绝不把已取消的任务推进为 COMPLETED。
         """
         if execution_state is not None:
-            self._state_persistence_service().persist(run, execution_state)
+            self.state_persistence.persist(run, execution_state)
         if run.status in self._terminal_run_statuses:
             return run
         run.status = self.state_machine.transition(run.status, WorkflowStatus.CANCELLED)
