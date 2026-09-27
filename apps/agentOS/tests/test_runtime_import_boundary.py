@@ -26,7 +26,7 @@ def test_retrieval_adapter_does_not_require_the_removed_retrieval_package() -> N
 
 @pytest.mark.parametrize(
     "module_name",
-    ["binding.py", "semantic_revision.py", "state_persistence.py"],
+    ["acg_execution.py", "binding.py", "semantic_revision.py", "state_persistence.py"],
 )
 def test_extracted_runtime_services_do_not_import_the_runtime_facade(
     module_name: str,

@@ -220,7 +220,7 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatc
         built.append((profile.resource_id, credential_provider))
         return _Adapter()
 
-    monkeypatch.setattr("runtime.workflow_runtime.build_resource_execution_adapter", factory)
+    monkeypatch.setattr("runtime.acg_execution.build_resource_execution_adapter", factory)
     runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=WorkflowRegistry(),
@@ -228,7 +228,7 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatc
         resource_service=resources,
     )
 
-    adapter = runtime._resource_execution_adapter("edge-01")
+    adapter = runtime.acg_execution_service._resource_execution_adapter("edge-01")
 
     assert adapter is not None
     assert built == [("edge-01", resources)]
@@ -256,7 +256,7 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_node(monkeypatch) 
         built.append((node.node_id, credential_provider))
         return _Adapter()
 
-    monkeypatch.setattr("runtime.workflow_runtime.build_node_execution_adapter", factory)
+    monkeypatch.setattr("runtime.acg_execution.build_node_execution_adapter", factory)
     runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
@@ -264,7 +264,7 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_node(monkeypatch) 
         node_service=nodes,
     )
 
-    adapter = runtime._node_execution_adapter("edge-node-01")
+    adapter = runtime.acg_execution_service._node_execution_adapter("edge-node-01")
 
     assert adapter is not None
     assert built == [("edge-node-01", nodes)]
@@ -294,7 +294,7 @@ def test_acg_execution_uses_node_adapter_from_node_agent_binding(monkeypatch) ->
     runtime.node_service.heartbeat("edge-node-01")
     adapter = _NodeAdapter()
     monkeypatch.setattr(
-        runtime,
+        runtime.acg_execution_service,
         "_node_execution_adapter",
         lambda node_id: adapter if node_id == "edge-node-01" else None,
     )

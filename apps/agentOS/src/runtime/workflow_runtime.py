@@ -13,9 +13,7 @@ import secrets
 import threading
 from time import monotonic
 from contracts.identity import new_attempt_id, new_step_execution_id
-from contracts.artifacts import is_final_synthesis_role
 from typing import Any, Callable, Mapping, Optional
-from uuid import uuid4
 
 from service.agents import AgentRegistry
 from support.acg.legacy.workflow_adapter import promote_workflow_to_acg
@@ -27,7 +25,7 @@ from components.mission_manager.state_machine import StateMachine
 from components.mission_manager.service import MissionManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
-from components.communicator import CommunicationBroker, CommunicatorService, ReliableMessage, SQLiteReliableCommunicationStore
+from components.communicator import SQLiteReliableCommunicationStore
 from components.communicator.provenance import ProvenanceLedger
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor import (
@@ -38,7 +36,6 @@ from components.executor import (
     ExecutionValueStore,
     SQLiteExecutionValueStore,
 )
-from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
 from components.evolution.service import EvolutionService
 from contracts.evolution import (
@@ -50,7 +47,7 @@ from contracts.evolution import (
 from components.memory.store import SQLiteMemoryStore
 from components.content import ContentManifestStore, SQLiteContentManifestStore
 from contracts.memory import MemoryPolicy, MemoryType
-from contracts.resource import BindingRequirement, DeploymentTier, ResourceType
+from contracts.resource import BindingRequirement
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
     TaskImplementationBinding,
@@ -63,29 +60,15 @@ from components.resource.agent_service import AgentService
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.resource.node_service import NodeService
 from components.resource.service import ResourceService
-from components.scheduler.models import SchedulerAllocationTimeout, SchedulerNoEligibleResource
 from components.scheduler.service import SchedulerService
 from components.scheduler.two_layer_service import TwoLayerSchedulerService
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
-    ExecutionInterrupt,
     ExecutionResumeCommand,
 )
-from adapters.agent_invocation import AgentInvocationAdapter
-from adapters.resource_execution import (
-    ResourceAgentProxy,
-    ResourceExecutionAdapter,
-    ResourceExecutionError,
-    build_node_execution_adapter,
-    build_resource_execution_adapter,
-)
-from service.agents.base import AgentProfile
-from adapters.audited_tool_runtime import AuditedToolRuntime
+from adapters.resource_execution import ResourceExecutionAdapter
 from adapters.guarded_model import GuardedModelRuntime
-from adapters.guarded_tool import GuardedToolRuntime
 from adapters.model_compatibility import ModelCompatibilityRegistry, ModelProviderAdapter
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.tool_adapter import configured_tool_runtime
 from contracts.workflow import (
     MissionRecordState,
     RuntimeMissionRecord,
@@ -95,7 +78,6 @@ from contracts.workflow import (
     ReviewDecisionType,
     ReviewRecord,
     StepStatus,
-    TraceEvent,
     TraceEventType,
     WorkflowDefinition,
     RuntimeRunRecord,
@@ -120,6 +102,7 @@ from components.planner.service import (
     normalize_capability_profile,
 )
 from runtime.binding import RuntimeBindingService
+from runtime.acg_execution import ACGExecutionService, ExecutionRunCancelled
 from runtime.semantic_revision import SemanticRevisionService
 from runtime.state_persistence import ACGStatePersistenceService
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
@@ -236,14 +219,6 @@ def _safe_topology_audit(value: object) -> dict[str, Any]:
 
 class ReviewConflictError(ValueError):
     """表示客户端读取审核对象后，运行或步骤已被其他操作更新。"""
-
-
-class ExecutionRunCancelled(RuntimeError):
-    """操作者请求取消后，用于在调度边界协作式终止图推进的控制流异常。
-
-    它不是 ``asyncio.CancelledError``：不撕毁事件循环中正在执行的任务树，
-    只让当前 run 停止认领新的节点执行，让已真实完成的步骤保留其提交。
-    """
 
 
 class ExecutionRuntime:
@@ -413,6 +388,56 @@ class ExecutionRuntime:
             replacement_lifecycle_message=_LIFECYCLE_MESSAGES[
                 WorkflowProgressPhase.UNDERSTANDING
             ],
+        )
+        # 执行边界：ACG stream loop、READY 调度与事件投影已迁入独立服务；锁、
+        # 执行槽与 public 入口仍由本 facade 持有。协作者按引用共享，派发前由
+        # ``_acg_execution_service()`` 重对齐可变项。
+        self.acg_execution_service = ACGExecutionService(
+            load_mission=self.mission_manager.get_mission,
+            load_workflow=self._workflow_for_run,
+            state_machine=self.state_machine,
+            state_persistence=self.acg_state_persistence,
+            checkpoint_store=self.checkpoint_store,
+            workflow_store=self.workflow_store,
+            trace_store=self.trace_store,
+            execution_value_store=self.execution_value_store,
+            memory_store=self.memory_store,
+            provenance_store=self.provenance_store,
+            decision_store=self.decision_store,
+            content_manifest_store=self.content_manifest_store,
+            reliable_communication_store=self.reliable_communication_store,
+            capability_catalog=self.capability_catalog,
+            agent_registry=self.agent_registry,
+            resource_directory=self.resource_directory,
+            legacy_resource_service=self.legacy_resource_service,
+            node_service=self.node_service,
+            agent_service=self.agent_service,
+            scheduler_service=self.scheduler_service,
+            legacy_scheduler_service=self.legacy_scheduler_service,
+            scheduler_wait_timeout=self.scheduler_wait_timeout,
+            resource_execution_adapters=self.resource_execution_adapters,
+            tool_runtime=self.tool_runtime,
+            model_registry=self.model_registry,
+            model_max_concurrency=self.model_max_concurrency,
+            model_min_interval_seconds=self.model_min_interval_seconds,
+            identity_lifecycle=self.identity_lifecycle,
+            attachment_context_builder=self.attachment_context_builder,
+            model_runtime=self._model_runtime,
+            default_model_binding=self.default_model_binding,
+            fault_hook=self._fault_hook,
+            terminal_run_statuses=frozenset(_TERMINAL_RUN_STATUSES),
+            lifecycle_messages=_LIFECYCLE_MESSAGES,
+            cancellation_event=self._cancellation_event,
+            cancellation_requested=self._run_cancellation_requested,
+            flush_identity_outbox=self._flush_identity_outbox,
+            set_run_lifecycle=self._set_run_lifecycle,
+            publish_run_terminal_event=self._publish_run_terminal_event,
+            fail_run_safely=self.fail_run_safely,
+            safe_error_message=self._safe_error_message,
+            mark_running=self.mission_manager.mark_running,
+            mark_running_for_new_run=self.mission_manager.mark_running_for_new_run,
+            mark_completed=self.mission_manager.mark_completed,
+            mark_waiting_review=self.mission_manager.mark_waiting_review,
         )
         self.run_lock_manager = run_lock_manager or GLOBAL_RUN_LOCK_MANAGER
         # 每个 run 同时只允许一个活跃执行体：并发 start/resume/审核恢复在入口处
@@ -1294,719 +1319,72 @@ class ExecutionRuntime:
     ) -> RuntimeRunRecord:
         """ACG 执行入口：认领单执行槽并管理取消信号生命周期。
 
-        并发重复入口（如同时 resume 同一检查点）在此被确定性拒绝；执行体见
-        ``_execute_acg_locked``。
+        并发重复入口（如同时 resume 同一检查点）在此被确定性拒绝；执行体由
+        ``ACGExecutionService.execute`` 承载。
         """
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
         if not self._claim_execution_slot(run.run_id):
             raise ValueError(f"run {run.run_id} already has an active execution")
         try:
-            return await self._execute_acg_locked(run, state=state, command=command)
+            return await self._acg_execution_service().execute(
+                run, state=state, command=command
+            )
         finally:
             self._release_execution_slot(run.run_id)
             self._discard_run_cancellation(run.run_id)
 
-    async def _execute_acg_locked(
-        self,
-        run: RuntimeRunRecord,
-        *,
-        state: ACGExecutionState | None = None,
-        command: ExecutionResumeCommand | None = None,
-    ) -> RuntimeRunRecord:
-        """执行或续跑融合 ACG，并把图状态投影为既有运行合同。
+    def _acg_execution_service(self) -> ACGExecutionService:
+        """把 facade 上可能被替换的协作者重对齐到执行服务后再派发。
 
-        图、值仓库和检查点均只传递引用型状态。此方法是 Runtime 唯一的 ACG 接线点：
-        通信、记忆、审计、Agent 适配由 ``ACGNodeRunner`` 组合，RuntimeRunRecord 只保存
-        生命周期、步骤状态、摘要和引用，绝不写入 Agent 的完整输出正文。
+        测试与应用装配会在构造后替换 store、身份生命周期或调度参数；执行服务
+        通过本入口在每次派发前重新读取当前值，保持与 facade 一致的晚绑定语义。
         """
-        if run.status in _TERMINAL_RUN_STATUSES:
-            return run
-        task = self.mission_manager.get_mission(run.mission_id)
-        workflow = self._workflow_for_run(run)
-        blueprint_data = run.acg_blueprint
-        if not isinstance(blueprint_data, dict):
-            raise ExecutionEngineMigratingError(run.run_id)
-        blueprint = RuntimeBlueprintSpec.model_validate(blueprint_data)
-        raw_package = run.execution_state.get("compiledACGPackage")
-        if not isinstance(raw_package, dict):
-            raise ExecutionEngineMigratingError(run.run_id)
-        from contracts.compiled_acg import load_compiled_acg_package
+        service = self.acg_execution_service
+        service.workflow_store = self.workflow_store
+        service.checkpoint_store = self.checkpoint_store
+        service.trace_store = self.trace_store
+        service.execution_value_store = self.execution_value_store
+        service.memory_store = self.memory_store
+        service.provenance_store = self.provenance_store
+        service.decision_store = self.decision_store
+        service.content_manifest_store = self.content_manifest_store
+        service.reliable_communication_store = self.reliable_communication_store
+        service.capability_catalog = self.capability_catalog
+        service.agent_registry = self.agent_registry
+        service.resource_directory = self.resource_directory
+        service.legacy_resource_service = self.legacy_resource_service
+        service.node_service = self.node_service
+        service.agent_service = self.agent_service
+        service.scheduler_service = self.scheduler_service
+        service.legacy_scheduler_service = self.legacy_scheduler_service
+        service.scheduler_wait_timeout = self.scheduler_wait_timeout
+        service.tool_runtime = self.tool_runtime
+        service.model_registry = self.model_registry
+        service.identity_lifecycle = self.identity_lifecycle
+        service.attachment_context_builder = self.attachment_context_builder
+        service.model_runtime = self._model_runtime
+        service.default_model_binding = self.default_model_binding
+        service._fault_hook = self._fault_hook
+        return service
 
-        compiled_package = load_compiled_acg_package(raw_package)
-        graph = ACGGraphCompiler().compile(
-            blueprint,
-            run_id=run.run_id,
-            package=compiled_package,
-        )
-        execution_state = state or ACGExecutionState(
-            runId=run.run_id,
-            graphId=blueprint.graph_id,
-            graphVersion=blueprint.version,
-        )
-        if execution_state.run_id != run.run_id:
-            raise ValueError("execution state runId does not match workflow run")
-        self._validate_acg_resume_identity(
-            run=run,
-            workflow=workflow,
-            blueprint=blueprint,
-            state=execution_state,
-        )
-        ledger = self.provenance_store.load_ledger(run_id=run.run_id, mission_id=task.mission_id)
-        self._validate_acg_state_references(run=run, state=execution_state, ledger=ledger)
-        runner = self._build_acg_runner(
-            task=task,
-            run=run,
-            workflow=workflow,
-            graph=graph,
-            state=execution_state,
-            ledger=ledger,
-        )
-        scheduled_runner = self._ready_node_runner(run=run, runner=runner)
-        run.execution_state["engineMigration"] = "langgraph_fused_v1"
-        run.execution_state["graphId"] = blueprint.graph_id
-        run.execution_state["compiledPackageId"] = compiled_package.package_id
-        run = self._set_run_lifecycle(
-            run,
-            status=WorkflowStatus.RUNNING,
-            phase=WorkflowProgressPhase.EXECUTING,
-            message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.EXECUTING],
-            set_started_at=True,
-        )
-        if self.identity_lifecycle is not None or run.execution_state.get("sourceRunId"):
-            self.mission_manager.mark_running_for_new_run(task, run_id=run.run_id)
-        else:
-            self.mission_manager.mark_running(task)
-        cancel_requested = self._cancellation_event(run.run_id)
-        try:
-            stream = (
-                graph.astream(execution_state, scheduled_runner)
-                if command is None
-                else graph.astream_after_resume(execution_state, command, scheduled_runner)
-            )
-            async for event in stream:
-                # ``nodes_scheduled`` 是图的安全取消点：此刻新 superstep 尚未派生
-                # 任何节点任务，在此停止推进即可避免一切新增 Agent/模型调用。
-                if (
-                    cancel_requested.is_set()
-                    and isinstance(event, dict)
-                    and event.get("type") == "nodes_scheduled"
-                ):
-                    break
-                self._project_acg_event(run, execution_state, event)
-            if cancel_requested.is_set():
-                return await self._finalize_cancelled_run(run, execution_state)
-            self._state_persistence_service().persist(run, execution_state)
-            run.output = self._acg_output(execution_state, blueprint)
-            run = self._set_run_lifecycle(
-                run,
-                status=WorkflowStatus.COMPLETED,
-                phase=WorkflowProgressPhase.COMPLETED,
-                message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.COMPLETED],
-            )
-            self.mission_manager.mark_completed(task)
-            self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
-            self.workflow_store.save_run(run)
-            self._publish_run_terminal_event(run, "run.completed")
-            if self.identity_lifecycle is not None:
-                self._flush_identity_outbox()
-            return run
-        except ExecutionRunCancelled:
-            # 节点执行体在调度边界感知到取消；与主循环 break 走同一条收敛路径。
-            return await self._finalize_cancelled_run(run, execution_state)
-        except ExecutionInterrupt as interrupt:
-            self._state_persistence_service().persist(run, execution_state)
-            checkpoint_id = self._state_persistence_service().save_checkpoint(
-                run, execution_state
-            )
-            self._state_persistence_service().persist(run, execution_state)
-            subject_type, subject_id = acg_review_subject(interrupt.payload)
-            blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
-            subject_node = blueprint.get_node(subject_id)
-            expected_node_type = "step" if subject_type == "step" else "control"
-            if subject_node.node_type.value != expected_node_type:
-                raise ValueError(
-                    f"ACG review subject type does not match blueprint node: {subject_id}"
-                )
-            if subject_type == "step":
-                step = run.get_step(subject_id)
-                step.status = StepStatus.WAITING_REVIEW
-            run.current_step_id = subject_id
-            self.trace_store.append_execution_event(run, {"type": "interrupted", **interrupt.payload})
-            self.trace_store.append_execution_event(run, {"type": "checkpoint_created", "checkpointId": checkpoint_id})
-            run = self._set_run_lifecycle(
-                run,
-                status=WorkflowStatus.WAITING_REVIEW,
-                phase=WorkflowProgressPhase.REVIEW,
-                message=_LIFECYCLE_MESSAGES[WorkflowProgressPhase.REVIEW],
-            )
-            self.mission_manager.mark_waiting_review(task)
-            self.workflow_store.save_run(run)
-            return run
-        except Exception as exc:
-            if isinstance(exc, ACGSuperstepError):
-                recovered = self._recover_remote_acg_failure(
-                    run=run,
-                    state=execution_state,
-                    error=exc,
-                )
-                if recovered:
-                    return await self._execute_acg_locked(
-                        run,
-                        state=execution_state,
-                    )
-            from components.recovery import RecoveryService, failure_event_from_exception
+    def _project_acg_event(
+        self, run: RuntimeRunRecord, state: ACGExecutionState, event: dict
+    ) -> None:
+        """委托执行服务投影单个图事件；保留既有调用点的稳定接缝。"""
+        self._acg_execution_service()._project_event(run, state, event)
 
-            failure = failure_event_from_exception(
-                exc,
-                subject_ref=(
-                    f"run:{run.run_id}:step:{execution_state.current_step_id}"
-                    if execution_state.current_step_id
-                    else f"run:{run.run_id}"
-                ),
-            )
-            recovery_plan = RecoveryService().propose(failure)
-            run.execution_state.setdefault("failureEvents", []).append(
-                failure.model_dump(by_alias=True, mode="json")
-            )
-            run.execution_state["recoveryOutcome"] = {
-                "failureId": failure.failure_id,
-                "source": failure.source.value,
-                "reasonCode": failure.reason_code,
-                "action": recovery_plan.strategy.value,
-                "status": "proposed",
-            }
-            self.workflow_store.save_run(run)
-            await self.fail_run_safely(
-                run.run_id,
-                error_code="acg_execution_failed",
-                error_message=self._safe_error_message(exc),
-            )
-            if self.identity_lifecycle is not None:
-                self._flush_identity_outbox()
-            raise
-
-    @staticmethod
-    def _unwrap_resource_execution_error(error: BaseException) -> ResourceExecutionError | None:
-        """Find a remote execution error hidden behind an ACG superstep wrapper."""
-        current: BaseException | None = error
-        visited: set[int] = set()
-        while current is not None and id(current) not in visited:
-            visited.add(id(current))
-            if isinstance(current, ResourceExecutionError):
-                return current
-            cause = getattr(current, "cause", None)
-            if isinstance(cause, BaseException):
-                current = cause
-                continue
-            chained = current.__cause__
-            current = chained if isinstance(chained, BaseException) else None
-        return None
-
-    def _resource_execution_adapter(self, resource_id: str) -> ResourceExecutionAdapter | None:
-        """Lazily construct the adapter for a bound remote resource."""
-        existing = self.resource_execution_adapters.get(resource_id)
-        if existing is not None:
-            return existing
-        try:
-            profile = self.legacy_resource_service.profile(resource_id)
-        except KeyError:
-            return None
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            return None
-        try:
-            adapter = build_resource_execution_adapter(
-                profile,
-                credential_provider=self.legacy_resource_service,
-            )
-        except KeyError as exc:
-            raise ResourceExecutionError(
-                f"REMOTE_EXECUTION_CONFIG_INVALID: credential missing for {resource_id}"
-            ) from exc
-        self.resource_execution_adapters[resource_id] = adapter
-        return adapter
-
-    def _node_execution_adapter(self, node_id: str) -> ResourceExecutionAdapter | None:
-        """Lazily construct the adapter for a bound remote Node ledger row."""
-        existing = self.resource_execution_adapters.get(node_id)
-        if existing is not None:
-            return existing
-        try:
-            profile = self.node_service.profile(node_id)
-        except KeyError:
-            return None
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            return None
-        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
-            return None
-        try:
-            adapter = build_node_execution_adapter(
-                profile,
-                credential_provider=self.node_service,
-            )
-        except KeyError as exc:
-            raise ResourceExecutionError(
-                f"REMOTE_EXECUTION_CONFIG_INVALID: node credential missing for {node_id}"
-            ) from exc
-        self.resource_execution_adapters[node_id] = adapter
-        return adapter
-
-    def _recover_remote_acg_failure(
+    def _validate_acg_state_references(
         self,
         *,
         run: RuntimeRunRecord,
         state: ACGExecutionState,
-        error: ACGSuperstepError,
-    ) -> bool:
-        """Mark failed remote resources unhealthy and prepare one safe rebind.
-
-        The graph has already projected ``superstep_failed`` when this method is
-        called.  We therefore repair only nodes without a committed graph result;
-        committed nodes remain completed and are replayed from the value store.
-        Each step/resource pair gets at most one automatic failover attempt.
-        """
-        resource_error = self._unwrap_resource_execution_error(error)
-        if resource_error is None:
-            return False
-
-        execution_bindings = run.execution_state.get("executionBindings")
-        if not isinstance(execution_bindings, dict):
-            return False
-        history = list(run.execution_state.get("resourceFailoverHistory") or [])
-        failed_resources: list[dict[str, str]] = []
-        failed_step_ids = list(dict.fromkeys(error.failed_step_ids))
-        reset_step_ids = list(dict.fromkeys(
-            [*error.failed_step_ids, *error.cancelled_step_ids]
-        ))
-        # ACG exposes the first failed task's exception as ``cause``. Other
-        # failed tasks may have independent causes, and cancelled siblings did
-        # not necessarily contact their bound remote resource at all.
-        for step_id in failed_step_ids[:1]:
-            binding = execution_bindings.get(step_id)
-            if not isinstance(binding, dict):
-                continue
-            resource_id = str(binding.get("resourceId") or "")
-            if resource_id not in self.resource_execution_adapters:
-                try:
-                    if self.legacy_resource_service.profile(resource_id).deployment_tier is DeploymentTier.LOCAL:
-                        continue
-                except KeyError:
-                    continue
-            already_attempted = any(
-                isinstance(item, dict)
-                and item.get("stepId") == step_id
-                and item.get("resourceId") == resource_id
-                for item in history
-            )
-            if already_attempted:
-                continue
-            self.legacy_resource_service.set_health(resource_id, healthy=False)
-            failed_resources.append({"stepId": step_id, "resourceId": resource_id})
-
-        if not failed_resources:
-            return False
-
-        for item in failed_resources:
-            item["error"] = str(resource_error)[:500]
-        history.extend(failed_resources)
-        run.execution_state["resourceFailoverHistory"] = history
-        run.execution_state["recoveryOutcome"] = {
-            "action": "resource_failover",
-            "status": "applied",
-            "resources": list(failed_resources),
-        }
-        run.recovery_count += 1
-        run.error = None
-        run.active_step_ids = []
-        run.current_step_id = None
-
-        committed_step_ids = set(state.completed_step_ids)
-        for step_id in reset_step_ids:
-            if step_id in committed_step_ids:
-                continue
-            step = run.get_step(step_id)
-            if step.status in {
-                StepStatus.FAILED,
-                StepStatus.CANCELLED,
-                StepStatus.RETRYING,
-                StepStatus.RUNNING,
-            }:
-                # This is an explicit recovery projection, not a normal
-                # lifecycle transition from FAILED back to PENDING.
-                step.status = StepStatus.PENDING
-                step.error = None
-                step.completed_at = None
-
-        self.trace_store.append(
-            run,
-            TraceEventType.RUN_RECOVERED,
-            step_id=(failed_resources[0]["stepId"]),
-            observation="远程资源执行失败，已切换到备用资源重新调度",
-            payload={
-                "failedResources": list(failed_resources),
-                "retryStepIds": [
-                    step_id for step_id in reset_step_ids
-                    if step_id not in committed_step_ids
-                ],
-            },
+        ledger: ProvenanceLedger | None = None,
+    ) -> None:
+        """委托执行服务校验引用归属；审核恢复路径与本入口共用同一实现。"""
+        self._acg_execution_service().validate_state_references(
+            run=run, state=state, ledger=ledger
         )
-        self.workflow_store.save_run(run)
-        return True
-
-    def _ready_node_runner(self, *, run: RuntimeRunRecord, runner: ACGNodeRunner):
-        """Decorate NodeRunner after Executor readiness with binding and lease coordination."""
-        raw_requirements = run.execution_state.get("bindingRequirements")
-        if not isinstance(raw_requirements, dict):
-            return runner
-        # A recreated Runtime resumes an already-prepared run without repeating
-        # prepare_run. Re-project the current registry through the authoritative
-        # resource service so every resource starts UNKNOWN and becomes usable
-        # only after this live registration heartbeat.
-        for agent in self.agent_registry.all():
-            self.resource_directory.register_agent(agent.profile)
-
-        async def execute(step_id: str, state: ACGExecutionState):
-            scheduling_started = monotonic()
-            execution_started: float | None = None
-            execution_outcome = "failed"
-            if self._run_cancellation_requested(run.run_id):
-                raise ExecutionRunCancelled(
-                    f"run {run.run_id} cancelled before scheduling step {step_id}"
-                )
-            payload = raw_requirements.get(step_id)
-            if not isinstance(payload, dict):
-                raise ValueError(f"READY step has no binding requirement: {step_id}")
-            requirement = BindingRequirement.model_validate(payload)
-            step = run.get_step(step_id)
-            attempt_number = max(step.attempt, step.retry_count) + 1
-            loop_path = tuple(state.loop_paths.get(step_id, ()))
-            loop_key = ".".join(str(item) for item in loop_path) or "root"
-            attempts = run.execution_state.setdefault("attemptIds", {})
-            attempt_key = f"{step_id}:{attempt_number}:{loop_key}"
-            attempt_id = str(attempts.setdefault(
-                attempt_key,
-                new_attempt_id() if self.identity_lifecycle is not None
-                else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
-            ))
-            allocation_deadline = monotonic() + self.scheduler_wait_timeout
-            retry_delay = 0.05
-            while True:
-                # Registry-backed Agents execute in this process.  Their continued
-                # presence is the authoritative liveness signal; refresh only those
-                # frozen into this requirement before evaluating health.  Without
-                # this heartbeat, a valid long Run becomes permanently ineligible
-                # as soon as the one-time registration heartbeat reaches its TTL.
-                allowed_resource_ids = set(requirement.allowed_resource_ids)
-                for local_agent in self.agent_registry.all():
-                    resource_id = self.agent_registry.agent_id(local_agent)
-                    if allowed_resource_ids and resource_id not in allowed_resource_ids:
-                        continue
-                    profile = self.legacy_resource_service.profile(resource_id)
-                    if profile.deployment_tier is DeploymentTier.LOCAL:
-                        self.legacy_resource_service.heartbeat(resource_id, source="local")
-                decision = self._schedule_ready(
-                    use_two_layer=(
-                        isinstance(self.scheduler_service, TwoLayerSchedulerService)
-                        and bool(self.agent_service.profiles())
-                        and bool(self.node_service.profiles())
-                    ),
-                    run_id=run.run_id,
-                    step_id=step_id,
-                    attempt_id=attempt_id,
-                    requirement=requirement,
-                )
-                if decision.status == "allocated":
-                    break
-                if decision.reason == "NO_ELIGIBLE_RESOURCE":
-                    rejected = ", ".join(
-                        f"{item.resource_id}:[{','.join(reason.value for reason in item.reasons)}]"
-                        for item in decision.candidates
-                        if item.reasons
-                    )
-                    raise SchedulerNoEligibleResource(
-                        f"NO_ELIGIBLE_RESOURCE:{step_id}: {rejected or 'no registered candidates'}"
-                    )
-                if monotonic() >= allocation_deadline:
-                    raise SchedulerAllocationTimeout(
-                        f"SCHEDULER_CAPACITY_TIMEOUT:{step_id}: "
-                        f"no lease after {self.scheduler_wait_timeout:g}s"
-                    )
-                if self._run_cancellation_requested(run.run_id):
-                    raise ExecutionRunCancelled(
-                        f"run {run.run_id} cancelled while waiting for step {step_id} lease"
-                    )
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(1.0, retry_delay * 2)
-            assert decision.binding is not None and decision.lease is not None
-            selected_resource_id = decision.binding.resource_id
-            node_binding = run.execution_state.get("nodeAgentBindings")
-            node_binding = node_binding.get(step_id) if isinstance(node_binding, dict) else None
-            binding_metadata = decision.binding.metadata
-            node_id = (
-                str(node_binding.get("nodeId") or "")
-                if isinstance(node_binding, dict)
-                else str(binding_metadata.get("nodeId") or "")
-            )
-            agent_id = (
-                str(node_binding.get("agentId") or selected_resource_id)
-                if isinstance(node_binding, dict)
-                else str(binding_metadata.get("agentId") or selected_resource_id)
-            )
-            remote_adapter = self._node_execution_adapter(node_id) if node_id else None
-            if remote_adapter is None:
-                remote_adapter = self._resource_execution_adapter(selected_resource_id)
-            if remote_adapter is not None:
-                resource_profile = None
-                if node_id:
-                    try:
-                        node_profile = self.node_service.profile(node_id)
-                        capabilities = list(self.agent_service.profile(agent_id).capabilities)
-                    except KeyError:
-                        node_profile = None
-                        capabilities = []
-                else:
-                    node_profile = None
-                    capabilities = []
-                if not capabilities:
-                    resource_profile = self.legacy_resource_service.profile(selected_resource_id)
-                    capabilities = list(resource_profile.capabilities)
-                runner.resource_execution_adapters[step_id] = remote_adapter
-                runner.agents[step_id] = ResourceAgentProxy(
-                    profile=AgentProfile(
-                        agentId=agent_id,
-                        agentName=step.agent_name or agent_id,
-                        domain=run.domain,
-                        capabilities=capabilities,
-                        enabled=(node_profile.enabled if node_profile is not None else resource_profile.enabled),
-                    ),
-                    adapter=remote_adapter,
-                )
-                selected_profile = runner.agents[step_id].profile
-            else:
-                runner.resource_execution_adapters.pop(step_id, None)
-                selected_agent = self.agent_registry.resolve_by_id(
-                    agent_id,
-                    allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
-                )
-                runner.agents[step_id] = selected_agent
-                selected_profile = selected_agent.profile
-            model_binding = self._freeze_model_binding(
-                step_id=step_id,
-                profile=selected_profile,
-            )
-            run.execution_state.setdefault("modelBindings", {})[step_id] = model_binding
-            if model_binding is not None:
-                model_runtime = self._model_runtime_from_binding(model_binding)
-                if model_runtime is not None:
-                    runner.model_runtimes[step_id] = model_runtime
-            runner.attempt_ids[step_id] = attempt_id
-            step_execution_id = (
-                run.execution_state.setdefault("stepExecutionIds", {}).setdefault(
-                    attempt_key,
-                    new_step_execution_id()
-                    if self.identity_lifecycle is not None
-                    else f"execution:{attempt_id}",
-                )
-            )
-            profile = selected_profile
-            base_events = [
-                self._lifecycle_event(
-                    f"attempt.ensured:{attempt_id}", "attempt.ensured", run.run_id,
-                    {"runId": run.run_id, "missionId": run.mission_id, "stepId": step_id,
-                     "attemptId": attempt_id, "attemptNumber": attempt_number},
-                ),
-                self._lifecycle_event(
-                    f"resource.bound:{attempt_id}", "resource.bound", attempt_id,
-                    {"attemptId": attempt_id,
-                     "binding": decision.binding.model_dump(by_alias=True, mode="json"),
-                     "agentId": str(profile.agent_id or decision.binding.resource_id),
-                     "modelId": str(profile.model_name or "runtime-default")},
-                ),
-                self._lifecycle_event(
-                    f"step.started:{step_execution_id}", "step.started", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id, "stepId": step_id,
-                     "stepExecutionId": step_execution_id},
-                ),
-            ]
-            run.execution_state.setdefault("executionBindings", {})[step_id] = (
-                decision.binding.model_dump(by_alias=True, mode="json")
-            )
-            run.execution_state.setdefault("schedulingDecisions", []).append(
-                {
-                    "stepId": step_id,
-                    "attemptId": attempt_id,
-                    "candidates": [
-                        item.model_dump(by_alias=True, mode="json") for item in decision.candidates
-                    ],
-                    "binding": decision.binding.model_dump(by_alias=True, mode="json"),
-                    "lease": decision.lease.model_dump(by_alias=True, mode="json"),
-                }
-            )
-            run.execution_state.setdefault("resourceBindings", {})[step_id] = (
-                decision.binding.resource_id
-            )
-            base_events = self._reuse_persisted_lifecycle_events(base_events)
-            self.workflow_store.save_run_with_events(run, base_events)
-            self._flush_identity_outbox()
-            try:
-                execution_started = monotonic()
-                result = await runner(step_id, state)
-                execution_outcome = "completed"
-                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
-                    f"step.succeeded:{step_execution_id}", "step.succeeded", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id,
-                     "stepExecutionId": step_execution_id,
-                     "result": self._safe_lifecycle_result(result)},
-                )])
-                self._flush_identity_outbox()
-                return result
-            except ExecutionRunCancelled:
-                execution_outcome = "cancelled"
-                reason = "step scheduling stopped by operator cancellation"
-                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
-                    f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id,
-                     "stepExecutionId": step_execution_id, "reason": reason},
-                )])
-                self._flush_identity_outbox()
-                raise
-            except asyncio.CancelledError:
-                execution_outcome = "cancelled"
-                reason = "ACG superstep cancelled after sibling failure"
-                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
-                    f"step.cancelled:{step_execution_id}", "step.cancelled", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id,
-                     "stepExecutionId": step_execution_id, "reason": reason},
-                )])
-                self._flush_identity_outbox()
-                raise
-            except Exception as exc:
-                from contracts.runtime_events import RuntimeEvent
-                from runtime.live_events import runtime_event_broker
-
-                error_code = str(
-                    getattr(exc, "code", None)
-                    or getattr(exc, "cause_code", None)
-                    or type(exc).__name__
-                )
-                await runtime_event_broker.publish(
-                    run.run_id,
-                    RuntimeEvent(
-                        eventType="node.failed",
-                        runId=run.run_id,
-                        nodeId=step_id,
-                        attemptId=attempt_id,
-                        sequence=0,
-                        payload={
-                            "errorCode": error_code,
-                            "retryable": bool(getattr(exc, "retryable", False)),
-                            "attempt": attempt_number,
-                        },
-                    ),
-                )
-                if remote_adapter is not None and isinstance(exc, ResourceExecutionError):
-                    if node_id:
-                        self.node_service.heartbeat(node_id, success=False)
-                    else:
-                        self.legacy_resource_service.set_health(selected_resource_id, healthy=False)
-                self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
-                    f"step.failed:{step_execution_id}", "step.failed", step_execution_id,
-                    {"runId": run.run_id, "attemptId": attempt_id,
-                     "stepExecutionId": step_execution_id, "reason": self._safe_error_message(exc)},
-                )])
-                self._flush_identity_outbox()
-                raise
-            finally:
-                finished = monotonic()
-                started = execution_started or finished
-                run.execution_state.setdefault("stepPerformance", {})[step_id] = {
-                    "schedulingWaitMs": round((started - scheduling_started) * 1000),
-                    "executionMs": round((finished - started) * 1000),
-                    "totalMs": round((finished - scheduling_started) * 1000),
-                    "outcome": execution_outcome,
-                    "resourceId": selected_resource_id,
-                }
-                released = self._release_lease(
-                    decision.lease.lease_id,
-                    use_two_layer=bool(node_id),
-                )
-                if released:
-                    for scheduling_item in reversed(
-                        run.execution_state.get("schedulingDecisions") or []
-                    ):
-                        lease = scheduling_item.get("lease") if isinstance(scheduling_item, dict) else None
-                        if isinstance(lease, dict) and lease.get("leaseId") == decision.lease.lease_id:
-                            lease["status"] = "released"
-                            break
-
-        execute.prepare_superstep = runner.prepare_superstep
-        return execute
-
-    def _schedule_ready(
-        self,
-        *,
-        use_two_layer: bool,
-        run_id: str,
-        step_id: str,
-        attempt_id: str,
-        requirement: BindingRequirement,
-    ):
-        """Choose the scheduler that owns the frozen binding's resource model."""
-        if use_two_layer and isinstance(self.scheduler_service, TwoLayerSchedulerService):
-            return self.scheduler_service.schedule_ready(
-                run_id=run_id,
-                step_id=step_id,
-                attempt_id=attempt_id,
-                requirement=requirement,
-            )
-        return self.legacy_scheduler_service.schedule_ready(
-            run_id=run_id,
-            step_id=step_id,
-            attempt_id=attempt_id,
-            requirement=requirement,
-        )
-
-    def _release_lease(self, lease_id: str, *, use_two_layer: bool) -> bool:
-        if use_two_layer and isinstance(self.scheduler_service, TwoLayerSchedulerService):
-            return self.scheduler_service.release(lease_id)
-        return self.legacy_scheduler_service.release(lease_id)
-
-    @staticmethod
-    def _lifecycle_event(event_id: str, event_type: str, aggregate_id: str, payload: dict) -> dict:
-        return {"eventId": event_id, "eventType": event_type, "aggregateId": aggregate_id, "payload": payload}
-
-    @staticmethod
-    def _safe_lifecycle_result(result: dict) -> dict:
-        allowed = {
-            "commitId", "outputRef", "outputSummary", "contextRef", "memoryRef",
-            "traceRef", "auditDecisionRef", "auditOutcome", "nodeExecution",
-            "communicationRefs", "evidenceRefs", "provenanceEvents",
-        }
-        safe = {key: result[key] for key in allowed if result.get(key) is not None}
-        raw = result.get("artifacts")
-        if raw is None and isinstance(result.get("artifact"), dict):
-            raw = [result["artifact"]]
-        elif isinstance(raw, dict):
-            raw = [raw]
-        if isinstance(raw, list):
-            descriptor_keys = {
-                "artifactKey", "semanticTaskKey", "name", "title", "artifactType",
-                "type", "mediaType", "manifestId", "checksum", "metadata",
-            }
-            descriptors = []
-            for item in raw:
-                if not isinstance(item, dict):
-                    continue
-                descriptor = {
-                    key: item[key]
-                    for key in descriptor_keys
-                    if item.get(key) is not None
-                }
-                descriptor.setdefault("artifactKey", "primary")
-                descriptors.append(descriptor)
-            if descriptors:
-                safe["artifacts"] = descriptors
-        return safe
 
     def _flush_identity_outbox(self, *, raise_on_failure: bool = True) -> None:
         if self.identity_lifecycle is None:
@@ -2032,762 +1410,10 @@ class ExecutionRuntime:
                 },
             )
 
-    def _reuse_persisted_lifecycle_events(self, events: list[dict]) -> list[dict]:
-        """Reuse the first committed event body during an idempotent attempt resume.
-
-        Scheduler leases carry timestamps and scores, so rebuilding the same attempt
-        can otherwise produce a different payload for an already persisted event ID.
-        The store remains authoritative: a different payload is still rejected by
-        ``save_run_with_events`` when no prior event exists in the outbox.
-        """
-        existing = {
-            str(item.get("event_id")): item
-            for item in self.workflow_store.list_outbox(limit=100000)
-            if isinstance(item, dict) and item.get("event_id")
-        }
-        normalized: list[dict] = []
-        for event in events:
-            prior = existing.get(str(event.get("eventId")))
-            if prior is None:
-                normalized.append(event)
-                continue
-            payload = prior.get("payload")
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload = None
-            normalized.append({
-                "eventId": prior["event_id"],
-                "eventType": prior["event_type"],
-                "aggregateId": prior["aggregate_id"],
-                "payload": payload if isinstance(payload, dict) else event.get("payload", {}),
-            })
-        return normalized
-
-    @staticmethod
-    def _validate_acg_resume_identity(
-        *,
-        run: RuntimeRunRecord,
-        workflow: WorkflowDefinition,
-        blueprint: RuntimeBlueprintSpec,
-        state: ACGExecutionState,
-    ) -> None:
-        """恢复前校验运行、蓝图、工作流和 checkpoint 的版本身份。"""
-        expected_graph_id = str(run.execution_state.get("graphId") or blueprint.graph_id)
-        if state.graph_id != expected_graph_id:
-            raise ValueError(
-                f"checkpoint graphId {state.graph_id!r} does not match run graphId {expected_graph_id!r}"
-            )
-        if int(state.graph_version) != int(blueprint.version):
-            raise ValueError(
-                f"checkpoint graphVersion {state.graph_version} does not match blueprint version {blueprint.version}"
-            )
-        source_blueprint_version = run.execution_state.get("sourceBlueprintVersion")
-        if source_blueprint_version is not None and int(blueprint.version) != int(source_blueprint_version):
-            raise ValueError(
-                "checkpoint sourceBlueprintVersion does not match persisted blueprint version"
-            )
-        workflow_version = run.execution_state.get("workflowVersion")
-        if workflow_version is not None and str(workflow.version) != str(workflow_version):
-            raise ValueError("checkpoint workflowVersion does not match persisted workflow version")
-
-    def _validate_acg_state_references(
-        self,
-        *,
-        run: RuntimeRunRecord,
-        state: ACGExecutionState,
-        ledger: ProvenanceLedger | None = None,
-    ) -> None:
-        """在恢复前重验检查点的引用归属，且不读取任何输出或上下文正文。
-
-        State 字典的键就是产生引用的步骤标识。若键、runId 或引用类别被篡改，必须在
-        改变运行生命周期、创建 Agent 或追加血缘事件之前停止，避免恢复路径成为越权入口。
-        """
-        valid_step_ids = {step.step_id for step in run.steps}
-        reference_maps = {
-            "output summaries": state.output_summaries,
-            "output": state.output_refs,
-            "context": state.context_refs,
-            "memory": state.memory_refs,
-            "trace": state.trace_refs,
-            "provenance": state.provenance_refs,
-        }
-        for reference_name, references in reference_maps.items():
-            for step_id in references:
-                if step_id not in valid_step_ids:
-                    raise ValueError(f"unknown ACG step {step_id} in {reference_name} references")
-        for step_id, output_ref in state.output_refs.items():
-            self.execution_value_store.assert_reference(
-                kind="output", run_id=run.run_id, step_id=step_id, reference=output_ref
-            )
-        for step_id, context_ref in state.context_refs.items():
-            self.execution_value_store.assert_reference(
-                kind="context", run_id=run.run_id, step_id=step_id, reference=context_ref
-            )
-        for patch_ref in state.graph_patch_refs:
-            self.execution_value_store.assert_reference(
-                kind="graph-patch",
-                run_id=run.run_id,
-                step_id="__graph__",
-                reference=patch_ref,
-            )
-        for step_id, memory_ref in state.memory_refs.items():
-            if memory_ref != "memory:none":
-                MemoryService(store=self.memory_store).assert_step_ref(
-                    run_id=run.run_id,
-                    step_id=step_id,
-                    memory_ref=memory_ref,
-                )
-        for step_id, trace_ref in state.trace_refs.items():
-            if trace_ref != f"trace:{step_id}":
-                raise ValueError(f"trace reference {trace_ref} does not belong to step {step_id}")
-            if not any(
-                event.event_type == TraceEventType.STEP_SUCCEEDED and event.step_id == step_id
-                for event in run.trace
-            ):
-                raise ValueError(f"trace reference {trace_ref} has no completed trace for step {step_id}")
-        active_ledger = ledger or self.provenance_store.load_ledger(
-            run_id=run.run_id,
-            mission_id=run.mission_id,
-        )
-        for step_id, event_ids in state.provenance_refs.items():
-            for event_id in event_ids:
-                active_ledger.assert_event_owner(event_id=event_id, step_id=step_id)
-        review_payload = state.review_payload
-        if isinstance(review_payload, dict):
-            decision_ref = review_payload.get("auditDecisionRef")
-            outcome = review_payload.get("auditOutcome")
-            review_step_id = review_payload.get("stepId")
-            if isinstance(decision_ref, str) and isinstance(outcome, str) and isinstance(review_step_id, str):
-                self.decision_store.assert_decision(
-                    run_id=run.run_id,
-                    step_id=review_step_id,
-                    decision_ref=decision_ref,
-                    outcomes={outcome},
-                )
-
-    def _build_acg_runner(
-        self,
-        *,
-        task: RuntimeMissionRecord,
-        run: RuntimeRunRecord,
-        workflow: WorkflowDefinition,
-        graph,
-        state: ACGExecutionState,
-        ledger: ProvenanceLedger,
-    ) -> ACGNodeRunner:
-        """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
-        steps = {step.step_id: step for step in run.steps}
-        allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
-        bindings = run.execution_state.get("resourceBindings")
-        if not isinstance(bindings, dict):
-            bindings = {}
-        node_agent_bindings = run.execution_state.get("nodeAgentBindings")
-        node_agent_bindings = node_agent_bindings if isinstance(node_agent_bindings, dict) else {}
-        agents = {}
-        resource_adapters = {}
-        for step_id, step in steps.items():
-            resource_id = str(bindings.get(step_id) or "")
-            if not resource_id:
-                # The READY wrapper will populate this step after Scheduler
-                # allocation. Preparation must not force a concrete resource.
-                continue
-            node_binding = node_agent_bindings.get(step_id)
-            node_id = str(node_binding.get("nodeId") or "") if isinstance(node_binding, dict) else ""
-            agent_id = str(node_binding.get("agentId") or resource_id) if isinstance(node_binding, dict) else resource_id
-            adapter = self._node_execution_adapter(node_id) if node_id else None
-            if adapter is None:
-                adapter = self._resource_execution_adapter(resource_id)
-            if adapter is None:
-                agents[step_id] = self.agent_registry.resolve_by_id(
-                    agent_id,
-                    allowed_agent_ids=allowed_agent_ids,
-                )
-                continue
-            try:
-                capabilities = list(self.agent_service.profile(agent_id).capabilities)
-            except KeyError:
-                profile = self.legacy_resource_service.profile(resource_id)
-                capabilities = list(profile.capabilities)
-            agents[step_id] = ResourceAgentProxy(
-                profile=AgentProfile(
-                    agentId=agent_id,
-                    agentName=step.agent_name or agent_id,
-                    domain=workflow.domain,
-                    capabilities=capabilities,
-                    enabled=True,
-                ),
-                adapter=adapter,
-            )
-            resource_adapters[step_id] = adapter
-        communication_rules = tuple(
-            getattr(graph.communication_manifest, "rules", ())
-            if graph.communication_manifest is not None
-            else ()
-        )
-        upstream_step_ids = {
-            node_id: tuple(
-                dict.fromkeys(
-                    [source for source, target in graph.edges if target == node_id]
-                    + [
-                        rule.producer_step_id
-                        for rule in communication_rules
-                        if rule.consumer_step_id == node_id
-                    ]
-                )
-            )
-            for node_id in steps
-        }
-        allowed_agent_set = set(allowed_agent_ids) if allowed_agent_ids is not None else None
-        allowed_tools = {
-            tool_name
-            for agent in self.agent_registry.all()
-            if allowed_agent_set is None or self.agent_registry.agent_id(agent) in allowed_agent_set
-            for tool_name in agent.profile.allowed_tools
-        }
-        delegate = self.tool_runtime or configured_tool_runtime()
-        # 工具必须先经过 AgentOS 的授权检查，再进入统一的超时、重试、限流与安全
-        # 错误映射边界。对已受保护的运行时不重复包装，避免双重重试放大副作用。
-        protected_tools = (
-            delegate
-            if isinstance(delegate, GuardedToolRuntime)
-            else GuardedToolRuntime(delegate=delegate, retries=1)
-        ) if delegate is not None else None
-        scoped_tools = (
-            AuditedToolRuntime(delegate=protected_tools, allowed_tools=allowed_tools)
-            if protected_tools is not None
-            else None
-        )
-        # Broker 由单次图执行共享，读取后的预算计数写入引用型 State；从检查点恢复
-        # 时，已消费额度会作为构造参数重新载入，不能因重启而回到零。
-        communication_broker = (
-            CommunicationBroker(
-                manifest=graph.communication_manifest,
-                value_store=self.execution_value_store,
-                usage=state.communication_usage,
-            )
-            if graph.communication_manifest is not None
-            else None
-        )
-        if communication_broker is not None:
-            # 空图或仅根节点的运行同样必须采用统一的零值表示。否则首次执行会在
-            # Broker 调用后才写入零计数，而提交重放会保留空对象，造成等价状态生成
-            # 不同 checkpoint 摘要并破坏恢复幂等性。
-            state.communication_usage = communication_broker.usage_snapshot()
-        model_bindings = run.execution_state.get("modelBindings")
-        if not isinstance(model_bindings, dict):
-            model_bindings = {}
-        # Steps frozen to the same provider/model must share one guard. Creating
-        # one guard per step makes every semaphore independent and allows a
-        # parallel superstep to burst past the provider quota.
-        shared_model_runtimes: dict[str, object | None] = {}
-        step_model_runtimes: dict[str, object | None] = {}
-        for step_id in steps:
-            binding = model_bindings.get(step_id)
-            cache_key = json.dumps(binding, sort_keys=True) if isinstance(binding, dict) else "null"
-            if cache_key not in shared_model_runtimes:
-                shared_model_runtimes[cache_key] = self._model_runtime_from_binding(binding)
-            step_model_runtimes[step_id] = shared_model_runtimes[cache_key]
-        resolved_task = task.model_copy(deep=True)
-        resolved_task.input = (
-            self.attachment_context_builder.enrich(dict(run.input))
-            if self.attachment_context_builder is not None
-            else dict(run.input)
-        )
-        return ACGNodeRunner(
-            task=resolved_task,
-            run=run,
-            workflow=workflow,
-            steps=steps,
-            agents=agents,
-            communicator=CommunicatorService(
-                run_id=run.run_id,
-                mission_id=task.mission_id,
-                ledger=ledger,
-            ),
-            memory=MemoryService(store=self.memory_store),
-            entropy_budget=(int(run.input["entropyBudget"]) if run.input.get("entropyBudget") is not None else None),
-            value_store=self.execution_value_store,
-            content_manifest_store=self.content_manifest_store,
-            communication_modes={node_id: spec.communication_mode for node_id, spec in graph.node_specs.items() if spec.kind == "step"},
-            upstream_step_ids=upstream_step_ids,
-            model_runtime=self._model_runtime,
-            model_runtimes={
-                step_id: runtime
-                for step_id, runtime in step_model_runtimes.items()
-                if runtime is not None
-            },
-            capability_descriptors={
-                step.capability: self.capability_catalog.resolve(step.capability)
-                for step in steps.values()
-                if step.capability
-            },
-            tool_runtime=scoped_tools,
-            communication_broker=communication_broker,
-            reliable_communication_store=self.reliable_communication_store,
-            compiled_package=graph.compiled_package,
-            skill_manifest=graph.compiled_package.skill_manifest,
-            memory_manifest=graph.compiled_package.memory_manifest,
-            evidence_manifest=graph.compiled_package.evidence_manifest,
-            agent_invoker=AgentInvocationAdapter(
-                registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
-            ),
-            resource_execution_adapters=resource_adapters,
-            decision_store=self.decision_store,
-            fault_hook=self._fault_hook,
-        )
-
-    def _project_acg_event(self, run: RuntimeRunRecord, state: ACGExecutionState, event: dict) -> None:
-        """投影单个图事件与步骤状态；事件正文只含步骤标识、摘要或引用。"""
-        projection_before = self._acg_projection_snapshot(run, state)
-        event_type = event.get("type")
-        commit_id = event.get("commitId")
-        node_trace_batch: list[TraceEvent] = []
-        if event_type == "node_completed" and isinstance(commit_id, str) and self._is_projected_commit(run, commit_id):
-            # Trace 已经确认过该提交，说明上次在状态保存前中断。重放时不能再次追加
-            # 步骤成功、记忆访问或通信血缘事件；但可变 WorkflowStep 投影仍必须与
-            # 提交事实对齐，否则 Run 会在完成时残留 RUNNING 步骤。
-            step_id = str(event.get("stepId"))
-            step = run.get_step(step_id)
-            step.status = StepStatus.COMPLETED
-            step.completed_at = step.completed_at or utc_now()
-            run.current_step_id = step_id
-            run.completed_step_ids = list(state.completed_step_ids)
-            run.active_step_ids = list(state.active_step_ids)
-            self._state_persistence_service().persist(
-                run,
-                state,
-                projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
-            )
-            return
-        if event_type == "nodes_scheduled":
-            for step_id in event.get("stepIds", []):
-                step = run.get_step(str(step_id))
-                step.status = StepStatus.RUNNING
-                step.started_at = step.started_at or utc_now()
-            run.active_step_ids = list(event.get("stepIds", []))
-            run.current_step_id = state.current_step_id
-        elif event_type == "node_completed":
-            step_id = str(event.get("stepId"))
-            step = run.get_step(step_id)
-            step.status = StepStatus.COMPLETED
-            step.completed_at = utc_now()
-            run.current_step_id = step_id
-            run.completed_step_ids = list(state.completed_step_ids)
-            # Graph 的并行 superstep 会逐个 yield 完成事件，State.activeStepIds
-            # 在整批提交前仍包含兄弟节点；已完成节点不能继续显示为活动。
-            run.active_step_ids = [
-                item for item in state.active_step_ids
-                if item not in state.completed_step_ids
-            ]
-            for runtime_event in event.get("runtimeEvents") or []:
-                if not isinstance(runtime_event, dict):
-                    continue
-                target = runtime_event.get("nodeId") or step_id
-                payload = {key: value for key, value in runtime_event.items() if key not in {"eventId", "eventType", "runId", "nodeId"}}
-                node_trace_batch.append(self.trace_store.build_event(
-                    run, event_type=TraceEventType.RUNTIME_EVENT_CLASSIFIED,
-                    step_id=str(target), observation=str(runtime_event.get("eventType") or "runtime event"),
-                    payload={"runtimeEvent": str(runtime_event.get("eventType") or ""), **payload},
-                ))
-        elif event_type == "superstep_completed":
-            self._project_completed_phase_capsules(run=run, state=state)
-            checkpoint_id = self._state_persistence_service().save_checkpoint(run, state)
-            state.checkpoint_id = checkpoint_id
-            run.execution_state["checkpointId"] = checkpoint_id
-            self.trace_store.append_execution_event(
-                run,
-                {"type": "checkpoint_created", "checkpointId": checkpoint_id},
-            )
-        elif event_type == "superstep_failed":
-            for step_id in event.get("failedStepIds", []):
-                step = run.get_step(str(step_id))
-                if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
-                    self._transition_step(step, StepStatus.FAILED)
-                    step.error = "ACG superstep node failed"
-            for step_id in event.get("cancelledStepIds", []):
-                step = run.get_step(str(step_id))
-                if step.status in {StepStatus.PENDING, StepStatus.RUNNING, StepStatus.RETRYING}:
-                    self._transition_step(step, StepStatus.CANCELLED)
-                    step.error = "ACG superstep cancelled after sibling failure"
-            run.active_step_ids = []
-        # 条件控制节点由图在超步边界内部推进，不会产生独立的节点事件。这里根据
-        # 已持久化的 skippedStepIds 补齐 RuntimeRunRecord 的可见步骤状态，供查询、
-        # 审计和取消逻辑一致地区分“未执行”与“条件明确跳过”。
-        for step_id in state.skipped_step_ids:
-            step = run.get_step(step_id)
-            if step.status == StepStatus.PENDING:
-                step.status = StepStatus.SKIPPED_BY_CONDITION
-                step.completed_at = utc_now()
-        if event_type not in {"superstep_completed", "superstep_failed"}:
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_execution_event(run, event))
-            else:
-                self.trace_store.append_execution_event(run, event)
-        if event_type == "superstep_failed":
-            self.trace_store.append(
-                run,
-                TraceEventType.STEP_FAILED,
-                step_id=(event.get("failedStepIds") or [None])[0],
-                observation="ACG parallel superstep failed",
-                payload={
-                    "failedStepIds": list(event.get("failedStepIds") or []),
-                    "cancelledStepIds": list(event.get("cancelledStepIds") or []),
-                },
-            )
-        for model_call in event.get("modelInvocations", []):
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_event(
-                    run,
-                    event_type=TraceEventType.MODEL_CALLED,
-                    step_id=event.get("stepId"),
-                    observation="Model invocation metadata projected",
-                    payload=dict(model_call),
-                ))
-            else:
-                self.trace_store.append(
-                    run,
-                    TraceEventType.MODEL_CALLED,
-                    step_id=event.get("stepId"),
-                    observation="Model invocation metadata projected",
-                    payload=dict(model_call),
-                )
-        for tool_call in event.get("toolCalls", []):
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_event(
-                    run,
-                    event_type=TraceEventType.TOOL_CALLED,
-                    step_id=event.get("stepId"),
-                    observation="Tool invocation metadata projected",
-                    payload=dict(tool_call),
-                ))
-            else:
-                self.trace_store.append(
-                    run,
-                    TraceEventType.TOOL_CALLED,
-                    step_id=event.get("stepId"),
-                    observation="Tool invocation metadata projected",
-                    payload=dict(tool_call),
-                )
-        memory_access = event.get("memoryAccess")
-        if isinstance(memory_access, dict):
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_event(
-                    run,
-                    event_type=TraceEventType.DATA_CONSUMED,
-                    step_id=event.get("stepId"),
-                    observation="Step memory policy applied",
-                    payload=dict(memory_access),
-                ))
-            else:
-                self.trace_store.append(
-                    run,
-                    TraceEventType.DATA_CONSUMED,
-                    step_id=event.get("stepId"),
-                    observation="Step memory policy applied",
-                    payload=dict(memory_access),
-                )
-        memory_event = event.get("memoryEvent")
-        if isinstance(memory_event, dict) and memory_event:
-            projected = StructuredMemoryEvent.model_validate(memory_event).model_dump(
-                by_alias=True, mode="json"
-            )
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_event(
-                    run,
-                    event_type=TraceEventType.DATA_PRODUCED,
-                    step_id=event.get("stepId"),
-                    observation="Structured memory event projected",
-                    payload=projected,
-                ))
-            else:
-                self.trace_store.append(
-                    run,
-                    TraceEventType.DATA_PRODUCED,
-                    step_id=event.get("stepId"),
-                    observation="Structured memory event projected",
-                    payload=projected,
-                )
-        # 通信读取事件来自 Broker，仅允许引用、字段名、计数与逻辑通道进入审计。
-        # 即便节点事件被外部调用方伪造，也不能借此把 reason 或任何正文塞进 Trace。
-        for communication_read in event.get("communicationReads", []):
-            if not isinstance(communication_read, dict):
-                continue
-            allowed = {
-                "runId",
-                "consumerStepId",
-                "producerStepId",
-                "outputRef",
-                "fields",
-                "tokens",
-                "channel",
-            }
-            payload = {
-                key: value
-                for key, value in communication_read.items()
-                if key in allowed
-            }
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_event(
-                    run,
-                    event_type=TraceEventType.DATA_CONSUMED,
-                    step_id=event.get("stepId"),
-                    observation="Broker communication read projected",
-                    payload=payload,
-                ))
-            else:
-                self.trace_store.append(
-                    run,
-                    TraceEventType.DATA_CONSUMED,
-                    step_id=event.get("stepId"),
-                    observation="Broker communication read projected",
-                    payload=payload,
-                )
-        for provenance_event in event.get("provenanceEvents", []):
-            if not isinstance(provenance_event, dict):
-                continue
-            event_name = provenance_event.get("eventType")
-            trace_type = {
-                "data_produced": TraceEventType.DATA_PRODUCED,
-                "data_consumed": TraceEventType.DATA_CONSUMED,
-            }.get(event_name)
-            payload = provenance_event.get("payload")
-            if trace_type is None or not isinstance(payload, dict):
-                continue
-            if event_type == "node_completed":
-                node_trace_batch.append(self.trace_store.build_event(
-                    run,
-                    event_type=trace_type,
-                    step_id=event.get("stepId"),
-                    observation="Communication provenance projected",
-                    payload=dict(payload),
-                ))
-            else:
-                self.trace_store.append(
-                    run,
-                    trace_type,
-                    step_id=event.get("stepId"),
-                    observation="Communication provenance projected",
-                    payload=dict(payload),
-                )
-        if node_trace_batch:
-            self.trace_store.append_batch(run, node_trace_batch)
-            self._inject_fault("after_trace")
-        # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
-        # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
-        self._state_persistence_service().persist(
-            run,
-            state,
-            projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
-        )
-
-    def _project_completed_phase_capsules(
-        self,
-        *,
-        run: RuntimeRunRecord,
-        state: ACGExecutionState,
-    ) -> None:
-        """Persist one deterministic capsule when every step in a planning stage completed."""
-        if not isinstance(run.acg_blueprint, dict):
-            return
-        blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
-        stages: dict[str, list[str]] = {}
-        for node in blueprint.step_nodes():
-            stage = str(node.metadata.get("planningStage") or "execution")
-            stages.setdefault(stage, []).append(node.node_id)
-        completed = set(state.completed_step_ids)
-        capsule_refs = run.execution_state.setdefault("phaseCapsuleRefs", {})
-        if not isinstance(capsule_refs, dict):
-            raise ValueError("phaseCapsuleRefs must be an object")
-        task = self.mission_manager.get_mission(run.mission_id)
-        raw_constraints = task.input.get("constraints")
-        constraints = raw_constraints if isinstance(raw_constraints, list) else []
-        raw_questions = task.input.get("openQuestions")
-        open_questions = raw_questions if isinstance(raw_questions, list) else []
-        service = MemoryService(store=self.memory_store)
-        for stage, step_ids in stages.items():
-            if not set(step_ids) <= completed:
-                continue
-            source_refs = [
-                state.memory_refs[step_id]
-                for step_id in step_ids
-                if state.memory_refs.get(step_id) not in {None, "memory:none"}
-            ]
-            if not source_refs:
-                continue
-            capsule = service.create_phase_capsule(
-                run_id=run.run_id,
-                phase_id=stage,
-                source_memory_refs=source_refs,
-                goal=task.title,
-                constraints=constraints,
-                open_questions=open_questions,
-            )
-            previous = capsule_refs.get(stage)
-            if previous is not None and previous != capsule.capsule_id:
-                raise ValueError(f"phase {stage} already points to a different capsule")
-            if previous == capsule.capsule_id:
-                continue
-            capsule_refs[stage] = capsule.capsule_id
-            self.trace_store.append(
-                run,
-                TraceEventType.DATA_PRODUCED,
-                observation="Phase capsule persisted",
-                payload={
-                    "kind": "phase_capsule",
-                    "phaseId": stage,
-                    "capsuleRef": capsule.capsule_id,
-                    "sourceMemoryRefs": list(capsule.source_memory_refs),
-                    "evidenceRefs": list(capsule.evidence_refs),
-                    "tokenCount": capsule.token_count,
-                },
-            )
-
-    @staticmethod
-    def _is_projected_commit(run: RuntimeRunRecord, commit_id: str) -> bool:
-        """通过既有步骤完成 Trace 判断提交是否已被投影，不额外保存正文状态。"""
-        return any(
-            event.event_type == TraceEventType.STEP_SUCCEEDED
-            and event.payload.get("commitId") == commit_id
-            for event in run.trace
-        )
-
-    @staticmethod
-    def _acg_projection_snapshot(run: RuntimeRunRecord, state: ACGExecutionState) -> str:
-        """返回用于判断 Run 是否真的发生可观察变化的稳定快照。
-
-        该快照只存在于当前投影调用，不写入执行状态或 checkpoint。Trace 事件 ID、
-        步骤状态和引用型 State 的变化都会触发版本推进；同一 commit 的重放如果没有
-        修复任何缺失投影，则不会无意义地改变 ``updatedAt``。
-        """
-        steps = [
-            {
-                "stepId": step.step_id,
-                "status": step.status.value,
-                "startedAt": step.started_at.isoformat() if step.started_at else None,
-                "completedAt": step.completed_at.isoformat() if step.completed_at else None,
-                "error": step.error,
-            }
-            for step in run.steps
-        ]
-        return json.dumps(
-            {
-                "state": state.model_dump(by_alias=True, mode="json"),
-                "completedStepIds": list(run.completed_step_ids),
-                "activeStepIds": list(run.active_step_ids),
-                "currentStepId": run.current_step_id,
-                "steps": steps,
-                "traceEventIds": [event.event_id for event in run.trace],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-
-    def _state_persistence_service(self) -> ACGStatePersistenceService:
-        """Keep injected test/application stores aligned with the extracted service."""
-        self.acg_state_persistence.checkpoint_store = self.checkpoint_store
-        self.acg_state_persistence.workflow_store = self.workflow_store
-        return self.acg_state_persistence
-
     def _inject_fault(self, stage: str) -> None:
         """调用测试专用中断钩子；正常执行没有附加分支或持久化副作用。"""
         if self._fault_hook is not None:
             self._fault_hook(stage)
-
-    @staticmethod
-    def _acg_output(
-        state: ACGExecutionState,
-        blueprint: RuntimeBlueprintSpec | None = None,
-    ) -> dict[str, str]:
-        """Select the final-synthesis output ref without copying its body."""
-        if not state.completed_step_ids:
-            return {}
-        if blueprint is not None:
-            final_step_ids = {
-                node.node_id
-                for node in blueprint.step_nodes()
-                if is_final_synthesis_role(node.logical_role)
-            }
-            for step_id in reversed(state.completed_step_ids):
-                if step_id in final_step_ids and state.output_refs.get(step_id):
-                    return {"outputRef": state.output_refs[step_id]}
-            if final_step_ids:
-                # A completed Run with a declared final step but no committed
-                # final output has no authoritative deliverable.
-                return {}
-            # Historical blueprints predate the final role. Keep their legacy
-            # reference for compatibility; Workspace/API still refuse to
-            # promote it without the canonical Artifact identity.
-        # Compatibility fallback for callers that only provide the legacy state.
-        for final_step_id in reversed(state.completed_step_ids):
-            output_ref = state.output_refs.get(final_step_id)
-            if output_ref:
-                return {"outputRef": output_ref}
-        return {}
-
-    def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, Any] | None:
-        """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""
-        provider = (getattr(profile, "model_provider", None) or "").strip()
-        model = (getattr(profile, "model_name", None) or "").strip()
-        version = (getattr(profile, "model_version", None) or "").strip() or None
-        if not provider and not model:
-            default = self.default_model_binding
-            if not isinstance(default, dict):
-                return None
-            provider = str(default.get("provider") or "").strip()
-            model = str(default.get("model") or "").strip()
-            version = str(default.get("version") or "").strip() or None
-            if not provider or not model:
-                return None
-        if not provider or not model:
-            raise ValueError(
-                f"MODEL_PROFILE_INCOMPLETE: step {step_id} must set both modelProvider and modelName"
-            )
-        try:
-            self.model_registry.resolve(provider, model, version=version)
-        except LookupError as exc:
-            raise ValueError(
-                f"MODEL_PROFILE_UNAVAILABLE: step {step_id} cannot resolve {provider}/{model}"
-            ) from exc
-        adapter = self.model_registry.resolve(provider, model, version=version)
-        binding: dict[str, Any] = {
-            "provider": provider,
-            "model": model,
-            # This is an explicit capability fact, not permission to fall back
-            # to the synchronous gateway. NativeGeneralAgent enforces it.
-            "streamingCapability": callable(getattr(adapter, "astream", None)),
-        }
-        if version is not None:
-            binding["version"] = version
-        return binding
-
-    def _model_runtime_from_binding(self, binding: object) -> object | None:
-        """依据冻结路由构造受保护运行时；未配置 Profile 时回退既有全局默认值。"""
-        if binding is None:
-            return None
-        if not isinstance(binding, dict):
-            raise ValueError("ACG model binding must be an object or null")
-        provider = binding.get("provider")
-        model = binding.get("model")
-        version = binding.get("version")
-        if not isinstance(provider, str) or not isinstance(model, str):
-            raise ValueError("ACG model binding is incomplete")
-        if version is not None and not isinstance(version, str):
-            raise ValueError("ACG model binding version is invalid")
-        return GuardedModelRuntime(
-            delegate=RegisteredModelRuntime(
-                registry=self.model_registry,
-                provider=provider,
-                model=model,
-                version=version,
-            ),
-            retries=2,
-            max_concurrency=self.model_max_concurrency,
-            min_interval_seconds=self.model_min_interval_seconds,
-            retry_delay_seconds=1.0,
-        )
 
     def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any]) -> None:
         """Append one planner Runtime Event as an auditable Trace entry.
@@ -3330,28 +1956,6 @@ class ExecutionRuntime:
                 },
             ),
         )
-
-    async def _finalize_cancelled_run(
-        self,
-        run: RuntimeRunRecord,
-        execution_state: ACGExecutionState | None,
-    ) -> RuntimeRunRecord:
-        """把仍处于活动状态的投影收敛为 CANCELLED，并保留真实完成的最新进度。
-
-        ``cancel()`` 先行写入了 CANCELLED 终态投影；本方法用携带更新后步骤状态
-        的内存投影覆盖它，让审计能看到取消前实际完成的步骤，而不改变终态，
-        也绝不把已取消的任务推进为 COMPLETED。
-        """
-        if execution_state is not None:
-            self._state_persistence_service().persist(run, execution_state)
-        if run.status in _TERMINAL_RUN_STATUSES:
-            return run
-        run.status = self.state_machine.transition(run.status, WorkflowStatus.CANCELLED)
-        run.lifecycle_phase = WorkflowProgressPhase.CANCELLED
-        run.lifecycle_message = _LIFECYCLE_MESSAGES[WorkflowProgressPhase.CANCELLED]
-        run.updated_at = utc_now()
-        self.workflow_store.save_run(run)
-        return run
 
     def get_status(self, run_id: str) -> RuntimeRunRecord:
         """读取指定运行的最新状态投影；不存在时由存储层抛出 ``KeyError``。"""
