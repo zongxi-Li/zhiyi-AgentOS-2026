@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timedelta
-import hashlib
+from datetime import datetime
 import json
 import logging
 import os
@@ -38,7 +37,6 @@ from components.executor import (
     ExecutionOrphanCleaner,
     ExecutionValueStore,
     SQLiteExecutionValueStore,
-    GraphPatchConflictError,
 )
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
@@ -52,7 +50,6 @@ from contracts.evolution import (
 from components.memory.store import SQLiteMemoryStore
 from components.content import ContentManifestStore, SQLiteContentManifestStore
 from contracts.memory import MemoryPolicy, MemoryType
-from contracts.authority import RuntimeResourceId
 from contracts.resource import BindingRequirement, DeploymentTier, ResourceType
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
@@ -63,7 +60,6 @@ from components.planner.acg_semantic_validator import (
     validate_bound_acg_semantics,
 )
 from components.resource.agent_service import AgentService
-from components.resource.agent_directory import AgentDirectory
 from components.resource.directory import ResourceDirectory, ResourceNotFoundError
 from components.resource.node_service import NodeService
 from components.resource.service import ResourceService
@@ -109,8 +105,7 @@ from contracts.workflow import (
     utc_now,
 )
 from contracts.execution import WorkflowProgressPhase
-from contracts.recovery import GraphPatchRef, GraphPatchResult, SemanticPatchRequest
-from contracts.workflow import GraphRef
+from contracts.recovery import GraphPatchResult, SemanticPatchRequest
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from runtime.execution_migration import ExecutionEngineMigratingError
 from support.acg.capabilities import CapabilityCatalog
@@ -124,7 +119,9 @@ from components.planner.complexity import transport_error_code
 from components.planner.service import (
     normalize_capability_profile,
 )
-from runtime.semantic_patch import SemanticGraphPatchService, derive_graph_patch
+from runtime.binding import RuntimeBindingService
+from runtime.semantic_revision import SemanticRevisionService
+from runtime.state_persistence import ACGStatePersistenceService
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
 from adapters.model.native import register_native_runtime
@@ -387,6 +384,35 @@ class ExecutionRuntime:
             workflow_registry=self.workflow_registry,
             state_machine=self.state_machine,
             trace_store=self.trace_store,
+        )
+        self.runtime_binding_service = RuntimeBindingService(
+            agent_registry=self.agent_registry,
+            resource_directory=self.resource_directory,
+            resource_service=self.legacy_resource_service,
+            resource_execution_adapters=self.resource_execution_adapters,
+        )
+        self.acg_state_persistence = ACGStatePersistenceService(
+            checkpoint_store=self.checkpoint_store,
+            workflow_store=self.workflow_store,
+            after_checkpoint_hook=lambda: self._inject_fault("after_checkpoint"),
+        )
+        self.semantic_revision_service = SemanticRevisionService(
+            workflow_store=self.workflow_store,
+            checkpoint_store=self.checkpoint_store,
+            execution_value_store=self.execution_value_store,
+            identity_lifecycle=self.identity_lifecycle,
+            capability_catalog=self.capability_catalog,
+            agent_registry=self.agent_registry,
+            trace_store=self.trace_store,
+            load_mission=self.mission_manager.get_mission,
+            load_workflow=self._workflow_for_run,
+            sync_run_steps=self._sync_run_steps_to_acg,
+            validate_blueprint_agents=(
+                self.runtime_binding_service.validate_blueprint_agents
+            ),
+            replacement_lifecycle_message=_LIFECYCLE_MESSAGES[
+                WorkflowProgressPhase.UNDERSTANDING
+            ],
         )
         self.run_lock_manager = run_lock_manager or GLOBAL_RUN_LOCK_MANAGER
         # 每个 run 同时只允许一个活跃执行体：并发 start/resume/审核恢复在入口处
@@ -1068,34 +1094,6 @@ class ExecutionRuntime:
         state_data.setdefault("runId", run.run_id)
         return ACGExecutionState.model_validate(state_data)
 
-    @staticmethod
-    def _fresh_replacement_execution_state(
-        source: RuntimeRunRecord,
-    ) -> dict[str, Any]:
-        """Create a new execution boundary without copying superseded results."""
-
-        source_state = (
-            source.execution_state if isinstance(source.execution_state, dict) else {}
-        )
-        inherited_planning_context = (
-            "pluginScopeResolution",
-            "visibleCapabilityCount",
-            "scopeExcludedAgentCount",
-            "planningDiversity",
-            "requestedCapabilityProfile",
-            "effectiveCapabilityProfile",
-            "capabilityProfileReason",
-            "planningSeed",
-            "plannerAlgorithmVersion",
-            "evolutionPolicyVersion",
-            "evolutionPolicy",
-        )
-        fresh: dict[str, Any] = {"engineMigration": "langgraph_pending"}
-        for key in inherited_planning_context:
-            if key in source_state:
-                fresh[key] = deepcopy(source_state[key])
-        return fresh
-
     def _materialize_acg_run(
         self,
         *,
@@ -1124,7 +1122,7 @@ class ExecutionRuntime:
             validate_bound_acg_semantics(
                 task_plan, blueprint, task_bindings, require_exact=True,
             )
-        self._validate_blueprint_agents(
+        self.runtime_binding_service.validate_blueprint_agents(
             blueprint,
             domain=workflow.domain or task.domain,
             scope=scope,
@@ -1139,11 +1137,14 @@ class ExecutionRuntime:
                 "nodeCount": len(compiled_package.nodes),
                 "edgeCount": len(compiled_package.edges),
             })
-        self._register_runtime_resources(
+        self.runtime_binding_service.prepare(
             run=run,
             workflow=workflow,
             scope=scope,
             binding_manifest=compiled_package.binding_manifest,
+            agent_service=self.agent_service,
+            scheduler_service=self.scheduler_service,
+            node_service=self.node_service,
         )
         run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
         run.execution_state.update(
@@ -1395,7 +1396,7 @@ class ExecutionRuntime:
                 self._project_acg_event(run, execution_state, event)
             if cancel_requested.is_set():
                 return await self._finalize_cancelled_run(run, execution_state)
-            self._persist_acg_state(run, execution_state)
+            self._state_persistence_service().persist(run, execution_state)
             run.output = self._acg_output(execution_state, blueprint)
             run = self._set_run_lifecycle(
                 run,
@@ -1414,9 +1415,11 @@ class ExecutionRuntime:
             # 节点执行体在调度边界感知到取消；与主循环 break 走同一条收敛路径。
             return await self._finalize_cancelled_run(run, execution_state)
         except ExecutionInterrupt as interrupt:
-            self._persist_acg_state(run, execution_state)
-            checkpoint_id = self._save_acg_checkpoint(run, execution_state)
-            self._persist_acg_state(run, execution_state)
+            self._state_persistence_service().persist(run, execution_state)
+            checkpoint_id = self._state_persistence_service().save_checkpoint(
+                run, execution_state
+            )
+            self._state_persistence_service().persist(run, execution_state)
             subject_type, subject_id = acg_review_subject(interrupt.payload)
             blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
             subject_node = blueprint.get_node(subject_id)
@@ -1499,14 +1502,6 @@ class ExecutionRuntime:
             chained = current.__cause__
             current = chained if isinstance(chained, BaseException) else None
         return None
-
-    def _known_remote_resource_ids(self) -> set[str]:
-        """Return registered remote resources plus explicitly injected adapters."""
-        resource_ids = set(self.resource_execution_adapters)
-        for profile in self.legacy_resource_service.profiles():
-            if profile.deployment_tier is not DeploymentTier.LOCAL:
-                resource_ids.add(profile.resource_id)
-        return resource_ids
 
     def _resource_execution_adapter(self, resource_id: str) -> ResourceExecutionAdapter | None:
         """Lazily construct the adapter for a bound remote resource."""
@@ -2360,7 +2355,7 @@ class ExecutionRuntime:
             run.current_step_id = step_id
             run.completed_step_ids = list(state.completed_step_ids)
             run.active_step_ids = list(state.active_step_ids)
-            self._persist_acg_state(
+            self._state_persistence_service().persist(
                 run,
                 state,
                 projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
@@ -2398,7 +2393,7 @@ class ExecutionRuntime:
                 ))
         elif event_type == "superstep_completed":
             self._project_completed_phase_capsules(run=run, state=state)
-            checkpoint_id = self._save_acg_checkpoint(run, state)
+            checkpoint_id = self._state_persistence_service().save_checkpoint(run, state)
             state.checkpoint_id = checkpoint_id
             run.execution_state["checkpointId"] = checkpoint_id
             self.trace_store.append_execution_event(
@@ -2581,7 +2576,7 @@ class ExecutionRuntime:
             self._inject_fault("after_trace")
         # 状态持久化属于图事件投影，不依赖模型或工具调用是否存在。若放在工具循环中，
         # 没有工具调用的普通节点会一直停留在存储层的旧快照，直到后续事件偶然覆盖。
-        self._persist_acg_state(
+        self._state_persistence_service().persist(
             run,
             state,
             projection_changed=(self._acg_projection_snapshot(run, state) != projection_before),
@@ -2690,59 +2685,11 @@ class ExecutionRuntime:
             separators=(",", ":"),
         )
 
-    @staticmethod
-    def _touch_run_projection(run: RuntimeRunRecord) -> None:
-        """单调推进 Run 投影时间，即使系统时钟精度不足也保证查询可见变化。"""
-        now = utc_now()
-        if now <= run.updated_at:
-            now = run.updated_at + timedelta(microseconds=1)
-        run.updated_at = now
-
-    def _persist_acg_state(
-        self,
-        run: RuntimeRunRecord,
-        state: ACGExecutionState,
-        *,
-        projection_changed: bool | None = None,
-    ) -> None:
-        """保存只含摘要和引用的图投影，禁止写入 value store 中的完整正文。"""
-        previous_state = dict(run.execution_state)
-        previous_completed = list(run.completed_step_ids)
-        previous_active = list(run.active_step_ids)
-        state_data = state.model_dump(by_alias=True, mode="json")
-        run.execution_state.update(state_data)
-        run.completed_step_ids = list(state.completed_step_ids)
-        run.active_step_ids = list(state.active_step_ids)
-        if projection_changed is None:
-            projection_changed = (
-                any(previous_state.get(key) != value for key, value in state_data.items())
-                or previous_completed != run.completed_step_ids
-                or previous_active != run.active_step_ids
-            )
-        if projection_changed:
-            run.runtime_revision += 1
-            self._touch_run_projection(run)
-        self.workflow_store.save_run(run)
-
-    def _save_acg_checkpoint(self, run: RuntimeRunRecord, state: ACGExecutionState) -> str:
-        """按运行当前 checkpoint 版本保存下一份引用型状态。"""
-        expected_version = self.checkpoint_store.latest_version(run_id=run.run_id)
-        # 检查点标识来自不含既有 checkpointId 的状态摘要。同一超步在“保存成功、
-        # 投影 Trace 前中断”后会生成完全相同的标识，底层仓库因此能复用旧快照和
-        # 版本；状态真正推进时摘要才变化，绝不会覆盖历史检查点。
-        checkpoint_data = state.model_dump(by_alias=True, mode="json")
-        checkpoint_data["checkpointId"] = None
-        encoded = json.dumps(checkpoint_data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        checkpoint_id = f"acgckpt_{hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:24]}"
-        state.checkpoint_id = checkpoint_id
-        saved = self.checkpoint_store.save(
-            run_id=run.run_id,
-            checkpoint_id=checkpoint_id,
-            state=state.model_dump(by_alias=True, mode="json"),
-            expected_version=expected_version,
-        )
-        self._inject_fault("after_checkpoint")
-        return saved
+    def _state_persistence_service(self) -> ACGStatePersistenceService:
+        """Keep injected test/application stores aligned with the extracted service."""
+        self.acg_state_persistence.checkpoint_store = self.checkpoint_store
+        self.acg_state_persistence.workflow_store = self.workflow_store
+        return self.acg_state_persistence
 
     def _inject_fault(self, stage: str) -> None:
         """调用测试专用中断钩子；正常执行没有附加分支或持久化副作用。"""
@@ -2779,134 +2726,6 @@ class ExecutionRuntime:
             if output_ref:
                 return {"outputRef": output_ref}
         return {}
-
-    def _validate_blueprint_agents(
-        self,
-        blueprint: RuntimeBlueprintSpec,
-        *,
-        domain: str,
-        scope: RunExecutionScope | None = None,
-    ) -> None:
-        missing: list[str] = []
-        agents_by_step: dict[str, list] = {}
-        for binding in blueprint.resource_plan.bindings:
-            agents_by_step.setdefault(binding.step_id, []).append(binding)
-        for step in blueprint.step_nodes():
-            agents = agents_by_step.get(step.node_id, [])
-            if len(agents) != 1:
-                missing.append(step.node_id)
-                continue
-            agent = agents[0]
-            try:
-                self.agent_registry.resolve(
-                    domain=domain,
-                    agent_name=agent.planned_agent_id,
-                    capability=step.capability,
-                    allowed_agent_ids=(scope.agent_ids if scope is not None else None),
-                )
-            except KeyError:
-                remote_match = any(
-                    self._remote_resource_matches_step(resource_id, step, domain=domain)
-                    for resource_id in self._known_remote_resource_ids()
-                )
-                if not remote_match:
-                    missing.append(agent.planned_agent_id or step.node_id)
-        if missing:
-            raise ValueError("ACG references unregistered Agents: " + ", ".join(sorted(set(missing))))
-
-    def _remote_resource_matches_step(self, resource_id: str, step, *, domain: str) -> bool:
-        """Return whether a registered remote Adapter can execute this step."""
-        try:
-            profile = self.legacy_resource_service.profile(resource_id)
-            health = self.legacy_resource_service.health_monitor.health(resource_id)
-        except KeyError:
-            return False
-        return (
-            profile.enabled
-            and health.healthy
-            and (not profile.domains or domain in profile.domains or "general" in profile.domains)
-            and (not step.capability or step.capability in profile.capabilities)
-        )
-
-    def _register_runtime_resources(
-        self,
-        *,
-        run: RuntimeRunRecord,
-        workflow: WorkflowDefinition,
-        scope: RunExecutionScope,
-        binding_manifest,
-    ) -> None:
-        """Register runtime candidates and persist eligibility requirements only.
-
-        The Scheduler creates the concrete binding after a step becomes READY.
-        Preparation must not choose a resource, node placement, lease, or
-        model instance.
-        """
-        directory = AgentDirectory(self.agent_service)
-        scoped_agent_ids = set(scope.agent_ids)
-        local_resource_ids: list[RuntimeResourceId] = []
-        for agent in self.agent_registry.all():
-            agent_id = self.agent_registry.agent_id(agent)
-            if scoped_agent_ids and agent_id not in scoped_agent_ids:
-                continue
-            self.resource_directory.register_agent(agent.profile)
-            directory.register_agent(agent.profile)
-            # The local Agent identity is converted explicitly at the runtime
-            # resource boundary; the two IDs may share a string value but have
-            # different authority.
-            local_resource_ids.append(RuntimeResourceId(str(agent_id)))
-        requirements: dict[str, dict[str, object]] = {}
-        model_bindings: dict[str, dict[str, Any] | None] = {}
-        two_layer_scheduler = (
-            self.scheduler_service
-            if isinstance(self.scheduler_service, TwoLayerSchedulerService)
-            else None
-        )
-        if two_layer_scheduler is not None:
-            # Keep the scheduler aligned with Runtime-owned services when an
-            # embedding application replaces those services after construction.
-            two_layer_scheduler.agent_service = self.agent_service
-            two_layer_scheduler.node_service = self.node_service
-        for step in run.steps:
-            rule = binding_manifest.for_step(step.step_id)
-            required_capabilities = list(rule.required_capabilities)
-            if not required_capabilities:
-                raise ValueError(
-                    f"BindingManifest has no capability requirement: {step.step_id}"
-                )
-            allowed_resource_ids = list(dict.fromkeys(
-                [
-                    *local_resource_ids,
-                    *(RuntimeResourceId(item) for item in sorted(self._known_remote_resource_ids())),
-                ]
-            ))
-            allowed_manifest_ids = set(rule.allowed_resource_ids)
-            if allowed_manifest_ids:
-                allowed_resource_ids = [
-                    item for item in allowed_resource_ids
-                    if item in allowed_manifest_ids
-                ]
-            requirement = BindingRequirement(
-                requiredCapabilities=required_capabilities,
-                domain=rule.domain or workflow.domain,
-                resourceTypes=[],
-                allowedResourceIds=allowed_resource_ids,
-                preferences={},
-                policyMetadata={
-                    "source": "compiled-binding-manifest",
-                    "stepId": step.step_id,
-                    "agentNodeIds": list(rule.agent_node_ids),
-                    "maxConcurrency": rule.max_concurrency,
-                },
-            )
-            requirements[step.step_id] = requirement.model_dump(by_alias=True, mode="json")
-            # The concrete model is frozen only after the Scheduler has chosen
-            # the resource for this step. Keep a complete shape for recovery.
-            model_bindings[step.step_id] = None
-        run.execution_state["resourceBindings"] = {}
-        run.execution_state.pop("nodeAgentBindings", None)
-        run.execution_state["bindingRequirements"] = requirements
-        run.execution_state["modelBindings"] = model_bindings
 
     def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, Any] | None:
         """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""
@@ -3524,7 +3343,7 @@ class ExecutionRuntime:
         也绝不把已取消的任务推进为 COMPLETED。
         """
         if execution_state is not None:
-            self._persist_acg_state(run, execution_state)
+            self._state_persistence_service().persist(run, execution_state)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
         run.status = self.state_machine.transition(run.status, WorkflowStatus.CANCELLED)
@@ -3991,307 +3810,45 @@ class ExecutionRuntime:
         adapter = self._workflow_adapter(workflow)
         return await adapter.apply_review(decision)
 
+    def _semantic_revision_service(self) -> SemanticRevisionService:
+        """Keep injected stores and lifecycle adapters aligned with the service."""
+        service = self.semantic_revision_service
+        service.workflow_store = self.workflow_store
+        service.checkpoint_store = self.checkpoint_store
+        service.execution_value_store = self.execution_value_store
+        service.identity_lifecycle = self.identity_lifecycle
+        service.capability_catalog = self.capability_catalog
+        service.agent_registry = self.agent_registry
+        service.trace_store = self.trace_store
+        return service
+
     async def apply_semantic_patch(
         self, request: SemanticPatchRequest
     ) -> GraphPatchResult:
-        """Create a replacement Run from a validated TaskPlan revision.
-
-        The request has no executable graph operations.  Runtime derives the
-        new Blueprint through the planning topology compiler and ACGLowerer,
-        then stores a GraphPatch only as an audit diff.
-        """
+        """Create a replacement Run from a validated TaskPlan revision."""
         async with self.run_lock_manager.lock_for(request.run_id):
             run = self.workflow_store.get_run(request.run_id)
-            if self._normalize_runtime_engine(run.runtime_engine) != "acg":
-                raise ValueError("semantic patching is only available for ACG runs")
-            if run.status is not WorkflowStatus.WAITING_REVIEW:
-                raise GraphPatchConflictError(
-                    "semantic patches require a persisted WAITING_REVIEW barrier"
-                )
-            if not isinstance(run.acg_blueprint, dict):
-                raise ValueError("ACG run has no persisted blueprint")
-            checkpoint_id = str(run.execution_state.get("checkpointId") or "")
-            checkpoint_data = self.checkpoint_store.load(
-                run_id=run.run_id,
-                checkpoint_id=checkpoint_id,
-            )
-            if checkpoint_data is None:
-                raise ValueError("semantic patch requires a persisted checkpoint")
-            state = ACGExecutionState.model_validate(checkpoint_data)
-            blueprint = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
-
-            applied_log = list(blueprint.metadata.get("appliedGraphPatches") or [])
-            previous = next(
-                (
-                    item for item in applied_log
-                    if isinstance(item, dict) and item.get("patchId") == request.patch_id
-                ),
-                None,
-            )
-            request_checksum = request.checksum()
-            if previous is not None:
-                if str(previous.get("requestChecksum") or "") != request_checksum:
-                    raise GraphPatchConflictError(
-                        "semantic patch id already exists with different content: "
-                        f"{request.patch_id}"
-                    )
-                uri = str(previous.get("patchRef") or "")
-                if not uri:
-                    raise ValueError("persisted graph patch is missing its reference")
-                return GraphPatchResult(
-                    applied=False,
-                    idempotentReplay=True,
-                    graphVersion=int(previous["graphVersion"]),
-                    runId=str(previous.get("newRunId") or "") or None,
-                    patchRef=GraphPatchRef(
-                        patchId=request.patch_id,
-                        graph=GraphRef(
-                            graphId=blueprint.graph_id,
-                            version=str(previous["graphVersion"]),
-                        ),
-                        uri=uri,
-                        checksum=str(previous["checksum"]),
-                    ),
-                )
-            if request.graph_id != blueprint.graph_id:
-                raise GraphPatchConflictError(
-                    "semantic patch graphId does not match blueprint"
-                )
-            if request.base_graph_version != blueprint.version:
-                raise GraphPatchConflictError(
-                    f"semantic patch version {request.base_graph_version} does not "
-                    f"match current version {blueprint.version}"
-                )
-            if set(state.active_step_ids):
-                raise GraphPatchConflictError(
-                    "semantic patch cannot be applied while nodes are active"
-                )
-
-            task = self.mission_manager.get_mission(run.mission_id)
-            workflow = self._workflow_for_run(run)
-            scope = run.execution_scope
-            if scope is None:
-                raise ValueError("semantic patch requires a frozen execution scope")
-            if self.identity_lifecycle is None:
-                raise ValueError(
-                    "semantic patch requires the identity lifecycle adapter"
-                )
-            raw_plan = run.execution_state.get("taskPlan")
-            raw_bindings = run.execution_state.get("taskBindings")
-            if not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
-                raise ValueError("semantic patch requires persisted Planner identity data")
-            current_plan = TaskPlan.model_validate(raw_plan)
-            base_bindings = tuple(
-                TaskImplementationBinding.model_validate(item)
-                for item in raw_bindings
-            )
-            topology_audits: list[dict[str, Any]] = []
-            semantic_result = SemanticGraphPatchService().apply(
-                blueprint=blueprint,
+            service = self._semantic_revision_service()
+            prepared = service.prepare(
                 request=request,
-                current_plan=current_plan,
-                base_bindings=base_bindings,
-                agent_registry=self.agent_registry.scoped(scope.agent_ids),
-                domain=workflow.domain or task.domain,
-                capability_catalog=self.capability_catalog,
-                audit_sink=topology_audits.append,
+                run=run,
             )
-            outcome_blueprint = semantic_result.blueprint
-            next_plan = semantic_result.next_plan
-            next_bindings = semantic_result.next_bindings
-            active_new_step_ids = {
-                node.node_id for node in outcome_blueprint.step_nodes()
-                if str(node.metadata.get("lifecycleStatus", "active")).lower() != "retired"
-            }
+            if isinstance(prepared, GraphPatchResult):
+                return prepared
 
-            self._validate_blueprint_agents(
-                outcome_blueprint,
-                domain=workflow.domain or task.domain,
-                scope=scope,
+            self.runtime_binding_service.prepare(
+                run=prepared.replacement_run,
+                workflow=prepared.workflow,
+                scope=prepared.scope,
+                binding_manifest=prepared.compiled_package.binding_manifest,
+                agent_service=self.agent_service,
+                scheduler_service=self.scheduler_service,
+                node_service=self.node_service,
             )
-
-            # Final binding integrity guard.
-            if len({item.plan_node_key for item in next_bindings}) != len(next_bindings):
-                raise ValueError("Graph Patch contains duplicate semantic bindings")
-            if len({item.acg_node_id for item in next_bindings}) != len(next_bindings):
-                raise ValueError("Graph Patch contains duplicate executable bindings")
-            if {item.plan_node_key for item in next_bindings} != {
-                node.key for node in next_plan.nodes
-            }:
-                raise ValueError("Graph Patch bindings must cover the complete revised TaskPlan")
-            if {item.acg_node_id for item in next_bindings} != active_new_step_ids:
-                raise ValueError(
-                    "Graph Patch bindings must cover every active executable node"
-                )
-            validate_bound_acg_semantics(
-                next_plan, outcome_blueprint, next_bindings, require_exact=True,
-            )
-
-            new_run_id = (
-                self.identity_lifecycle.new_run_id(task.mission_id)
-            )
-            new_payload = run.model_dump(by_alias=True, mode="json")
-            new_payload.update({
-                "runId": new_run_id,
-                "status": WorkflowStatus.PENDING.value,
-                "lifecyclePhase": WorkflowProgressPhase.UNDERSTANDING.value,
-                "lifecycleMessage": _LIFECYCLE_MESSAGES[WorkflowProgressPhase.UNDERSTANDING],
-                "startedAt": None,
-                "currentStepId": None,
-                "output": {},
-                "steps": [],
-                "checkpoints": [],
-                "trace": [],
-                "error": None,
-                "recoveryCount": 0,
-                "idempotencyKey": None,
-                "idempotencyFingerprint": None,
-                "completedStepIds": [],
-                "activeStepIds": [],
-                "provenance": None,
-                "executionState": self._fresh_replacement_execution_state(run),
-                "runtimeRevision": 0,
-                "acgBlueprint": outcome_blueprint.model_dump(by_alias=True, mode="json"),
-                "createdAt": utc_now().isoformat(),
-                "updatedAt": utc_now().isoformat(),
-            })
-            new_run = RuntimeRunRecord.model_validate(new_payload)
-            self._sync_run_steps_to_acg(new_run, outcome_blueprint)
-            compiled_package = ACGGraphCompiler().compile_package(
-                outcome_blueprint, run_id=new_run.run_id
-            )
-            self._register_runtime_resources(
-                run=new_run,
-                workflow=workflow,
-                scope=scope,
-                binding_manifest=compiled_package.binding_manifest,
-            )
-
-            graph_patch = derive_graph_patch(
-                blueprint,
-                outcome_blueprint,
-                patch_id=request.patch_id,
-                reason=request.reason,
-            )
-            patch_checksum = graph_patch.checksum()
-
-            patch_uri = self.execution_value_store.put_graph_patch(
-                run_id=new_run.run_id,
-                payload=graph_patch.model_dump(by_alias=True, mode="json"),
-            )
-            patch_ref = GraphPatchRef(
-                patchId=request.patch_id,
-                graph=GraphRef(
-                    graphId=outcome_blueprint.graph_id,
-                    version=str(outcome_blueprint.version),
-                ),
-                uri=patch_uri,
-                checksum=patch_checksum,
-            )
-            applied_metadata = list(
-                outcome_blueprint.metadata.get("appliedGraphPatches") or []
-            )
-            # Record the patch lineage in the blueprint metadata.
-            patch_entry = {
-                "patchId": request.patch_id,
-                "idempotencyKey": request.idempotency_key,
-                "requestChecksum": request_checksum,
-                "checksum": patch_checksum,
-                "baseGraphVersion": request.base_graph_version,
-                "graphVersion": outcome_blueprint.version,
-                "reason": request.reason,
-                "patchRef": patch_uri,
-                "sourceRunId": run.run_id,
-                "newRunId": new_run.run_id,
-            }
-            existing_entry = next(
-                (i for i, e in enumerate(applied_metadata)
-                 if isinstance(e, dict) and e.get("patchId") == request.patch_id),
-                None,
-            )
-            if existing_entry is not None:
-                applied_metadata[existing_entry] = patch_entry
-            else:
-                applied_metadata.append(patch_entry)
-            outcome_blueprint.metadata["appliedGraphPatches"] = applied_metadata
-            new_run.acg_blueprint = outcome_blueprint.model_dump(by_alias=True, mode="json")
-            new_run.execution_state.update({
-                "workflowVersion": workflow.version,
-                "graphId": outcome_blueprint.graph_id,
-                "sourceBlueprintVersion": outcome_blueprint.version,
-                "graphVersion": outcome_blueprint.version,
-                "graphDiff": graph_patch.model_dump(by_alias=True, mode="json"),
-                "taskPlanVersion": next_plan.plan_version,
-                "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
-                "taskBindings": [
-                    item.model_dump(by_alias=True, mode="json") for item in next_bindings
-                ],
-                "parentRunId": run.run_id,
-                "supersedesRunId": run.run_id,
-                "sourcePatchId": request.patch_id,
-                **({"topologyAudit": topology_audits[-1]} if topology_audits else {}),
-                "graphPatchRefs": [patch_uri],
-            })
-            new_run.execution_state.update({
-                "compiledACGPackage": compiled_package.model_dump(
-                    by_alias=True, mode="json"
-                ),
-                "compiledPackageId": compiled_package.package_id,
-                "compiledPackageChecksum": compiled_package.checksum,
-                "compiledPackageVersion": compiled_package.package_version,
-                "compiledPackageBlueprintHash": compiled_package.blueprint_hash,
-            })
-            run.status = WorkflowStatus.SUPERSEDED
-            run.execution_state["supersededByRunId"] = new_run.run_id
-            run_graph = deepcopy(run.acg_blueprint or {})
-            run_graph["metadata"] = deepcopy(run_graph.get("metadata") or {})
-            run_graph["metadata"]["appliedGraphPatches"] = applied_metadata
-            run.acg_blueprint = run_graph
-            run.updated_at = utc_now()
-            self.trace_store.append(
-                run,
-                TraceEventType.GRAPH_PATCH_APPLIED,
-                observation="ACG graph patch applied",
-                payload={
-                    "patchId": request.patch_id,
-                    "patchRef": patch_uri,
-                    "baseGraphVersion": request.base_graph_version,
-                    "graphVersion": outcome_blueprint.version,
-                    "newRunId": new_run.run_id,
-                },
-            )
-            self.workflow_store.save_graph_patch_transition(
-                run,
-                new_run,
-                {
-                    "eventId": f"graph.patch.prepared:{run.run_id}:{request.patch_id}",
-                    "eventType": "graph.patch.prepared",
-                    "aggregateId": run.run_id,
-                    "payload": {
-                        "missionId": task.mission_id,
-                        "oldRunId": run.run_id,
-                        "newRunId": new_run.run_id,
-                        "workflowId": new_run.workflow_id,
-                        "patchId": request.patch_id,
-                        "blueprint": outcome_blueprint.model_dump(
-                            by_alias=True, mode="json"
-                        ),
-                        "taskPlan": next_plan.model_dump(by_alias=True, mode="json"),
-                        "taskBindings": [
-                            item.model_dump(by_alias=True, mode="json")
-                            for item in next_bindings
-                        ],
-                        "executionState": dict(new_run.execution_state),
-                    },
-                },
-            )
+            result = service.commit(prepared)
             self._flush_identity_outbox()
-            return GraphPatchResult(
-                applied=True,
-                graphVersion=outcome_blueprint.version,
-                runId=new_run.run_id,
-                patchRef=patch_ref,
-            )
+            return result
+
 
     async def rebind_step(self, *, run_id: str, step_id: str, reason: str) -> str:
         """Select a healthy alternate Agent inside the run's frozen scope.

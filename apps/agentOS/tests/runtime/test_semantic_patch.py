@@ -28,7 +28,11 @@ from contracts.resource import (
     ResourceSnapshot,
     ResourceType,
 )
-from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
+from contracts.workflow import (
+    TraceEventType,
+    WorkflowDefinition,
+    WorkflowStepDefinition,
+)
 from runtime import ExecutionRuntime
 from runtime.semantic_patch import derive_graph_patch
 from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
@@ -137,6 +141,7 @@ def test_add_task_is_lowered_from_task_plan_and_graph_patch_is_derived(tmp_path)
             ),
         )
         result = asyncio.run(runtime.apply_semantic_patch(request))
+        source = runtime.workflow_store.get_run(paused.run_id)
         replacement = runtime.workflow_store.get_run(result.run_id)
         revised = ACGBlueprint.model_validate(replacement.acg_blueprint)
         dependencies = {
@@ -144,6 +149,7 @@ def test_add_task_is_lowered_from_task_plan_and_graph_patch_is_derived(tmp_path)
             for edge in revised.edges_of_type(EdgeType.DEPENDENCY)
         }
         assert dependencies == {("A", "C"), ("C", "B")}
+        assert source.trace[-1].event_type is TraceEventType.GRAPH_PATCH_APPLIED
         assert replacement.execution_state["resourceBindings"] == {}
         assert all(
             item["policyMetadata"]["source"] == "compiled-binding-manifest"
@@ -171,9 +177,21 @@ def test_add_task_is_lowered_from_task_plan_and_graph_patch_is_derived(tmp_path)
         lifecycle.close()
 
 
-def test_semantic_replacement_uses_normal_local_and_remote_candidate_registration(tmp_path):
+def test_semantic_replacement_uses_normal_local_and_remote_candidate_registration(
+    tmp_path, monkeypatch
+):
     runtime, lifecycle, mission, paused = _paused(tmp_path)
     try:
+        prepared_run_ids: list[str] = []
+        prepare = runtime.runtime_binding_service.prepare
+
+        def record_prepare(**kwargs):
+            prepared_run_ids.append(kwargs["run"].run_id)
+            return prepare(**kwargs)
+
+        monkeypatch.setattr(
+            runtime.runtime_binding_service, "prepare", record_prepare
+        )
         resources: ResourceService = runtime.legacy_resource_service
         resources.register(
             ResourceProfile(
@@ -215,6 +233,7 @@ def test_semantic_replacement_uses_normal_local_and_remote_candidate_registratio
         result = asyncio.run(runtime.apply_semantic_patch(request))
         replacement = runtime.workflow_store.get_run(result.run_id)
 
+        assert prepared_run_ids == [replacement.run_id]
         assert replacement.execution_state["resourceBindings"] == {}
         assert replacement.execution_state["bindingRequirements"]["C"][
             "allowedResourceIds"

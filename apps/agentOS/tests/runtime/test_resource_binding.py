@@ -73,13 +73,22 @@ def _runtime(calls: list[str]) -> tuple[ExecutionRuntime, AgentRegistry]:
     ), agents
 
 
-def test_prepare_run_defers_concrete_resource_binding_to_scheduler() -> None:
+def test_prepare_run_defers_concrete_resource_binding_to_scheduler(monkeypatch) -> None:
     """Preparation persists eligibility; Scheduler creates the binding at READY."""
     runtime, _ = _runtime([])
+    calls: list[str] = []
+    prepare = runtime.runtime_binding_service.prepare
+
+    def record_prepare(**kwargs):
+        calls.append(kwargs["run"].run_id)
+        return prepare(**kwargs)
+
+    monkeypatch.setattr(runtime.runtime_binding_service, "prepare", record_prepare)
     task = runtime.create_mission("resource", workflow_id="resource-run")
 
     _, run = runtime.prepare_run(task.mission_id)
 
+    assert calls == [run.run_id]
     assert run.execution_state["resourceBindings"] == {}
     assert run.execution_state["bindingRequirements"] == {
         "analyse": {
