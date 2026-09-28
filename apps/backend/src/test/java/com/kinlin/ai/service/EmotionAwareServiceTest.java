@@ -1,52 +1,35 @@
 package com.kinlin.ai.service;
 
+import com.kinlin.ai.client.EmotionClient;
+import com.kinlin.ai.client.PlatformAiClientException;
 import com.kinlin.ai.dto.EmotionAnalyzeRequest;
-import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
 import com.kinlin.ai.dto.EmotionAwareResponseRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 
 /**
- * EmotionAwareService单元测试
+ * EmotionAwareService单元测试（应用层 fallback 表征：transport 失败时的既有用户可见行为）
  */
 @ExtendWith(MockitoExtension.class)
 class EmotionAwareServiceTest {
 
     @Mock
-    private WebClient.Builder webClientBuilder;
-
-    @Mock
-    private WebClient webClient;
-
-    @Mock
-    private WebClient.RequestBodyUriSpec requestBodyUriSpec;
-
-    @Mock
-    private WebClient.RequestBodySpec requestBodySpec;
-
-    @Mock
-    private WebClient.ResponseSpec responseSpec;
+    private EmotionClient emotionClient;
 
     private EmotionAwareService emotionAwareService;
 
     @BeforeEach
     void setUp() {
-        PythonServiceProperties properties = new PythonServiceProperties();
-        properties.setTimeout(5000);
-        emotionAwareService = new EmotionAwareService(webClient, properties);
+        emotionAwareService = new EmotionAwareService(emotionClient);
     }
 
     @Test
@@ -55,35 +38,26 @@ class EmotionAwareServiceTest {
         EmotionAnalyzeRequest request = new EmotionAnalyzeRequest();
         request.setText("我很开心");
 
-        Map<String, Object> responseData = new HashMap<>();
-        responseData.put("success", true);
-        responseData.put("data", Map.of("emotion", "happy", "intensity", 0.8));
-
-        when(webClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
-        doReturn(requestBodySpec).when(requestBodySpec).bodyValue(any());
-        when(requestBodySpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.bodyToMono(Map.class)).thenReturn(Mono.just(responseData));
+        when(emotionClient.analyzeEmotion(request))
+                .thenReturn(Map.of("emotion", "happy", "intensity", 0.8));
 
         // Act
         Map<String, Object> result = emotionAwareService.analyzeEmotion(request);
 
         // Assert
         assertNotNull(result);
-        assertTrue(result.containsKey("emotion"));
+        assertEquals("happy", result.get("emotion"));
     }
 
     @Test
-    void testAnalyzeEmotion_Failure() {
-        // Arrange
+    void testAnalyzeEmotion_TransportFailureKeepsNeutralFallback() {
+        // Arrange：表征冻结——情感分析失败时返回中性情感默认值
         EmotionAnalyzeRequest request = new EmotionAnalyzeRequest();
         request.setText("测试");
 
-        when(webClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
-        doReturn(requestBodySpec).when(requestBodySpec).bodyValue(any());
-        when(requestBodySpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.bodyToMono(Map.class)).thenReturn(Mono.error(new RuntimeException("Service error")));
+        when(emotionClient.analyzeEmotion(request))
+                .thenThrow(new PlatformAiClientException(
+                        PlatformAiClientException.Type.UPSTREAM_ERROR, "500 Service Unavailable"));
 
         // Act
         Map<String, Object> result = emotionAwareService.analyzeEmotion(request);
@@ -91,6 +65,7 @@ class EmotionAwareServiceTest {
         // Assert
         assertNotNull(result);
         assertEquals("neutral", result.get("emotion"));
+        assertEquals(0.5, result.get("intensity"));
     }
 
     @Test
@@ -100,21 +75,32 @@ class EmotionAwareServiceTest {
         request.setQuestion("你好");
         request.setBaseRole(new HashMap<>());
 
-        Map<String, Object> responseData = new HashMap<>();
-        responseData.put("success", true);
-        responseData.put("data", Map.of("response", "你好，很高兴见到你"));
-
-        when(webClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri(anyString())).thenReturn(requestBodySpec);
-        doReturn(requestBodySpec).when(requestBodySpec).bodyValue(any());
-        when(requestBodySpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.bodyToMono(Map.class)).thenReturn(Mono.just(responseData));
+        when(emotionClient.generateEmotionAwareResponse(request))
+                .thenReturn(Map.of("response", "你好，很高兴见到你"));
 
         // Act
         Map<String, Object> result = emotionAwareService.generateEmotionAwareResponse(request);
 
         // Assert
         assertNotNull(result);
+        assertEquals("你好，很高兴见到你", result.get("response"));
+    }
+
+    @Test
+    void testGenerateEmotionAwareResponse_TransportFailureKeepsFrozenErrorMap() {
+        // Arrange：表征冻结——error Map 携带既有前缀文案
+        EmotionAwareResponseRequest request = new EmotionAwareResponseRequest();
+        request.setQuestion("你好");
+        request.setBaseRole(new HashMap<>());
+
+        when(emotionClient.generateEmotionAwareResponse(request))
+                .thenThrow(new PlatformAiClientException(
+                        PlatformAiClientException.Type.UNAVAILABLE, "Connection refused"));
+
+        // Act
+        Map<String, Object> result = emotionAwareService.generateEmotionAwareResponse(request);
+
+        // Assert
+        assertEquals("生成情感感知回复失败: Connection refused", result.get("error"));
     }
 }
-

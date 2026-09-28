@@ -1,5 +1,7 @@
 package com.kinlin.ai.service;
 
+import com.kinlin.ai.client.AiChatClient;
+import com.kinlin.ai.client.PlatformAiClientException;
 import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Conversation;
@@ -39,7 +41,7 @@ class ChatServiceTest {
     private MessageRepository messageRepository;
 
     @Mock
-    private AiService aiService;
+    private AiChatClient aiChatClient;
 
     @Spy
     private TransactionTemplate transactionTemplate =
@@ -79,7 +81,7 @@ class ChatServiceTest {
         when(conversationRepository.save(any(Conversation.class))).thenReturn(conversation);
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         // When
@@ -110,7 +112,7 @@ class ChatServiceTest {
                 .thenReturn(Optional.of(conversation));
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         // When
@@ -143,7 +145,7 @@ class ChatServiceTest {
         });
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         ChatResponse response = chatService.sendMessage(chatRequest, userId);
@@ -179,7 +181,7 @@ class ChatServiceTest {
         });
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         chatService.sendMessage(chatRequest, userId);
@@ -252,7 +254,7 @@ class ChatServiceTest {
         when(conversationRepository.save(any(Conversation.class))).thenReturn(conversation);
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         // When
@@ -260,7 +262,9 @@ class ChatServiceTest {
 
         // Then
         assertNotNull(response);
-        verify(aiService).sendTextMessage(eq(""), anyString(), anyList(), anyString());
+        var commandCaptor = org.mockito.ArgumentCaptor.forClass(AiChatClient.AiChatCommand.class);
+        verify(aiChatClient).sendText(commandCaptor.capture());
+        assertEquals("", commandCaptor.getValue().text());
     }
 
     @Test
@@ -279,7 +283,7 @@ class ChatServiceTest {
         when(conversationRepository.save(any(Conversation.class))).thenReturn(conversation);
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         // When
@@ -287,7 +291,9 @@ class ChatServiceTest {
 
         // Then
         assertNotNull(response);
-        verify(aiService).sendTextMessage(eq(longText), anyString(), anyList(), anyString());
+        var commandCaptor = org.mockito.ArgumentCaptor.forClass(AiChatClient.AiChatCommand.class);
+        verify(aiChatClient).sendText(commandCaptor.capture());
+        assertEquals(longText, commandCaptor.getValue().text());
     }
 
     @Test
@@ -305,7 +311,7 @@ class ChatServiceTest {
         when(conversationRepository.save(any(Conversation.class))).thenReturn(conversation);
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         // When
@@ -370,7 +376,7 @@ class ChatServiceTest {
                 .thenReturn(Optional.of(conversation));
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId()))
                 .thenReturn(List.of(previousMessage));
-        when(aiService.sendTextMessage(anyString(), anyString(), anyList(), anyString()))
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
                 .thenReturn(aiResponse);
 
         // When
@@ -378,7 +384,9 @@ class ChatServiceTest {
 
         // Then
         assertNotNull(response);
-        verify(aiService).sendTextMessage(anyString(), anyString(), argThat(list -> list.size() > 0), anyString());
+        var commandCaptor = org.mockito.ArgumentCaptor.forClass(AiChatClient.AiChatCommand.class);
+        verify(aiChatClient).sendText(commandCaptor.capture());
+        assertTrue(commandCaptor.getValue().context().size() > 0);
     }
 
     @Test
@@ -399,18 +407,44 @@ class ChatServiceTest {
         when(conversationRepository.save(any(Conversation.class))).thenReturn(conversation);
         when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
                 .thenReturn(Collections.emptyList());
-        when(aiService.sendTextMessage(
-                anyString(), anyString(), anyList(), anyString(),
-                anyString(), anyString(), anyString(), anyString(), anyString()
-        )).thenReturn(aiResponse);
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
+                .thenReturn(aiResponse);
 
         ChatResponse response = chatService.sendMessage(chatRequest, userId);
 
         assertEquals("指定模型回复", response.getText());
-        verify(aiService).sendTextMessage(
-                anyString(), anyString(), anyList(), anyString(),
-                eq("qwen3-plus"), eq("https://example.com/v1"), eq("test-key"), eq("high"), eq("auto")
-        );
+        var commandCaptor = org.mockito.ArgumentCaptor.forClass(AiChatClient.AiChatCommand.class);
+        verify(aiChatClient).sendText(commandCaptor.capture());
+        AiChatClient.AiChatCommand command = commandCaptor.getValue();
+        assertEquals("qwen3-plus", command.model());
+        assertEquals("https://example.com/v1", command.baseUrl());
+        assertEquals("test-key", command.apiKey());
+        assertEquals("high", command.thinkingMode());
+        assertEquals("auto", command.toolMode());
+    }
+
+    @Test
+    void testSendMessage_TransportFailureKeepsFrozenFallbackResponse() {
+        // Given：表征冻结（J1.2 §25-B）——Python 不可用时用户可见 fallback 不变
+        when(conversationRepository.findByContextId(anyString())).thenReturn(Optional.empty());
+        when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> {
+            Conversation conv = invocation.getArgument(0);
+            conv.setId(UUID.randomUUID());
+            return conv;
+        });
+        when(messageRepository.findByConversationIdOrderByCreatedAtAsc(any(UUID.class)))
+                .thenReturn(Collections.emptyList());
+        when(aiChatClient.sendText(any(AiChatClient.AiChatCommand.class)))
+                .thenThrow(new PlatformAiClientException(
+                        PlatformAiClientException.Type.TIMEOUT, "Did not observe any item"));
+
+        // When
+        ChatResponse response = chatService.sendMessage(chatRequest, userId);
+
+        // Then
+        assertEquals("抱歉，AI服务当前不可用，请稍后重试。", response.getText());
+        assertEquals(0.0, response.getConfidence());
+        verify(messageRepository, times(2)).save(any(Message.class));
     }
 }
 

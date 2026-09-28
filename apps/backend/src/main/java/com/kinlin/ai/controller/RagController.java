@@ -1,5 +1,6 @@
 package com.kinlin.ai.controller;
 
+import com.kinlin.ai.client.RagClient;
 import com.kinlin.ai.service.RagService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,20 +22,20 @@ public class RagController {
      * RAG查询
      */
     @PostMapping("/query")
-    public ResponseEntity<RagService.RagResponse> query(
+    public ResponseEntity<RagClient.RagQueryResult> query(
             @RequestBody Map<String, Object> request
     ) {
         String query = (String) request.get("query");
-        Integer topK = request.get("top_k") != null ? 
+        Integer topK = request.get("top_k") != null ?
                 ((Number) request.get("top_k")).intValue() : 5;
-        String contextId = request.get("context_id") != null ? 
+        String contextId = request.get("context_id") != null ?
                 (String) request.get("context_id") : null;
         String roleId = request.get("role_id") != null ?
                 request.get("role_id").toString() : null;
         Boolean useKnowledgeGraph = request.get("use_knowledge_graph") != null ?
                 Boolean.valueOf(request.get("use_knowledge_graph").toString()) : null;
 
-        RagService.RagResponse response = ragService.query(query, topK, contextId, roleId, useKnowledgeGraph);
+        RagClient.RagQueryResult response = ragService.query(query, topK, contextId, roleId, useKnowledgeGraph);
         return ResponseEntity.ok(response);
     }
 

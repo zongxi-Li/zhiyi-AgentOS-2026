@@ -1,6 +1,9 @@
 package com.kinlin.ai.service;
 
 import com.kinlin.ai.annotation.LogExecutionTime;
+import com.kinlin.ai.client.AiChatClient;
+import com.kinlin.ai.client.PlatformAiClientException;
+import com.kinlin.ai.client.RagClient;
 import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Conversation;
@@ -28,8 +31,8 @@ public class ChatService {
 
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final AiService aiService;
-    private final RagService ragService;
+    private final AiChatClient aiChatClient;
+    private final RagClient ragClient;
     private final MetricsService metricsService;
     private final RoleSwitchOptimizer roleSwitchOptimizer;
     private final TransactionTemplate transactionTemplate;
@@ -78,14 +81,16 @@ public class ChatService {
         String enhancedText = request.getText();
         if (request.getUseRag() != null && request.getUseRag()) {
             try {
-                RagService.RagResponse ragResponse = ragService.query(
+                RagClient.RagQueryResult ragResponse = ragClient.query(new RagClient.RagQueryCommand(
                         request.getText(),
                         5,  // top_k
-                        conversation.getContextId()
-                );
+                        conversation.getContextId(),
+                        null,
+                        null
+                ));
                 // 将RAG检索结果融入查询
                 if (ragResponse != null && ragResponse.sources() != null && !ragResponse.sources().isEmpty()) {
-                    enhancedText = request.getText() + "\n\n相关参考信息：" + 
+                    enhancedText = request.getText() + "\n\n相关参考信息：" +
                             ragResponse.sources().stream()
                                     .map(s -> s.get("excerpt") != null ? s.get("excerpt").toString() : "")
                                     .filter(s -> !s.isEmpty())
@@ -106,35 +111,28 @@ public class ChatService {
                 log.warn("获取角色上下文失败，使用默认: " + e.getMessage());
             }
         }
-        
-        // 调用AI服务获取回复
+
+        // 调用AI服务获取回复（transport 失败的业务 fallback 决策在此层）
         boolean hasRuntimeModel = request.getModel() != null
                 || request.getBaseUrl() != null
                 || request.getApiKey() != null
                 || request.getToolMode() != null;
-        ChatResponse aiResponse;
-        if (hasRuntimeModel) {
-            aiResponse = aiService.sendTextMessage(
-                    enhancedText,
-                    request.getRoleId() != null ? request.getRoleId().toString() : null,
-                    context,
-                    conversation.getContextId(),
-                    request.getModel(),
-                    request.getBaseUrl(),
-                    request.getApiKey(),
-                    request.getThinkingMode() != null
-                            ? request.getThinkingMode()
-                            : request.getReasoningEffort(),
-                    request.getToolMode()
-            );
-        } else {
-            aiResponse = aiService.sendTextMessage(
-                    enhancedText,
-                    request.getRoleId() != null ? request.getRoleId().toString() : null,
-                    context,
-                    conversation.getContextId()
-            );
-        }
+        AiChatClient.AiChatCommand command = new AiChatClient.AiChatCommand(
+                enhancedText,
+                request.getRoleId() != null ? request.getRoleId().toString() : null,
+                context,
+                conversation.getContextId(),
+                request.getModel(),
+                request.getBaseUrl(),
+                request.getApiKey(),
+                hasRuntimeModel
+                        ? (request.getThinkingMode() != null
+                                ? request.getThinkingMode()
+                                : request.getReasoningEffort())
+                        : null,
+                request.getToolMode()
+        );
+        ChatResponse aiResponse = invokeChat(command);
         
         // 如果角色上下文可用，添加到响应元数据中
         if (roleContext != null) {
@@ -183,6 +181,21 @@ public class ChatService {
         aiResponse.setContextId(conversation.getContextId());
 
         return aiResponse;
+    }
+
+    /**
+     * 调用 chat client；transport 失败时保持既有用户可见 fallback（固定文案、confidence 0）。
+     */
+    private ChatResponse invokeChat(AiChatClient.AiChatCommand command) {
+        try {
+            return aiChatClient.sendText(command);
+        } catch (PlatformAiClientException e) {
+            log.error("调用Python AI服务失败", e);
+            ChatResponse fallbackResponse = new ChatResponse();
+            fallbackResponse.setText("抱歉，AI服务当前不可用，请稍后重试。");
+            fallbackResponse.setConfidence(0.0);
+            return fallbackResponse;
+        }
     }
 
     /**

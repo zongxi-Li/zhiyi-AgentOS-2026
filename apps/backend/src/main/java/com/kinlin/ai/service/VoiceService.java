@@ -1,5 +1,7 @@
 package com.kinlin.ai.service;
 
+import com.kinlin.ai.client.AiChatClient;
+import com.kinlin.ai.client.SpeechClient;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.dto.VoiceRecognitionResponse;
 import com.kinlin.ai.entity.Conversation;
@@ -22,7 +24,8 @@ public class VoiceService {
 
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final AiService aiService;
+    private final AiChatClient aiChatClient;
+    private final SpeechClient speechClient;
     private final TransactionTemplate transactionTemplate;
 
     /**
@@ -39,7 +42,7 @@ public class VoiceService {
                 getOrCreateConversation(contextId, userId, roleId));
 
         // 调用AI服务进行语音识别和生成回复（Python端会一次性处理）
-        ChatResponse aiResponse = aiService.sendVoiceMessage(
+        ChatResponse aiResponse = aiChatClient.sendVoiceMessage(
                 audioData,
                 roleId != null ? roleId.toString() : null
         );
@@ -85,7 +88,7 @@ public class VoiceService {
      * 文本转语音
      */
     public byte[] textToSpeech(String text, String voice, Double speed, Double pitch) {
-        return aiService.textToSpeech(text, voice, speed, pitch);
+        return speechClient.textToSpeech(text, voice, speed, pitch);
     }
 
     private Conversation getOrCreateConversation(String contextId, UUID userId, UUID roleId) {

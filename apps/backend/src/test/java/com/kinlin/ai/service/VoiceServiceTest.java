@@ -1,5 +1,7 @@
 package com.kinlin.ai.service;
 
+import com.kinlin.ai.client.AiChatClient;
+import com.kinlin.ai.client.SpeechClient;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
@@ -38,7 +40,10 @@ class VoiceServiceTest {
     private MessageRepository messageRepository;
 
     @Mock
-    private AiService aiService;
+    private AiChatClient aiChatClient;
+
+    @Mock
+    private SpeechClient speechClient;
 
     @Spy
     private TransactionTemplate transactionTemplate =
@@ -73,7 +78,7 @@ class VoiceServiceTest {
             conv.setId(UUID.randomUUID());
             return conv;
         });
-        when(aiService.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
+        when(aiChatClient.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // 执行
@@ -102,7 +107,7 @@ class VoiceServiceTest {
         aiResponse.setRecognizedText("识别的文本");
 
         when(conversationRepository.findByContextId(contextId)).thenReturn(Optional.of(existingConv));
-        when(aiService.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
+        when(aiChatClient.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // 执行
@@ -125,7 +130,7 @@ class VoiceServiceTest {
         Double pitch = 1.0;
         byte[] expectedAudio = new byte[]{1, 2, 3};
 
-        when(aiService.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
+        when(speechClient.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
 
         // 执行
         byte[] result = voiceService.textToSpeech(text, voice, speed, pitch);
@@ -133,7 +138,7 @@ class VoiceServiceTest {
         // 验证
         assertNotNull(result);
         assertArrayEquals(expectedAudio, result);
-        verify(aiService).textToSpeech(text, voice, speed, pitch);
+        verify(speechClient).textToSpeech(text, voice, speed, pitch);
     }
 
     @Test
@@ -150,7 +155,7 @@ class VoiceServiceTest {
             conv.setId(UUID.randomUUID());
             return conv;
         });
-        when(aiService.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
+        when(aiChatClient.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // 执行
@@ -160,7 +165,7 @@ class VoiceServiceTest {
 
         // 验证
         assertNotNull(response);
-        verify(aiService).sendVoiceMessage(any(byte[].class), anyString());
+        verify(aiChatClient).sendVoiceMessage(any(byte[].class), anyString());
     }
 
     @Test
@@ -176,7 +181,7 @@ class VoiceServiceTest {
             conv.setId(UUID.randomUUID());
             return conv;
         });
-        when(aiService.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
+        when(aiChatClient.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // 执行
@@ -198,7 +203,7 @@ class VoiceServiceTest {
         Double pitch = 1.0;
         byte[] expectedAudio = new byte[0];
 
-        when(aiService.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
+        when(speechClient.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
 
         // 执行
         byte[] result = voiceService.textToSpeech(text, voice, speed, pitch);
@@ -218,7 +223,7 @@ class VoiceServiceTest {
         byte[] expectedAudio = new byte[]{1, 2, 3};
 
         for (String voice : voices) {
-            when(aiService.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
+            when(speechClient.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
 
             // 执行
             byte[] result = voiceService.textToSpeech(text, voice, speed, pitch);
@@ -240,7 +245,7 @@ class VoiceServiceTest {
 
         for (Double speed : speeds) {
             for (Double pitch : pitches) {
-                when(aiService.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
+                when(speechClient.textToSpeech(text, voice, speed, pitch)).thenReturn(expectedAudio);
 
                 // 执行
                 byte[] result = voiceService.textToSpeech(text, voice, speed, pitch);
@@ -266,7 +271,7 @@ class VoiceServiceTest {
             conv.setId(UUID.randomUUID());
             return conv;
         });
-        when(aiService.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
+        when(aiChatClient.sendVoiceMessage(any(byte[].class), anyString())).thenReturn(aiResponse);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         // 执行
