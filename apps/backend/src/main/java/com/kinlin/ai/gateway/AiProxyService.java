@@ -54,13 +54,9 @@ public class AiProxyService {
         this(transport, objectMapper, Duration.ofMillis(properties.getTimeout()));
     }
 
-    AiProxyService(
-            WebClient.Builder webClientBuilder,
-            ObjectMapper objectMapper,
-            String aiServiceUrl,
-            int timeoutMs
-    ) {
-        this(webClientBuilder.clone().baseUrl(aiServiceUrl).build(), objectMapper, Duration.ofMillis(timeoutMs));
+    /** Test seam: takes a pre-built transport so base-URL wiring stays with {@code PythonClientFactory}. */
+    AiProxyService(WebClient transport, ObjectMapper objectMapper, int timeoutMs) {
+        this(transport, objectMapper, Duration.ofMillis(timeoutMs));
     }
 
     private AiProxyService(WebClient transport, ObjectMapper objectMapper, Duration timeout) {

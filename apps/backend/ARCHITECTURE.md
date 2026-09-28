@@ -71,13 +71,15 @@ com.kinlin.ai
 │  └─ PythonServiceAuthentication / TrustedUserContextForwarder / AiGatewayHeaders / AiInternalServiceToken
 ├─ legacy/agent/                   ← LEGACY_AI 隔离区（J1.3 删除）
 │  └─ AgentGatewayService          ← 唯一 RestTemplate（表征测试已冻结行为）
-└─ service/                        ← 业务 service 持有 endpoint + 错误语义，不再持有 transport
+└─ service/                        ← 业务 service 持有 endpoint + 错误语义
 ```
+
+transport 归属的精确表述：业务 Service 不再拥有 **transport 构造/配置 authority**（WebClient 构造、base URL、auth filter、connect timeout 全部收归 `infrastructure.http` / 共享 builder），但平台 AI 家族仍**通过共享 transport 直接执行 HTTP 调用**（endpoint path、retrieve、timeout application、fallback 语义由各 service 自持）。Client/Application 分层（`Application Service → PlatformAiClient → WebClient`）是 J1.2 的第一优先级，J1.1 不做。
 
 核心规则（守卫强制）：
 
 1. 业务 Service 不创建 WebClient/RestTemplate、不拼 base URL、不读 `ai.service.*` 配置。
-2. `.baseUrl(` 只允许出现在 `infrastructure/http` 与 `gateway`。
+2. `.baseUrl(` 只允许出现在 `PythonClientFactory`（唯一 owner，机器可证明；测试缝隙同样禁止自行接线）。
 3. Controller 禁止任何 transport（WebClient/RestTemplate/exchangeToMono/block）。
 4. RestTemplate 只允许存在于 `legacy/agent`；正式代码新增 RestTemplate = 违例。
 5. 上游 SSE 流只允许 `AiSseGatewayService` 打开。
@@ -128,11 +130,13 @@ com.kinlin.ai
 
 ## 8. J1.1 遗留清单（明确不修，留给后续阶段）
 
-1. 平台 AI 家族错误语义不统一（fallback/吞错/泄漏三种并存）——J1.2 统一 transport error mapping。
-2. `agent.timeout-ms` 与 `ai.service.timeout` 值相等但键分离——J1.2 配置合并候选。
-3. `RagService` 无显式请求超时——J1.2 补 QUERY 类超时。
-4. `AgentController` 死参数 `X-User-Id`——J1.2 移除。
-5. `AiService`/`RagService` 中文 fallback 文案含部署细节（端口 8000）——J1.3/产品定夺。
-6. WebSocket/STOMP 删除、legacy role endpoints 删除——J1.3。
-7. `mapper` 空包删除——J1.2 结构清理。
-8. SSE protocol（RuntimeEventEnvelope）——N2。
+1. 业务 Service 仍直接执行平台 AI HTTP 调用（endpoint/retrieve/timeout application/fallback 自持）——**J1.2 第一优先级**：引入 `PlatformAiClient` 家族分层（Application Service → Typed Client → Transport）。
+2. 平台 AI 家族错误语义不统一（fallback/吞错/泄漏三种并存）——J1.2 统一 transport error mapping。
+3. `agent.timeout-ms` 与 `ai.service.timeout` 值相等但键分离——J1.2 配置合并候选。
+4. `RagService` 无显式请求超时——J1.2 补 QUERY 类超时。
+5. `AgentController` 死参数 `X-User-Id`——J1.2 移除。
+6. `AiService`/`RagService` 中文 fallback 文案含部署细节（端口 8000）——J1.3/产品定夺。
+7. WebSocket/STOMP 删除、legacy role endpoints 删除——J1.3。
+8. `mapper` 空包删除——J1.2 结构清理。
+9. SSE protocol（RuntimeEventEnvelope）——N2。
+10. GitHub 远端无 CI（`.github/workflows` 为空，185 测试与架构守卫仅本地强制）——J1.4 Architecture Freeze 前必须补 GitHub Actions 跑 `mvn test`（含 ArchitectureGuardTest）。

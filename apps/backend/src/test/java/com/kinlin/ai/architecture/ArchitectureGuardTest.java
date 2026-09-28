@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       are resolved only by the infrastructure transport owner; SSE timeouts only by
  *       the SSE gateway.</li>
  *   <li>Business services never wire a base URL or construct an HTTP client; base-URL
- *       wiring belongs to the client factory and the gateway transport classes.</li>
+ *       wiring belongs solely to {@code PythonClientFactory}, test seams included.</li>
  *   <li>The AgentOS upstream path is reachable only through the single AgentOS
  *       transport family.</li>
  *   <li>Only the SSE gateway opens upstream event streams; WebSocket is a marked
@@ -115,13 +115,13 @@ class ArchitectureGuardTest {
     }
 
     @Test
-    void baseUrlWiringNeverHappensInBusinessServices() {
+    void baseUrlWiringHappensOnlyInTheClientFactory() {
         List<String> offenders = matchingFiles(".baseUrl(").stream()
-                .filter(key -> !key.startsWith("com/kinlin/ai/infrastructure/http/")
-                        && !key.startsWith("com/kinlin/ai/gateway/"))
+                .filter(key -> !key.equals("com/kinlin/ai/infrastructure/http/PythonClientFactory.java"))
                 .toList();
 
-        assertTrue(offenders.isEmpty(), "base URL wiring outside transport owners: " + offenders);
+        assertTrue(offenders.isEmpty(),
+                "base-URL wiring must happen only in PythonClientFactory (sole owner): " + offenders);
     }
 
     @Test
@@ -175,9 +175,28 @@ class ArchitectureGuardTest {
         }
     }
 
+    /**
+     * Authority symbols of the Python-owned ACG/execution semantics. Banning the symbol
+     * (class/type name), never the bare concept word: e.g. {@code TaskPlan} stays legal
+     * because a future query projection may surface it as a display field, while a Java
+     * {@code TaskPlanPatch} implementation would be an authority violation.
+     */
+    private static final List<String> ACG_AUTHORITY_SYMBOLS = List.of(
+            "ACGLowering",
+            "ACGLowerer",
+            "ACGLoweringInput",
+            "TaskPlanPatch",
+            "CompiledACGPackage",
+            "BindingManifest",
+            "CapabilityBindingSolver",
+            "SemanticGraphPatchService"
+    );
+
     @Test
     void noAcgSemanticsLiveInJavaPlatform() {
-        List<String> offenders = matchingFiles("ACGLowering");
+        List<String> offenders = ACG_AUTHORITY_SYMBOLS.stream()
+                .flatMap(symbol -> matchingFiles(symbol).stream().map(file -> file + " contains " + symbol))
+                .toList();
 
         assertTrue(offenders.isEmpty(), "ACG semantic implementation leaked into Java: " + offenders);
         assertTrue(Stream.of("acg", "scheduler", "topology")

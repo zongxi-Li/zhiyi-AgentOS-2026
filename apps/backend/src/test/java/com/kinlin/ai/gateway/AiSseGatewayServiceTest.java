@@ -136,7 +136,7 @@ class AiSseGatewayServiceTest {
     }
 
     private AiSseGatewayService service(long idleMs, long maximumMs) {
-        return new AiSseGatewayService(WebClient.builder(), baseUrl, idleMs, maximumMs);
+        return new AiSseGatewayService(WebClient.builder().baseUrl(baseUrl).build(), idleMs, maximumMs);
     }
 
     private void stream(HttpExchange exchange, List<String> events, long delayMs) throws IOException {

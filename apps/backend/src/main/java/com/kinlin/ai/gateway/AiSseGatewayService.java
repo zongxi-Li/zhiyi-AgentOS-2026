@@ -46,8 +46,9 @@ public class AiSseGatewayService {
         this.userContextForwarder = userContextForwarder;
     }
 
-    AiSseGatewayService(WebClient.Builder builder, String url, long idleTimeoutMs, long maximumDurationMs) {
-        this(builder.clone().baseUrl(url).build(), idleTimeoutMs, maximumDurationMs, new TrustedUserContextForwarder());
+    /** Test seam: takes a pre-built transport so base-URL wiring stays with {@code PythonClientFactory}. */
+    AiSseGatewayService(WebClient transport, long idleTimeoutMs, long maximumDurationMs) {
+        this(transport, idleTimeoutMs, maximumDurationMs, new TrustedUserContextForwarder());
     }
 
     public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> openPost(String path, Object body) {

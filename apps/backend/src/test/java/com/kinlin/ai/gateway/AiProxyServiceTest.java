@@ -110,10 +110,11 @@ class AiProxyServiceTest {
 
     @Test
     void mapsConnectionFailureAndRejectsUnsafePath() throws Exception {
-        AiProxyService unavailable = new AiProxyService(
-                WebClient.builder().exchangeFunction(ignored -> Mono.error(new ConnectException("test connection refused"))),
-                new ObjectMapper(), "http://127.0.0.1", 1_000
-        );
+        WebClient failingTransport = WebClient.builder()
+                .baseUrl("http://127.0.0.1")
+                .exchangeFunction(ignored -> Mono.error(new ConnectException("test connection refused")))
+                .build();
+        AiProxyService unavailable = new AiProxyService(failingTransport, new ObjectMapper(), 1_000);
         ResponseEntity<byte[]> response = unavailable.forward(request("GET", "/ai/ok"));
 
         assertEquals(503, response.getStatusCode().value());
@@ -122,7 +123,7 @@ class AiProxyServiceTest {
     }
 
     private AiProxyService service(int timeoutMs) {
-        return new AiProxyService(WebClient.builder(), new ObjectMapper(), baseUrl, timeoutMs);
+        return new AiProxyService(WebClient.builder().baseUrl(baseUrl).build(), new ObjectMapper(), timeoutMs);
     }
 
     private MockHttpServletRequest request(String method, String path) {
