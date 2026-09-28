@@ -10,6 +10,7 @@ import com.kinlin.ai.dto.agentos.AgentOsRunResponse;
 import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
+import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.gateway.AiSseGatewayService;
 import com.kinlin.ai.service.AgentOsGatewayService;
 import jakarta.validation.Valid;
@@ -39,7 +40,7 @@ import reactor.core.publisher.Mono;
 @RequestMapping("/api/agentos/v2")
 public class AgentOsGatewayController {
 
-    private static final String UPSTREAM_ROOT = "/ai/agentos/v2";
+    private static final String UPSTREAM_ROOT = AgentOsPaths.UPSTREAM_ROOT;
     private final AgentOsGatewayService gateway;
     private final AiSseGatewayService sseGateway;
 

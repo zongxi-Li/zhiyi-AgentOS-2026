@@ -374,7 +374,7 @@ class AgentOsGatewayControllerTest {
         private String lastDeletePath;
 
         private RecordingGateway() {
-            super(WebClient.builder(), new AgentProperties(), "http://localhost:8000");
+            super(WebClient.builder().baseUrl("http://localhost:8000").build(), new AgentProperties());
         }
 
         @Override

@@ -32,8 +32,7 @@ public class AiSseGatewayService {
 
     @Autowired
     public AiSseGatewayService(
-            WebClient.Builder webClientBuilder,
-            @Value("${ai.service.url:http://localhost:8000}") String aiServiceUrl,
+            WebClient pythonTransport,
             @Value("${ai.sse.idle-timeout-ms:240000}") long idleTimeoutMs,
             @Value("${ai.sse.max-duration-ms:1800000}") long maximumDurationMs,
             TrustedUserContextForwarder userContextForwarder
@@ -41,14 +40,14 @@ public class AiSseGatewayService {
         if (idleTimeoutMs <= 0 || maximumDurationMs <= 0) {
             throw new IllegalArgumentException("SSE timeouts must be positive");
         }
-        this.webClient = webClientBuilder.baseUrl(aiServiceUrl).build();
+        this.webClient = pythonTransport;
         this.idleTimeout = Duration.ofMillis(idleTimeoutMs);
         this.maximumDuration = Duration.ofMillis(maximumDurationMs);
         this.userContextForwarder = userContextForwarder;
     }
 
     AiSseGatewayService(WebClient.Builder builder, String url, long idleTimeoutMs, long maximumDurationMs) {
-        this(builder, url, idleTimeoutMs, maximumDurationMs, new TrustedUserContextForwarder());
+        this(builder.clone().baseUrl(url).build(), idleTimeoutMs, maximumDurationMs, new TrustedUserContextForwarder());
     }
 
     public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> openPost(String path, Object body) {

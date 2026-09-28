@@ -2,9 +2,11 @@ package com.kinlin.ai.gateway;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
+import com.kinlin.ai.infrastructure.http.TransportErrorClassifier;
+import com.kinlin.ai.observability.TraceContext;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -12,20 +14,15 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.Exceptions;
-import com.kinlin.ai.observability.TraceContext;
 
 import java.io.IOException;
-import java.net.ConnectException;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeoutException;
 
 /** Fixed-upstream, header-whitelisted proxy for non-streaming Python AI routes. */
 @Slf4j
@@ -48,15 +45,28 @@ public class AiProxyService {
     private final ObjectMapper objectMapper;
     private final Duration timeout;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public AiProxyService(
+            WebClient transport,
+            ObjectMapper objectMapper,
+            PythonServiceProperties properties
+    ) {
+        this(transport, objectMapper, Duration.ofMillis(properties.getTimeout()));
+    }
+
+    AiProxyService(
             WebClient.Builder webClientBuilder,
             ObjectMapper objectMapper,
-            @Value("${ai.service.url:http://localhost:8000}") String aiServiceUrl,
-            @Value("${ai.service.timeout:240000}") int timeoutMs
+            String aiServiceUrl,
+            int timeoutMs
     ) {
-        this.webClient = webClientBuilder.baseUrl(aiServiceUrl).build();
+        this(webClientBuilder.clone().baseUrl(aiServiceUrl).build(), objectMapper, Duration.ofMillis(timeoutMs));
+    }
+
+    private AiProxyService(WebClient transport, ObjectMapper objectMapper, Duration timeout) {
+        this.webClient = transport;
         this.objectMapper = objectMapper;
-        this.timeout = Duration.ofMillis(timeoutMs);
+        this.timeout = timeout;
     }
 
     public ResponseEntity<byte[]> forward(HttpServletRequest request) throws IOException {
@@ -82,12 +92,12 @@ public class AiProxyService {
             return response == null ? gatewayError(HttpStatus.BAD_GATEWAY, "AI_UPSTREAM_INVALID_RESPONSE") : response;
         } catch (Exception error) {
             Throwable cause = Exceptions.unwrap(error);
-            if (isConnectionFailure(cause)) {
+            if (TransportErrorClassifier.isConnectionFailure(cause)) {
                 log.warn("AI upstream connection unavailable. method={}, path={}, type={}",
                         method, request.getRequestURI(), cause.getClass().getSimpleName());
                 return gatewayError(HttpStatus.SERVICE_UNAVAILABLE, "AI_UPSTREAM_UNAVAILABLE");
             }
-            if (isTimeout(cause)) {
+            if (TransportErrorClassifier.isTimeout(cause)) {
                 log.warn("AI upstream read timeout. method={}, path={}", method, request.getRequestURI());
                 return gatewayError(HttpStatus.GATEWAY_TIMEOUT, "AI_UPSTREAM_TIMEOUT");
             }
@@ -161,28 +171,6 @@ public class AiProxyService {
                 target.put(name, java.util.Collections.list(request.getHeaders(name)));
             }
         });
-    }
-
-    private boolean isTimeout(Throwable error) {
-        return error instanceof TimeoutException
-                || error.getClass().getSimpleName().contains("Timeout");
-    }
-
-    private boolean isConnectionFailure(Throwable error) {
-        if (error instanceof WebClientRequestException requestError) {
-            Throwable cause = requestError.getCause();
-            return cause instanceof ConnectException || cause instanceof UnknownHostException
-                    || (cause != null && cause.getClass().getSimpleName().contains("Connect"));
-        }
-        Throwable current = error;
-        while (current != null) {
-            if (current instanceof ConnectException || current instanceof UnknownHostException
-                    || current.getClass().getSimpleName().contains("ConnectException")) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
     }
 
     private boolean containsControlCharacter(String value) {

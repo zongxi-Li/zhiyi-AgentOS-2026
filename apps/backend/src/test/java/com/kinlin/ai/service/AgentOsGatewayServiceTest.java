@@ -65,7 +65,7 @@ class AgentOsGatewayServiceTest {
         properties.setTimeoutMs(5_000);
         properties.setProgressTimeoutMs(10);
         WebClient.Builder builder = WebClient.builder().exchangeFunction(request -> Mono.never());
-        AgentOsGatewayService service = new AgentOsGatewayService(builder, properties, "http://agentos");
+        AgentOsGatewayService service = new AgentOsGatewayService(builder.clone().baseUrl("http://agentos").build(), properties);
 
         Map<String, Object> result = service.get("/ai/agentos/v2/runs");
 
@@ -99,7 +99,7 @@ class AgentOsGatewayServiceTest {
                         .body("{\"items\":[]}")
                         .build())
         );
-        AgentOsGatewayService service = new AgentOsGatewayService(builder, properties, "http://agentos");
+        AgentOsGatewayService service = new AgentOsGatewayService(builder.clone().baseUrl("http://agentos").build(), properties);
 
         Map<String, Object> result = service.get("/ai/agentos/v2/missions?page=1&pageSize=100");
 
@@ -116,6 +116,6 @@ class AgentOsGatewayServiceTest {
                         .body(body)
                         .build()
         ));
-        return new AgentOsGatewayService(builder, properties, "http://agentos");
+        return new AgentOsGatewayService(builder.clone().baseUrl("http://agentos").build(), properties);
     }
 }

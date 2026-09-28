@@ -5,8 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.config.AgentProperties;
 import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
 import com.kinlin.ai.dto.agentos.AgentOsErrorResponse;
+import com.kinlin.ai.gateway.AgentOsPaths;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,7 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -38,12 +40,8 @@ public class AgentOsGatewayService {
     private final WebClient webClient;
     private final AgentProperties properties;
 
-    public AgentOsGatewayService(
-            WebClient.Builder webClientBuilder,
-            AgentProperties properties,
-            @Value("${ai.service.url:http://localhost:8000}") String aiServiceUrl
-    ) {
-        this.webClient = webClientBuilder.baseUrl(aiServiceUrl).build();
+    public AgentOsGatewayService(WebClient transport, AgentProperties properties) {
+        this.webClient = transport;
         this.properties = properties;
     }
 
@@ -123,7 +121,7 @@ public class AgentOsGatewayService {
         if (!properties.isEnabled()) {
             return new BinaryResponse(
                     HttpStatus.SERVICE_UNAVAILABLE.value(),
-                    "AgentOS gateway is disabled.".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    "AgentOS gateway is disabled.".getBytes(StandardCharsets.UTF_8),
                     MediaType.TEXT_PLAIN_VALUE,
                     null
             );
@@ -135,14 +133,14 @@ public class AgentOsGatewayService {
                                 .map(MediaType::toString)
                                 .orElse(MediaType.APPLICATION_OCTET_STREAM_VALUE);
                         String disposition = response.headers().asHttpHeaders()
-                                .getFirst(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION);
+                                .getFirst(HttpHeaders.CONTENT_DISPOSITION);
                         return response.bodyToMono(byte[].class).defaultIfEmpty(new byte[0])
                                 .map(body -> {
                                     if (upstreamStatus >= 500) {
                                         return new BinaryResponse(
                                                 HttpStatus.BAD_GATEWAY.value(),
                                                 "AgentOS service returned an error."
-                                                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                                        .getBytes(StandardCharsets.UTF_8),
                                                 MediaType.TEXT_PLAIN_VALUE,
                                                 null
                                         );
@@ -156,7 +154,7 @@ public class AgentOsGatewayService {
                     .onErrorReturn(new BinaryResponse(
                             HttpStatus.SERVICE_UNAVAILABLE.value(),
                             "AgentOS gateway unavailable."
-                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                    .getBytes(StandardCharsets.UTF_8),
                             MediaType.TEXT_PLAIN_VALUE,
                             null
                     ))
@@ -167,7 +165,7 @@ public class AgentOsGatewayService {
             return new BinaryResponse(
                     HttpStatus.SERVICE_UNAVAILABLE.value(),
                     "AgentOS gateway unavailable."
-                            .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                            .getBytes(StandardCharsets.UTF_8),
                     MediaType.TEXT_PLAIN_VALUE,
                     null
             );
@@ -212,7 +210,7 @@ public class AgentOsGatewayService {
 
     private int getTimeoutMs(String path) {
         String pathWithoutQuery = path == null ? "" : path.split("\\?", 2)[0];
-        return "/ai/agentos/v2/missions".equals(pathWithoutQuery)
+        return (AgentOsPaths.UPSTREAM_ROOT + "/missions").equals(pathWithoutQuery)
                 ? properties.getTimeoutMs()
                 : properties.getProgressTimeoutMs();
     }
