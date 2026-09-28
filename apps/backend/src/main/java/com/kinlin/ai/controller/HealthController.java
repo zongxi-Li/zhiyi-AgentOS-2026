@@ -1,11 +1,10 @@
 package com.kinlin.ai.controller;
 
+import com.kinlin.ai.infrastructure.http.AiDependencyHealthClient;
 import org.springframework.http.ResponseEntity;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -15,6 +14,10 @@ import java.util.Map;
 
 /**
  * 健康检查控制器
+ *
+ * <p>Platform health (postgres/redis) is checked here; Python dependency health is
+ * delegated to the narrow {@link AiDependencyHealthClient} — this controller performs
+ * no transport itself.</p>
  */
 @RestController
 @RequestMapping("/health")
@@ -22,15 +25,16 @@ public class HealthController {
 
     private final JdbcTemplate jdbcTemplate;
     private final RedisConnectionFactory redisConnectionFactory;
-    private final WebClient.Builder webClientBuilder;
+    private final AiDependencyHealthClient aiDependencyHealthClient;
 
-    @Value("${ai.service.url:http://localhost:8000}")
-    private String aiServiceUrl;
-
-    public HealthController(JdbcTemplate jdbcTemplate, RedisConnectionFactory redisConnectionFactory, WebClient.Builder webClientBuilder) {
+    public HealthController(
+            JdbcTemplate jdbcTemplate,
+            RedisConnectionFactory redisConnectionFactory,
+            AiDependencyHealthClient aiDependencyHealthClient
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.redisConnectionFactory = redisConnectionFactory;
-        this.webClientBuilder = webClientBuilder;
+        this.aiDependencyHealthClient = aiDependencyHealthClient;
     }
 
     @GetMapping
@@ -65,18 +69,16 @@ public class HealthController {
 
     @GetMapping("/dependencies")
     public ResponseEntity<Map<String, Object>> dependencies() {
-        Map<String, Object> ai = new HashMap<>();
-        try {
-            Object body = webClientBuilder.baseUrl(aiServiceUrl).build().get().uri("/health/dependencies")
-                    .retrieve().bodyToMono(Object.class).block(java.time.Duration.ofSeconds(3));
-            ai.put("status", "REACHABLE");
-            ai.put("detail", body);
-        } catch (Exception e) {
-            ai.put("status", "DEGRADED");
-            ai.put("error", e.getClass().getSimpleName());
+        AiDependencyHealthClient.AiDependencyHealth ai = aiDependencyHealthClient.probe();
+        Map<String, Object> aiService = new HashMap<>();
+        aiService.put("status", ai.status());
+        if (ai.detail() != null) {
+            aiService.put("detail", ai.detail());
         }
-        ai.put("affectsReadiness", false);
-        return ResponseEntity.ok(Map.of("status", ai.get("status"), "dependencies", Map.of("aiService", ai)));
+        if (ai.errorType() != null) {
+            aiService.put("error", ai.errorType());
+        }
+        aiService.put("affectsReadiness", false);
+        return ResponseEntity.ok(Map.of("status", ai.status(), "dependencies", Map.of("aiService", aiService)));
     }
 }
-
