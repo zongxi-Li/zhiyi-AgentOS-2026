@@ -4,7 +4,7 @@ import com.kinlin.ai.dto.agent.AgentChatRequest;
 import com.kinlin.ai.dto.agent.AgentChatResponse;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.AgentConversationPersistenceService;
-import com.kinlin.ai.service.AgentGatewayService;
+import com.kinlin.ai.legacy.agent.AgentGatewayService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
