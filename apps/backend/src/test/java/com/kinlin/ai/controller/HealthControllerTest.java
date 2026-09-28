@@ -1,21 +1,16 @@
 package com.kinlin.ai.controller;
 
-import com.kinlin.ai.infrastructure.http.AiDependencyHealthClient;
+import com.kinlin.ai.client.AiDependencyHealthClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.reactive.function.client.ClientResponse;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -29,15 +24,9 @@ class HealthControllerTest {
 
     @BeforeEach
     void setUp() {
-        AiDependencyHealthClient delegatingClient = new AiDependencyHealthClient(
-                WebClient.builder()
-                        .exchangeFunction(ignored ->
-                                Mono.just(ClientResponse.create(HttpStatus.OK).build()))
-                        .build(),
-                new com.kinlin.ai.infrastructure.http.PythonServiceProperties()
-        ) {
+        AiDependencyHealthClient delegatingClient = new AiDependencyHealthClient() {
             @Override
-            public AiDependencyHealthClient.AiDependencyHealth probe() {
+            public AiDependencyHealth probe() {
                 return probeResult.get();
             }
         };

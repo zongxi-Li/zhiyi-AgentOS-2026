@@ -1,5 +1,6 @@
 package com.kinlin.ai.infrastructure.http;
 
+import com.kinlin.ai.client.AiDependencyHealthClient;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -20,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Characterizes the Python dependency health probe (J1.1 §13): bounded blocking probe,
  * REACHABLE with upstream detail, DEGRADED with exception simple name on failure.
  */
-class AiDependencyHealthClientTest {
+class WebClientAiDependencyHealthClientTest {
 
     private HttpServer server;
     private String baseUrl;
@@ -58,7 +59,7 @@ class AiDependencyHealthClientTest {
 
     @Test
     void reportsReachableWithUpstreamDetail() {
-        AiDependencyHealthClient client = client(new PythonServiceProperties(), baseUrl);
+        WebClientAiDependencyHealthClient client = client(new PythonServiceProperties(), baseUrl);
 
         AiDependencyHealthClient.AiDependencyHealth health = client.probe();
 
@@ -71,7 +72,7 @@ class AiDependencyHealthClientTest {
     void reportsDegradedWithSimpleErrorTypeWhenUnreachable() {
         PythonServiceProperties properties = new PythonServiceProperties();
         properties.setUrl("http://127.0.0.1:1");
-        AiDependencyHealthClient client = client(properties, "http://127.0.0.1:1");
+        WebClientAiDependencyHealthClient client = client(properties, "http://127.0.0.1:1");
 
         AiDependencyHealthClient.AiDependencyHealth health = client.probe();
 
@@ -84,7 +85,7 @@ class AiDependencyHealthClientTest {
     void boundsTheProbeWaitWithTheHealthTimeout() {
         PythonServiceProperties properties = new PythonServiceProperties();
         properties.setHealthTimeout(50);
-        AiDependencyHealthClient slowClient = new AiDependencyHealthClient(
+        WebClientAiDependencyHealthClient slowClient = new WebClientAiDependencyHealthClient(
                 WebClient.builder().baseUrl(baseUrl + "/health/slow").build(), properties);
 
         AiDependencyHealthClient.AiDependencyHealth health = slowClient.probe();
@@ -92,7 +93,7 @@ class AiDependencyHealthClientTest {
         assertEquals("DEGRADED", health.status());
     }
 
-    private AiDependencyHealthClient client(PythonServiceProperties properties, String url) {
-        return new AiDependencyHealthClient(WebClient.builder().baseUrl(url).build(), properties);
+    private WebClientAiDependencyHealthClient client(PythonServiceProperties properties, String url) {
+        return new WebClientAiDependencyHealthClient(WebClient.builder().baseUrl(url).build(), properties);
     }
 }

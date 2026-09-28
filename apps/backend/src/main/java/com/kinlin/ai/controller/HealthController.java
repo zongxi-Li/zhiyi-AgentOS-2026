@@ -1,6 +1,6 @@
 package com.kinlin.ai.controller;
 
-import com.kinlin.ai.infrastructure.http.AiDependencyHealthClient;
+import com.kinlin.ai.client.AiDependencyHealthClient;
 import org.springframework.http.ResponseEntity;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisConnection;
