@@ -22,13 +22,23 @@ import java.util.Set;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class SensitiveIdentityHeaderFilter extends OncePerRequestFilter {
 
+    /**
+     * Strips every header that carries inbound identity or service credentials.
+     * The X-Authenticated-* family is the Java-to-Python trusted hop namespace
+     * ({@link com.kinlin.ai.gateway.AiGatewayHeaders}); it is generated outbound
+     * from Spring Security only and must never be accepted from the wire.
+     */
     public static final Set<String> SENSITIVE_HEADERS = Set.of(
             "x-user-id",
             "x-user-role",
             "x-tenant-id",
             "x-organization-id",
             "x-workshop-id",
-            "x-internal-service-token"
+            "x-internal-service-token",
+            "x-authenticated-user-id",
+            "x-authenticated-user-subject",
+            "x-authenticated-user-role",
+            "x-authenticated-tenant-id"
     );
 
     @Override

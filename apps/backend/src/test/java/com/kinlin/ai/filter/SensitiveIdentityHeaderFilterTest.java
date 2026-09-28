@@ -21,6 +21,9 @@ class SensitiveIdentityHeaderFilterTest {
         request.addHeader("X-User-Id", "forged-user");
         request.addHeader("X-User-Role", "ADMIN");
         request.addHeader("X-Internal-Service-Token", "forged-token");
+        request.addHeader("X-Authenticated-User-Id", "forged-authenticated-user");
+        request.addHeader("X-Authenticated-User-Role", "ADMIN");
+        request.addHeader("X-Authenticated-Tenant-Id", "forged-tenant");
         AtomicReference<ServletRequest> downstream = new AtomicReference<>();
 
         new SensitiveIdentityHeaderFilter().doFilter(
@@ -35,6 +38,10 @@ class SensitiveIdentityHeaderFilterTest {
         assertNull(wrapped.getHeader("X-User-Id"));
         assertNull(wrapped.getHeader("X-User-Role"));
         assertNull(wrapped.getHeader("X-Internal-Service-Token"));
+        assertNull(wrapped.getHeader("X-Authenticated-User-Id"));
+        assertNull(wrapped.getHeader("X-Authenticated-User-Role"));
+        assertNull(wrapped.getHeader("X-Authenticated-Tenant-Id"));
         assertFalse(Collections.list(wrapped.getHeaderNames()).contains("X-User-Id"));
+        assertFalse(Collections.list(wrapped.getHeaderNames()).contains("X-Authenticated-User-Id"));
     }
 }
