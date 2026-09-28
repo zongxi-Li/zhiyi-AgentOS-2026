@@ -9,6 +9,10 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 /**
  * WebSocket配置类
  * 用于实时通信
+ *
+ * <p>LEGACY transport (J1.1): WebSocket/STOMP is a deprecation candidate scheduled for
+ * removal in J1.3. It must never carry the typed upstream runtime event stream; upstream
+ * events are SSE-only via {@code AiSseGatewayService}. Guarded by {@code ArchitectureGuardTest}.</p>
  */
 @Configuration
 @EnableWebSocketMessageBroker

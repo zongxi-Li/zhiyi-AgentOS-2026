@@ -15,6 +15,10 @@ import java.util.UUID;
 /**
  * WebSocket控制器
  * 处理实时消息通信
+ *
+ * <p>LEGACY transport (J1.1): chat-over-STOMP is a deprecation candidate scheduled for
+ * removal in J1.3. Must never carry the typed upstream runtime event stream (SSE-only via
+ * {@code AiSseGatewayService}). Guarded by {@code ArchitectureGuardTest}.</p>
  */
 @Slf4j
 @Controller
