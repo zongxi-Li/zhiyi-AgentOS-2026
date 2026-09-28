@@ -61,6 +61,7 @@ ai:
     url: ${AI_SERVICE_URL:http://localhost:8000}
     connect-timeout: ${AI_SERVICE_CONNECT_TIMEOUT:15000}
     timeout: ${AI_SERVICE_TIMEOUT:240000}
+    health-timeout: ${AI_SERVICE_HEALTH_TIMEOUT:3000}
   sse:
     idle-timeout-ms: ${SSE_IDLE_TIMEOUT:240000}
     max-duration-ms: ${SSE_MAX_DURATION:1800000}
