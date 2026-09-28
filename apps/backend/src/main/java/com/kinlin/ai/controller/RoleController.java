@@ -37,10 +37,8 @@ public class RoleController {
      * 获取自定义角色列表
      */
     @GetMapping("/custom")
-    public ResponseEntity<List<Role>> getCustomRoles(
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
-    ) {
-        userId = resolveUserId(userId);
+    public ResponseEntity<List<Role>> getCustomRoles() {
+        UUID userId = resolveUserId();
         List<Role> roles = roleService.getCustomRoles(userId);
         return ResponseEntity.ok(roles);
     }
@@ -93,10 +91,9 @@ public class RoleController {
      */
     @PostMapping("/custom")
     public ResponseEntity<Role> createRole(
-            @Valid @RequestBody RoleCreateRequest request,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @Valid @RequestBody RoleCreateRequest request
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         Role role = roleService.createRole(request, userId);
         return ResponseEntity.status(HttpStatus.CREATED).body(role);
     }
@@ -107,10 +104,9 @@ public class RoleController {
     @PutMapping("/{roleId}")
     public ResponseEntity<Role> updateRole(
             @PathVariable UUID roleId,
-            @Valid @RequestBody RoleCreateRequest request,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @Valid @RequestBody RoleCreateRequest request
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         return roleService.updateRole(roleId, request, userId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -121,17 +117,19 @@ public class RoleController {
      */
     @DeleteMapping("/{roleId}")
     public ResponseEntity<Void> deleteRole(
-            @PathVariable UUID roleId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable UUID roleId
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         if (roleService.deleteRole(roleId, userId)) {
             return ResponseEntity.ok().build();
         }
         return ResponseEntity.notFound().build();
     }
 
-    private UUID resolveUserId(UUID userIdHeader) {
-        return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+    /**
+     * X-User-Id 请求头已被 SensitiveIdentityHeaderFilter 剥离，一律以认证身份为准。
+     */
+    private UUID resolveUserId() {
+        return AuthenticatedUser.currentUserId().orElse(null);
     }
 }

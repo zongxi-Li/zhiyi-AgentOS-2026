@@ -27,8 +27,7 @@ public class ChatQualityController {
      */
     @GetMapping("/{contextId}")
     public ResponseEntity<Map<String, Object>> assessQuality(
-            @PathVariable String contextId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable String contextId
     ) {
         UUID currentUserId = AuthenticatedUser.currentUserId()
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));

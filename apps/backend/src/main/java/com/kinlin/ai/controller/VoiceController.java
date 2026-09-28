@@ -31,11 +31,10 @@ public class VoiceController {
     public ResponseEntity<ChatResponse> sendVoiceMessage(
             @RequestParam("audio") MultipartFile audioFile,
             @RequestParam(value = "roleId", required = false) UUID roleId,
-            @RequestParam(value = "contextId", required = false) String contextId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @RequestParam(value = "contextId", required = false) String contextId
     ) {
         try {
-            userId = AuthenticatedUser.currentUserId().orElse(userId);
+            UUID userId = AuthenticatedUser.currentUserId().orElse(null);
             byte[] audioData = audioFile.getBytes();
             ChatResponse response = voiceService.processVoiceMessage(
                     audioData, roleId, contextId, userId

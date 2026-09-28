@@ -29,10 +29,9 @@ public class ChatController {
      */
     @PostMapping("/text")
     public ResponseEntity<ChatResponse> sendTextMessage(
-            @Valid @RequestBody ChatRequest request,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @Valid @RequestBody ChatRequest request
     ) {
-        ChatResponse response = chatService.sendMessage(request, resolveUserId(userId));
+        ChatResponse response = chatService.sendMessage(request, resolveUserId());
         return ResponseEntity.ok(response);
     }
 
@@ -41,10 +40,9 @@ public class ChatController {
      */
     @GetMapping("/history/{contextId}")
     public ResponseEntity<List<Message>> getHistory(
-            @PathVariable String contextId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable String contextId
     ) {
-        List<Message> history = chatService.getHistory(contextId, requireUserId(userId));
+        List<Message> history = chatService.getHistory(contextId, requireUserId());
         return ResponseEntity.ok(history);
     }
 
@@ -53,20 +51,21 @@ public class ChatController {
      */
     @DeleteMapping("/history/{contextId}")
     public ResponseEntity<Void> clearHistory(
-            @PathVariable String contextId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable String contextId
     ) {
-        chatService.clearHistory(contextId, requireUserId(userId));
+        chatService.clearHistory(contextId, requireUserId());
         return ResponseEntity.ok().build();
     }
 
-    private UUID resolveUserId(UUID userIdHeader) {
-        return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+    /**
+     * X-User-Id 请求头已被 SensitiveIdentityHeaderFilter 剥离，一律以认证身份为准。
+     */
+    private UUID resolveUserId() {
+        return AuthenticatedUser.currentUserId().orElse(null);
     }
 
-    private UUID requireUserId(UUID userIdHeader) {
+    private UUID requireUserId() {
         return AuthenticatedUser.currentUserId()
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
     }
 }
-

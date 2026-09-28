@@ -41,10 +41,8 @@ public class UserController {
      * 获取当前用户信息
      */
     @GetMapping("/me")
-    public ResponseEntity<User> getCurrentUser(
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
-    ) {
-        UUID currentUserId = resolveUserId(userId);
+    public ResponseEntity<User> getCurrentUser() {
+        UUID currentUserId = resolveUserId();
         if (currentUserId == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -69,10 +67,9 @@ public class UserController {
     @PutMapping("/{userId}")
     public ResponseEntity<User> updateUser(
             @PathVariable UUID userId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID currentUserId,
             @RequestBody User userUpdate
     ) {
-        currentUserId = resolveUserId(currentUserId);
+        UUID currentUserId = resolveUserId();
         // 验证用户只能更新自己的信息
         if (currentUserId == null || !currentUserId.equals(userId)) {
             return ResponseEntity.badRequest().build();
@@ -96,10 +93,9 @@ public class UserController {
     @PostMapping(value = "/{userId}/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<User> uploadAvatar(
             @PathVariable UUID userId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID currentUserId,
             @RequestParam("file") MultipartFile file
     ) {
-        currentUserId = resolveUserId(currentUserId);
+        UUID currentUserId = resolveUserId();
         if (currentUserId == null || !currentUserId.equals(userId)) {
             return ResponseEntity.badRequest().build();
         }
@@ -174,10 +170,9 @@ public class UserController {
     @PostMapping("/{userId}/password")
     public ResponseEntity<Void> changePassword(
             @PathVariable UUID userId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID currentUserId,
             @RequestBody PasswordChangeRequest request
     ) {
-        currentUserId = resolveUserId(currentUserId);
+        UUID currentUserId = resolveUserId();
         // 验证用户只能修改自己的密码
         if (currentUserId == null || !currentUserId.equals(userId)) {
             return ResponseEntity.badRequest().build();
@@ -196,8 +191,11 @@ public class UserController {
         return ResponseEntity.ok().build();
     }
 
-    private UUID resolveUserId(UUID userIdHeader) {
-        return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+    /**
+     * X-User-Id 请求头已被 SensitiveIdentityHeaderFilter 剥离，一律以认证身份为准。
+     */
+    private UUID resolveUserId() {
+        return AuthenticatedUser.currentUserId().orElse(null);
     }
 
     /**

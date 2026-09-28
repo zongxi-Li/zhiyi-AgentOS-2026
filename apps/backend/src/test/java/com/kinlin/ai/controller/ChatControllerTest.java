@@ -16,9 +16,13 @@ import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import org.mockito.ArgumentCaptor;
+
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -65,7 +69,9 @@ class ChatControllerTest {
         response.setContextId(UUID.randomUUID().toString());
         response.setConfidence(0.95);
 
-        when(chatService.sendMessage(any(ChatRequest.class), any(UUID.class)))
+        // X-User-Id 入站即被 SensitiveIdentityHeaderFilter 剥除；测试切片无认证上下文，
+        // 服务收到的身份必须是 null（any() 才匹配 null，any(UUID.class) 不匹配）。
+        when(chatService.sendMessage(any(ChatRequest.class), any()))
                 .thenReturn(response);
 
         // When & Then
@@ -76,6 +82,10 @@ class ChatControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.text").value("AI回复"))
                 .andExpect(jsonPath("$.confidence").value(0.95));
+
+        ArgumentCaptor<UUID> userIdCaptor = ArgumentCaptor.forClass(UUID.class);
+        verify(chatService).sendMessage(any(ChatRequest.class), userIdCaptor.capture());
+        assertNull(userIdCaptor.getValue(), "伪造 X-User-Id 不得参与身份绑定");
     }
 
     @Test

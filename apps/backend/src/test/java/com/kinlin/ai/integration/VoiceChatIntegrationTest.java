@@ -1,6 +1,5 @@
 package com.kinlin.ai.integration;
 
-import com.kinlin.ai.controller.VoiceController;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.service.VoiceService;
 import org.junit.jupiter.api.Test;
@@ -17,7 +16,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -61,7 +59,7 @@ class VoiceChatIntegrationTest {
                 any(byte[].class),
                 any(UUID.class),
                 nullable(String.class),
-                any(UUID.class)
+                nullable(UUID.class)
         )).thenReturn(mockResponse);
 
         // 执行和验证
@@ -74,6 +72,13 @@ class VoiceChatIntegrationTest {
                 .andExpect(jsonPath("$.text").value("AI回复文本"))
                 .andExpect(jsonPath("$.recognizedText").value("识别的用户语音"))
                 .andExpect(jsonPath("$.confidence").value(0.9));
+
+        // X-User-Id 入站即被剥除，测试切片无认证上下文 → 服务收到 null 身份，伪造头不参与绑定
+        org.mockito.ArgumentCaptor<UUID> userIdCaptor = org.mockito.ArgumentCaptor.forClass(UUID.class);
+        org.mockito.Mockito.verify(voiceService).processVoiceMessage(
+                any(byte[].class), any(UUID.class), nullable(String.class), userIdCaptor.capture());
+        org.junit.jupiter.api.Assertions.assertNull(userIdCaptor.getValue(),
+                "伪造 X-User-Id 不得参与身份绑定");
     }
 
     @Test

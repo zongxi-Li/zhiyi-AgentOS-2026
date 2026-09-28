@@ -28,10 +28,9 @@ public class SearchController {
     @GetMapping("/messages")
     public ResponseEntity<List<Message>> searchMessages(
             @RequestParam("keyword") String keyword,
-            @RequestParam(value = "contextId", required = false) String contextId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @RequestParam(value = "contextId", required = false) String contextId
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         if (userId == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -50,10 +49,9 @@ public class SearchController {
      */
     @GetMapping("/all-messages")
     public ResponseEntity<List<Message>> searchAllMessages(
-            @RequestParam("keyword") String keyword,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @RequestParam("keyword") String keyword
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         if (userId == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -67,7 +65,7 @@ public class SearchController {
     /**
      * X-User-Id 请求头已被 SensitiveIdentityHeaderFilter 剥离，一律以认证身份为准。
      */
-    private UUID resolveUserId(UUID userIdHeader) {
+    private UUID resolveUserId() {
         return AuthenticatedUser.currentUserId().orElse(null);
     }
 }

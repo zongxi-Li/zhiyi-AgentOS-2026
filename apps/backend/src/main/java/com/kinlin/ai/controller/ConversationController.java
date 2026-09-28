@@ -29,10 +29,9 @@ public class ConversationController {
      */
     @GetMapping
     public ResponseEntity<List<Conversation>> getUserConversations(
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId,
             @RequestParam(value = "workspaceMode", required = false) String workspaceMode
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         if (userId == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -47,11 +46,10 @@ public class ConversationController {
      */
     @GetMapping("/{contextId}")
     public ResponseEntity<Conversation> getConversation(
-            @PathVariable String contextId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable String contextId
     ) {
         Conversation conversation = conversationService
-                .getConversationByContextIdForUser(contextId, requireUserId(userId))
+                .getConversationByContextIdForUser(contextId, requireUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
         return ResponseEntity.ok(conversation);
     }
@@ -61,10 +59,9 @@ public class ConversationController {
      */
     @DeleteMapping("/{conversationId}")
     public ResponseEntity<Void> deleteConversation(
-            @PathVariable UUID conversationId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable UUID conversationId
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         if (userId == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -79,11 +76,10 @@ public class ConversationController {
     @PutMapping("/{conversationId}/title")
     public ResponseEntity<Conversation> updateTitle(
             @PathVariable UUID conversationId,
-            @RequestBody UpdateTitleRequest request,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @RequestBody UpdateTitleRequest request
     ) {
         Conversation conversation = conversationService
-                .updateTitle(conversationId, requireUserId(userId), request.getTitle());
+                .updateTitle(conversationId, requireUserId(), request.getTitle());
         return ResponseEntity.ok(conversation);
     }
 
@@ -92,11 +88,10 @@ public class ConversationController {
      */
     @GetMapping("/{conversationId}/detail")
     public ResponseEntity<Map<String, Object>> getConversationDetail(
-            @PathVariable UUID conversationId,
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId
+            @PathVariable UUID conversationId
     ) {
         Conversation conversation = conversationService
-                .getConversationByIdForUser(conversationId, requireUserId(userId))
+                .getConversationByIdForUser(conversationId, requireUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
 
         // 自动生成标题（如果还没有）
@@ -118,10 +113,9 @@ public class ConversationController {
      */
     @DeleteMapping("/all")
     public ResponseEntity<Void> deleteAllConversations(
-            @RequestHeader(value = "X-User-Id", required = false) UUID userId,
             @RequestParam(value = "workspaceMode", required = false) String workspaceMode
     ) {
-        userId = resolveUserId(userId);
+        UUID userId = resolveUserId();
         if (userId == null) {
             return ResponseEntity.badRequest().build();
         }
@@ -133,11 +127,14 @@ public class ConversationController {
         return ResponseEntity.ok().build();
     }
 
-    private UUID resolveUserId(UUID userIdHeader) {
-        return AuthenticatedUser.currentUserId().orElse(userIdHeader);
+    /**
+     * X-User-Id 请求头已被 SensitiveIdentityHeaderFilter 剥离，一律以认证身份为准。
+     */
+    private UUID resolveUserId() {
+        return AuthenticatedUser.currentUserId().orElse(null);
     }
 
-    private UUID requireUserId(UUID userIdHeader) {
+    private UUID requireUserId() {
         return AuthenticatedUser.currentUserId()
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
     }
