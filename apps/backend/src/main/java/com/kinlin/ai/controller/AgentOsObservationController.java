@@ -1,0 +1,113 @@
+package com.kinlin.ai.controller;
+
+import com.kinlin.ai.client.AgentOsClient;
+import com.kinlin.ai.gateway.AgentOsPaths;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * OBSERVATION ownership: read-only projections over a mission or run —
+ * workspace, history-config, graph, execution tree, resource usage, trace,
+ * memory events, provenance, checkpoints, and the upstream identity health probe.
+ * No command lives here.
+ */
+@RestController
+@RequestMapping("/api/agentos/v2")
+public class AgentOsObservationController {
+
+    private final AgentOsClient gateway;
+
+    public AgentOsObservationController(AgentOsClient gateway) {
+        this.gateway = gateway;
+    }
+
+    @GetMapping("/missions/{missionId}/workspace")
+    public ResponseEntity<Map<String, Object>> getMissionWorkspace(
+            @PathVariable String missionId,
+            @RequestParam(required = false) String runId
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("runId", runId);
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.mission(missionId) + "/workspace", params)));
+    }
+
+    @GetMapping("/identity/health")
+    public ResponseEntity<Map<String, Object>> getIdentityHealth() {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.identityHealth()));
+    }
+
+    @GetMapping("/runs/{runId}/history-config")
+    public ResponseEntity<Map<String, Object>> getHistoryConfig(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(
+                gateway.get(AgentOsPaths.run(runId) + "/history-config"));
+    }
+
+    @GetMapping("/runs/{runId}/graph")
+    public ResponseEntity<Map<String, Object>> getGraph(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/graph"));
+    }
+
+    @GetMapping("/runs/{runId}/execution-tree")
+    public ResponseEntity<Map<String, Object>> getExecutionTree(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(
+                gateway.get(AgentOsPaths.run(runId) + "/execution-tree"));
+    }
+
+    @GetMapping("/runs/{runId}/resource-usage")
+    public ResponseEntity<Map<String, Object>> getResourceUsage(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(
+                gateway.get(AgentOsPaths.run(runId) + "/resource-usage"));
+    }
+
+    @GetMapping("/runs/{runId}/resource-usage/calls")
+    public ResponseEntity<Map<String, Object>> getResourceUsageCalls(
+            @PathVariable String runId,
+            @RequestParam(required = false) String stepId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("stepId", stepId);
+        params.put("cursor", cursor);
+        params.put("pageSize", String.valueOf(pageSize));
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.run(runId) + "/resource-usage/calls", params)));
+    }
+
+    @GetMapping("/runs/{runId}/trace")
+    public ResponseEntity<Map<String, Object>> getTrace(
+            @PathVariable String runId,
+            @RequestParam(required = false) String view
+    ) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("view", view);
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.run(runId) + "/trace", params)));
+    }
+
+    @GetMapping("/runs/{runId}/memory-events")
+    public ResponseEntity<Map<String, Object>> getMemoryEvents(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(
+                gateway.get(AgentOsPaths.run(runId) + "/memory-events"));
+    }
+
+    @GetMapping("/runs/{runId}/provenance")
+    public ResponseEntity<Map<String, Object>> getProvenance(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(
+                gateway.get(AgentOsPaths.run(runId) + "/provenance"));
+    }
+
+    @GetMapping("/runs/{runId}/checkpoints")
+    public ResponseEntity<Map<String, Object>> getCheckpoints(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(
+                gateway.get(AgentOsPaths.run(runId) + "/checkpoints"));
+    }
+}

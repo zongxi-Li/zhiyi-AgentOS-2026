@@ -1,19 +1,19 @@
-package com.kinlin.ai.service;
+package com.kinlin.ai.gateway;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kinlin.ai.client.AgentOsClient;
 import com.kinlin.ai.config.AgentProperties;
 import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
 import com.kinlin.ai.dto.agentos.AgentOsErrorResponse;
-import com.kinlin.ai.gateway.AgentOsPaths;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Mono;
 
@@ -22,20 +22,17 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Stateless transport and error-mapping boundary for AgentOS v2. */
+/**
+ * HTTP client implementation of {@link AgentOsClient}: the AgentOS v2 transport
+ * family owned by the {@code gateway} package. Stateless transport, timeout
+ * selection and N1.1 error-envelope mapping — no business logic. Callers depend
+ * on the {@code AgentOsClient} contract, never on this class.
+ */
 @Slf4j
 @Service
-public class AgentOsGatewayService {
+public class AgentOsGatewayService implements AgentOsClient {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
-    public static final String INTERNAL_HTTP_STATUS_KEY = "_httpStatus";
-
-    public record BinaryResponse(int status, byte[] body, String contentType, String contentDisposition) { }
-    public record TypedResponse<T extends AgentOsApiResponse>(
-            int status,
-            T body,
-            AgentOsErrorResponse error
-    ) { }
 
     private final WebClient webClient;
     private final AgentProperties properties;
@@ -45,6 +42,7 @@ public class AgentOsGatewayService {
         this.properties = properties;
     }
 
+    @Override
     public Map<String, Object> get(String path) {
         if (!properties.isEnabled()) {
             return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
@@ -61,6 +59,7 @@ public class AgentOsGatewayService {
         }
     }
 
+    @Override
     public Map<String, Object> post(String path, Object body) {
         if (!properties.isEnabled()) {
             return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
@@ -77,7 +76,8 @@ public class AgentOsGatewayService {
         }
     }
 
-    public <T extends AgentOsApiResponse> TypedResponse<T> postTyped(
+    @Override
+    public <T extends AgentOsApiResponse> AgentOsClient.TypedResponse<T> postTyped(
             String path,
             Object body,
             Class<T> responseType
@@ -101,6 +101,7 @@ public class AgentOsGatewayService {
         }
     }
 
+    @Override
     public Map<String, Object> delete(String path) {
         if (!properties.isEnabled()) {
             return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
@@ -117,9 +118,10 @@ public class AgentOsGatewayService {
         }
     }
 
-    public BinaryResponse getBinary(String path) {
+    @Override
+    public AgentOsClient.BinaryResponse getBinary(String path) {
         if (!properties.isEnabled()) {
-            return new BinaryResponse(
+            return new AgentOsClient.BinaryResponse(
                     HttpStatus.SERVICE_UNAVAILABLE.value(),
                     "AgentOS gateway is disabled.".getBytes(StandardCharsets.UTF_8),
                     MediaType.TEXT_PLAIN_VALUE,
@@ -137,7 +139,7 @@ public class AgentOsGatewayService {
                         return response.bodyToMono(byte[].class).defaultIfEmpty(new byte[0])
                                 .map(body -> {
                                     if (upstreamStatus >= 500) {
-                                        return new BinaryResponse(
+                                        return new AgentOsClient.BinaryResponse(
                                                 HttpStatus.BAD_GATEWAY.value(),
                                                 "AgentOS service returned an error."
                                                         .getBytes(StandardCharsets.UTF_8),
@@ -145,13 +147,13 @@ public class AgentOsGatewayService {
                                                 null
                                         );
                                     }
-                                    return new BinaryResponse(
+                                    return new AgentOsClient.BinaryResponse(
                                             upstreamStatus, body, contentType, disposition
                                     );
                                 });
                     })
                     .timeout(Duration.ofMillis(properties.getProgressTimeoutMs()))
-                    .onErrorReturn(new BinaryResponse(
+                    .onErrorReturn(new AgentOsClient.BinaryResponse(
                             HttpStatus.SERVICE_UNAVAILABLE.value(),
                             "AgentOS gateway unavailable."
                                     .getBytes(StandardCharsets.UTF_8),
@@ -162,7 +164,7 @@ public class AgentOsGatewayService {
         } catch (Exception failure) {
             log.error("AgentOS binary gateway unavailable. path={}, type={}",
                     path, failure.getClass().getSimpleName());
-            return new BinaryResponse(
+            return new AgentOsClient.BinaryResponse(
                     HttpStatus.SERVICE_UNAVAILABLE.value(),
                     "AgentOS gateway unavailable."
                             .getBytes(StandardCharsets.UTF_8),
@@ -178,6 +180,7 @@ public class AgentOsGatewayService {
                 : properties.getTimeoutMs();
     }
 
+    @Override
     public Map<String, Object> postMultipart(String path, MultipartFile file) {
         if (!properties.isEnabled()) {
             return error(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_GATEWAY_DISABLED",
@@ -245,7 +248,7 @@ public class AgentOsGatewayService {
                 "AgentOS gateway unavailable.");
     }
 
-    private <T extends AgentOsApiResponse> Mono<TypedResponse<T>> typedResponse(
+    private <T extends AgentOsApiResponse> Mono<AgentOsClient.TypedResponse<T>> typedResponse(
             int upstreamStatus,
             Mono<String> responseBody,
             Class<T> responseType
@@ -253,7 +256,7 @@ public class AgentOsGatewayService {
         return responseBody.defaultIfEmpty("").map(body -> {
             if (upstreamStatus >= 200 && upstreamStatus < 300) {
                 try {
-                    return new TypedResponse<>(
+                    return new AgentOsClient.TypedResponse<>(
                             upstreamStatus,
                             OBJECT_MAPPER.readValue(body, responseType),
                             null
@@ -270,7 +273,7 @@ public class AgentOsGatewayService {
                     if (error.code() == null || error.message() == null) {
                         throw new IllegalArgumentException("missing stable error fields");
                     }
-                    return new TypedResponse<>(upstreamStatus, null, new AgentOsErrorResponse(
+                    return new AgentOsClient.TypedResponse<>(upstreamStatus, null, new AgentOsErrorResponse(
                             error.code(), sanitize(error.message()), error.requestId()
                     ));
                 } catch (Exception ignored) {
@@ -283,16 +286,16 @@ public class AgentOsGatewayService {
         });
     }
 
-    private <T extends AgentOsApiResponse> TypedResponse<T> typedUnavailable(String path, Throwable failure) {
+    private <T extends AgentOsApiResponse> AgentOsClient.TypedResponse<T> typedUnavailable(String path, Throwable failure) {
         log.error("AgentOS gateway unavailable. path={}, type={}", path, failure.getClass().getSimpleName());
         return typedError(HttpStatus.SERVICE_UNAVAILABLE.value(), "AGENTOS_UPSTREAM_UNAVAILABLE",
                 "AgentOS gateway unavailable.", null);
     }
 
-    private <T extends AgentOsApiResponse> TypedResponse<T> typedError(
+    private <T extends AgentOsApiResponse> AgentOsClient.TypedResponse<T> typedError(
             int status, String code, String message, String requestId
     ) {
-        return new TypedResponse<>(status, null, new AgentOsErrorResponse(code, message, requestId));
+        return new AgentOsClient.TypedResponse<>(status, null, new AgentOsErrorResponse(code, message, requestId));
     }
 
     private Map<String, Object> error(int status, String code, String message) {

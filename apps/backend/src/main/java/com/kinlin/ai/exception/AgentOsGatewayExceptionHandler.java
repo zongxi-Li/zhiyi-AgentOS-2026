@@ -1,6 +1,11 @@
 package com.kinlin.ai.exception;
 
-import com.kinlin.ai.controller.AgentOsGatewayController;
+import com.kinlin.ai.controller.AgentOsArtifactController;
+import com.kinlin.ai.controller.AgentOsEventController;
+import com.kinlin.ai.controller.AgentOsMissionController;
+import com.kinlin.ai.controller.AgentOsObservationController;
+import com.kinlin.ai.controller.AgentOsReviewController;
+import com.kinlin.ai.controller.AgentOsRunController;
 import com.kinlin.ai.dto.agentos.AgentOsErrorResponse;
 import com.kinlin.ai.observability.TraceContext;
 import org.springframework.core.annotation.Order;
@@ -11,9 +16,19 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-/** Stable local error envelope for the Java AgentOS northbound boundary. */
+/**
+ * Stable local error envelope for the Java AgentOS northbound boundary, bound to
+ * every split AgentOS controller (J1.2B) so validation errors keep one envelope.
+ */
 @Order(0)
-@RestControllerAdvice(assignableTypes = AgentOsGatewayController.class)
+@RestControllerAdvice(assignableTypes = {
+        AgentOsMissionController.class,
+        AgentOsRunController.class,
+        AgentOsReviewController.class,
+        AgentOsArtifactController.class,
+        AgentOsObservationController.class,
+        AgentOsEventController.class
+})
 public class AgentOsGatewayExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
