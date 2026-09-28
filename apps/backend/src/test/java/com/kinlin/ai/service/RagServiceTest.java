@@ -41,14 +41,9 @@ class RagServiceTest {
 
     private RagService ragService;
 
-    private String aiServiceUrl;
-
     @BeforeEach
     void setUp() {
-        aiServiceUrl = "http://localhost:8000";
-        when(webClientBuilder.baseUrl(anyString())).thenReturn(webClientBuilder);
-        when(webClientBuilder.build()).thenReturn(webClient);
-        ragService = new RagService(webClientBuilder, aiServiceUrl);
+        ragService = new RagService(webClient);
     }
 
     @Test

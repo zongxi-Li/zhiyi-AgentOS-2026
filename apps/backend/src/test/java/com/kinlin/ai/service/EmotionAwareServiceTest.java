@@ -1,13 +1,13 @@
 package com.kinlin.ai.service;
 
 import com.kinlin.ai.dto.EmotionAnalyzeRequest;
+import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
 import com.kinlin.ai.dto.EmotionAwareResponseRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -44,11 +44,9 @@ class EmotionAwareServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(webClientBuilder.baseUrl(anyString())).thenReturn(webClientBuilder);
-        when(webClientBuilder.build()).thenReturn(webClient);
-        emotionAwareService = new EmotionAwareService(webClientBuilder, "http://localhost:8000", 5000);
-        ReflectionTestUtils.setField(emotionAwareService, "aiServiceUrl", "http://localhost:8000");
-        ReflectionTestUtils.setField(emotionAwareService, "timeout", 5000);
+        PythonServiceProperties properties = new PythonServiceProperties();
+        properties.setTimeout(5000);
+        emotionAwareService = new EmotionAwareService(webClient, properties);
     }
 
     @Test

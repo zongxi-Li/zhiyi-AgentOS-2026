@@ -2,8 +2,8 @@ package com.kinlin.ai.service;
 
 import com.kinlin.ai.dto.EmotionAnalyzeRequest;
 import com.kinlin.ai.dto.EmotionAwareResponseRequest;
+import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -22,20 +22,11 @@ public class EmotionAwareService {
 
     private final WebClient webClient;
 
-    @Value("${ai.service.url}")
-    private String aiServiceUrl;
+    private final int timeout;
 
-    @Value("${ai.service.timeout}")
-    private int timeout;
-
-    public EmotionAwareService(WebClient.Builder webClientBuilder, 
-                               @Value("${ai.service.url}") String aiServiceUrl, 
-                               @Value("${ai.service.timeout}") int timeout) {
-        this.aiServiceUrl = aiServiceUrl;
-        this.timeout = timeout;
-        this.webClient = webClientBuilder
-                .baseUrl(aiServiceUrl)
-                .build();
+    public EmotionAwareService(WebClient pythonTransport, PythonServiceProperties properties) {
+        this.timeout = properties.getTimeout();
+        this.webClient = pythonTransport;
     }
 
     /**

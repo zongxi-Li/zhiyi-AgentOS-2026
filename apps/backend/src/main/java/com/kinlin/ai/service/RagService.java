@@ -1,7 +1,6 @@
 package com.kinlin.ai.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
@@ -21,13 +20,9 @@ import java.util.Map;
 public class RagService {
 
     private final WebClient webClient;
-    
-    @Value("${ai.service.url:http://localhost:8000}")
-    private String aiServiceUrl;
 
-    public RagService(WebClient.Builder webClientBuilder, @Value("${ai.service.url:http://localhost:8000}") String aiServiceUrl) {
-        this.webClient = webClientBuilder.baseUrl(aiServiceUrl).build();
-        this.aiServiceUrl = aiServiceUrl;
+    public RagService(WebClient pythonTransport) {
+        this.webClient = pythonTransport;
     }
 
     /**

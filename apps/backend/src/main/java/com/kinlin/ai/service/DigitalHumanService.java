@@ -2,8 +2,8 @@ package com.kinlin.ai.service;
 
 import com.kinlin.ai.dto.DigitalHumanRequest;
 import com.kinlin.ai.dto.DigitalHumanResponse;
+import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
@@ -25,25 +25,16 @@ import java.util.Map;
 public class DigitalHumanService {
 
     private final WebClient webClient;
-    
+
     // 类型引用，用于避免类型安全警告
-    private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE_REF = 
+    private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE_REF =
         new ParameterizedTypeReference<Map<String, Object>>() {};
 
-    @Value("${ai.service.url}")
-    private String aiServiceUrl;
+    private final int timeout;
 
-    @Value("${ai.service.timeout}")
-    private int timeout;
-
-    public DigitalHumanService(WebClient.Builder webClientBuilder, 
-                               @Value("${ai.service.url}") String aiServiceUrl, 
-                               @Value("${ai.service.timeout}") int timeout) {
-        this.aiServiceUrl = aiServiceUrl;
-        this.timeout = timeout;
-        this.webClient = webClientBuilder
-                .baseUrl(aiServiceUrl)
-                .build();
+    public DigitalHumanService(WebClient pythonTransport, PythonServiceProperties properties) {
+        this.timeout = properties.getTimeout();
+        this.webClient = pythonTransport;
     }
 
     /**

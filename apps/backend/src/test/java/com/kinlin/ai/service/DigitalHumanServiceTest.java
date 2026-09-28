@@ -1,6 +1,7 @@
 package com.kinlin.ai.service;
 
 import com.kinlin.ai.dto.DigitalHumanRequest;
+import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
 import com.kinlin.ai.dto.DigitalHumanResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -45,11 +45,9 @@ class DigitalHumanServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(webClientBuilder.baseUrl(anyString())).thenReturn(webClientBuilder);
-        when(webClientBuilder.build()).thenReturn(webClient);
-        digitalHumanService = new DigitalHumanService(webClientBuilder, "http://localhost:8000", 5000);
-        ReflectionTestUtils.setField(digitalHumanService, "aiServiceUrl", "http://localhost:8000");
-        ReflectionTestUtils.setField(digitalHumanService, "timeout", 5000);
+        PythonServiceProperties properties = new PythonServiceProperties();
+        properties.setTimeout(5000);
+        digitalHumanService = new DigitalHumanService(webClient, properties);
     }
 
     @Test

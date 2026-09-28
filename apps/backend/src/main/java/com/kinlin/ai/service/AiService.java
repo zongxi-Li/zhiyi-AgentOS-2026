@@ -2,8 +2,8 @@ package com.kinlin.ai.service;
 
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.dto.VoiceRecognitionResponse;
+import com.kinlin.ai.infrastructure.http.PythonServiceProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
@@ -25,19 +25,11 @@ import java.util.Map;
 public class AiService {
 
     private final WebClient webClient;
+    private final int timeout;
 
-    @Value("${ai.service.url}")
-    private String aiServiceUrl;
-
-    @Value("${ai.service.timeout}")
-    private int timeout;
-
-    public AiService(WebClient.Builder webClientBuilder, @Value("${ai.service.url}") String aiServiceUrl, @Value("${ai.service.timeout}") int timeout) {
-        this.aiServiceUrl = aiServiceUrl;
-        this.timeout = timeout;
-        this.webClient = webClientBuilder
-                .baseUrl(aiServiceUrl)
-                .build();
+    public AiService(WebClient pythonTransport, PythonServiceProperties properties) {
+        this.webClient = pythonTransport;
+        this.timeout = properties.getTimeout();
     }
 
     /**
