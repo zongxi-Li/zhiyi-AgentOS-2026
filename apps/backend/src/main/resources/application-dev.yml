@@ -50,11 +50,3 @@ logging:
 ai:
   service:
     url: ${AI_SERVICE_URL:http://localhost:8000}
-
-agent:
-  python:
-    base-url: ${AI_SERVICE_URL:http://localhost:8000}
-    lawyer-chat-url: ${AGENT_PYTHON_LAWYER_CHAT_URL:}
-    teacher-chat-url: ${AGENT_PYTHON_TEACHER_CHAT_URL:}
-    programmer-chat-url: ${AGENT_PYTHON_PROGRAMMER_CHAT_URL:}
-    writer-chat-url: ${AGENT_PYTHON_WRITER_CHAT_URL:}

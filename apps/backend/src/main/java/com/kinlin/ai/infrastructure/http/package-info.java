@@ -7,7 +7,7 @@
  * and the health probe client implementation ({@link com.kinlin.ai.infrastructure.http.WebClientAiDependencyHealthClient};
  * its contract lives in {@code com.kinlin.ai.client}).</p>
  *
- * <p>Outside this package (and the legacy agent boundary) no class may build an HTTP client,
+ * <p>Outside this package no class may build an HTTP client,
  * resolve the Python base URL, or read {@code ai.service.*} configuration.</p>
  */
 package com.kinlin.ai.infrastructure.http;

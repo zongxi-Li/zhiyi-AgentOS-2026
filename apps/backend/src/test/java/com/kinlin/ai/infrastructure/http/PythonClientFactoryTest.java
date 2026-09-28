@@ -53,7 +53,6 @@ class PythonClientFactoryTest {
     void classifiesEndpointFamiliesForTransportMetrics() {
         assertEquals("agentos", PythonClientFactory.endpointFamily("/ai/agentos/v2/runs"));
         assertEquals("health", PythonClientFactory.endpointFamily("/health/dependencies"));
-        assertEquals("legacy_agent", PythonClientFactory.endpointFamily("/ai/agent/lawyer/chat"));
         assertEquals("platform_rag", PythonClientFactory.endpointFamily("/rag/query"));
         assertEquals("platform_knowledge_graph",
                 PythonClientFactory.endpointFamily("/api/knowledge-graph/build"));

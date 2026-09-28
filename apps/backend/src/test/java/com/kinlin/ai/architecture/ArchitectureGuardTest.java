@@ -17,23 +17,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Architecture guards for the J1.1 backend boundary convergence.
+ * Architecture guards for the J1.1 backend boundary convergence and the J1.2
+ * Spring Boot layering convergence.
  *
  * <p>Source-level guards (no bytecode analysis dependency). They enforce the decisions
  * frozen in {@code apps/backend/ARCHITECTURE.md}:</p>
  *
  * <ul>
  *   <li>Controllers never operate transport (WebClient / RestTemplate).</li>
- *   <li>RestTemplate exists only inside the legacy agent boundary.</li>
+ *   <li>J1.3: RestTemplate is forbidden outright; the legacy agent boundary no longer
+ *       exists.</li>
  *   <li>The Python root and {@code ai.service.*} / {@code agent.*} property placeholders
  *       are resolved only by the infrastructure transport owner; SSE timeouts only by
  *       the SSE gateway.</li>
  *   <li>Business services never wire a base URL or construct an HTTP client; base-URL
  *       wiring belongs solely to {@code PythonClientFactory}, test seams included.</li>
+ *   <li>J1.2: business services operate no transport at all — endpoint paths,
+ *       serialization, timeouts and transport error handling live in client
+ *       implementations ({@code infrastructure.http}, {@code gateway}); services call
+ *       {@code com.kinlin.ai.client} contracts only.</li>
+ *   <li>J1.2: client contracts are transport-free; client implementations and gateway
+ *       transports never import application services or controllers.</li>
+ *   <li>J1.2B: the AgentOS northbound is owned by exactly six frozen controllers; web
+ *       controllers import no infrastructure implementation, no repository, and declare
+ *       no {@code @RequestHeader} for the identity headers stripped inbound.</li>
  *   <li>The AgentOS upstream path is reachable only through the single AgentOS
  *       transport family.</li>
- *   <li>Only the SSE gateway opens upstream event streams; WebSocket is a marked
- *       LEGACY transport and never carries AgentOS events.</li>
+ *   <li>J1.3: WebSocket / STOMP / SockJS are removed transports — production sources
+ *       must not reference them at all; streaming is SSE-only.</li>
  *   <li>No ACG semantic implementation leaks into the Java platform.</li>
  * </ul>
  */
@@ -84,13 +95,153 @@ class ArchitectureGuardTest {
         assertTrue(offenders.isEmpty(), "controllers must not operate transport: " + offenders);
     }
 
+    /** Transport markers that only client implementations / gateway transports may carry. */
+    private static final List<String> TRANSPORT_OPERATION_TOKENS = List.of(
+            "WebClient",
+            "RestTemplate",
+            "MultipartBodyBuilder",
+            "BodyInserters",
+            ".retrieve(",
+            ".exchangeToMono(",
+            ".bodyToMono(",
+            ".bodyValue(",
+            ".block("
+    );
+
+    /** J1.2: application services own orchestration and fallback decisions — never transport. */
     @Test
-    void restTemplateIsConfinedToTheLegacyBoundary() {
-        List<String> offenders = matchingFiles("RestTemplate").stream()
-                .filter(key -> !key.startsWith("com/kinlin/ai/legacy/"))
+    void businessServicesOperateNoTransport() {
+        List<String> offenders = filesUnder("com/kinlin/ai/service/").stream()
+                .filter(key -> {
+                    String content = SOURCES.get(key);
+                    return TRANSPORT_OPERATION_TOKENS.stream().anyMatch(content::contains)
+                            || content.contains("com.kinlin.ai.gateway");
+                })
                 .toList();
 
-        assertTrue(offenders.isEmpty(), "RestTemplate outside the legacy boundary: " + offenders);
+        assertTrue(offenders.isEmpty(),
+                "business services must not operate transport or import the gateway family: " + offenders);
+    }
+
+    /** J1.2: client contracts describe capabilities — never transport types. */
+    @Test
+    void clientContractsStayTransportFree() {
+        List<String> offenders = filesUnder("com/kinlin/ai/client/").stream()
+                .filter(key -> {
+                    String content = SOURCES.get(key);
+                    return content.contains("org.springframework.web.reactive")
+                            || content.contains("reactor.core")
+                            || content.contains("org.springframework.http")
+                            || content.contains(".block(")
+                            || content.contains(".retrieve(");
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(), "client contracts must stay transport-free: " + offenders);
+    }
+
+    /** J1.2: dependency direction — transport implementations never look up into app/controller layers. */
+    @Test
+    void transportLayersNeverImportApplicationOrWebLayers() {
+        List<String> offenders = Stream.concat(
+                        filesUnder("com/kinlin/ai/gateway/").stream(),
+                        filesUnder("com/kinlin/ai/infrastructure/").stream())
+                .filter(key -> {
+                    String content = SOURCES.get(key);
+                    return content.contains("import com.kinlin.ai.service")
+                            || content.contains("import com.kinlin.ai.controller");
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "transport implementations must not import application/controller classes: " + offenders);
+    }
+
+    /** J1.2: the canonical Python properties are consumed only by the transport families and config wiring. */
+    @Test
+    void pythonServicePropertiesAreConsumedOnlyByTransportAndConfig() {
+        List<String> offenders = matchingFiles("import com.kinlin.ai.infrastructure.http.PythonServiceProperties")
+                .stream()
+                .filter(key -> !key.startsWith("com/kinlin/ai/infrastructure/")
+                        && !key.startsWith("com/kinlin/ai/gateway/")
+                        && !key.startsWith("com/kinlin/ai/config/"))
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "PythonServiceProperties must only be consumed by transport families and config: " + offenders);
+    }
+
+    /** J1.2B: AgentOS northbound ownership is frozen on the six split controllers. */
+    @Test
+    void agentOsRoutesHaveFrozenOwnershipControllers() {
+        List<String> owners = filesUnder("com/kinlin/ai/controller/").stream()
+                .filter(key -> SOURCES.get(key).contains("RequestMapping(\"/api/agentos/v2\")"))
+                .sorted()
+                .toList();
+
+        assertEquals(
+                List.of(
+                        "com/kinlin/ai/controller/AgentOsArtifactController.java",
+                        "com/kinlin/ai/controller/AgentOsEventController.java",
+                        "com/kinlin/ai/controller/AgentOsMissionController.java",
+                        "com/kinlin/ai/controller/AgentOsObservationController.java",
+                        "com/kinlin/ai/controller/AgentOsReviewController.java",
+                        "com/kinlin/ai/controller/AgentOsRunController.java"),
+                owners,
+                "AgentOS controller ownership must stay frozen (J1.2B)");
+
+        assertTrue(matchingFiles("AgentOsGatewayController").isEmpty(),
+                "the aggregated AgentOsGatewayController must stay deleted");
+    }
+
+    /** J1.2B: controllers import no infrastructure implementation and no persistence repository. */
+    @Test
+    void controllersNeverImportInfrastructureImplementationsOrRepositories() {
+        List<String> offenders = filesUnder("com/kinlin/ai/controller/").stream()
+                .filter(key -> {
+                    String content = SOURCES.get(key);
+                    return content.contains("import com.kinlin.ai.infrastructure")
+                            || content.contains("import com.kinlin.ai.repository");
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "controllers must not import infrastructure implementations or repositories: " + offenders);
+    }
+
+    /** J1.2B: headers stripped by SensitiveIdentityHeaderFilter can never re-enter as @RequestHeader. */
+    @Test
+    void controllersDeclareNoStrippedIdentityHeaderParameters() {
+        List<String> stripped = List.of(
+                "x-user-id",
+                "x-user-role",
+                "x-tenant-id",
+                "x-organization-id",
+                "x-workshop-id",
+                "x-internal-service-token",
+                "x-authenticated-user-id",
+                "x-authenticated-user-subject",
+                "x-authenticated-user-role",
+                "x-authenticated-tenant-id");
+
+        List<String> offenders = filesUnder("com/kinlin/ai/controller/").stream()
+                .filter(key -> {
+                    String content = SOURCES.get(key).toLowerCase();
+                    return content.contains("@requestheader") && stripped.stream()
+                            .anyMatch(header -> content.contains("\"" + header + "\""));
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "controllers must not declare @RequestHeader for stripped identity headers: " + offenders);
+    }
+
+    /** J1.3: the legacy agent boundary is gone — RestTemplate must not appear anywhere in production sources. */
+    @Test
+    void restTemplateIsForbidden() {
+        List<String> offenders = matchingFiles("RestTemplate");
+
+        assertTrue(offenders.isEmpty(), "RestTemplate must not appear in production sources: " + offenders);
     }
 
     @Test
@@ -116,7 +267,9 @@ class ArchitectureGuardTest {
 
     @Test
     void baseUrlWiringHappensOnlyInTheClientFactory() {
-        List<String> offenders = matchingFiles(".baseUrl(").stream()
+        List<String> offenders = Stream.of(".clone().baseUrl(", "WebClient.builder().baseUrl(")
+                .flatMap(needle -> matchingFiles(needle).stream())
+                .distinct()
                 .filter(key -> !key.equals("com/kinlin/ai/infrastructure/http/PythonClientFactory.java"))
                 .toList();
 
@@ -157,22 +310,27 @@ class ArchitectureGuardTest {
                 "the AgentOS upstream root must be defined once (AgentOsPaths): " + offenders);
     }
 
+    /** J1.3: WebSocket/STOMP/SockJS are removed transports — no production source may reference them. */
     @Test
-    void webSocketIsMarkedLegacyAndNeverCarriesAgentOsEvents() {
-        List<String> webSocketFiles = matchingFiles("WebSocket");
+    void webSocketStompAndSockjsAreForbidden() {
+        List<String> forbiddenTokens = List.of(
+                "websocket",
+                "stomp",
+                "sockjs",
+                "@messagemapping",
+                "simplmessagingtemplate");
 
-        assertEquals(
-                List.of("com/kinlin/ai/config/WebSocketConfig.java",
-                        "com/kinlin/ai/controller/WebSocketController.java"),
-                webSocketFiles,
-                "unexpected WebSocket usage");
+        List<String> offenders = SOURCES.entrySet().stream()
+                .filter(entry -> {
+                    String content = entry.getValue().toLowerCase();
+                    return forbiddenTokens.stream().anyMatch(content::contains);
+                })
+                .map(Map.Entry::getKey)
+                .sorted()
+                .toList();
 
-        for (String key : webSocketFiles) {
-            assertTrue(SOURCES.get(key).contains("LEGACY"),
-                    key + " must carry the LEGACY transport marker");
-            assertFalse(SOURCES.get(key).toLowerCase().contains("agentos"),
-                    key + " must not reference AgentOS events");
-        }
+        assertTrue(offenders.isEmpty(),
+                "WebSocket/STOMP/SockJS are removed transports (SSE-only): " + offenders);
     }
 
     /**

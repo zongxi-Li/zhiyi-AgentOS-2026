@@ -37,9 +37,6 @@ public class PythonClientFactory {
         if (path.startsWith("/health")) {
             return "health";
         }
-        if (path.startsWith("/ai/agent/")) {
-            return "legacy_agent";
-        }
         if (path.startsWith("/rag/")) {
             return "platform_rag";
         }

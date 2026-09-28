@@ -7,9 +7,7 @@ import org.springframework.stereotype.Component;
  * Canonical owner of the Java-to-Python service root and its transport timeouts.
  *
  * <p>Config keys are unchanged (deployment compatibility): this class only consolidates
- * ownership. Every formal client must take the Python root from this bean;
- * {@code agent.python.base-url} remains a legacy-scoped alias consumed only by
- * {@code com.kinlin.ai.legacy.agent}.</p>
+ * ownership. Every formal client must take the Python root from this bean.</p>
  *
  * <p>Timeout categories owned here:
  * <ul>

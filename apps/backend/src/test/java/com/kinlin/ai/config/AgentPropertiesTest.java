@@ -4,26 +4,33 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * J1.3：legacy role-specific（agent.python.*）与零引用字段（trace-enabled/federated）已删除，
+ * 仅保留正式 AgentOS gateway 消费的字段。
+ */
 class AgentPropertiesTest {
 
     @Test
-    void derivesEveryRoleEndpointFromTheSharedPythonBaseUrl() {
-        AgentProperties.Python python = new AgentProperties.Python();
-        python.setBaseUrl("http://ai-service:8000/");
+    void formalAgentOsFieldsKeepTheirFrozenDefaults() {
+        AgentProperties properties = new AgentProperties();
 
-        assertThat(python.getLawyerChatUrl()).isEqualTo("http://ai-service:8000/ai/agent/lawyer/chat");
-        assertThat(python.getTeacherChatUrl()).isEqualTo("http://ai-service:8000/ai/agent/teacher/chat");
-        assertThat(python.getProgrammerChatUrl()).isEqualTo("http://ai-service:8000/ai/agent/programmer/chat");
-        assertThat(python.getWriterChatUrl()).isEqualTo("http://ai-service:8000/ai/agent/writer/chat");
+        assertThat(properties.isEnabled()).isTrue();
+        assertThat(properties.getTimeoutMs()).isEqualTo(240000);
+        assertThat(properties.getProgressTimeoutMs()).isEqualTo(5000);
+        assertThat(properties.getAsyncStartTimeoutMs()).isEqualTo(15000);
     }
 
     @Test
-    void preservesAnExplicitRoleEndpointOverride() {
-        AgentProperties.Python python = new AgentProperties.Python();
-        python.setBaseUrl("http://ai-service:8000");
-        python.setLawyerChatUrl(" http://legal-agent:9000/custom/chat ");
+    void formalAgentOsFieldsStayBindable() {
+        AgentProperties properties = new AgentProperties();
+        properties.setEnabled(false);
+        properties.setTimeoutMs(1000);
+        properties.setProgressTimeoutMs(2000);
+        properties.setAsyncStartTimeoutMs(3000);
 
-        assertThat(python.getLawyerChatUrl()).isEqualTo("http://legal-agent:9000/custom/chat");
-        assertThat(python.getTeacherChatUrl()).isEqualTo("http://ai-service:8000/ai/agent/teacher/chat");
+        assertThat(properties.isEnabled()).isFalse();
+        assertThat(properties.getTimeoutMs()).isEqualTo(1000);
+        assertThat(properties.getProgressTimeoutMs()).isEqualTo(2000);
+        assertThat(properties.getAsyncStartTimeoutMs()).isEqualTo(3000);
     }
 }
