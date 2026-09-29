@@ -1,0 +1,30 @@
+# J1.4A 持久化契约 profile：真实 PostgreSQL（Testcontainers 动态注入 datasource）。
+#
+# 目标矩阵（任务书 §十三）：
+#   DB        = 真实 PostgreSQL（容器，版本对齐生产 postgres:15.17-alpine）
+#   Flyway    = true（migrate 权威）
+#   ddl-auto  = validate（Hibernate 只做 schema 校验）
+#   OSIV      = false（由 canonical application.yml 继承，此处不得覆盖）
+#
+# datasource url/username/password 由 @DynamicPropertySource 在运行期
+# 指向 Testcontainers 容器，不依赖固定端口/本机 PostgreSQL/本地密码。
+spring:
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+    baseline-on-migrate: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  cache:
+    type: simple
+
+management:
+  health:
+    redis:
+      enabled: false
+
+logging:
+  level:
+    com.kinlin.ai: INFO

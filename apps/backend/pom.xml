@@ -23,6 +23,9 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Boot 3.2.0 BOM 钉的 1.19.x 无法对接 Docker Engine 29（API 最低 1.44，npipe 直接 400），
+             1.21.4+ 内置 docker-java 3.4.2 为 Engine 29 实测兼容线，故覆盖版本属性 -->
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -143,6 +146,19 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Testcontainers：真实 PostgreSQL 持久化契约/迁移测试（仅 test scope，禁止进入生产依赖） -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Micrometer指标监控 -->
         <dependency>
             <groupId>io.micrometer</groupId>
