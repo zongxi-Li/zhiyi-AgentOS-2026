@@ -48,6 +48,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       transport family.</li>
  *   <li>J1.3: WebSocket / STOMP / SockJS are removed transports — production sources
  *       must not reference them at all; streaming is SSE-only.</li>
+ *   <li>J1.4B: no JWT default secret in prod/compose configs; JwtUtil reads no
+ *       {@code @Value}; RoleSwitchOptimizer carries no local mutable role cache;
+ *       controllers/services never touch cache infrastructure directly.</li>
  *   <li>J1.4A: controllers declare no {@code @Transactional}; formal configs
  *       (canonical/prod/compose) pin ddl-auto=validate + open-in-view=false and never
  *       point at H2; MyBatis / MyBatis-Plus stay banned at dependency and import level.</li>
@@ -396,6 +399,11 @@ class ArchitectureGuardTest {
             "src/main/resources/application-prod.yml",
             "src/main/resources/application-compose.yml");
 
+    /** J1.4B：production-authority 配置（不含 canonical——canonical 带开发默认属 dev 继承路径）。 */
+    private static final List<String> FORMAL_PROD_CONFIGS = List.of(
+            "src/main/resources/application-prod.yml",
+            "src/main/resources/application-compose.yml");
+
     private static String formalConfig(String relativePath) {
         try {
             return Files.readString(Path.of(relativePath));
@@ -473,5 +481,79 @@ class ArchitectureGuardTest {
                 .toList();
 
         assertTrue(offenders.isEmpty(), "MyBatis imports are banned in production sources: " + offenders);
+    }
+
+    // ------------------------------------------------------------------
+    // J1.4B infrastructure guards
+    // ------------------------------------------------------------------
+
+    /** J1.4B §十九A：prod/compose 配置不得携带 JWT 默认 secret（fail-closed 占位符须无默认值）。 */
+    @Test
+    void productionJwtSecretPlaceholderHasNoFallback() {
+        List<String> offenders = FORMAL_PROD_CONFIGS.stream()
+                .filter(path -> {
+                    String content = formalConfig(path);
+                    // secret 行必须是无默认值的 ${APP_JWT_SECRET}；出现 ":-" 即仓库默认回退
+                    return !content.contains("secret: ${APP_JWT_SECRET}")
+                            || content.contains("secret: ${APP_JWT_SECRET:");
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "prod/compose must declare app.jwt.secret as ${APP_JWT_SECRET} with no fallback: " + offenders);
+    }
+
+    /** J1.4B §十九B：secret/expiration 归 JwtProperties 持有，JwtUtil 不得直接 @Value。 */
+    @Test
+    void jwtUtilDoesNotReadConfigValuesDirectly() {
+        String jwtUtil = SOURCES.get("com/kinlin/ai/util/JwtUtil.java");
+        if (jwtUtil == null) {
+            throw new IllegalStateException("JwtUtil must stay at com/kinlin/ai/util/JwtUtil.java");
+        }
+        // 带括号精确匹配注解使用，避免 javadoc 散文（"不再直接 @Value"）误伤
+        assertFalse(jwtUtil.contains("@Value("),
+                "JwtUtil must take secret/expiration from typed JwtProperties, not @Value");
+    }
+
+    /** J1.4B §十九C：Role 缓存权威唯一——不得重新引入第二个 mutable 本地 Role 缓存。 */
+    @Test
+    void roleSwitchOptimizerStaysFreeOfLocalMutableRoleCache() {
+        String optimizer = SOURCES.get("com/kinlin/ai/service/RoleSwitchOptimizer.java");
+        if (optimizer == null) {
+            throw new IllegalStateException(
+                    "RoleSwitchOptimizer must stay at com/kinlin/ai/service/RoleSwitchOptimizer.java");
+        }
+        assertFalse(optimizer.contains("ConcurrentHashMap"),
+                "a second mutable local Role cache must not reappear (Spring Cache is the sole authority)");
+        // 方法定义形状精确匹配（void + 括号），避免 javadoc 提及历史方法名时误伤
+        Pattern localEvictMethod = Pattern.compile("void\\s+clear(?:Role|All)Cache\\s*\\(");
+        assertFalse(localEvictMethod.matcher(optimizer).find(),
+                "local cache eviction methods must not reappear; use @CacheEvict on write paths");
+    }
+
+    /** J1.4B §十九D：Controller 不得操作缓存基础设施（含手工清缓存的 @CacheEvict）。 */
+    @Test
+    void controllersOperateNoCacheInfrastructure() {
+        List<String> offenders = filesUnder("com/kinlin/ai/controller/").stream()
+                .filter(key -> {
+                    String content = SOURCES.get(key);
+                    return content.contains("CacheManager") || content.contains("RedisTemplate")
+                            || content.contains("@CacheEvict") || content.contains("@CachePut");
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "controllers must not touch cache infrastructure; eviction belongs to services: " + offenders);
+    }
+
+    /** J1.4B §十九E：业务 service 不得直连 RedisTemplate（缓存只走 Spring Cache 抽象）。 */
+    @Test
+    void businessServicesOperateNoRedisTemplate() {
+        List<String> offenders = filesUnder("com/kinlin/ai/service/").stream()
+                .filter(key -> SOURCES.get(key).contains("RedisTemplate"))
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "business services must use the Spring Cache abstraction, never RedisTemplate: " + offenders);
     }
 }
