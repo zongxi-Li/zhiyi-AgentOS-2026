@@ -15,6 +15,8 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
+        # J1.4C §八：Hibernate Statistics 供确定性 query-count 测量（仅测试面，生产不开启）
+        generate_statistics: true
 
   cache:
     type: simple
@@ -35,6 +37,9 @@ ai:
   service:
     url: http://localhost:8000
     timeout: 5000
+  internal:
+    # 非生产测试值：出站 transport filter 需要合法形态的内部令牌（≥32 字符）
+    token: test-only-internal-token-0123456789abcdef
 
 logging:
   level:

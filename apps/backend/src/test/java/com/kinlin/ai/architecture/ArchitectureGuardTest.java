@@ -556,4 +556,64 @@ class ArchitectureGuardTest {
         assertTrue(offenders.isEmpty(),
                 "business services must use the Spring Cache abstraction, never RedisTemplate: " + offenders);
     }
+
+    // ------------------------------------------------------------------
+    // J1.4C observability guards
+    // ------------------------------------------------------------------
+
+    /** J1.4C §三：Micrometer 仪表禁止高基数身份标签（userId/runId/traceId/原始 path variable 等）。 */
+    @Test
+    void metricsCarryNoHighCardinalityIdentityTags() {
+        List<String> forbidden = List.of("userId", "missionId", "runId", "conversationId",
+                "traceId", "username", "messageId", "roleId", "requestId");
+        List<String> offenders = SOURCES.entrySet().stream()
+                .filter(entry -> entry.getValue().contains("io.micrometer.core.instrument"))
+                .filter(entry -> entry.getValue().lines()
+                        .map(String::trim)
+                        .filter(line -> !line.isEmpty() && !line.startsWith("//")
+                                && !line.startsWith("*") && !line.startsWith("/*"))
+                        .anyMatch(line -> line.contains(".tag(") || line.contains(".tag(")
+                                || line.contains("Tag.of("))
+                )
+                .flatMap(entry -> forbidden.stream()
+                        .filter(token -> entry.getValue().lines()
+                                .map(String::trim)
+                                .filter(line -> !line.isEmpty() && !line.startsWith("//")
+                                        && !line.startsWith("*") && !line.startsWith("/*"))
+                                .anyMatch(line -> (line.contains(".tag(") || line.contains("Tag.of("))
+                                        && line.contains(token)))
+                        .map(token -> entry.getKey() + " uses " + token))
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "metrics must not carry high-cardinality identity tags: " + offenders);
+    }
+
+    /** J1.4C §二十一：JWT 组件不得把 token/secret/authHeader 写进日志。 */
+    @Test
+    void authComponentsLogNoSecretMaterial() throws IOException {
+        List<String> guarded = List.of(
+                "com/kinlin/ai/util/JwtUtil.java",
+                "com/kinlin/ai/filter/JwtAuthenticationFilter.java");
+        List<String> offenders = new java.util.ArrayList<>();
+        for (String file : guarded) {
+            String content = SOURCES.get(file);
+            if (content == null) {
+                throw new IllegalStateException(file + " must stay in place");
+            }
+            content.lines()
+                    .map(String::trim)
+                    .filter(line -> !line.isEmpty() && !line.startsWith("//")
+                            && !line.startsWith("*") && !line.startsWith("/*"))
+                    .filter(line -> line.toLowerCase().contains("log.")
+                            && (line.toLowerCase().contains("token")
+                                || line.toLowerCase().contains("secret")
+                                || line.toLowerCase().contains("authheader")))
+                    .map(line -> file + " -> " + line)
+                    .forEach(offenders::add);
+        }
+
+        assertTrue(offenders.isEmpty(),
+                "JWT components must never log token/secret material: " + offenders);
+    }
 }
