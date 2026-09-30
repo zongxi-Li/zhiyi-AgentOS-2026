@@ -20,6 +20,12 @@ spring:
   cache:
     type: simple
 
+  # 与 dev/test 同款：真实 PG 契约测试不触碰 Redis，显式排除自动配置。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
 management:
   health:
     redis:

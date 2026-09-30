@@ -7,6 +7,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -14,7 +15,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * RoleSwitchOptimizer单元测试
+ * RoleSwitchOptimizer 单元测试（J1.4B 收敛后）。
+ *
+ * <p>本地 ConcurrentHashMap 双层缓存已删除，缓存职责整体移交 Spring Cache
+ * （单元测试无缓存代理，@Cacheable 直通；真实缓存命中/逐出/序列化由
+ * {@code RoleCacheRedisIntegrationTest} 在 Testcontainers Redis 上验证）。
+ * 本测试锁定：委托关系、上下文派生、内置角色预热有界性。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class RoleSwitchOptimizerTest {
@@ -31,7 +37,7 @@ class RoleSwitchOptimizerTest {
     void setUp() {
         optimizer = new RoleSwitchOptimizer(roleService);
         roleId = UUID.randomUUID();
-        
+
         testRole = new Role();
         testRole.setId(roleId);
         testRole.setName("测试角色");
@@ -39,46 +45,32 @@ class RoleSwitchOptimizerTest {
     }
 
     @Test
-    void testGetRoleCached_FirstTime() {
-        // 准备
+    void getRoleCachedDelegatesToRoleService() {
         when(roleService.getRole(roleId)).thenReturn(java.util.Optional.of(testRole));
 
-        // 执行
         Role result = optimizer.getRoleCached(roleId);
 
-        // 验证
         assertNotNull(result);
         assertEquals(roleId, result.getId());
         verify(roleService).getRole(roleId);
     }
 
     @Test
-    void testGetRoleCached_Cached() {
-        // 准备
-        when(roleService.getRole(roleId)).thenReturn(java.util.Optional.of(testRole));
+    void getRoleCachedThrowsWhenRoleMissing() {
+        when(roleService.getRole(roleId)).thenReturn(java.util.Optional.empty());
 
-        // 第一次调用
-        Role firstResult = optimizer.getRoleCached(roleId);
-        
-        // 第二次调用（应该从缓存获取）
-        Role secondResult = optimizer.getRoleCached(roleId);
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> optimizer.getRoleCached(roleId));
 
-        // 验证
-        assertNotNull(secondResult);
-        assertEquals(roleId, secondResult.getId());
-        // 应该只调用一次数据库查询
-        verify(roleService, times(1)).getRole(roleId);
+        assertTrue(exception.getMessage().contains("角色不存在"));
     }
 
     @Test
-    void testGetRoleContext() {
-        // 准备
+    void getRoleContextDerivesFromCachedRoleOnDemand() {
         when(roleService.getRole(roleId)).thenReturn(java.util.Optional.of(testRole));
 
-        // 执行
         Map<String, Object> context = optimizer.getRoleContext(roleId);
 
-        // 验证
         assertNotNull(context);
         assertEquals(roleId.toString(), context.get("role_id"));
         assertEquals("测试角色", context.get("name"));
@@ -86,37 +78,18 @@ class RoleSwitchOptimizerTest {
     }
 
     @Test
-    void testClearRoleCache() {
-        // 准备
-        when(roleService.getRole(roleId)).thenReturn(java.util.Optional.of(testRole));
-        optimizer.getRoleCached(roleId); // 先缓存
+    void warmupLoadsEveryBuiltinRoleAndSurvivesFailures() {
+        Role failing = new Role();
+        failing.setId(UUID.randomUUID());
+        failing.setName("坏角色");
+        when(roleService.getBuiltinRoles()).thenReturn(List.of(testRole, failing));
+        when(roleService.getRole(testRole.getId())).thenReturn(java.util.Optional.of(testRole));
+        when(roleService.getRole(failing.getId())).thenReturn(java.util.Optional.empty());
 
-        // 执行
-        optimizer.clearRoleCache(roleId);
+        assertDoesNotThrow(() -> optimizer.warmupCommonRoles());
 
-        // 验证
-        Map<String, Object> stats = optimizer.getCacheStats();
-        assertEquals(0, stats.get("role_cache_size"));
-    }
-
-    @Test
-    void testGetCacheStats() {
-        // 准备
-        when(roleService.getRole(roleId)).thenReturn(java.util.Optional.of(testRole));
-        optimizer.getRoleCached(roleId);
-
-        // 执行
-        Map<String, Object> stats = optimizer.getCacheStats();
-
-        // 验证
-        assertNotNull(stats);
-        assertTrue(stats.containsKey("role_cache_size"));
-        assertTrue(stats.containsKey("context_cache_size"));
-        assertTrue((Integer) stats.get("role_cache_size") >= 0);
+        // 每个内置角色都尝试预热，单个失败不中断（RoleCacheWarmup 契约）
+        verify(roleService).getRole(testRole.getId());
+        verify(roleService).getRole(failing.getId());
     }
 }
-
-
-
-
-

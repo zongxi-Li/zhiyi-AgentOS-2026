@@ -30,10 +30,15 @@ spring:
   cache:
     type: simple
 
-  # 禁用Redis（使用内存缓存替代）
-  data:
-    redis:
-      enabled: false
+  # 禁用Redis（使用内存缓存替代）。
+  # 注意：spring.data.redis.enabled 不是 Spring Boot 的合法开关（不存在的
+  # property），此前的"禁用"是假的——Redis 自动配置照样创建连接工厂。
+  # 真实禁用 = 显式排除 Redis 自动配置（RedisConfig 的 RedisTemplate 死 bean
+  # 已在 J1.4B 删除，不再有消费者需要连接工厂）。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
 
 management:
   health:

@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AiDependencyHealthClient;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.ResponseEntity;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -18,18 +19,22 @@ import java.util.Map;
  * <p>Platform health (postgres/redis) is checked here; Python dependency health is
  * delegated to the narrow {@link AiDependencyHealthClient} — this controller performs
  * no transport itself.</p>
+ *
+ * <p>Redis 连接工厂按可选依赖注入：prod/compose（cache.type=redis）必有；
+ * dev/test/pg-it 显式排除 Redis 自动配置后无该 bean，/ready 将 redis 标记为
+ * disabled 而不是让整个上下文无法启动。</p>
  */
 @RestController
 @RequestMapping("/health")
 public class HealthController {
 
     private final JdbcTemplate jdbcTemplate;
-    private final RedisConnectionFactory redisConnectionFactory;
+    private final ObjectProvider<RedisConnectionFactory> redisConnectionFactory;
     private final AiDependencyHealthClient aiDependencyHealthClient;
 
     public HealthController(
             JdbcTemplate jdbcTemplate,
-            RedisConnectionFactory redisConnectionFactory,
+            ObjectProvider<RedisConnectionFactory> redisConnectionFactory,
             AiDependencyHealthClient aiDependencyHealthClient
     ) {
         this.jdbcTemplate = jdbcTemplate;
@@ -56,9 +61,15 @@ public class HealthController {
         Map<String, Object> checks = new HashMap<>();
         try {
             checks.put("postgres", jdbcTemplate.queryForObject("SELECT 1", Integer.class) != null);
-            try (RedisConnection connection = redisConnectionFactory.getConnection()) {
-                String pong = connection.ping();
-                checks.put("redis", "PONG".equalsIgnoreCase(pong));
+            RedisConnectionFactory factory = redisConnectionFactory.getIfAvailable();
+            if (factory == null) {
+                // Redis 自动配置被显式排除的 profile（dev/test/pg-it）：缓存降级为进程内，redis 不参与就绪判定
+                checks.put("redis", "disabled");
+            } else {
+                try (RedisConnection connection = factory.getConnection()) {
+                    String pong = connection.ping();
+                    checks.put("redis", "PONG".equalsIgnoreCase(pong));
+                }
             }
             return ResponseEntity.ok(Map.of("status", "UP", "checks", checks));
         } catch (Exception e) {
