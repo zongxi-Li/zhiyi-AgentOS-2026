@@ -14,6 +14,10 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
+    properties:
+      hibernate:
+        # J1.4C §八：性能基准的 query/request 测量（仅测试面）
+        generate_statistics: true
   cache:
     type: redis
 

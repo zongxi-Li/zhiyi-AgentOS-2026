@@ -26,6 +26,9 @@
         <!-- Boot 3.2.0 BOM 钉的 1.19.x 无法对接 Docker Engine 29（API 最低 1.44，npipe 直接 400），
              1.21.4+ 内置 docker-java 3.4.2 为 Engine 29 实测兼容线，故覆盖版本属性 -->
         <testcontainers.version>1.21.4</testcontainers.version>
+        <!-- J1.4C §二十三：负载/基准测试（@Tag("performance")）默认整体排除，
+             普通 mvn test 保持快速稳定；-Pperformance 打开 -->
+        <surefire.excludedGroups>performance</surefire.excludedGroups>
     </properties>
 
     <dependencies>
@@ -220,6 +223,22 @@
                     <skipMain>false</skipMain>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>performance</id>
+            <properties>
+                <surefire.excludedGroups></surefire.excludedGroups>
+            </properties>
+        </profile>
+    </profiles>
 </project>
