@@ -262,9 +262,9 @@ public class ChatService {
     public void clearHistory(String contextId, UUID userId) {
         Conversation conversation = conversationRepository.findByContextIdAndUserId(contextId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
-        messageRepository.deleteAll(
-                messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId())
-        );
+        // J1.4C A/B：bulk DELETE 替代"全量加载 10 条消息后逐实体 DELETE"
+        //（statements 13→4，行为不变）
+        messageRepository.deleteAllByConversationId(conversation.getId());
         conversationRepository.delete(conversation);
     }
 }
