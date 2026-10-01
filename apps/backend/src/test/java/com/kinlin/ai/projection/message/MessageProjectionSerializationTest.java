@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.projection.message.dto.MessageMetadataQuery;
 import com.kinlin.ai.projection.message.dto.MessageQuery;
 import com.kinlin.ai.projection.message.mapper.MessageProjectionMapper;
 import org.junit.jupiter.api.Test;
@@ -134,6 +135,43 @@ class MessageProjectionSerializationTest {
                 Message.MessageRole.ASSISTANT, partial));
         assertEquals(1, withStages.metadata().executionSummary().size());
         assertEquals("reasoning", withStages.metadata().executionSummary().get(0).stage());
+    }
+
+    @Test
+    void numericReadsAreExactAndNeverFabricateObservations() throws Exception {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("totalTokens", new java.math.BigInteger("9223372036854775808")); // 2^63：旧实现回绕成负数
+        metadata.put("inputTokens", new java.math.BigInteger("9223372036854775807")); // Long.MAX_VALUE：精确保留
+        metadata.put("outputTokens", new java.math.BigDecimal("12.5"));               // 小数计数：不截断成 12
+        metadata.put("reasoningTokens", new java.math.BigDecimal("900"));             // 整数十进制：精确
+        metadata.put("latencyMs", 1200.0);                                            // 数学整数的 double：精确
+        metadata.put("reasoningPhaseMs", 1200.5);                                     // 小数 double：省略
+        metadata.put("tokens_used", 1e20);                                            // 整数但越界 long：省略
+        MessageMetadataQuery query = MessageProjectionMapper.toQuery(
+                message(Message.MessageRole.ASSISTANT, metadata)).metadata();
+        assertNull(query.totalTokens(), "2^63 不得回绕成 -9223372036854775808");
+        assertEquals(Long.MAX_VALUE, query.inputTokens());
+        assertNull(query.outputTokens(), "12.5 不得截断成 12");
+        assertEquals(900L, query.reasoningTokens());
+        assertEquals(1200L, query.latencyMs());
+        assertNull(query.reasoningPhaseMs());
+        assertNull(query.tokensUsed(), "越界整型 double 不得钳制到 Long.MAX_VALUE");
+
+        Map<String, Object> nonFinite = new HashMap<>();
+        nonFinite.put("confidence", Double.POSITIVE_INFINITY);          // 旧实现产出 JSON 字符串 "Infinity"
+        MessageMetadataQuery infinite = MessageProjectionMapper.toQuery(
+                message(Message.MessageRole.ASSISTANT, nonFinite)).metadata();
+        assertNull(infinite.confidence());
+        nonFinite.put("confidence", Float.NaN);
+        assertNull(MessageProjectionMapper.toQuery(message(Message.MessageRole.ASSISTANT, nonFinite)).metadata().confidence());
+        nonFinite.put("confidence", new java.math.BigDecimal("1e999"));
+        assertNull(MessageProjectionMapper.toQuery(message(Message.MessageRole.ASSISTANT, nonFinite)).metadata().confidence());
+
+        String encoded = jackson.writeValueAsString(MessageProjectionMapper.toQuery(message(
+                Message.MessageRole.ASSISTANT, metadata)));
+        assertFalse(encoded.contains("Infinity") || encoded.contains("NaN"),
+                "非有限数不得以任何形式进入 JSON");
+        assertFalse(encoded.contains("-9223372036854775808"), "不得出现回绕值");
     }
 
     @Test

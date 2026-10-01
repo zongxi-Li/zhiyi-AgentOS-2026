@@ -6,6 +6,8 @@ import com.kinlin.ai.projection.message.dto.MessageQuery;
 import com.kinlin.ai.projection.message.dto.MessageRoleQuery;
 import com.kinlin.ai.projection.message.dto.MessageTypeQuery;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +16,8 @@ import java.util.Map;
  * Pure output adapter over persisted messages; no service, repository, transport or
  * cache calls. Metadata keeps only the whitelisted public keys; optional fields whose
  * persisted value has an unexpected JSON type are omitted (null) instead of coerced.
+ * Numeric reads are exact: fractional counts, out-of-range integers and non-finite
+ * values never become fabricated observations (no silent wrap-around or truncation).
  */
 public final class MessageProjectionMapper {
     private MessageProjectionMapper() { }
@@ -58,14 +62,47 @@ public final class MessageProjectionMapper {
                 stages(source.get("executionSummary")));
     }
 
+    /** Finite doubles only; NaN/Infinity would leave the JSON number space. */
     private static Double decimal(Object value) {
-        return value instanceof Number number ? number.doubleValue() : null;
+        if (!(value instanceof Number number)) {
+            return null;
+        }
+        double converted = number.doubleValue();
+        return Double.isFinite(converted) ? converted : null;
     }
 
+    /**
+     * Exact integral mapping only: fixed-width integers pass through, BigInteger/BigDecimal
+     * via {@code longValueExact} (fraction or overflow drops to null), floats/doubles only
+     * when finite, mathematically integral and inside the long range.
+     */
     private static Long whole(Object value) {
-        return value instanceof Number number && !(value instanceof Double) && !(value instanceof Float)
-                ? number.longValue()
-                : null;
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof BigInteger big) {
+            try {
+                return big.longValueExact();
+            } catch (ArithmeticException outOfRange) {
+                return null;
+            }
+        }
+        if (value instanceof BigDecimal big) {
+            try {
+                return big.longValueExact();
+            } catch (ArithmeticException fractionalOrOutOfRange) {
+                return null;
+            }
+        }
+        if (value instanceof Float || value instanceof Double) {
+            double converted = ((Number) value).doubleValue();
+            if (!Double.isFinite(converted) || converted != Math.rint(converted)
+                    || converted < Long.MIN_VALUE || converted > Long.MAX_VALUE) {
+                return null;
+            }
+            return (long) converted;
+        }
+        return null;
     }
 
     private static String text(Object value) {
