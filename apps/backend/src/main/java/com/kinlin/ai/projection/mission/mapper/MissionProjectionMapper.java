@@ -1,6 +1,7 @@
 package com.kinlin.ai.projection.mission.mapper;
 
 import com.kinlin.ai.projection.mission.dto.MissionDetailQuery;
+import com.kinlin.ai.projection.mission.dto.MissionListQuery;
 import com.kinlin.ai.projection.mission.dto.MissionRunHistoryQuery;
 import com.kinlin.ai.projection.mission.dto.MissionRunSummaryQuery;
 import java.math.BigDecimal;
@@ -32,6 +33,18 @@ public final class MissionProjectionMapper {
         return new MissionRunHistoryQuery(text(wire, "missionId"), items(wire.get("runs"), MissionProjectionMapper::run));
     }
 
+    /** Owner identity (userId) is dropped, following the mission detail field rule. */
+    public static MissionListQuery list(Map<String, Object> wire) {
+        return new MissionListQuery(
+                items(wire.get("items"), item -> new MissionListQuery.Item(
+                        text(item, "missionId"), text(item, "title"), text(item, "description"),
+                        text(item, "status"), optionalText(item, "latestRunId"),
+                        optionalText(item, "latestRunStatus"), time(item, "createdAt", false),
+                        time(item, "updatedAt", false), nonNegativeInt(item, "runCount"))),
+                nonNegativeInt(wire, "total"), positiveInt(wire, "page"),
+                positiveInt(wire, "pageSize"), optionalText(wire, "source"));
+    }
+
     private static MissionRunSummaryQuery run(Map<?, ?> run) {
         return new MissionRunSummaryQuery(text(run, "runId"), text(run, "missionId"), text(run, "status"),
                 positiveInt(run, "graphVersion"), time(run, "startedAt", true), time(run, "finishedAt", true),
@@ -60,6 +73,13 @@ public final class MissionProjectionMapper {
         if (!(source.get(field) instanceof Number value)) { throw invalid(); }
         int result = new BigDecimal(value.toString()).intValueExact();
         if (result < 1) { throw invalid(); }
+        return result;
+    }
+
+    private static int nonNegativeInt(Map<?, ?> source, String field) {
+        if (!(source.get(field) instanceof Number value)) { throw invalid(); }
+        int result = new BigDecimal(value.toString()).intValueExact();
+        if (result < 0) { throw invalid(); }
         return result;
     }
 

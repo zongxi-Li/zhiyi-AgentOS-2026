@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonSerializable;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.kinlin.ai.controller.AgentOsMissionController;
 import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
@@ -174,7 +175,8 @@ class QueryProjectionArchitectureTest {
      * sendTextMessage: its dynamic ChatResponse (open metadata Map) is a registered
      * follow-up scope of the chat migration, not a completed projection. The same holds
      * for the feedback statistics/receipt handlers, which stay a registered follow-up
-     * scope of the feedback statistics batch.
+     * scope of the feedback statistics batch, and for the unmigrated AgentOS command
+     * responses (dynamic upstream passthrough).
      */
     private static boolean strictOutputChecked(Class<?> controller, Method method) {
         if (controller == UserController.class || controller == RoleController.class
@@ -183,6 +185,9 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == UserFeedbackController.class) {
             return "getUserFeedbacks".equals(method.getName());
+        }
+        if (controller == AgentOsMissionController.class) {
+            return "listMissions".equals(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }

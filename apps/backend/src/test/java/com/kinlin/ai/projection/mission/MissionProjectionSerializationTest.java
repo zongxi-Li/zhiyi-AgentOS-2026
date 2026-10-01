@@ -86,6 +86,50 @@ class MissionProjectionSerializationTest {
                 () -> MissionProjectionMapper.history(Map.of("missionId", "m", "runs", List.of(invalidRun))));
     }
 
+    @Test
+    void listIsAWhitelistEnvelopeWithoutOwnerIdentityOrInternalFields() throws Exception {
+        Map<String, Object> wire = MissionQueryFixture.list();
+        Map<String, Object> idle = MissionQueryFixture.listItem();
+        idle.put("missionId", "mission_2");
+        idle.put("latestRunId", null);
+        idle.put("latestRunStatus", null);
+        idle.put("runCount", 0);
+        wire.put("items", List.of(MissionQueryFixture.listItem(), idle));
+        var result = MissionProjectionMapper.list(wire);
+        String encoded = jackson.writeValueAsString(result);
+        assertFields(jackson.readTree(encoded), "items", "total", "page", "pageSize", "source");
+        assertFields(jackson.readTree(encoded).get("items").get(0), "missionId", "title", "description",
+                "status", "latestRunId", "latestRunStatus", "createdAt", "updatedAt", "runCount");
+        assertEquals(List.of("mission_1", "mission_2"), result.items().stream().map(item -> item.missionId()).toList());
+        assertEquals("agentos-v2", result.source());
+        assertEquals(MissionQueryFixture.TIME, result.items().get(0).createdAt());
+        assertNull(result.items().get(1).latestRunId());
+        assertEquals(0, result.items().get(1).runCount());
+        assertFalse(encoded.contains(MissionQueryFixture.SECRET));
+        wire.clear();
+        assertEquals(encoded, jackson.writeValueAsString(result));
+        assertThrows(UnsupportedOperationException.class, () -> result.items().clear());
+    }
+
+    @Test
+    void listKeepsEmptyPagesAndRejectsMissingOrInvalidContractFields() {
+        var empty = MissionProjectionMapper.list(Map.of("items", List.of(), "total", 0, "page", 1, "pageSize", 20));
+        assertTrue(empty.items().isEmpty());
+        for (String field : List.of("items", "total", "page", "pageSize")) {
+            var incomplete = MissionQueryFixture.list(); incomplete.remove(field);
+            assertThrows(IllegalArgumentException.class, () -> MissionProjectionMapper.list(incomplete), field);
+        }
+        var noItemId = MissionQueryFixture.list();
+        noItemId.put("items", List.of(Map.of("title", "缺少标识")));
+        assertThrows(IllegalArgumentException.class, () -> MissionProjectionMapper.list(noItemId));
+        var negativeCount = MissionQueryFixture.list();
+        ((Map<String, Object>) ((List<?>) negativeCount.get("items")).get(0)).put("runCount", -1);
+        assertThrows(RuntimeException.class, () -> MissionProjectionMapper.list(negativeCount));
+        var invalidTime = MissionQueryFixture.list();
+        ((Map<String, Object>) ((List<?>) invalidTime.get("items")).get(0)).put("updatedAt", MissionQueryFixture.SECRET);
+        assertThrows(RuntimeException.class, () -> MissionProjectionMapper.list(invalidTime));
+    }
+
     private void assertFields(JsonNode node, String... expected) {
         Set<String> actual = new HashSet<>(); node.fieldNames().forEachRemaining(actual::add);
         assertEquals(Set.of(expected), actual);

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
 import com.kinlin.ai.projection.mission.MissionQueryFixture;
+import com.kinlin.ai.projection.mission.dto.MissionListQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -28,12 +30,14 @@ class AgentOsMissionControllerTest {
     private MockMvc mockMvc;
     private ObjectMapper objectMapper;
     private RecordingAgentOsGateway gateway;
+    private AgentOsMissionController missionController;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
         gateway = new RecordingAgentOsGateway();
-        mockMvc = MockMvcBuilders.standaloneSetup(new AgentOsMissionController(gateway))
+        missionController = new AgentOsMissionController(gateway);
+        mockMvc = MockMvcBuilders.standaloneSetup(missionController)
                 .setControllerAdvice(new AgentOsGatewayExceptionHandler())
                 .build();
     }
@@ -76,13 +80,13 @@ class AgentOsMissionControllerTest {
     @Test
     void listMissionsForwardsDefaultPaginationWithoutEmptyFilters() throws Exception {
         String path = "/ai/agentos/v2/missions?page=1&pageSize=20";
-        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of(
-                "items", List.of(), "total", 0
-        )));
+        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, MissionQueryFixture.list()));
+        assertInstanceOf(MissionListQuery.class, missionController.listMissions(null, 1, 20).getBody());
 
         mockMvc.perform(get("/api/agentos/v2/missions"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(0));
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].missionId").value("mission_1"));
 
         assertEquals(path, gateway.lastGetPath);
     }
@@ -90,11 +94,12 @@ class AgentOsMissionControllerTest {
     @Test
     void listMissionsForwardsTheStatusFilter() throws Exception {
         String path = "/ai/agentos/v2/missions?status=archived&page=2&pageSize=50";
-        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of("total", 0)));
+        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, MissionQueryFixture.list()));
 
         mockMvc.perform(get("/api/agentos/v2/missions")
                         .param("status", "archived").param("page", "2").param("pageSize", "50"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1));
 
         assertEquals(path, gateway.lastGetPath);
     }
