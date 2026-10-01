@@ -8,6 +8,7 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
+import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.UserController;
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
@@ -36,12 +37,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Shared projection guards covering every controller response closure. Conversation and
- * Message entities are banned everywhere except the registered remaining exceptions
- * (SearchController still answers with raw entities until its own migration batch);
- * each exception is pinned to its exact GET route and raw return type, so widening the
- * response, migrating it to a projection, or rerouting it fails loudly. Strict
- * closed-output checks apply to migrated handlers only, so the dynamic
- * POST /chat/text response stays a registered follow-up scope instead of a silent pass.
+ * Message entities are banned everywhere; the exception registry is currently empty and
+ * any new raw-entity response must be registered as a loan pinned to its exact GET route
+ * and raw return type, so widening the response, migrating it to a projection, or
+ * rerouting it fails loudly. Strict closed-output checks apply to migrated handlers
+ * only, so the dynamic POST /chat/text response stays a registered follow-up scope
+ * instead of a silent pass.
  */
 class QueryProjectionArchitectureTest {
     private static final Path MAIN = Path.of("src/main/java");
@@ -49,12 +50,10 @@ class QueryProjectionArchitectureTest {
     private static final String RAW_MESSAGE_LIST =
             "org.springframework.http.ResponseEntity<java.util.List<com.kinlin.ai.entity.Message>>";
 
-    /** The exact raw response still tolerated per registered handler; keep this list shrinking. */
+    /** The exact raw response still tolerated per registered handler; keep this list empty. */
     private record RawEntityResponse(String typeName, String route) { }
 
-    private static final Map<String, RawEntityResponse> ENTITY_RESPONSE_EXCEPTIONS = Map.of(
-            "SearchController#searchMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/search/messages"),
-            "SearchController#searchAllMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/search/all-messages"));
+    private static final Map<String, RawEntityResponse> ENTITY_RESPONSE_EXCEPTIONS = Map.of();
 
     @Test
     void everyControllerReturnTypeRejectsPlatformEntitiesIncludingNestedBodies() throws Exception {
@@ -175,7 +174,7 @@ class QueryProjectionArchitectureTest {
      */
     private static boolean strictOutputChecked(Class<?> controller, Method method) {
         if (controller == UserController.class || controller == RoleController.class
-                || controller == ConversationController.class) {
+                || controller == ConversationController.class || controller == SearchController.class) {
             return true;
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
