@@ -2,6 +2,9 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.dto.RoleCreateRequest;
 import com.kinlin.ai.entity.Role;
+import com.kinlin.ai.projection.role.dto.RoleContextQuery;
+import com.kinlin.ai.projection.role.dto.RoleQuery;
+import com.kinlin.ai.projection.role.mapper.RoleProjectionMapper;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.RoleService;
 import jakarta.validation.Valid;
@@ -28,29 +31,29 @@ public class RoleController {
      * 获取内置角色列表
      */
     @GetMapping("/builtin")
-    public ResponseEntity<List<Role>> getBuiltinRoles() {
+    public ResponseEntity<List<RoleQuery>> getBuiltinRoles() {
         List<Role> roles = roleService.getBuiltinRoles();
-        return ResponseEntity.ok(roles);
+        return ResponseEntity.ok(roles.stream().map(RoleProjectionMapper::toQuery).toList());
     }
 
     /**
      * 获取自定义角色列表
      */
     @GetMapping("/custom")
-    public ResponseEntity<List<Role>> getCustomRoles() {
+    public ResponseEntity<List<RoleQuery>> getCustomRoles() {
         UUID userId = resolveUserId();
         List<Role> roles = roleService.getCustomRoles(userId);
-        return ResponseEntity.ok(roles);
+        return ResponseEntity.ok(roles.stream().map(RoleProjectionMapper::toQuery).toList());
     }
 
     /**
      * 获取角色详情（使用缓存优化）
      */
     @GetMapping("/{roleId}")
-    public ResponseEntity<Role> getRole(@PathVariable UUID roleId) {
+    public ResponseEntity<RoleQuery> getRole(@PathVariable UUID roleId) {
         try {
             Role role = roleSwitchOptimizer.getRoleCached(roleId);
-            return ResponseEntity.ok(role);
+            return ResponseEntity.ok(RoleProjectionMapper.toQuery(role));
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
@@ -60,10 +63,9 @@ public class RoleController {
      * 获取角色上下文（快速访问）
      */
     @GetMapping("/{roleId}/context")
-    public ResponseEntity<java.util.Map<String, Object>> getRoleContext(@PathVariable UUID roleId) {
+    public ResponseEntity<RoleContextQuery> getRoleContext(@PathVariable UUID roleId) {
         try {
-            java.util.Map<String, Object> context = roleSwitchOptimizer.getRoleContext(roleId);
-            return ResponseEntity.ok(context);
+            return ResponseEntity.ok(RoleProjectionMapper.toContext(roleSwitchOptimizer.getRoleContext(roleId)));
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
@@ -73,24 +75,25 @@ public class RoleController {
      * 创建自定义角色
      */
     @PostMapping("/custom")
-    public ResponseEntity<Role> createRole(
+    public ResponseEntity<RoleQuery> createRole(
             @Valid @RequestBody RoleCreateRequest request
     ) {
         UUID userId = resolveUserId();
         Role role = roleService.createRole(request, userId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(role);
+        return ResponseEntity.status(HttpStatus.CREATED).body(RoleProjectionMapper.toQuery(role));
     }
 
     /**
      * 更新角色
      */
     @PutMapping("/{roleId}")
-    public ResponseEntity<Role> updateRole(
+    public ResponseEntity<RoleQuery> updateRole(
             @PathVariable UUID roleId,
             @Valid @RequestBody RoleCreateRequest request
     ) {
         UUID userId = resolveUserId();
         return roleService.updateRole(roleId, request, userId)
+                .map(RoleProjectionMapper::toQuery)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
