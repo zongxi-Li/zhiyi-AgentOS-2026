@@ -10,10 +10,12 @@ import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
 import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.UserController;
+import com.kinlin.ai.controller.UserFeedbackController;
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
 import com.kinlin.ai.entity.Role;
 import com.kinlin.ai.entity.User;
+import com.kinlin.ai.entity.UserFeedback;
 import com.kinlin.ai.projection.message.dto.MessageQuery;
 import com.kinlin.ai.projection.role.dto.RoleConfigurationQuery;
 import com.kinlin.ai.projection.role.dto.RoleContextQuery;
@@ -36,13 +38,13 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Shared projection guards covering every controller response closure. Conversation and
- * Message entities are banned everywhere; the exception registry is currently empty and
- * any new raw-entity response must be registered as a loan pinned to its exact GET route
- * and raw return type, so widening the response, migrating it to a projection, or
- * rerouting it fails loudly. Strict closed-output checks apply to migrated handlers
- * only, so the dynamic POST /chat/text response stays a registered follow-up scope
- * instead of a silent pass.
+ * Shared projection guards covering every controller response closure. Platform entities
+ * (User, Role, Conversation, Message, UserFeedback) are banned everywhere; the exception
+ * registry is currently empty and any new raw-entity response must be registered as a
+ * loan pinned to its exact GET route and raw return type, so widening the response,
+ * migrating it to a projection, or rerouting it fails loudly. Strict closed-output
+ * checks apply to migrated handlers only, so the dynamic POST /chat/text response stays
+ * a registered follow-up scope instead of a silent pass.
  */
 class QueryProjectionArchitectureTest {
     private static final Path MAIN = Path.of("src/main/java");
@@ -74,7 +76,7 @@ class QueryProjectionArchitectureTest {
                         assertRegisteredExceptionStillMatches(handler, registered, method);
                         // Message stays tolerated for this pinned handler only; other entities remain banned.
                         assertSafe(method.getGenericReturnType(), false, new HashSet<>(), method.toString(),
-                                Set.of(User.class, Role.class, Conversation.class));
+                                RAW_MESSAGE_LOAN_BAN);
                         remainingExceptions.add(handler);
                         continue;
                     }
@@ -130,7 +132,7 @@ class QueryProjectionArchitectureTest {
             Method method = ExceptionFixtures.class.getDeclaredMethod(name);
             assertThrows(AssertionError.class, () -> assertSafe(
                     method.getGenericReturnType(), false, new HashSet<>(), name,
-                    Set.of(User.class, Role.class, Conversation.class)), name);
+                    RAW_MESSAGE_LOAN_BAN), name);
         }
     }
 
@@ -170,12 +172,17 @@ class QueryProjectionArchitectureTest {
     /**
      * Strict closed-output checks target migrated handlers. ChatController is strict except
      * sendTextMessage: its dynamic ChatResponse (open metadata Map) is a registered
-     * follow-up scope of the chat migration, not a completed projection.
+     * follow-up scope of the chat migration, not a completed projection. The same holds
+     * for the feedback statistics/receipt handlers, which stay a registered follow-up
+     * scope of the feedback statistics batch.
      */
     private static boolean strictOutputChecked(Class<?> controller, Method method) {
         if (controller == UserController.class || controller == RoleController.class
                 || controller == ConversationController.class || controller == SearchController.class) {
             return true;
+        }
+        if (controller == UserFeedbackController.class) {
+            return "getUserFeedbacks".equals(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
@@ -233,7 +240,7 @@ class QueryProjectionArchitectureTest {
 
     @Test
     void negativeFixturesDetectWrappedEntitiesDynamicDtosAndConfigurationSpread() throws Exception {
-        for (String name : List.of("user", "roles", "conversations", "messages", "nested", "nestedMessage",
+        for (String name : List.of("user", "roles", "conversations", "messages", "feedbacks", "nested", "nestedMessage",
                 "dynamic", "dynamicMetadata", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
             Type type = BadResponses.class.getDeclaredMethod(name).getGenericReturnType();
             assertThrows(AssertionError.class, () -> assertSafe(type, true, new HashSet<>(), name, ALL_PLATFORM_ENTITIES), name);
@@ -246,7 +253,16 @@ class QueryProjectionArchitectureTest {
     }
 
     private static final Set<Class<?>> ALL_PLATFORM_ENTITIES =
-            Set.of(User.class, Role.class, Conversation.class, Message.class);
+            Set.of(User.class, Role.class, Conversation.class, Message.class, UserFeedback.class);
+
+    /** A registered raw-Message loan tolerates Message only; every other platform entity stays banned. */
+    private static final Set<Class<?>> RAW_MESSAGE_LOAN_BAN = buildLoanBan();
+
+    private static Set<Class<?>> buildLoanBan() {
+        Set<Class<?>> ban = new HashSet<>(ALL_PLATFORM_ENTITIES);
+        ban.remove(Message.class);
+        return Set.copyOf(ban);
+    }
 
     private static void assertSafe(Type type, boolean strict, Set<Type> visited, String path,
                                    Set<Class<?>> bannedEntities) {
@@ -365,6 +381,7 @@ class QueryProjectionArchitectureTest {
         ResponseEntity<List<Role>> roles();
         ResponseEntity<List<Conversation>> conversations();
         ResponseEntity<List<Message>> messages();
+        ResponseEntity<List<UserFeedback>> feedbacks();
         ResponseEntity<NestedRole> nested();
         ResponseEntity<WrappedMessage> nestedMessage();
         ResponseEntity<DynamicDto> dynamic();
