@@ -1,7 +1,5 @@
 package com.kinlin.ai.service;
 
-import org.springframework.web.reactive.function.client.WebClient;
-
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.entity.Message;
 import com.kinlin.ai.exception.ResourceNotFoundException;
