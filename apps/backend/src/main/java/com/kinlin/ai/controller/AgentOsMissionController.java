@@ -5,6 +5,8 @@ import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsMissionResponse;
 import com.kinlin.ai.gateway.AgentOsPaths;
+import com.kinlin.ai.projection.common.dto.QueryResponse;
+import com.kinlin.ai.projection.mission.mapper.MissionProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -58,13 +60,15 @@ public class AgentOsMissionController {
     }
 
     @GetMapping("/missions/{missionId}")
-    public ResponseEntity<Map<String, Object>> getMission(@PathVariable String missionId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId)));
+    public ResponseEntity<QueryResponse> getMission(@PathVariable String missionId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.mission(missionId)),
+                MissionProjectionMapper::detail);
     }
 
     @GetMapping("/missions/{missionId}/runs")
-    public ResponseEntity<Map<String, Object>> getMissionRuns(@PathVariable String missionId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.missionRuns(missionId)));
+    public ResponseEntity<QueryResponse> getMissionRuns(@PathVariable String missionId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.missionRuns(missionId)),
+                MissionProjectionMapper::history);
     }
 
     @PostMapping("/missions/{missionId}/archive")
