@@ -5,8 +5,12 @@ import com.fasterxml.jackson.databind.JsonSerializable;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.kinlin.ai.controller.ChatController;
+import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
 import com.kinlin.ai.controller.UserController;
+import com.kinlin.ai.entity.Conversation;
+import com.kinlin.ai.entity.Message;
 import com.kinlin.ai.entity.Role;
 import com.kinlin.ai.entity.User;
 import com.kinlin.ai.projection.role.dto.RoleConfigurationQuery;
@@ -26,15 +30,27 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Shared projection guards. Inputs and not-yet-migrated response domains remain outside the strict output checks. */
+/**
+ * Shared projection guards covering every controller response closure. Conversation and
+ * Message entities are banned everywhere except the registered remaining exceptions
+ * (SearchController still answers with raw entities until its own migration batch);
+ * strict closed-output checks apply to migrated handlers only, so the dynamic
+ * POST /chat/text response stays a registered follow-up scope instead of a silent pass.
+ */
 class QueryProjectionArchitectureTest {
     private static final Path MAIN = Path.of("src/main/java");
 
+    /** Still-raw entity responses pending their own projection batch; keep this list shrinking. */
+    private static final Set<String> ENTITY_RESPONSE_EXCEPTIONS = Set.of(
+            "SearchController#searchMessages",
+            "SearchController#searchAllMessages");
+
     @Test
-    void everyControllerReturnTypeRejectsUserAndRoleIncludingNestedBodies() throws Exception {
+    void everyControllerReturnTypeRejectsPlatformEntitiesIncludingNestedBodies() throws Exception {
         Path directory = MAIN.resolve("com/kinlin/ai/controller");
         assertTrue(Files.isDirectory(directory), "backend source directory must exist; never skip this guard");
         int checked = 0;
+        Set<String> remainingExceptions = new HashSet<>();
         try (Stream<Path> files = Files.list(directory)) {
             for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
                 Class<?> controller = Class.forName("com.kinlin.ai.controller."
@@ -42,13 +58,33 @@ class QueryProjectionArchitectureTest {
                 if (!AnnotatedElementUtils.hasAnnotation(controller, RestController.class)) { continue; }
                 for (Method method : controller.getDeclaredMethods()) {
                     if (!AnnotatedElementUtils.hasAnnotation(method, RequestMapping.class)) { continue; }
-                    boolean strictIdentity = controller == UserController.class || controller == RoleController.class;
-                    assertSafe(method.getGenericReturnType(), strictIdentity, new HashSet<>(), method.toString());
+                    String handler = controller.getSimpleName() + "#" + method.getName();
+                    if (ENTITY_RESPONSE_EXCEPTIONS.contains(handler)) {
+                        remainingExceptions.add(handler);
+                        continue;
+                    }
+                    assertSafe(method.getGenericReturnType(), strictOutputChecked(controller, method),
+                            new HashSet<>(), method.toString());
                     checked++;
                 }
             }
         }
         assertTrue(checked > 0, "must inspect actual HTTP handlers");
+        assertEquals(ENTITY_RESPONSE_EXCEPTIONS, remainingExceptions,
+                "every registered exception must still exist; migrate the handler and shrink this list");
+    }
+
+    /**
+     * Strict closed-output checks target migrated handlers. ChatController is strict except
+     * sendTextMessage: its dynamic ChatResponse (open metadata Map) is a registered
+     * follow-up scope of the chat migration, not a completed projection.
+     */
+    private static boolean strictOutputChecked(Class<?> controller, Method method) {
+        if (controller == UserController.class || controller == RoleController.class
+                || controller == ConversationController.class) {
+            return true;
+        }
+        return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
 
     @Test
@@ -104,7 +140,8 @@ class QueryProjectionArchitectureTest {
 
     @Test
     void negativeFixturesDetectWrappedEntitiesDynamicDtosAndConfigurationSpread() throws Exception {
-        for (String name : List.of("user", "roles", "nested", "dynamic", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
+        for (String name : List.of("user", "roles", "conversations", "messages", "nested", "nestedMessage",
+                "dynamic", "dynamicMetadata", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
             Type type = BadResponses.class.getDeclaredMethod(name).getGenericReturnType();
             assertThrows(AssertionError.class, () -> assertSafe(type, true, new HashSet<>(), name), name);
         }
@@ -137,6 +174,8 @@ class QueryProjectionArchitectureTest {
     private static void inspectClass(Class<?> type, boolean strict, Set<Type> visited, String path) {
         assertFalse(User.class.isAssignableFrom(type), path + " exposes/inherits User Entity");
         assertFalse(Role.class.isAssignableFrom(type), path + " exposes/inherits Role Entity");
+        assertFalse(Conversation.class.isAssignableFrom(type), path + " exposes/inherits Conversation Entity");
+        assertFalse(Message.class.isAssignableFrom(type), path + " exposes/inherits Message Entity");
         if (strict) {
             assertNotEquals(Object.class, type, path + " exposes Object");
             assertFalse(Map.class.isAssignableFrom(type), path + " exposes Map");
@@ -217,6 +256,8 @@ class QueryProjectionArchitectureTest {
     private record NestedRole(Role body) { }
     private record RuntimeDto(String checkpoint) { }
     private record DynamicDto(Map<String, String> metadata) { }
+    private record WrappedMessage(Message body) { }
+    private record DynamicMetadataDto(Map<String, Object> metadata) { }
     private record ConfigurationSpread(List<RoleConfigurationQuery> payload) { }
     private static class InheritedUser extends User { }
     private static class GetterDto { public Role getRole() { return null; } }
@@ -225,8 +266,12 @@ class QueryProjectionArchitectureTest {
         ResponseEntity<RuntimeDto> checkpoint();
         ResponseEntity<User> user();
         ResponseEntity<List<Role>> roles();
+        ResponseEntity<List<Conversation>> conversations();
+        ResponseEntity<List<Message>> messages();
         ResponseEntity<NestedRole> nested();
+        ResponseEntity<WrappedMessage> nestedMessage();
         ResponseEntity<DynamicDto> dynamic();
+        ResponseEntity<DynamicMetadataDto> dynamicMetadata();
         ResponseEntity<Object> opaque();
         ResponseEntity<JsonNode> json();
         ResponseEntity raw();
