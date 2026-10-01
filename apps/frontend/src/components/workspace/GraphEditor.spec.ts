@@ -1,9 +1,9 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import GraphEditor from './GraphEditor.vue'
-import type { AcgBlueprint, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceGraphNode } from '@/services/api/agentos'
 
-const graph: AcgBlueprint = { graphId: 'graph_1', nodes: [{ nodeId: 'node_1', nodeType: 'step', name: 'Capacity' }], edges: [] }
+const graph: GraphProjection = { graphId: 'graph_1', nodes: [{ nodeId: 'node_1', nodeType: 'step', name: 'Capacity' }], edges: [] }
 const graphNodes: WorkspaceGraphNode[] = [{ acgNodeId: 'node_1', nodeType: 'step', name: 'Capacity', semanticTaskKey: 'capacity', taskId: 'task_1', identityQuality: 'canonical', displayOrder: 0 }]
 
 const topologyStub = {

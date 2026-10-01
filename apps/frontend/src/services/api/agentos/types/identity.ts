@@ -63,19 +63,16 @@ export interface IdentityStepExecution {
   startedAt?: string | null
   finishedAt?: string | null
 }
-export interface ExecutionBinding {
-  bindingId: string
-  attemptId: string
-  acgNodeId: string
+export interface ResourceUseQuery {
   resourceId: string
-  agentId: string
-  modelId: string
-  metadata: Record<string, unknown>
-  createdAt?: string
+  agentId?: string
+  modelId?: string
+  acgNodeId?: string
+  deploymentTier?: string
 }
 export interface IdentityAttemptDetail {
   attempt: IdentityAttempt
-  executionBinding?: ExecutionBinding | null
+  resourceUse?: ResourceUseQuery | null
   executions: IdentityStepExecution[]
 }
 export interface RunExecutionNode {
@@ -95,7 +92,6 @@ export interface RunLineage {
   rerunReason?: string | null
   supersedesRunId?: string | null
   supersededByRunId?: string | null
-  sourcePatchId?: string | null
 }
 export interface RunOperationalState {
   package?: CompiledPackageIdentity | null
@@ -159,9 +155,10 @@ export interface IdentityWorkflowRun {
 }
 export interface RunExecutionTree {
   run: IdentityWorkflowRun
-  blueprint: IdentityBlueprint
+  graph: import('./graph').GraphProjection
   nodes: RunExecutionNode[]
-  operational: RunOperationalState
+  lineage: RunLineage
+  lifecycles: NodeLifecycleQuery[]
 }
 export interface IdentityProjectionHealth {
   status: 'healthy' | 'degraded'
@@ -184,4 +181,12 @@ export interface IdentityProjectionHealth {
 export interface IdentityProjectionState {
   status: 'available' | 'pending' | 'unavailable'
   message?: string
+}
+
+export interface NodeLifecycleQuery {
+  stepId: string
+  attemptId: string
+  phase: NodeExecutionPhase
+  failureCode?: string
+  sequence: number
 }

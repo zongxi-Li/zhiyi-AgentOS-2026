@@ -1,5 +1,5 @@
 import type { StepStatus, TraceEvent, WorkflowStatus } from './workflow'
-import type { AcgBlueprint } from './graph'
+import type { GraphProjection } from './graph'
 import type { IdentityAttemptDetail, IdentityProjectionState, IdentitySemanticTask, IdentityStepExecution, NodeExecutionRecord, RunExecutionTree, RunOperationalState, RuntimeAttemptProjection } from './identity'
 
 export interface RunProvenanceEvent {
@@ -79,7 +79,7 @@ export interface AcgStepState {
   agentName: string
   attempt: number
   retryCount: number
-  currentBinding?: Record<string, any> | null
+  resourceUse?: import('./identity').ResourceUseQuery | null
   bindingHistory?: Array<Record<string, any>>
   attempts?: RuntimeAttemptProjection[]
   sourcePatchId?: string | null
@@ -91,7 +91,7 @@ export interface AcgStepState {
   acgNodeId?: string
   identityAttempts?: IdentityAttemptDetail[]
   stepExecutions?: IdentityStepExecution[]
-  nodeExecutions?: NodeExecutionRecord[]
+  nodeExecutions?: import('./identity').NodeLifecycleQuery[]
 }
 export interface MissionRecordMutation {
   missionId: string
@@ -212,7 +212,7 @@ export interface AcgView {
   status: WorkflowStatus
   engine: string
   runtimeRevision?: number
-  acgBlueprint: AcgBlueprint | null
+  acgBlueprint: GraphProjection | null
   graphVersion?: number | null
   completedStepIds: string[]
   activeStepIds: string[]
@@ -234,6 +234,8 @@ export interface AcgView {
   finalReport: string | null
   lowEntropyMetrics: AcgLowEntropyMetrics
   executionTree?: RunExecutionTree | null
+  lineage?: import('./identity').RunLineage | null
+  lifecycles?: import('./identity').NodeLifecycleQuery[]
   operational?: RunOperationalState | null
   identityProjection?: IdentityProjectionState
 }

@@ -197,10 +197,7 @@ describe('RuntimeObservationAdapter', () => {
   })
 
   it('reads low-entropy metrics from ledger-backed provenance events', async () => {
-    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue({
-      ...run('run_1'),
-      executionState: { graphPatchRefs: ['patch_1'] }
-    } as any)
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run('run_1') as any)
     vi.spyOn(agentosApi, 'getWorkflowTrace').mockResolvedValue(trace('run_1') as any)
     vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue({
       ...provenance('run_1'),
@@ -228,19 +225,8 @@ describe('RuntimeObservationAdapter', () => {
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
     vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({
       nodes: [],
-      operational: {
-        lineage: {},
-        nodeExecutions: [],
-        controlFrames: [{ frameId: 'frame_1', status: 'joined' }],
-        communicationRefs: ['communication_ref_1'],
-        memoryRefs: ['memory_ref_1'],
-        evidenceRefs: ['evidence_1'],
-        leaseStatuses: { agent_1: 'released' },
-        loopIterations: { step_2: 1 },
-        consensusResults: { step_2: { accepted: true } },
-        debateSessions: {},
-        recoveryOutcome: null
-      }
+      lineage: { parentRunId: 'parent_1' },
+      lifecycles: [{ stepId: 'step_2', attemptId: 'attempt_1', phase: 'committed', sequence: 0 }]
     } as any)
 
     const result = await readRuntimeObservation('run_1')
@@ -251,9 +237,8 @@ describe('RuntimeObservationAdapter', () => {
       productions: [{ eventId: 'prod_1' }],
       consumptions: [{ eventId: 'cons_1', consumerStepId: 'step_2' }]
     })
-    expect(result.operational?.controlFrames).toHaveLength(1)
-    expect(result.operational?.communicationRefs).toEqual(['communication_ref_1'])
-    expect(result.patchRefs).toEqual(['patch_1'])
+    expect(result.lineage).toEqual({ parentRunId: 'parent_1' })
+    expect(result.lifecycles).toEqual([{ stepId: 'step_2', attemptId: 'attempt_1', phase: 'committed', sequence: 0 }])
     expect(result.lowEntropy).toMatchObject({
       observed: true,
       source: 'provenance',

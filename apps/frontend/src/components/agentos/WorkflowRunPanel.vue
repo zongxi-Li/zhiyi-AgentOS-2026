@@ -49,8 +49,8 @@
           <strong>{{ run.outputRef || '尚未生成' }}</strong>
         </div>
         <div>
-          <small>Checkpoint</small>
-          <strong>{{ run.executionState?.checkpointId || '尚未生成' }}</strong>
+          <small>运行阶段</small>
+          <strong>{{ run.lifecyclePhase || '暂无阶段信息' }}</strong>
         </div>
       </div>
     </template>

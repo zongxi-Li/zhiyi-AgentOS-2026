@@ -7,7 +7,7 @@ export interface AcgNode {
   agentName?: string
   capability?: string
   controlType?: string
-  metadata?: Record<string, any>
+  display?: GraphDisplay
 }
 export interface AcgEdge {
   edgeId: string
@@ -16,14 +16,27 @@ export interface AcgEdge {
   edgeType: 'dependency' | 'communication' | 'control_flow' | 'execution' | 'write' | 'read' | 'support'
   condition?: string
   activation?: 'inactive' | 'active' | 'terminated' | 'superseded'
-  metadata?: Record<string, any>
+  display?: GraphDisplay
 }
-export interface AcgBlueprint {
+export interface GraphProjection {
+  graphVersion?: number
+  taskPlanVersion?: number
   graphId: string
   missionId?: string
   objective?: string
   complexityLevel?: string
   nodes: AcgNode[]
   edges: AcgEdge[]
-  metadata?: Record<string, any>
+  display?: GraphDisplay
+}
+
+export interface GraphDisplay {
+  semanticTaskKey?: string
+  taskId?: string
+  logicalRole?: string
+  endpointRole?: string
+  agentName?: string
+  allowedSkills?: string[]
+  dependencyKeys?: string[]
+  displayOrder?: number
 }

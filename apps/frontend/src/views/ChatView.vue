@@ -519,7 +519,7 @@
               v-if="activeAcgView"
               class="chat-runtime-timeline"
               :events="activeAcgAuditEvents"
-              :patch-refs="activeWorkflowRun?.executionState?.graphPatchRefs || []"
+              :patch-refs="[]"
               :max-items="8"
             />
             <div v-if="isLoadingWorkflowResult && !activeAcgView" class="workflow-acg-loading">正在加载动态拓扑…</div>

@@ -1,7 +1,7 @@
 import {
   agentosApi,
   type AcgView,
-  type AcgBlueprint,
+  type GraphProjection,
   type AcgNode,
   type AcgEdge,
   type AcgLowEntropyMetrics,
@@ -51,7 +51,7 @@ import {
 
 export type {
   AcgView,
-  AcgBlueprint,
+  GraphProjection,
   AcgNode,
   AcgEdge,
   AcgLowEntropyMetrics,

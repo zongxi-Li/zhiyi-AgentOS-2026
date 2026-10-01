@@ -14,27 +14,21 @@ const view = {
   lowEntropyMetrics: { averageSavingRatio: 0, effectiveSavingRatio: 0, tokensAvailable: 0, tokensDelivered: 0, tokensSaved: 0, recoveryCount: 0, interactionCount: 0, contractViolationCount: 0, integrityStatus: 'valid' },
   executionTree: {
     run: { runId: 'run_1', taskId: 'task_1', blueprintId: 'blueprint_1', status: 'running', graphVersion: 2, metadata: {} },
-    blueprint: { blueprintId: 'blueprint_1', taskId: 'task_1', version: 2, graphId: 'graph_1', graph: {}, metadata: {} },
+    graph: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] },
     nodes: [], operational: null
   },
-  operational: {
-    package: { packageId: 'package_123456789', packageVersion: 2, checksum: 'checksum_123456789', blueprintHash: 'blueprint_hash_123456789' },
-    lineage: { parentRunId: 'run_parent', supersedesRunId: 'run_old', sourcePatchId: 'patch_1' },
-    nodeExecutions: [{ operationId: 'operation_1', executionInstanceId: 'instance_1', runId: 'run_1', stepId: 'step_1', attemptId: 'attempt_1', phase: 'committed', artifactRefs: { output: 'artifact_1' }, auditRef: 'audit_1', commitId: 'commit_1', loopPath: [1] }],
-    controlFrames: [{ type: 'parallel', status: 'joined' }], communicationRefs: ['message_1'], memoryRefs: ['memory_1'], evidenceRefs: ['evidence_1'],
-    leaseStatuses: { lease_1: 'active' }, loopIterations: { loop_1: 2 }, consensusResults: { consensus_1: { decision: 'accepted' } },
-    debateSessions: { debate_1: { round: 2 } }, recoveryOutcome: { action: 'resume', status: 'succeeded' }
-  },
+  lineage: { parentRunId: 'run_parent', supersedesRunId: 'run_old' },
+  lifecycles: [{ stepId: 'step_1', attemptId: 'attempt_1', phase: 'committed', sequence: 0 }],
   identityProjection: { status: 'available' }
 } as any
 
 describe('ACG capability panels', () => {
   it('shows package, Blueprint and Run lineage identities', () => {
     const wrapper = mount(AcgExecutionContractBar, { props: { view }, global: { plugins: [ElementPlus] } })
-    expect(wrapper.text()).toContain('package_123456789')
-    expect(wrapper.text()).toContain('blueprint_1')
+    expect(wrapper.text()).not.toContain('Package')
+    expect(wrapper.text()).toContain('graph_1')
     expect(wrapper.text()).toContain('父 Run')
-    expect(wrapper.text()).toContain('patch_1')
+    expect(wrapper.text()).not.toContain('patch_1')
   })
 
   it('renders lifecycle and exposes control, communication and recovery tabs', async () => {
@@ -56,28 +50,23 @@ describe('ACG capability panels', () => {
     })
 
     await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('控制协同'))!.trigger('click')
-    expect(wrapper.findAll('.summary-card').slice(0, 4).map(item => item.text())).toEqual([
-      '1Control Frame', '1Loop', '1Consensus', '1Debate'
-    ])
-    expect(wrapper.text()).toContain('"type": "parallel"')
-
+    expect(wrapper.text()).toContain('审核对象与原因由审核面板展示')
+    expect(wrapper.text()).not.toContain('parallel')
     await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('通信上下文'))!.trigger('click')
-    expect(wrapper.findAll('.summary-card').slice(4).map(item => item.text())).toEqual([
-      '1Communication', '1Memory', '1Evidence', '1Lease'
-    ])
-    expect(wrapper.text()).toContain('message_1')
-    expect(wrapper.text()).toContain('lease_1')
+    expect(wrapper.text()).toContain('Context Inspector')
+    expect(wrapper.text()).not.toContain('lease_1')
+
   })
 
   it('uses a consistent zero-state summary when operational data is absent', async () => {
-    const emptyView = { ...view, operational: null }
+    const emptyView = { ...view, lifecycles: [] }
     const wrapper = mount(AcgOperationalInspector, {
       props: { view: emptyView, auditEvents: [], patchRefs: [] }, global: { plugins: [ElementPlus] }
     })
 
     await wrapper.findAll('.el-tabs__item').find(item => item.text().includes('控制协同'))!.trigger('click')
-    expect(wrapper.findAll('.summary-card strong').map(item => item.text())).toEqual(['0', '0', '0', '0', '0', '0', '0', '0'])
-    expect(wrapper.findAll('.empty').length).toBeGreaterThanOrEqual(4)
+    expect(wrapper.findAll('.summary-card')).toHaveLength(0)
+    expect(wrapper.findAll('.empty').length).toBeGreaterThanOrEqual(1)
   })
 
   it('keeps unknown API capacity unknown in the read-only resource panel', async () => {

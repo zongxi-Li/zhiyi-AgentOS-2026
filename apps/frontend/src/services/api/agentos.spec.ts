@@ -10,21 +10,13 @@ const run = {
     outputRef: 'output:run_1:deliver', outputSummary: 'Contract review ready'
   }],
   completedStepIds: ['deliver'], activeStepIds: [],
-  executionState: {
-    outputRefs: { deliver: 'output:run_1:deliver' },
-    resourceBindings: { deliver: { resourceId: 'legal.drafter' } }
-  }
+  outputs: [{ stepId: "deliver", outputRef: 'output:run_1:deliver' }]
 }
 
-const executionTree = (nodes: Array<Record<string, unknown>> = [], nodeExecutions: Array<Record<string, unknown>> = []) => ({
-  run: { runId: 'run_1', missionId: 'mission_1', blueprintId: 'blueprint_1', status: 'succeeded', graphVersion: 2, metadata: {} },
-  blueprint: { blueprintId: 'blueprint_1', missionId: 'mission_1', version: 2, graphId: 'graph_1', graph: {}, metadata: {} },
-  nodes,
-  operational: {
-    package: { packageId: 'package_1', packageVersion: 2, checksum: 'abc', blueprintHash: 'def' },
-    lineage: {}, nodeExecutions, controlFrames: [], communicationRefs: [], memoryRefs: [], evidenceRefs: [],
-    leaseStatuses: {}, loopIterations: {}, consensusResults: {}, debateSessions: {}, recoveryOutcome: null
-  }
+const executionTree = (nodes: Array<Record<string, unknown>> = [], lifecycles: Array<Record<string, unknown>> = []) => ({
+  run: { runId: 'run_1', missionId: 'mission_1', status: 'succeeded', graphVersion: 2 },
+  graph: { graphId: 'graph_1', graphVersion: 2, nodes: [], edges: [] },
+  nodes, lineage: {}, lifecycles
 })
 
 describe('AgentOS v2 application API', () => {
@@ -151,7 +143,7 @@ describe('AgentOS v2 application API', () => {
 
     expect(result.deliverables[0].output.final_answer).toBe('# Final')
     expect(result.finalArtifacts).toEqual([{ ...artifact, stepId: 'deliver' }])
-    expect(result.stepStates[0].currentBinding).toEqual({ resourceId: 'legal.drafter' })
+    expect(result.stepStates[0].resourceUse).toBeNull()
     expect(get).toHaveBeenLastCalledWith('/runs/run_1/outputs/output%3Arun_1%3Adeliver', { signal: undefined })
   })
 
@@ -174,7 +166,7 @@ describe('AgentOS v2 application API', () => {
       ...run,
       status: 'running' as const,
       steps: [{ ...run.steps[0], outputRef: undefined }],
-      executionState: { resourceBindings: {} }
+      outputs: []
     }
     const get = vi.spyOn(agentosRequest, 'get')
       .mockResolvedValueOnce({ data: pendingRun } as never)
@@ -201,10 +193,7 @@ describe('AgentOS v2 application API', () => {
       ],
       completedStepIds: ['deliver'],
       activeStepIds: ['research'],
-      executionState: {
-        outputRefs: { deliver: 'output:run_1:deliver' },
-        resourceBindings: {}
-      }
+      outputs: [{ stepId: "deliver", outputRef: 'output:run_1:deliver' }]
     }
     const get = vi.spyOn(agentosRequest, 'get')
       .mockResolvedValueOnce({ data: liveRun } as never)
@@ -242,10 +231,7 @@ describe('AgentOS v2 application API', () => {
       ],
       completedStepIds: ['first', 'second'],
       activeStepIds: [],
-      executionState: {
-        outputRefs: { second: 'output:run_1:second', first: 'output:run_1:first' },
-        resourceBindings: {}
-      }
+      outputs: [{ stepId: "second", outputRef: 'output:run_1:second' }, { stepId: "first", outputRef: 'output:run_1:first' }]
     }
     const get = vi.spyOn(agentosRequest, 'get')
       .mockResolvedValueOnce({ data: completedRun } as never)
@@ -269,10 +255,7 @@ describe('AgentOS v2 application API', () => {
       ...run,
       outputRef: undefined,
       steps: [{ ...run.steps[0], outputRef: 'output:run_1:deliver' }],
-      executionState: {
-        outputRefs: { deliver: 'output:run_1:deliver' },
-        resourceBindings: {}
-      }
+      outputs: [{ stepId: "deliver", outputRef: 'output:run_1:deliver' }]
     }
     const get = vi.spyOn(agentosRequest, 'get')
       .mockResolvedValueOnce({ data: completedRun } as never)
@@ -355,13 +338,13 @@ describe('AgentOS v2 application API', () => {
       acgNodeId: 'deliver',
       attempts: [{
         attempt: { attemptId: 'attempt_1', runId: 'run_1', nodeId: 'semantic_task_1', status: 'running', attemptNumber: 1 },
-        executionBinding: { bindingId: 'binding_1', attemptId: 'attempt_1', acgNodeId: 'deliver', resourceId: 'resource_1', agentId: 'agent_1', modelId: 'model_1', metadata: {} },
+        resourceUse: { ignoredInternalKey: 'binding_1', attemptId: 'attempt_1', acgNodeId: 'deliver', resourceId: 'resource_1', agentId: 'agent_1', modelId: 'model_1', metadata: {} },
         executions: [{ stepExecutionId: 'step_execution_1', runId: 'run_1', nodeId: 'semantic_task_1', attemptId: 'attempt_1', status: 'running' }]
       }]
     }
     const records = [2, 1].map(iteration => ({
       operationId: `operation_${iteration}`, executionInstanceId: `instance_${iteration}`, runId: 'run_1', stepId: 'deliver',
-      attemptId: 'attempt_1', phase: iteration === 2 ? 'committed' : 'audited', artifactRefs: {}, loopPath: [iteration]
+      attemptId: 'attempt_1', phase: iteration === 2 ? 'committed' : 'audited', sequence: iteration
     }))
     vi.spyOn(agentosRequest, 'get')
       .mockResolvedValueOnce({ data: run } as never)
@@ -375,9 +358,9 @@ describe('AgentOS v2 application API', () => {
 
     expect(result.identityProjection?.status).toBe('available')
     expect(result.stepStates[0].task?.nodeId).toBe('semantic_task_1')
-    expect(result.stepStates[0].currentBinding).toMatchObject({ bindingId: 'binding_1', resourceId: 'resource_1' })
+    expect(result.stepStates[0].resourceUse).toMatchObject({ resourceId: 'resource_1' })
     expect(result.stepStates[0].stepExecutions?.[0].stepExecutionId).toBe('step_execution_1')
-    expect(result.stepStates[0].nodeExecutions?.map(item => item.loopPath)).toEqual([[1], [2]])
+    expect(result.stepStates[0].nodeExecutions?.map(item => item.sequence)).toEqual([1, 2])
     expect(result.stepStates[0].status).toBe('completed')
   })
 
@@ -394,7 +377,7 @@ describe('AgentOS v2 application API', () => {
 
     expect(result.identityProjection).toMatchObject({ status: 'pending' })
     expect(result.executionTree).toBeNull()
-    expect(result.stepStates[0].currentBinding).toEqual({ resourceId: 'legal.drafter' })
+    expect(result.stepStates[0].resourceUse).toBeNull()
   })
 
   it('forwards review concurrency fields and does not swallow conflicts', async () => {

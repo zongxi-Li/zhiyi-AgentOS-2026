@@ -1,4 +1,4 @@
-import type { AcgBlueprint } from './graph'
+import type { GraphProjection } from './graph'
 
 export type WorkflowStatus =
   | 'pending'
@@ -91,48 +91,6 @@ export interface RunMemoryEventsResponse {
   runId: string
   items: RunMemoryEvent[]
   total: number
-}
-export interface WorkflowExecutionState {
-  parentRunId?: string | null
-  sourceRunId?: string | null
-  rerunReason?: string | null
-  retryTargetStepId?: string | null
-  reusedStepIds?: string[]
-  singleStepRetry?: {
-    sourceRunId: string
-    targetStepId: string
-    reason?: string
-    reusedStepIds: string[]
-  }
-  supersedesRunId?: string | null
-  supersededByRunId?: string | null
-  sourcePatchId?: string | null
-  outputRefs?: Record<string, string>
-  outputSummaries?: Record<string, string>
-  contextRefs?: Record<string, string>
-  memoryRefs?: Record<string, string>
-  traceRefs?: Record<string, string>
-  provenanceRefs?: Record<string, string>
-  graphPatchRefs?: string[]
-  resourceBindings?: Record<string, Record<string, unknown>>
-  checkpointId?: string | null
-  graphVersion?: number
-  reviewPayload?: Record<string, unknown> | null
-  consensusResults?: Record<string, Record<string, unknown>>
-  controlFrames?: Array<Record<string, unknown>>
-  loopIterations?: Record<string, number>
-  loopPaths?: Record<string, number[]>
-  planningDiversity?: 'stable' | 'balanced' | 'exploratory'
-  planningSeed?: number | null
-  plannerAlgorithmVersion?: string | null
-  planningCandidateCount?: number
-  selectedPlanningVariantId?: string | null
-  selectedCapabilities?: string[]
-  selectedBindings?: Array<Record<string, string>>
-  planningSelectionReasons?: string[]
-  requestedCapabilityProfile?: 'auto' | 'standard' | 'full'
-  effectiveCapabilityProfile?: 'standard' | 'full'
-  capabilityProfileReason?: string
 }
 export type StepStatus =
   | 'pending'
@@ -234,8 +192,11 @@ export interface WorkflowRun {
   completedStepIds?: string[]
   activeStepIds?: string[]
   skippedStepIds?: string[]
-  executionState?: WorkflowExecutionState
-  acgBlueprint?: AcgBlueprint | null
+  outputs?: Array<{ stepId: string; outputRef: string; summary?: string }>
+  review?: { subjectType?: string; subjectId?: string; controlId?: string; stepId?: string; reasonCode?: string; iteration?: number; approvals?: number; quorum?: number; accepted?: boolean; strategy?: string }
+  lineage?: { parentRunId?: string; sourceRunId?: string; rerunReason?: string; supersedesRunId?: string; supersededByRunId?: string }
+  graphVersion?: number
+  acgBlueprint?: GraphProjection | null
   createdAt?: string
   updatedAt?: string
   runtimeRevision?: number

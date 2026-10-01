@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 import type {
-  AcgBlueprint,
+  GraphProjection,
   WorkspaceDiagnostic,
   WorkspaceEntry,
   WorkspaceEntryKind,
@@ -31,7 +31,7 @@ export interface WorkbenchInspectorContext extends WorkbenchContext {
   entry: WorkspaceEntry | null
   graphNode: WorkspaceGraphNode | null
   available: boolean
-  graph: AcgBlueprint | null
+  graph: GraphProjection | null
   runStatus: string | null
 }
 

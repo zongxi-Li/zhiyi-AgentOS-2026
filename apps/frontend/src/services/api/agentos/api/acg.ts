@@ -1,5 +1,5 @@
 import { agentosRequest } from '../client'
-import type { AcgBlueprint, AcgDeliverable, AcgFinalArtifact, AcgStepState, AcgView, NodeExecutionPhase, ProvenanceConsumption, ProvenanceProduction, RunExecutionNode, RunOperationalState, RuntimeInteraction, StepStatus, WorkflowRun, WorkflowTraceExport } from '../types'
+import type { GraphProjection, AcgDeliverable, AcgFinalArtifact, AcgStepState, AcgView, NodeExecutionPhase, ProvenanceConsumption, ProvenanceProduction, RunExecutionNode, RuntimeInteraction, StepStatus, WorkflowRun, WorkflowTraceExport } from '../types'
 import { runPath } from '../paths'
 import axios from 'axios'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
@@ -45,32 +45,22 @@ const identityStepStatus = (phase: NodeExecutionPhase): StepStatus => ({
   cancelled: 'cancelled'
 }[phase] as StepStatus)
 
-const compareLoopPath = (left: number[], right: number[]) => {
-  const length = Math.max(left.length, right.length)
-  for (let index = 0; index < length; index += 1) {
-    const difference = (left[index] ?? -1) - (right[index] ?? -1)
-    if (difference) return difference
-  }
-  return 0
-}
-
 const projectIdentityStepState = (
   base: AcgStepState,
   identityNode: RunExecutionNode | undefined,
-  operational: RunOperationalState | null
+  lifecycles: import('../types/identity').NodeLifecycleQuery[]
 ): AcgStepState => {
-  if (!identityNode || !operational) return base
+  if (!identityNode) return base
   const attempts = [...identityNode.attempts].sort((left, right) =>
     left.attempt.attemptNumber - right.attempt.attemptNumber
   )
   const attemptNumberById = new Map(attempts.map(item => [item.attempt.attemptId, item.attempt.attemptNumber]))
   const nodeIds = new Set([base.stepId, identityNode.task.taskId, identityNode.acgNodeId].filter(Boolean))
-  const nodeExecutions = operational.nodeExecutions
+  const nodeExecutions = lifecycles
     .filter(item => nodeIds.has(item.stepId))
     .sort((left, right) => {
       const attemptDifference = (attemptNumberById.get(left.attemptId) || 0) - (attemptNumberById.get(right.attemptId) || 0)
-      return attemptDifference || compareLoopPath(left.loopPath, right.loopPath)
-        || left.executionInstanceId.localeCompare(right.executionInstanceId)
+      return attemptDifference || left.sequence - right.sequence
     })
   const latestAttempt = attempts[attempts.length - 1]
   const latestExecution = nodeExecutions[nodeExecutions.length - 1]
@@ -80,13 +70,12 @@ const projectIdentityStepState = (
     status: latestExecution ? identityStepStatus(latestExecution.phase) : base.status,
     attempt: latestAttempt?.attempt.attemptNumber ?? base.attempt,
     retryCount: Math.max(0, attempts.length - 1),
-    currentBinding: latestAttempt?.executionBinding || base.currentBinding,
+    resourceUse: latestAttempt?.resourceUse || base.resourceUse,
     attempts: attempts.map(item => ({
       attemptId: item.attempt.attemptId,
       attemptNumber: item.attempt.attemptNumber,
-      bindingId: item.executionBinding?.bindingId,
-      agentName: item.executionBinding?.agentId,
-      modelName: item.executionBinding?.modelId,
+      agentName: item.resourceUse?.agentId,
+      modelName: item.resourceUse?.modelId,
       status: item.attempt.status === 'succeeded' ? 'completed' : item.attempt.status as StepStatus,
       startedAt: item.attempt.startedAt || undefined,
       endedAt: item.attempt.finishedAt,
@@ -144,7 +133,7 @@ export const createAcgApi = (getApi: () => AcgApiDependencies) => ({
       ? traceResult.value
       : { runId, missionId: run.missionId, workflowId: run.workflowId, domain: run.domain, status: run.status, eventCount: 0, events: [] }
     const identityResult = await identityRequest
-    const outputRefs = Object.entries(run.executionState?.outputRefs || {}) as Array<[string, string]>
+    const outputRefs = (run.outputs || []).map(item => [item.stepId, item.outputRef] as [string, string])
     const outputResults: PromiseSettledResult<AcgDeliverable>[] = outputRefs.length
       ? await Promise.allSettled(outputRefs.map(async ([stepId, outputRef]) => {
         const response = await agentosRequest.get<{ content: Record<string, any> }>(
@@ -223,16 +212,16 @@ export const createAcgApi = (getApi: () => AcgApiDependencies) => ({
       agentName: step.agentName,
       attempt: step.attempt || 0,
       retryCount: step.retryCount || 0,
-      currentBinding: run.executionState?.resourceBindings?.[step.stepId] || null,
+      resourceUse: null,
       outputSummary: step.outputSummary
-    }, identityNodesByAcgId.get(step.stepId), executionTree?.operational || null))
+    }, identityNodesByAcgId.get(step.stepId), executionTree?.lifecycles || []))
     return {
       runId,
       status: run.status,
       engine: run.runtimeEngine || 'acg',
       runtimeRevision: run.runtimeRevision,
-      acgBlueprint: graph as AcgBlueprint | null,
-      graphVersion: graph?.graphVersion || run.executionState?.graphVersion || null,
+      acgBlueprint: graph as GraphProjection | null,
+      graphVersion: graph?.graphVersion || run.graphVersion || null,
       completedStepIds: run.completedStepIds || [],
       activeStepIds: run.activeStepIds || [],
       stepStates,
@@ -257,7 +246,9 @@ export const createAcgApi = (getApi: () => AcgApiDependencies) => ({
         integrityStatus: provenance.integrityStatus || 'invalid'
       },
       executionTree,
-      operational: executionTree?.operational || null,
+      lineage: executionTree?.lineage || run.lineage || null,
+      lifecycles: executionTree?.lifecycles || [],
+      operational: null,
       identityProjection: identityResult.projection
     }
   }

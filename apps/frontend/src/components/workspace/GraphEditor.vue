@@ -30,10 +30,10 @@
 import { computed } from 'vue'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import AcgTopologyGraph from '@/components/agentos/AcgTopologyGraph.vue'
-import type { AcgBlueprint, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceGraphNode } from '@/services/api/agentos'
 
 const props = defineProps<{
-  graph: AcgBlueprint | null
+  graph: GraphProjection | null
   graphNodes: WorkspaceGraphNode[]
   selectedSemanticTaskKey: string | null
   focusNodeId: string | null
@@ -48,8 +48,8 @@ const emit = defineEmits<{
 }>()
 
 const graphVersion = computed(() => {
-  const snapshot = props.graph as (AcgBlueprint & { graphVersion?: number }) | null
-  return snapshot?.graphVersion || snapshot?.metadata?.graphVersion
+  const snapshot = props.graph as (GraphProjection & { graphVersion?: number }) | null
+  return snapshot?.graphVersion
 })
 
 const resolveSemanticKey = (nodeId: string) => props.graphNodes.find(node => node.acgNodeId === nodeId)?.semanticTaskKey || null

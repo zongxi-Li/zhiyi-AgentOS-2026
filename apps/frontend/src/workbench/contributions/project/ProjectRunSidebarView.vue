@@ -124,7 +124,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { NodeExecutionPhase } from '@/services/api/agentos'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
@@ -138,7 +138,7 @@ const props = defineProps<{
   graphNode: WorkspaceGraphNode | null
   graphNodes: WorkspaceGraphNode[]
   runId: string | null
-  graph: AcgBlueprint | null
+  graph: GraphProjection | null
   runStatus: string | null
   historical: boolean
   context?: WorkbenchInspectorContext
@@ -179,8 +179,8 @@ const latestAttemptId = computed(() => props.graphNode?.attemptId || props.entry
 const nodeCount = computed(() => props.graph?.nodes?.length ?? (props.graphNodes.length > 0 ? props.graphNodes.length : null))
 const edgeCount = computed(() => props.graph?.edges?.length ?? null)
 const graphVersion = computed(() => {
-  const graph = props.graph as (AcgBlueprint & { graphVersion?: number }) | null
-  return graph?.graphVersion ?? graph?.metadata?.graphVersion ?? props.entry?.graphVersion ?? null
+  const graph = props.graph as (GraphProjection & { graphVersion?: number }) | null
+  return graph?.graphVersion ?? graph?.graphVersion ?? props.entry?.graphVersion ?? null
 })
 const graphIdentity = computed(() => {
   if (!props.graph && !props.graphNodes.length) return '等待编译'

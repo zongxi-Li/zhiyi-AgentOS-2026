@@ -132,7 +132,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { ArrowUp, ChatDotRound, Cpu, Loading, Monitor, MoreFilled, Plus, Share } from '@element-plus/icons-vue'
-import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 
 type MessageRole = 'assistant' | 'user'
@@ -143,7 +143,7 @@ const props = withDefaults(defineProps<{
   entry?: WorkspaceEntry | null
   graphNode?: WorkspaceGraphNode | null
   graphNodes?: WorkspaceGraphNode[]
-  graph?: AcgBlueprint | null
+  graph?: GraphProjection | null
   runId?: string | null
   runStatus?: string | null
   runtimeObservation?: RuntimeObservation | null

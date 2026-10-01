@@ -466,7 +466,7 @@
           </section>
           <RuntimeAuditTimeline
             :events="acgAuditEvents"
-            :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+            :patch-refs="[]"
           />
         </div>
       </template>
@@ -502,7 +502,7 @@
               v-if="acgView"
               :view="acgView"
               :audit-events="acgAuditEvents"
-              :patch-refs="activeRun?.executionState?.graphPatchRefs || []"
+              :patch-refs="[]"
               :runtime-store="runtimeEventStore"
               @export-audit="exportAudit"
             />

@@ -65,15 +65,20 @@ class AgentOsObservationControllerTest {
 
         String graphPath = "/ai/agentos/v2/runs/run_001/graph";
         gateway.getResponses.put(graphPath, RecordingAgentOsGateway.response(200, Map.of(
-                "runId", "run_001", "nodes", List.of())));
+                "runId", "run_001", "nodes", List.of(Map.of("nodeId", "n", "metadata", Map.of("taskId", "t", "scheduler", "secret"))),
+                "compiledPackage", Map.of("secret", "secret"))));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/graph", "run_001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.runId").value("run_001"));
+                .andExpect(jsonPath("$.runId").value("run_001"))
+                .andExpect(jsonPath("$.nodes[0].display.taskId").value("t"))
+                .andExpect(jsonPath("$.nodes[0].metadata").doesNotExist())
+                .andExpect(jsonPath("$.compiledPackage").doesNotExist());
         assertEquals(graphPath, gateway.lastGetPath);
 
         String treePath = "/ai/agentos/v2/runs/run%20001/execution-tree";
         gateway.getResponses.put(treePath, RecordingAgentOsGateway.response(200, Map.of(
-                "run", Map.of("runId", "run 001"), "nodes", List.of())));
+                "run", Map.of("runId", "run 001", "graphVersion", 1), "nodes", List.of(),
+                "blueprint", Map.of("graph", Map.of("nodes", List.of(), "edges", List.of())))));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/execution-tree", "run 001"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.run.runId").value("run 001"));

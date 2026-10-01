@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import com.kinlin.ai.projection.run.dto.RunQuery;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -95,13 +97,16 @@ class AgentOsRunControllerTest {
     void getRunUsesEncodedRunIdentity() throws Exception {
         String path = "/ai/agentos/v2/runs/run%20001";
         gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of(
-                "runId", "run 001", "status", "running"
+                "runId", "run 001", "status", "running", "executionState", Map.of("checkpointId", "secret")
         )));
 
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}", "run 001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("running"));
+                .andExpect(jsonPath("$.status").value("running"))
+                .andExpect(jsonPath("$.executionState").doesNotExist())
+                .andExpect(jsonPath("$.checkpointId").doesNotExist());
 
+        assertInstanceOf(RunQuery.class, new AgentOsRunController(gateway).getRun("run 001").getBody());
         assertEquals(path, gateway.lastGetPath);
     }
 

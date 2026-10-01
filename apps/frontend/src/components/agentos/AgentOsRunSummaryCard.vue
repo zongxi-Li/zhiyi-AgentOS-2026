@@ -80,12 +80,9 @@ const summary = computed(() => {
   const viewSteps = props.view?.stepStates || []
   const steps = runSteps.length ? runSteps : viewSteps
   const count = (stepStatus: string) => steps.filter(step => step.status === stepStatus).length
-  const patchRefs = new Set([
-    ...(props.run?.executionState?.graphPatchRefs || []),
-    ...viewSteps.map(step => step.sourcePatchId).filter((value): value is string => Boolean(value))
-  ])
+  const patchRefs = new Set<string>()
   return {
-    graphVersion: props.view?.graphVersion ?? props.run?.executionState?.graphVersion ?? null,
+    graphVersion: props.view?.graphVersion ?? props.run?.graphVersion ?? null,
     totalSteps: props.progress?.totalSteps ?? steps.length,
     completedSteps: props.progress?.completedSteps ?? count('completed'),
     activeSteps: props.progress?.activeStepIds?.length ?? props.run?.activeStepIds?.length ?? count('running'),

@@ -1,4 +1,4 @@
-import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode, WorkspaceMission } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceEntry, WorkspaceGraphNode, WorkspaceMission } from '@/services/api/agentos'
 import type { RuntimeObservation, RuntimeTraceObservation, ModelOutputItem } from './observation'
 import { projectModelOutput } from './observation'
 import { projectRunProgress, type RunProgressTaskGroup } from './runProgress'
@@ -55,7 +55,7 @@ export interface RunDocumentModel {
 export interface RunDocumentProjectionInput {
   runId: string | null
   mission: WorkspaceMission
-  graph?: AcgBlueprint | null
+  graph?: GraphProjection | null
   graphNodes: WorkspaceGraphNode[]
   entries: WorkspaceEntry[]
   runtimeObservation: RuntimeObservation | null
@@ -274,7 +274,7 @@ const plannerSymbol = (
   runtimeStore: RuntimeEventStore | null | undefined,
   traces: RuntimeTraceObservation[],
   graphNodes: WorkspaceGraphNode[],
-  graph: AcgBlueprint | null | undefined
+  graph: GraphProjection | null | undefined
 ): RunDocumentSymbol | null => {
   const planning = runtimeStore?.planning
   // A materialized graph is a verified planning output. The planner event
@@ -364,7 +364,7 @@ const acgSymbol = (
   plannerItems: ModelOutputItem[],
   runtimeStore: RuntimeEventStore | null | undefined,
   graphNodes: WorkspaceGraphNode[],
-  graph: AcgBlueprint | null | undefined
+  graph: GraphProjection | null | undefined
 ): RunDocumentSymbol => {
   const planning = runtimeStore?.planning
   const graphResult = [...plannerItems].reverse().find(item => item.kind === 'graph_compiled')

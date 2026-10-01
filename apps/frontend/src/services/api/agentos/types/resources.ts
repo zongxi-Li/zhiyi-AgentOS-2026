@@ -1,4 +1,4 @@
-import type { ExecutionBinding } from './identity'
+import type { ResourceUseQuery } from './identity'
 
 export type RuntimeResourceType = 'agent' | 'model' | 'embedding' | 'tool' | 'worker' | 'skill' | 'mcp' | string
 export type RuntimeResourceHealth = 'unknown' | 'online' | 'degraded' | 'offline' | string
@@ -53,7 +53,8 @@ export interface ResourceRegistrationRequest {
   profile: RuntimeResourceProfile
   snapshot: RuntimeResourceSnapshot
 }
-export interface ResourceBindingObservation extends ExecutionBinding {
+export interface ResourceBindingObservation extends ResourceUseQuery {
+  attemptId: string
   taskId: string
   semanticTaskKey?: string | null
   attemptNumber: number
@@ -61,8 +62,6 @@ export interface ResourceBindingObservation extends ExecutionBinding {
   startedAt?: string | null
   finishedAt?: string | null
   deploymentTier: RuntimeDeploymentTier | null
-  placementReasons: string[]
-  scoreFactors: Record<string, number>
 }
 export interface ResourceFailoverObservation {
   eventId: string

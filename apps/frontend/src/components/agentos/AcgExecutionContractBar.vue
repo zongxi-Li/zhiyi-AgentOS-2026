@@ -1,32 +1,19 @@
 <template>
-  <section class="execution-contract" aria-label="ACG 执行合同">
+  <section class="execution-contract" aria-label="ACG 运行摘要">
     <div class="contract-heading">
-      <strong>执行合同</strong>
+      <strong>运行摘要</strong>
       <span class="projection-state" :class="view.identityProjection?.status || 'pending'">
         {{ projectionLabel }}
       </span>
     </div>
     <div class="contract-facts">
       <div>
-        <span>Package</span>
-        <code :title="packageIdentity?.packageId || ''">{{ shortId(packageIdentity?.packageId) }}</code>
-        <small v-if="packageIdentity">v{{ packageIdentity.packageVersion }}</small>
-        <button v-if="packageIdentity?.packageId" type="button" title="复制 Package ID" @click="copy(packageIdentity.packageId)">
+        <span>Graph</span>
+        <code :title="blueprint?.graphId || ''">{{ shortId(blueprint?.graphId) }}</code>
+        <small v-if="blueprint">v{{ blueprint.graphVersion }}</small>
+        <button v-if="blueprint?.graphId" type="button" title="复制 Graph ID" @click="copy(blueprint.graphId)">
           <el-icon><CopyDocument /></el-icon>
         </button>
-      </div>
-      <div>
-        <span>Blueprint</span>
-        <code :title="blueprint?.blueprintId || ''">{{ shortId(blueprint?.blueprintId) }}</code>
-        <small v-if="blueprint">v{{ blueprint.version }}</small>
-        <button v-if="blueprint?.blueprintId" type="button" title="复制 Blueprint ID" @click="copy(blueprint.blueprintId)">
-          <el-icon><CopyDocument /></el-icon>
-        </button>
-      </div>
-      <div>
-        <span>校验</span>
-        <code :title="packageIdentity?.checksum || ''">{{ shortHash(packageIdentity?.checksum) }}</code>
-        <small :title="packageIdentity?.blueprintHash || ''">图 {{ shortHash(packageIdentity?.blueprintHash) }}</small>
       </div>
       <div v-if="lineageItems.length" class="lineage">
         <span>Run 血缘</span>
@@ -38,13 +25,6 @@
           :title="item.value"
           @click="emit('open-run', item.value)"
         >{{ item.label }} · {{ shortId(item.value) }}</button>
-      </div>
-      <div v-if="lineage?.sourcePatchId">
-        <span>Graph Patch</span>
-        <code :title="lineage.sourcePatchId">{{ shortId(lineage.sourcePatchId) }}</code>
-        <button type="button" title="复制 Patch ID" @click="copy(lineage.sourcePatchId)">
-          <el-icon><CopyDocument /></el-icon>
-        </button>
       </div>
     </div>
     <p v-if="view.identityProjection?.message" class="projection-message">{{ view.identityProjection.message }}</p>
@@ -60,9 +40,8 @@ import type { AcgView } from '@/services/api/workflow'
 const props = defineProps<{ view: AcgView }>()
 const emit = defineEmits<{ 'open-run': [runId: string] }>()
 
-const packageIdentity = computed(() => props.view.operational?.package || null)
-const blueprint = computed(() => props.view.executionTree?.blueprint || null)
-const lineage = computed(() => props.view.operational?.lineage || null)
+const blueprint = computed(() => props.view.executionTree?.graph || null)
+const lineage = computed(() => props.view.lineage || null)
 const projectionLabel = computed(() => ({
   available: 'Identity 已同步',
   pending: 'Identity 同步中',
