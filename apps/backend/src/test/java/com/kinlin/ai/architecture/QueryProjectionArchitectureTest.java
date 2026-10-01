@@ -21,7 +21,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.lang.reflect.*;
@@ -51,8 +53,8 @@ class QueryProjectionArchitectureTest {
     private record RawEntityResponse(String typeName, String route) { }
 
     private static final Map<String, RawEntityResponse> ENTITY_RESPONSE_EXCEPTIONS = Map.of(
-            "SearchController#searchMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/messages"),
-            "SearchController#searchAllMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/all-messages"));
+            "SearchController#searchMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/search/messages"),
+            "SearchController#searchAllMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/search/all-messages"));
 
     @Test
     void everyControllerReturnTypeRejectsPlatformEntitiesIncludingNestedBodies() throws Exception {
@@ -95,9 +97,15 @@ class QueryProjectionArchitectureTest {
      */
     private static void assertRegisteredExceptionStillMatches(
             String handler, RawEntityResponse registered, Method method) {
-        GetMapping mapping = method.getAnnotation(GetMapping.class);
+        RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
         assertNotNull(mapping, handler + " must stay a GET route; HTTP method drift invalidates the registry");
-        assertEquals(registered.route(), String.join(",", mapping.value()),
+        assertArrayEquals(new RequestMethod[]{RequestMethod.GET}, mapping.method(), handler + " must stay GET");
+        RequestMapping prefix = AnnotatedElementUtils.findMergedAnnotation(
+                method.getDeclaringClass(), RequestMapping.class);
+        assertNotNull(prefix, handler + " must retain its controller route prefix");
+        assertEquals(1, prefix.value().length, handler + " must have exactly one controller route");
+        assertEquals(1, mapping.value().length, handler + " must have exactly one handler route");
+        assertEquals(registered.route(), prefix.value()[0] + mapping.value()[0],
                 handler + " route changed; update the registry deliberately, never by widening it");
         assertEquals(registered.typeName(), method.getGenericReturnType().getTypeName(),
                 handler + " no longer answers with the pinned raw entity response; if it was migrated to a "
@@ -106,10 +114,14 @@ class QueryProjectionArchitectureTest {
 
     @Test
     void registeredExceptionsRejectExpansionStalenessAndRouteDrift() throws Exception {
-        RawEntityResponse registered = new RawEntityResponse(RAW_MESSAGE_LIST, "/messages");
+        RawEntityResponse registered = new RawEntityResponse(RAW_MESSAGE_LIST, "/search/messages");
         assertDoesNotThrow(() -> assertRegisteredExceptionStillMatches("Fixture#valid", registered,
                 ExceptionFixtures.class.getDeclaredMethod("valid")));
-        for (String name : List.of("expanded", "stale", "rerouted")) {
+        assertDoesNotThrow(() -> assertRegisteredExceptionStillMatches("Fixture#alias", registered,
+                ExceptionFixtures.class.getDeclaredMethod("alias")));
+        assertThrows(AssertionError.class, () -> assertRegisteredExceptionStillMatches("Fixture#prefix", registered,
+                ChangedPrefixFixture.class.getDeclaredMethod("valid")));
+        for (String name : List.of("expanded", "stale", "rerouted", "post", "extraRoute")) {
             Method method = ExceptionFixtures.class.getDeclaredMethod(name);
             assertThrows(AssertionError.class,
                     () -> assertRegisteredExceptionStillMatches("Fixture#" + name, registered, method), name);
@@ -123,9 +135,25 @@ class QueryProjectionArchitectureTest {
         }
     }
 
+    @RequestMapping("/changed-search-prefix")
+    private static class ChangedPrefixFixture {
+        @GetMapping("/messages")
+        ResponseEntity<List<Message>> valid() { return null; }
+    }
+
+    @RequestMapping("/search")
     private static class ExceptionFixtures {
         @GetMapping("/messages")
         ResponseEntity<List<Message>> valid() { return null; }
+
+        @GetMapping(path = "/messages")
+        ResponseEntity<List<Message>> alias() { return null; }
+
+        @PostMapping("/messages")
+        ResponseEntity<List<Message>> post() { return null; }
+
+        @GetMapping({"/messages", "/extra"})
+        ResponseEntity<List<Message>> extraRoute() { return null; }
 
         @GetMapping("/messages")
         ResponseEntity<List<User>> expanded() { return null; }

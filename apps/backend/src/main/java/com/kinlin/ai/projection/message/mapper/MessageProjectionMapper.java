@@ -96,8 +96,9 @@ public final class MessageProjectionMapper {
         }
         if (value instanceof Float || value instanceof Double) {
             double converted = ((Number) value).doubleValue();
+            // Long.MAX_VALUE rounds to 2^63 as a double; the upper bound must be exclusive.
             if (!Double.isFinite(converted) || converted != Math.rint(converted)
-                    || converted < Long.MIN_VALUE || converted > Long.MAX_VALUE) {
+                    || converted < -0x1p63 || converted >= 0x1p63) {
                 return null;
             }
             return (long) converted;

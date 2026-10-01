@@ -157,21 +157,44 @@ class MessageProjectionSerializationTest {
         assertNull(query.reasoningPhaseMs());
         assertNull(query.tokensUsed(), "越界整型 double 不得钳制到 Long.MAX_VALUE");
 
-        Map<String, Object> nonFinite = new HashMap<>();
-        nonFinite.put("confidence", Double.POSITIVE_INFINITY);          // 旧实现产出 JSON 字符串 "Infinity"
-        MessageMetadataQuery infinite = MessageProjectionMapper.toQuery(
-                message(Message.MessageRole.ASSISTANT, nonFinite)).metadata();
-        assertNull(infinite.confidence());
-        nonFinite.put("confidence", Float.NaN);
-        assertNull(MessageProjectionMapper.toQuery(message(Message.MessageRole.ASSISTANT, nonFinite)).metadata().confidence());
-        nonFinite.put("confidence", new java.math.BigDecimal("1e999"));
-        assertNull(MessageProjectionMapper.toQuery(message(Message.MessageRole.ASSISTANT, nonFinite)).metadata().confidence());
+        for (Number invalid : List.of(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+                Double.NaN, Float.NaN, new java.math.BigDecimal("1e999"))) {
+            MessageQuery nonFinite = MessageProjectionMapper.toQuery(message(
+                    Message.MessageRole.ASSISTANT, Map.of("confidence", invalid)));
+            assertNull(nonFinite.metadata().confidence());
+            String actual = jackson.writeValueAsString(nonFinite);
+            assertTrue(jackson.readTree(actual).get("metadata").get("confidence").isNull());
+            assertFalse(actual.contains("Infinity") || actual.contains("NaN"),
+                    "the actual non-finite input must not escape through serialization");
+        }
 
         String encoded = jackson.writeValueAsString(MessageProjectionMapper.toQuery(message(
                 Message.MessageRole.ASSISTANT, metadata)));
-        assertFalse(encoded.contains("Infinity") || encoded.contains("NaN"),
-                "非有限数不得以任何形式进入 JSON");
         assertFalse(encoded.contains("-9223372036854775808"), "不得出现回绕值");
+    }
+
+    @Test
+    void floatingCountsRespectTheExclusiveUpperBoundAndExactLowerBound() throws Exception {
+        for (Number invalid : List.of(0x1p63, 0x1p63f, (double) Long.MAX_VALUE,
+                Math.nextDown(-0x1p63), Double.POSITIVE_INFINITY, Double.NaN)) {
+            MessageQuery query = MessageProjectionMapper.toQuery(message(
+                    Message.MessageRole.ASSISTANT, Map.of("totalTokens", invalid)));
+            assertNull(query.metadata().totalTokens(), invalid + " must not clamp or wrap");
+            assertTrue(jackson.readTree(jackson.writeValueAsString(query))
+                    .get("metadata").get("totalTokens").isNull());
+        }
+        for (Number minimum : List.of(-0x1p63, -0x1p63f)) {
+            MessageQuery query = MessageProjectionMapper.toQuery(message(
+                    Message.MessageRole.ASSISTANT, Map.of("totalTokens", minimum)));
+            assertEquals(Long.MIN_VALUE, query.metadata().totalTokens());
+            assertEquals(Long.MIN_VALUE, jackson.readTree(jackson.writeValueAsString(query))
+                    .get("metadata").get("totalTokens").longValue());
+        }
+        MessageQuery belowMaximum = MessageProjectionMapper.toQuery(message(
+                Message.MessageRole.ASSISTANT, Map.of("totalTokens", Math.nextDown(0x1p63))));
+        assertEquals(9223372036854774784L, belowMaximum.metadata().totalTokens());
+        assertEquals(9223372036854774784L, jackson.readTree(jackson.writeValueAsString(belowMaximum))
+                .get("metadata").get("totalTokens").longValue());
     }
 
     @Test
