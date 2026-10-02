@@ -5,6 +5,7 @@ import com.kinlin.ai.entity.Role;
 import com.kinlin.ai.repository.RoleRepository;
 import com.kinlin.ai.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,7 +48,10 @@ public class RoleService {
     }
 
     /**
-     * 创建自定义角色
+     * 创建自定义角色。
+     *
+     * <p>不加 @CacheEvict：新角色是全新 UUID，"roles" 缓存中不可能存在
+     * 该 key 的旧条目，无 stale 可逐出。</p>
      */
     @Transactional
     public Role createRole(RoleCreateRequest request, UUID userId) {
@@ -72,8 +76,12 @@ public class RoleService {
     }
 
     /**
-     * 更新角色
+     * 更新角色。
+     *
+     * <p>@CacheEvict 精确逐出 "roles" 缓存该条目：Redis 为共享缓存，
+     * 多实例部署时任意实例的更新对所有实例立即生效，杜绝 stale。</p>
      */
+    @CacheEvict(cacheNames = "roles", key = "#roleId")
     @Transactional
     public Optional<Role> updateRole(UUID roleId, RoleCreateRequest request, UUID userId) {
         return roleRepository.findById(roleId)
@@ -99,8 +107,9 @@ public class RoleService {
     }
 
     /**
-     * 删除角色
+     * 删除角色（@CacheEvict 防止已删角色继续被缓存命中读取）。
      */
+    @CacheEvict(cacheNames = "roles", key = "#roleId")
     @Transactional
     public boolean deleteRole(UUID roleId, UUID userId) {
         return roleRepository.findById(roleId)

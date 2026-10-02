@@ -1,0 +1,22 @@
+# J1.4B Redis 缓存契约 profile（自足，不叠加 pg-it——@ActiveProfiles 会沿类层次
+# 合并，若两 profile 同活，pg-it 的 spring.autoconfigure.exclude 会把 Redis
+# 自动配置整体排除，RedisConnectionFactory 就不存在了）。
+#
+# 与生产一致的完整链：真实 PostgreSQL（容器动态注入）+ Flyway migrate +
+# Hibernate validate + OSIV=false（继承 canonical）+ RedisCacheManager（TTL 1h）。
+# Redis host/port 由 RedisIntegrationTestBase 动态注入，不依赖固定端口。
+spring:
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+    baseline-on-migrate: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  cache:
+    type: redis
+
+logging:
+  level:
+    com.kinlin.ai: INFO

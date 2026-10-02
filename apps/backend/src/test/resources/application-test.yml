@@ -18,11 +18,13 @@ spring:
 
   cache:
     type: simple
-  
-  data:
-    redis:
-      host: localhost
-      port: 6379
+
+  # dev 同款：真禁用 Redis（spring.data.redis.enabled 不是合法开关，
+  # 旧的 data.redis.host/port 只会创建无人使用的连接工厂）。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
 
 management:
   health:

@@ -1,131 +1,84 @@
 package com.kinlin.ai.service;
 
 import com.kinlin.ai.entity.Role;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
- * 角色切换性能优化服务
- * 通过缓存和预加载优化角色切换性能
+ * 角色切换缓存服务（J1.4B 收敛后）
+ *
+ * <p>缓存权威唯一化：Spring Cache（生产 = RedisCacheManager "roles"，TTL 1h）是
+ * 唯一共享 cache owner。JVM 本地双层缓存（可变实体 Map + 派生上下文 Map）已删除——
+ * 它缓存可变 Role 实体、跨实例不同步、且本地逐出方法只清本地不清 Redis，
+ * 曾导致角色更新后最长 1 小时 stale。</p>
+ *
+ * <p>失效协议：RoleService 的 update/delete 写路径用 @CacheEvict 精确逐出，
+ * Redis 为共享存储，多实例部署时任意实例的写对所有实例生效。</p>
+ *
+ * <p>Redis 不可用时按 degrade-to-DB 语义降级（CacheConfig 的 CacheErrorHandler），
+ * 请求回落数据库，不阻断核心链路。</p>
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class RoleSwitchOptimizer {
 
     private final RoleService roleService;
-    
-    // 角色配置缓存
-    private final Map<UUID, Role> roleCache = new ConcurrentHashMap<>();
-    
-    // 角色上下文缓存（预加载）
-    private final Map<UUID, Map<String, Object>> roleContextCache = new ConcurrentHashMap<>();
-    
-    public RoleSwitchOptimizer(RoleService roleService) {
-        this.roleService = roleService;
-    }
-    
+
     /**
-     * 获取角色（带缓存）
+     * 获取角色（Spring Cache "roles"，miss 时由数据库加载）。
      */
     @Cacheable(value = "roles", key = "#roleId")
     public Role getRoleCached(UUID roleId) {
-        // 先从内存缓存获取
-        Role cached = roleCache.get(roleId);
-        if (cached != null) {
-            log.debug("从内存缓存获取角色: {}", roleId);
-            return cached;
-        }
-        
-        // 从数据库获取
         Role role = roleService.getRole(roleId)
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + roleId));
-        
-        // 存入缓存
-        roleCache.put(roleId, role);
-        
-        // 预加载角色上下文
-        preloadRoleContext(roleId);
-        
-        log.debug("从数据库加载角色并缓存: {}", roleId);
+        log.debug("从数据库加载角色: {}", roleId);
         return role;
     }
-    
+
     /**
-     * 预加载角色上下文
+     * 获取角色上下文（快速访问）。
+     *
+     * <p>纯派生数据，按需从缓存的 Role 构建，不再维护第二份本地缓存——
+     * 构建成本为单对象字段拷贝，此前"预加载"无真实性能证据。</p>
      */
-    private void preloadRoleContext(UUID roleId) {
-        if (roleContextCache.containsKey(roleId)) {
-            return; // 已经预加载
-        }
-        
-        try {
-            Role role = roleCache.get(roleId);
-            if (role == null) {
-                role = roleService.getRole(roleId).orElse(null);
-                if (role == null) return;
-                roleCache.put(roleId, role);
-            }
-            
-            // 构建角色上下文
-            Map<String, Object> context = buildRoleContext(role);
-            roleContextCache.put(roleId, context);
-            
-            log.debug("预加载角色上下文: {}", roleId);
-        } catch (Exception e) {
-            log.warn("预加载角色上下文失败: {}", roleId, e);
-        }
+    public Map<String, Object> getRoleContext(UUID roleId) {
+        Role role = getRoleCached(roleId);
+        return buildRoleContext(role);
     }
-    
+
     /**
      * 构建角色上下文
      */
     private Map<String, Object> buildRoleContext(Role role) {
         Map<String, Object> context = new HashMap<>();
-        
+
         context.put("role_id", role.getId().toString());
         context.put("name", role.getName());
         context.put("description", role.getDescription());
         context.put("personality", role.getPersonality());
         context.put("system_prompt", role.getSystemPrompt());
         context.put("dialogue_style", role.getDialogueStyle());
-        
+
         return context;
     }
-    
+
     /**
-     * 获取角色上下文（快速访问）
-     */
-    public Map<String, Object> getRoleContext(UUID roleId) {
-        // 先从缓存获取
-        Map<String, Object> context = roleContextCache.get(roleId);
-        if (context != null) {
-            return context;
-        }
-        
-        // 如果缓存中没有，获取角色并构建上下文
-        Role role = getRoleCached(roleId);
-        context = buildRoleContext(role);
-        roleContextCache.put(roleId, context);
-        
-        return context;
-    }
-    
-    /**
-     * 预热常用角色
+     * 预热内置角色（启动期，数量固定且极小，有界成本；失败不阻止应用启动）。
      */
     public void warmupCommonRoles() {
         log.info("开始预热常用角色...");
-        
+
         try {
             // 获取所有内置角色
             var builtinRoles = roleService.getBuiltinRoles();
-            
+
             for (Role role : builtinRoles) {
                 try {
                     getRoleCached(role.getId());
@@ -134,43 +87,10 @@ public class RoleSwitchOptimizer {
                     log.warn("预热角色失败: {}", role.getId(), e);
                 }
             }
-            
+
             log.info("常用角色预热完成，共预热 {} 个角色", builtinRoles.size());
         } catch (Exception e) {
             log.error("预热常用角色失败", e);
         }
     }
-    
-    /**
-     * 清除角色缓存
-     */
-    public void clearRoleCache(UUID roleId) {
-        roleCache.remove(roleId);
-        roleContextCache.remove(roleId);
-        log.debug("清除角色缓存: {}", roleId);
-    }
-    
-    /**
-     * 清除所有缓存
-     */
-    public void clearAllCache() {
-        roleCache.clear();
-        roleContextCache.clear();
-        log.info("清除所有角色缓存");
-    }
-    
-    /**
-     * 获取缓存统计
-     */
-    public Map<String, Object> getCacheStats() {
-        Map<String, Object> stats = new ConcurrentHashMap<>();
-        stats.put("role_cache_size", roleCache.size());
-        stats.put("context_cache_size", roleContextCache.size());
-        return stats;
-    }
 }
-
-
-
-
-

@@ -68,23 +68,6 @@ public class RoleController {
             return ResponseEntity.notFound().build();
         }
     }
-    
-    /**
-     * 获取缓存统计
-     */
-    @GetMapping("/cache/stats")
-    public ResponseEntity<java.util.Map<String, Object>> getCacheStats() {
-        return ResponseEntity.ok(roleSwitchOptimizer.getCacheStats());
-    }
-    
-    /**
-     * 清除角色缓存
-     */
-    @DeleteMapping("/cache/{roleId}")
-    public ResponseEntity<Void> clearRoleCache(@PathVariable UUID roleId) {
-        roleSwitchOptimizer.clearRoleCache(roleId);
-        return ResponseEntity.ok().build();
-    }
 
     /**
      * 创建自定义角色
