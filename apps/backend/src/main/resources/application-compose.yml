@@ -17,6 +17,9 @@ spring:
 app:
   upload:
     dir: /app/data/uploads
+  jwt:
+    # J1.4B fail-closed：与 prod 同款无默认占位符（说明见 application-prod.yml）。
+    secret: ${APP_JWT_SECRET}
 
 logging:
   level:

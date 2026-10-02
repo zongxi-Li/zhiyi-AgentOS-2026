@@ -1,10 +1,10 @@
 package com.kinlin.ai.util;
 
+import com.kinlin.ai.config.JwtProperties;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
@@ -18,19 +18,22 @@ import java.util.function.Function;
 /**
  * JWT工具类
  * 用于生成和验证JWT Token
+ *
+ * <p>secret/expiration 自 J1.4B 起由 typed {@link JwtProperties} 持有
+ * （启动期 fail-closed 校验），本类不再直接 @Value。</p>
  */
 @Slf4j
 @Component
 public class JwtUtil {
 
-    @Value("${app.jwt.secret}")
-    private String secret;
+    private final JwtProperties properties;
 
-    @Value("${app.jwt.expiration:86400000}")
-    private Long expiration;
+    public JwtUtil(JwtProperties properties) {
+        this.properties = properties;
+    }
 
     private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(properties.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -52,7 +55,7 @@ public class JwtUtil {
                 .claims(claims)
                 .subject(subject)
                 .issuedAt(new Date(System.currentTimeMillis()))
-                .expiration(new Date(System.currentTimeMillis() + expiration))
+                .expiration(new Date(System.currentTimeMillis() + properties.getExpiration()))
                 .signWith(getSigningKey())
                 .compact();
     }

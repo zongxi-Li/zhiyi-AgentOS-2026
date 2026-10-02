@@ -18,6 +18,13 @@ spring:
 app:
   upload:
     dir: /app/data/uploads
+  jwt:
+    # J1.4B fail-closed：生产禁止回落仓库默认 secret。
+    # 打包部署：docker-entrypoint.sh 经 configtree 注入 app.jwt.secret
+    # （Docker secret jwt_secret，缺失/为空即 exit 78 拒绝启动），
+    # 且 configtree 导入源优先级高于本文件。
+    # 裸跑 prod：APP_JWT_SECRET 未设置 → 占位符解析失败 → 应用启动失败。
+    secret: ${APP_JWT_SECRET}
 
 ai:
   internal:
