@@ -1,4 +1,4 @@
-import type { AcgBlueprint } from './graph'
+import type { GraphProjection } from './graph'
 import type { WorkflowStatus } from './workflow'
 import type { InputAttachment } from './artifacts'
 
@@ -85,7 +85,7 @@ export interface WorkspaceDiagnostic {
 export interface MissionWorkspaceProjection {
   mission: WorkspaceMission
   activeRun?: WorkspaceRunSummary | null
-  activeGraph?: AcgBlueprint | null
+  activeGraph?: GraphProjection | null
   runs: WorkspaceRunSummary[]
   entries: WorkspaceEntry[]
   graphNodes: WorkspaceGraphNode[]

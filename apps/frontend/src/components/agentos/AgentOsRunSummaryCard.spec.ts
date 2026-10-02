@@ -13,7 +13,7 @@ const progress: WorkflowProgress = {
 
 const run: WorkflowRun = {
   runId: 'run_1', taskId: 'task_1', workflowId: 'workflow_1', domain: 'native', status: 'running',
-  steps: [], skippedStepIds: ['step_2'], executionState: { graphVersion: 3, graphPatchRefs: ['patch_1'] }
+  steps: [], skippedStepIds: ['step_2'], graphVersion: 3
 }
 
 describe('AgentOsRunSummaryCard', () => {
@@ -31,7 +31,7 @@ describe('AgentOsRunSummaryCard', () => {
     })
     expect(wrapper.text()).toContain('运行态摘要')
     expect(wrapper.text()).toContain('3')
-    expect(wrapper.text()).toContain('1 个 GraphPatch 引用')
+    expect(wrapper.text()).not.toContain('GraphPatch 引用')
     expect(wrapper.text()).toContain('2 次恢复')
     expect(wrapper.text()).not.toContain('bindingSwitchCount')
     expect(wrapper.text()).not.toContain('Runtime Graph')

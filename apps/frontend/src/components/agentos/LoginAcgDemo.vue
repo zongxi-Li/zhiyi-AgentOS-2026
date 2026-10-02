@@ -70,15 +70,10 @@
           <div v-if="selectedNodeStatus"><dt>运行状态</dt><dd class="node-status" :class="selectedNodeStatus">{{ selectedNodeStatus }}</dd></div>
           <div v-if="selectedStepState?.agentName || selectedNode.agentName"><dt>Agent</dt><dd>{{ selectedStepState?.agentName || selectedNode.agentName }}</dd></div>
           <div v-if="selectedNode.capability"><dt>能力</dt><dd>{{ selectedNode.capability }}</dd></div>
-          <div v-if="selectedStepState?.currentBinding"><dt>当前 Binding</dt><dd><code>{{ bindingLabel(selectedStepState.currentBinding) }}</code></dd></div>
-          <div v-if="selectedStepState?.currentBinding"><dt>来源</dt><dd>{{ bindingSourceLabel(selectedStepState.currentBinding) }}</dd></div>
-          <div v-if="selectedStepState?.currentBinding?.pluginId"><dt>插件</dt><dd><code>{{ selectedStepState.currentBinding.pluginId }}</code></dd></div>
-          <div v-if="selectedStepState?.currentBinding?.pluginVersion"><dt>插件版本</dt><dd>{{ selectedStepState.currentBinding.pluginVersion }}</dd></div>
-          <div v-if="selectedStepState?.currentBinding?.modelName"><dt>模型</dt><dd>{{ selectedStepState.currentBinding.modelName }}</dd></div>
-          <div v-if="selectedStepState?.currentBinding?.bindingId"><dt>Binding ID</dt><dd><code>{{ selectedStepState.currentBinding.bindingId }}</code></dd></div>
+          <div v-if="selectedStepState?.resourceUse"><dt>使用资源</dt><dd><code>{{ bindingLabel(selectedStepState.resourceUse) }}</code></dd></div>
+          <div v-if="selectedStepState?.resourceUse?.modelId"><dt>模型</dt><dd>{{ selectedStepState.resourceUse.modelId }}</dd></div>
           <div v-if="selectedStepState?.attempt"><dt>Attempt</dt><dd>{{ selectedStepState.attempt }} 次</dd></div>
           <div v-if="selectedStepState?.createdGraphVersion"><dt>创建图版本</dt><dd>v{{ selectedStepState.createdGraphVersion }}</dd></div>
-          <div v-if="selectedStepState?.sourcePatchId"><dt>来源 Patch</dt><dd><code>{{ selectedStepState.sourcePatchId }}</code></dd></div>
           <div v-if="selectedAllowedSkills.length">
             <dt>可用技能</dt>
             <dd class="skill-list"><code v-for="skill in selectedAllowedSkills" :key="skill">{{ skill }}</code></dd>
@@ -91,15 +86,10 @@
         <div v-if="selectedStepState?.attempts?.length" class="runtime-detail-group">
           <strong>Attempt 历史 · {{ selectedStepState.attempts.length }}</strong>
           <span v-for="attempt in selectedStepState.attempts" :key="attempt.attemptId">
-            #{{ attempt.attemptNumber }} · {{ attempt.status }} · {{ attempt.agentName || attempt.bindingId || '默认绑定' }}
+            #{{ attempt.attemptNumber }} · {{ attempt.status }} · {{ attempt.agentName || '未观察到 Agent' }}
           </span>
         </div>
-        <div v-if="selectedStepState?.bindingHistory?.length" class="runtime-detail-group">
-          <strong>Binding 历史 · {{ selectedStepState.bindingHistory.length }}</strong>
-          <span v-for="(binding, index) in selectedStepState.bindingHistory" :key="binding.sourcePatchId || `${binding.bindingId}-${index}`">
-            {{ binding.bindingId }} · v{{ binding.selectedAtGraphVersion || 1 }}
-          </span>
-        </div>
+
         <p v-if="selectedStepState?.errorSummary" class="runtime-summary is-error">{{ selectedStepState.errorSummary }}</p>
         <p v-if="selectedStepState?.outputSummary" class="runtime-summary">{{ selectedStepState.outputSummary }}</p>
         <div class="connection-group">
@@ -141,11 +131,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Aim, ArrowDownBold, Close, FullScreen, RefreshRight, Share } from '@element-plus/icons-vue'
 import { DataSet } from 'vis-data'
 import { Network } from 'vis-network'
-import type { AcgBlueprint, AcgNode, AcgEdge, AcgStepState } from '@/services/api/agentos'
+import type { GraphProjection, AcgNode, AcgEdge, AcgStepState } from '@/services/api/agentos'
 import { mapEdgeVisualState, mapNodeVisualState } from '@/utils/acgGraphPresentation'
 
 const props = defineProps<{
-  blueprint: AcgBlueprint | null
+  blueprint: GraphProjection | null
   completedStepIds?: string[]
   stepStates?: AcgStepState[]
   collapsible?: boolean
@@ -189,7 +179,7 @@ const hasData = computed(() => {
   return !!props.blueprint && Array.isArray(props.blueprint.nodes) && props.blueprint.nodes.length > 0
 })
 
-const renderableBlueprint = computed<AcgBlueprint | null>(() => {
+const renderableBlueprint = computed<GraphProjection | null>(() => {
   if (!props.blueprint) return null
   const connectedNodeIds = new Set(
     props.blueprint.edges.flatMap(edge => [edge.sourceId, edge.targetId])
@@ -200,7 +190,7 @@ const renderableBlueprint = computed<AcgBlueprint | null>(() => {
   return { ...props.blueprint, nodes }
 })
 
-const visibleBlueprint = computed<AcgBlueprint | null>(() => {
+const visibleBlueprint = computed<GraphProjection | null>(() => {
   const blueprint = renderableBlueprint.value
   if (!blueprint) return null
   if (focusMainPath.value) {
@@ -226,7 +216,7 @@ const selectedNode = computed(() =>
   props.blueprint?.nodes.find(node => node.nodeId === selectedNodeId.value) || null
 )
 const selectedAllowedSkills = computed(() => {
-  const value = selectedNode.value?.metadata?.allowedSkills
+  const value = selectedNode.value?.display?.allowedSkills
   return Array.isArray(value) ? value.map(String).filter(Boolean) : []
 })
 const stateByStep = computed(() => new Map((props.stepStates || []).map(item => [item.stepId, item])))
@@ -236,10 +226,8 @@ const selectedNodeStatus = computed(() => {
   return stateByStep.value.get(selectedNode.value.nodeId)?.status
     || ((props.completedStepIds || []).includes(selectedNode.value.nodeId) ? 'completed' : '')
 })
-const bindingLabel = (binding: Record<string, any>) =>
-  String(binding.agentName || binding.bindingId || binding.assignedAgentId || '默认绑定')
-const bindingSourceLabel = (binding: Record<string, any>) =>
-  binding.source === 'plugin' ? 'Plugin' : 'Native'
+const bindingLabel = (binding: import('@/services/api/agentos').ResourceUseQuery) =>
+  String(binding.agentId || binding.resourceId)
 const incomingConnections = computed(() =>
   visibleBlueprint.value?.edges.filter(edge => edge.targetId === selectedNodeId.value) || []
 )
@@ -464,7 +452,7 @@ const options = {
   interaction: { hover: true, dragNodes: true, zoomView: true, navigationButtons: false }
 }
 
-const getStructureKey = (blueprint: AcgBlueprint) => JSON.stringify({
+const getStructureKey = (blueprint: GraphProjection) => JSON.stringify({
   nodes: blueprint.nodes.map(node => [node.nodeId, node.nodeType]),
   edges: blueprint.edges.map(edge => [edge.edgeId, edge.sourceId, edge.targetId, edge.edgeType])
 })

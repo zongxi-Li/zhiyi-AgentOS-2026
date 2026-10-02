@@ -153,7 +153,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
 import SecondarySidebar from '@/components/workbench/SecondarySidebar.vue'
@@ -181,7 +181,7 @@ const props = defineProps<{
   available: boolean
   runId: string | null
   missionId: string
-  graph: AcgBlueprint | null
+  graph: GraphProjection | null
   runStatus: string | null
   historical: boolean
   runtimeStore?: RuntimeEventStore | null

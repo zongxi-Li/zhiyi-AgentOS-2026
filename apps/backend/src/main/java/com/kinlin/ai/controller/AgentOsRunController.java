@@ -6,6 +6,8 @@ import com.kinlin.ai.dto.agentos.AgentOsMissionRunCreateRequest;
 import com.kinlin.ai.dto.agentos.AgentOsOperationResponse;
 import com.kinlin.ai.dto.agentos.AgentOsRunResponse;
 import com.kinlin.ai.gateway.AgentOsPaths;
+import com.kinlin.ai.projection.common.dto.QueryResponse;
+import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,7 +46,7 @@ public class AgentOsRunController {
     }
 
     @GetMapping("/runs")
-    public ResponseEntity<Map<String, Object>> listRuns(
+    public ResponseEntity<QueryResponse> listRuns(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String statuses,
             @RequestParam(required = false) String domain,
@@ -71,13 +73,13 @@ public class AgentOsRunController {
         params.put("summary", summary == null ? null : summary.toString());
         params.put("page", String.valueOf(page));
         params.put("pageSize", String.valueOf(pageSize));
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.query(AgentOsPaths.runs(), params)));
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.query(AgentOsPaths.runs(), params)), RunProjectionMapper::page);
     }
 
     @GetMapping("/runs/{runId}")
-    public ResponseEntity<Map<String, Object>> getRun(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId)));
+    public ResponseEntity<QueryResponse> getRun(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.run(runId)), RunProjectionMapper::run);
     }
 
     @PostMapping("/runs/{runId}/cancel")

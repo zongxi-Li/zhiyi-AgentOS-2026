@@ -105,7 +105,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Cpu, DataAnalysis, Monitor, Share } from '@element-plus/icons-vue'
-import type { AcgBlueprint, AcgView, WorkflowProgress, WorkflowRun } from '@/services/api/agentos'
+import type { GraphProjection, AcgView, WorkflowProgress, WorkflowRun } from '@/services/api/agentos'
 
 type InspectorProgress = Omit<WorkflowProgress, 'activeStepIds' | 'completedStepIds'> & {
   activeStepIds: readonly string[]
@@ -119,7 +119,7 @@ const props = withDefaults(defineProps<{
   run?: WorkflowRun | null
   view?: AcgView | null
   progress?: Readonly<InspectorProgress> | null
-  blueprint?: AcgBlueprint | null
+  blueprint?: GraphProjection | null
   loading?: boolean
 }>(), {
   runId: '',

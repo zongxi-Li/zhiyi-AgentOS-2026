@@ -26,8 +26,8 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** N1.2 identity output guards; input entities and not-yet-migrated query domains are untouched. */
-class IdentityProjectionArchitectureTest {
+/** Shared projection guards. Inputs and not-yet-migrated response domains remain outside the strict output checks. */
+class QueryProjectionArchitectureTest {
     private static final Path MAIN = Path.of("src/main/java");
 
     @Test
@@ -52,18 +52,19 @@ class IdentityProjectionArchitectureTest {
     }
 
     @Test
-    void identityDtosContainNoEntityDynamicContainerOrInternalType() throws Exception {
-        for (String domain : List.of("user", "role")) {
-            Path directory = MAIN.resolve("com/kinlin/ai/projection/" + domain + "/dto");
-            assertTrue(Files.isDirectory(directory));
-            try (Stream<Path> files = Files.list(directory)) {
-                for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
-                    Class<?> dto = Class.forName("com.kinlin.ai.projection." + domain + ".dto."
-                            + file.getFileName().toString().replace(".java", ""));
-                    assertSafe(dto, true, new HashSet<>(), dto.getName());
-                }
+    void everyProjectionDtoHasClosedTypedPublicFields() throws Exception {
+        Path directory = MAIN.resolve("com/kinlin/ai/projection");
+        assertTrue(Files.isDirectory(directory));
+        int checked = 0;
+        try (Stream<Path> files = Files.walk(directory)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java"))
+                    .filter(path -> path.getParent().getFileName().toString().equals("dto")).toList()) {
+                String name = MAIN.relativize(file).toString().replace('\\', '.').replace('/', '.').replace(".java", "");
+                assertSafe(Class.forName(name), true, new HashSet<>(), name);
+                checked++;
             }
         }
+        assertTrue(checked > 0);
     }
 
     @Test
@@ -81,28 +82,29 @@ class IdentityProjectionArchitectureTest {
     }
 
     @Test
-    void mappersHaveNoInfrastructureOrStateMutationDependencies() throws Exception {
-        for (String domain : List.of("user", "role")) {
-            Path directory = MAIN.resolve("com/kinlin/ai/projection/" + domain + "/mapper");
-            assertTrue(Files.isDirectory(directory));
-            try (Stream<Path> files = Files.list(directory)) {
-                for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
-                    String code = Files.readString(file).replaceAll("(?s)/\\*.*?\\*/", "")
-                            .replaceAll("(?m)//.*$", "");
-                    for (String dependency : List.of("repository", "service", "gateway", "client", "infrastructure", "runtime")) {
-                        assertFalse(code.contains("com.kinlin.ai." + dependency + "."), file + " depends on " + dependency);
-                    }
-                    assertFalse(java.util.regex.Pattern.compile(
-                            "copyProperties\\s*\\(|convertValue\\s*\\(|@Cache|@Transactional|\\.(?:save|delete|put|remove|set\\w*)\\s*\\(")
-                            .matcher(code).find(), file + " must only construct output values");
+    void allProjectionMappersHaveNoInfrastructureOrMutationDependencies() throws Exception {
+        Path directory = MAIN.resolve("com/kinlin/ai/projection");
+        assertTrue(Files.isDirectory(directory));
+        int checked = 0;
+        try (Stream<Path> files = Files.walk(directory)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java"))
+                    .filter(path -> path.getParent().getFileName().toString().equals("mapper")).toList()) {
+                String code = Files.readString(file).replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
+                for (String dependency : List.of("repository", "service", "gateway", "client", "infrastructure", "runtime")) {
+                    assertFalse(code.contains("com.kinlin.ai." + dependency + "."), file + " depends on " + dependency);
                 }
+                assertFalse(java.util.regex.Pattern.compile(
+                        "copyProperties\\s*\\(|convertValue\\s*\\(|@Cache|@Transactional|\\.(?:save|delete|put|remove|set\\w*)\\s*\\(")
+                        .matcher(code).find(), file + " must only construct output values");
+                checked++;
             }
         }
+        assertTrue(checked > 0);
     }
 
     @Test
     void negativeFixturesDetectWrappedEntitiesDynamicDtosAndConfigurationSpread() throws Exception {
-        for (String name : List.of("user", "roles", "nested", "dynamic", "opaque", "json", "raw", "wildcard", "inherited", "getter")) {
+        for (String name : List.of("user", "roles", "nested", "dynamic", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
             Type type = BadResponses.class.getDeclaredMethod(name).getGenericReturnType();
             assertThrows(AssertionError.class, () -> assertSafe(type, true, new HashSet<>(), name), name);
         }
@@ -156,7 +158,12 @@ class IdentityProjectionArchitectureTest {
         }
         for (Field field : type.getDeclaredFields()) {
             if (!Modifier.isStatic(field.getModifiers())) {
-                if (strict) { assertFalse(field.isAnnotationPresent(JsonSerialize.class), path + " overrides field serialization"); }
+                if (strict) {
+                    assertFalse(field.isAnnotationPresent(JsonSerialize.class), path + " overrides field serialization");
+                    assertFalse(Set.of("passwordHash", "executionState", "checkpoint", "checkpointId", "scheduler",
+                            "binding", "executionBinding", "bindingManifest", "compiledPackage", "graphPatchRefs",
+                            "sourcePatchId", "controlFrames", "resourceBindings").contains(field.getName()), field.toString());
+                }
                 assertSafe(field.getGenericType(), strict, visited, path + "." + field.getName());
             }
         }
@@ -197,23 +204,25 @@ class IdentityProjectionArchitectureTest {
             return concrete == RoleConfigurationQuery.class || concrete.getEnclosingClass() == RoleConfigurationQuery.class;
         }
         if (type instanceof ParameterizedType generic) {
-            return Arrays.stream(generic.getActualTypeArguments()).anyMatch(IdentityProjectionArchitectureTest::containsConfiguration);
+            return Arrays.stream(generic.getActualTypeArguments()).anyMatch(QueryProjectionArchitectureTest::containsConfiguration);
         }
         if (type instanceof GenericArrayType array) { return containsConfiguration(array.getGenericComponentType()); }
         if (type instanceof WildcardType wildcard) {
             return Stream.concat(Arrays.stream(wildcard.getUpperBounds()), Arrays.stream(wildcard.getLowerBounds()))
-                    .anyMatch(IdentityProjectionArchitectureTest::containsConfiguration);
+                    .anyMatch(QueryProjectionArchitectureTest::containsConfiguration);
         }
         return false;
     }
 
     private record NestedRole(Role body) { }
+    private record RuntimeDto(String checkpoint) { }
     private record DynamicDto(Map<String, String> metadata) { }
     private record ConfigurationSpread(List<RoleConfigurationQuery> payload) { }
     private static class InheritedUser extends User { }
     private static class GetterDto { public Role getRole() { return null; } }
     private static class GetterConfigurationSpread { public RoleConfigurationQuery getMetadata() { return null; } }
     private interface BadResponses {
+        ResponseEntity<RuntimeDto> checkpoint();
         ResponseEntity<User> user();
         ResponseEntity<List<Role>> roles();
         ResponseEntity<NestedRole> nested();

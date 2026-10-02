@@ -6,6 +6,8 @@ import {
   type ResourceObservation,
   type RunContextPackSummary,
   type RunOperationalState,
+  type RunLineage,
+  type NodeLifecycleQuery,
   type RuntimeInteraction,
   type RunProvenanceProjection,
   type TraceEvent,
@@ -117,6 +119,8 @@ export interface RuntimeObservation {
   audit: RuntimeAuditObservation
   provenance: RuntimeProvenanceObservation
   operational: RunOperationalState | null
+  lineage: RunLineage | null
+  lifecycles: NodeLifecycleQuery[]
   recoveryTrace: RuntimeTraceObservation[]
   contractViolations: RuntimeTraceObservation[]
   scheduleTrace: RuntimeTraceObservation[]
@@ -632,6 +636,8 @@ export const emptyRuntimeObservation = (runId: string, diagnostics: readonly Wor
     interactions: []
   },
   operational: null,
+  lineage: null,
+  lifecycles: [],
   recoveryTrace: [],
   contractViolations: [],
   scheduleTrace: [],
@@ -704,11 +710,13 @@ export const readRuntimeObservation = async (
     problems: normalizeProblems(traces, diagnostics),
     audit: normalizeAudit(provenance, traces, reviews?.items.length ?? null),
     provenance,
-    operational: executionTree?.operational || null,
+    operational: null,
+    lineage: executionTree?.lineage || run?.lineage || null,
+    lifecycles: executionTree?.lifecycles || [],
     recoveryTrace,
     contractViolations,
     scheduleTrace,
-    patchRefs: run?.executionState?.graphPatchRefs || [],
+    patchRefs: [],
     lowEntropy: normalizeLowEntropy(provenance, traces),
     resourceObservation,
     contextPacks,

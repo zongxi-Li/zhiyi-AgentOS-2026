@@ -26,13 +26,9 @@ describe('loadResourceObservation', () => {
         acgNodeId: 'node_1',
         attempts: [{
           attempt: { attemptId: 'attempt_1', runId: 'run_1', taskId: 'task_1', status: 'succeeded', attemptNumber: 1 },
-          executionBinding: {
-            bindingId: 'binding_1', attemptId: 'attempt_1', acgNodeId: 'node_1', resourceId: 'native_general_agent',
-            agentId: 'native_general_agent', modelId: 'runtime-default', metadata: {
-              deploymentTier: 'edge',
-              placementReasons: ['deploymentTier=edge', 'latencyMs=18'],
-              scoreFactors: { latency: 0.98 }
-            }
+          resourceUse: {
+            acgNodeId: 'node_1', resourceId: 'native_general_agent',
+            agentId: 'native_general_agent', modelId: 'runtime-default', deploymentTier: 'edge'
           },
           executions: []
         }]
@@ -48,9 +44,7 @@ describe('loadResourceObservation', () => {
       resourceId: 'native_general_agent',
       agentId: 'native_general_agent',
       modelId: 'runtime-default',
-      deploymentTier: 'edge',
-      placementReasons: ['deploymentTier=edge', 'latencyMs=18'],
-      scoreFactors: { latency: 0.98 }
+      deploymentTier: 'edge'
     })
     expect(result.items[0].snapshot.healthStatus).toBe('unknown')
   })

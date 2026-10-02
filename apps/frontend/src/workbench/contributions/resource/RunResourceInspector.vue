@@ -19,9 +19,6 @@
           <span>{{ resource.attemptCount }} attempts</span>
           <span>Latency {{ formatMetric(resource.latencyMs, 'ms') }}</span>
         </div>
-        <div v-if="resource.placementReasons.length" class="resource-reasons">
-          <span v-for="reason in resource.placementReasons" :key="reason">{{ reason }}</span>
-        </div>
       </article>
     </div>
     <div v-if="resourceObservation?.failoverEvents?.length" class="resource-failover-list" aria-label="端边云切换记录">
@@ -57,7 +54,6 @@ const boundResources = computed(() => {
     attemptCount: number
     health: string
     deploymentTier: string | null
-    placementReasons: string[]
     latencyMs: number | null | undefined
   }>()
   for (const binding of observation.bindings) {
@@ -74,7 +70,6 @@ const boundResources = computed(() => {
       attemptCount: 1,
       health: profile?.snapshot.healthStatus || 'unknown',
       deploymentTier: binding.deploymentTier || profile?.profile.deploymentTier || null,
-      placementReasons: binding.placementReasons,
       latencyMs: profile?.snapshot.latencyMs
     })
   }

@@ -6,7 +6,6 @@
         { label: 'deploymentTier', value: tierLabel(selectedBinding.deploymentTier) },
         { label: 'agentId', value: selectedBinding.agentId, code: true },
         { label: 'modelId', value: selectedBinding.modelId, code: true },
-        { label: 'ExecutionBinding', value: selectedBinding.bindingId, code: true },
         { label: 'Attempt', value: selectedBinding.attemptId, code: true },
         { label: 'health', value: healthLabel(selectedHealth) }
       ]" />

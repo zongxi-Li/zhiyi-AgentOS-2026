@@ -247,7 +247,7 @@
         <RuntimeAuditTimeline
           v-if="selectedRun || selectedAcgView"
           :events="traceEvents"
-          :patch-refs="selectedRun?.executionState?.graphPatchRefs || []"
+          :patch-refs="[]"
           :checkpoints="checkpoints"
           :reviews="reviews"
         />

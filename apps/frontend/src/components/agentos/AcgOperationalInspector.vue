@@ -8,11 +8,11 @@
           <header><strong>节点生命周期</strong><span>{{ records.length }}</span></header>
           <p v-if="!records.length" class="empty">暂无 Identity 节点执行记录</p>
           <div v-else class="record-list">
-            <article v-for="record in records" :key="record.executionInstanceId">
+            <article v-for="record in records" :key="String(record.sequence)">
               <div><strong>{{ record.stepId }}</strong><span class="phase" :class="record.phase">{{ phaseLabel(record.phase) }}</span></div>
-              <code :title="record.executionInstanceId">{{ shortId(record.executionInstanceId) }}</code>
-              <small>Attempt {{ shortId(record.attemptId) }}<template v-if="record.loopPath.length"> · Loop {{ record.loopPath.join('.') }}</template></small>
-              <small v-if="record.commitId">Commit {{ shortId(record.commitId) }}</small>
+
+              <small>Attempt {{ shortId(record.attemptId) }}</small>
+
               <small v-if="record.failureCode" class="failure">{{ record.failureCode }}</small>
             </article>
           </div>
@@ -30,29 +30,16 @@
       </el-tab-pane>
       <el-tab-pane name="control">
         <template #label><span class="tab-label"><el-icon><Operation /></el-icon>控制协同</span></template>
-        <OperationalSummary :items="controlSummary" />
-        <OperationalGroup title="控制 Frame" :items="controlFrames" />
-        <OperationalMap title="Loop 迭代" :value="view.operational?.loopIterations || {}" />
-        <OperationalMap title="Consensus" :value="view.operational?.consensusResults || {}" />
-        <OperationalMap title="Debate" :value="view.operational?.debateSessions || {}" />
+        <p class="empty">审核对象与原因由审核面板展示。</p>
       </el-tab-pane>
 
       <el-tab-pane name="context">
         <template #label><span class="tab-label"><el-icon><Connection /></el-icon>通信上下文</span></template>
-        <OperationalSummary :items="contextSummary" />
-        <ReferenceGroup title="Communication" :refs="view.operational?.communicationRefs || []" />
-        <ReferenceGroup title="Memory" :refs="view.operational?.memoryRefs || []" />
-        <ReferenceGroup title="Evidence" :refs="view.operational?.evidenceRefs || []" />
-        <OperationalMap title="Lease" :value="view.operational?.leaseStatuses || {}" />
+        <p class="empty">上下文与证据摘要见 Context Inspector。</p>
       </el-tab-pane>
 
       <el-tab-pane name="audit">
         <template #label><span class="tab-label"><el-icon><RefreshRight /></el-icon>恢复审计</span></template>
-        <div class="section-block">
-          <header><strong>恢复结果</strong></header>
-          <pre v-if="view.operational?.recoveryOutcome">{{ formatValue(view.operational.recoveryOutcome) }}</pre>
-          <p v-else class="empty">当前 Run 没有恢复结果</p>
-        </div>
         <RuntimeAuditTimeline :events="auditEvents" :patch-refs="patchRefs" />
       </el-tab-pane>
     </el-tabs>
@@ -60,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, ref, type PropType } from 'vue'
+import { computed, ref } from 'vue'
 import { Connection, DataAnalysis, Operation, RefreshRight } from '@element-plus/icons-vue'
 import type { AcgView, NodeExecutionPhase, TraceEvent } from '@/services/api/workflow'
 import AcgLowEntropyMetrics from './AcgLowEntropyMetrics.vue'
@@ -75,94 +62,16 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'export-audit': [format: 'json' | 'csv'] }>()
 const activeTab = ref('runtime')
-const liveNodeId = computed(() => props.view.operational?.nodeExecutions?.find(item => item.phase === 'executed')?.stepId || props.view.operational?.nodeExecutions?.[0]?.stepId || '')
+const liveNodeId = computed(() => props.view.lifecycles?.find(item => item.phase === 'executed')?.stepId || props.view.lifecycles?.[0]?.stepId || '')
 const liveNode = computed(() => liveNodeId.value ? props.runtimeStore?.nodes[liveNodeId.value] || null : null)
-const records = computed(() => props.view.operational?.nodeExecutions || [])
-const controlFrames = computed(() => props.view.operational?.controlFrames || [])
-const controlSummary = computed(() => [
-  { label: 'Control Frame', value: controlFrames.value.length },
-  { label: 'Loop', value: Object.keys(props.view.operational?.loopIterations || {}).length },
-  { label: 'Consensus', value: Object.keys(props.view.operational?.consensusResults || {}).length },
-  { label: 'Debate', value: Object.keys(props.view.operational?.debateSessions || {}).length }
-])
-const contextSummary = computed(() => [
-  { label: 'Communication', value: (props.view.operational?.communicationRefs || []).length },
-  { label: 'Memory', value: (props.view.operational?.memoryRefs || []).length },
-  { label: 'Evidence', value: (props.view.operational?.evidenceRefs || []).length },
-  { label: 'Lease', value: Object.keys(props.view.operational?.leaseStatuses || {}).length }
-])
+const records = computed(() => props.view.lifecycles || [])
 
-const formatValue = (value: unknown) => JSON.stringify(value, null, 2)
 const shortId = (value: string) => value.length > 28 ? `${value.slice(0, 14)}...${value.slice(-8)}` : value
 const phaseLabel = (phase: NodeExecutionPhase) => ({
   prepared: '已准备', executed: '已执行', audited: '已审计', committed: '已提交',
   waiting_review: '待审核', failed: '失败', cancelled: '已取消'
 }[phase])
 
-const emptyText = (title: string) => `暂无 ${title} 数据`
-const ReferenceGroup = defineComponent({
-  props: { title: { type: String, required: true }, refs: { type: Array as PropType<string[]>, required: true } },
-  setup(componentProps) {
-    return () => h('div', { class: 'section-block' }, [
-      h('header', [h('strong', componentProps.title), h('span', String(componentProps.refs.length))]),
-      componentProps.refs.length
-        ? h('div', { class: 'reference-list' }, componentProps.refs.map((item, index) =>
-          h('article', { class: 'data-card reference-card', key: item }, [
-            h('span', { class: 'data-card__index', 'aria-hidden': 'true' }, String(index + 1).padStart(2, '0')),
-            h('code', { title: item }, item)
-          ])
-        ))
-        : h('p', { class: 'empty' }, emptyText(componentProps.title))
-    ])
-  }
-})
-const OperationalGroup = defineComponent({
-  props: { title: { type: String, required: true }, items: { type: Array as PropType<Array<Record<string, unknown>>>, required: true } },
-  setup(componentProps) {
-    return () => h('div', { class: 'section-block' }, [
-      h('header', [h('strong', componentProps.title), h('span', String(componentProps.items.length))]),
-      componentProps.items.length
-        ? h('div', { class: 'structured-list' }, componentProps.items.map((item, index) =>
-          h('article', { class: 'data-card structured-card', key: index }, [
-            h('div', { class: 'data-card__heading' }, [
-              h('strong', `记录 ${String(index + 1).padStart(2, '0')}`)
-            ]),
-            h('pre', formatValue(item))
-          ])
-        ))
-        : h('p', { class: 'empty' }, emptyText(componentProps.title))
-    ])
-  }
-})
-const OperationalMap = defineComponent({
-  props: { title: { type: String, required: true }, value: { type: Object as PropType<Record<string, unknown>>, required: true } },
-  setup(componentProps) {
-    return () => h('div', { class: 'section-block' }, [
-      h('header', [h('strong', componentProps.title), h('span', String(Object.keys(componentProps.value).length))]),
-      Object.keys(componentProps.value).length
-        ? h('div', { class: 'structured-list' }, Object.entries(componentProps.value).map(([key, value]) =>
-          h('article', { class: 'data-card structured-card', key }, [
-            h('div', { class: 'data-card__heading' }, [
-              h('code', { title: key }, key)
-            ]),
-            h('pre', formatValue(value))
-          ])
-        ))
-        : h('p', { class: 'empty' }, emptyText(componentProps.title))
-    ])
-  }
-})
-const OperationalSummary = defineComponent({
-  props: { items: { type: Array as PropType<Array<{ label: string; value: number }>>, required: true } },
-  setup(componentProps) {
-    return () => h('div', { class: 'operational-summary', 'aria-label': '能力状态摘要' }, componentProps.items.map(item =>
-      h('div', { class: ['summary-card', { 'summary-card--active': item.value > 0 }], key: item.label }, [
-        h('strong', String(item.value)),
-        h('span', item.label)
-      ])
-    ))
-  }
-})
 </script>
 
 <style scoped>

@@ -67,13 +67,11 @@ describe('WorkflowReviewPanel', () => {
       ...run,
       currentStepId: 'ctrl_join_1',
       steps: run.steps.map(step => ({ ...step, status: 'completed' })),
-      executionState: {
-        reviewPayload: {
+      review: {
           subjectType: 'control',
           subjectId: 'ctrl_join_1',
           controlId: 'ctrl_join_1',
           reasonCode: 'CONSENSUS_UNRESOLVED'
-        }
       }
     }
     const wrapper = mount(WorkflowReviewPanel, {

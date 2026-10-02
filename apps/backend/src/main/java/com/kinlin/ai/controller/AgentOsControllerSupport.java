@@ -2,10 +2,13 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AgentOsClient;
 import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
+import com.kinlin.ai.projection.common.dto.QueryError;
+import com.kinlin.ai.projection.common.dto.QueryResponse;
 import org.springframework.http.ResponseEntity;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Shared non-business API projection for the split AgentOS controllers (J1.2B):
@@ -30,5 +33,23 @@ final class AgentOsControllerSupport {
     ) {
         AgentOsApiResponse body = response.error() == null ? response.body() : response.error();
         return ResponseEntity.status(response.status()).body(body);
+    }
+
+    static <T extends QueryResponse> ResponseEntity<QueryResponse> projectedResponse(
+            Map<String, Object> payload, Function<Map<String, Object>, T> mapper
+    ) {
+        ResponseEntity<Map<String, Object>> upstream = response(payload);
+        Map<String, Object> body = upstream.getBody();
+        if (!upstream.getStatusCode().is2xxSuccessful()) {
+            // The existing gateway already owns status selection, sanitization and error normalization.
+            return ResponseEntity.status(upstream.getStatusCode()).body(new QueryError(
+                    (String) body.get("code"), (String) body.get("message"), (String) body.get("requestId")));
+        }
+        try {
+            return ResponseEntity.status(upstream.getStatusCode()).body(mapper.apply(body));
+        } catch (IllegalArgumentException | ArithmeticException invalid) {
+            return ResponseEntity.status(502).body(new QueryError("AGENTOS_CONTRACT_INVALID",
+                    "AgentOS service returned an invalid response contract.", null));
+        }
     }
 }

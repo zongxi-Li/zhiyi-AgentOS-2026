@@ -20,22 +20,17 @@
       :aria-expanded="detailsExpanded"
       @click="detailsExpanded = !detailsExpanded"
     >
-      <span>Binding Details</span>
+      <span>Resource Details</span>
       <span class="inspector-disclosure__action">{{ detailsExpanded ? '收起' : '展开' }}</span>
     </button>
     <div v-if="detailsExpanded" class="resource-details">
       <InspectorPropertyList :rows="[
         { label: 'Resource ID', value: binding?.resourceId, code: true },
-        { label: 'Binding ID', value: binding?.bindingId, code: true },
         { label: 'Attempt ID', value: binding?.attemptId || graphNode.attemptId, code: true },
         { label: 'Deployment Tier', value: tierLabel(binding?.deploymentTier) }
       ]" />
     </div>
-    <div v-if="binding?.placementReasons.length" class="resource-reasons">
-      <strong>Scheduling</strong>
-      <span v-for="reason in binding.placementReasons" :key="reason">{{ reasonLabel(reason) }}</span>
-    </div>
-    <p v-if="!binding" class="resource-empty">当前节点没有可证明的 ExecutionBinding。</p>
+    <p v-if="!binding" class="resource-empty">当前节点没有可证明的 资源使用记录。</p>
   </InspectorSection>
 </template>
 
@@ -67,15 +62,6 @@ const resourceHealth = computed(() => {
 })
 const modelLabel = computed(() => binding.value?.modelId === 'runtime-default' ? 'Runtime Default' : (binding.value?.modelId || '未观测'))
 
-const reasonLabel = (value: string) => {
-  const [key, rawValue] = value.split('=', 2)
-  const labels: Record<string, string> = {
-    deploymentTier: '部署层级',
-    resourceType: '资源类型',
-    latencyMs: '延迟'
-  }
-  return rawValue == null ? value : `${labels[key] || key}：${rawValue}`
-}
 </script>
 
 <style scoped>

@@ -7,6 +7,8 @@ import com.kinlin.ai.dto.agentos.AgentOsReviewResponse;
 import com.kinlin.ai.dto.agentos.AgentOsRetryRequest;
 import com.kinlin.ai.dto.agentos.AgentOsRunResponse;
 import com.kinlin.ai.gateway.AgentOsPaths;
+import com.kinlin.ai.projection.common.dto.QueryResponse;
+import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,9 +36,9 @@ public class AgentOsReviewController {
     }
 
     @GetMapping("/runs/{runId}/reviews")
-    public ResponseEntity<Map<String, Object>> getReviews(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/reviews"));
+    public ResponseEntity<QueryResponse> getReviews(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/reviews"), RunProjectionMapper::reviews);
     }
 
     @PostMapping("/runs/{runId}/reviews")

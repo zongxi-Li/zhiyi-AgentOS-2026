@@ -106,7 +106,7 @@ const review = useWorkflowReview({
 
 const reviewStep = computed(() => props.run?.steps.find(step => step.status === 'waiting_review')
   || props.run?.steps.find(step => step.stepId === props.progress?.currentStepId))
-const reviewPayload = computed(() => props.run?.executionState?.reviewPayload || null)
+const reviewPayload = computed(() => props.run?.review || null)
 const reviewSubjectType = computed(() => reviewPayload.value?.subjectType === 'control' ? 'control' : 'step')
 const persistedSubjectId = computed(() => {
   const payload = reviewPayload.value

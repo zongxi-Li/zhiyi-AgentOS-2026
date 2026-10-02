@@ -26,7 +26,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AcgBlueprint, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
+import type { GraphProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 
@@ -34,19 +34,16 @@ const props = defineProps<{
   entry: WorkspaceEntry | null
   graphNodes: WorkspaceGraphNode[]
   runId: string | null
-  graph: AcgBlueprint | null
+  graph: GraphProjection | null
   runStatus: string | null
 }>()
 
 const graphVersion = computed(() => {
-  const graph = props.graph as (AcgBlueprint & { graphVersion?: number }) | null
-  return graph?.graphVersion || graph?.metadata?.graphVersion || props.entry?.graphVersion || null
+  return props.graph?.graphVersion ?? props.entry?.graphVersion ?? null
 })
 
 const taskPlanVersion = computed(() => {
-  const graph = props.graph as (AcgBlueprint & { taskPlanVersion?: number }) | null
-  const metadata = graph?.metadata || {}
-  const value = graph?.taskPlanVersion || metadata.taskPlanVersion || metadata.plannerPlanVersion || props.entry?.metadata?.taskPlanVersion
+  const value = props.graph?.taskPlanVersion ?? props.entry?.metadata?.taskPlanVersion
   return value == null ? '—' : String(value)
 })
 

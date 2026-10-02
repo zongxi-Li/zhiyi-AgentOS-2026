@@ -3,6 +3,7 @@ package com.kinlin.ai.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
+import com.kinlin.ai.projection.mission.MissionQueryFixture;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -101,14 +102,14 @@ class AgentOsMissionControllerTest {
     @Test
     void missionReadsUseEncodedMissionIdentity() throws Exception {
         String getPath = "/ai/agentos/v2/missions/mission%20001";
-        gateway.getResponses.put(getPath, RecordingAgentOsGateway.response(200, Map.of("missionId", "mission 001")));
+        gateway.getResponses.put(getPath, RecordingAgentOsGateway.response(200, MissionQueryFixture.detail()));
         mockMvc.perform(get("/api/agentos/v2/missions/{missionId}", "mission 001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.missionId").value("mission 001"));
+                .andExpect(jsonPath("$.mission.missionId").value("mission_1"));
         assertEquals(getPath, gateway.lastGetPath);
 
         String runsPath = "/ai/agentos/v2/missions/mission%20001/runs";
-        gateway.getResponses.put(runsPath, RecordingAgentOsGateway.response(200, Map.of("items", List.of())));
+        gateway.getResponses.put(runsPath, RecordingAgentOsGateway.response(200, MissionQueryFixture.history()));
         mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/runs", "mission 001"))
                 .andExpect(status().isOk());
         assertEquals(runsPath, gateway.lastGetPath);

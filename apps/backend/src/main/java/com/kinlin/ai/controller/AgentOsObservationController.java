@@ -2,6 +2,9 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AgentOsClient;
 import com.kinlin.ai.gateway.AgentOsPaths;
+import com.kinlin.ai.projection.common.dto.QueryResponse;
+import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
+import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,14 +54,14 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/graph")
-    public ResponseEntity<Map<String, Object>> getGraph(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/graph"));
+    public ResponseEntity<QueryResponse> getGraph(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.run(runId) + "/graph"), GraphProjectionMapper::graph);
     }
 
     @GetMapping("/runs/{runId}/execution-tree")
-    public ResponseEntity<Map<String, Object>> getExecutionTree(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/execution-tree"));
+    public ResponseEntity<QueryResponse> getExecutionTree(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/execution-tree"), RunProjectionMapper::tree);
     }
 
     @GetMapping("/runs/{runId}/resource-usage")
