@@ -8,6 +8,8 @@ import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import com.kinlin.ai.projection.operational.dto.OperationalQuery;
+import com.kinlin.ai.projection.operational.mapper.OperationalProjectionMapper;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -99,12 +101,13 @@ public class FileController {
      * 获取文件列表
      */
     @GetMapping
-    public ResponseEntity<List<FileService.FileInfo>> getFileList(
+    public ResponseEntity<List<OperationalQuery.File>> getFileList(
             @RequestParam(value = "type", required = false) String type
     ) {
         try {
             List<FileService.FileInfo> files = fileService.listFiles(type != null ? type : "general");
-            return ResponseEntity.ok(files);
+            return ResponseEntity.ok(files.stream().map(item -> OperationalProjectionMapper.file(item.getId(),
+                    item.getName(), item.getPath(), item.getSize(), item.getType(), item.getUploadTime())).toList());
         } catch (IOException e) {
             log.error("Get file list failed", e);
             return ResponseEntity.internalServerError().build();

@@ -9,6 +9,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import com.kinlin.ai.projection.operational.dto.OperationalQuery;
+import com.kinlin.ai.projection.operational.mapper.OperationalProjectionMapper;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -108,7 +110,7 @@ public class AuthController {
      * 验证Token
      */
     @GetMapping("/verify")
-    public ResponseEntity<Map<String, Object>> verifyToken(
+    public ResponseEntity<OperationalQuery.Token> verifyToken(
             @RequestHeader(value = "Authorization", required = false) String authHeader
     ) {
         Map<String, Object> result = new HashMap<>();
@@ -117,14 +119,14 @@ public class AuthController {
             if (authHeader == null || !authHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
                 result.put("valid", false);
                 result.put("message", "Missing or invalid Authorization header");
-                return ResponseEntity.ok(result);
+                return ResponseEntity.ok(OperationalProjectionMapper.token(result));
             }
 
             String token = authHeader.substring(7).trim();
             if (token.isEmpty()) {
                 result.put("valid", false);
                 result.put("message", "Token is empty");
-                return ResponseEntity.ok(result);
+                return ResponseEntity.ok(OperationalProjectionMapper.token(result));
             }
 
             String username = jwtUtil.getUsernameFromToken(token);
@@ -143,7 +145,7 @@ public class AuthController {
             result.put("message", "Token验证失败: " + e.getMessage());
         }
         
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(OperationalProjectionMapper.token(result));
     }
 }
 

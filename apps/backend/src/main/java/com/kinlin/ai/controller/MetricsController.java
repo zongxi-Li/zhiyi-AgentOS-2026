@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import io.micrometer.core.instrument.Counter;
+import com.kinlin.ai.projection.operational.dto.OperationalQuery;
+import com.kinlin.ai.projection.operational.mapper.OperationalProjectionMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -26,7 +28,7 @@ public class MetricsController {
      * 获取系统指标
      */
     @GetMapping
-    public ResponseEntity<Map<String, Object>> getMetrics() {
+    public ResponseEntity<OperationalQuery.Metrics> getMetrics() {
         Map<String, Object> metrics = new HashMap<>();
         
         try {
@@ -54,7 +56,7 @@ public class MetricsController {
             metrics.put("errorRate", 0.0);
         }
         
-        return ResponseEntity.ok(metrics);
+        return ResponseEntity.ok(OperationalProjectionMapper.metrics(metrics));
     }
 }
 

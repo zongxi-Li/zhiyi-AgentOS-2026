@@ -20,6 +20,12 @@ import com.kinlin.ai.controller.EmotionController;
 import com.kinlin.ai.controller.RoleFusionController;
 import com.kinlin.ai.controller.DigitalHumanController;
 import com.kinlin.ai.controller.RecommendationController;
+import com.kinlin.ai.controller.AlertController;
+import com.kinlin.ai.controller.AuthController;
+import com.kinlin.ai.controller.FileController;
+import com.kinlin.ai.controller.HealthController;
+import com.kinlin.ai.controller.KylinOSController;
+import com.kinlin.ai.controller.MetricsController;
 import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.StatisticsController;
 import com.kinlin.ai.controller.UserProfileController;
@@ -225,6 +231,12 @@ class QueryProjectionArchitectureTest {
             return "getDigitalHuman".equals(method.getName());
         }
         if (controller == RecommendationController.class) { return true; }
+        if (controller == AuthController.class) { return "verifyToken".equals(method.getName()); }
+        if (controller == FileController.class) { return "getFileList".equals(method.getName()); }
+        if (controller == AlertController.class || controller == HealthController.class
+                || controller == KylinOSController.class || controller == MetricsController.class) {
+            return AnnotatedElementUtils.hasAnnotation(method, GetMapping.class);
+        }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
 
