@@ -7,6 +7,7 @@ import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
 import com.kinlin.ai.projection.memory.mapper.MemoryEventsProjectionMapper;
+import com.kinlin.ai.projection.provenance.mapper.ProvenanceProjectionMapper;
 import com.kinlin.ai.projection.trace.mapper.TraceProjectionMapper;
 import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
@@ -108,9 +109,9 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/provenance")
-    public ResponseEntity<Map<String, Object>> getProvenance(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/provenance"));
+    public ResponseEntity<QueryResponse> getProvenance(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/provenance"), ProvenanceProjectionMapper::provenance);
     }
 
     @GetMapping("/runs/{runId}/checkpoints")

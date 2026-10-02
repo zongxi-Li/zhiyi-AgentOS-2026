@@ -264,7 +264,7 @@ class AgentOsObservationControllerTest {
 
         String provenancePath = "/ai/agentos/v2/runs/run_001/provenance";
         gateway.getResponses.put(provenancePath, RecordingAgentOsGateway.response(200, Map.of(
-                "runId", "run_001", "sources", List.of())));
+                "runId", "run_001", "integrityStatus", "valid", "events", List.of())));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/provenance", "run_001"))
                 .andExpect(status().isOk());
         assertEquals(provenancePath, gateway.lastGetPath);

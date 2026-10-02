@@ -320,7 +320,7 @@ const interactionPayload = (item: RuntimeInteraction): Record<string, any> => ({
   eventId: item.eventId,
   producerStepIds: item.producerStepIds,
   consumerStepId: item.consumerStepId,
-  fieldsByProducer: item.fieldsByProducer,
+  producerFields: item.producerFields,
   tokensDelivered: item.tokensDelivered,
   tokensAvailable: item.tokensAvailable,
   contractStatus: item.contractStatus
@@ -331,7 +331,7 @@ const consumptionPayload = (item: ProvenanceConsumption): Record<string, any> =>
   producerStepIds: item.producerStepIds,
   consumerStepId: item.consumerStepId,
   consumedFields: item.consumedFields,
-  fieldsByProducer: item.fieldsByProducer,
+  producerFields: item.producerFields,
   tokensDelivered: item.tokensDelivered,
   tokensAvailable: item.tokensAvailable,
   contractStatus: item.contractStatus
