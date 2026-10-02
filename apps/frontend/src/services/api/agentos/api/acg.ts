@@ -5,6 +5,35 @@ import axios from 'axios'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 import type { AcgApiDependencies } from '../dependencies'
 
+/**
+ * 输出正文专用 wire 合同（ContentValueQuery grammar）的解码入口：后端把用户产物
+ * 正文表达为 kind + 标量/列表/成员行的自引用结构，这里还原成既有消费结构的普通
+ * JSON 对象，字段名、嵌套、数组顺序、布尔、null 与数字全部保持不变。
+ */
+export interface OutputContentValue {
+  kind: 'string' | 'boolean' | 'number' | 'list' | 'object' | 'null'
+  text?: string
+  bool?: boolean
+  number?: number
+  items?: OutputContentValue[]
+  members?: Array<{ name: string; value: OutputContentValue }>
+}
+
+export const decodeOutputContent = (value: OutputContentValue | null | undefined): any => {
+  if (!value || value.kind === 'null') return null
+  if (value.kind === 'object') {
+    const result: Record<string, any> = {}
+    for (const member of value.members || []) {
+      result[member.name] = decodeOutputContent(member.value)
+    }
+    return result
+  }
+  if (value.kind === 'list') return (value.items || []).map(item => decodeOutputContent(item))
+  if (value.kind === 'boolean') return value.bool === true
+  if (value.kind === 'number') return value.number == null ? null : Number(value.number)
+  return value.text ?? ''
+}
+
 const outputMarkdown = (content: Record<string, any>): string | null => {
   for (const key of ['final_answer', 'report_markdown', 'report', 'final_report', 'content']) {
     const value = content[key]
@@ -136,12 +165,12 @@ export const createAcgApi = (getApi: () => AcgApiDependencies) => ({
     const outputRefs = (run.outputs || []).map(item => [item.stepId, item.outputRef] as [string, string])
     const outputResults: PromiseSettledResult<AcgDeliverable>[] = outputRefs.length
       ? await Promise.allSettled(outputRefs.map(async ([stepId, outputRef]) => {
-        const response = await agentosRequest.get<{ content: Record<string, any> }>(
+        const response = await agentosRequest.get<{ content: OutputContentValue }>(
           `${runPath(runId)}/outputs/${encodeURIComponent(outputRef)}`,
           { signal: options.signal }
         )
         const step = run.steps.find(item => item.stepId === stepId)
-        return { stepId, outputRef, name: step?.name || stepId, status: step?.status || 'completed', output: response.data.content }
+        return { stepId, outputRef, name: step?.name || stepId, status: step?.status || 'completed', output: decodeOutputContent(response.data.content) }
       }))
       : []
     const outputByKey = new Map<string, AcgDeliverable>()
