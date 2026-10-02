@@ -1,6 +1,9 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.RagClient;
+import com.kinlin.ai.projection.rag.dto.RagDocumentPageQuery;
+import com.kinlin.ai.projection.rag.dto.RagQueryResponseQuery;
+import com.kinlin.ai.projection.rag.mapper.RagProjectionMapper;
 import com.kinlin.ai.service.RagService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +25,7 @@ public class RagController {
      * RAG查询
      */
     @PostMapping("/query")
-    public ResponseEntity<RagClient.RagQueryResult> query(
+    public ResponseEntity<RagQueryResponseQuery> query(
             @RequestBody Map<String, Object> request
     ) {
         String query = (String) request.get("query");
@@ -35,8 +38,8 @@ public class RagController {
         Boolean useKnowledgeGraph = request.get("use_knowledge_graph") != null ?
                 Boolean.valueOf(request.get("use_knowledge_graph").toString()) : null;
 
-        RagClient.RagQueryResult response = ragService.query(query, topK, contextId, roleId, useKnowledgeGraph);
-        return ResponseEntity.ok(response);
+        RagClient.RagQueryResult result = ragService.query(query, topK, contextId, roleId, useKnowledgeGraph);
+        return ResponseEntity.ok(RagProjectionMapper.query(result.answer(), result.sources(), result.confidence()));
     }
 
     /**
@@ -60,15 +63,14 @@ public class RagController {
      * 获取文档列表
      */
     @GetMapping("/documents")
-    public ResponseEntity<Map<String, Object>> listDocuments(
+    public ResponseEntity<com.kinlin.ai.projection.common.dto.QueryResponse> listDocuments(
             @RequestParam(value = "role_id", required = false) String roleId
     ) {
         try {
-            Map<String, Object> response = ragService.listDocuments(roleId);
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(RagProjectionMapper.documents(ragService.listDocuments(roleId)));
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
-                    .body(Map.of("error", e.getMessage()));
+                    .body(new com.kinlin.ai.projection.rag.dto.RagErrorResponse(e.getMessage()));
         }
     }
     

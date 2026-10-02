@@ -13,6 +13,7 @@ import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
 import com.kinlin.ai.controller.ChatQualityController;
 import com.kinlin.ai.controller.KnowledgeGraphController;
+import com.kinlin.ai.controller.RagController;
 import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.StatisticsController;
 import com.kinlin.ai.controller.UserProfileController;
@@ -207,6 +208,9 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == KnowledgeGraphController.class) {
             return List.of("getGraphStats", "getGraphData").contains(method.getName());
+        }
+        if (controller == RagController.class) {
+            return List.of("query", "listDocuments").contains(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
