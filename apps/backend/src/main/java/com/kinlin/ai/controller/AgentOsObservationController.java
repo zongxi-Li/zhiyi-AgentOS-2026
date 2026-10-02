@@ -5,6 +5,7 @@ import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
+import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -66,9 +67,9 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/resource-usage")
-    public ResponseEntity<Map<String, Object>> getResourceUsage(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/resource-usage"));
+    public ResponseEntity<QueryResponse> getResourceUsage(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/resource-usage"), ResourceUsageProjectionMapper::usage);
     }
 
     @GetMapping("/runs/{runId}/resource-usage/calls")
