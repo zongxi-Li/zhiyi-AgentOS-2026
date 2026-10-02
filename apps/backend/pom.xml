@@ -178,12 +178,6 @@
             <version>7.4</version>
         </dependency>
 
-        <!-- HikariCP连接池 -->
-        <dependency>
-            <groupId>com.zaxxer</groupId>
-            <artifactId>HikariCP</artifactId>
-        </dependency>
-
         <!-- JWT -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
