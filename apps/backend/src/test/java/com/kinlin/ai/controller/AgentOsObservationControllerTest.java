@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
+import com.kinlin.ai.projection.resource.ResourceUsageQueryFixture;
 import com.kinlin.ai.projection.workspace.WorkspaceQueryFixture;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,6 +76,28 @@ class AgentOsObservationControllerTest {
     }
 
     @Test
+    void resourceUsageKeepsErrorStatusesAndFailsContractViolationsWithoutEcho() throws Exception {
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_404/resource-usage",
+                RecordingAgentOsGateway.response(404, Map.of(
+                        "code", "AGENTOS_NOT_FOUND", "message", "run not found", "requestId", "request-2")));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage", "run_404"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().json(
+                        "{\"code\":\"AGENTOS_NOT_FOUND\",\"message\":\"run not found\",\"requestId\":\"request-2\"}", true));
+
+        // A wire without the required usage object must 502 instead of fabricating empty data.
+        Map<String, Object> missingUsage = ResourceUsageQueryFixture.observedUsage();
+        missingUsage.remove("usage");
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_bad/resource-usage",
+                RecordingAgentOsGateway.response(200, missingUsage));
+        String body = mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage", "run_bad"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"))
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(body.contains(ResourceUsageQueryFixture.SECRET));
+    }
+
+    @Test
     void missionWorkspaceKeepsUsableProjectionsWithTheirDiagnostics() throws Exception {
         gateway.getResponses.put("/ai/agentos/v2/missions/mDeferred/workspace",
                 RecordingAgentOsGateway.response(200, WorkspaceQueryFixture.deferredFallback()));
@@ -98,9 +121,16 @@ class AgentOsObservationControllerTest {
     @Test
     void runObservationQueriesPreserveUpstreamStatusesAndBodies() throws Exception {
         String usagePath = "/ai/agentos/v2/runs/run%20001/resource-usage";
-        gateway.getResponses.put(usagePath, RecordingAgentOsGateway.response(200, Map.of("runId", "run 001")));
-        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage", "run 001"))
-                .andExpect(status().isOk());
+        gateway.getResponses.put(usagePath, RecordingAgentOsGateway.response(
+                200, ResourceUsageQueryFixture.observedUsage()));
+        String usageBody = mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage", "run 001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.usage.callCount").value(2))
+                .andExpect(jsonPath("$.contextPressure.source").value("usage_derived"))
+                .andExpect(jsonPath("$.scheduler").doesNotExist())
+                .andExpect(jsonPath("$..features").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(usageBody.contains(ResourceUsageQueryFixture.SECRET));
         assertEquals(usagePath, gateway.lastGetPath);
 
         String callsPath = usagePath + "/calls?stepId=report&cursor=20&pageSize=25";
