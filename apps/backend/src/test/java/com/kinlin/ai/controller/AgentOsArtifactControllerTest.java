@@ -250,9 +250,12 @@ class AgentOsArtifactControllerTest {
     @Test
     void outputRefsUseOwnedSubresourcePathsWithIdentityEncoding() throws Exception {
         String outputPath = "/ai/agentos/v2/runs/run_001/outputs/output:run_001:report:hash";
-        gateway.getResponses.put(outputPath, RecordingAgentOsGateway.response(200, Map.of("outputRef", "output:run_001:report:hash")));
+        gateway.getResponses.put(outputPath, RecordingAgentOsGateway.response(200, Map.of(
+                "runId", "run_001", "outputRef", "output:run_001:report:hash",
+                "content", Map.of("report_markdown", "公开报告"))));
         mockMvc.perform(get("/api/agentos/v2/runs/run_001/outputs/output:run_001:report:hash"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.kind").value("object"));
         assertEquals(outputPath, gateway.lastGetPath);
 
         String legacyOutputPath = "/ai/agentos/v2/runs/run_001/legacy-outputs";

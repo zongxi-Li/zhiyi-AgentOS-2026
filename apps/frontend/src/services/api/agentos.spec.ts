@@ -1,5 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, agentosRequest, WorkflowApiContractError } from './agentos'
+import { decodeOutputContent, type OutputContentValue } from './agentos/api/acg'
+
+// The output endpoint returns ContentValueQuery, not the reconstructed product object.
+const outputValue = (value: unknown): OutputContentValue => {
+  if (value === null) return { kind: 'null' }
+  if (typeof value === 'string') return { kind: 'string', text: value }
+  if (typeof value === 'number') return { kind: 'number', number: value }
+  if (typeof value === 'boolean') return { kind: 'boolean', bool: value }
+  if (Array.isArray(value)) return { kind: 'list', items: value.map(outputValue) }
+  if (value && typeof value === 'object') return {
+    kind: 'object', members: Object.entries(value).map(([name, item]) => ({ name, value: outputValue(item) }))
+  }
+  throw new Error('Invalid output fixture')
+}
 
 const run = {
   runId: 'run_1', missionId: 'mission_1', workflowId: 'legal.contract_review', domain: 'legal',
@@ -20,6 +34,17 @@ const executionTree = (nodes: Array<Record<string, unknown>> = [], lifecycles: A
 })
 
 describe('AgentOS v2 application API', () => {
+  it('keeps prototype-shaped content keys as own product data', () => {
+    const result = decodeOutputContent({ kind: 'object', members: [
+      { name: '__proto__', value: outputValue({ publicValue: '正文' }) },
+      { name: 'constructor', value: outputValue('正文构造字段') }
+    ] })
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+    expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(true)
+    expect(result.__proto__).toEqual({ publicValue: '正文' })
+    expect(Object.prototype.hasOwnProperty.call(result, 'constructor')).toBe(true)
+    expect(JSON.parse(JSON.stringify(result)).__proto__).toEqual({ publicValue: '正文' })
+  })
   beforeEach(() => vi.restoreAllMocks())
 
   it('starts a run through the v2 gateway and preserves clientRequestId', async () => {
@@ -137,7 +162,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final', artifact } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ final_answer: '# Final', artifact }) } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 
@@ -153,7 +178,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ final_answer: '# Final' }) } } as never)
 
     await agentosApi.getAcgView('run_1', { run })
 
@@ -204,7 +229,7 @@ describe('AgentOS v2 application API', () => {
         isAxiosError: true,
         response: { status: 404 }
       }))
-      .mockResolvedValueOnce({ data: { content: { answer: '节点已完成的完整答案' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ answer: '节点已完成的完整答案' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 
@@ -239,8 +264,8 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({ data: { content: { answer: 'first' } } } as never)
-      .mockResolvedValueOnce({ data: { content: { answer: 'second' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ answer: 'first' }) } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ answer: 'second' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 
@@ -263,7 +288,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({ data: { content: { answer: 'only intermediate output' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ answer: 'only intermediate output' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 
@@ -286,7 +311,7 @@ describe('AgentOS v2 application API', () => {
       } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ final_answer: '# Final' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_legacy_provenance')
 
@@ -316,7 +341,7 @@ describe('AgentOS v2 application API', () => {
       } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree() } as never)
-      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ final_answer: '# Final' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_native_delivery')
 
@@ -352,7 +377,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockResolvedValueOnce({ data: executionTree([identityNode], records) } as never)
-      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ final_answer: '# Final' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 
@@ -371,7 +396,7 @@ describe('AgentOS v2 application API', () => {
       .mockResolvedValueOnce({ data: { integrityStatus: 'valid', events: [] } } as never)
       .mockResolvedValueOnce({ data: { events: [] } } as never)
       .mockRejectedValueOnce({ isAxiosError: true, response: { status: 404 } })
-      .mockResolvedValueOnce({ data: { content: { final_answer: '# Final' } } } as never)
+      .mockResolvedValueOnce({ data: { content: outputValue({ final_answer: '# Final' }) } } as never)
 
     const result = await agentosApi.getAcgView('run_1')
 

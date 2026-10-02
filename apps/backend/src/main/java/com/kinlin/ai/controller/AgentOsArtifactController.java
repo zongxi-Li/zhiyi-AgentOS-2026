@@ -5,6 +5,7 @@ import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.artifact.mapper.ArtifactProjectionMapper;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
+import com.kinlin.ai.projection.output.mapper.OutputProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -112,17 +113,18 @@ public class AgentOsArtifactController {
     }
 
     @GetMapping("/runs/{runId}/outputs/{outputRef}")
-    public ResponseEntity<Map<String, Object>> getOutput(
+    public ResponseEntity<QueryResponse> getOutput(
             @PathVariable String runId,
             @PathVariable String outputRef
     ) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.output(runId, outputRef)));
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.output(runId, outputRef)), OutputProjectionMapper::output);
     }
 
     @GetMapping("/runs/{runId}/legacy-outputs")
-    public ResponseEntity<Map<String, Object>> getLegacyOutputs(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/legacy-outputs"));
+    public ResponseEntity<QueryResponse> getLegacyOutputs(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/legacy-outputs"), OutputProjectionMapper::legacyOutputs);
     }
 
     @PostMapping(value = "/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
