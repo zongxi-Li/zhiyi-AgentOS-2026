@@ -1,0 +1,54 @@
+name: backend-ci
+
+# J1.4D：Backend Architecture Freeze Gate 的唯一 CI 权威。
+# 不做 path 过滤：根级 pom / compose / .env 样例都能影响 backend 行为，
+# 过滤省下的时间不值得漏跑风险。性能基准（@Tag("performance")）被 surefire
+# excludedGroups 默认排除，不属于本 required gate（J1.4D §八）。
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-gate:
+    name: backend test + package gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 生产 runtime 对齐：pom java.version=17，backend 运行镜像
+      # eclipse-temurin:17.0.19_10-jre-jammy。本机 benchmark 用的 JDK 21
+      # 只是测量工具，不代表项目版本，CI 不跟随（J1.4D §四）。
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # Required test gate：unit + architecture guard + PostgreSQL/Redis
+      # Testcontainers（github runner 自带 Docker，纯云环境证明 §六）
+      # + security contracts + observability contracts（J1.4D §五/§十~十四）。
+      - name: Run backend test gate (mvn test)
+        working-directory: apps/backend
+        run: mvn -B -ntp test
+
+      - name: Package production jar
+        working-directory: apps/backend
+        run: mvn -B -ntp package -DskipTests
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-${{ github.run_id }}
+          path: apps/backend/target/surefire-reports/
+          if-no-files-found: ignore

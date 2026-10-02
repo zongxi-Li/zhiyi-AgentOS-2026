@@ -1,9 +1,10 @@
-# Java Backend 架构边界（J1.3 冻结）
+# Java Backend 架构边界（J1.4D 冻结）
 
 > 状态：J1.1 Backend Boundary Convergence + J1.2 Spring Boot Layering Convergence（含 J1.2B
-> Controller / API Layering）+ J1.3 Legacy AI Cleanup 已落地。本文档是 Java Backend 系统边界的权威表述，由
-> `ArchitectureGuardTest` 以源码扫描方式强制。
-> 后续阶段：J1.4 Backend Architecture Freeze → N1.2 / N2 / N3。
+> Controller / API Layering）+ J1.3 Legacy AI Cleanup + J1.4A/B/C/D Hardening 已落地。
+> **本文档是 Java Backend 系统边界的权威表述**，由 `ArchitectureGuardTest`（30 条源码守卫）
+> 与 GitHub Actions `backend-ci`（required gate）双机制强制。
+> 后续阶段：N1.2 / N2 / N3（均为 contract evolution，见 §10/§14 准入门）。
 >
 > **J1.3 已移除**：legacy agent 整链（`AgentController` + `legacy/agent.AgentGatewayService`
 > + `dto.agent.AgentChat*` + `agent.python.*` 配置，RestTemplate 随之全仓禁止）、
@@ -204,4 +205,97 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 4. KG/DH/Emotion/RoleFusion 的动态 Map projection 系统化 typed 化——N1.2。
 5. SSE protocol（RuntimeEventEnvelope）——N2。
 6. Resource transport（multipart/binary 上游传输的系统化收敛）——N3。
-7. GitHub 远端无 CI（`.github/workflows` 为空，测试与架构守卫仅本地强制）——J1.4 前必须补 GitHub Actions 跑 `mvn test`。
+7. ~~GitHub 远端无 CI~~ → **J1.4D 已建立** `.github/workflows/backend-ci.yml`（required gate，
+   push/PR → master 必跑 `mvn test` 全量含 Testcontainers + `mvn package -DskipTests`，见 §11）。
+
+## 9. Architecture Freeze Status（J1.4D，2026-10-01）
+
+**BACKEND ARCHITECTURE = FROZEN。**
+
+冻结组件（任何修改必须满足 §10 准入门）：
+
+| 组件 | 权威落点 |
+|---|---|
+| Controller ownership | AgentOS 北向六 controller 拆分 + 路由 owner（§4 规则 11~13） |
+| 分层方向 | Controller → Application Service → Client Contract → Client Impl → Transport（§2，五层单向） |
+| transport ownership | `PythonClientFactory` 唯一 WebClient 工厂；`PlatformAiTransport` 统一超时/错误分类；`AiProxyService` 唯一白名单代理 |
+| SSE ownership | `AiSseGatewayService` 唯一上游 SSE 桥（冻结至 N2） |
+| persistence authority | backend 启动期 Flyway 唯一 schema owner + Hibernate validate；OSIV=false；schema-tool=MANUAL_TOOL |
+| cache authority | Spring Cache（生产 = RedisCacheManager `"roles"`，TTL 1h）唯一共享 cache owner；`@CacheEvict` 失效协议；Redis 故障 degrade-to-DB |
+| JWT configuration authority | typed `JwtProperties`（HS512 ≥64B，启动期 fail-fast）；prod/compose 无默认 secret（`${APP_JWT_SECRET}` 缺失即启动失败） |
+| network stack | Spring MVC inbound + WebClient outbound + SSE streaming（RestTemplate / WebSocket / STOMP / SockJS = 已删除态，守卫禁止复活） |
+| Java 平台语义边界 | Java 不拥有 ACG semantics（TaskPlan / ACG topology / Scheduler / ExecutionBinding 等，§1） |
+
+强制机制：`ArchitectureGuardTest`（30 条源码守卫，§7）+ `backend-ci` GitHub Actions required gate（§11）。
+
+## 10. Freeze 准入门（未来修改的唯一合法理由）
+
+**允许**（四类，须在 PR 描述附证据）：
+
+| 类别 | 定义 | 证据要求 |
+|---|---|---|
+| `BUG_FIX` | 可复现缺陷，修复不改变边界 | 复现路径 + 回归测试 |
+| `CONTRACT_EVOLUTION` | N1.2 Query Projection / N2 Runtime Event Protocol / N3 Resource Transport（§14） | 契约变更清单；不得破坏 §9 冻结组件 |
+| `MEASURED_PERFORMANCE_DEFECT` | 有重复测量数据证明的性能缺陷 | 对照 §12 基线的 BEFORE/A/B 数据（同数据集/硬件/并发） |
+| `SECURITY_FIX` | 有证据的安全缺陷 | 缺陷描述 + 修复后测试 |
+
+**不接受**："为了更优雅"、"为了统一技术栈"、"为了以后可能需要"、无测量数据的"性能优化"。
+
+## 11. CI Freeze Gate（`.github/workflows/backend-ci.yml`）
+
+- **触发**：push → master、pull_request → master；**不做 path 过滤**（根级 pom/compose/.env 样例
+  同样影响 backend，过滤省时风险不划算）。
+- **Java 版本对齐**：CI = **17**（pom `java.version=17` + 运行镜像 `eclipse-temurin:17.0.19_10-jre-jammy`；
+  本机 benchmark 的 JDK 21 只是测量工具，不代表项目版本）。
+- **必跑两步**：`mvn test`（全量 305：unit + 30 条架构守卫 + PostgreSQL/Redis Testcontainers +
+  security contracts + observability contracts，即 §十二~十四全部冻结门的执行体）+
+  `mvn package -DskipTests`（生产 jar 可构建）。
+- **性能基准不在 required gate**：`@Tag("performance")` 由 surefire `excludedGroups` 默认排除
+  （`-Pperformance` 打开）；P50/P95/P99 基线永不作为 PR blocking threshold。
+- **Testcontainers 1.21.4 override 是正式版本决策**：Boot 3.2.0 BOM 钉的 1.19.x 内置 docker-java
+  无法对接 Docker Engine 29（API ≥1.44）；1.21.4（docker-java 3.4.2）向下兼容旧引擎，
+  GitHub runner 的 Docker 直接可用。非临时本机 hack —— pom 属性注释 + 本节双记录，禁止回退。
+- **分支保护建议**（不由工具自动改远端）：Settings → Branches → Add branch protection rule →
+  勾选 Require status checks → 选中 `backend-gate`（job 名）为 required check（针对 master）。
+
+## 12. Performance Baseline Registry（J1.4C，2026-09-30）
+
+基线是**回归参照**，不是 SLA / 保证 / 容量上限；CI 不设性能阈值。
+
+环境：Windows 11 本机 Docker Desktop（Engine 29.0.1）；benchmark JVM 21（仅测量工具）；
+PostgreSQL 15.17-alpine + Redis 7.4.9-alpine（Testcontainers，pg-it/redis-it profiles）；
+fake Python upstream（JDK HttpServer，15ms 固定延迟，**零真实 LLM/公网调用**，测的是 Java 自身开销）；
+并发档 1/10/25/50，warmup 5s、measure 10s；指标 P50/P95/P99/max + 吞吐 + 错误率 + CPU +
+Hikari pending + query/request + cache hitRatio。
+
+| 负载 | 端点 | 吞吐 @50 | P50 @50 | 备注 |
+|---|---|---|---|---|
+| W1 auth-login | `POST /auth/login` | 315 rps | 154ms | BCrypt 故意成本，非缺陷 |
+| W2 role-read | `GET /roles/{builtin}` | 10239 rps | 4ms | cache hitRatio=1.00 |
+| W3 conversation-list | `GET /conversations` | —（饱和） | — | 50 并发 Hikari pending 峰值 27（§13 D2） |
+| W4 chat-persistence | `POST /chat/text` | 1823 rps | 26ms | ≈4 statements/req；pending 峰值 9 |
+| W5 agentos-gateway | `GET /api/agentos/v2/missions` | — | 17ms 恒定 | fake upstream 15ms + Java 开销 ≈2ms |
+
+## 13. Known Debt Registry（J1.4A/B/C 汇总，冻结期只登记不修）
+
+| # | 债务 | 事实 | 分类 |
+|---|---|---|---|
+| D1 | conversationList auto-title 写放大 | 列表查询夹带隐藏 auto-title UPDATE（20 会话 23 statements，J1.4C [DEBT-2]） | DEFERRED —— 需业务决策（列表是否继续自动命名） |
+| D2 | conversation-list 50 并发 Hikari pending=27 | W3 饱和信号（W4 pending=9）；禁调 pool | DEFERRED —— 有测量证据后按 §10 准入 |
+| D3 | AlertService 无界本地 alertHistory | `ConcurrentHashMap<String,List<Alert>>` 内存累积、无逐出（AlertService.java:28） | DEFERRED —— 需产品决策（接 metrics 后端或设上限） |
+| D4 | `RoleSwitchOptimizer` 命名失真 | 名为 optimizer，实为 Spring Cache roles 权威 | ACCEPTED —— freeze 期禁大规模重命名 |
+| D5 | Controller 直接暴露 Entity | 7 个 controller import `com.kinlin.ai.entity`（Chat/Auth/Role/Conversation/UserFeedback/Search/User） | DEFERRED —— 响应形状变更属 contract evolution（N1.2） |
+| D6 | schema 无 FK 约束 | 贫血实体裸 UUID 列、无 relationship mapping | ACCEPTED —— schema 冻结；唯一性/CHECK/JSONB 已有真实 PG 契约测试 |
+| D7 | 死持久化方法 | `ConversationRepository.findByUserIdAndRoleId`、`MessageRepository.findRecentMessages`、`UserFeedbackRepository.findByRoleId/findBySentiment/findByMessageId` 零生产调用（2026-10-01 grep 复核） | REMOVE —— 下阶段清理（含测试引用） |
+| D8 | SSE 负载基准缺失 | W5 测的是 JSON 网关透传，SSE 流式未压测 | DEFERRED —— N2 改 SSE 协议后重建基准 |
+
+## 14. N1.2 / N2 / N3 边界（contract evolution 通道）
+
+后续三阶段全部走 §10 的 `CONTRACT_EVOLUTION` 通道：
+
+- **N1.2 Query Projection**：KG/DH/Emotion/RoleFusion 动态 Map projection typed 化 + D5 Entity 暴露收敛。
+- **N2 Runtime Event Protocol**：SSE protocol（RuntimeEventEnvelope）；`AiSseGatewayService` 所有权届时解冻。
+- **N3 Resource Transport**：multipart/binary 上游传输系统化收敛。
+
+三者允许修改相应边界，但**不得借机破坏**：五层分层（§2）、transport ownership（§4）、
+ACG authority（Java 不拥有 ACG semantics，§1）。
