@@ -23,6 +23,8 @@ class StaticQueryRouteArchitectureTest {
                     "org.springframework.http.ResponseEntity<byte[]>", "[]"),
             new Transport("FileController#downloadFile", "/files/download/{type}/{filename:.+}",
                     "org.springframework.http.ResponseEntity<org.springframework.core.io.Resource>", "[]"),
+            new Transport("UserController#getAvatar", "/users/{userId}/avatar",
+                    "org.springframework.http.ResponseEntity<org.springframework.core.io.Resource>", "[]"),
             new Transport("AgentOsEventController#streamRunEvents", "/api/agentos/v2/runs/{runId}/events",
                     "reactor.core.publisher.Mono<org.springframework.http.ResponseEntity<reactor.core.publisher.Flux<org.springframework.http.codec.ServerSentEvent<java.lang.String>>>>",
                     "[text/event-stream]"));
@@ -47,11 +49,14 @@ class StaticQueryRouteArchitectureTest {
             var method = entry.getValue().getMethod();
             var type = method.getDeclaringClass();
             for (var path : route.getPatternValues()) {
-                if (QueryProjectionArchitectureTest.strictOutputChecked(type, method)) { checked++; continue; }
                 var transport = new Transport(type.getSimpleName() + "#" + method.getName(), path,
                         method.getGenericReturnType().getTypeName(), route.getProducesCondition().toString());
-                assertTrue(TRANSPORTS.contains(transport), "unprojected GET or widened transport exception: " + transport);
-                seenTransports.add(transport);
+                if (TRANSPORTS.contains(transport)) { seenTransports.add(transport); continue; }
+                assertFalse(transport.response().contains("byte[]") || transport.response().contains("org.springframework.core.io.Resource")
+                        || transport.response().contains("ServerSentEvent"), "unregistered transport: " + transport);
+                assertTrue(QueryProjectionArchitectureTest.strictOutputChecked(type, method),
+                        "unprojected GET or widened transport exception: " + transport);
+                checked++;
             }
         }
         assertTrue(checked > 0, "must inspect real Spring mappings");
