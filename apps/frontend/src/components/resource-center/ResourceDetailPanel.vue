@@ -42,7 +42,7 @@
         <div><dt>数据域</dt><dd>{{ item.profile.dataZone || '未标注' }}</dd></div>
         <div><dt>位置</dt><dd>{{ item.profile.location || '未标注' }}</dd></div>
         <div><dt>归属</dt><dd>{{ item.profile.ownerScope || '未标注' }}</dd></div>
-        <div v-if="item.profile.executionEndpoint"><dt>端点</dt><dd class="resource-detail__code">{{ item.profile.executionEndpoint.protocol }}://{{ item.profile.executionEndpoint.address }}</dd></div>
+        <!-- 执行端点与凭据引用已随 N1.2 投影迁移从资源目录移除（任务书：资源目录无 endpoint/credential）。 -->
       </dl>
     </section>
 
@@ -67,17 +67,17 @@
       </div>
     </section>
 
-    <section v-if="Object.keys(item.profile.labels).length" class="resource-detail__section">
+    <section v-if="item.profile.labels?.length" class="resource-detail__section">
       <h3>标签</h3>
       <dl class="resource-detail__kv">
-        <div v-for="(value, key) in item.profile.labels" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></div>
+        <div v-for="label in item.profile.labels" :key="label.key"><dt>{{ label.key }}</dt><dd>{{ label.value }}</dd></div>
       </dl>
     </section>
 
-    <section v-if="Object.keys(item.profile.costMetadata).length" class="resource-detail__section">
+    <section v-if="item.profile.costMetadata?.length" class="resource-detail__section">
       <h3>成本元数据</h3>
       <dl class="resource-detail__kv">
-        <div v-for="(value, key) in item.profile.costMetadata" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></div>
+        <div v-for="cost in item.profile.costMetadata" :key="cost.key"><dt>{{ cost.key }}</dt><dd>{{ cost.value }}</dd></div>
       </dl>
     </section>
 

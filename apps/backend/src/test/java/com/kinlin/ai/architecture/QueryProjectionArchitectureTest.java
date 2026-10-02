@@ -190,12 +190,12 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == AgentOsArtifactController.class) {
             return List.of("getArtifacts", "getArtifact", "getArtifactFragments",
-                    "getOutput", "getLegacyOutputs").contains(method.getName());
+                    "getOutput", "getLegacyOutputs", "getResources").contains(method.getName());
         }
         if (controller == AgentOsObservationController.class) {
             return List.of("getMissionWorkspace", "getResourceUsage", "getResourceUsageCalls",
                     "getTrace", "getMemoryEvents", "getProvenance", "getCheckpoints",
-                    "getIdentityHealth").contains(method.getName());
+                    "getIdentityHealth", "getHistoryConfig").contains(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }

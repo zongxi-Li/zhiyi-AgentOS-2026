@@ -6,6 +6,7 @@ import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.artifact.mapper.ArtifactProjectionMapper;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.output.mapper.OutputProjectionMapper;
+import com.kinlin.ai.projection.resourcecatalog.mapper.ResourceCatalogProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -52,8 +53,9 @@ public class AgentOsArtifactController {
     }
 
     @GetMapping("/resources")
-    public ResponseEntity<Map<String, Object>> getResources() {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.resources()));
+    public ResponseEntity<QueryResponse> getResources() {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.resources()), ResourceCatalogProjectionMapper::catalog);
     }
 
     @PostMapping("/resources/register")

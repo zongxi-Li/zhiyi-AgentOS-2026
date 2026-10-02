@@ -1,4 +1,4 @@
-import type { ResourceFailoverObservation, RuntimeComputeCapacity } from '@/services/api/agentos'
+import type { ResourceFailoverObservation } from '@/services/api/agentos'
 
 /** 端-边-云部署层级的中文标签。 */
 export const tierLabel = (value?: string | null): string => ({
@@ -62,15 +62,21 @@ export const formatDate = (value: string | null | undefined): string => {
 }
 
 /** 算力画像（CPU 核数 / 内存 / GPU / 带宽）格式化。 */
-export const formatCapacity = (capacity?: RuntimeComputeCapacity | null): string => {
+export const formatCapacity = (capacity?: {
+  cpuCores?: number | null
+  memoryMb?: number | null
+  gpuType?: string | null
+  gpuMemoryMb?: number | null
+  bandwidthMbps?: number | null
+} | null): string => {
   if (!capacity) return '未观测'
-  const parts = [`${capacity.cpuCores}核`, `${Math.round(capacity.memoryMb / 1024)}G 内存`]
+  const parts = [`${capacity.cpuCores ?? 0}核`, `${Math.round((capacity.memoryMb ?? 0) / 1024)}G 内存`]
   if (capacity.gpuType) {
-    parts.push(`${capacity.gpuType} ${Math.round(capacity.gpuMemoryMb / 1024)}G`)
+    parts.push(`${capacity.gpuType} ${Math.round((capacity.gpuMemoryMb ?? 0) / 1024)}G`)
   } else if (capacity.gpuMemoryMb) {
     parts.push(`GPU ${Math.round(capacity.gpuMemoryMb / 1024)}G`)
   }
-  parts.push(`${capacity.bandwidthMbps}Mbps`)
+  parts.push(`${capacity.bandwidthMbps ?? 0}Mbps`)
   return parts.join(' · ')
 }
 
