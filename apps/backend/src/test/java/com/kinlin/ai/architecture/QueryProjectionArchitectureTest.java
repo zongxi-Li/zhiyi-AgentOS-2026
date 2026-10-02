@@ -16,6 +16,8 @@ import com.kinlin.ai.controller.KnowledgeGraphController;
 import com.kinlin.ai.controller.RagController;
 import com.kinlin.ai.controller.EmotionController;
 import com.kinlin.ai.controller.RoleFusionController;
+import com.kinlin.ai.controller.DigitalHumanController;
+import com.kinlin.ai.controller.RecommendationController;
 import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.StatisticsController;
 import com.kinlin.ai.controller.UserProfileController;
@@ -215,6 +217,10 @@ class QueryProjectionArchitectureTest {
         if (controller == RagController.class) {
             return List.of("query", "listDocuments").contains(method.getName());
         }
+        if (controller == DigitalHumanController.class) {
+            return "getDigitalHuman".equals(method.getName());
+        }
+        if (controller == RecommendationController.class) { return true; }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
 
@@ -324,7 +330,7 @@ class QueryProjectionArchitectureTest {
     @Test
     void negativeFixturesDetectWrappedEntitiesDynamicDtosAndConfigurationSpread() throws Exception {
         for (String name : List.of("user", "roles", "conversations", "messages", "feedbacks", "nested", "nestedMessage",
-                "dynamic", "dynamicMetadata", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
+                "dynamic", "dynamicMetadata", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint", "checkpointReference")) {
             Type type = BadResponses.class.getDeclaredMethod(name).getGenericReturnType();
             assertThrows(AssertionError.class, () -> assertSafe(type, true, new HashSet<>(), name, ALL_PLATFORM_ENTITIES), name);
         }
@@ -333,6 +339,8 @@ class QueryProjectionArchitectureTest {
         assertDoesNotThrow(() -> assertSafe(RoleQuery.class, true, new HashSet<>(), "valid role", ALL_PLATFORM_ENTITIES));
         assertDoesNotThrow(() -> assertConfigurationSlots(RoleQuery.class));
         assertDoesNotThrow(() -> assertConfigurationSlots(RoleContextQuery.class));
+        assertDoesNotThrow(() -> assertSafe(com.kinlin.ai.projection.recovery.dto.CheckpointItemQuery.class,
+                true, new HashSet<>(), "public recovery reference", ALL_PLATFORM_ENTITIES));
     }
 
     private static final Set<Class<?>> ALL_PLATFORM_ENTITIES =
@@ -401,6 +409,10 @@ class QueryProjectionArchitectureTest {
                     assertFalse(Set.of("passwordHash", "executionState", "checkpoint", "scheduler",
                             "binding", "executionBinding", "bindingManifest", "compiledPackage", "graphPatchRefs",
                             "sourcePatchId", "controlFrames", "resourceBindings").contains(field.getName()), field.toString());
+                    if ("checkpointId".equals(field.getName())) {
+                        assertEquals("com.kinlin.ai.projection.recovery.dto.CheckpointItemQuery", type.getName(),
+                                path + " spreads the recovery-only public reference");
+                    }
                 }
                 assertSafe(field.getGenericType(), strict, visited, path + "." + field.getName(), bannedEntities);
             }
@@ -454,6 +466,7 @@ class QueryProjectionArchitectureTest {
 
     private record NestedRole(Role body) { }
     private record RuntimeDto(String checkpoint) { }
+    private record PrivateCheckpointReference(String checkpointId) { }
     private record DynamicDto(Map<String, String> metadata) { }
     private record WrappedMessage(Message body) { }
     private record DynamicMetadataDto(Map<String, Object> metadata) { }
@@ -463,6 +476,7 @@ class QueryProjectionArchitectureTest {
     private static class GetterConfigurationSpread { public RoleConfigurationQuery getMetadata() { return null; } }
     private interface BadResponses {
         ResponseEntity<RuntimeDto> checkpoint();
+        ResponseEntity<PrivateCheckpointReference> checkpointReference();
         ResponseEntity<User> user();
         ResponseEntity<List<Role>> roles();
         ResponseEntity<List<Conversation>> conversations();
