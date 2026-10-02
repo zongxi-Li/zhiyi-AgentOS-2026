@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -97,28 +98,116 @@ class AgentOsArtifactControllerTest {
     void artifactMetadataAndFragmentsKeepUpstreamPagination() throws Exception {
         String fragmentsPath = "/ai/agentos/v2/runs/run%20001/artifacts/manifest%20001/fragments"
                 + "?cursor=5&pageSize=10";
-        gateway.getResponses.put(fragmentsPath, RecordingAgentOsGateway.response(200, Map.of("items", List.of())));
+        Map<String, Object> manifestRow = new java.util.HashMap<>();
+        manifestRow.put("manifestId", "manifest 001");
+        manifestRow.put("kind", "artifact");
+        manifestRow.put("ownerType", "run");
+        manifestRow.put("ownerId", "run 001");
+        manifestRow.put("mediaType", "text/markdown");
+        manifestRow.put("checksum", "a".repeat(64));
+        manifestRow.put("byteLength", 64);
+        manifestRow.put("fragmentCount", 1);
+        manifestRow.put("estimatedTokens", 8);
+        manifestRow.put("chunkingVersion", "content-bytes.v1");
+        manifestRow.put("sealed", true);
+        manifestRow.put("createdAt", "2026-10-02T00:00:00Z");
+        Map<String, Object> fragmentRow = new java.util.HashMap<>(Map.of(
+                "fragmentId", "fragment 001", "manifestId", "manifest 001", "sequence", 0,
+                "checksum", "c".repeat(64), "byteLength", 64, "estimatedTokens", 8,
+                "sourceRefs", List.of("step_001"), "constraintRefs", List.of(),
+                "verificationStatus", "passed", "complete", true));
+        fragmentRow.put("content", "分片正文");
+        Map<String, Object> fragmentPage = new java.util.HashMap<>();
+        fragmentPage.put("manifest", manifestRow);
+        fragmentPage.put("items", List.of(fragmentRow));
+        fragmentPage.put("nextCursor", null);
+        gateway.getResponses.put(fragmentsPath, RecordingAgentOsGateway.response(200, fragmentPage));
         mockMvc.perform(get(
                         "/api/agentos/v2/runs/{runId}/artifacts/{manifestId}/fragments",
                         "run 001", "manifest 001"
                 ).param("cursor", "5").param("pageSize", "10"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manifest.manifestId").value("manifest 001"))
+                .andExpect(jsonPath("$.items[0].content").value("分片正文"))
+                .andExpect(jsonPath("$.items[0].sequence").value(0))
+                .andExpect(jsonPath("$.nextCursor").isEmpty())
+                .andExpect(jsonPath("$.manifest.ownerType").doesNotExist())
+                .andExpect(jsonPath("$.manifest.chunkingVersion").doesNotExist())
+                .andExpect(jsonPath("$.manifest.bindingId").doesNotExist())
+                .andExpect(jsonPath("$.manifest.metadata").doesNotExist());
         assertEquals(fragmentsPath, gateway.lastGetPath);
 
         String listPath = "/ai/agentos/v2/runs/run_001/artifacts";
-        gateway.getResponses.put(listPath, RecordingAgentOsGateway.response(200, Map.of(
-                "items", List.of(Map.of("manifestId", "manifest_001")))));
+        Map<String, Object> identityRow = new java.util.HashMap<>(manifestRow);
+        identityRow.put("artifactId", "artifact_001");
+        identityRow.put("missionId", "mission_001");
+        identityRow.put("originRunId", "run_001");
+        identityRow.put("taskId", "task_001");
+        identityRow.put("semanticTaskKey", "analyze");
+        identityRow.put("artifactKey", "primary");
+        identityRow.put("acgNodeId", "node_7");
+        identityRow.put("producerAttemptId", "attempt_001");
+        identityRow.put("name", "尽调报告");
+        identityRow.put("artifactType", "run_deliverable");
+        identityRow.put("contentRef", "manifest 001");
+        identityRow.put("disposition", "GENERATED");
+        identityRow.put("sourceRunId", null);
+        identityRow.put("bindingId", "binding_001");
+        identityRow.put("runId", "run_001");
+        identityRow.put("createdAt", "2026-10-02T01:00:00Z");
+        Map<String, Object> listPage = new java.util.HashMap<>();
+        listPage.put("runId", "run_001");
+        listPage.put("items", List.of(identityRow));
+        listPage.put("total", 1);
+        gateway.getResponses.put(listPath, RecordingAgentOsGateway.response(200, listPage));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/artifacts", "run_001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.items[0].manifestId").value("manifest_001"));
+                .andExpect(jsonPath("$.runId").value("run_001"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].manifestId").value("manifest 001"))
+                .andExpect(jsonPath("$.items[0].name").value("尽调报告"))
+                .andExpect(jsonPath("$.items[0].disposition").value("GENERATED"))
+                .andExpect(jsonPath("$.items[0].createdAt").value("2026-10-02T01:00:00Z"))
+                .andExpect(jsonPath("$.items[0].bindingId").doesNotExist())
+                .andExpect(jsonPath("$.items[0].ownerId").doesNotExist())
+                .andExpect(jsonPath("$.items[0].ownerType").doesNotExist())
+                .andExpect(jsonPath("$.items[0].chunkingVersion").doesNotExist());
         assertEquals(listPath, gateway.lastGetPath);
 
         String singlePath = "/ai/agentos/v2/runs/run_001/artifacts/manifest_001";
-        gateway.getResponses.put(singlePath, RecordingAgentOsGateway.response(200, Map.of(
-                "manifestId", "manifest_001", "mediaType", "text/plain")));
+        gateway.getResponses.put(singlePath, RecordingAgentOsGateway.response(200, identityRow));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/artifacts/{manifestId}", "run_001", "manifest_001"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manifestId").value("manifest 001"))
+                .andExpect(jsonPath("$.mediaType").value("text/markdown"))
+                .andExpect(jsonPath("$.artifactId").value("artifact_001"));
         assertEquals(singlePath, gateway.lastGetPath);
+    }
+
+    @Test
+    void artifactContractViolationsFailWithTheExistingErrorEnvelope() throws Exception {
+        String singlePath = "/ai/agentos/v2/runs/run_001/artifacts/manifest_001";
+        gateway.getResponses.put(singlePath, RecordingAgentOsGateway.response(200,
+                Map.of("manifestId", "manifest_001")));
+        String body = mockMvc.perform(get(
+                        "/api/agentos/v2/runs/{runId}/artifacts/{manifestId}", "run_001", "manifest_001"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"))
+                .andExpect(jsonPath("$._httpStatus").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(body.contains("manifest_001"));
+
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_001/artifacts",
+                RecordingAgentOsGateway.response(200, Map.of("items", List.of(), "total", 0)));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/artifacts", "run_001"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"));
+
+        gateway.getResponses.put(singlePath, RecordingAgentOsGateway.response(404,
+                Map.of("code", "AGENTOS_REQUEST_REJECTED", "message", "artifact not found")));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/artifacts/{manifestId}", "run_001", "manifest_001"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AGENTOS_REQUEST_REJECTED"));
     }
 
     @Test
