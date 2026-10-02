@@ -237,26 +237,25 @@ class QueryProjectionArchitectureTest {
         Class<?> grammar = Class.forName("com.kinlin.ai.projection.output.dto.ContentValueQuery");
         Path directory = MAIN.resolve("com/kinlin/ai/projection");
         int checked = 0;
+        Set<String> actualOwners = new HashSet<>();
         try (Stream<Path> files = Files.walk(directory)) {
             for (Path file : files.filter(path -> path.toString().endsWith(".java"))
                     .filter(path -> path.getParent().getFileName().toString().equals("dto")).toList()) {
                 String name = MAIN.relativize(file).toString().replace('\\', '.').replace('/', '.').replace(".java", "");
                 Class<?> dto = Class.forName(name);
-                if (!name.startsWith("com.kinlin.ai.projection.output.dto.")) {
-                    for (Field field : dto.getDeclaredFields()) {
-                        assertFalse(containsValueType(field.getGenericType(), grammar, new HashSet<>()),
+                for (Field field : dto.getDeclaredFields()) {
+                    if (Modifier.isStatic(field.getModifiers())) { continue; }
+                    if (containsValueType(field.getGenericType(), grammar, new HashSet<>())) {
+                        assertTrue(allowedOwners.contains(name),
                                 name + "." + field.getName() + " embeds the output content grammar");
+                        actualOwners.add(name);
                     }
                 }
                 checked++;
             }
         }
         assertTrue(checked > 0);
-        assertEquals(allowedOwners, Set.of(
-                "com.kinlin.ai.projection.output.dto.OutputQuery",
-                "com.kinlin.ai.projection.output.dto.LegacyOutputItemQuery",
-                "com.kinlin.ai.projection.output.dto.ContentValueQuery",
-                "com.kinlin.ai.projection.output.dto.ContentMemberQuery"),
+        assertEquals(allowedOwners, actualOwners,
                 "the owner list must be updated deliberately when the grammar family changes");
     }
 
