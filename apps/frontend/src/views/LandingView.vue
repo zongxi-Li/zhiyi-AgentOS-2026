@@ -437,6 +437,33 @@ const setupPointerMotion = (root: HTMLElement) => {
   if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
+  /* 大标题字符上滑：拆字后随区块 is-in 逐字升起；标题自身交出 data-reveal
+     （避免父子双重位移动画），眉题与铜线各自接管入场。 */
+  if ('IntersectionObserver' in window) {
+    root.querySelectorAll<HTMLElement>('.landing-section__heading').forEach(heading => {
+      const h2 = heading.querySelector('h2')
+      if (!h2 || h2.dataset.splitDone) return
+      const text = h2.textContent ?? ''
+      if (!text.trim()) return
+      h2.textContent = ''
+      ;[...text].forEach((ch, i) => {
+        const s = document.createElement('span')
+        s.className = 'rise-char'
+        s.style.transitionDelay = `${Math.min(i * 36, 560)}ms`
+        s.textContent = ch === ' ' ? '\u00A0' : ch
+        h2.appendChild(s)
+      })
+      h2.dataset.splitDone = '1'
+      heading.removeAttribute('data-reveal')
+      const eyebrow = heading.querySelector('.landing-eyebrow')
+      if (eyebrow) {
+        eyebrow.setAttribute('data-reveal', '')
+        revealObserver?.observe(eyebrow)
+      }
+      revealObserver?.observe(heading)
+    })
+  }
+
   root.querySelectorAll<HTMLElement>('.landing-cta, .landing-island-btn, .landing-footer__top').forEach(el => {
     const onMove = (e: MouseEvent) => {
       const r = el.getBoundingClientRect()
@@ -463,6 +490,46 @@ const setupPointerMotion = (root: HTMLElement) => {
     el.addEventListener('mousemove', onMove, { passive: true })
     motionCleanups.push(() => el.removeEventListener('mousemove', onMove))
   })
+
+  /* 信息卡 3D 倾斜：随指针位置轻转，最大 2.5°，保留一丝悬浮感。 */
+  root.querySelectorAll<HTMLElement>('.landing-info-card').forEach(el => {
+    const onMove = (e: MouseEvent) => {
+      const r = el.getBoundingClientRect()
+      const px = (e.clientX - r.left) / r.width - 0.5
+      const py = (e.clientY - r.top) / r.height - 0.5
+      el.style.transform = `perspective(900px) rotateX(${(-py * 5).toFixed(2)}deg) rotateY(${(px * 5).toFixed(2)}deg) translateY(-2px)`
+    }
+    const onLeave = () => { el.style.transform = '' }
+    el.addEventListener('mousemove', onMove, { passive: true })
+    el.addEventListener('mouseleave', onLeave, { passive: true })
+    motionCleanups.push(() => {
+      el.removeEventListener('mousemove', onMove)
+      el.removeEventListener('mouseleave', onLeave)
+      el.style.transform = ''
+    })
+  })
+
+  /* SYSTEM MAP 条 Dock 放大：悬停项放大 12%，邻居按高斯衰减跟随。 */
+  const strip = root.querySelector('.landing-capability-strip')
+  if (strip) {
+    const items = Array.from(strip.querySelectorAll<HTMLElement>('.landing-capability-strip__item'))
+    const onMove = (e: MouseEvent) => {
+      for (const it of items) {
+        const r = it.getBoundingClientRect()
+        const d = Math.abs(e.clientX - (r.left + r.width / 2))
+        const s = 1 + 0.12 * Math.exp(-Math.pow(d / 110, 2))
+        it.style.transform = `translateY(-1px) scale(${s.toFixed(3)})`
+      }
+    }
+    const onLeave = () => items.forEach(it => { it.style.transform = '' })
+    strip.addEventListener('mousemove', onMove, { passive: true })
+    strip.addEventListener('mouseleave', onLeave, { passive: true })
+    motionCleanups.push(() => {
+      strip.removeEventListener('mousemove', onMove)
+      strip.removeEventListener('mouseleave', onLeave)
+      onLeave()
+    })
+  }
 }
 
 onUnmounted(() => {
@@ -669,7 +736,12 @@ const goToLogin = () => openAuth()
 .landing-section__heading { text-align: center; margin-bottom: clamp(26px, 4vh, 44px); }
 .landing-section__heading .landing-eyebrow { margin-bottom: 14px; }
 .landing-section__heading h2 { margin: 0; color: var(--ink); font-family: var(--font-serif, serif); font-size: clamp(32px, 3.6vw, 52px); font-weight: 600; letter-spacing: -.045em; }
-.landing-section__heading::after { content: ''; display: block; width: 52px; height: 3px; margin: 18px auto 0; border-radius: 2px; background: var(--copper); }
+.landing-section__heading::after { content: ''; display: block; width: 52px; height: 3px; margin: 18px auto 0; border-radius: 2px; background: var(--copper); transition: opacity 420ms ease 160ms; }
+/* 大标题字符上滑：拆字 span 由 splitHeadings 生成，随区块 is-in 逐字升起；
+   铜线延后半拍淡入，避免空标题期"悬空横线"。 */
+.rise-char { display: inline-block; opacity: 0; transform: translateY(.55em); transition: opacity 480ms ease, transform 640ms cubic-bezier(.2, .8, .2, 1); }
+.landing-section__heading.is-in .rise-char { opacity: 1; transform: none; }
+.landing-view.supports-reveal .landing-section__heading:not(.is-in)::after { opacity: 0; }
 .landing-section__intro { margin: 16px auto 0; max-width: 62ch; color: var(--ink-soft); font-size: 15px; line-height: 1.8; }
 
 .landing-watermark { position: absolute; z-index: 0; top: 50%; right: clamp(-40px, 2vw, 60px); transform: translateY(-50%); color: var(--wm); font-family: var(--font-serif, serif); font-size: clamp(260px, 28vw, 430px); font-weight: 700; line-height: 1; letter-spacing: -.04em; pointer-events: none; user-select: none; }
@@ -946,5 +1018,6 @@ const goToLogin = () => openAuth()
   .landing-info-card, .landing-cta, .landing-nav a, .landing-nav a::after, .landing-capability-strip__item, .landing-store-ribbon__items span { transition: none; }
   .landing-nav a.is-active { animation: none; }
   .landing-watermark { animation: none; }
+  .rise-char { opacity: 1; transform: none; transition: none; }
 }
 </style>
