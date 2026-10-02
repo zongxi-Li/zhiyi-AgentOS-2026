@@ -14,6 +14,8 @@ import com.kinlin.ai.controller.RoleController;
 import com.kinlin.ai.controller.ChatQualityController;
 import com.kinlin.ai.controller.KnowledgeGraphController;
 import com.kinlin.ai.controller.RagController;
+import com.kinlin.ai.controller.EmotionController;
+import com.kinlin.ai.controller.RoleFusionController;
 import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.StatisticsController;
 import com.kinlin.ai.controller.UserProfileController;
@@ -203,7 +205,8 @@ class QueryProjectionArchitectureTest {
                     "getIdentityHealth", "getHistoryConfig").contains(method.getName());
         }
         if (controller == StatisticsController.class || controller == UserProfileController.class
-                || controller == ChatQualityController.class) {
+                || controller == ChatQualityController.class || controller == EmotionController.class
+                || controller == RoleFusionController.class) {
             return true;
         }
         if (controller == KnowledgeGraphController.class) {
