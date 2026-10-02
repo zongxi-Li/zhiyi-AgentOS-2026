@@ -48,6 +48,9 @@ class RoleCacheRedisIntegrationTest extends RedisIntegrationTestBase {
     @Autowired
     private RoleRepository roleRepository;
 
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
     @BeforeEach
     void resetCacheAndSpy() {
         Cache cache = cacheManager.getCache("roles");
@@ -130,6 +133,9 @@ class RoleCacheRedisIntegrationTest extends RedisIntegrationTestBase {
         Role fresh = optimizer.getRoleCached(roleId);
         assertThat(fresh.getName()).isEqualTo("更新后名字_" + suffix);
         verify(roleService, times(2)).getRole(roleId);
+
+        // §五：eviction 指标经官方 RedisCacheWriter statistics 落地
+        assertThat(meterRegistry.find("cache.evictions").tag("cache", "roles").counters()).isNotEmpty();
     }
 
     @Test
@@ -149,6 +155,21 @@ class RoleCacheRedisIntegrationTest extends RedisIntegrationTestBase {
         assertThat(roleRepository.findById(roleId)).isEmpty();
     }
 
+    /** §五：cache.gets hit/miss 与 cache.puts 由 Boot 官方 instrumentation 产出。 */
+    @Test
+    @Order(1)
+    void cacheHitMissPutMetricsAreInstrumented() {
+        Role role = createCustomRole("指标测试_" + UUID.randomUUID());
+        optimizer.getRoleCached(role.getId());  // miss → put
+        optimizer.getRoleCached(role.getId());  // hit
+
+        assertThat(meterRegistry.find("cache.gets").tag("cache", "roles")
+                .tag("result", "miss").counters()).isNotEmpty();
+        assertThat(meterRegistry.find("cache.gets").tag("cache", "roles")
+                .tag("result", "hit").counters()).isNotEmpty();
+        assertThat(meterRegistry.find("cache.puts").tag("cache", "roles").counters()).isNotEmpty();
+    }
+
     /**
      * §十五：Redis 被定义为 optional cache——不可用时核心 DB 路径仍可工作
      * （degrade-to-DB，CacheConfig 的 CacheErrorHandler 吞掉缓存异常）。
@@ -156,7 +177,7 @@ class RoleCacheRedisIntegrationTest extends RedisIntegrationTestBase {
      * 新端口，而应用上下文持旧端口），后续也无需再用。
      */
     @Test
-    @Order(5)
+    @Order(6)
     void redisUnavailableDegradesToDatabase() {
         Role role = createCustomRole("降级测试_" + UUID.randomUUID());
         UUID roleId = role.getId();

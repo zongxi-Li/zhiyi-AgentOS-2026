@@ -136,7 +136,95 @@ class AiSseGatewayServiceTest {
     }
 
     private AiSseGatewayService service(long idleMs, long maximumMs) {
-        return new AiSseGatewayService(WebClient.builder().baseUrl(baseUrl).build(), idleMs, maximumMs);
+        return service(idleMs, maximumMs, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    private AiSseGatewayService service(long idleMs, long maximumMs,
+                                        io.micrometer.core.instrument.MeterRegistry registry) {
+        return new AiSseGatewayService(WebClient.builder().baseUrl(baseUrl).build(), idleMs, maximumMs,
+                new TrustedUserContextForwarder(), registry);
+    }
+
+    private static double counter(io.micrometer.core.instrument.MeterRegistry registry, String name) {
+        return registry.find(name).counters().stream().mapToDouble(c -> c.count()).sum();
+    }
+
+    private static double gauge(io.micrometer.core.instrument.MeterRegistry registry, String name) {
+        return registry.find(name).gauge() == null ? 0.0 : registry.find(name).gauge().value();
+    }
+
+    @Test
+    void streamLifecycleCountersTrackOpenCompleteIdleMaxAndActiveGauge() {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+        // 正常完成：opened=1、completed=1、active 回 0
+        ResponseEntity<Flux<ServerSentEvent<String>>> ok = service(200, 1_000, registry)
+                .openPost("/ai/events", java.util.Map.of()).block(Duration.ofSeconds(1));
+        ok.getBody().collectList().block(Duration.ofSeconds(1));
+        assertEquals(1.0, counter(registry, "kinlin.sse.streams.opened"));
+        assertEquals(1.0, counter(registry, "kinlin.sse.streams.completed"));
+        assertEquals(0.0, gauge(registry, "kinlin.sse.streams.active"));
+
+        // idle timeout：专用计数器 + active 回 0
+        ResponseEntity<Flux<ServerSentEvent<String>>> idle = service(40, 1_000, registry)
+                .openPost("/ai/idle", java.util.Map.of()).block(Duration.ofSeconds(1));
+        idle.getBody().collectList().block(Duration.ofSeconds(1));
+        assertEquals(1.0, counter(registry, "kinlin.sse.streams.idle_timeout"));
+
+        // max duration：专用计数器
+        ResponseEntity<Flux<ServerSentEvent<String>>> maximum = service(80, 70, registry)
+                .openPost("/ai/long", java.util.Map.of()).block(Duration.ofSeconds(1));
+        maximum.getBody().collectList().block(Duration.ofSeconds(1));
+        assertEquals(1.0, counter(registry, "kinlin.sse.streams.max_duration"));
+
+        // 三条流全部终结后，active gauge 必须归零（泄漏防线）
+        assertEquals(0.0, gauge(registry, "kinlin.sse.streams.active"));
+    }
+
+    @Test
+    void downstreamCancelIsCountedAndReleasesActiveStream() throws Exception {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        reactor.core.Disposable subscription = service(1_000, 5_000, registry)
+                .openGet("/ai/runtime-events-timeline").block(Duration.ofSeconds(1))
+                .getBody()
+                .subscribe();
+
+        // 订阅/取消是异步传播，轮询等待计数落地（有界，不无限等）
+        awaitValue(registry, "kinlin.sse.streams.active", 1.0);
+        subscription.dispose();
+        awaitValue(registry, "kinlin.sse.streams.cancelled", 1.0);
+        awaitValue(registry, "kinlin.sse.streams.active", 0.0);
+    }
+
+    private static void awaitValue(io.micrometer.core.instrument.MeterRegistry registry,
+                                   String name, double expected) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 2_000;
+        double current;
+        do {
+            current = "kinlin.sse.streams.active".equals(name)
+                    ? gauge(registry, name)
+                    : counter(registry, name);
+            if (Double.compare(current, expected) == 0) {
+                return;
+            }
+            Thread.sleep(20);
+        } while (System.currentTimeMillis() < deadline);
+        org.junit.jupiter.api.Assertions.assertEquals(expected, current, name + " 未在时限内到达");
+    }
+
+    @Test
+    void preStreamUpstreamErrorsDoNotTouchStreamCounters() {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        // 422 在流建立前被拒绝（errorResponse 路径）：不算 opened，也不产生 active
+        ResponseEntity<Flux<ServerSentEvent<String>>> rejected = service(100, 1_000, registry)
+                .openPost("/ai/rejected", java.util.Map.of()).block(Duration.ofSeconds(1));
+        rejected.getBody().collectList().block(Duration.ofSeconds(1));
+
+        assertEquals(0.0, counter(registry, "kinlin.sse.streams.opened"));
+        assertEquals(0.0, gauge(registry, "kinlin.sse.streams.active"));
     }
 
     private void stream(HttpExchange exchange, List<String> events, long delayMs) throws IOException {

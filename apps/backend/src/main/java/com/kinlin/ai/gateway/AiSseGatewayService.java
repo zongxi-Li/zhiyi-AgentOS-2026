@@ -1,5 +1,6 @@
 package com.kinlin.ai.gateway;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,9 +14,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Non-buffering SSE bridge with separate inactivity and total-duration limits. */
 @Slf4j
@@ -30,12 +33,19 @@ public class AiSseGatewayService {
     private final Duration maximumDuration;
     private final TrustedUserContextForwarder userContextForwarder;
 
+    // J1.4C §六：SSE 流生命周期指标，全部无 tag（runId/userId 禁止进入）。
+    // idle/max/upstream 三类终止在各自 onErrorResume 转换点计数（事实源头），
+    // opened/completed/cancelled/active 在下游订阅生命周期上计数。
+    private final AtomicLong activeStreams;
+    private final MeterRegistry meterRegistry;
+
     @Autowired
     public AiSseGatewayService(
             WebClient pythonTransport,
             @Value("${ai.sse.idle-timeout-ms:240000}") long idleTimeoutMs,
             @Value("${ai.sse.max-duration-ms:1800000}") long maximumDurationMs,
-            TrustedUserContextForwarder userContextForwarder
+            TrustedUserContextForwarder userContextForwarder,
+            MeterRegistry meterRegistry
     ) {
         if (idleTimeoutMs <= 0 || maximumDurationMs <= 0) {
             throw new IllegalArgumentException("SSE timeouts must be positive");
@@ -44,11 +54,15 @@ public class AiSseGatewayService {
         this.idleTimeout = Duration.ofMillis(idleTimeoutMs);
         this.maximumDuration = Duration.ofMillis(maximumDurationMs);
         this.userContextForwarder = userContextForwarder;
+        this.meterRegistry = meterRegistry;
+        this.activeStreams = meterRegistry.gauge("kinlin.sse.streams.active", new AtomicLong());
     }
 
     /** Test seam: takes a pre-built transport so base-URL wiring stays with {@code PythonClientFactory}. */
     AiSseGatewayService(WebClient transport, long idleTimeoutMs, long maximumDurationMs) {
-        this(transport, idleTimeoutMs, maximumDurationMs, new TrustedUserContextForwarder());
+        this(transport, idleTimeoutMs, maximumDurationMs,
+                new TrustedUserContextForwarder(),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
     public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> openPost(String path, Object body) {
@@ -96,11 +110,14 @@ public class AiSseGatewayService {
                     .takeUntilOther(Mono.delay(maximumDuration)
                             .flatMap(ignored -> Mono.<Void>error(new SseMaximumDurationException())))
                     .onErrorResume(SseIdleTimeoutException.class,
-                            ignored -> Flux.just(errorEvent("SSE_IDLE_TIMEOUT")))
+                            ignored -> Flux.just(terminalErrorEvent("SSE_IDLE_TIMEOUT",
+                                    "kinlin.sse.streams.idle_timeout")))
                     .onErrorResume(SseMaximumDurationException.class,
-                            ignored -> Flux.just(errorEvent("SSE_MAX_DURATION")))
+                            ignored -> Flux.just(terminalErrorEvent("SSE_MAX_DURATION",
+                                    "kinlin.sse.streams.max_duration")))
                     .onErrorResume(error -> {
                         log.warn("SSE upstream stream terminated. type={}", error.getClass().getSimpleName());
+                        meterRegistry.counter("kinlin.sse.streams.upstream_error").increment();
                         return Flux.just(errorEvent("AI_STREAM_INTERRUPTED"));
                     })
                     .doOnCancel(() -> log.info("SSE downstream cancelled; upstream subscription cancelled"));
@@ -109,8 +126,34 @@ public class AiSseGatewayService {
                     .contentType(MediaType.TEXT_EVENT_STREAM)
                     .header("Cache-Control", "no-cache, no-transform")
                     .header("X-Accel-Buffering", "no")
-                    .body(stream);
+                    .body(instrument(stream));
         });
+    }
+
+    private Flux<ServerSentEvent<String>> instrument(Flux<ServerSentEvent<String>> stream) {
+        return stream
+                .doOnSubscribe(ignored -> {
+                    meterRegistry.counter("kinlin.sse.streams.opened").increment();
+                    activeStreams.incrementAndGet();
+                })
+                .doOnCancel(() -> {
+                    meterRegistry.counter("kinlin.sse.streams.cancelled").increment();
+                    activeStreams.decrementAndGet();
+                })
+                .doFinally(signal -> {
+                    if (signal == SignalType.ON_COMPLETE) {
+                        meterRegistry.counter("kinlin.sse.streams.completed").increment();
+                        activeStreams.decrementAndGet();
+                    } else if (signal == SignalType.ON_ERROR) {
+                        activeStreams.decrementAndGet();
+                    }
+                });
+    }
+
+    /** 终止类错误事件：计数 + 错误事件一次完成（idle/max 专用）。 */
+    private ServerSentEvent<String> terminalErrorEvent(String code, String counterName) {
+        meterRegistry.counter(counterName).increment();
+        return errorEvent(code);
     }
 
     private Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> mapConnectionError(Throwable error) {
