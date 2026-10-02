@@ -100,10 +100,13 @@ class AgentOsRouteCompatibilityTest {
                 .andExpect(jsonPath("$.eventCount").value(1));
 
         gateway.getResponses.put("/ai/agentos/v2/identity/health", RecordingAgentOsGateway.response(200, Map.of(
-                "status", "ok")));
+                "status", "healthy", "source", "agentos-v2", "backlogCount", 0, "failedCount", 0,
+                "unappliedEventCount", 0, "inboxBacklog", 0, "outboxBacklog", 0,
+                "startupReconciliation", Map.of("examinedMissions", 0, "examinedRuns", 0,
+                        "repairedMissions", 0, "repairedRuns", 0, "replayedEvents", 0, "failureCount", 0))));
         mockMvc.perform(get("/api/agentos/v2/identity/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("ok"));
+                .andExpect(jsonPath("$.status").value("healthy"));
     }
 
     @Test

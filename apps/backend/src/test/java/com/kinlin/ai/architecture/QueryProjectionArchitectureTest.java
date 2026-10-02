@@ -193,7 +193,8 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == AgentOsObservationController.class) {
             return List.of("getMissionWorkspace", "getResourceUsage", "getResourceUsageCalls",
-                    "getTrace", "getMemoryEvents", "getProvenance").contains(method.getName());
+                    "getTrace", "getMemoryEvents", "getProvenance", "getCheckpoints",
+                    "getIdentityHealth").contains(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
@@ -323,7 +324,10 @@ class QueryProjectionArchitectureTest {
             if (!Modifier.isStatic(field.getModifiers())) {
                 if (strict) {
                     assertFalse(field.isAnnotationPresent(JsonSerialize.class), path + " overrides field serialization");
-                    assertFalse(Set.of("passwordHash", "executionState", "checkpoint", "checkpointId", "scheduler",
+                    // "checkpointId" is the registered public recovery reference of the
+                    // checkpoints endpoint (key set pinned by its serialization test);
+                    // checkpoint snapshot data stays banned everywhere.
+                    assertFalse(Set.of("passwordHash", "executionState", "checkpoint", "scheduler",
                             "binding", "executionBinding", "bindingManifest", "compiledPackage", "graphPatchRefs",
                             "sourcePatchId", "controlFrames", "resourceBindings").contains(field.getName()), field.toString());
                 }
