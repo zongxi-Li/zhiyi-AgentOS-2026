@@ -3,9 +3,10 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.client.AgentOsClient;
 import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
+import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
-import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
+import com.kinlin.ai.projection.trace.mapper.TraceProjectionMapper;
 import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -89,14 +90,14 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/trace")
-    public ResponseEntity<Map<String, Object>> getTrace(
+    public ResponseEntity<QueryResponse> getTrace(
             @PathVariable String runId,
             @RequestParam(required = false) String view
     ) {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("view", view);
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
-                AgentOsPaths.run(runId) + "/trace", params)));
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.run(runId) + "/trace", params)), TraceProjectionMapper::trace);
     }
 
     @GetMapping("/runs/{runId}/memory-events")

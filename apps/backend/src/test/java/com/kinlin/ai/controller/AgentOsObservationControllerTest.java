@@ -234,8 +234,17 @@ class AgentOsObservationControllerTest {
     @Test
     void traceForwardsWorkspaceViewAndKeepsDefaultFullExport() throws Exception {
         String path = "/ai/agentos/v2/runs/run_001/trace";
-        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of("eventCount", 50000)));
-        gateway.getResponses.put(path + "?view=workspace", RecordingAgentOsGateway.response(200, Map.of("eventCount", 50000)));
+        // A structurally valid envelope: eventCount keeps the full persisted count
+        // while the workspace view legitimately filters the events list shorter.
+        Map<String, Object> traceEnvelope = Map.of(
+                "runId", "run_001", "missionId", "m1", "workflowId", "wf", "domain", "general",
+                "status", "running", "eventCount", 50000, "events", List.of(Map.of(
+                        "eventId", "evt_1", "runId", "run_001", "stepId", "step_1",
+                        "agentName", "agent", "eventType", "step_scheduled", "observation", "",
+                        "payload", Map.of("stepIds", List.of("step_1")), "durationMs", 0,
+                        "createdAt", "2026-10-02T10:00:00Z")));
+        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, traceEnvelope));
+        gateway.getResponses.put(path + "?view=workspace", RecordingAgentOsGateway.response(200, traceEnvelope));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/trace", "run_001").param("view", "workspace"))
                 .andExpect(status().isOk());
         assertEquals(path + "?view=workspace", gateway.lastGetPath);

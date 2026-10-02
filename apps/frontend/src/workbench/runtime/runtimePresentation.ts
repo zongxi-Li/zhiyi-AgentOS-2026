@@ -392,31 +392,66 @@ const detailEntries = (event: SourceEvent, kind: RuntimePresentationKind): Runti
     { label: 'Event', value: safeText(event.eventType, 100), code: true },
     ...(event.stepId ? [{ label: 'Step', value: safeText(event.stepId, 120), code: true }] : [])
   ]
-  const keys: string[] = []
-  if (kind === 'generic') {
-    for (const key in event.payload) {
-      if (keys.length >= MAX_OBJECT_FIELDS) break
-      if (Object.prototype.hasOwnProperty.call(event.payload, key)) keys.push(key)
-    }
-  } else {
-    keys.push(...(kind === 'model'
-      ? ['model', 'provider', 'status', 'finishReason', 'latencyMs', 'receivedLength']
-      : ['model', 'tool', 'name', 'command', 'path', 'artifactRef', 'outputRef', 'status', 'errorCode', 'message']))
-  }
   const seen = new Set<string>()
   let total = details.reduce((sum, detail) => sum + detail.label.length + detail.value.length, 0)
-  for (const key of keys) {
-    if (details.length >= MAX_DETAILS || total >= MAX_DETAILS_TOTAL) break
-    if (seen.has(key) || isSensitiveField(key) || event.payload[key] == null || key === 'delta') continue
-    seen.add(key)
-    const label = safeText(key, 72)
-    const value = safeSerialize(event.payload[key], Math.min(MAX_SAFE_VALUE_LENGTH, MAX_DETAILS_TOTAL - total - label.length - 4))
-    if (!label || !value) continue
-    details.push({ label, value, code: typeof event.payload[key] !== 'string' })
-    total += label.length + value.length
+  let hasRows = false
+  if (kind === 'generic') {
+    const detailRows = event.payload.details
+    if (Array.isArray(detailRows)) {
+      // Server-projected trace events: each whitelisted payload key arrives as a
+      // bounded public detail row (key/value/kind); unknown keys, internal policy
+      // and mistyped values never become rows.
+      for (const row of detailRows) {
+        if (details.length >= MAX_DETAILS || total >= MAX_DETAILS_TOTAL) break
+        const entry = record(row)
+        const key = text(entry.key)
+        if (!key || seen.has(key) || isSensitiveField(key) || key === 'delta') continue
+        const valueKind = typeof entry.kind === 'string' ? entry.kind : 'string'
+        if (valueKind === 'null') continue
+        const value = safeText(entry.value, Math.min(MAX_SAFE_VALUE_LENGTH, MAX_DETAILS_TOTAL - total - key.length - 4))
+        if (!value) continue
+        seen.add(key)
+        hasRows = true
+        details.push({ label: key, value, code: valueKind !== 'string' })
+        total += key.length + value.length
+      }
+    } else {
+      // Live SSE runtime events keep their raw payload display until Phase 4
+      // projects their wire the same way (trace wire always carries details rows).
+      const keys: string[] = []
+      for (const key in event.payload) {
+        if (keys.length >= MAX_OBJECT_FIELDS) break
+        if (Object.prototype.hasOwnProperty.call(event.payload, key)) keys.push(key)
+      }
+      for (const key of keys) {
+        if (details.length >= MAX_DETAILS || total >= MAX_DETAILS_TOTAL) break
+        if (seen.has(key) || isSensitiveField(key) || event.payload[key] == null || key === 'delta') continue
+        seen.add(key)
+        hasRows = true
+        const label = safeText(key, 72)
+        const value = safeSerialize(event.payload[key], Math.min(MAX_SAFE_VALUE_LENGTH, MAX_DETAILS_TOTAL - total - label.length - 4))
+        if (!label || !value) continue
+        details.push({ label, value, code: typeof event.payload[key] !== 'string' })
+        total += label.length + value.length
+      }
+    }
+  } else {
+    const keys = kind === 'model'
+      ? ['model', 'provider', 'status', 'finishReason', 'latencyMs', 'receivedLength']
+      : ['model', 'tool', 'name', 'command', 'path', 'artifactRef', 'outputRef', 'status', 'errorCode', 'message']
+    for (const key of keys) {
+      if (details.length >= MAX_DETAILS || total >= MAX_DETAILS_TOTAL) break
+      if (seen.has(key) || isSensitiveField(key) || event.payload[key] == null || key === 'delta') continue
+      seen.add(key)
+      hasRows = true
+      const label = safeText(key, 72)
+      const value = safeSerialize(event.payload[key], Math.min(MAX_SAFE_VALUE_LENGTH, MAX_DETAILS_TOTAL - total - label.length - 4))
+      if (!label || !value) continue
+      details.push({ label, value, code: typeof event.payload[key] !== 'string' })
+      total += label.length + value.length
+    }
   }
-  const hasPayloadField = keys.length > 0
-  if (kind === 'generic' && !hasPayloadField && event.observation) {
+  if (kind === 'generic' && !hasRows && event.observation) {
     details.push({ label: 'Summary', value: safeText(event.observation, 320) })
   }
   return details

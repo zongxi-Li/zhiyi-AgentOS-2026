@@ -252,6 +252,47 @@ describe('RuntimeObservationAdapter', () => {
     expect(result.lowEntropy.effectiveSavingRatio).toBeCloseTo(0.2279, 3)
   })
 
+  it('reads communication fields from typed producer association rows on trace payloads', async () => {
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run('run_1') as any)
+    vi.spyOn(agentosApi, 'getWorkflowTrace').mockResolvedValue({
+      ...trace('run_1'),
+      events: [{
+        eventId: 'event_consumed',
+        runId: 'run_1',
+        stepId: 'step_2',
+        eventType: 'data_consumed',
+        observation: 'Communication provenance projected',
+        createdAt: '2026-10-02T10:00:00Z',
+        durationMs: 0,
+        payload: {
+          eventId: 'cons_1',
+          consumerStepId: 'step_2',
+          producerStepId: 'step_1',
+          outputRef: 'output:step_1',
+          channel: 'report',
+          producerFields: [{ producerId: 'step_1', fields: ['section', 'title'] }],
+          tokens: 512,
+          contractStatus: 'valid'
+        }
+      }]
+    } as any)
+    vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue(provenance('run_1') as any)
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
+    vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
+
+    const result = await readRuntimeObservation('run_1')
+
+    const item = result.communication.find(entry => entry.source === 'trace')
+    expect(item).toMatchObject({
+      source: 'trace',
+      producerStepId: 'step_1',
+      consumerStepId: 'step_2',
+      artifactRef: 'output:step_1',
+      tokenCount: 512
+    })
+    expect(item?.fields).toEqual(['section', 'title'])
+  })
+
   it('drops a stale response after a fast Run switch', async () => {
     const run1Trace = deferred<ReturnType<typeof trace>>()
     const getWorkflowRun = vi.spyOn(agentosApi, 'getWorkflowRun').mockImplementation(async runId => run(runId) as any)
