@@ -41,7 +41,7 @@ public final class MissionProjectionMapper {
                         text(item, "status"), optionalText(item, "latestRunId"),
                         optionalText(item, "latestRunStatus"), time(item, "createdAt", false),
                         time(item, "updatedAt", false), nonNegativeInt(item, "runCount"))),
-                nonNegativeInt(wire, "total"), positiveInt(wire, "page"),
+                nonNegativeLong(wire, "total"), positiveInt(wire, "page"),
                 positiveInt(wire, "pageSize"), optionalText(wire, "source"));
     }
 
@@ -79,6 +79,16 @@ public final class MissionProjectionMapper {
     private static int nonNegativeInt(Map<?, ?> source, String field) {
         if (!(source.get(field) instanceof Number value)) { throw invalid(); }
         int result = new BigDecimal(value.toString()).intValueExact();
+        if (result < 0) { throw invalid(); }
+        return result;
+    }
+
+    private static long nonNegativeLong(Map<?, ?> source, String field) {
+        if (!(source.get(field) instanceof Number value)) { throw invalid(); }
+        // For floating inputs, preserve the actual binary value rather than a rounded decimal string.
+        BigDecimal exact = value instanceof Float || value instanceof Double
+                ? new BigDecimal(value.doubleValue()) : new BigDecimal(value.toString());
+        long result = exact.longValueExact();
         if (result < 0) { throw invalid(); }
         return result;
     }

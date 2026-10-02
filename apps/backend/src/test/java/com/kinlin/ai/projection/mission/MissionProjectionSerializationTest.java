@@ -130,6 +130,25 @@ class MissionProjectionSerializationTest {
         assertThrows(RuntimeException.class, () -> MissionProjectionMapper.list(invalidTime));
     }
 
+    @Test
+    void listTotalPreservesLongCountsAndRejectsInvalidNumbers() throws Exception {
+        for (Number count : List.of(2147483648L, Long.MAX_VALUE,
+                new java.math.BigInteger("9223372036854775807"), Math.nextDown(0x1p63))) {
+            var wire = MissionQueryFixture.list();
+            wire.put("total", count);
+            var result = MissionProjectionMapper.list(wire);
+            long expected = count.longValue();
+            assertEquals(expected, result.total());
+            assertEquals(expected, jackson.readTree(jackson.writeValueAsString(result)).get("total").longValue());
+        }
+        for (Number invalid : List.of(-1L, new java.math.BigDecimal("12.5"),
+                new java.math.BigInteger("9223372036854775808"), 0x1p63, Double.NaN)) {
+            var wire = MissionQueryFixture.list();
+            wire.put("total", invalid);
+            assertThrows(RuntimeException.class, () -> MissionProjectionMapper.list(wire));
+        }
+    }
+
     private void assertFields(JsonNode node, String... expected) {
         Set<String> actual = new HashSet<>(); node.fieldNames().forEachRemaining(actual::add);
         assertEquals(Set.of(expected), actual);
