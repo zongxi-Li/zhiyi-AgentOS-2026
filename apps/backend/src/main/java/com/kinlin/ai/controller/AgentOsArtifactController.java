@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AgentOsClient;
+import com.kinlin.ai.projection.material.mapper.MaterialProjectionMapper;
 import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.artifact.mapper.ArtifactProjectionMapper;
@@ -48,8 +49,9 @@ public class AgentOsArtifactController {
     }
 
     @GetMapping("/materials/{manifestId}")
-    public ResponseEntity<Map<String, Object>> getMaterial(@PathVariable String manifestId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.material(manifestId)));
+    public ResponseEntity<QueryResponse> getMaterial(@PathVariable String manifestId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.material(manifestId)),
+                MaterialProjectionMapper::material);
     }
 
     @GetMapping("/resources")
@@ -138,8 +140,9 @@ public class AgentOsArtifactController {
     }
 
     @GetMapping("/attachments/{attachmentId}")
-    public ResponseEntity<Map<String, Object>> getAttachment(@PathVariable String attachmentId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.attachment(attachmentId)));
+    public ResponseEntity<QueryResponse> getAttachment(@PathVariable String attachmentId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.attachment(attachmentId)),
+                MaterialProjectionMapper::attachment);
     }
 
     @DeleteMapping("/attachments/{attachmentId}")
