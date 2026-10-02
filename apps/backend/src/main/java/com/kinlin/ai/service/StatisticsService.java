@@ -7,6 +7,7 @@ import com.kinlin.ai.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -28,7 +29,11 @@ public class StatisticsService {
 
     /**
      * 获取用户对话统计
+     *
+     * <p>多次查询（会话 + 消息）聚合计算，readOnly 事务保证跨查询一致性快照；
+     * 实体无懒加载关系，纯读无写路径。</p>
      */
+    @Transactional(readOnly = true)
     public Map<String, Object> getUserStatistics(UUID userId) {
         Map<String, Object> stats = new HashMap<>();
         
@@ -77,7 +82,10 @@ public class StatisticsService {
 
     /**
      * 获取系统整体统计
+     *
+     * <p>三次聚合/去重查询（count × 2 + distinct），readOnly 事务保证同批快照。</p>
      */
+    @Transactional(readOnly = true)
     public Map<String, Object> getSystemStatistics() {
         Map<String, Object> stats = new HashMap<>();
         

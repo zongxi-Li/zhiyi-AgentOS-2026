@@ -17,7 +17,8 @@ cp -a "$PACKAGE_ROOT" "$home"
 export KINLIN_RELEASE_HOME=$home
 compose config --quiet
 compose stop frontend backend ai-service
-compose --profile migration run --rm --no-deps schema-tool migrate
+# schema mutation 的唯一正式 owner 是 backend 启动期 Flyway（flyway.enabled=true）。
+# schema-tool 仅为 MANUAL_TOOL（见 compose.yaml），不得在此自动执行迁移。
 compose up -d --pull never --no-build --wait
 compose exec -T frontend wget -qO- http://127.0.0.1:8080/health >/dev/null
 ln -sfn "$home" "$INSTALL_ROOT/current"

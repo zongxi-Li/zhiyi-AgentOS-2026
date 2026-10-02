@@ -28,6 +28,9 @@ spring:
 
   # JPA配置
   jpa:
+    # OSIV 显式关闭：Controller/serialization 阶段不得依赖 Hibernate Session。
+    # canonical 级声明，prod/compose/dev/test 全部继承；如需覆盖仅限显式评估后。
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false

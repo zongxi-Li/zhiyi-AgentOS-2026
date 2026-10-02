@@ -2,6 +2,8 @@ package com.kinlin.ai.architecture;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -9,6 +11,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,6 +48,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       transport family.</li>
  *   <li>J1.3: WebSocket / STOMP / SockJS are removed transports — production sources
  *       must not reference them at all; streaming is SSE-only.</li>
+ *   <li>J1.4A: controllers declare no {@code @Transactional}; formal configs
+ *       (canonical/prod/compose) pin ddl-auto=validate + open-in-view=false and never
+ *       point at H2; MyBatis / MyBatis-Plus stay banned at dependency and import level.</li>
  *   <li>No ACG semantic implementation leaks into the Java platform.</li>
  * </ul>
  */
@@ -360,5 +366,112 @@ class ArchitectureGuardTest {
         assertTrue(Stream.of("acg", "scheduler", "topology")
                         .noneMatch(name -> Files.isDirectory(mainJava.resolve("com/kinlin/ai").resolve(name))),
                 "ACG-semantic packages must not appear under com.kinlin.ai");
+    }
+
+    // ------------------------------------------------------------------
+    // J1.4A persistence guards
+    // ------------------------------------------------------------------
+
+    /** J1.4A §十七B：Controller 不得声明 @Transactional（含组合注解，反射级检查，不受注释误伤）。 */
+    @Test
+    void controllersDeclareNoTransactional() throws Exception {
+        List<String> offenders = new java.util.ArrayList<>();
+        try (Stream<Path> paths = Files.list(mainJava.resolve("com/kinlin/ai/controller"))) {
+            for (Path file : paths.filter(p -> p.toString().endsWith(".java")).toList()) {
+                String className = "com.kinlin.ai.controller."
+                        + file.getFileName().toString().replaceFirst("\\.java$", "");
+                Class<?> clazz = Class.forName(className);
+                if (AnnotatedElementUtils.hasAnnotation(clazz, Transactional.class)) {
+                    offenders.add(className);
+                }
+            }
+        }
+
+        assertTrue(offenders.isEmpty(), "controllers must not declare @Transactional: " + offenders);
+    }
+
+    /** 正式（production-authority）配置文件集合；dev/test 属开发豁免面，不在其列。 */
+    private static final List<String> FORMAL_CONFIGS = List.of(
+            "src/main/resources/application.yml",
+            "src/main/resources/application-prod.yml",
+            "src/main/resources/application-compose.yml");
+
+    private static String formalConfig(String relativePath) {
+        try {
+            return Files.readString(Path.of(relativePath));
+        } catch (IOException e) {
+            throw new IllegalStateException("无法读取正式配置文件: " + relativePath, e);
+        }
+    }
+
+    private static final Pattern DDL_AUTO_PATTERN = Pattern.compile("ddl-auto:\\s*(\\S+)");
+
+    /** J1.4A §十七C：正式配置禁止 update/create/create-drop；Hibernate 只有 validate 权。 */
+    @Test
+    void formalConfigsAllowOnlyValidateSchemaTool() {
+        List<String> offenders = FORMAL_CONFIGS.stream()
+                .flatMap(path -> DDL_AUTO_PATTERN.matcher(formalConfig(path)).results()
+                        .map(matcher -> path + " -> ddl-auto: " + matcher.group(1)))
+                .filter(match -> !match.endsWith("validate"))
+                .toList();
+
+        assertTrue(offenders.isEmpty(),
+                "formal configs must use ddl-auto=validate only (Flyway owns mutation): " + offenders);
+    }
+
+    /** J1.4A §十七C：canonical 必须显式声明 validate（默认值漂移防线）。 */
+    @Test
+    void canonicalConfigDeclaresValidateExplicitly() {
+        String canonical = formalConfig("src/main/resources/application.yml");
+        assertTrue(DDL_AUTO_PATTERN.matcher(canonical).results()
+                        .anyMatch(match -> match.group(1).equals("validate")),
+                "canonical application.yml must declare ddl-auto: validate explicitly");
+    }
+
+    /** J1.4A §十七D：canonical 必须显式 open-in-view: false；正式配置不得改回 true。 */
+    @Test
+    void osivStaysExplicitlyClosedInFormalConfigs() {
+        String canonical = formalConfig("src/main/resources/application.yml");
+        assertTrue(canonical.contains("open-in-view: false"),
+                "canonical application.yml must declare open-in-view: false explicitly");
+
+        List<String> offenders = FORMAL_CONFIGS.stream()
+                .filter(path -> formalConfig(path).contains("open-in-view: true"))
+                .toList();
+        assertTrue(offenders.isEmpty(), "OSIV must never be re-enabled in formal configs: " + offenders);
+    }
+
+    /** J1.4A §十七E：正式配置的 datasource 不得指向 H2（H2 仅限 dev/test 快速测试面）。 */
+    @Test
+    void formalConfigsNeverPointAtH2() {
+        List<String> offenders = FORMAL_CONFIGS.stream()
+                .filter(path -> {
+                    String content = formalConfig(path);
+                    return content.contains("org.h2.Driver") || content.contains("jdbc:h2:");
+                })
+                .toList();
+
+        assertTrue(offenders.isEmpty(), "formal configs must not use H2 datasource: " + offenders);
+    }
+
+    /** J1.4A §十七F：MyBatis / MyBatis-Plus 禁止回归——依赖与 import 双关卡。 */
+    @Test
+    void myBatisStaysBanned() throws IOException {
+        String pom = Files.readString(Path.of("pom.xml"));
+        assertTrue(Pattern.compile("<artifactId>\\s*mybatis").matcher(pom).results().count() == 0,
+                "pom.xml must not declare MyBatis / MyBatis-Plus dependencies");
+
+        // import 行级检查：剥掉注释行，避免文档误伤
+        Pattern importPattern = Pattern.compile("^import\\s+(?:static\\s+)?(?:org\\.mybatis|org\\.apache\\.ibatis)");
+        List<String> offenders = SOURCES.entrySet().stream()
+                .filter(entry -> entry.getValue().lines()
+                        .map(String::trim)
+                        .filter(line -> !line.isEmpty() && !line.startsWith("//")
+                                && !line.startsWith("*") && !line.startsWith("/*"))
+                        .anyMatch(line -> importPattern.matcher(line).find()))
+                .map(Map.Entry::getKey)
+                .toList();
+
+        assertTrue(offenders.isEmpty(), "MyBatis imports are banned in production sources: " + offenders);
     }
 }
