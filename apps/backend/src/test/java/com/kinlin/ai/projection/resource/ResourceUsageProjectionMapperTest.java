@@ -1,8 +1,10 @@
 package com.kinlin.ai.projection.resource;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import com.kinlin.ai.projection.resource.dto.ResourceCallPageQuery;
 import com.kinlin.ai.projection.resource.dto.RunResourceUsageQuery;
 import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import org.junit.jupiter.api.Test;
@@ -85,5 +87,61 @@ class ResourceUsageProjectionMapperTest {
         RunResourceUsageQuery usage = ResourceUsageProjectionMapper.usage(wireWithout("capability"));
         assertNull(usage.capability());
         assertEquals("observed", usage.capabilitySource());
+    }
+
+    @Test
+    void callsPageKeepsFilterAndPaginationSemantics() {
+        ResourceCallPageQuery page =
+                ResourceUsageProjectionMapper.callPage(ResourceUsageQueryFixture.firstCallPage());
+        assertEquals("run_1", page.runId());
+        assertEquals(2, page.items().size());
+        // The cursor passes through verbatim; the mapper never parses or rewrites it.
+        assertEquals("2", page.nextCursor());
+        assertEquals(25, page.total());
+        var row = page.items().get(0);
+        assertEquals("trace_001", row.callId());
+        assertEquals(1234, row.latencyMs());
+        assertEquals(12200, row.usage().totalTokens());
+        assertEquals(0.5, row.contextPressure());
+    }
+
+    @Test
+    void missingCallsListFailsLoudlyInsteadOfPassingAsAnEmptyPage() {
+        Map<String, Object> missing = ResourceUsageQueryFixture.firstCallPage();
+        missing.remove("items");
+        assertThrows(IllegalArgumentException.class, () -> ResourceUsageProjectionMapper.callPage(missing));
+        Map<String, Object> nulled = ResourceUsageQueryFixture.firstCallPage();
+        nulled.put("items", null);
+        assertThrows(IllegalArgumentException.class, () -> ResourceUsageProjectionMapper.callPage(nulled));
+        Map<String, Object> mistyped = ResourceUsageQueryFixture.firstCallPage();
+        mistyped.put("items", "not-a-list");
+        assertThrows(IllegalArgumentException.class, () -> ResourceUsageProjectionMapper.callPage(mistyped));
+    }
+
+    @Test
+    void brokenCallRowsFailTheContractInsteadOfFabricatingValues() {
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "callId", null);
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "outputPolicy", "");
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "outputExhausted", null);
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "latencyMs", -1);
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "usage", null);
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "partIndex", "1");
+        assertCallRowInvalid(ResourceUsageQueryFixture.firstCallPage(), "contextPressure", Double.NaN);
+        assertCallRowThrows(ResourceUsageQueryFixture.firstCallPage(), "requestedOutputTokens", 98304.5,
+                ArithmeticException.class);
+    }
+
+    private static void assertCallRowInvalid(Map<String, Object> page, String field, Object value) {
+        assertCallRowThrows(page, field, value, IllegalArgumentException.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertCallRowThrows(Map<String, Object> page, String field, Object value,
+            Class<? extends Exception> expected) {
+        Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) ((List<?>) page.get("items")).get(0));
+        row.put(field, value);
+        Map<String, Object> edited = new LinkedHashMap<>(page);
+        edited.put("items", List.of(row));
+        assertThrows(expected, () -> ResourceUsageProjectionMapper.callPage(edited), field);
     }
 }

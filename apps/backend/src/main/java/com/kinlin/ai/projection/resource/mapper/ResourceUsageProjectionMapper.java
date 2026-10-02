@@ -1,20 +1,26 @@
 package com.kinlin.ai.projection.resource.mapper;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 
 import com.kinlin.ai.projection.resource.dto.CompositionQuery;
 import com.kinlin.ai.projection.resource.dto.ContextPressureQuery;
+import com.kinlin.ai.projection.resource.dto.ModelCallQuery;
 import com.kinlin.ai.projection.resource.dto.ModelCapabilityQuery;
+import com.kinlin.ai.projection.resource.dto.ResourceCallPageQuery;
 import com.kinlin.ai.projection.resource.dto.RunResourceUsageQuery;
+import com.kinlin.ai.projection.resource.dto.TokenUsageQuery;
 import com.kinlin.ai.projection.resource.dto.UsageSummaryQuery;
 
 import static com.kinlin.ai.projection.common.mapper.QueryWire.bool;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.decimal;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.integer;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.invalid;
+import static com.kinlin.ai.projection.common.mapper.QueryWire.items;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.object;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.requiredText;
+import static com.kinlin.ai.projection.common.mapper.QueryWire.smallInt;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.text;
 
 /**
@@ -44,6 +50,30 @@ public final class ResourceUsageProjectionMapper {
         return new ModelCapabilityQuery(text(raw, "provider"), text(raw, "model"),
                 text(raw, "version"), text(raw, "revision"), text(raw, "source"),
                 integer(raw, "contextWindowTokens"), integer(raw, "maxOutputTokens"));
+    }
+
+    /** The calls list must exist — a missing list is a contract break, not an empty page. */
+    public static ResourceCallPageQuery callPage(Map<String, Object> wire) {
+        if (wire.get("items") == null) { throw invalid(); }
+        return new ResourceCallPageQuery(requiredText(wire, "runId"),
+                items(wire.get("items"), ResourceUsageProjectionMapper::call),
+                text(wire, "nextCursor"), nonNegativeInt(wire, "total"));
+    }
+
+    private static ModelCallQuery call(Map<?, ?> raw) {
+        return new ModelCallQuery(requiredText(raw, "callId"), text(raw, "stepId"),
+                text(raw, "provider"), text(raw, "model"), text(raw, "createdAt"),
+                nonNegativeLong(raw, "latencyMs"), tokenUsage(object(raw.get("usage"))),
+                text(raw, "finishReason"), requiredText(raw, "outputPolicy"),
+                integer(raw, "requestedOutputTokens"), integer(raw, "effectiveOutputTokens"),
+                text(raw, "effectiveReason"), requiredBool(raw, "outputExhausted"),
+                smallInt(raw, "partIndex"), text(raw, "callChainId"), decimal(raw, "contextPressure"));
+    }
+
+    private static TokenUsageQuery tokenUsage(Map<?, ?> raw) {
+        return new TokenUsageQuery(nonNegativeLong(raw, "inputTokens"), nonNegativeLong(raw, "outputTokens"),
+                nonNegativeLong(raw, "cacheReadTokens"), nonNegativeLong(raw, "cacheWriteTokens"),
+                nonNegativeLong(raw, "reasoningTokens"), nonNegativeLong(raw, "totalTokens"));
     }
 
     private static UsageSummaryQuery usageSummary(Map<?, ?> raw) {

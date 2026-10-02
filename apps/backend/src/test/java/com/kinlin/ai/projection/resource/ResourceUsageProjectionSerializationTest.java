@@ -108,4 +108,59 @@ class ResourceUsageProjectionSerializationTest {
         assertTrue(inputTokens.isLong(), "a 3e9 token sum must serialize as a long, not truncate");
         assertEquals(3_000_000_000L, inputTokens.asLong());
     }
+
+    @Test
+    void callPageEnvelopeKeepsItsExactWhitelistAndDropsRowCapability() throws Exception {
+        JsonNode page = MAPPER.readTree(MAPPER.writeValueAsString(
+                ResourceUsageProjectionMapper.callPage(ResourceUsageQueryFixture.firstCallPage())));
+        assertEquals(Set.of("runId", "items", "nextCursor", "total"), keys(page));
+        assertEquals("run_1", page.path("runId").asText());
+        assertEquals("2", page.path("nextCursor").asText());
+        assertEquals(25, page.path("total").asInt());
+        assertEquals(2, page.path("items").size());
+        JsonNode row = page.path("items").get(0);
+        assertEquals(Set.of("callId", "stepId", "provider", "model", "createdAt", "latencyMs",
+                "usage", "finishReason", "outputPolicy", "requestedOutputTokens",
+                "effectiveOutputTokens", "effectiveReason", "outputExhausted", "partIndex",
+                "callChainId", "contextPressure"), keys(row));
+        assertEquals(Set.of("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens",
+                "reasoningTokens", "totalTokens"), keys(row.path("usage")));
+    }
+
+    @Test
+    void exhaustedCallRowKeepsRequiredValuesAndOmitsUnobservedOnes() throws Exception {
+        JsonNode page = MAPPER.readTree(MAPPER.writeValueAsString(
+                ResourceUsageProjectionMapper.callPage(ResourceUsageQueryFixture.firstCallPage())));
+        JsonNode exhausted = page.path("items").get(1);
+        assertTrue(exhausted.path("outputExhausted").asBoolean());
+        assertEquals(0, exhausted.path("usage").path("inputTokens").asInt());
+        assertEquals("provider_required", exhausted.path("outputPolicy").asText());
+        for (String absent : new String[] {"stepId", "provider", "model", "finishReason",
+                "requestedOutputTokens", "effectiveOutputTokens", "effectiveReason", "partIndex",
+                "callChainId", "contextPressure", "capability"}) {
+            assertTrue(!exhausted.has(absent), absent + " must be absent, not null");
+        }
+    }
+
+    @Test
+    void lastAndEmptyCallPagesKeepUpstreamSemantics() throws Exception {
+        JsonNode last = MAPPER.readTree(MAPPER.writeValueAsString(
+                ResourceUsageProjectionMapper.callPage(ResourceUsageQueryFixture.lastCallPage())));
+        assertTrue(!last.has("nextCursor"), "the final page has no cursor");
+        assertEquals(25, last.path("total").asInt());
+        assertEquals(1, last.path("items").size());
+
+        JsonNode empty = MAPPER.readTree(MAPPER.writeValueAsString(
+                ResourceUsageProjectionMapper.callPage(ResourceUsageQueryFixture.emptyCallPage())));
+        assertTrue(!empty.has("nextCursor"));
+        assertEquals(0, empty.path("total").asInt());
+        assertEquals(0, empty.path("items").size());
+    }
+
+    @Test
+    void callRowSecretsNeverReachTheSerializedResponse() throws Exception {
+        String body = MAPPER.writeValueAsString(
+                ResourceUsageProjectionMapper.callPage(ResourceUsageQueryFixture.firstCallPage()));
+        assertFalse(body.contains(ResourceUsageQueryFixture.SECRET));
+    }
 }

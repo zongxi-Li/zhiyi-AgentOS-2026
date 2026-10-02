@@ -1,22 +1,25 @@
 package com.kinlin.ai.projection.resource;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
- * Minimal sanitized GET /runs/{id}/resource-usage wire fixtures mirroring the upstream
- * agentos_v2.py {@code get_resource_usage} dict exactly: every listed key is present on the
- * wire (nulls included), because this endpoint is a plain dict return, not an exclude_none
- * pydantic dump.
+ * Minimal sanitized resource-usage wire fixtures (GET /runs/{id}/resource-usage and
+ * /resource-usage/calls) mirroring the upstream agentos_v2.py dict returns exactly: every
+ * listed key is present on the wire (nulls included), because these endpoints are plain
+ * dict returns, not an exclude_none pydantic dump.
  *
- * <p>Two upstream paths: observed usage from real model calls, and the zero-call state where
- * the capability comes from the declared catalog hint (provider OR model only). SECRET
- * sentinels mark values the projection must drop: the whole scheduler object, the capability
- * subkeys without a reader (maxTokensField/features/maxTokensRequired/observedAt), and any
- * unknown wire key.
+ * <p>Overview paths: observed usage from real model calls, and the zero-call state where
+ * the capability comes from the declared catalog hint (provider OR model only). Calls paths:
+ * a mid-run page (traceable cursor arithmetic), the last page, and an empty filter result.
+ * SECRET sentinels mark values the projection must drop: the whole scheduler object, the
+ * capability subkeys without a reader (maxTokensField/features/maxTokensRequired/observedAt),
+ * the per-call capability dict, and any unknown wire key.
  */
 public final class ResourceUsageQueryFixture {
     public static final String SECRET = "internal-control-sentinel";
+    public static final String TIME = "2026-10-02T09:00:01.234567+08:00";
 
     private ResourceUsageQueryFixture() { }
 
@@ -118,5 +121,90 @@ public final class ResourceUsageQueryFixture {
         // Unknown internal key must not survive the whitelist either.
         wire.put("internalSchedulerState", SECRET);
         return wire;
+    }
+
+    /**
+     * First calls page of a 25-call run queried with pageSize=2 (traceable upstream cursor
+     * arithmetic: nextCursor = start + pageSize = "2"). Row capability dicts are dropped by
+     * the mapper, so their SECRET payload must not echo.
+     */
+    public static Map<String, Object> firstCallPage() {
+        Map<String, Object> fullUsage = new LinkedHashMap<>();
+        fullUsage.put("inputTokens", 9800);
+        fullUsage.put("outputTokens", 2400);
+        fullUsage.put("cacheReadTokens", 2100);
+        fullUsage.put("cacheWriteTokens", 256);
+        fullUsage.put("reasoningTokens", 460);
+        fullUsage.put("totalTokens", 12200);
+        Map<String, Object> full = new LinkedHashMap<>();
+        full.put("callId", "trace_001");
+        full.put("stepId", "step_outline");
+        full.put("provider", "zhipu");
+        full.put("model", "glm-4.7");
+        full.put("createdAt", TIME);
+        full.put("latencyMs", 1234);
+        full.put("usage", fullUsage);
+        full.put("finishReason", "stop");
+        full.put("outputPolicy", "api_controlled");
+        full.put("requestedOutputTokens", 98304);
+        full.put("effectiveOutputTokens", 8192);
+        full.put("effectiveReason", "provider_default");
+        full.put("outputExhausted", false);
+        full.put("partIndex", 1);
+        full.put("callChainId", "chain_a1");
+        full.put("contextPressure", 0.5);
+        full.put("capability", Map.of("provider", "zhipu", "model", "glm-4.7", "internal", SECRET));
+        // Error-path audit shape: usage empty, optional keys absent, exhausted retry.
+        Map<String, Object> zeroUsage = new LinkedHashMap<>();
+        for (String key : new String[] {"inputTokens", "outputTokens", "cacheReadTokens",
+                "cacheWriteTokens", "reasoningTokens", "totalTokens"}) {
+            zeroUsage.put(key, 0);
+        }
+        Map<String, Object> exhausted = new LinkedHashMap<>();
+        exhausted.put("callId", "trace_002");
+        exhausted.put("stepId", null);
+        exhausted.put("provider", null);
+        exhausted.put("model", null);
+        exhausted.put("createdAt", TIME);
+        exhausted.put("latencyMs", 40);
+        exhausted.put("usage", zeroUsage);
+        exhausted.put("finishReason", null);
+        exhausted.put("outputPolicy", "provider_required");
+        exhausted.put("requestedOutputTokens", null);
+        exhausted.put("effectiveOutputTokens", null);
+        exhausted.put("effectiveReason", null);
+        exhausted.put("outputExhausted", true);
+        exhausted.put("partIndex", null);
+        exhausted.put("callChainId", null);
+        exhausted.put("contextPressure", null);
+        exhausted.put("capability", null);
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("runId", "run_1");
+        page.put("items", List.of(full, exhausted));
+        page.put("nextCursor", "2");
+        page.put("total", 25);
+        return page;
+    }
+
+    /** Last page: one item, no cursor (start + pageSize == total). */
+    public static Map<String, Object> lastCallPage() {
+        Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) ((List<?>) firstCallPage().get("items")).get(0));
+        row.put("callId", "trace_025");
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("runId", "run_1");
+        page.put("items", List.of(row));
+        page.put("nextCursor", null);
+        page.put("total", 25);
+        return page;
+    }
+
+    /** stepId filter with zero matches: empty page with total 0, no cursor. */
+    public static Map<String, Object> emptyCallPage() {
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("runId", "run_1");
+        page.put("items", List.of());
+        page.put("nextCursor", null);
+        page.put("total", 0);
+        return page;
     }
 }
