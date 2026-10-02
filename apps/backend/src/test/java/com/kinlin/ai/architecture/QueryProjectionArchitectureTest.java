@@ -196,7 +196,7 @@ class QueryProjectionArchitectureTest {
      * binary download stays a registered exact binary exception, and the same holds
      * for the unmigrated AgentOS command responses (dynamic upstream passthrough).
      */
-    private static boolean strictOutputChecked(Class<?> controller, Method method) {
+    static boolean strictOutputChecked(Class<?> controller, Method method) {
         if (controller == UserController.class || controller == RoleController.class
                 || controller == ConversationController.class || controller == SearchController.class
                 || controller == UserFeedbackController.class) {
