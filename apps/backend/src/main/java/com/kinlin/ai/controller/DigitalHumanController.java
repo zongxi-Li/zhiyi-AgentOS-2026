@@ -3,6 +3,8 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.dto.DigitalHumanRequest;
 import com.kinlin.ai.dto.DigitalHumanResponse;
 import com.kinlin.ai.service.DigitalHumanService;
+import com.kinlin.ai.projection.digitalhuman.dto.DigitalHumanQuery;
+import com.kinlin.ai.projection.digitalhuman.mapper.DigitalHumanProjectionMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -85,7 +87,7 @@ public class DigitalHumanController {
      * 获取数字人信息（用于加载已创建的数字人）
      */
     @GetMapping("/{roleId}")
-    public ResponseEntity<DigitalHumanResponse> getDigitalHuman(
+    public ResponseEntity<DigitalHumanQuery> getDigitalHuman(
             @PathVariable("roleId") String roleId
     ) {
         try {
@@ -94,15 +96,15 @@ public class DigitalHumanController {
             
             if (response.getSuccess() != null && !response.getSuccess()) {
                 // 如果数字人不存在，返回404
-                return ResponseEntity.status(404).body(response);
+                return ResponseEntity.status(404).body(DigitalHumanProjectionMapper.query(response));
             }
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(DigitalHumanProjectionMapper.query(response));
         } catch (Exception e) {
             log.error("获取数字人失败", e);
             DigitalHumanResponse errorResponse = new DigitalHumanResponse();
             errorResponse.setSuccess(false);
             errorResponse.setMessage("获取数字人失败: " + e.getMessage());
-            return ResponseEntity.status(404).body(errorResponse);
+            return ResponseEntity.status(404).body(DigitalHumanProjectionMapper.query(errorResponse));
         }
     }
 }
