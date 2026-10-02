@@ -3,6 +3,9 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.dto.EmotionAnalyzeRequest;
 import com.kinlin.ai.dto.EmotionAwareResponseRequest;
 import com.kinlin.ai.service.EmotionAwareService;
+import com.kinlin.ai.projection.emotion.dto.EmotionQuery;
+import com.kinlin.ai.projection.emotion.dto.EmotionResponseQuery;
+import com.kinlin.ai.projection.emotion.mapper.EmotionProjectionMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,22 +29,22 @@ public class EmotionController {
      * 多模态情感分析
      */
     @PostMapping("/analyze")
-    public ResponseEntity<Map<String, Object>> analyzeEmotion(
+    public ResponseEntity<EmotionQuery> analyzeEmotion(
             @Valid @RequestBody EmotionAnalyzeRequest request
     ) {
         Map<String, Object> result = emotionAwareService.analyzeEmotion(request);
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(EmotionProjectionMapper.analyze(result));
     }
 
     /**
      * 生成情感感知回复
      */
     @PostMapping("/response")
-    public ResponseEntity<Map<String, Object>> generateEmotionAwareResponse(
+    public ResponseEntity<EmotionResponseQuery> generateEmotionAwareResponse(
             @Valid @RequestBody EmotionAwareResponseRequest request
     ) {
         Map<String, Object> result = emotionAwareService.generateEmotionAwareResponse(request);
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(EmotionProjectionMapper.response(result));
     }
 }
 
