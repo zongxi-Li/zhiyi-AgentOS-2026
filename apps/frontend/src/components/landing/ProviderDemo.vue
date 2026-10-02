@@ -112,7 +112,7 @@ const phase = computed(() => {
 })
 const currentEvent = computed(() => {
   const at = playing.value ? tick.value : LOOP_TICKS
-  let found = events[0]
+  let found: (typeof events)[number] = events[0]
   for (const event of events) { if (at >= event.at) found = event }
   return found
 })
