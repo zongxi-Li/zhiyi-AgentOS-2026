@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.kinlin.ai.controller.AgentOsArtifactController;
 import com.kinlin.ai.controller.AgentOsMissionController;
+import com.kinlin.ai.controller.AgentOsObservationController;
 import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
@@ -189,6 +190,9 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == AgentOsArtifactController.class) {
             return List.of("getArtifacts", "getArtifact", "getArtifactFragments").contains(method.getName());
+        }
+        if (controller == AgentOsObservationController.class) {
+            return "getMissionWorkspace".equals(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
