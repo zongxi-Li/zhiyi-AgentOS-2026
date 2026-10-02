@@ -174,17 +174,13 @@ class QueryProjectionArchitectureTest {
      * Strict closed-output checks target migrated handlers. ChatController is strict except
      * sendTextMessage: its dynamic ChatResponse (open metadata Map) is a registered
      * follow-up scope of the chat migration, not a completed projection. The same holds
-     * for the feedback statistics/receipt handlers, which stay a registered follow-up
-     * scope of the feedback statistics batch, and for the unmigrated AgentOS command
-     * responses (dynamic upstream passthrough).
+     * for the unmigrated AgentOS command responses (dynamic upstream passthrough).
      */
     private static boolean strictOutputChecked(Class<?> controller, Method method) {
         if (controller == UserController.class || controller == RoleController.class
-                || controller == ConversationController.class || controller == SearchController.class) {
+                || controller == ConversationController.class || controller == SearchController.class
+                || controller == UserFeedbackController.class) {
             return true;
-        }
-        if (controller == UserFeedbackController.class) {
-            return "getUserFeedbacks".equals(method.getName());
         }
         if (controller == AgentOsMissionController.class) {
             return "listMissions".equals(method.getName());
