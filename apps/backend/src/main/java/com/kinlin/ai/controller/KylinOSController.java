@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.service.KylinOSIntegrationService;
+import com.kinlin.ai.projection.operational.dto.OperationalQuery;
+import com.kinlin.ai.projection.operational.mapper.OperationalProjectionMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,27 +23,27 @@ public class KylinOSController {
      * 获取系统信息
      */
     @GetMapping("/system-info")
-    public ResponseEntity<Map<String, Object>> getSystemInfo() {
+    public ResponseEntity<OperationalQuery.SystemInfo> getSystemInfo() {
         Map<String, Object> info = kylinOSService.getSystemInfo();
-        return ResponseEntity.ok(info);
+        return ResponseEntity.ok(OperationalProjectionMapper.systemInfo(info));
     }
 
     /**
      * 监控系统资源
      */
     @GetMapping("/resources")
-    public ResponseEntity<Map<String, Object>> monitorResources() {
+    public ResponseEntity<OperationalQuery.Resources> monitorResources() {
         Map<String, Object> resources = kylinOSService.monitorSystemResources();
-        return ResponseEntity.ok(resources);
+        return ResponseEntity.ok(OperationalProjectionMapper.resources(resources));
     }
 
     /**
      * 获取安全状态
      */
     @GetMapping("/security")
-    public ResponseEntity<Map<String, Object>> getSecurityStatus() {
+    public ResponseEntity<OperationalQuery.Security> getSecurityStatus() {
         Map<String, Object> security = kylinOSService.getSecurityStatus();
-        return ResponseEntity.ok(security);
+        return ResponseEntity.ok(OperationalProjectionMapper.security(security));
     }
 }
 

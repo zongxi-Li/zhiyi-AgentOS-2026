@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AiDependencyHealthClient;
+import com.kinlin.ai.projection.operational.dto.OperationalQuery;
+import com.kinlin.ai.projection.operational.mapper.OperationalProjectionMapper;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.ResponseEntity;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -43,21 +45,22 @@ public class HealthController {
     }
 
     @GetMapping
-    public ResponseEntity<Map<String, Object>> health() {
+    public ResponseEntity<OperationalQuery.BasicHealth> health() {
         Map<String, Object> response = new HashMap<>();
         response.put("status", "UP");
         response.put("service", "kinlin-backend");
         response.put("version", "1.0.0");
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(OperationalProjectionMapper.health(response));
     }
 
     @GetMapping("/live")
-    public ResponseEntity<Map<String, Object>> live() {
-        return ResponseEntity.ok(Map.of("status", "UP", "service", "kinlin-backend", "check", "liveness"));
+    public ResponseEntity<OperationalQuery.BasicHealth> live() {
+        return ResponseEntity.ok(OperationalProjectionMapper.health(
+                Map.of("status", "UP", "service", "kinlin-backend", "check", "liveness")));
     }
 
     @GetMapping("/ready")
-    public ResponseEntity<Map<String, Object>> ready() {
+    public ResponseEntity<OperationalQuery.Ready> ready() {
         Map<String, Object> checks = new HashMap<>();
         try {
             checks.put("postgres", jdbcTemplate.queryForObject("SELECT 1", Integer.class) != null);
@@ -71,15 +74,15 @@ public class HealthController {
                     checks.put("redis", "PONG".equalsIgnoreCase(pong));
                 }
             }
-            return ResponseEntity.ok(Map.of("status", "UP", "checks", checks));
+            return ResponseEntity.ok(OperationalProjectionMapper.ready(Map.of("status", "UP", "checks", checks)));
         } catch (Exception e) {
             checks.put("error", e.getClass().getSimpleName());
-            return ResponseEntity.status(503).body(Map.of("status", "DOWN", "checks", checks));
+            return ResponseEntity.status(503).body(OperationalProjectionMapper.ready(Map.of("status", "DOWN", "checks", checks)));
         }
     }
 
     @GetMapping("/dependencies")
-    public ResponseEntity<Map<String, Object>> dependencies() {
+    public ResponseEntity<OperationalQuery.Dependencies> dependencies() {
         AiDependencyHealthClient.AiDependencyHealth ai = aiDependencyHealthClient.probe();
         Map<String, Object> aiService = new HashMap<>();
         aiService.put("status", ai.status());
@@ -90,6 +93,7 @@ public class HealthController {
             aiService.put("error", ai.errorType());
         }
         aiService.put("affectsReadiness", false);
-        return ResponseEntity.ok(Map.of("status", ai.status(), "dependencies", Map.of("aiService", aiService)));
+        return ResponseEntity.ok(OperationalProjectionMapper.dependencies(
+                Map.of("status", ai.status(), "dependencies", Map.of("aiService", aiService))));
     }
 }

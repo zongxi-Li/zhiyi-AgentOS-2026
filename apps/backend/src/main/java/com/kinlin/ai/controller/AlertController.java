@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.service.AlertService;
+import com.kinlin.ai.projection.operational.dto.OperationalQuery;
+import com.kinlin.ai.projection.operational.mapper.OperationalProjectionMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -31,20 +33,26 @@ public class AlertController {
      * 获取告警历史
      */
     @GetMapping("/history")
-    public ResponseEntity<Map<String, List<AlertService.Alert>>> getAlertHistory() {
+    public ResponseEntity<List<OperationalQuery.AlertGroup>> getAlertHistory() {
         Map<String, List<AlertService.Alert>> alerts = alertService.getAllAlerts();
-        return ResponseEntity.ok(alerts);
+        return ResponseEntity.ok(alerts.entrySet().stream().map(entry -> OperationalProjectionMapper.alertGroup(
+                entry.getKey(), projectAlerts(entry.getValue()))).toList());
     }
 
     /**
      * 获取指定类型的告警
      */
     @GetMapping("/history/{alertType}")
-    public ResponseEntity<List<AlertService.Alert>> getAlertHistoryByType(
+    public ResponseEntity<List<OperationalQuery.Alert>> getAlertHistoryByType(
             @PathVariable String alertType
     ) {
         List<AlertService.Alert> alerts = alertService.getAlertHistory(alertType);
-        return ResponseEntity.ok(alerts);
+        return ResponseEntity.ok(projectAlerts(alerts));
+    }
+
+    private static List<OperationalQuery.Alert> projectAlerts(List<AlertService.Alert> alerts) {
+        return alerts.stream().map(item -> OperationalProjectionMapper.alert(item.getAlertType(), item.getMessage(),
+                item.getSeverity(), item.getTimestamp())).toList();
     }
 
     /**
