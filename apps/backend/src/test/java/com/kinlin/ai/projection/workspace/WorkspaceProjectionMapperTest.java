@@ -209,6 +209,47 @@ class WorkspaceProjectionMapperTest {
         assertThrows(IllegalArgumentException.class, () -> WorkspaceProjectionMapper.workspace(legacy));
     }
 
+    @Test
+    void numberDisplaysMatchJavaScriptAcrossExponentAndPrecisionBoundaries() throws Exception {
+        assertMetadataField("confidence", 1e-7, "1e-7");
+        assertMetadataField("confidence", 1e-6, "0.000001");
+        assertMetadataField("confidence", 1e20, "100000000000000000000");
+        assertMetadataField("confidence", 1e21, "1e+21");
+        assertMetadataField("confidence", 0.1f, "0.10000000149011612");
+        assertMetadataField("confidence", 9007199254740993L, "9007199254740992");
+        assertMetadataField("confidence", -0.0, "0");
+        assertMetadataField("confidence", Double.MIN_VALUE, "5e-324");
+        assertMetadataField("confidence", Double.MAX_VALUE, "1.7976931348623157e+308");
+        assertMetadataField("confidence", new java.math.BigDecimal("0.10000000000000000001"), "0.1");
+        assertMetadataField("agentName", 1000000000000000128d, "1000000000000000100");
+        assertMetadataField("evidenceRefs", List.of(1e-7, 0.1f, 9007199254740993L),
+                List.of("1e-7", "0.10000000149011612", "9007199254740992"));
+    }
+
+    @Test
+    void missingNullOrWrongTypedRequiredCollectionsNeverBecomeEmptySuccess() {
+        for (String field : List.of("runs", "entries", "graphNodes", "inputAttachments", "diagnostics")) {
+            var missing = minimalWire();
+            missing.remove(field);
+            assertThrows(IllegalArgumentException.class, () -> WorkspaceProjectionMapper.workspace(missing), field);
+            for (Object invalid : new Object[]{null, "invalid", Map.of()}) {
+                var wire = minimalWire();
+                wire.put(field, invalid);
+                assertThrows(IllegalArgumentException.class, () -> WorkspaceProjectionMapper.workspace(wire), field);
+            }
+        }
+    }
+
+    @Test
+    void attachmentCountsKeepTheExactDecodedInteger() {
+        var attachment = WorkspaceQueryFixture.attachment();
+        attachment.put("sizeBytes", Math.nextDown(0x1p63));
+        var wire = minimalWire();
+        wire.put("inputAttachments", List.of(attachment));
+        assertEquals(9223372036854774784L, WorkspaceProjectionMapper.workspace(wire)
+                .inputAttachments().get(0).sizeBytes());
+    }
+
     private static Map<String, Object> diagnosticDetails(Map<String, Object> wire, String code) {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> diagnostics = (List<Map<String, Object>>) wire.get("diagnostics");
