@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.User;
+import com.kinlin.ai.projection.user.dto.UserQuery;
+import com.kinlin.ai.projection.user.mapper.UserProjectionMapper;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -41,12 +43,13 @@ public class UserController {
      * 获取当前用户信息
      */
     @GetMapping("/me")
-    public ResponseEntity<User> getCurrentUser() {
+    public ResponseEntity<UserQuery> getCurrentUser() {
         UUID currentUserId = resolveUserId();
         if (currentUserId == null) {
             return ResponseEntity.badRequest().build();
         }
         return userService.getUserById(currentUserId)
+                .map(UserProjectionMapper::toQuery)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -55,8 +58,9 @@ public class UserController {
      * 获取用户信息
      */
     @GetMapping("/{userId}")
-    public ResponseEntity<User> getUser(@PathVariable UUID userId) {
+    public ResponseEntity<UserQuery> getUser(@PathVariable UUID userId) {
         return userService.getUserById(userId)
+                .map(UserProjectionMapper::toQuery)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -65,7 +69,7 @@ public class UserController {
      * 更新用户信息
      */
     @PutMapping("/{userId}")
-    public ResponseEntity<User> updateUser(
+    public ResponseEntity<UserQuery> updateUser(
             @PathVariable UUID userId,
             @RequestBody User userUpdate
     ) {
@@ -85,13 +89,13 @@ public class UserController {
                         user.setUsername(userUpdate.getUsername());
                     }
                     User updated = userService.updateUser(user);
-                    return ResponseEntity.ok(updated);
+                    return ResponseEntity.ok(UserProjectionMapper.toQuery(updated));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping(value = "/{userId}/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<User> uploadAvatar(
+    public ResponseEntity<UserQuery> uploadAvatar(
             @PathVariable UUID userId,
             @RequestParam("file") MultipartFile file
     ) {
@@ -121,7 +125,7 @@ public class UserController {
             user.setAvatar(avatarPath);
             User updated = userService.updateUser(user);
             deletePreviousAvatar(previousAvatar, avatarPath);
-            return ResponseEntity.ok(updated);
+            return ResponseEntity.ok(UserProjectionMapper.toQuery(updated));
         } catch (IOException exception) {
             log.error("Avatar upload failed for user {}", userId, exception);
             return ResponseEntity.internalServerError().build();
