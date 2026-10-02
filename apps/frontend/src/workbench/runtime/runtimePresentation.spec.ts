@@ -132,6 +132,38 @@ describe('runtime presentation projection', () => {
     expect(models.map(item => item.eventIds.length)).toEqual([2, 1, 1])
   })
 
+  it('renders server-projected detail rows for trace events and skips sensitive keys', () => {
+    const [item] = projectRuntimePresentations([
+      event(1, 'task_status_changed', {
+        details: [
+          { key: 'stage', value: 'outline', kind: 'string' },
+          { key: 'taskCount', value: '5', kind: 'number' },
+          { key: 'failedResources', value: '[step_1: res_1]', kind: 'list' },
+          { key: 'tokenBudget', value: '[redacted]', kind: 'redacted' },
+          { key: 'internalNote', value: 'leak', kind: 'string' }
+        ],
+        status: 'completed'
+      })
+    ])
+
+    expect(item.kind).toBe('generic')
+    expect(item.details.some(detail => detail.label === 'stage' && detail.code !== true)).toBe(true)
+    expect(item.details.some(detail => detail.label === 'taskCount' && detail.code === true)).toBe(true)
+    expect(item.details.some(detail => detail.label === 'failedResources')).toBe(true)
+    // Sensitive row keys keep the display-side skip; redacted values render as text.
+    expect(item.details.some(detail => detail.label === 'tokenBudget')).toBe(false)
+    expect(item.details.some(detail => detail.label === 'internalNote')).toBe(false)
+  })
+
+  it('falls back to the observation summary when a trace event has no detail rows', () => {
+    const [item] = projectRuntimePresentations([
+      event(1, 'run_completed', { details: [] }, { observation: '运行已完成' } as Partial<RuntimePresentationInput>)
+    ])
+
+    expect(item.kind).toBe('generic')
+    expect(item.details.some(detail => detail.label === 'Summary' && detail.value === '运行已完成')).toBe(true)
+  })
+
   it('keeps tool and command calls separate when only the step is shared', () => {
     const items = projectRuntimePresentations([
       event(1, 'tool.started', { tool: 'search' }, { attemptId: null }),

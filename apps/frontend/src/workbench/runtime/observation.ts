@@ -217,6 +217,16 @@ const normalizeResourceFailoverEvents = (traces: RuntimeTraceObservation[]): Res
 const fieldsFromPayload = (payload: Record<string, any>) => {
   if (Array.isArray(payload.fields)) return payload.fields.filter((value): value is string => typeof value === 'string')
   if (Array.isArray(payload.consumedFields)) return payload.consumedFields.filter((value): value is string => typeof value === 'string')
+  // Typed producer→fields association rows (the trace/provenance projections);
+  // the legacy dynamic fieldsByProducer map stays readable until both producers migrated.
+  if (Array.isArray(payload.producerFields)) {
+    return payload.producerFields.flatMap(row => {
+      const association = asRecord(row)
+      return Array.isArray(association.fields)
+        ? association.fields.filter((value): value is string => typeof value === 'string')
+        : []
+    })
+  }
   const fieldsByProducer = asRecord(payload.fieldsByProducer)
   return Object.values(fieldsByProducer).flatMap(value => Array.isArray(value) ? value : [])
     .filter((value): value is string => typeof value === 'string')
