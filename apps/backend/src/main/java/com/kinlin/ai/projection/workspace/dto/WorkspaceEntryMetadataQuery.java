@@ -24,21 +24,24 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  *   <li>Artifact descriptor candidates ({@code artifactKind}/{@code artifact_kind}/
  *       {@code schema}/{@code schemaName}, {@code evidenceRefs}/{@code evidence_refs},
  *       {@code upstreamInputs}/{@code sourceStepIds}, {@code traceLinks}/{@code traceRefs},
- *       {@code confidence}, {@code agentName}/{@code agent}) — no Python producer exists
- *       today and the identity store census shows none of these keys, so value types are
- *       unprovable; they are typed as the consumers' display shapes (String /
- *       List&lt;String&gt;) with the original wire aliases preserved. The frontend readers
- *       (artifactProjection text/list) filter non-scalars to empty, so omitting a
- *       non-conforming value is display-equivalent to the raw passthrough.</li>
+ *       {@code confidence}, {@code agentName}/{@code agent}) — no dedicated writer is
+ *       found, but arbitrary model descriptor metadata survives canonicalization and
+ *       is forwarded by workspace.py. An empty census is not a type contract. These
+ *       fields use the consumers' display shapes (String / List&lt;String&gt;) with original
+ *       wire aliases. artifactProjection text/list also consume numbers and booleans;
+ *       blindly omitting values not already matching these Java types is not compatible.
+ *       E2 must verify and record scalar display normalization or resolve the mismatch
+ *       before filtering. Nested objects must never be stringified.</li>
  * </ul>
  *
  * <p>Dropped metadata keys (registered in the scheme matrix): {@code identityVersion} and
  * metadata-level {@code logicalRole} (canonicalize_artifact_identity internals; the entry
  * top-level logicalRole is kept), {@code sourceAttachmentIds} (no public consumer; public
  * attachments already live in inputAttachments), {@code parentTaskId} (no consumer
- * repo-wide), {@code projection} (run-history internal marker). The mapper must project a
- * whitelisted key only when its value conforms to the declared type, and omit it otherwise
- * — never stringify objects and never fail the whole workspace for a bad candidate.
+ * repo-wide), {@code projection} (run-history internal marker). E2 maps only whitelisted
+ * public values under an explicit, tested compatibility rule. Unsupported internal
+ * objects must not reach the wire, but visible scalar/list values must not silently
+ * disappear. E1 defines serialization contracts; it does not implement these mapping rules.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record WorkspaceEntryMetadataQuery(
