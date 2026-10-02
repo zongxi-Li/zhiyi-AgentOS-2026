@@ -11,7 +11,10 @@ import com.kinlin.ai.controller.AgentOsObservationController;
 import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
+import com.kinlin.ai.controller.ChatQualityController;
 import com.kinlin.ai.controller.SearchController;
+import com.kinlin.ai.controller.StatisticsController;
+import com.kinlin.ai.controller.UserProfileController;
 import com.kinlin.ai.controller.UserController;
 import com.kinlin.ai.controller.UserFeedbackController;
 import com.kinlin.ai.entity.Conversation;
@@ -196,6 +199,10 @@ class QueryProjectionArchitectureTest {
             return List.of("getMissionWorkspace", "getResourceUsage", "getResourceUsageCalls",
                     "getTrace", "getMemoryEvents", "getProvenance", "getCheckpoints",
                     "getIdentityHealth", "getHistoryConfig").contains(method.getName());
+        }
+        if (controller == StatisticsController.class || controller == UserProfileController.class
+                || controller == ChatQualityController.class) {
+            return true;
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }

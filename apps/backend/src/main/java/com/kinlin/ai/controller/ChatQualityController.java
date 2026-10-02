@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.exception.ResourceNotFoundException;
+import com.kinlin.ai.projection.chatquality.dto.ChatQualityQuery;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ChatQualityService;
 import com.kinlin.ai.service.ChatService;
@@ -26,7 +27,7 @@ public class ChatQualityController {
      * 评估对话质量（仅属主可见）
      */
     @GetMapping("/{contextId}")
-    public ResponseEntity<Map<String, Object>> assessQuality(
+    public ResponseEntity<ChatQualityQuery> assessQuality(
             @PathVariable String contextId
     ) {
         UUID currentUserId = AuthenticatedUser.currentUserId()
@@ -34,11 +35,8 @@ public class ChatQualityController {
         var messages = chatService.getHistory(contextId, currentUserId);
         var score = qualityService.assessQuality(messages);
 
-        return ResponseEntity.ok(Map.of(
-                "score", score.score(),
-                "feedback", score.feedback(),
-                "messageCount", messages.size()
-        ));
+        return ResponseEntity.ok(new ChatQualityQuery(
+                score.score(), score.feedback(), (long) messages.size()));
     }
 }
 
