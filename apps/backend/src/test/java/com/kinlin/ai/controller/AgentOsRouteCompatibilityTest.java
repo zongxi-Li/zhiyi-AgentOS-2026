@@ -81,9 +81,10 @@ class AgentOsRouteCompatibilityTest {
                 .andExpect(status().isOk());
 
         gateway.getResponses.put("/ai/agentos/v2/runs/run_1/artifacts", RecordingAgentOsGateway.response(200, Map.of(
-                "items", List.of())));
+                "runId", "run_1", "items", List.of(), "total", 0)));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/artifacts", "run_1"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.runId").value("run_1"));
 
         gateway.getResponses.put("/ai/agentos/v2/materials/m1", RecordingAgentOsGateway.response(200, Map.of(
                 "manifestId", "m1")));

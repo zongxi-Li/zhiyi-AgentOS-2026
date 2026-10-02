@@ -3,6 +3,8 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.client.AgentOsClient;
 import com.kinlin.ai.dto.agentos.AgentOsMaterialCreateRequest;
 import com.kinlin.ai.gateway.AgentOsPaths;
+import com.kinlin.ai.projection.artifact.mapper.ArtifactProjectionMapper;
+import com.kinlin.ai.projection.common.dto.QueryResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -60,21 +62,22 @@ public class AgentOsArtifactController {
     }
 
     @GetMapping("/runs/{runId}/artifacts")
-    public ResponseEntity<Map<String, Object>> getArtifacts(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/artifacts"));
+    public ResponseEntity<QueryResponse> getArtifacts(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/artifacts"), ArtifactProjectionMapper::page);
     }
 
     @GetMapping("/runs/{runId}/artifacts/{manifestId}")
-    public ResponseEntity<Map<String, Object>> getArtifact(
+    public ResponseEntity<QueryResponse> getArtifact(
             @PathVariable String runId,
             @PathVariable String manifestId
     ) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.artifact(runId, manifestId)));
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.artifact(runId, manifestId)), ArtifactProjectionMapper::detail);
     }
 
     @GetMapping("/runs/{runId}/artifacts/{manifestId}/fragments")
-    public ResponseEntity<Map<String, Object>> getArtifactFragments(
+    public ResponseEntity<QueryResponse> getArtifactFragments(
             @PathVariable String runId,
             @PathVariable String manifestId,
             @RequestParam(required = false) String cursor,
@@ -83,8 +86,9 @@ public class AgentOsArtifactController {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("cursor", cursor);
         params.put("pageSize", String.valueOf(pageSize));
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
-                AgentOsPaths.artifact(runId, manifestId) + "/fragments", params)));
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.artifact(runId, manifestId) + "/fragments", params)),
+                ArtifactProjectionMapper::fragmentPage);
     }
 
     @GetMapping("/runs/{runId}/artifacts/{manifestId}/download")

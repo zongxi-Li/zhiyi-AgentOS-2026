@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonSerializable;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.kinlin.ai.controller.AgentOsArtifactController;
 import com.kinlin.ai.controller.AgentOsMissionController;
 import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
@@ -173,7 +174,8 @@ class QueryProjectionArchitectureTest {
     /**
      * Strict closed-output checks target migrated handlers. ChatController is strict except
      * sendTextMessage: its dynamic ChatResponse (open metadata Map) is a registered
-     * follow-up scope of the chat migration, not a completed projection. The same holds
+     * follow-up scope of the chat migration, not a completed projection. The artifact
+     * binary download stays a registered exact binary exception, and the same holds
      * for the unmigrated AgentOS command responses (dynamic upstream passthrough).
      */
     private static boolean strictOutputChecked(Class<?> controller, Method method) {
@@ -184,6 +186,9 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == AgentOsMissionController.class) {
             return "listMissions".equals(method.getName());
+        }
+        if (controller == AgentOsArtifactController.class) {
+            return List.of("getArtifacts", "getArtifact", "getArtifactFragments").contains(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
