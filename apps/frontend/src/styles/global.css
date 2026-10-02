@@ -1921,3 +1921,19 @@ html[data-color-scheme='one-dark-modern'] .agent-panel .card {
   color: #f56c6c;
   word-break: break-all;
 }
+
+/* 主题/风格切换：View Transitions API 圆形扩散（落地页暗色切换与纸弈/星弈分门切换）。
+   旧快照静止，新快照由 LandingView 的 JS 从点击处驱动 clip-path: circle() 展开；
+   参照开源实现 rudrodip/theme-toggle-effect 与 MaxiGarcia13/js-theme-animation-monorepo。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+}
