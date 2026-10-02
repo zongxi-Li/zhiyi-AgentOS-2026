@@ -1,11 +1,14 @@
 package com.kinlin.ai.controller;
 
+import com.kinlin.ai.projection.userprofile.dto.ProfileRecommendationsQuery;
+import com.kinlin.ai.projection.userprofile.dto.UserProfileQuery;
+import com.kinlin.ai.projection.userprofile.mapper.UserProfileProjectionMapper;
 import com.kinlin.ai.service.UserProfileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -23,26 +26,27 @@ public class UserProfileController {
      * 获取用户画像
      */
     @GetMapping("/{userId}")
-    public ResponseEntity<Map<String, Object>> getUserProfile(@PathVariable UUID userId) {
+    public ResponseEntity<UserProfileQuery> getUserProfile(@PathVariable UUID userId) {
         UserProfileService.UserProfile userProfile = userProfileService.buildUserProfile(userId);
-        Map<String, Object> profile = new HashMap<>();
-        profile.put("userId", userProfile.getUserId());
-        profile.put("username", userProfile.getUsername());
-        profile.put("email", userProfile.getEmail());
-        profile.put("conversationCount", userProfile.getConversationCount());
-        profile.put("favoriteRoleId", userProfile.getFavoriteRoleId());
-        profile.put("favoriteRoleName", userProfile.getFavoriteRoleName());
-        profile.put("roleUsageCount", userProfile.getRoleUsageCount());
-        profile.put("activityLevel", userProfile.getActivityLevel());
-        return ResponseEntity.ok(profile);
+        Map<String, Object> wire = new LinkedHashMap<>();
+        wire.put("userId", String.valueOf(userProfile.getUserId()));
+        wire.put("username", userProfile.getUsername());
+        wire.put("email", userProfile.getEmail());
+        wire.put("conversationCount", userProfile.getConversationCount());
+        wire.put("favoriteRoleId", userProfile.getFavoriteRoleId() == null
+                ? null : userProfile.getFavoriteRoleId().toString());
+        wire.put("favoriteRoleName", userProfile.getFavoriteRoleName());
+        wire.put("roleUsageCount", userProfile.getRoleUsageCount());
+        wire.put("activityLevel", userProfile.getActivityLevel());
+        return ResponseEntity.ok(UserProfileProjectionMapper.profile(wire));
     }
 
     /**
      * 获取个性化推荐
      */
     @GetMapping("/{userId}/recommendations")
-    public ResponseEntity<Map<String, Object>> getRecommendations(@PathVariable UUID userId) {
-        Map<String, Object> recommendations = userProfileService.getPersonalizedRecommendations(userId);
-        return ResponseEntity.ok(recommendations);
+    public ResponseEntity<ProfileRecommendationsQuery> getRecommendations(@PathVariable UUID userId) {
+        return ResponseEntity.ok(
+                UserProfileProjectionMapper.recommendations(userProfileService.getPersonalizedRecommendations(userId)));
     }
 }
