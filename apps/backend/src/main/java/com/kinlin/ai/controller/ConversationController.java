@@ -2,6 +2,9 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.Conversation;
 import com.kinlin.ai.exception.ResourceNotFoundException;
+import com.kinlin.ai.projection.conversation.dto.ConversationDetailQuery;
+import com.kinlin.ai.projection.conversation.dto.ConversationQuery;
+import com.kinlin.ai.projection.conversation.mapper.ConversationProjectionMapper;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ConversationService;
 import lombok.Data;
@@ -9,9 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -28,7 +29,7 @@ public class ConversationController {
      * 获取用户的对话列表
      */
     @GetMapping
-    public ResponseEntity<List<Conversation>> getUserConversations(
+    public ResponseEntity<List<ConversationQuery>> getUserConversations(
             @RequestParam(value = "workspaceMode", required = false) String workspaceMode
     ) {
         UUID userId = resolveUserId();
@@ -38,20 +39,22 @@ public class ConversationController {
         List<Conversation> conversations = workspaceMode == null
                 ? conversationService.getUserConversations(userId)
                 : conversationService.getUserConversations(userId, workspaceMode);
-        return ResponseEntity.ok(conversations);
+        return ResponseEntity.ok(conversations.stream()
+                .map(ConversationProjectionMapper::toQuery)
+                .toList());
     }
 
     /**
      * 获取对话详情（仅属主可见）
      */
     @GetMapping("/{contextId}")
-    public ResponseEntity<Conversation> getConversation(
+    public ResponseEntity<ConversationQuery> getConversation(
             @PathVariable String contextId
     ) {
         Conversation conversation = conversationService
                 .getConversationByContextIdForUser(contextId, requireUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在或无权访问"));
-        return ResponseEntity.ok(conversation);
+        return ResponseEntity.ok(ConversationProjectionMapper.toQuery(conversation));
     }
 
     /**
@@ -74,20 +77,20 @@ public class ConversationController {
      * 更新对话标题（仅属主可操作）
      */
     @PutMapping("/{conversationId}/title")
-    public ResponseEntity<Conversation> updateTitle(
+    public ResponseEntity<ConversationQuery> updateTitle(
             @PathVariable UUID conversationId,
             @RequestBody UpdateTitleRequest request
     ) {
         Conversation conversation = conversationService
                 .updateTitle(conversationId, requireUserId(), request.getTitle());
-        return ResponseEntity.ok(conversation);
+        return ResponseEntity.ok(ConversationProjectionMapper.toQuery(conversation));
     }
 
     /**
      * 获取对话详情（包含预览内容，仅属主可见）
      */
     @GetMapping("/{conversationId}/detail")
-    public ResponseEntity<Map<String, Object>> getConversationDetail(
+    public ResponseEntity<ConversationDetailQuery> getConversationDetail(
             @PathVariable UUID conversationId
     ) {
         Conversation conversation = conversationService
@@ -98,14 +101,10 @@ public class ConversationController {
         if (conversation.getTitle() == null || conversation.getTitle().isEmpty()) {
             conversation = conversationService.autoGenerateTitle(conversationId);
         }
-        
+
         String preview = conversationService.getPreviewContent(conversationId);
-        
-        Map<String, Object> result = new HashMap<>();
-        result.put("conversation", conversation);
-        result.put("preview", preview);
-        
-        return ResponseEntity.ok(result);
+
+        return ResponseEntity.ok(ConversationProjectionMapper.toDetail(conversation, preview));
     }
 
     /**

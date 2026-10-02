@@ -4,6 +4,8 @@ import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.entity.Message;
 import com.kinlin.ai.exception.ResourceNotFoundException;
+import com.kinlin.ai.projection.message.dto.MessageQuery;
+import com.kinlin.ai.projection.message.mapper.MessageProjectionMapper;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ChatService;
 import jakarta.validation.Valid;
@@ -39,11 +41,11 @@ public class ChatController {
      * 获取对话历史（仅属主可见）
      */
     @GetMapping("/history/{contextId}")
-    public ResponseEntity<List<Message>> getHistory(
+    public ResponseEntity<List<MessageQuery>> getHistory(
             @PathVariable String contextId
     ) {
         List<Message> history = chatService.getHistory(contextId, requireUserId());
-        return ResponseEntity.ok(history);
+        return ResponseEntity.ok(MessageProjectionMapper.toQuery(history));
     }
 
     /**

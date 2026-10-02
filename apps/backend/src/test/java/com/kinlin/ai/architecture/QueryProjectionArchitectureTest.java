@@ -5,17 +5,25 @@ import com.fasterxml.jackson.databind.JsonSerializable;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.kinlin.ai.controller.ChatController;
+import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
 import com.kinlin.ai.controller.UserController;
+import com.kinlin.ai.entity.Conversation;
+import com.kinlin.ai.entity.Message;
 import com.kinlin.ai.entity.Role;
 import com.kinlin.ai.entity.User;
+import com.kinlin.ai.projection.message.dto.MessageQuery;
 import com.kinlin.ai.projection.role.dto.RoleConfigurationQuery;
 import com.kinlin.ai.projection.role.dto.RoleContextQuery;
 import com.kinlin.ai.projection.role.dto.RoleQuery;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.lang.reflect.*;
@@ -26,15 +34,34 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Shared projection guards. Inputs and not-yet-migrated response domains remain outside the strict output checks. */
+/**
+ * Shared projection guards covering every controller response closure. Conversation and
+ * Message entities are banned everywhere except the registered remaining exceptions
+ * (SearchController still answers with raw entities until its own migration batch);
+ * each exception is pinned to its exact GET route and raw return type, so widening the
+ * response, migrating it to a projection, or rerouting it fails loudly. Strict
+ * closed-output checks apply to migrated handlers only, so the dynamic
+ * POST /chat/text response stays a registered follow-up scope instead of a silent pass.
+ */
 class QueryProjectionArchitectureTest {
     private static final Path MAIN = Path.of("src/main/java");
 
+    private static final String RAW_MESSAGE_LIST =
+            "org.springframework.http.ResponseEntity<java.util.List<com.kinlin.ai.entity.Message>>";
+
+    /** The exact raw response still tolerated per registered handler; keep this list shrinking. */
+    private record RawEntityResponse(String typeName, String route) { }
+
+    private static final Map<String, RawEntityResponse> ENTITY_RESPONSE_EXCEPTIONS = Map.of(
+            "SearchController#searchMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/search/messages"),
+            "SearchController#searchAllMessages", new RawEntityResponse(RAW_MESSAGE_LIST, "/search/all-messages"));
+
     @Test
-    void everyControllerReturnTypeRejectsUserAndRoleIncludingNestedBodies() throws Exception {
+    void everyControllerReturnTypeRejectsPlatformEntitiesIncludingNestedBodies() throws Exception {
         Path directory = MAIN.resolve("com/kinlin/ai/controller");
         assertTrue(Files.isDirectory(directory), "backend source directory must exist; never skip this guard");
         int checked = 0;
+        Set<String> remainingExceptions = new HashSet<>();
         try (Stream<Path> files = Files.list(directory)) {
             for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
                 Class<?> controller = Class.forName("com.kinlin.ai.controller."
@@ -42,13 +69,116 @@ class QueryProjectionArchitectureTest {
                 if (!AnnotatedElementUtils.hasAnnotation(controller, RestController.class)) { continue; }
                 for (Method method : controller.getDeclaredMethods()) {
                     if (!AnnotatedElementUtils.hasAnnotation(method, RequestMapping.class)) { continue; }
-                    boolean strictIdentity = controller == UserController.class || controller == RoleController.class;
-                    assertSafe(method.getGenericReturnType(), strictIdentity, new HashSet<>(), method.toString());
+                    String handler = controller.getSimpleName() + "#" + method.getName();
+                    RawEntityResponse registered = ENTITY_RESPONSE_EXCEPTIONS.get(handler);
+                    if (registered != null) {
+                        assertRegisteredExceptionStillMatches(handler, registered, method);
+                        // Message stays tolerated for this pinned handler only; other entities remain banned.
+                        assertSafe(method.getGenericReturnType(), false, new HashSet<>(), method.toString(),
+                                Set.of(User.class, Role.class, Conversation.class));
+                        remainingExceptions.add(handler);
+                        continue;
+                    }
+                    assertSafe(method.getGenericReturnType(), strictOutputChecked(controller, method),
+                            new HashSet<>(), method.toString(), ALL_PLATFORM_ENTITIES);
                     checked++;
                 }
             }
         }
         assertTrue(checked > 0, "must inspect actual HTTP handlers");
+        assertEquals(ENTITY_RESPONSE_EXCEPTIONS.keySet(), remainingExceptions,
+                "every registered exception must still exist; migrate the handler and shrink this list");
+    }
+
+    /**
+     * A registered exception is a loan, not a free pass: the handler must still answer the
+     * pinned GET route with the pinned raw entity response. Migration to a projection,
+     * widening to other entities, or rerouting all invalidate the entry and must fail here.
+     */
+    private static void assertRegisteredExceptionStillMatches(
+            String handler, RawEntityResponse registered, Method method) {
+        RequestMapping mapping = AnnotatedElementUtils.findMergedAnnotation(method, RequestMapping.class);
+        assertNotNull(mapping, handler + " must stay a GET route; HTTP method drift invalidates the registry");
+        assertArrayEquals(new RequestMethod[]{RequestMethod.GET}, mapping.method(), handler + " must stay GET");
+        RequestMapping prefix = AnnotatedElementUtils.findMergedAnnotation(
+                method.getDeclaringClass(), RequestMapping.class);
+        assertNotNull(prefix, handler + " must retain its controller route prefix");
+        assertEquals(1, prefix.value().length, handler + " must have exactly one controller route");
+        assertEquals(1, mapping.value().length, handler + " must have exactly one handler route");
+        assertEquals(registered.route(), prefix.value()[0] + mapping.value()[0],
+                handler + " route changed; update the registry deliberately, never by widening it");
+        assertEquals(registered.typeName(), method.getGenericReturnType().getTypeName(),
+                handler + " no longer answers with the pinned raw entity response; if it was migrated to a "
+                        + "projection, shrink the registry (stale exception), if it widened, migrate it");
+    }
+
+    @Test
+    void registeredExceptionsRejectExpansionStalenessAndRouteDrift() throws Exception {
+        RawEntityResponse registered = new RawEntityResponse(RAW_MESSAGE_LIST, "/search/messages");
+        assertDoesNotThrow(() -> assertRegisteredExceptionStillMatches("Fixture#valid", registered,
+                ExceptionFixtures.class.getDeclaredMethod("valid")));
+        assertDoesNotThrow(() -> assertRegisteredExceptionStillMatches("Fixture#alias", registered,
+                ExceptionFixtures.class.getDeclaredMethod("alias")));
+        assertThrows(AssertionError.class, () -> assertRegisteredExceptionStillMatches("Fixture#prefix", registered,
+                ChangedPrefixFixture.class.getDeclaredMethod("valid")));
+        for (String name : List.of("expanded", "stale", "rerouted", "post", "extraRoute")) {
+            Method method = ExceptionFixtures.class.getDeclaredMethod(name);
+            assertThrows(AssertionError.class,
+                    () -> assertRegisteredExceptionStillMatches("Fixture#" + name, registered, method), name);
+        }
+        // Even inside a tolerated handler shape, other platform entities stay banned.
+        for (String name : List.of("expanded", "wrappedConversation")) {
+            Method method = ExceptionFixtures.class.getDeclaredMethod(name);
+            assertThrows(AssertionError.class, () -> assertSafe(
+                    method.getGenericReturnType(), false, new HashSet<>(), name,
+                    Set.of(User.class, Role.class, Conversation.class)), name);
+        }
+    }
+
+    @RequestMapping("/changed-search-prefix")
+    private static class ChangedPrefixFixture {
+        @GetMapping("/messages")
+        ResponseEntity<List<Message>> valid() { return null; }
+    }
+
+    @RequestMapping("/search")
+    private static class ExceptionFixtures {
+        @GetMapping("/messages")
+        ResponseEntity<List<Message>> valid() { return null; }
+
+        @GetMapping(path = "/messages")
+        ResponseEntity<List<Message>> alias() { return null; }
+
+        @PostMapping("/messages")
+        ResponseEntity<List<Message>> post() { return null; }
+
+        @GetMapping({"/messages", "/extra"})
+        ResponseEntity<List<Message>> extraRoute() { return null; }
+
+        @GetMapping("/messages")
+        ResponseEntity<List<User>> expanded() { return null; }
+
+        @GetMapping("/messages")
+        ResponseEntity<List<MessageQuery>> stale() { return null; }
+
+        @GetMapping("/changed")
+        ResponseEntity<List<Message>> rerouted() { return null; }
+
+        @GetMapping("/wrapped")
+        ResponseEntity<List<Conversation>> wrappedConversation() { return null; }
+    }
+
+    /**
+     * Strict closed-output checks target migrated handlers. ChatController is strict except
+     * sendTextMessage: its dynamic ChatResponse (open metadata Map) is a registered
+     * follow-up scope of the chat migration, not a completed projection.
+     */
+    private static boolean strictOutputChecked(Class<?> controller, Method method) {
+        if (controller == UserController.class || controller == RoleController.class
+                || controller == ConversationController.class) {
+            return true;
+        }
+        return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
 
     @Test
@@ -60,7 +190,7 @@ class QueryProjectionArchitectureTest {
             for (Path file : files.filter(path -> path.toString().endsWith(".java"))
                     .filter(path -> path.getParent().getFileName().toString().equals("dto")).toList()) {
                 String name = MAIN.relativize(file).toString().replace('\\', '.').replace('/', '.').replace(".java", "");
-                assertSafe(Class.forName(name), true, new HashSet<>(), name);
+                assertSafe(Class.forName(name), true, new HashSet<>(), name, ALL_PLATFORM_ENTITIES);
                 checked++;
             }
         }
@@ -104,39 +234,46 @@ class QueryProjectionArchitectureTest {
 
     @Test
     void negativeFixturesDetectWrappedEntitiesDynamicDtosAndConfigurationSpread() throws Exception {
-        for (String name : List.of("user", "roles", "nested", "dynamic", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
+        for (String name : List.of("user", "roles", "conversations", "messages", "nested", "nestedMessage",
+                "dynamic", "dynamicMetadata", "opaque", "json", "raw", "wildcard", "inherited", "getter", "checkpoint")) {
             Type type = BadResponses.class.getDeclaredMethod(name).getGenericReturnType();
-            assertThrows(AssertionError.class, () -> assertSafe(type, true, new HashSet<>(), name), name);
+            assertThrows(AssertionError.class, () -> assertSafe(type, true, new HashSet<>(), name, ALL_PLATFORM_ENTITIES), name);
         }
         assertThrows(AssertionError.class, () -> assertConfigurationSlots(ConfigurationSpread.class));
         assertThrows(AssertionError.class, () -> assertConfigurationSlots(GetterConfigurationSpread.class));
-        assertDoesNotThrow(() -> assertSafe(RoleQuery.class, true, new HashSet<>(), "valid role"));
+        assertDoesNotThrow(() -> assertSafe(RoleQuery.class, true, new HashSet<>(), "valid role", ALL_PLATFORM_ENTITIES));
         assertDoesNotThrow(() -> assertConfigurationSlots(RoleQuery.class));
         assertDoesNotThrow(() -> assertConfigurationSlots(RoleContextQuery.class));
     }
 
-    private static void assertSafe(Type type, boolean strict, Set<Type> visited, String path) {
+    private static final Set<Class<?>> ALL_PLATFORM_ENTITIES =
+            Set.of(User.class, Role.class, Conversation.class, Message.class);
+
+    private static void assertSafe(Type type, boolean strict, Set<Type> visited, String path,
+                                   Set<Class<?>> bannedEntities) {
         if (!visited.add(type)) { return; }
         if (type instanceof ParameterizedType generic) {
-            for (Type argument : generic.getActualTypeArguments()) { assertSafe(argument, strict, visited, path); }
-            inspectClass((Class<?>) generic.getRawType(), strict, visited, path);
+            for (Type argument : generic.getActualTypeArguments()) { assertSafe(argument, strict, visited, path, bannedEntities); }
+            inspectClass((Class<?>) generic.getRawType(), strict, visited, path, bannedEntities);
         } else if (type instanceof Class<?> concrete) {
             if (strict) { assertEquals(0, concrete.getTypeParameters().length, path + " contains a raw generic"); }
-            inspectClass(concrete, strict, visited, path);
+            inspectClass(concrete, strict, visited, path, bannedEntities);
         } else if (type instanceof GenericArrayType array) {
-            assertSafe(array.getGenericComponentType(), strict, visited, path);
+            assertSafe(array.getGenericComponentType(), strict, visited, path, bannedEntities);
         } else if (type instanceof WildcardType wildcard) {
             assertFalse(strict, path + " contains a wildcard");
-            for (Type bound : wildcard.getUpperBounds()) { assertSafe(bound, false, visited, path); }
-            for (Type bound : wildcard.getLowerBounds()) { assertSafe(bound, false, visited, path); }
+            for (Type bound : wildcard.getUpperBounds()) { assertSafe(bound, false, visited, path, bannedEntities); }
+            for (Type bound : wildcard.getLowerBounds()) { assertSafe(bound, false, visited, path, bannedEntities); }
         } else {
             assertFalse(strict, path + " contains an unresolved generic type: " + type);
         }
     }
 
-    private static void inspectClass(Class<?> type, boolean strict, Set<Type> visited, String path) {
-        assertFalse(User.class.isAssignableFrom(type), path + " exposes/inherits User Entity");
-        assertFalse(Role.class.isAssignableFrom(type), path + " exposes/inherits Role Entity");
+    private static void inspectClass(Class<?> type, boolean strict, Set<Type> visited, String path,
+                                     Set<Class<?>> bannedEntities) {
+        for (Class<?> entity : bannedEntities) {
+            assertFalse(entity.isAssignableFrom(type), path + " exposes/inherits " + entity.getSimpleName() + " Entity");
+        }
         if (strict) {
             assertNotEquals(Object.class, type, path + " exposes Object");
             assertFalse(Map.class.isAssignableFrom(type), path + " exposes Map");
@@ -151,10 +288,10 @@ class QueryProjectionArchitectureTest {
                 assertEquals(RoleConfigurationQuery.class, type, path + " has an unapproved custom JSON serializer");
             }
         }
-        if (type.isArray()) { assertSafe(type.getComponentType(), strict, visited, path); return; }
+        if (type.isArray()) { assertSafe(type.getComponentType(), strict, visited, path, bannedEntities); return; }
         if (!type.getName().startsWith("com.kinlin.ai.") || type.isEnum()) { return; }
         if (type.isSealed()) {
-            for (Class<?> permitted : type.getPermittedSubclasses()) { assertSafe(permitted, strict, visited, path); }
+            for (Class<?> permitted : type.getPermittedSubclasses()) { assertSafe(permitted, strict, visited, path, bannedEntities); }
         }
         for (Field field : type.getDeclaredFields()) {
             if (!Modifier.isStatic(field.getModifiers())) {
@@ -164,7 +301,7 @@ class QueryProjectionArchitectureTest {
                             "binding", "executionBinding", "bindingManifest", "compiledPackage", "graphPatchRefs",
                             "sourcePatchId", "controlFrames", "resourceBindings").contains(field.getName()), field.toString());
                 }
-                assertSafe(field.getGenericType(), strict, visited, path + "." + field.getName());
+                assertSafe(field.getGenericType(), strict, visited, path + "." + field.getName(), bannedEntities);
             }
         }
         for (Method method : type.getDeclaredMethods()) {
@@ -174,11 +311,11 @@ class QueryProjectionArchitectureTest {
             }
             if (Modifier.isPublic(method.getModifiers()) && !Modifier.isStatic(method.getModifiers())
                     && method.getParameterCount() == 0 && (method.getName().startsWith("get") || method.getName().startsWith("is"))) {
-                assertSafe(method.getGenericReturnType(), strict, visited, path + "." + method.getName());
+                assertSafe(method.getGenericReturnType(), strict, visited, path + "." + method.getName(), bannedEntities);
             }
         }
         Type parent = type.getGenericSuperclass();
-        if (parent != null && parent != Object.class) { assertSafe(parent, strict, visited, path); }
+        if (parent != null && parent != Object.class) { assertSafe(parent, strict, visited, path, bannedEntities); }
     }
 
     private static void assertConfigurationSlots(Class<?> owner) {
@@ -217,6 +354,8 @@ class QueryProjectionArchitectureTest {
     private record NestedRole(Role body) { }
     private record RuntimeDto(String checkpoint) { }
     private record DynamicDto(Map<String, String> metadata) { }
+    private record WrappedMessage(Message body) { }
+    private record DynamicMetadataDto(Map<String, Object> metadata) { }
     private record ConfigurationSpread(List<RoleConfigurationQuery> payload) { }
     private static class InheritedUser extends User { }
     private static class GetterDto { public Role getRole() { return null; } }
@@ -225,8 +364,12 @@ class QueryProjectionArchitectureTest {
         ResponseEntity<RuntimeDto> checkpoint();
         ResponseEntity<User> user();
         ResponseEntity<List<Role>> roles();
+        ResponseEntity<List<Conversation>> conversations();
+        ResponseEntity<List<Message>> messages();
         ResponseEntity<NestedRole> nested();
+        ResponseEntity<WrappedMessage> nestedMessage();
         ResponseEntity<DynamicDto> dynamic();
+        ResponseEntity<DynamicMetadataDto> dynamicMetadata();
         ResponseEntity<Object> opaque();
         ResponseEntity<JsonNode> json();
         ResponseEntity raw();
