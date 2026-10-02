@@ -256,7 +256,8 @@ class AgentOsObservationControllerTest {
     @Test
     void memoryProvenanceAndCheckpointQueriesUseOwnedSubresourcePaths() throws Exception {
         String memoryPath = "/ai/agentos/v2/runs/run_001/memory-events";
-        gateway.getResponses.put(memoryPath, RecordingAgentOsGateway.response(200, Map.of("events", List.of())));
+        gateway.getResponses.put(memoryPath, RecordingAgentOsGateway.response(200, Map.of(
+                "runId", "run_001", "items", List.of(), "total", 0)));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/memory-events", "run_001"))
                 .andExpect(status().isOk());
         assertEquals(memoryPath, gateway.lastGetPath);

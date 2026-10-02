@@ -6,6 +6,7 @@ import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
+import com.kinlin.ai.projection.memory.mapper.MemoryEventsProjectionMapper;
 import com.kinlin.ai.projection.trace.mapper.TraceProjectionMapper;
 import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
@@ -101,9 +102,9 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/memory-events")
-    public ResponseEntity<Map<String, Object>> getMemoryEvents(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/memory-events"));
+    public ResponseEntity<QueryResponse> getMemoryEvents(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/memory-events"), MemoryEventsProjectionMapper::memoryEvents);
     }
 
     @GetMapping("/runs/{runId}/provenance")

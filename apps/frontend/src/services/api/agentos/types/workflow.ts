@@ -55,36 +55,27 @@ export interface MemoryAccessEvent {
   stepId: string | null
   retrievalMode: string | null
   hitRefs: string[]
-  budget: number | null
   fallbackReason: string | null
   createdAt: string | null
 }
 export interface MemoryWriteEvent {
   kind: 'memory_event'
-  eventId?: string
-  runId?: string
   stepId?: string | null
-  commitId?: string
   summary?: string
-  evidenceRefs?: string[]
+  createdAt?: string | null
   metrics?: {
     fieldCount?: number
     evidenceCount?: number
     modelInvocationCount?: number
     toolCallCount?: number
   }
-  decision?: string
-  relations?: Array<{ sourceStepId: string; targetStepId: string }>
-  [key: string]: unknown
 }
 export interface PhaseCapsuleEvent {
   kind: 'phase_capsule'
   phaseId?: string
-  capsuleRef?: string
   sourceMemoryRefs?: string[]
-  evidenceRefs?: string[]
-  tokenCount?: number
-  [key: string]: unknown
+  /** 上游对 tokenCount 一律打 [redacted] 标记，wire 上是文本而不是数字。 */
+  tokenCount?: string | null
 }
 export type RunMemoryEvent = MemoryAccessEvent | MemoryWriteEvent | PhaseCapsuleEvent
 export interface RunMemoryEventsResponse {
