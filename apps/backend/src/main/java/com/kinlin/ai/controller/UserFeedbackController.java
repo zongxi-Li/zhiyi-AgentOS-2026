@@ -2,6 +2,8 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.UserFeedback;
 import com.kinlin.ai.exception.ResourceNotFoundException;
+import com.kinlin.ai.projection.feedback.dto.FeedbackQuery;
+import com.kinlin.ai.projection.feedback.mapper.FeedbackProjectionMapper;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.UserFeedbackService;
 import lombok.Data;
@@ -49,9 +51,9 @@ public class UserFeedbackController {
      * 获取用户反馈列表（路径参数仅为兼容保留，实际以认证身份为准）
      */
     @GetMapping("/user/{userId}")
-    public ResponseEntity<List<UserFeedback>> getUserFeedbacks(@PathVariable UUID userId) {
+    public ResponseEntity<List<FeedbackQuery>> getUserFeedbacks(@PathVariable UUID userId) {
         List<UserFeedback> feedbacks = feedbackService.getUserFeedbacks(requireCurrentUserId());
-        return ResponseEntity.ok(feedbacks);
+        return ResponseEntity.ok(FeedbackProjectionMapper.toQuery(feedbacks));
     }
 
     /**

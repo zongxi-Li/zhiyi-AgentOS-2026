@@ -31,6 +31,28 @@ public final class MissionQueryFixture {
         return new LinkedHashMap<>(Map.of("missionId", "mission_1", "runs", List.of(run()), "unknown", SECRET));
     }
 
+    /** Actual GET /missions wire shape plus hostile unknown fields and owner identity. */
+    public static Map<String, Object> list() {
+        return new LinkedHashMap<>(Map.of("items", List.of(listItem()), "total", 1,
+                "page", 1, "pageSize", 20, "source", "agentos-v2", "unknown", SECRET));
+    }
+
+    public static Map<String, Object> listItem() {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("missionId", "mission_1");
+        item.put("userId", SECRET); // owner identity stays internal, following the detail rule
+        item.put("title", "审核合同");
+        item.put("description", "查看执行进度");
+        item.put("status", "running");
+        item.put("latestRunId", "run_1");
+        item.put("latestRunStatus", "running");
+        item.put("createdAt", TIME);
+        item.put("updatedAt", TIME);
+        item.put("runCount", 2);
+        item.put("metadata", Map.of("binding", SECRET));
+        return item;
+    }
+
     public static Map<String, Object> detail() {
         Map<String, Object> mission = new LinkedHashMap<>(Map.of(
                 "missionId", "mission_1", "userId", SECRET, "goal", "审核合同", "description", "查看执行进度",

@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.entity.Message;
+import com.kinlin.ai.projection.message.dto.MessageQuery;
+import com.kinlin.ai.projection.message.mapper.MessageProjectionMapper;
 import com.kinlin.ai.security.AuthenticatedUser;
 import com.kinlin.ai.service.ChatService;
 import com.kinlin.ai.service.SearchService;
@@ -26,7 +28,7 @@ public class SearchController {
      * 搜索对话消息
      */
     @GetMapping("/messages")
-    public ResponseEntity<List<Message>> searchMessages(
+    public ResponseEntity<List<MessageQuery>> searchMessages(
             @RequestParam("keyword") String keyword,
             @RequestParam(value = "contextId", required = false) String contextId
     ) {
@@ -39,7 +41,7 @@ public class SearchController {
             List<Message> results = messages.stream()
                     .filter(msg -> msg.getContent().toLowerCase().contains(keyword.toLowerCase()))
                     .toList();
-            return ResponseEntity.ok(results);
+            return ResponseEntity.ok(MessageProjectionMapper.toQuery(results));
         }
         return ResponseEntity.ok(List.of());
     }
@@ -48,7 +50,7 @@ public class SearchController {
      * 搜索用户的所有消息
      */
     @GetMapping("/all-messages")
-    public ResponseEntity<List<Message>> searchAllMessages(
+    public ResponseEntity<List<MessageQuery>> searchAllMessages(
             @RequestParam("keyword") String keyword
     ) {
         UUID userId = resolveUserId();
@@ -59,7 +61,7 @@ public class SearchController {
         // 跨对话搜索当前用户会话中包含关键词的消息（最多200条）
         List<Message> results = searchService.searchMessages(userId, keyword);
 
-        return ResponseEntity.ok(results);
+        return ResponseEntity.ok(MessageProjectionMapper.toQuery(results));
     }
 
     /**

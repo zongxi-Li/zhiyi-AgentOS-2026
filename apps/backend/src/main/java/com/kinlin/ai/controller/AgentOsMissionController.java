@@ -46,7 +46,7 @@ public class AgentOsMissionController {
     }
 
     @GetMapping("/missions")
-    public ResponseEntity<Map<String, Object>> listMissions(
+    public ResponseEntity<QueryResponse> listMissions(
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize
@@ -55,8 +55,9 @@ public class AgentOsMissionController {
         params.put("status", status);
         params.put("page", String.valueOf(page));
         params.put("pageSize", String.valueOf(pageSize));
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.query(AgentOsPaths.missions(), params)));
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.query(AgentOsPaths.missions(), params)),
+                MissionProjectionMapper::list);
     }
 
     @GetMapping("/missions/{missionId}")
