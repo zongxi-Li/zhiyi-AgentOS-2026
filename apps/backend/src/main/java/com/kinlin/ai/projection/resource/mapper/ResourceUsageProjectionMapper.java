@@ -15,7 +15,6 @@ import com.kinlin.ai.projection.resource.dto.UsageSummaryQuery;
 
 import static com.kinlin.ai.projection.common.mapper.QueryWire.bool;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.decimal;
-import static com.kinlin.ai.projection.common.mapper.QueryWire.integer;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.invalid;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.items;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.object;
@@ -49,7 +48,7 @@ public final class ResourceUsageProjectionMapper {
     private static ModelCapabilityQuery capability(Map<?, ?> raw) {
         return new ModelCapabilityQuery(text(raw, "provider"), text(raw, "model"),
                 text(raw, "version"), text(raw, "revision"), text(raw, "source"),
-                integer(raw, "contextWindowTokens"), integer(raw, "maxOutputTokens"));
+                optionalLong(raw, "contextWindowTokens"), optionalLong(raw, "maxOutputTokens"));
     }
 
     /** The calls list must exist — a missing list is a contract break, not an empty page. */
@@ -65,7 +64,7 @@ public final class ResourceUsageProjectionMapper {
                 text(raw, "provider"), text(raw, "model"), text(raw, "createdAt"),
                 nonNegativeLong(raw, "latencyMs"), tokenUsage(object(raw.get("usage"))),
                 text(raw, "finishReason"), requiredText(raw, "outputPolicy"),
-                integer(raw, "requestedOutputTokens"), integer(raw, "effectiveOutputTokens"),
+                optionalLong(raw, "requestedOutputTokens"), optionalLong(raw, "effectiveOutputTokens"),
                 text(raw, "effectiveReason"), requiredBool(raw, "outputExhausted"),
                 smallInt(raw, "partIndex"), text(raw, "callChainId"), decimal(raw, "contextPressure"));
     }
@@ -113,14 +112,22 @@ public final class ResourceUsageProjectionMapper {
     }
 
     private static long nonNegativeLong(Map<?, ?> source, String field) {
+        long result = exactLong(source, field);
+        if (result < 0) { throw invalid(); }
+        return result;
+    }
+
+    private static long exactLong(Map<?, ?> source, String field) {
         if (!(source.get(field) instanceof Number value)) { throw invalid(); }
         // Float/Double first build an exact BigDecimal from the binary64 value (no
         // decimal-string detour), then convert exactly — no truncation, no re-rounding.
         BigDecimal exact = value instanceof Float || value instanceof Double
                 ? new BigDecimal(value.doubleValue()) : new BigDecimal(value.toString());
-        long result = exact.longValueExact();
-        if (result < 0) { throw invalid(); }
-        return result;
+        return exact.longValueExact();
+    }
+
+    private static Long optionalLong(Map<?, ?> source, String field) {
+        return source.get(field) == null ? null : exactLong(source, field);
     }
 
     private static Long optionalNonNegativeLong(Map<?, ?> source, String field) {

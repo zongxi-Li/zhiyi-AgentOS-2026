@@ -83,6 +83,32 @@ class ResourceUsageProjectionMapperTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void optionalQuotasKeepDecodedIntegersWithoutDecimalStringRounding() {
+        double boundary = Math.nextDown(0x1p63);
+        long expected = 9223372036854774784L;
+        Map<String, Object> wire = ResourceUsageQueryFixture.observedUsage();
+        Map<String, Object> capability = new LinkedHashMap<>((Map<String, Object>) wire.get("capability"));
+        capability.put("contextWindowTokens", boundary);
+        capability.put("maxOutputTokens", boundary);
+        wire.put("capability", capability);
+        var projected = ResourceUsageProjectionMapper.usage(wire).capability();
+        assertEquals(expected, projected.contextWindowTokens());
+        assertEquals(expected, projected.maxOutputTokens());
+
+        Map<String, Object> page = ResourceUsageQueryFixture.firstCallPage();
+        Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) ((List<?>) page.get("items")).get(0));
+        row.put("requestedOutputTokens", boundary);
+        row.put("effectiveOutputTokens", boundary);
+        page.put("items", List.of(row));
+        var call = ResourceUsageProjectionMapper.callPage(page).items().get(0);
+        assertEquals(expected, call.requestedOutputTokens());
+        assertEquals(expected, call.effectiveOutputTokens());
+        assertCallRowThrows(page, "requestedOutputTokens", 0x1p63, ArithmeticException.class);
+        assertCallRowThrows(page, "effectiveOutputTokens", 1.5, ArithmeticException.class);
+    }
+
+    @Test
     void missingCapabilityStaysANullableComponent() {
         RunResourceUsageQuery usage = ResourceUsageProjectionMapper.usage(wireWithout("capability"));
         assertNull(usage.capability());
