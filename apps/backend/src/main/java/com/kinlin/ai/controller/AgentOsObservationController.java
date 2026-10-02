@@ -6,10 +6,12 @@ import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
+import com.kinlin.ai.projection.history.mapper.HistoryConfigProjectionMapper;
 import com.kinlin.ai.projection.identity.mapper.IdentityProjectionMapper;
 import com.kinlin.ai.projection.memory.mapper.MemoryEventsProjectionMapper;
 import com.kinlin.ai.projection.provenance.mapper.ProvenanceProjectionMapper;
 import com.kinlin.ai.projection.recovery.mapper.RecoveryProjectionMapper;
+import com.kinlin.ai.projection.resourcecatalog.mapper.ResourceCatalogProjectionMapper;
 import com.kinlin.ai.projection.trace.mapper.TraceProjectionMapper;
 import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
@@ -49,16 +51,17 @@ public class AgentOsObservationController {
                 AgentOsPaths.mission(missionId) + "/workspace", params)), WorkspaceProjectionMapper::workspace);
     }
 
+    @GetMapping("/runs/{runId}/history-config")
+    public ResponseEntity<QueryResponse> getHistoryConfig(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/history-config"),
+                HistoryConfigProjectionMapper::historyConfig);
+    }
+
     @GetMapping("/identity/health")
     public ResponseEntity<QueryResponse> getIdentityHealth() {
         return AgentOsControllerSupport.projectedResponse(
                 gateway.get(AgentOsPaths.identityHealth()), IdentityProjectionMapper::identityHealth);
-    }
-
-    @GetMapping("/runs/{runId}/history-config")
-    public ResponseEntity<Map<String, Object>> getHistoryConfig(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/history-config"));
     }
 
     @GetMapping("/runs/{runId}/graph")

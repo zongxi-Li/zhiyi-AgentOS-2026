@@ -313,6 +313,13 @@ export class WorkflowApiContractError extends Error {
     this.name = 'WorkflowApiContractError'
   }
 }
+/** 后端 history-config wire 的 pluginData typed 关联行；API 入口解码回 Record。 */
+export interface WorkflowHistoryPluginEntry {
+  name: string
+  text?: string | null
+  bool?: boolean | null
+  number?: number | string | null
+}
 export interface WorkflowHistoryConfig {
   runId: string
   title?: string | null

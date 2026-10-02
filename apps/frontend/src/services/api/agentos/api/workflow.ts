@@ -1,5 +1,5 @@
 import { agentosRequest } from '../client'
-import type { Checkpoint, PageResponse, ReviewRecord, ReviewRequest, RunMemoryEventsResponse, SingleStepRetryRequest, StepStatus, WorkflowHistoryConfig, WorkflowProgress, WorkflowProgressPhase, WorkflowRerunRequest, WorkflowRun, WorkflowRunQuery, WorkflowRunSummary, WorkflowTraceExport } from '../types'
+import type { Checkpoint, PageResponse, ReviewRecord, ReviewRequest, RunMemoryEventsResponse, SingleStepRetryRequest, StepStatus, WorkflowHistoryConfig, WorkflowHistoryPluginEntry, WorkflowProgress, WorkflowProgressPhase, WorkflowRerunRequest, WorkflowRun, WorkflowRunQuery, WorkflowRunSummary, WorkflowTraceExport } from '../types'
 import { WorkflowApiContractError } from '../types'
 import { runPath } from '../paths'
 import type { WorkflowApiDependencies } from '../dependencies'
@@ -135,10 +135,39 @@ export const createWorkflowApi = (getApi: () => WorkflowApiDependencies) => ({
   },
 
   async getWorkflowHistoryConfig(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowHistoryConfig> {
-    const response = await agentosRequest.get<WorkflowHistoryConfig>(`${runPath(runId)}/history-config`, {
-      signal: options.signal
-    })
-    return response.data
+    // 后端把 pluginData 表达为 typed 关联行（WorkflowHistoryPluginEntry[]）；
+    // 在此还原成既有重开流程消费的 Record 结构（扁平标量），restoreWorkbenchDraft、
+    // hydratePluginData 与 clonePluginData 的读取全部保持不变。
+    const response = await agentosRequest.get<{
+      runId: string
+      title?: string | null
+      reviewMode?: string
+      enabledPluginIds?: string[]
+      input?: { pluginData?: Array<{ pluginId: string; entries?: WorkflowHistoryPluginEntry[] }> | null }
+    }>(`${runPath(runId)}/history-config`, { signal: options.signal })
+    const wire = response.data
+    const config: WorkflowHistoryConfig = {
+      runId: wire.runId,
+      title: wire.title,
+      reviewMode: wire.reviewMode,
+      enabledPluginIds: wire.enabledPluginIds,
+      input: { ...(wire.input || {}) }
+    }
+    const rows = wire.input?.pluginData
+    if (config.input && Array.isArray(rows)) {
+      const pluginData: Record<string, Record<string, unknown>> = {}
+      for (const block of rows) {
+        const entries: Record<string, unknown> = {}
+        for (const entry of block.entries || []) {
+          if (entry.text != null) entries[entry.name] = entry.text
+          else if (entry.bool != null) entries[entry.name] = entry.bool
+          else if (entry.number != null) entries[entry.name] = Number(entry.number)
+        }
+        pluginData[block.pluginId] = entries
+      }
+      config.input.pluginData = pluginData
+    }
+    return config
   },
 
   async listWorkflowCheckpoints(runId: string, options: { signal?: AbortSignal } = {}): Promise<PageResponse<Checkpoint> & { runId: string }> {

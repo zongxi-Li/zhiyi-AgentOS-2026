@@ -44,10 +44,49 @@ export interface RuntimeResourceSnapshot {
   latencyMs?: number | null
   metrics: Record<string, number>
 }
+/**
+ * /resources 查询响应行：仅含资源目录消费方读取的字段（响应收窄）。
+ * RuntimeResourceProfile/RuntimeResourceSnapshot 完整形状仍用于注册命令；
+ * labels/costMetadata 动态键以后端 typed 键值行表达，详情面板做行化适配。
+ */
 export interface RuntimeResourceItem {
-  profile: RuntimeResourceProfile
-  snapshot: RuntimeResourceSnapshot
+  profile: RuntimeResourceCatalogProfile
+  snapshot: RuntimeResourceCatalogSnapshot
   snapshotVersion: number
+}
+
+export interface RuntimeResourceCatalogProfile {
+  resourceId: string
+  resourceType: RuntimeResourceType
+  deploymentTier?: RuntimeDeploymentTier | null
+  capabilities: string[]
+  domains: string[]
+  version: number
+  enabled: boolean
+  capacity: number
+  privacyLevel?: string | null
+  dataZone?: string | null
+  location?: string | null
+  ownerScope?: string | null
+  modelIds?: string[] | null
+  labels?: Array<{ key: string; value: string }> | null
+  costMetadata?: Array<{ key: string; value: number }> | null
+  computeCapacity?: {
+    cpuCores?: number | null
+    memoryMb?: number | null
+    gpuType?: string | null
+    gpuMemoryMb?: number | null
+    bandwidthMbps?: number | null
+  } | null
+}
+
+export interface RuntimeResourceCatalogSnapshot {
+  healthStatus: RuntimeResourceHealth
+  utilization?: number | null
+  latencyMs?: number | null
+  availableSlots?: number | null
+  reliability?: number | null
+  observedAt?: string | null
 }
 export interface ResourceRegistrationRequest {
   profile: RuntimeResourceProfile
