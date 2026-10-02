@@ -510,7 +510,7 @@ const handleRegister = async () => {
 .auth-view.is-embedded .auth-card {
   position: relative;
   left: 0;
-  transform: translateY(clamp(-16px, -1.4vh, -6px));
+  transform: none;
   width: min(100%, 520px);
   max-width: 100%;
   margin: 0 auto;
@@ -592,9 +592,130 @@ const handleRegister = async () => {
 .auth-view.is-embedded .auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) { border-color: #4b9ed5; background: #4b9ed5; }
 .auth-view.is-embedded .text-action { color: #277ec0; }
 .auth-view.is-embedded .auth-form__options { min-height: 32px; }
-.auth-view.is-embedded .auth-submit { min-height: 50px; margin-top: 10px; background: #5d61d8; box-shadow: 0 12px 24px rgba(70, 88, 190, .24); }
+/* 全局样式表对 .el-button--primary 施加了 background: var(--primary-color) !important，
+   嵌入卡的提交按钮必须同样加 !important 才能跟随纸/星分门配色。 */
+.auth-view.is-embedded .auth-submit { min-height: 50px; margin-top: 10px; background: linear-gradient(105deg, #2f9ff0, #6352f5) !important; box-shadow: 0 12px 24px rgba(70, 116, 239, .32); }
 .auth-view.is-embedded .auth-submit:hover { box-shadow: 0 15px 28px rgba(70, 88, 190, .3); }
 .auth-view.is-embedded .auth-card__close:focus-visible { outline: 3px solid rgba(67, 158, 215, .38); outline-offset: 3px; }
+
+/* 风格分门：星弈（默认/星空）走冷蓝系，纸弈走暖纸系；由落地页写入
+   html[data-landing-style] 决定，独立登录页不受影响（无 embedded）。 */
+html:not([data-landing-style='paper']) {
+/* Embedded + dark: the landing page renders the agent slot on the dark scene,
+   so the embedded dialog must follow the dark surface language here instead of
+   the light glass above (the standalone dark scene only covers .is-theme-dark
+   without .is-embedded). */
+.auth-view.is-embedded.is-theme-dark {
+  color-scheme: dark;
+  --auth-field: rgba(7, 20, 38, .72);
+}
+.auth-view.is-embedded.is-theme-dark .auth-card {
+  border-color: rgba(130, 184, 237, .3);
+  background: linear-gradient(145deg, rgba(18, 42, 76, .82), rgba(6, 16, 32, .74));
+  -webkit-backdrop-filter: blur(24px) saturate(132%);
+  backdrop-filter: blur(24px) saturate(132%);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(220, 239, 255, .16);
+}
+.auth-view.is-embedded.is-theme-dark .auth-card__mark { border-color: rgba(130, 184, 237, .24); background: rgba(13, 32, 58, .6); }
+.auth-view.is-embedded.is-theme-dark .auth-card__heading h2 { color: #edf5ff; }
+.auth-view.is-embedded.is-theme-dark .auth-card__heading > p:not(.auth-card__eyebrow) { color: #9db5d4; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(120, 172, 226, .24); }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item) { color: #8ea8c8; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item.is-active) { color: #f1f6ff; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__active-bar) { background: linear-gradient(90deg, #39c4f1, #9b78ff); }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-form-item__label) { color: #a5beda; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper) { border-color: rgba(135, 188, 241, .3) !important; background: var(--auth-field) !important; box-shadow: 0 1px 3px rgba(0, 0, 0, .4) inset !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(109, 189, 255, .62) !important; background: rgba(9, 26, 48, .84) !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper.is-focus) { border-color: #52b8ff !important; background: rgba(9, 26, 48, .94) !important; box-shadow: 0 0 0 3px rgba(82, 184, 255, .18) !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__inner) { color: #eff6ff !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__inner::placeholder) { color: #8ca6c5 !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__prefix), .auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__suffix) { color: #7fcaff !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form__error { color: #ff9da9; }
+.auth-view.is-embedded.is-theme-dark .auth-form__options :deep(.el-checkbox__label) { color: #a1b6d0; }
+.auth-view.is-embedded.is-theme-dark .auth-form__options :deep(.el-checkbox__inner) { border-color: rgba(137, 187, 237, .42); background: rgba(5, 14, 28, .78); }
+.auth-view.is-embedded.is-theme-dark .auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) { border-color: #52b8ff; background: #52b8ff; }
+.auth-view.is-embedded.is-theme-dark .text-action { color: #6fc3ff; }
+.auth-view.is-embedded.is-theme-dark .auth-submit { background: linear-gradient(105deg, #2f9ff0, #6352f5) !important; box-shadow: 0 12px 24px rgba(70, 116, 239, .32); }
+.auth-view.is-embedded.is-theme-dark .auth-submit:hover { box-shadow: 0 15px 28px rgba(70, 116, 239, .4); }
+.auth-view.is-embedded.is-theme-dark .auth-legal { color: #8298b3; }
+.auth-view.is-embedded.is-theme-dark .auth-card__close { border-color: rgba(133, 193, 244, .36); color: #b3c8e3; background: rgba(7, 20, 39, .6); }
+.auth-view.is-embedded.is-theme-dark .auth-card__close:hover { border-color: rgba(133, 193, 244, .66); color: #f1f6ff; background: rgba(18, 44, 77, .8); }
+.auth-view.is-embedded.is-theme-dark .auth-card__close:focus-visible { outline-color: rgba(82, 184, 255, .5); }
+}
+
+/* Embedded on the warm-paper landing: the dialog follows the ivory/copper
+   editorial language instead of the cool blue glass above. */
+html[data-landing-style='paper'] {
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card {
+  border-color: #e0d8c6;
+  background: linear-gradient(145deg, #fcfaf5, #f4efe2);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  backdrop-filter: blur(20px) saturate(120%);
+  box-shadow: 0 18px 44px rgba(38, 35, 31, .12), inset 0 1px 0 #ffffff;
+}
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card__mark { border-color: #e0d8c6; background: #f4efe2; box-shadow: none; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card__heading h2 { color: #26231f; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card__heading > p:not(.auth-card__eyebrow) { color: #6f665a; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(58, 50, 38, .14); }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__item) { color: #8d8676; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__item.is-active) { color: #26231f; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__active-bar) { background: #c15f3c; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-form-item__label) { color: #6f665a; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__wrapper) { border-color: rgba(58, 50, 38, .32) !important; background: #fbf8f0 !important; box-shadow: 0 1px 2px rgba(58, 50, 38, .05) inset !important; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(193, 95, 60, .5) !important; background: #fffdf7 !important; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__wrapper.is-focus) { border-color: #c15f3c !important; background: #fffdf7 !important; box-shadow: 0 0 0 3px rgba(193, 95, 60, .13) !important; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__inner) { color: #26231f !important; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__inner::placeholder) { color: #8f8471 !important; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__prefix), .auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__suffix) { color: #c15f3c !important; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form__error { color: #b4485a; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form__options :deep(.el-checkbox__label) { color: #6f665a; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form__options :deep(.el-checkbox__inner) { border-color: rgba(58, 50, 38, .3); background: #fbf8f0; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) { border-color: #c15f3c; background: #c15f3c; }
+.auth-view.is-embedded:not(.is-theme-dark) .text-action { color: #a84e30; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-submit { background: #2b241c !important; box-shadow: 0 12px 24px rgba(38, 35, 31, .2); }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-submit:hover { background: #c15f3c !important; box-shadow: 0 15px 28px rgba(193, 95, 60, .26); }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-legal { color: #a39a8a; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card__close { border-color: rgba(58, 50, 38, .2); color: #6f665a; background: #fbf8f0; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card__close:hover { border-color: #c15f3c; color: #26231f; background: #fffdf7; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-card__close:focus-visible { outline-color: rgba(193, 95, 60, .45); }
+
+/* 纸弈 · 暗色：暖炭卡面 + 象牙文字 + 铜橘强调 */
+.auth-view.is-embedded.is-theme-dark {
+  color-scheme: dark;
+  --auth-field: rgba(31, 28, 25, .72);
+}
+.auth-view.is-embedded.is-theme-dark .auth-card {
+  border-color: #3a342b;
+  background: linear-gradient(145deg, rgba(42, 37, 31, .92), rgba(31, 28, 25, .86));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(242, 237, 228, .08);
+}
+.auth-view.is-embedded.is-theme-dark .auth-card__mark { border-color: #3a342b; background: rgba(31, 28, 25, .8); }
+.auth-view.is-embedded.is-theme-dark .auth-card__heading h2 { color: #f2ede4; }
+.auth-view.is-embedded.is-theme-dark .auth-card__heading > p:not(.auth-card__eyebrow) { color: #9a8f7e; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(242, 237, 228, .14); }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item) { color: #9a8f7e; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item.is-active) { color: #f2ede4; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__active-bar) { background: #d97757; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-form-item__label) { color: #c9bfad; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper) { border-color: rgba(242, 237, 228, .18) !important; background: var(--auth-field) !important; box-shadow: 0 1px 3px rgba(0, 0, 0, .4) inset !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(217, 119, 87, .55) !important; background: rgba(37, 32, 25, .86) !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper.is-focus) { border-color: #d97757 !important; background: rgba(37, 32, 25, .94) !important; box-shadow: 0 0 0 3px rgba(217, 119, 87, .18) !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__inner) { color: #f2ede4 !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__inner::placeholder) { color: #8d8375 !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__prefix), .auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__suffix) { color: #d97757 !important; }
+.auth-view.is-embedded.is-theme-dark .auth-form__error { color: #ff9da9; }
+.auth-view.is-embedded.is-theme-dark .auth-form__options :deep(.el-checkbox__label) { color: #c9bfad; }
+.auth-view.is-embedded.is-theme-dark .auth-form__options :deep(.el-checkbox__inner) { border-color: rgba(242, 237, 228, .24); background: rgba(31, 28, 25, .78); }
+.auth-view.is-embedded.is-theme-dark .auth-form__options :deep(.el-checkbox__input.is-checked .el-checkbox__inner) { border-color: #d97757; background: #d97757; }
+.auth-view.is-embedded.is-theme-dark .text-action { color: #e8926f; }
+.auth-view.is-embedded.is-theme-dark .auth-submit { background: #f2ede4 !important; color: #1f1c19; box-shadow: 0 12px 24px rgba(0, 0, 0, .32); }
+.auth-view.is-embedded.is-theme-dark .auth-submit:hover { background: #d97757 !important; color: #1f1c19; box-shadow: 0 15px 28px rgba(217, 119, 87, .3); }
+.auth-view.is-embedded.is-theme-dark .auth-legal { color: #8d8375; }
+.auth-view.is-embedded.is-theme-dark .auth-card__close { border-color: rgba(242, 237, 228, .18); color: #c9bfad; background: rgba(31, 28, 25, .7); }
+.auth-view.is-embedded.is-theme-dark .auth-card__close:hover { border-color: rgba(217, 119, 87, .55); color: #f2ede4; background: rgba(42, 37, 31, .9); }
+.auth-view.is-embedded.is-theme-dark .auth-card__close:focus-visible { outline-color: rgba(217, 119, 87, .5); }
+}
+
 @media (max-width: 940px) {
   .auth-view.is-embedded .auth-card { transform: none; }
 }
