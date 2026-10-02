@@ -68,6 +68,20 @@
       <DesktopWindowControls v-if="desktopShell" />
     </header>
 
+    <div class="landing-rail" aria-hidden="true">
+      <button
+        v-for="item in navigation"
+        :key="item.id"
+        type="button"
+        tabindex="-1"
+        :class="{ 'is-active': activeSection === item.id }"
+        @click="goToSection(item.id)"
+      >
+        <span aria-hidden="true">{{ item.label }}</span>
+        <i aria-hidden="true"></i>
+      </button>
+    </div>
+
     <div class="landing-scroll">
       <section id="home" data-testid="landing-page-home" class="landing-hero" :class="{ 'is-auth-open': authOpen }" aria-labelledby="landing-title">
         <span class="landing-watermark" aria-hidden="true">局</span>
@@ -142,6 +156,7 @@
             <h2 id="horizon-title">千步长程，不散不塌</h2>
             <p class="landing-section__intro">超长程任务常见的五种失败模式，知弈各有一个工程答案——每一项都有对应实现与测试。</p>
           </div>
+          <RecoveryDemo class="landing-workspace-demo" data-reveal :active="recoveryDemoActive" :dark="isDarkTheme" />
           <div class="landing-info-grid landing-info-grid--horizon">
             <article v-for="item in horizonFeatures" :key="item.title" class="landing-info-card" data-reveal>
               <span class="landing-info-card__index">{{ item.index }}</span>
@@ -161,6 +176,7 @@
             <h2 id="scenes-title">一套系统，通用场景</h2>
             <p class="landing-section__intro">领域 Pack 即插即用；没有现成模板，就从一句话意图开始动态组网。</p>
           </div>
+          <GraphDemo class="landing-workspace-demo" data-reveal :active="graphDemoActive" :dark="isDarkTheme" />
           <div class="landing-info-grid landing-info-grid--scenes">
             <article v-for="item in sceneFeatures" :key="item.title" class="landing-info-card" :class="{ 'landing-info-card--featured': item.featured }" data-reveal>
               <span class="landing-info-card__index">{{ item.index }}</span>
@@ -183,6 +199,7 @@
             <h2 id="ecosystem-title">连接模型、知识与运行时</h2>
             <p class="landing-section__intro">模型、知识与角色汇成一局之势，需要什么，就调用什么。</p>
           </div>
+          <ProviderDemo class="landing-workspace-demo" data-reveal :active="providerDemoActive" :dark="isDarkTheme" />
           <div class="landing-info-grid landing-info-grid--four">
             <article v-for="item in ecosystemFeatures" :key="item.title" class="landing-info-card" data-reveal>
               <span class="landing-info-card__index">{{ item.index }}</span>
@@ -253,6 +270,9 @@ import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 import { useTheme } from '@/composables/useTheme'
 import MissionRunDemo from '@/components/landing/MissionRunDemo.vue'
+import RecoveryDemo from '@/components/landing/RecoveryDemo.vue'
+import ProviderDemo from '@/components/landing/ProviderDemo.vue'
+import GraphDemo from '@/components/landing/GraphDemo.vue'
 const GlassConstellation = defineAsyncComponent(() => import('@/components/landing/GlassConstellation.vue').then(module => module.default))
 const LoginView = defineAsyncComponent(() => import('@/views/LoginView.vue').then(module => module.default))
 
@@ -266,6 +286,9 @@ const dragRegionProps = platform.dragRegionProps
 const landingRoot = ref<HTMLElement | null>(null)
 const scrolled = ref(false)
 const missionDemoActive = ref(false)
+const recoveryDemoActive = ref(false)
+const providerDemoActive = ref(false)
+const graphDemoActive = ref(false)
 
 /* 整体风格：纸弈（暖纸·铜橘，默认）/ 星弈（星空·青紫），选择持久化。 */
 type LandingStyle = 'paper' | 'star'
@@ -381,11 +404,20 @@ const handleScroll = () => {
   const max = Math.max(1, el.scrollHeight - el.clientHeight)
   // 变量写在根元素上：进度条在 .landing-header（滚动容器的兄弟子树），靠继承取值
   if (landingRoot.value) landingRoot.value.style.setProperty('--scroll-progress', String(Math.min(1, el.scrollTop / max)))
-  const demo = landingRoot.value.querySelector('.mission-demo')
-  if (demo) {
-    const rect = demo.getBoundingClientRect()
-    missionDemoActive.value = rect.top < window.innerHeight * 0.9 && rect.bottom > 0
+  const demoFlags: Array<[string, { value: boolean }]> = [
+    ['.mission-demo', missionDemoActive],
+    ['.recovery-demo', recoveryDemoActive],
+    ['.provider-demo', providerDemoActive],
+    ['.graph-demo', graphDemoActive]
+  ]
+  for (const [selector, flag] of demoFlags) {
+    const demo = landingRoot.value.querySelector(selector)
+    if (demo) {
+      const rect = demo.getBoundingClientRect()
+      flag.value = rect.top < window.innerHeight * 0.9 && rect.bottom > 0
+    }
   }
+  kickScrollMotion?.()
 }
 
 /* 真正滚动的是内层 .landing-scroll（scroll 事件不冒泡，监听必须挂在它身上；
@@ -427,6 +459,7 @@ onMounted(() => {
   }
   handleScroll()
   setupPointerMotion(root)
+  setupScrollMotion(root)
 })
 
 /* 指针微动效：磁吸按钮 + 卡片聚光。只在精细指针（鼠标）且未开启
@@ -532,6 +565,76 @@ const setupPointerMotion = (root: HTMLElement) => {
   }
 }
 
+/* 滚动过程反馈：惯性倾斜 + 视差景深 + 首屏退场。rAF 循环只在滚动期间运行，
+   静止后自动停机并清掉倾斜；"减少动效"或降级环境完全不启用。
+   视差目标刻意避开带 data-reveal 的元素——reveal 的 700ms transform 过渡
+   会把逐帧位移拖成糊状。水印基准居中位移 translateY(-50%) 需在内联样式里保留。 */
+let kickScrollMotion: (() => void) | null = null
+const setupScrollMotion = (root: HTMLElement) => {
+  const el = scrollEl
+  if (!el || typeof window.matchMedia !== 'function') return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+  const leanBlocks = Array.from(root.querySelectorAll<HTMLElement>('.landing-section__inner, .landing-mission-layout, .landing-about__inner'))
+  const watermarks = Array.from(root.querySelectorAll<HTMLElement>('.landing-watermark'))
+  const heroSlot = root.querySelector<HTMLElement>('.landing-agent-slot')
+  const heroInner = root.querySelector<HTMLElement>('.landing-hero__inner')
+
+  let raf = 0
+  let lastTop = el.scrollTop
+  let velocity = 0
+  let lean = 0
+
+  const frame = () => {
+    raf = 0
+    const top = el.scrollTop
+    velocity += (top - lastTop - velocity) * 0.22
+    lastTop = top
+    const targetLean = Math.max(-0.65, Math.min(0.65, velocity * 0.05))
+    lean += (targetLean - lean) * 0.16
+    const skew = Math.abs(lean) > 0.012 ? `skewY(${lean.toFixed(3)}deg)` : ''
+    for (const block of leanBlocks) block.style.transform = skew
+    const vh = window.innerHeight || 1
+    if (window.innerWidth > 860) {
+      for (const wm of watermarks) {
+        const r = wm.getBoundingClientRect()
+        const offset = (r.top + r.height / 2 - vh / 2) * 0.055
+        wm.style.transform = `translate3d(0, ${offset.toFixed(1)}px, 0) translateY(-50%)`
+      }
+      if (heroSlot && !heroSlot.firstElementChild?.classList.contains('auth-view')) {
+        const r = heroSlot.getBoundingClientRect()
+        const offset = (r.top + r.height / 2 - vh / 2) * 0.045
+        heroSlot.style.transform = `translate3d(0, ${offset.toFixed(1)}px, 0)`
+      } else if (heroSlot) {
+        heroSlot.style.transform = ''
+      }
+    } else {
+      for (const wm of watermarks) wm.style.transform = ''
+      if (heroSlot) heroSlot.style.transform = ''
+    }
+    if (heroInner) {
+      const exit = Math.min(1, top / (vh * 0.72))
+      heroInner.style.opacity = (1 - exit * 0.55).toFixed(3)
+      heroInner.style.transform = `translate3d(0, ${(exit * -34).toFixed(1)}px, 0)`
+    }
+    if (Math.abs(velocity) > 0.08 || Math.abs(lean) > 0.004) raf = requestAnimationFrame(frame)
+    else for (const block of leanBlocks) block.style.transform = ''
+  }
+
+  kickScrollMotion = () => {
+    if (!raf) raf = requestAnimationFrame(frame)
+  }
+
+  motionCleanups.push(() => {
+    kickScrollMotion = null
+    if (raf) cancelAnimationFrame(raf)
+    for (const block of leanBlocks) block.style.transform = ''
+    for (const wm of watermarks) wm.style.transform = ''
+    if (heroSlot) heroSlot.style.transform = ''
+    if (heroInner) { heroInner.style.opacity = ''; heroInner.style.transform = '' }
+  })
+}
+
 onUnmounted(() => {
   revealObserver?.disconnect()
   spyObserver?.disconnect()
@@ -624,8 +727,8 @@ const goToLogin = () => openAuth()
   /* 顶栏胶囊随主题走：浅色=纸面同色系，深色=暖炭浮动岛。 */
   --header-bg: rgba(252, 250, 245, .84);
   --header-border: rgba(38, 35, 31, .12);
-  --header-shadow: 0 10px 24px rgba(24, 19, 12, .1), inset 0 1px 0 rgba(255, 255, 255, .85);
-  --header-shadow-scrolled: 0 16px 40px rgba(24, 19, 12, .16), inset 0 1px 0 rgba(255, 255, 255, .9);
+  --header-shadow: 0 6px 16px rgba(24, 19, 12, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
+  --header-shadow-scrolled: 0 10px 28px rgba(24, 19, 12, .13), inset 0 1px 0 rgba(255, 255, 255, .9);
   position: relative;
   height: 100vh;
   height: 100dvh;
@@ -649,31 +752,42 @@ const goToLogin = () => openAuth()
 /* 顶栏胶囊：底色/边框/阴影走主题变量——浅色主题融入纸面，深色主题保持浮动暖炭岛。
    入场一次轻落（backwards 结束后释放 transform，滚动位移照常生效）。 */
 @keyframes landing-header-in { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
-.landing-header { position: sticky; top: 14px; z-index: 12; width: min(1180px, calc(100% - 48px)); margin: 0 auto; min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 10px 8px 20px; border-radius: 999px; border: 1px solid var(--header-border); background: var(--header-bg); box-shadow: var(--header-shadow); backdrop-filter: blur(18px) saturate(140%); animation: landing-header-in 720ms cubic-bezier(.2, .8, .2, 1) backwards; transition: box-shadow 280ms ease, transform 280ms cubic-bezier(.2, .8, .2, 1), background-color 280ms ease; }
+.landing-header { position: sticky; top: 12px; z-index: 12; width: min(1180px, calc(100% - 48px)); margin: 0 auto; min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 6px 5px 16px; border-radius: 999px; border: 1px solid var(--header-border); background: var(--header-bg); box-shadow: var(--header-shadow); backdrop-filter: blur(18px) saturate(140%); animation: landing-header-in 720ms cubic-bezier(.2, .8, .2, 1) backwards; transition: box-shadow 280ms ease, transform 280ms cubic-bezier(.2, .8, .2, 1), background-color 280ms ease; }
 @media (prefers-reduced-motion: reduce) { .landing-header { animation: none; } .landing-brand__logo img { transition: none; } .landing-brand:hover .landing-brand__logo img { transform: none; } }
 .landing-view.is-scrolled .landing-header { box-shadow: var(--header-shadow-scrolled); transform: translateY(-2px); }
 /* 阅读进度：顶栏下缘细铜线，scaleX(--scroll-progress) 由滚动句柄写入。 */
-.landing-header::after { content: ''; position: absolute; left: 22px; right: 22px; bottom: 3px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--copper) 72%, transparent); transform-origin: 0 50%; transform: scaleX(var(--scroll-progress, 0)); }
+.landing-header::after { content: ''; position: absolute; left: 16px; right: 16px; bottom: 2px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--copper) 72%, transparent); transform-origin: 0 50%; transform: scaleX(var(--scroll-progress, 0)); }
 /* 品牌区：花环原标 + 全衬线字标，与首屏大标题同一语言。
    花环图自带留白，直接裸放比塞进色块徽章更干净；深色主题下补一枚软边象牙圆托保对比度。 */
-.landing-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--ink); font-family: var(--font-serif, serif); font-size: 19px; font-weight: 600; letter-spacing: -.02em; text-decoration: none; white-space: nowrap; }
+.landing-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-family: var(--font-serif, serif); font-size: 17px; font-weight: 600; letter-spacing: -.02em; text-decoration: none; white-space: nowrap; }
 .landing-brand__wordmark { display: inline-flex; align-items: baseline; gap: 6px; }
 .landing-brand strong { color: var(--copper); font-size: .95em; font-weight: 500; letter-spacing: -.01em; transition: color 220ms ease; }
 .landing-brand:hover strong { color: var(--copper-deep); }
-.landing-brand__logo { width: 33px; height: 33px; display: block; }
+.landing-brand__logo { width: 27px; height: 27px; display: block; }
 .landing-brand__logo img { width: 100%; height: 100%; display: block; object-fit: contain; transition: transform 480ms cubic-bezier(.34, 1.56, .64, 1); transform-origin: 50% 50%; }
 .landing-brand:hover .landing-brand__logo img { transform: rotate(14deg) scale(1.07); }
 .landing-view.is-theme-dark .landing-brand__logo { border-radius: 50%; background: radial-gradient(circle, #f6f1e2 72%, rgba(246, 241, 226, 0) 100%); }
 .landing-nav { display: flex; align-items: center; gap: 2px; }
-.landing-nav a { position: relative; padding: 8px 14px; border-radius: 999px; color: var(--ink-soft); font-size: 13.5px; text-decoration: none; transition: color 200ms ease, background-color 200ms ease; }
+.landing-nav a { position: relative; padding: 6px 12px; border-radius: 999px; color: var(--ink-soft); font-size: 13px; text-decoration: none; transition: color 200ms ease, background-color 200ms ease; }
 .landing-nav a:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .landing-nav a.is-active { color: var(--ink); background: color-mix(in srgb, var(--ink) 11%, transparent); animation: landing-nav-pill-in 280ms cubic-bezier(.2, .8, .2, 1); }
 .landing-header__actions { display: flex; align-items: center; gap: 9px; margin-left: auto; }
-.landing-header__note { margin-right: 8px; color: var(--muted); font-size: 10.5px; letter-spacing: .1em; white-space: nowrap; }
+.landing-header__note { margin-right: 6px; color: var(--muted); font-size: 10px; letter-spacing: .1em; white-space: nowrap; }
 .landing-header__note i { padding: 0 7px; font-style: normal; color: var(--copper); }
 @media (max-width: 1359px) { .landing-header__note { display: none; } }
-.landing-island-btn { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); border-radius: 999px; color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); cursor: pointer; font: inherit; transition: border-color 200ms ease, background-color 200ms ease, color 200ms ease, transform 200ms ease; }
-.landing-island-btn .el-icon { font-size: 16px; }
+
+/* 右缘章节导航轨：滚动位置的可视锚点，悬停展开章节名，点击跳转。 */
+.landing-rail { position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 11; display: flex; flex-direction: column; gap: 2px; }
+.landing-rail button { display: flex; align-items: center; justify-content: flex-end; gap: 8px; width: 104px; padding: 6px 0; border: 0; background: none; cursor: pointer; font: inherit; }
+.landing-rail button span { color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .14em; opacity: 0; transform: translateX(6px); transition: opacity 200ms ease, transform 200ms ease, color 200ms ease; }
+.landing-rail button i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 999px; background: color-mix(in srgb, var(--ink) 26%, transparent); transition: transform 260ms cubic-bezier(.2, .8, .2, 1), background-color 240ms ease; }
+.landing-rail button:hover i, .landing-rail button.is-active i { background: var(--copper); }
+.landing-rail button:hover span { opacity: 1; transform: none; }
+.landing-rail button.is-active span { opacity: 1; transform: none; color: var(--ink); }
+.landing-rail button.is-active i { transform: scale(1.55); }
+@media (max-width: 1180px) { .landing-rail { display: none; } }
+.landing-island-btn { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); border-radius: 999px; color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); cursor: pointer; font: inherit; transition: border-color 200ms ease, background-color 200ms ease, color 200ms ease, transform 200ms ease; }
+.landing-island-btn .el-icon { font-size: 14px; }
 .landing-island-btn:hover { border-color: color-mix(in srgb, var(--ink) 34%, transparent); background: color-mix(in srgb, var(--ink) 12%, transparent); transform: translateY(-1px); }
 .landing-island-btn[aria-expanded='true'] { border-color: color-mix(in srgb, var(--copper) 55%, transparent); color: var(--copper); background: color-mix(in srgb, var(--copper) 16%, transparent); }
 
@@ -704,7 +818,7 @@ const goToLogin = () => openAuth()
 .landing-hero.is-auth-open .landing-agent-slot { width: min(42vw, 540px); height: auto; min-height: 0; }
 .landing-hero.is-auth-open .landing-scroll-cue { display: none; }
 .landing-hero.is-auth-open .landing-watermark { opacity: .55; }
-.landing-hero__copy { position: relative; z-index: 1; width: min(560px, 48vw); animation: landing-content-in 900ms cubic-bezier(.2, .8, .2, 1) both; }
+.landing-hero__copy { position: relative; z-index: 1; width: min(560px, 48vw); margin: clamp(20px, 5vh, 48px) 0 0 clamp(24px, 3vw, 48px); animation: landing-content-in 900ms cubic-bezier(.2, .8, .2, 1) both; }
 .landing-eyebrow { margin: 0 0 18px; color: var(--copper); font-size: 11px; font-weight: 750; letter-spacing: .22em; }
 .landing-eyebrow::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 9px; border-radius: 2px; background: var(--copper); vertical-align: 1px; }
 .landing-hero h1 { margin: 0; color: var(--ink); font-family: var(--font-serif, serif); font-size: clamp(52px, 5vw, 82px); font-weight: 600; line-height: .98; letter-spacing: -.05em; }
@@ -762,6 +876,7 @@ const goToLogin = () => openAuth()
 
 /* 任务闭环布局 */
 .landing-mission-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, .9fr); gap: 16px; align-items: stretch; }
+.landing-workspace-demo { margin: 6px 0 18px; }
 .landing-info-grid { display: grid; width: 100%; gap: 14px; text-align: left; }
 .landing-info-grid--features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .landing-info-grid--horizon { grid-template-columns: repeat(6, minmax(0, 1fr)); }
@@ -848,8 +963,8 @@ const goToLogin = () => openAuth()
   --grid-dot: rgba(220, 200, 160, .13);
   --header-bg: rgba(30, 27, 23, .9);
   --header-border: rgba(255, 255, 255, .07);
-  --header-shadow: 0 10px 26px rgba(24, 19, 12, .18), inset 0 1px 0 rgba(255, 255, 255, .06);
-  --header-shadow-scrolled: 0 18px 44px rgba(24, 19, 12, .3), inset 0 1px 0 rgba(255, 255, 255, .07);
+  --header-shadow: 0 6px 18px rgba(24, 19, 12, .16), inset 0 1px 0 rgba(255, 255, 255, .06);
+  --header-shadow-scrolled: 0 12px 32px rgba(24, 19, 12, .26), inset 0 1px 0 rgba(255, 255, 255, .07);
   color-scheme: dark;
 
   .landing-cta { color: #1f1c19; background: var(--ink); border-color: var(--ink); box-shadow: 0 10px 22px rgba(0, 0, 0, .3); }
@@ -887,8 +1002,8 @@ const goToLogin = () => openAuth()
   --grid-dot: rgba(73, 139, 200, .16);
   --header-bg: rgba(255, 255, 255, .52);
   --header-border: rgba(255, 255, 255, .8);
-  --header-shadow: 0 12px 28px rgba(73, 125, 207, .12), inset 0 1px 0 rgba(255, 255, 255, .9);
-  --header-shadow-scrolled: 0 18px 44px rgba(73, 125, 207, .18), inset 0 1px 0 rgba(255, 255, 255, .95);
+  --header-shadow: 0 8px 20px rgba(73, 125, 207, .1), inset 0 1px 0 rgba(255, 255, 255, .9);
+  --header-shadow-scrolled: 0 12px 30px rgba(73, 125, 207, .15), inset 0 1px 0 rgba(255, 255, 255, .95);
   background: #dcecff url('/bg.webp') center / cover no-repeat;
 }
 .landing-view.is-style-star::before { content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(112deg, rgba(249, 253, 255, .88) 0%, rgba(243, 250, 255, .6) 38%, rgba(225, 240, 255, .2) 72%, rgba(216, 232, 255, .36) 100%); }
@@ -910,7 +1025,10 @@ const goToLogin = () => openAuth()
 .landing-view.is-style-star .landing-cta--ghost { color: #2c5789; background: rgba(255, 255, 255, .38); border-color: transparent; box-shadow: inset 0 0 0 1px rgba(60, 126, 199, .32), 0 8px 20px rgba(70, 122, 193, .1); }
 .landing-view.is-style-star .landing-cta--ghost:hover { color: #1c4877; background: rgba(255, 255, 255, .66); box-shadow: inset 0 0 0 1px rgba(60, 126, 199, .55), 0 12px 26px rgba(70, 122, 193, .16); }
 /* 演示面板跟随星弈调色（CSS 变量穿透子组件根节点） */
-.landing-view.is-style-star .mission-demo {
+.landing-view.is-style-star .mission-demo,
+.landing-view.is-style-star .recovery-demo,
+.landing-view.is-style-star .provider-demo,
+.landing-view.is-style-star .graph-demo {
   --demo-ink: #1c3f6e;
   --demo-ink-soft: #5e7ca8;
   --demo-muted: #7d97bb;
@@ -920,6 +1038,7 @@ const goToLogin = () => openAuth()
   --demo-accent: #2b93ec;
   --demo-tan: #6655f4;
   --demo-success: #2fa27a;
+  --demo-fault: #cc5546;
   --demo-on-ink: #ffffff;
   --demo-planning: #b98a2f;
 }
@@ -940,8 +1059,8 @@ const goToLogin = () => openAuth()
   --grid-dot: rgba(113, 166, 237, .22);
   --header-bg: rgba(8, 14, 28, .88);
   --header-border: rgba(130, 184, 237, .18);
-  --header-shadow: 0 10px 26px rgba(0, 0, 0, .3), inset 0 1px 0 rgba(220, 239, 255, .08);
-  --header-shadow-scrolled: 0 18px 44px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(220, 239, 255, .1);
+  --header-shadow: 0 8px 20px rgba(0, 0, 0, .26), inset 0 1px 0 rgba(220, 239, 255, .08);
+  --header-shadow-scrolled: 0 12px 32px rgba(0, 0, 0, .36), inset 0 1px 0 rgba(220, 239, 255, .1);
   color-scheme: dark;
   background: #050914 url('/darkbg.webp') center / cover no-repeat;
 }
@@ -955,7 +1074,10 @@ const goToLogin = () => openAuth()
 .landing-view.is-style-star.is-theme-dark .landing-cta { color: #fff; }
 .landing-view.is-style-star.is-theme-dark .landing-cta--ghost { color: #cfe2fb; background: rgba(12, 30, 56, .5); box-shadow: inset 0 0 0 1px rgba(109, 189, 255, .34), 0 8px 20px rgba(0, 0, 0, .22); }
 .landing-view.is-style-star.is-theme-dark .landing-cta--ghost:hover { color: #f1f6ff; background: rgba(20, 46, 82, .78); box-shadow: inset 0 0 0 1px rgba(109, 189, 255, .6), 0 12px 26px rgba(0, 0, 0, .3); }
-.landing-view.is-style-star.is-theme-dark .mission-demo {
+.landing-view.is-style-star.is-theme-dark .mission-demo,
+.landing-view.is-style-star.is-theme-dark .recovery-demo,
+.landing-view.is-style-star.is-theme-dark .provider-demo,
+.landing-view.is-style-star.is-theme-dark .graph-demo {
   --demo-ink: #edf4ff;
   --demo-ink-soft: #b9cde6;
   --demo-muted: #8ba4c6;
@@ -965,13 +1087,14 @@ const goToLogin = () => openAuth()
   --demo-accent: #4db2ff;
   --demo-tan: #a184ff;
   --demo-success: #6fd0a5;
+  --demo-fault: #f09385;
   --demo-on-ink: #edf4ff;
   --demo-planning: #d9b66f;
 }
 
 .landing-view.is-desktop-shell { --app-topbar-muted: var(--muted); --app-topbar-hover: color-mix(in srgb, var(--copper) 8%, transparent); --app-topbar-active: color-mix(in srgb, var(--copper) 12%, transparent); --app-topbar-focus-ring: color-mix(in srgb, var(--copper) 45%, transparent); }
 .landing-view.is-desktop-shell .landing-header { padding-right: 24px; padding-left: 24px; }
-.landing-view.is-desktop-shell .landing-header :deep(.desktop-window-controls) { height: 52px; align-self: center; }
+.landing-view.is-desktop-shell .landing-header :deep(.desktop-window-controls) { height: 44px; align-self: center; }
 .landing-brand:focus-visible, .landing-nav a:focus-visible, .landing-theme-toggle:focus-visible, .landing-cta:focus-visible, .landing-capability-strip__item:focus-visible, .landing-footer__top:focus-visible { outline: 2px solid color-mix(in srgb, var(--copper) 60%, transparent); outline-offset: 4px; }
 
 @media (max-width: 1060px) {
@@ -983,12 +1106,12 @@ const goToLogin = () => openAuth()
 }
 
 @media (max-width: 860px) {
-  .landing-header { width: calc(100% - 24px); gap: 10px; padding: 10px 12px; }
+  .landing-header { width: calc(100% - 24px); gap: 8px; padding: 8px 10px; }
   .landing-nav, .landing-header__note { display: none; }
   .landing-hero { padding-top: 96px; }
   .landing-hero__inner { width: calc(100% - 32px); }
   .landing-hero-row { flex-direction: column; gap: 6px; }
-  .landing-hero__copy { width: 100%; }
+  .landing-hero__copy { width: 100%; margin: 0; }
   .landing-agent-slot { width: min(78vw, 460px); height: min(42vh, 380px); min-width: 0; min-height: 0; margin: 0 auto; }
   .landing-capability-strip { flex-wrap: wrap; }
   .landing-capability-strip__label { width: 100%; padding: 2px 4px; }

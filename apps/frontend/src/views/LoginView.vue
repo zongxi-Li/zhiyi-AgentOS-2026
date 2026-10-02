@@ -46,7 +46,7 @@
 
         <el-tabs v-model="activeTab" class="auth-tabs" stretch @tab-change="authError = ''">
           <el-tab-pane label="登录" name="login">
-            <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-position="top" class="auth-form">
+            <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-position="top" hide-required-asterisk class="auth-form">
               <el-form-item label="登录账号" prop="username">
                 <el-input v-model="loginForm.username" :prefix-icon="User" placeholder="用户名、邮箱或手机号" autocomplete="username" />
               </el-form-item>
@@ -63,19 +63,21 @@
           </el-tab-pane>
 
           <el-tab-pane label="注册" name="register">
-            <el-form ref="registerFormRef" :model="registerForm" :rules="registerRules" label-position="top" class="auth-form">
-              <el-form-item label="用户名" prop="username">
-                <el-input v-model="registerForm.username" :prefix-icon="User" placeholder="设置用户名" autocomplete="username" />
-              </el-form-item>
-              <el-form-item label="邮箱地址" prop="email">
-                <el-input v-model="registerForm.email" :prefix-icon="Message" placeholder="用于接收账号通知" autocomplete="email" />
-              </el-form-item>
-              <el-form-item label="设置密码" prop="password">
-                <el-input v-model="registerForm.password" type="password" :prefix-icon="Lock" placeholder="至少 6 位字符" autocomplete="new-password" show-password />
-              </el-form-item>
-              <el-form-item label="确认密码" prop="confirmPassword">
-                <el-input v-model="registerForm.confirmPassword" type="password" :prefix-icon="Lock" placeholder="再次输入你的密码" autocomplete="new-password" show-password @keyup.enter="handleRegister" />
-              </el-form-item>
+            <el-form ref="registerFormRef" :model="registerForm" :rules="registerRules" label-position="top" hide-required-asterisk class="auth-form">
+              <div class="auth-form__grid">
+                <el-form-item label="用户名" prop="username">
+                  <el-input v-model="registerForm.username" :prefix-icon="User" placeholder="设置用户名" autocomplete="username" />
+                </el-form-item>
+                <el-form-item label="邮箱地址" prop="email">
+                  <el-input v-model="registerForm.email" :prefix-icon="Message" placeholder="用于接收账号通知" autocomplete="email" />
+                </el-form-item>
+                <el-form-item label="设置密码" prop="password">
+                  <el-input v-model="registerForm.password" type="password" :prefix-icon="Lock" placeholder="至少 6 位字符" autocomplete="new-password" show-password />
+                </el-form-item>
+                <el-form-item label="确认密码" prop="confirmPassword">
+                  <el-input v-model="registerForm.confirmPassword" type="password" :prefix-icon="Lock" placeholder="再次输入你的密码" autocomplete="new-password" show-password @keyup.enter="handleRegister" />
+                </el-form-item>
+              </div>
               <p v-if="authError" class="auth-form__error" role="alert">{{ authError }}</p>
               <el-button type="primary" class="auth-submit" data-testid="auth-submit" :loading="loading" @click="handleRegister">立即注册</el-button>
             </el-form>
@@ -573,12 +575,20 @@ const handleRegister = async () => {
 .auth-view.is-embedded .auth-card__eyebrow span { display: none; }
 .auth-view.is-embedded .auth-card__heading h2 { color: #173a63; font-size: 31px; letter-spacing: -.05em; text-shadow: none; }
 .auth-view.is-embedded .auth-card__heading > p:not(.auth-card__eyebrow) { max-width: none; margin: 9px 0 24px; color: #5f7d9e; font-size: 13px; line-height: 1.65; }
-.auth-view.is-embedded .auth-tabs :deep(.el-tabs__header) { margin-bottom: 20px; }
-.auth-view.is-embedded .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(89, 137, 185, .26); }
-.auth-view.is-embedded .auth-tabs :deep(.el-tabs__item) { min-height: 40px; color: #7894b2; font-size: 13px; }
-.auth-view.is-embedded .auth-tabs :deep(.el-tabs__item.is-active) { color: #244b73; }
-.auth-view.is-embedded .auth-tabs :deep(.el-tabs__active-bar) { height: 2px; background: #3f8fd2; }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__header) { margin-bottom: 22px; }
+/* 分段药丸选项卡：去掉下划线基线与活动杆，等宽双药丸，激活底色随风格分门。 */
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__nav-wrap) { padding: 4px; border: 1px solid rgba(91, 137, 185, .22); border-radius: 999px; background: rgba(255, 255, 255, .35); }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__item) { height: 38px; min-height: 38px; color: #7894b2; font-size: 13px; font-weight: 650; border-radius: 999px; transition: color 220ms ease, background-color 220ms ease, box-shadow 220ms ease; }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__item:hover) { color: #244b73; background: rgba(89, 137, 185, .1); }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__item.is-active) { color: #fff; background: linear-gradient(105deg, #2f9ff0, #6352f5); box-shadow: 0 6px 14px rgba(70, 116, 239, .28); }
+.auth-view.is-embedded .auth-tabs :deep(.el-tabs__active-bar) { display: none; }
 .auth-view.is-embedded .auth-form :deep(.el-form-item) { margin-bottom: 22px; }
+/* 编辑部级表单标签：小字号 + 宽字距，配合 hide-required-asterisk 去掉红星噪音。 */
+.auth-view.is-embedded .auth-form :deep(.el-form-item__label) { margin-bottom: 7px; font-size: 11px; font-weight: 650; letter-spacing: .12em; }
+/* 注册表单字段两两双列，压扁长表单的卡片高度；窄屏回落单列。 */
+.auth-view.is-embedded .auth-form__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+@media (max-width: 560px) { .auth-view.is-embedded .auth-form__grid { grid-template-columns: 1fr; } }
 .auth-view.is-embedded .auth-form :deep(.el-form-item__label) { color: #527397; }
 .auth-view.is-embedded .auth-form :deep(.el-input__wrapper) { min-height: 50px; border-radius: 14px; border-color: rgba(91, 137, 185, .32) !important; background: rgba(255, 255, 255, .56) !important; box-shadow: 0 1px 2px rgba(59, 106, 158, .07) inset !important; }
 .auth-view.is-embedded .auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(53, 157, 214, .62) !important; background: rgba(255, 255, 255, .72) !important; }
@@ -621,6 +631,8 @@ html:not([data-landing-style='paper']) {
 .auth-view.is-embedded.is-theme-dark .auth-card__heading > p:not(.auth-card__eyebrow) { color: #9db5d4; }
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(120, 172, 226, .24); }
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item) { color: #8ea8c8; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item:hover) { color: #cfe2fb; background: rgba(120, 172, 226, .12); }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__nav-wrap) { border-color: rgba(130, 184, 237, .26); background: rgba(7, 20, 38, .5); }
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item.is-active) { color: #f1f6ff; }
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__active-bar) { background: linear-gradient(90deg, #39c4f1, #9b78ff); }
 .auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-form-item__label) { color: #a5beda; }
@@ -659,6 +671,9 @@ html[data-landing-style='paper'] {
 .auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(58, 50, 38, .14); }
 .auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__item) { color: #8d8676; }
 .auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__item.is-active) { color: #26231f; }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__nav-wrap) { border-color: rgba(58, 50, 38, .18); background: rgba(252, 250, 245, .6); }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__item:hover) { color: #26231f; background: rgba(58, 50, 38, .08); }
+.auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__item.is-active) { color: #f5f1e8; background: #2b241c; box-shadow: 0 6px 14px rgba(38, 35, 31, .22); }
 .auth-view.is-embedded:not(.is-theme-dark) .auth-tabs :deep(.el-tabs__active-bar) { background: #c15f3c; }
 .auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-form-item__label) { color: #6f665a; }
 .auth-view.is-embedded:not(.is-theme-dark) .auth-form :deep(.el-input__wrapper) { border-color: rgba(58, 50, 38, .32) !important; background: #fbf8f0 !important; box-shadow: 0 1px 2px rgba(58, 50, 38, .05) inset !important; }
@@ -695,7 +710,9 @@ html[data-landing-style='paper'] {
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__nav-wrap::after) { background: rgba(242, 237, 228, .14); }
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item) { color: #9a8f7e; }
 .auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item.is-active) { color: #f2ede4; }
-.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__active-bar) { background: #d97757; }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__nav-wrap) { border-color: rgba(242, 237, 228, .16); background: rgba(31, 28, 25, .55); }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item:hover) { color: #f2ede4; background: rgba(242, 237, 228, .08); }
+.auth-view.is-embedded.is-theme-dark .auth-tabs :deep(.el-tabs__item.is-active) { color: #26231f; background: #f2ede4; box-shadow: 0 6px 14px rgba(0, 0, 0, .32); }
 .auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-form-item__label) { color: #c9bfad; }
 .auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper) { border-color: rgba(242, 237, 228, .18) !important; background: var(--auth-field) !important; box-shadow: 0 1px 3px rgba(0, 0, 0, .4) inset !important; }
 .auth-view.is-embedded.is-theme-dark .auth-form :deep(.el-input__wrapper:hover) { border-color: rgba(217, 119, 87, .55) !important; background: rgba(37, 32, 25, .86) !important; }
