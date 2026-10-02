@@ -1,6 +1,8 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.dto.KnowledgeGraphRequest;
+import com.kinlin.ai.projection.knowledgegraph.dto.KnowledgeGraphEnvelopeQuery;
+import com.kinlin.ai.projection.knowledgegraph.mapper.KnowledgeGraphProjectionMapper;
 import com.kinlin.ai.service.KnowledgeGraphService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -69,9 +71,9 @@ public class KnowledgeGraphController {
      * 获取知识图谱统计信息
      */
     @GetMapping("/stats")
-    public ResponseEntity<Map<String, Object>> getGraphStats() {
-        Map<String, Object> result = knowledgeGraphService.getGraphStats();
-        return wrapSuccess(result);
+    public ResponseEntity<KnowledgeGraphEnvelopeQuery.StatsEnvelope> getGraphStats() {
+        return ResponseEntity.ok(
+                KnowledgeGraphProjectionMapper.stats(knowledgeGraphService.getGraphStats()));
     }
 
     /**
@@ -91,11 +93,11 @@ public class KnowledgeGraphController {
      * 获取完整的知识图谱数据（用于可视化）
      */
     @GetMapping("/graph-data")
-    public ResponseEntity<Map<String, Object>> getGraphData(
+    public ResponseEntity<KnowledgeGraphEnvelopeQuery.GraphDataEnvelope> getGraphData(
             @RequestParam(value = "role_id", required = false) String roleId
     ) {
-        Map<String, Object> result = knowledgeGraphService.getGraphData(roleId);
-        return wrapSuccess(result);
+        return ResponseEntity.ok(
+                KnowledgeGraphProjectionMapper.graphData(knowledgeGraphService.getGraphData(roleId)));
     }
 }
 
