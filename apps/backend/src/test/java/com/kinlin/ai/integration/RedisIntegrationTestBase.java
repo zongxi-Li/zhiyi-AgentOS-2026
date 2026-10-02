@@ -20,7 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 @ActiveProfiles("redis-it")
 public abstract class RedisIntegrationTestBase extends PostgresContainerBase {
 
-    static final GenericContainer<?> REDIS = new GenericContainer<>(
+    public static final GenericContainer<?> REDIS = new GenericContainer<>(
             DockerImageName.parse("redis:7.4.9-alpine"))
             .withExposedPorts(6379);
 

@@ -19,7 +19,7 @@ import org.testcontainers.utility.DockerImageName;
  */
 public abstract class PostgresContainerBase {
 
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
+    public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
             DockerImageName.parse("postgres:15.17-alpine"))
             .withDatabaseName("kinlin_ai")
             .withUsername("kinlin_it")

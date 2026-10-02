@@ -228,14 +228,12 @@ class ChatServiceTest {
 
         when(conversationRepository.findByContextIdAndUserId(contextId, userId))
                 .thenReturn(Optional.of(conversation));
-        when(messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId()))
-                .thenReturn(List.of(message));
-
+        // J1.4C：clearHistory 改 bulk DELETE（statements 13→3），不再全量加载逐实体删
         // When
         chatService.clearHistory(contextId, userId);
 
         // Then
-        verify(messageRepository).deleteAll(anyList());
+        verify(messageRepository).deleteAllByConversationId(conversation.getId());
         verify(conversationRepository).delete(conversation);
     }
 

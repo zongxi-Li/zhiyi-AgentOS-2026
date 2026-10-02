@@ -162,21 +162,23 @@ public class ConversationService {
      * 获取对话预览内容（第一条用户消息的前50个字符）
      */
     public String getPreviewContent(UUID conversationId) {
-        List<Message> messages = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId);
-        if (messages.isEmpty()) {
-            return "暂无消息";
+        // J1.4C A/B：复用批量预览查询替代全量消息加载
+        //（20 消息会话 entityLoads 20→0、取值语义逐字不变），无用户消息时
+        // 仍区分"暂无预览"（有消息）与"暂无消息"（空会话）
+        String userPreview = messageRepository
+                .findFirstMessagePreviews(List.of(conversationId), Message.MessageRole.USER)
+                .stream()
+                .findFirst()
+                .map(preview -> preview.getContent().length() > 50
+                        ? preview.getContent().substring(0, 50) + "..."
+                        : preview.getContent())
+                .orElse(null);
+        if (userPreview != null) {
+            return userPreview;
         }
-        // 查找第一条用户消息
-        for (Message message : messages) {
-            if (message.getRole() == Message.MessageRole.USER) {
-                String content = message.getContent();
-                if (content.length() > 50) {
-                    return content.substring(0, 50) + "...";
-                }
-                return content;
-            }
-        }
-        return "暂无预览";
+        boolean hasMessages = !messageRepository
+                .findConversationIdsWithMessages(List.of(conversationId)).isEmpty();
+        return hasMessages ? "暂无预览" : "暂无消息";
     }
 
     /**
@@ -216,14 +218,15 @@ public class ConversationService {
     }
 
     private void deleteConversations(List<Conversation> conversations) {
-        // 删除所有相关的消息
-        for (Conversation conversation : conversations) {
-            List<Message> messages = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId());
-            if (!messages.isEmpty()) {
-                messageRepository.deleteAll(messages);
-            }
+        if (conversations.isEmpty()) {
+            return;
         }
-        // 删除所有对话
+        // J1.4C A/B：bulk DELETE 替代逐会话加载全部消息再逐实体删除
+        //（5 会话 statements 26→7，消除 N+1）
+        List<UUID> conversationIds = conversations.stream()
+                .map(Conversation::getId)
+                .toList();
+        messageRepository.deleteAllByConversationIdIn(conversationIds);
         conversationRepository.deleteAll(conversations);
     }
 }
