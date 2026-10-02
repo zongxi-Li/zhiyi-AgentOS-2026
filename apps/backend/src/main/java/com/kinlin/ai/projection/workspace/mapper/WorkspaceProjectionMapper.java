@@ -1,6 +1,8 @@
 package com.kinlin.ai.projection.workspace.mapper;
 
 import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.time.DateTimeException;
 import java.util.ArrayList;
@@ -38,9 +40,10 @@ import static com.kinlin.ai.projection.common.mapper.QueryWire.texts;
  * String-only filtering is NOT display-equivalent). Each whitelisted key follows its
  * verified consumer, verified against the real frontend reader functions:
  * <ul>
- *   <li>{@code outputRef}/{@code outputSummary}/{@code runtimeStatus} — TaskEditor and
- *       ProjectTaskExecutionInspector guard with {@code typeof === 'string'}, so any
- *       non-string is omitted (display-equivalent; producers are str-typed anyway).</li>
+ *   <li>{@code outputRef}/{@code outputSummary} — TaskEditor has typeof-string guards.
+ *       {@code runtimeStatus} has a string-typed producer; ProjectTaskExecutionInspector
+ *       uses String(value || fallback), not a typeof guard. These fields accept strings
+ *       only; arbitrary metadata values outside the producer contract are omitted.</li>
  *   <li>{@code artifactKind}/{@code artifact_kind}/{@code schema}/{@code schemaName}/
  *       {@code confidence} — artifactProjection {@code text()} renders strings verbatim,
  *       finite numbers and booleans as display strings, and everything else as empty;
@@ -72,6 +75,9 @@ public final class WorkspaceProjectionMapper {
     private WorkspaceProjectionMapper() { }
 
     public static MissionWorkspaceQuery workspace(Map<String, Object> wire) {
+        for (String field : List.of("runs", "entries", "graphNodes", "inputAttachments", "diagnostics")) {
+            if (!(wire.get(field) instanceof List<?>)) { throw invalid(); }
+        }
         WorkspaceMissionQuery mission = mission(object(wire.get("mission")));
         WorkspaceRunSummaryQuery activeRun =
                 wire.get("activeRun") == null ? null : runSummary(object(wire.get("activeRun")));
@@ -158,7 +164,7 @@ public final class WorkspaceProjectionMapper {
                 agentDisplay(raw.get("agent")));
     }
 
-    /** typeof-string-guarded consumers: any non-string value is already invisible to them. */
+    /** String-only reference/summary consumers and the string-typed runtime status producer. */
     private static String strictText(Object value) {
         return value instanceof String text ? text : null;
     }
@@ -170,12 +176,42 @@ public final class WorkspaceProjectionMapper {
         if (value instanceof Number number) {
             double raw = number.doubleValue();
             if (!Double.isFinite(raw)) { return null; }
-            if (raw == Math.rint(raw) && Math.abs(raw) < 9007199254740992L) {
-                return String.valueOf((long) raw); // JS prints integral doubles without a fraction
-            }
-            return number.toString(); // shortest round-trip, matching JS for common ranges
+            return numberDisplay(raw);
         }
         return null; // objects/arrays/null render empty upstream — omitted, never stringified
+    }
+
+    /** Shortest binary64 round-trip decimal, with ECMAScript's notation thresholds. */
+    private static String numberDisplay(double value) {
+        if (value == 0) { return "0"; }
+        double magnitude = Math.abs(value);
+        BigDecimal exact = new BigDecimal(magnitude);
+        BigDecimal shortest = null;
+        for (int precision = 1; precision <= 17 && shortest == null; precision++) {
+            for (RoundingMode rounding : List.of(RoundingMode.DOWN, RoundingMode.UP)) {
+                BigDecimal candidate = exact.round(new MathContext(precision, rounding)).stripTrailingZeros();
+                if (candidate.doubleValue() != magnitude) { continue; }
+                if (shortest == null) {
+                    shortest = candidate;
+                } else {
+                    int distance = candidate.subtract(exact).abs().compareTo(shortest.subtract(exact).abs());
+                    if (distance < 0 || (distance == 0 && !candidate.unscaledValue().testBit(0))) {
+                        shortest = candidate;
+                    }
+                }
+            }
+        }
+        if (shortest == null) { throw invalid(); }
+        int exponent = shortest.precision() - shortest.scale() - 1;
+        String display;
+        if (exponent >= -6 && exponent < 21) {
+            display = shortest.toPlainString();
+        } else {
+            String digits = shortest.unscaledValue().toString();
+            String coefficient = digits.length() == 1 ? digits : digits.charAt(0) + "." + digits.substring(1);
+            display = coefficient + "e" + (exponent >= 0 ? "+" : "") + exponent;
+        }
+        return value < 0 ? "-" + display : display;
     }
 
     /** runDocument safeText() accepts strings and numbers but nulls booleans. */
@@ -317,7 +353,9 @@ public final class WorkspaceProjectionMapper {
 
     private static long nonNegativeLong(Map<?, ?> source, String field) {
         if (!(source.get(field) instanceof Number value)) { throw invalid(); }
-        long result = new BigDecimal(value.toString()).longValueExact();
+        BigDecimal exact = value instanceof Float || value instanceof Double
+                ? new BigDecimal(value.doubleValue()) : new BigDecimal(value.toString());
+        long result = exact.longValueExact();
         if (result < 0) { throw invalid(); }
         return result;
     }
