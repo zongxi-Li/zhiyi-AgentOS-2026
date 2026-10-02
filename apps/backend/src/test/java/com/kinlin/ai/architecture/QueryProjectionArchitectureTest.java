@@ -8,6 +8,8 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.kinlin.ai.controller.AgentOsArtifactController;
 import com.kinlin.ai.controller.AgentOsMissionController;
 import com.kinlin.ai.controller.AgentOsObservationController;
+import com.kinlin.ai.controller.AgentOsRunController;
+import com.kinlin.ai.controller.AgentOsReviewController;
 import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
@@ -195,16 +197,18 @@ class QueryProjectionArchitectureTest {
             return true;
         }
         if (controller == AgentOsMissionController.class) {
-            return "listMissions".equals(method.getName());
+            return AnnotatedElementUtils.hasAnnotation(method, GetMapping.class);
+        }
+        if (controller == AgentOsRunController.class || controller == AgentOsReviewController.class) {
+            return AnnotatedElementUtils.hasAnnotation(method, GetMapping.class);
         }
         if (controller == AgentOsArtifactController.class) {
             return List.of("getArtifacts", "getArtifact", "getArtifactFragments",
-                    "getOutput", "getLegacyOutputs", "getResources").contains(method.getName());
+                    "getOutput", "getLegacyOutputs", "getResources", "getMaterial", "getAttachment")
+                    .contains(method.getName());
         }
         if (controller == AgentOsObservationController.class) {
-            return List.of("getMissionWorkspace", "getResourceUsage", "getResourceUsageCalls",
-                    "getTrace", "getMemoryEvents", "getProvenance", "getCheckpoints",
-                    "getIdentityHealth", "getHistoryConfig").contains(method.getName());
+            return AnnotatedElementUtils.hasAnnotation(method, GetMapping.class);
         }
         if (controller == StatisticsController.class || controller == UserProfileController.class
                 || controller == ChatQualityController.class || controller == EmotionController.class

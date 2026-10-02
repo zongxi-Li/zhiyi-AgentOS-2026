@@ -44,6 +44,32 @@ class AgentOsArtifactControllerTest {
     }
 
     @Test
+    void materialAndAttachmentReadsProjectPublicFieldsAndPreserveGatewayErrors() throws Exception {
+        String materialPath = "/ai/agentos/v2/materials/m1";
+        gateway.getResponses.put(materialPath, RecordingAgentOsGateway.response(200,
+                Map.of("manifestId", "m1", "ownerId", "SECRET", "ownerType", "SECRET")));
+        mockMvc.perform(get("/api/agentos/v2/materials/m1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.manifestId").value("m1"))
+                .andExpect(jsonPath("$.ownerId").doesNotExist()).andExpect(jsonPath("$.ownerType").doesNotExist());
+
+        String attachmentPath = "/ai/agentos/v2/attachments/a1";
+        gateway.getResponses.put(attachmentPath, RecordingAgentOsGateway.response(200,
+                Map.of("attachmentId", "a1", "status", "FAILED", "errorCode", "PARSING_FAILED",
+                        "filename", "notes.txt", "metadata", Map.of("internal", "SECRET"))));
+        mockMvc.perform(get("/api/agentos/v2/attachments/a1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.errorCode").value("PARSING_FAILED"))
+                .andExpect(jsonPath("$.filename").value("notes.txt")).andExpect(jsonPath("$.metadata").doesNotExist());
+        gateway.getResponses.put(attachmentPath, RecordingAgentOsGateway.response(503,
+                Map.of("code", "UPLOAD_FAILED", "message", "attachment service is unavailable", "requestId", "req-1")));
+        mockMvc.perform(get("/api/agentos/v2/attachments/a1"))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("UPLOAD_FAILED"))
+                .andExpect(jsonPath("$.requestId").value("req-1"));
+        gateway.getResponses.put(materialPath, RecordingAgentOsGateway.response(200, Map.of("internal", "SECRET")));
+        mockMvc.perform(get("/api/agentos/v2/materials/m1"))
+                .andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"));
+    }
+
+    @Test
     void materialManifestEndpointsPreserveCompleteContentAndReferences() throws Exception {
         String materialPath = "/ai/agentos/v2/materials";
         gateway.postResponses.put(materialPath, RecordingAgentOsGateway.response(201, Map.of(
