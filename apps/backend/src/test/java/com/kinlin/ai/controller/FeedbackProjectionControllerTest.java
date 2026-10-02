@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -17,12 +18,14 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** GET /api/feedback/user/{userId} answers with feedback projection DTOs, scoped to the authenticated user. */
@@ -107,6 +110,86 @@ class FeedbackProjectionControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success").value(false));
         verifyNoInteractions(feedbackService);
+    }
+
+    @Test
+    void statisticsAnswersSortedTypedCategoryListsForTheAuthenticatedUser() throws Exception {
+        UserFeedbackService.FeedbackStatistics statistics = new UserFeedbackService.FeedbackStatistics();
+        statistics.setUserId(userId);
+        statistics.setTotalFeedbacks(2L);
+        statistics.setAverageRating(4.0);
+        statistics.setFeedbackTypeCount(Map.of("quality", 1L, "自定义维度", 1L));
+        statistics.setSentimentCount(Map.of("positive", 2L));
+        when(feedbackService.getFeedbackStatistics(eq(userId))).thenReturn(statistics);
+
+        // 路径参数仅为兼容保留：传他人 id 时 Service 实参仍是当前认证身份
+        mvc.perform(get("/api/feedback/user/{userId}/statistics", UUID.randomUUID()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(userId.toString()))
+                .andExpect(jsonPath("$.totalFeedbacks").value(2))
+                .andExpect(jsonPath("$.averageRating").value(4.0))
+                .andExpect(jsonPath("$.feedbackTypeCount.length()").value(2))
+                .andExpect(jsonPath("$.feedbackTypeCount[0].type").value("quality"))
+                .andExpect(jsonPath("$.feedbackTypeCount[0].count").value(1))
+                .andExpect(jsonPath("$.feedbackTypeCount[1].type").value("自定义维度"))
+                .andExpect(jsonPath("$.feedbackTypeCount[1].count").value(1))
+                .andExpect(jsonPath("$.sentimentCount.length()").value(1))
+                .andExpect(jsonPath("$.sentimentCount[0].type").value("positive"))
+                .andExpect(jsonPath("$.sentimentCount[0].count").value(2));
+    }
+
+    @Test
+    void emptyUserStatisticsKeepZeroDefaultsAndEmptyCategoryLists() throws Exception {
+        UserFeedbackService.FeedbackStatistics statistics = new UserFeedbackService.FeedbackStatistics();
+        statistics.setUserId(userId);
+        statistics.setTotalFeedbacks(0L);
+        statistics.setAverageRating(0.0);
+        statistics.setFeedbackTypeCount(Map.of());
+        statistics.setSentimentCount(Map.of());
+        when(feedbackService.getFeedbackStatistics(eq(userId))).thenReturn(statistics);
+
+        mvc.perform(get("/api/feedback/user/{userId}/statistics", userId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalFeedbacks").value(0))
+                .andExpect(jsonPath("$.averageRating").value(0.0))
+                .andExpect(jsonPath("$.feedbackTypeCount.length()").value(0))
+                .andExpect(jsonPath("$.sentimentCount.length()").value(0));
+    }
+
+    @Test
+    void globalStatisticsAnswersTypedCategoryList() throws Exception {
+        UserFeedbackService.GlobalFeedbackStatistics statistics = new UserFeedbackService.GlobalFeedbackStatistics();
+        statistics.setTotalFeedbacks(7L);
+        statistics.setAverageRating(3.5);
+        statistics.setFeedbackTypeCount(Map.of("relevance", 4L, "helpfulness", 3L));
+        when(feedbackService.getGlobalStatistics()).thenReturn(statistics);
+
+        mvc.perform(get("/api/feedback/statistics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalFeedbacks").value(7))
+                .andExpect(jsonPath("$.averageRating").value(3.5))
+                .andExpect(jsonPath("$.feedbackTypeCount.length()").value(2))
+                .andExpect(jsonPath("$.feedbackTypeCount[0].type").value("helpfulness"))
+                .andExpect(jsonPath("$.feedbackTypeCount[0].count").value(3))
+                .andExpect(jsonPath("$.feedbackTypeCount[1].type").value("relevance"))
+                .andExpect(jsonPath("$.feedbackTypeCount[1].count").value(4));
+    }
+
+    @Test
+    void submissionReceiptKeepsLegacyMessageIdAndStatus() throws Exception {
+        UserFeedback saved = new UserFeedback();
+        saved.setId(UUID.randomUUID());
+        when(feedbackService.createFeedback(eq(userId), eq(null), eq(null), eq(null),
+                eq("quality"), eq(5), eq("很满意，长文本不截断"))).thenReturn(saved);
+
+        mvc.perform(post("/api/feedback")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":"%s","feedbackType":"quality","rating":5,"content":"很满意，长文本不截断"}
+                                """.formatted(userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("反馈已提交"))
+                .andExpect(jsonPath("$.feedbackId").value(saved.getId().toString()));
     }
 
     private UserFeedback feedback(boolean fullyPopulated) {
