@@ -1,4 +1,4 @@
-import type { AcgView, TraceEvent } from '@/services/api/agentos'
+import type { AcgView, ProvenanceProducerFields, TraceEvent } from '@/services/api/agentos'
 
 const contractViolation = (event: TraceEvent) => ({
   eventId: event.eventId,
@@ -10,6 +10,15 @@ const contractViolation = (event: TraceEvent) => ({
   path: event.payload?.path,
   attempt: event.payload?.attempt
 })
+
+/** 审计导出格式保持 producer→fields 映射；wire 上的 typed 关联行在此还原。 */
+const fieldsByProducer = (rows: ProvenanceProducerFields[] | undefined): Record<string, string[]> => {
+  const map: Record<string, string[]> = {}
+  for (const row of rows || []) {
+    if (row.producerId) map[row.producerId] = row.fields || []
+  }
+  return map
+}
 
 export const buildAcgAuditExport = (view: AcgView) => ({
   schemaVersion: view.provenance.schemaVersion || 2,
@@ -44,7 +53,7 @@ export const buildAcgAuditExport = (view: AcgView) => ({
     attempt: event.attempt,
     producerStepIds: event.producerStepIds,
     producerEventIds: event.producerEventIds || [],
-    fieldsByProducer: event.fieldsByProducer || {},
+    fieldsByProducer: fieldsByProducer(event.producerFields),
     consumedFields: event.consumedFields || [],
     tokensDelivered: event.tokensDelivered || 0,
     tokensAvailable: event.tokensAvailable || 0,
@@ -65,7 +74,7 @@ export const buildAcgAuditExport = (view: AcgView) => ({
     consumerStepId: event.consumerStepId,
     producerAgentNames: event.producerAgentNames,
     consumerAgentName: event.consumerAgentName,
-    fieldsByProducer: event.fieldsByProducer,
+    fieldsByProducer: fieldsByProducer(event.producerFields),
     tokensDelivered: event.tokensDelivered,
     tokensAvailable: event.tokensAvailable,
     savingRatio: event.savingRatio,

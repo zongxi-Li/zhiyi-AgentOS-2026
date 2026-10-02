@@ -119,7 +119,8 @@ const runtimeEvents = computed(() => {
 })
 
 const interactionFields = (item: RuntimeInteraction) => {
-  return Array.from(new Set(Object.values(item.fieldsByProducer || {}).flat()))
+  // wire 上的动态 fieldsByProducer 映射已由后端转为 typed 关联行。
+  return Array.from(new Set((item.producerFields || []).flatMap(row => row.fields || [])))
 }
 
 const agentNames = (names: string[], stepIds: string[]) => {

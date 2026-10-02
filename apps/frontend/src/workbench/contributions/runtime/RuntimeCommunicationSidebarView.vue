@@ -130,7 +130,7 @@ const participantLabel = (names: string[] | undefined, stepIds: string[]) => {
   const values = names?.length ? names : stepIds
   return values.join(' + ') || '来源未观测'
 }
-const interactionFields = (item: typeof interactions.value[number]) => Array.from(new Set(Object.values(item.fieldsByProducer || {}).flat()))
+const interactionFields = (item: typeof interactions.value[number]) => Array.from(new Set((item.producerFields || []).flatMap(row => row.fields || [])))
 const formatNumber = (value: number | undefined) => {
   if (value == null) return '未观测'
   return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value)

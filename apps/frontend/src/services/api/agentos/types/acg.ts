@@ -31,6 +31,10 @@ export interface ProvenanceProduction {
   createdAt?: string
   evidenceRefs?: string[]
 }
+export interface ProvenanceProducerFields {
+  producerId: string
+  fields: string[]
+}
 export interface ProvenanceConsumption {
   eventId: string
   consumerStepId: string
@@ -41,7 +45,8 @@ export interface ProvenanceConsumption {
   attempt?: number
   producerEventIds?: string[]
   consumedFields?: string[]
-  fieldsByProducer?: Record<string, string[]>
+  /** 上游动态 fieldsByProducer 映射已改为 typed 关联行。 */
+  producerFields?: ProvenanceProducerFields[]
   tokensDelivered?: number
   tokensAvailable?: number
   savingRatio?: number
@@ -61,7 +66,8 @@ export interface RuntimeInteraction {
   consumerStepId: string
   producerAgentNames: string[]
   consumerAgentName: string
-  fieldsByProducer: Record<string, string[]>
+  /** 上游动态 fieldsByProducer 映射已改为 typed 关联行。 */
+  producerFields?: ProvenanceProducerFields[]
   tokensDelivered: number
   tokensAvailable: number
   savingRatio: number

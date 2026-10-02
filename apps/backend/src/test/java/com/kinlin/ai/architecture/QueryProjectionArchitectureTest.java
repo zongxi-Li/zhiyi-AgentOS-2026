@@ -193,7 +193,7 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == AgentOsObservationController.class) {
             return List.of("getMissionWorkspace", "getResourceUsage", "getResourceUsageCalls",
-                    "getTrace", "getMemoryEvents").contains(method.getName());
+                    "getTrace", "getMemoryEvents", "getProvenance").contains(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
