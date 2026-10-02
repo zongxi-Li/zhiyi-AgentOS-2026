@@ -24,7 +24,9 @@ export const decodeOutputContent = (value: OutputContentValue | null | undefined
   if (value.kind === 'object') {
     const result: Record<string, any> = {}
     for (const member of value.members || []) {
-      result[member.name] = decodeOutputContent(member.value)
+      Object.defineProperty(result, member.name, {
+        value: decodeOutputContent(member.value), enumerable: true, writable: true, configurable: true
+      })
     }
     return result
   }
