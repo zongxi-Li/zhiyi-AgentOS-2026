@@ -73,7 +73,7 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/resource-usage/calls")
-    public ResponseEntity<Map<String, Object>> getResourceUsageCalls(
+    public ResponseEntity<QueryResponse> getResourceUsageCalls(
             @PathVariable String runId,
             @RequestParam(required = false) String stepId,
             @RequestParam(required = false) String cursor,
@@ -83,8 +83,9 @@ public class AgentOsObservationController {
         params.put("stepId", stepId);
         params.put("cursor", cursor);
         params.put("pageSize", String.valueOf(pageSize));
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
-                AgentOsPaths.run(runId) + "/resource-usage/calls", params)));
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.run(runId) + "/resource-usage/calls", params)),
+                ResourceUsageProjectionMapper::callPage);
     }
 
     @GetMapping("/runs/{runId}/trace")

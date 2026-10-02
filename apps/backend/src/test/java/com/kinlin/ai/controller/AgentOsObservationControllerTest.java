@@ -98,6 +98,52 @@ class AgentOsObservationControllerTest {
     }
 
     @Test
+    void resourceCallsForwardParamsVerbatimAndKeepPageSemantics() throws Exception {
+        String defaultPath = "/ai/agentos/v2/runs/run_1/resource-usage/calls?pageSize=20";
+        gateway.getResponses.put(defaultPath, RecordingAgentOsGateway.response(
+                200, ResourceUsageQueryFixture.firstCallPage()));
+        String firstPage = mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage/calls", "run_1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].callId").value("trace_001"))
+                .andExpect(jsonPath("$.nextCursor").value("2"))
+                .andExpect(jsonPath("$.total").value(25))
+                .andExpect(jsonPath("$.items[0].capability").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(firstPage.contains(ResourceUsageQueryFixture.SECRET));
+        assertEquals(defaultPath, gateway.lastGetPath);
+
+        String filteredPath = "/ai/agentos/v2/runs/run%201/resource-usage/calls"
+                + "?stepId=step_outline&cursor=2&pageSize=1";
+        gateway.getResponses.put(filteredPath, RecordingAgentOsGateway.response(
+                200, ResourceUsageQueryFixture.lastCallPage()));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage/calls", "run 1")
+                        .param("stepId", "step_outline")
+                        .param("cursor", "2")
+                        .param("pageSize", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nextCursor").doesNotExist())
+                .andExpect(jsonPath("$.items[0].callId").value("trace_025"));
+        assertEquals(filteredPath, gateway.lastGetPath);
+
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_404/resource-usage/calls?pageSize=20",
+                RecordingAgentOsGateway.response(404, Map.of(
+                        "code", "AGENTOS_NOT_FOUND", "message", "run not found", "requestId", "request-3")));
+        mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage/calls", "run_404"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AGENTOS_NOT_FOUND"));
+
+        Map<String, Object> missingItems = ResourceUsageQueryFixture.firstCallPage();
+        missingItems.remove("items");
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_bad/resource-usage/calls?pageSize=20",
+                RecordingAgentOsGateway.response(200, missingItems));
+        String bad = mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage/calls", "run_bad"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"))
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(bad.contains(ResourceUsageQueryFixture.SECRET));
+    }
+
+    @Test
     void missionWorkspaceKeepsUsableProjectionsWithTheirDiagnostics() throws Exception {
         gateway.getResponses.put("/ai/agentos/v2/missions/mDeferred/workspace",
                 RecordingAgentOsGateway.response(200, WorkspaceQueryFixture.deferredFallback()));
@@ -134,12 +180,14 @@ class AgentOsObservationControllerTest {
         assertEquals(usagePath, gateway.lastGetPath);
 
         String callsPath = usagePath + "/calls?stepId=report&cursor=20&pageSize=25";
-        gateway.getResponses.put(callsPath, RecordingAgentOsGateway.response(200, Map.of("items", List.of())));
+        gateway.getResponses.put(callsPath, RecordingAgentOsGateway.response(
+                200, ResourceUsageQueryFixture.emptyCallPage()));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/resource-usage/calls", "run 001")
                         .param("stepId", "report")
                         .param("cursor", "20")
                         .param("pageSize", "25"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
         assertEquals(callsPath, gateway.lastGetPath);
 
         String graphPath = "/ai/agentos/v2/runs/run_001/graph";

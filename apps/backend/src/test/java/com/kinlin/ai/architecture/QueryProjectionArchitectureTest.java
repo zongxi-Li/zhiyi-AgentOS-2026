@@ -192,7 +192,9 @@ class QueryProjectionArchitectureTest {
             return List.of("getArtifacts", "getArtifact", "getArtifactFragments").contains(method.getName());
         }
         if (controller == AgentOsObservationController.class) {
-            return "getMissionWorkspace".equals(method.getName()) || "getResourceUsage".equals(method.getName());
+            return "getMissionWorkspace".equals(method.getName())
+                    || "getResourceUsage".equals(method.getName())
+                    || "getResourceUsageCalls".equals(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
