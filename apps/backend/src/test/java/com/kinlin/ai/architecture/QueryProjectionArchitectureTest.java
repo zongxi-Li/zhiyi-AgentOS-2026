@@ -12,6 +12,7 @@ import com.kinlin.ai.controller.ChatController;
 import com.kinlin.ai.controller.ConversationController;
 import com.kinlin.ai.controller.RoleController;
 import com.kinlin.ai.controller.ChatQualityController;
+import com.kinlin.ai.controller.KnowledgeGraphController;
 import com.kinlin.ai.controller.SearchController;
 import com.kinlin.ai.controller.StatisticsController;
 import com.kinlin.ai.controller.UserProfileController;
@@ -203,6 +204,9 @@ class QueryProjectionArchitectureTest {
         if (controller == StatisticsController.class || controller == UserProfileController.class
                 || controller == ChatQualityController.class) {
             return true;
+        }
+        if (controller == KnowledgeGraphController.class) {
+            return List.of("getGraphStats", "getGraphData").contains(method.getName());
         }
         return controller == ChatController.class && !"sendTextMessage".equals(method.getName());
     }
