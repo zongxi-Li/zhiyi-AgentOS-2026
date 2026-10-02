@@ -3,6 +3,8 @@ package com.kinlin.ai.controller;
 import com.kinlin.ai.dto.KnowledgeGraphRequest;
 import com.kinlin.ai.projection.knowledgegraph.dto.KnowledgeGraphEnvelopeQuery;
 import com.kinlin.ai.projection.knowledgegraph.mapper.KnowledgeGraphProjectionMapper;
+import com.kinlin.ai.projection.knowledgegraph.dto.KnowledgeQuery;
+import com.kinlin.ai.projection.knowledgegraph.mapper.KnowledgeQueryMapper;
 import com.kinlin.ai.service.KnowledgeGraphService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -47,24 +49,24 @@ public class KnowledgeGraphController {
      * 混合检索：知识图谱 + 向量数据库
      */
     @PostMapping("/search")
-    public ResponseEntity<Map<String, Object>> hybridSearch(
+    public ResponseEntity<KnowledgeQuery.SearchEnvelope> hybridSearch(
             @RequestParam("question") String question,
             @RequestBody List<Map<String, Object>> vectorDbResults,
             @RequestParam(value = "topK", defaultValue = "5") Integer topK
     ) {
         Map<String, Object> result = knowledgeGraphService.hybridSearch(question, vectorDbResults, topK);
-        return wrapSuccess(result);
+        return ResponseEntity.ok(KnowledgeQueryMapper.search(result));
     }
 
     /**
      * 基于知识图谱进行推理
      */
     @PostMapping("/reason")
-    public ResponseEntity<Map<String, Object>> reasonWithKnowledgeGraph(
+    public ResponseEntity<KnowledgeQuery.ReasonEnvelope> reasonWithKnowledgeGraph(
             @RequestParam("question") String question
     ) {
         Map<String, Object> result = knowledgeGraphService.reasonWithKnowledgeGraph(question);
-        return wrapSuccess(result);
+        return ResponseEntity.ok(KnowledgeQueryMapper.reason(result));
     }
 
     /**
@@ -80,13 +82,13 @@ public class KnowledgeGraphController {
      * 查询实体相关信息
      */
     @GetMapping("/entity/{entityId}")
-    public ResponseEntity<Map<String, Object>> getEntityInfo(
+    public ResponseEntity<KnowledgeQuery.EntityEnvelope> getEntityInfo(
             @PathVariable String entityId,
             @RequestParam(value = "relation", required = false) String relation,
             @RequestParam(value = "limit", defaultValue = "10") Integer limit
     ) {
         Map<String, Object> result = knowledgeGraphService.getEntityInfo(entityId, relation, limit);
-        return wrapSuccess(result);
+        return ResponseEntity.ok(KnowledgeQueryMapper.entity(result));
     }
 
     /**
@@ -100,4 +102,3 @@ public class KnowledgeGraphController {
                 KnowledgeGraphProjectionMapper.graphData(knowledgeGraphService.getGraphData(roleId)));
     }
 }
-

@@ -14,10 +14,8 @@ import java.util.List;
  * part of the wire contract the frontend unwraps, so it is modeled concretely
  * per query (no generic DTO fields).
  *
- * <p>The {@code /entity/{id}}, {@code /search} and {@code /reason} responses stay
- * registered passthroughs: their remote data payload schema has no in-repo
- * evidence (the entity info panel renders the whole payload as JSON, and search
- * and reason have no frontend call sites), so typing them would mean guessing.
+ * <p>Entity, search and reason responses use the sibling {@link KnowledgeQuery}
+ * contracts traced to the repository's Python producers.
  */
 public final class KnowledgeGraphEnvelopeQuery {
     private KnowledgeGraphEnvelopeQuery() {

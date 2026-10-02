@@ -222,7 +222,7 @@ class QueryProjectionArchitectureTest {
             return true;
         }
         if (controller == KnowledgeGraphController.class) {
-            return List.of("getGraphStats", "getGraphData").contains(method.getName());
+            return !"buildKnowledgeGraph".equals(method.getName());
         }
         if (controller == RagController.class) {
             return List.of("query", "listDocuments").contains(method.getName());
