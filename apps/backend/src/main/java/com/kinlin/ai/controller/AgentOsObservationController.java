@@ -5,6 +5,7 @@ import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
+import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,14 +33,14 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/missions/{missionId}/workspace")
-    public ResponseEntity<Map<String, Object>> getMissionWorkspace(
+    public ResponseEntity<QueryResponse> getMissionWorkspace(
             @PathVariable String missionId,
             @RequestParam(required = false) String runId
     ) {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("runId", runId);
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
-                AgentOsPaths.mission(missionId) + "/workspace", params)));
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.mission(missionId) + "/workspace", params)), WorkspaceProjectionMapper::workspace);
     }
 
     @GetMapping("/identity/health")

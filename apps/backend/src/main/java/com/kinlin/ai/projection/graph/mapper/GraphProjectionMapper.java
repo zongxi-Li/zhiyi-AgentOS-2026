@@ -20,12 +20,14 @@ public final class GraphProjectionMapper {
                 items(source.get("edges"), GraphProjectionMapper::edge), texts(source.get("completedStepIds")),
                 texts(source.get("activeStepIds")), texts(source.get("skippedStepIds")));
     }
-    private static GraphNodeQuery node(Map<?, ?> node) {
+    /** Shared with the workspace graph projection; the run graph output is regression-covered. */
+    public static GraphNodeQuery node(Map<?, ?> node) {
         return new GraphNodeQuery(requiredText(node, "nodeId"), text(node, "nodeType"), text(node, "name"),
                 text(node, "description"), text(node, "goal"), text(node, "agentName"), text(node, "capability"),
                 text(node, "controlType"), display(optionalObject(node.get("metadata"))));
     }
-    private static GraphEdgeQuery edge(Map<?, ?> edge) {
+    /** Shared with the workspace graph projection; the run graph output is regression-covered. */
+    public static GraphEdgeQuery edge(Map<?, ?> edge) {
         return new GraphEdgeQuery(text(edge, "edgeId"), requiredText(edge, "sourceId"), requiredText(edge, "targetId"),
                 text(edge, "edgeType"), text(edge, "activation"), display(optionalObject(edge.get("metadata"))));
     }

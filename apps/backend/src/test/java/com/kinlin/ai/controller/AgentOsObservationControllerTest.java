@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
+import com.kinlin.ai.projection.workspace.WorkspaceQueryFixture;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -10,7 +11,9 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -32,18 +35,64 @@ class AgentOsObservationControllerTest {
     }
 
     @Test
-    void missionWorkspaceForwardsTheOptionalRunSelection() throws Exception {
+    void missionWorkspaceForwardsTheOptionalRunSelectionAndProjectsTheEnvelope() throws Exception {
         String workspacePath = "/ai/agentos/v2/missions/mission%20001/workspace?runId=run%20001";
-        gateway.getResponses.put(workspacePath, RecordingAgentOsGateway.response(200, Map.of(
-                "missionId", "mission 001", "activeRun", Map.of("runId", "run 001")
-        )));
+        gateway.getResponses.put(workspacePath, RecordingAgentOsGateway.response(
+                200, WorkspaceQueryFixture.normalPlan()));
 
-        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "mission 001")
+        String body = mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "mission 001")
                         .param("runId", "run 001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.missionId").value("mission 001"));
-
+                .andExpect(jsonPath("$.mission.missionId").value("mission_1"))
+                .andExpect(jsonPath("$.activeGraph.taskPlanVersion").value(2))
+                .andExpect(jsonPath("$.entries[0].entryId").value("folder:overview"))
+                .andExpect(jsonPath("$..userId").doesNotExist())
+                .andExpect(jsonPath("$..identityVersion").doesNotExist())
+                .andExpect(jsonPath("$._httpStatus").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(body.contains(WorkspaceQueryFixture.SECRET));
         assertEquals(workspacePath, gateway.lastGetPath);
+    }
+
+    @Test
+    void missionWorkspaceKeepsErrorStatusesAndFailsContractViolationsWithoutEcho() throws Exception {
+        gateway.getResponses.put("/ai/agentos/v2/missions/m404/workspace",
+                RecordingAgentOsGateway.response(404, Map.of(
+                        "code", "AGENTOS_REQUEST_REJECTED", "message", "not found", "requestId", "request-1")));
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "m404"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().json(
+                        "{\"code\":\"AGENTOS_REQUEST_REJECTED\",\"message\":\"not found\",\"requestId\":\"request-1\"}", true));
+
+        gateway.getResponses.put("/ai/agentos/v2/missions/mBad/workspace",
+                RecordingAgentOsGateway.response(200, Map.of("missionId", WorkspaceQueryFixture.SECRET)));
+        String body = mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "mBad"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"))
+                .andExpect(jsonPath("$._httpStatus").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertFalse(body.contains(WorkspaceQueryFixture.SECRET));
+    }
+
+    @Test
+    void missionWorkspaceKeepsUsableProjectionsWithTheirDiagnostics() throws Exception {
+        gateway.getResponses.put("/ai/agentos/v2/missions/mDeferred/workspace",
+                RecordingAgentOsGateway.response(200, WorkspaceQueryFixture.deferredFallback()));
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "mDeferred"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.diagnostics[0].code").value("PLANNING_PROJECTION_PENDING"))
+                .andExpect(jsonPath("$.diagnostics[0].details.runtimeStatus").value("running"))
+                .andExpect(jsonPath("$.diagnostics[0].details.errorCode").doesNotExist())
+                .andExpect(jsonPath("$.activeRun.status").value("running"));
+
+        gateway.getResponses.put("/ai/agentos/v2/missions/mNoPlan/workspace",
+                RecordingAgentOsGateway.response(200, WorkspaceQueryFixture.noPlan()));
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/workspace", "mNoPlan"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.diagnostics[0].code").value("PLAN_SNAPSHOT_UNRESOLVED"))
+                .andExpect(jsonPath("$.diagnostics[0].details.runId").value("run_1"))
+                .andExpect(jsonPath("$.diagnostics[0].details.taskPlanVersion").doesNotExist())
+                .andExpect(jsonPath("$.entries[0].entryId").value("folder:overview"));
     }
 
     @Test

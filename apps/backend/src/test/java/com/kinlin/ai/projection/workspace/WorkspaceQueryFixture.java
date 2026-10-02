@@ -112,6 +112,8 @@ public final class WorkspaceQueryFixture {
         entry.put("group", "overview");
         entry.put("parentEntryId", "folder:overview");
         entry.put("displayOrder", 0);
+        entry.put("attemptCount", 0);
+        entry.put("artifactCount", 0);
         entry.put("runId", "run_1");
         entry.put("blueprintId", "blueprint_1");
         entry.put("graphId", "graph_1");
@@ -128,6 +130,8 @@ public final class WorkspaceQueryFixture {
         entry.put("group", "overview");
         entry.put("parentEntryId", "folder:overview");
         entry.put("displayOrder", 1);
+        entry.put("attemptCount", 0);
+        entry.put("artifactCount", 0);
         entry.put("content", MISSION_MD_LEAK);
         entry.put("metadata", Map.of());
         return entry;
@@ -206,6 +210,8 @@ public final class WorkspaceQueryFixture {
         entry.put("group", "runs");
         entry.put("parentEntryId", "folder:runs");
         entry.put("displayOrder", 0);
+        entry.put("attemptCount", 0);
+        entry.put("artifactCount", 0);
         entry.put("runId", summary.get("runId"));
         entry.put("status", summary.get("status"));
         entry.put("createdAt", TIME);
@@ -217,7 +223,7 @@ public final class WorkspaceQueryFixture {
     public static Map<String, Object> folder(String name, String group) {
         return new LinkedHashMap<>(Map.of(
                 "entryId", "folder:" + group, "kind", "folder", "name", name, "group", group,
-                "displayOrder", 0, "metadata", Map.of()));
+                "displayOrder", 0, "attemptCount", 0, "artifactCount", 0, "metadata", Map.of()));
     }
 
     /** Whitelisted attachment wire row: owner/storage keys excluded, metadata dict kept. */
@@ -332,6 +338,8 @@ public final class WorkspaceQueryFixture {
         legacy.put("group", "steps");
         legacy.put("parentEntryId", "folder:steps");
         legacy.put("displayOrder", 1);
+        legacy.put("attemptCount", 0);
+        legacy.put("artifactCount", 0);
         legacy.put("contentRef", "manifest_1");
         legacy.put("mediaType", "text/markdown");
         legacy.put("artifactType", "legacy_artifact");
