@@ -223,11 +223,12 @@ class AgentOsObservationControllerTest {
     @Test
     void identityHealthPassesTheUpstreamFailureThrough() throws Exception {
         gateway.getResponses.put("/ai/agentos/v2/identity/health", RecordingAgentOsGateway.response(503, Map.of(
-                "detail", "identity query source unavailable"
-        )));
+                "code", "IDENTITY_UNAVAILABLE", "message", "identity query source unavailable",
+                "requestId", "request-9")));
         mockMvc.perform(get("/api/agentos/v2/identity/health"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.detail").value("identity query source unavailable"));
+                .andExpect(jsonPath("$.code").value("IDENTITY_UNAVAILABLE"))
+                .andExpect(jsonPath("$.message").value("identity query source unavailable"));
         assertEquals("/ai/agentos/v2/identity/health", gateway.lastGetPath);
     }
 
@@ -270,7 +271,8 @@ class AgentOsObservationControllerTest {
         assertEquals(provenancePath, gateway.lastGetPath);
 
         String checkpointPath = "/ai/agentos/v2/runs/run_001/checkpoints";
-        gateway.getResponses.put(checkpointPath, RecordingAgentOsGateway.response(200, Map.of("items", List.of())));
+        gateway.getResponses.put(checkpointPath, RecordingAgentOsGateway.response(200, Map.of(
+                "runId", "run_001", "items", List.of(), "total", 0)));
         mockMvc.perform(get("/api/agentos/v2/runs/{runId}/checkpoints", "run_001"))
                 .andExpect(status().isOk());
         assertEquals(checkpointPath, gateway.lastGetPath);

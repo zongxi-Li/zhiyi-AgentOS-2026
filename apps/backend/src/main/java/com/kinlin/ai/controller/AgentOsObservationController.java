@@ -6,8 +6,10 @@ import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import com.kinlin.ai.projection.graph.mapper.GraphProjectionMapper;
+import com.kinlin.ai.projection.identity.mapper.IdentityProjectionMapper;
 import com.kinlin.ai.projection.memory.mapper.MemoryEventsProjectionMapper;
 import com.kinlin.ai.projection.provenance.mapper.ProvenanceProjectionMapper;
+import com.kinlin.ai.projection.recovery.mapper.RecoveryProjectionMapper;
 import com.kinlin.ai.projection.trace.mapper.TraceProjectionMapper;
 import com.kinlin.ai.projection.workspace.mapper.WorkspaceProjectionMapper;
 import org.springframework.http.ResponseEntity;
@@ -48,8 +50,9 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/identity/health")
-    public ResponseEntity<Map<String, Object>> getIdentityHealth() {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.identityHealth()));
+    public ResponseEntity<QueryResponse> getIdentityHealth() {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.identityHealth()), IdentityProjectionMapper::identityHealth);
     }
 
     @GetMapping("/runs/{runId}/history-config")
@@ -115,8 +118,8 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/runs/{runId}/checkpoints")
-    public ResponseEntity<Map<String, Object>> getCheckpoints(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(
-                gateway.get(AgentOsPaths.run(runId) + "/checkpoints"));
+    public ResponseEntity<QueryResponse> getCheckpoints(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/checkpoints"), RecoveryProjectionMapper::checkpoints);
     }
 }
