@@ -1,14 +1,18 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.gateway.AiSseGatewayService;
+import com.kinlin.ai.interceptor.RateLimitInterceptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -16,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
@@ -26,15 +30,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** EVENT ownership: the SSE entry delegates to the SSE gateway and nothing else. */
+@WebMvcTest(AgentOsEventController.class)
+@AutoConfigureMockMvc(addFilters = false)
 class AgentOsEventControllerTest {
 
-    private AiSseGatewayService sseGateway;
+    @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiSseGatewayService sseGateway;
+
+    @MockBean
+    private RateLimitInterceptor rateLimitInterceptor;
 
     @BeforeEach
     void setUp() {
-        sseGateway = mock(AiSseGatewayService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new AgentOsEventController(sseGateway)).build();
+        when(rateLimitInterceptor.preHandle(any(), any(), any())).thenReturn(true);
     }
 
     @Test
@@ -45,7 +56,8 @@ class AgentOsEventControllerTest {
                         .body(Flux.just(ServerSentEvent.builder("hello").event("RuntimeEvent").build()))
         ));
 
-        MvcResult started = mockMvc.perform(get("/api/agentos/v2/runs/{runId}/events", "run_1"))
+        MvcResult started = mockMvc.perform(get("/api/agentos/v2/runs/{runId}/events", "run_1")
+                        .accept(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(request().asyncStarted())
                 .andReturn();
         mockMvc.perform(asyncDispatch(started))
