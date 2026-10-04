@@ -2,6 +2,7 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.gateway.AiSseGatewayService;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
+import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,9 @@ class AgentOsEventControllerTest {
 
     @MockBean
     private RateLimitInterceptor rateLimitInterceptor;
+
+    @MockBean
+    private JwtUtil jwtUtil;
 
     @BeforeEach
     void setUp() {
