@@ -20,6 +20,7 @@ from support.stores.workflow_store import (
     RuntimeRunRecordDeleteResult,
     RuntimeMissionRunSummary,
     RuntimeRunOverview,
+    RuntimeRunListSummary,
     RuntimeRunRecordNotTerminalError,
     WorkflowStore,
     WorkflowStorePage,
@@ -453,6 +454,14 @@ class MemoryWorkflowStore(WorkflowStore):
         ]
         runs.sort(key=lambda run: (run.updated_at, run.run_id), reverse=True)
         return tuple(runs[: max(1, limit)])
+
+    def list_all_run_summaries(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunListSummary, ...]:
+        runs = sorted(self._runs.values(), key=lambda run: (run.updated_at, run.run_id))
+        start = max(0, offset)
+        return tuple(RuntimeRunListSummary(
+            run_id=run.run_id, mission_id=run.mission_id,
+            status=run.status, updated_at=run.updated_at,
+        ) for run in runs[start:start + max(1, limit)])
 
     def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         runs = sorted(

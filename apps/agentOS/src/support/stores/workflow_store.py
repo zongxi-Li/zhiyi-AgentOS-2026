@@ -346,6 +346,11 @@ class WorkflowStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_all_run_summaries(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunListSummary, ...]:
+        """Internal recovery metadata; includes all owners without loading Run bodies."""
+        raise NotImplementedError
+
+    @abstractmethod
     def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """Return an unscoped page for reconciliation, including terminal runs."""
         raise NotImplementedError

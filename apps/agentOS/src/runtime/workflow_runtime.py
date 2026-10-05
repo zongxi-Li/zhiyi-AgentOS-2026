@@ -1020,7 +1020,7 @@ class ExecutionRuntime(CollaboratorAccess):
             return
         from runtime.v2.reconciliation import IdentityProjectionReconciler
 
-        report = IdentityProjectionReconciler(self.identity_lifecycle).reconcile_workflow_store(
+        report = IdentityProjectionReconciler(self.identity_lifecycle).project_pending_events(
             self.workflow_store,
             limit=200,
         )

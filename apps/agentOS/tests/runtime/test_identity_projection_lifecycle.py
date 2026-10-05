@@ -399,6 +399,53 @@ def test_planner_progress_does_not_publish_partial_run_identity_event(monkeypatc
         identity_runtime.close()
 
 
+def test_runtime_projects_lifecycle_events_without_scanning_history(monkeypatch) -> None:
+    runtime, identity_runtime, bridge, task = _runtime()
+    try:
+        def reject_history_scan(*args, **kwargs):
+            raise AssertionError("node hot path scanned historical records")
+
+        monkeypatch.setattr(runtime.workflow_store, "list_all_runs", reject_history_scan)
+        monkeypatch.setattr(runtime.workflow_store, "list_missions", reject_history_scan)
+        task.input["reasoningEffort"] = "low"
+        runtime.workflow_store.save_mission(task)
+        result = asyncio.run(runtime.start(task.mission_id, workflow_id="identity-acg"))
+        assert result.status is WorkflowStatus.COMPLETED
+        assert all(step.input["reasoningEffort"] == "low" for step in result.steps)
+        assert all(step.input["reasoningPolicyReason"] == "run_explicit" for step in result.steps)
+        assert identity_runtime.repositories.runs.get(result.run_id).status is RunStatus.SUCCEEDED
+        report = IdentityProjectionReconciler(bridge).project_pending_events(runtime.workflow_store)
+        assert report.failures == []
+        assert report.examined_tasks == report.examined_runs == 0
+        assert runtime.workflow_store.list_outbox() == []
+    finally:
+        identity_runtime.close()
+
+
+def test_startup_reconciliation_skips_healthy_owned_run_bodies(monkeypatch, tmp_path) -> None:
+    from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+
+    store = SQLiteWorkflowStore(tmp_path / "workflows.sqlite3")
+    runtime, identity_runtime, bridge, task = _runtime(workflow_store=store)
+    try:
+        task = runtime.create_mission(
+            "Owned startup recovery", workflow_id="identity-acg",
+            input={"authenticatedUserId": "owner-startup"},
+        )
+        asyncio.run(runtime.start(task.mission_id, workflow_id="identity-acg"))
+
+        def reject_full_scan(*args, **kwargs):
+            raise AssertionError("startup must not deserialize healthy historical Runs")
+
+        monkeypatch.setattr(store, "list_all_runs", reject_full_scan)
+        monkeypatch.setattr(store, "get_run", reject_full_scan)
+        report = IdentityProjectionReconciler(bridge).reconcile_workflow_store(store, audit_existing=False)
+        assert report.failures == []
+        assert report.examined_runs == 0
+    finally:
+        identity_runtime.close()
+
+
 def test_reconciler_restores_a_missing_run_projection_from_runtime_snapshot() -> None:
     runtime, identity_runtime, bridge, task = _runtime()
     try:
@@ -410,7 +457,7 @@ def test_reconciler_restores_a_missing_run_projection_from_runtime_snapshot() ->
         assert identity_runtime.repositories.runs.get(run.run_id) is None
 
         report = IdentityProjectionReconciler(bridge).reconcile_workflow_store(
-            runtime.workflow_store
+            runtime.workflow_store, audit_existing=False,
         )
 
         assert report.failures == []

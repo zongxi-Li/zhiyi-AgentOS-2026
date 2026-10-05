@@ -390,7 +390,7 @@ def build_default_runtime(
     runtime.attachment_context_builder = attachment_service.context_builder
     reconciliation = IdentityProjectionReconciler(
         identity_adapter
-    ).reconcile_workflow_store(runtime.workflow_store)
+    ).reconcile_workflow_store(runtime.workflow_store, audit_existing=False)
     runtime.identity_reconciliation_report = reconciliation
     local_runtime_endpoint = str(env.get("AGENTOS_LOCAL_RUNTIME_ENDPOINT") or "").strip()
     if local_runtime_endpoint:

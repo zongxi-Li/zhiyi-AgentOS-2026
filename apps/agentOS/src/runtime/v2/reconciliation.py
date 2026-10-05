@@ -43,12 +43,13 @@ class IdentityProjectionReconciler:
     def __init__(self, adapter: IdentityProjectionBridge) -> None:
         self.adapter = adapter
 
-    def reconcile_workflow_store(
+    def project_pending_events(
         self,
         workflow_store: Any,
         *,
         limit: int = 200,
     ) -> IdentityReconciliationReport:
+        """Deliver pending lifecycle facts without scanning historical Missions or Runs."""
         report = IdentityReconciliationReport()
         projection_stats = self.adapter.repositories.projection_events.stats()
         replay = self.adapter.replay_unapplied(
@@ -60,6 +61,18 @@ class IdentityProjectionReconciler:
                 f"{replay['failed']} lifecycle projection events could not be replayed"
             )
         self._consume_execution_outbox(workflow_store, report, limit=limit)
+        self._update_backlog_report(workflow_store, report)
+        return report
+
+    def reconcile_workflow_store(
+        self,
+        workflow_store: Any,
+        *,
+        limit: int = 200,
+        audit_existing: bool = True,
+    ) -> IdentityReconciliationReport:
+        """Repair historical projections at startup or during explicit recovery."""
+        report = self.project_pending_events(workflow_store, limit=limit)
         page = 1
         while True:
             task_page = workflow_store.list_missions(page=page, page_size=max(1, limit))
@@ -76,15 +89,7 @@ class IdentityProjectionReconciler:
             if page * task_page.page_size >= task_page.total:
                 break
             page += 1
-        runs = []
-        offset = 0
-        while True:
-            run_page = workflow_store.list_all_runs(offset=offset, limit=max(1, limit))
-            runs.extend(run_page)
-            if len(run_page) < max(1, limit):
-                break
-            offset += len(run_page)
-        for run in runs:
+        for run in self._reconciliation_runs(workflow_store, limit, audit_existing):
             if run.run_id in report.failed_aggregate_ids:
                 continue
             # Deferred planning is an accepted Execution Runtime placeholder,
@@ -133,6 +138,34 @@ class IdentityProjectionReconciler:
                 self._audit_run(run)
             except Exception as exc:
                 report.failures.append(f"{run.run_id}: {exc}")
+        self._update_backlog_report(workflow_store, report)
+        return report
+
+    def _reconciliation_runs(self, workflow_store: Any, limit: int, audit_existing: bool):
+        if audit_existing:
+            offset = 0
+            while True:
+                runs = workflow_store.list_all_runs(offset=offset, limit=max(1, limit))
+                yield from runs
+                if len(runs) < max(1, limit):
+                    return
+                offset += len(runs)
+        offset = 0
+        terminal_statuses = {"completed": "succeeded", "failed": "failed", "cancelled": "cancelled", "superseded": "superseded"}
+        while True:
+            summaries = workflow_store.list_all_run_summaries(offset=offset, limit=max(1, limit))
+            for summary in summaries:
+                identity = self.adapter.repositories.runs.get(summary.run_id)
+                expected = terminal_statuses.get(summary.status.value)
+                if identity is None or expected is None or identity.status.value != expected:
+                    yield workflow_store.get_run(summary.run_id)
+            if len(summaries) < max(1, limit):
+                return
+            offset += len(summaries)
+
+    def _update_backlog_report(
+        self, workflow_store: Any, report: IdentityReconciliationReport,
+    ) -> None:
         inbox_stats = self.adapter.repositories.inbox_events.stats()
         projection_stats = self.adapter.repositories.projection_events.stats()
         outbox_stats = (
@@ -157,7 +190,6 @@ class IdentityProjectionReconciler:
             if value is not None
         ]
         report.oldest_event_at = min(timestamps) if timestamps else None
-        return report
 
     def _consume_execution_outbox(
         self,

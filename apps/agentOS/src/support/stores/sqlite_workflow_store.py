@@ -669,6 +669,16 @@ class SQLiteWorkflowStore(WorkflowStore):
             RuntimeRunRecord.model_validate(json.loads(row["payload"])) for row in rows
         )
 
+    def list_all_run_summaries(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunListSummary, ...]:
+        rows = self._fetch_all(
+            "SELECT run_id, mission_id, status, updated_at FROM runs ORDER BY updated_at, run_id LIMIT ? OFFSET ?",
+            (max(1, limit), max(0, offset)),
+        )
+        return tuple(RuntimeRunListSummary(
+            run_id=row["run_id"], mission_id=row["mission_id"],
+            status=WorkflowStatus(row["status"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+        ) for row in rows)
+
     def list_all_runs(self, *, offset: int = 0, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         rows = self._fetch_all(
             "SELECT payload FROM runs ORDER BY updated_at, run_id LIMIT ? OFFSET ?",
