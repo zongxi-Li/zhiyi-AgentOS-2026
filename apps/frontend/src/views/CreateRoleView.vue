@@ -442,9 +442,9 @@ const handleSubmit = async () => {
         // 3. 刷新角色列表（通过事件通知）
         window.dispatchEvent(new CustomEvent('role-created', { detail: { role } }))
         
-        // 4. 返回角色管理页面
+        // 4. 返回资源中心（角色管理入口已下线）
         setTimeout(() => {
-          router.push('/agentos/resources?tab=roles')
+          router.push('/agentos/resources')
         }, 500)
         
       } catch (error: any) {

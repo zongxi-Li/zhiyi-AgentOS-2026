@@ -30,7 +30,6 @@
 
           <section class="resource-center__content">
             <ResourceOverviewPanel v-if="resourceTab === 'overview'" ref="overviewPanel" />
-            <RoleManagementPanel v-else-if="resourceTab === 'roles'" />
             <ModelManagementPanel v-else />
           </section>
         </main>
@@ -48,14 +47,12 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import WorkspacePageHero from '@/components/app/WorkspacePageHero.vue'
 import ResourceOverviewPanel from '@/components/resource-center/ResourceOverviewPanel.vue'
-import RoleManagementPanel from '@/components/resource-center/RoleManagementPanel.vue'
 import ModelManagementPanel from '@/components/resource-center/ModelManagementPanel.vue'
 import ResourceRegistrationDialog from '@/components/resource-center/ResourceRegistrationDialog.vue'
 
-type ResourceTab = 'overview' | 'roles' | 'models'
+type ResourceTab = 'overview' | 'models'
 const resourceTabs: Array<{ id: ResourceTab; label: string }> = [
   { id: 'overview', label: '资源概览' },
-  { id: 'roles', label: '角色管理' },
   { id: 'models', label: '模型管理' }
 ]
 const route = useRoute()

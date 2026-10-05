@@ -100,23 +100,23 @@ describe('authentication outage handling', () => {
 
 describe('integrated legacy route contract', () => {
   it.each([
-    ['/roles', '/agentos/resources', 'roles'],
-    ['/federated-learning', '/agentos/resources', 'federated'],
-    ['/federated-models', '/agentos/resources', 'models'],
-    ['/agentos-console', '/history', 'acg'],
-  ])('keeps %s as a redirect-only route', (legacyPath, targetPath, tab) => {
+    ['/roles', '/agentos/resources', {}],
+    ['/federated-learning', '/agentos/resources', { tab: 'federated' }],
+    ['/federated-models', '/agentos/resources', { tab: 'models' }],
+    ['/agentos-console', '/history', { tab: 'acg' }],
+  ])('keeps %s as a redirect-only route', (legacyPath, targetPath, query) => {
     const legacyRoute = router.getRoutes().find(route => route.path === legacyPath)
 
     expect(legacyRoute?.component).toBeUndefined()
     expect(legacyRoute?.redirect).toBeTypeOf('function')
     expect(legacyRoute?.redirect?.({ query: {}, params: {}, path: legacyPath } as never)).toEqual({
       path: targetPath,
-      query: { tab }
+      query
     })
   })
 
   it.each([
-    ['/roles?source=legacy', '/agentos/resources', { source: 'legacy', tab: 'roles' }],
+    ['/roles?source=legacy', '/agentos/resources', { source: 'legacy' }],
     ['/federated-learning?source=legacy', '/agentos/resources', { source: 'legacy', tab: 'federated' }],
     ['/federated-models?source=legacy', '/agentos/resources', { source: 'legacy', tab: 'models' }],
     ['/agentos-console?runId=run_1&source=legacy', '/history', { runId: 'run_1', source: 'legacy', tab: 'acg' }],

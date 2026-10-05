@@ -4,7 +4,6 @@ import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { agentosApi } from '@/services/api/agentos'
 import { federatedModelApi } from '@/services/api/federatedModel'
-import { roleApi } from '@/services/api/role'
 import ResourceCenterView from './ResourceCenterView.vue'
 
 const layoutStub = { template: '<div class="layout-stub"><slot name="main" /></div>' }
@@ -75,20 +74,19 @@ describe('ResourceCenterView', () => {
         plugins: [testRouter, createPinia()],
         stubs: {
           WorkbenchLayout: layoutStub,
-          RoleManagementPanel: { template: '<div data-testid="role-management-panel-stub" />' },
           'el-icon': true
         }
       }
     })
 
     expect(wrapper.text()).toContain('资源概览')
-    expect(wrapper.text()).toContain('角色管理')
+    expect(wrapper.text()).not.toContain('角色管理')
     expect(wrapper.text()).toContain('模型管理')
-    await wrapper.get('[data-testid="resource-tab-roles"]').trigger('click')
+    await wrapper.get('[data-testid="resource-tab-models"]').trigger('click')
     await flushPromises()
 
     expect(testRouter.currentRoute.value.path).toBe('/agentos/resources')
-    expect(testRouter.currentRoute.value.query.tab).toBe('roles')
+    expect(testRouter.currentRoute.value.query.tab).toBe('models')
   })
 
   it('defaults to overview and follows browser query changes', async () => {
@@ -105,7 +103,6 @@ describe('ResourceCenterView', () => {
         plugins: [testRouter, createPinia()],
         stubs: {
           WorkbenchLayout: layoutStub,
-          RoleManagementPanel: { template: '<div data-testid="roles-panel" />' },
           ModelManagementPanel: { template: '<div data-testid="models-panel" />' },
           'el-icon': true
         }
@@ -155,16 +152,8 @@ describe('ResourceCenterView', () => {
     expect(wrapper.get('.resource-center__main').attributes('data-max-width')).toBe('1400px')
   })
 
-  it('keeps roles and model management wired to the existing stores and APIs', async () => {
+  it('keeps model management wired to the existing stores and APIs', async () => {
     vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
-    vi.spyOn(roleApi, 'getBuiltinRoles').mockResolvedValue([{
-      id: 'role_builtin',
-      name: '内置助手',
-      description: '内置角色',
-      systemPrompt: 'system prompt',
-      isBuiltin: true
-    }])
-    vi.spyOn(roleApi, 'getCustomRoles').mockResolvedValue([])
     vi.spyOn(federatedModelApi, 'listModels').mockResolvedValue({
       success: true,
       data: {
@@ -184,8 +173,6 @@ describe('ResourceCenterView', () => {
         plugins: [testRouter, createPinia()],
         stubs: {
           WorkbenchLayout: layoutStub,
-          RoleCard: { props: ['role'], template: '<article class="role-card">{{ role.name }}</article>' },
-          EditRoleDialog: true,
           FederatedTopologyGraph: true,
           TrainingCurveChart: true,
           ModelAggregationCard: true,
@@ -203,14 +190,6 @@ describe('ResourceCenterView', () => {
         }
       }
     })
-
-    await wrapper.get('[data-testid="resource-tab-roles"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="role-management-panel"]').exists()).toBe(true)
-    expect(roleApi.getBuiltinRoles).toHaveBeenCalled()
-    expect(roleApi.getCustomRoles).toHaveBeenCalled()
-
-    await flushPromises()
 
     await wrapper.get('[data-testid="resource-tab-models"]').trigger('click')
     await flushPromises()

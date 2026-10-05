@@ -90,7 +90,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/roles',
     name: 'Roles',
-    redirect: to => ({ path: '/agentos/resources', query: { ...to.query, tab: 'roles' } })
+    redirect: to => ({ path: '/agentos/resources', query: to.query })
   },
   {
     path: '/create-role',
