@@ -113,59 +113,54 @@ def _run_coroutine_sync(factory):
 
 
 class RegisteredPlannerLLM:
-    """Planner adapter that resolves the active provider for every call."""
+    """Bridge planner calls to the Runtime-owned model registry."""
 
     def __init__(self, runtime: ExecutionRuntime) -> None:
         self._runtime = runtime
 
     @property
-    def _gateway(self):
-        from app.llm.gateway import get_llm_gateway
-        return get_llm_gateway()
+    def _model_runtime(self) -> RegisteredModelRuntime:
+        binding = self._runtime.default_model_binding or {}
+        return RegisteredModelRuntime(
+            registry=self._runtime.model_registry,
+            provider=str(binding.get("provider") or ""),
+            model=str(binding.get("model") or ""),
+            version=binding.get("version"),
+        )
 
     @property
     def provider(self) -> str:
-        return str(self._gateway.provider_name or "")
+        return str((self._runtime.default_model_binding or {}).get("provider") or "")
 
     @property
     def model(self) -> str:
-        return str(self._gateway.model or "")
+        return str((self._runtime.default_model_binding or {}).get("model") or "")
 
     def is_available(self) -> bool:
-        return self.provider not in {"", "mock", "unavailable"}
+        if not self.provider or not self.model:
+            return False
+        return self._model_runtime.is_available()
 
     def describe_model(self):
-        from app.llm.capabilities import provider_model_capabilities
-        from contracts.capability import ModelCapabilityEnvelope, ModelCapabilitySource, ModelFeatureSet
-        gateway = self._gateway
-        declared = provider_model_capabilities(self.model, str(getattr(gateway.provider, "base_url", "") or ""))
-        return ModelCapabilityEnvelope(
-            provider=self.provider or "unavailable", model=self.model or "unknown",
-            version=declared.version, source=ModelCapabilitySource.ADAPTER_DECLARED,
-            contextWindowTokens=declared.context_window_tokens,
-            maxOutputTokens=declared.max_output_tokens,
-            maxTokensField=declared.max_tokens_field,
-            features=ModelFeatureSet(
-                jsonSchema=declared.supports_json_schema, streaming=declared.supports_stream_usage,
-                tools=declared.supports_tools, thinking=declared.supports_thinking, promptCaching=None,
-            ),
-        )
+        return self._model_runtime.describe_model()
 
     def stream_generate_json(self, **kwargs):
-        async def one():
-            import asyncio
-            call_kwargs = dict(kwargs)
-            prompt = call_kwargs.pop("prompt")
-            schema = call_kwargs.pop("schema")
-            result = await asyncio.to_thread(self._gateway.generate_json, prompt, schema, **call_kwargs)
-            yield {"eventType": "model.completed", "payload": {
-                "data": result.get("data"), "provider": result.get("provider", self.provider),
-                "model": result.get("model", self.model), "streamUsed": False,
-            }}
-        return one()
+        return self._model_runtime.stream_generate_json(**kwargs)
 
     def generate_json(self, prompt: str, schema: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        return self._gateway.generate_json(prompt, schema, **kwargs)
+        call_kwargs = dict(kwargs)
+        if "max_tokens" in call_kwargs:
+            call_kwargs["max_output_tokens"] = call_kwargs.pop("max_tokens")
+        # Legacy planner audit identity is separate from model request parameters.
+        template_hash = call_kwargs.pop("prompt_template_hash", None)
+        result = _run_coroutine_sync(lambda: self._model_runtime.generate_json(
+            prompt=prompt, schema=schema, **call_kwargs,
+        ))
+        return {
+            **result.audit_record(), "data": result.data,
+            "latency_ms": result.latency_ms,
+            **({"prompt_template_hash": template_hash} if template_hash else {}),
+        }
 
 
 def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
@@ -173,12 +168,7 @@ def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
     current = getattr(runtime, "_intent_llm", None)
     if not isinstance(current, GatewayIntentLLM):
         return False
-    from app.llm.gateway import get_llm_gateway
-
-    gateway = get_llm_gateway()
-    provider = str(gateway.provider_name or "").strip()
-    model = str(gateway.model or "").strip()
-    if provider in {"", "mock", "unavailable"} or not model:
+    if not getattr(runtime, "default_model_binding", None):
         return False
     candidate = RegisteredPlannerLLM(runtime)
     if not candidate.is_available():

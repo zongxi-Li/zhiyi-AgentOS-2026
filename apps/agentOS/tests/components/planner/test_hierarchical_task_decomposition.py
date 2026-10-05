@@ -103,6 +103,35 @@ def test_repeated_capability_instances_survive_taskplan_and_acg_build() -> None:
     assert llm.calls[0]["reasoning_effort"] == "high"
 
 
+def test_full_coverage_preserves_explicit_reasoning_and_stable_planning(monkeypatch) -> None:
+    agents = AgentRegistry()
+    workflows = WorkflowRegistry()
+    register_native_runtime(agent_registry=agents, workflow_registry=workflows)
+    engine = PlanningEngine(workflow_registry=workflows, agent_registry=agents)
+    monkeypatch.setattr(engine.intent_parser, "parse", lambda **kwargs: TaskSemanticProfile(
+        primaryGoal="Understand the task", requiredCapabilities=["task_understanding"],
+        estimatedComplexity=ComplexityLevel.COMPLEX,
+    ))
+    captured = {}
+    original = engine.semantic_planner.plan_profile
+
+    def plan_profile(**kwargs):
+        captured.update(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(engine.semantic_planner, "plan_profile", plan_profile)
+    result = engine.plan(
+        mission_id="mission_0123456789ab", intent="Understand the task",
+        deterministic_intent=True, force_dynamic=True, capability_profile="auto",
+        reasoning_effort="low", planning_diversity="stable",
+    )
+    assert result.effective_capability_profile == "full"
+    assert result.planning_diversity == "stable"
+    assert result.planning_seed is None
+    assert result.candidate_count == 1
+    assert captured["reasoning_effort"] == "low"
+
+
 def test_planner_rebinds_capabilities_materialized_by_task_plan() -> None:
     agents = AgentRegistry()
     workflows = WorkflowRegistry()

@@ -1427,7 +1427,10 @@ class ExecutionRuntime(CollaboratorAccess):
             # Blueprint 是规划期唯一真源。这里把记忆策略复制到本次运行步骤，后续
             # 即使蓝图对象被修改，也不能反向改变已创建 run 的读取、写入和预算边界。
             node_input = dict(node.input_spec)
-            if node.metadata.get("reasoningEffort"):
+            if run.input.get("reasoningEffort"):
+                node_input["reasoningEffort"] = run.input["reasoningEffort"]
+                node_input["reasoningPolicyReason"] = "run_explicit"
+            elif node.metadata.get("reasoningEffort"):
                 node_input["reasoningEffort"] = node.metadata["reasoningEffort"]
                 node_input["reasoningPolicyReason"] = node.metadata.get(
                     "reasoningPolicyReason", "planner_policy"

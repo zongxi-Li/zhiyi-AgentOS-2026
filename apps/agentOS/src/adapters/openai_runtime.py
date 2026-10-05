@@ -434,12 +434,9 @@ class OpenAICompatibleRuntime:
                 if isinstance(reasoning_effort, str) and reasoning_effort.strip():
                     # 显式档位意味着用户选择让思考参与本次输出；此时关闭思考
                     # 会静默吞掉档位语义，等价于档位永远无效。
-                    # DeepSeek 官方只声明 high/max：low/medium 收敛到 high，
-                    # 与 Chat 链 adapt_chat_completion_parameters 同语义。
                     if provider == "deepseek":
-                        payload["reasoning_effort"] = (
-                            "max" if reasoning_effort.strip() == "max" else "high"
-                        )
+                        effort = reasoning_effort.strip()
+                        payload["reasoning_effort"] = "high" if effort == "medium" else effort
                     else:
                         payload["reasoning_effort"] = reasoning_effort.strip()
                     payload["thinking"] = {"type": "enabled"}

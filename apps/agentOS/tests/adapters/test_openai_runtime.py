@@ -376,9 +376,9 @@ def test_glm_runtime_honors_reasoning_effort_and_enables_thinking() -> None:
     assert transport.payload["messages"][0]["role"] == "system"
 
 
-@pytest.mark.parametrize("requested,expected", [("medium", "high"), ("low", "high"), ("max", "max")])
-def test_deepseek_runtime_enables_thinking_and_clamps_effort(requested: str, expected: str) -> None:
-    """DeepSeek 档位走 thinking enabled + effort 外发；low/medium 收敛到官方 high。"""
+@pytest.mark.parametrize("requested,expected", [("medium", "high"), ("low", "low"), ("high", "high"), ("max", "max")])
+def test_deepseek_runtime_preserves_supported_effort_and_enables_thinking(requested: str, expected: str) -> None:
+    """Preserve low/high/max and normalize the legacy medium alias to high."""
     transport = _JsonTransport()
     runtime = OpenAICompatibleRuntime(
         manifest=CapabilityManifest(

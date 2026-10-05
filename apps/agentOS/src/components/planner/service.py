@@ -247,12 +247,9 @@ class PlanningEngine:
             else "complexity_auto_full" if auto_full
             else "simple_or_medium_auto"
         )
-        if effective_profile == "full" and diversity != "exploratory":
-            diversity = "exploratory"
         resolved_seed = planning_seed
         if diversity != "stable" and resolved_seed is None:
             resolved_seed = secrets.randbits(53)
-        planning_reasoning_effort = "max" if effective_profile == "full" else reasoning_effort
         if required_capabilities:
             selected = self.capability_catalog.expand_dependencies(required_capabilities)
             existing = {
@@ -333,7 +330,7 @@ class PlanningEngine:
                 **dict(task_input or {}),
                 "_effectiveCapabilityProfile": effective_profile,
             },
-            reasoning_effort=planning_reasoning_effort,
+            reasoning_effort=reasoning_effort,
             use_llm=not deterministic_intent,
             existing_semantic_tasks=existing_semantic_tasks,
             planning_deadline=planning_deadline,
