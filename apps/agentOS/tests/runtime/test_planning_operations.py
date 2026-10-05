@@ -143,6 +143,8 @@ def test_input_wait_wakeup_survives_restart_without_approving_review(tmp_path):
     waiting = asyncio.run(runtime.execute_prepared_run(run.run_id))
     assert waiting.status == WorkflowStatus.WAITING_REVIEW
     service = RuntimePlanningInteraction(runtime)
+    with pytest.raises(ValueError, match="失败恢复"):
+        preview(service, run.run_id, "recover", key="cannot-bypass-wait")
     proposal = preview(service, run.run_id, "user_input", content="采用当前结果并继续评估")
     apply(service, run.run_id, proposal)
     recovered, agent2 = runtime_at(tmp_path)
@@ -243,8 +245,7 @@ def test_node_rerun_reenters_settled_verification_region_with_existing_loop_auth
             result = await super().run(context)
             if context.step.step_id == "C":
                 self.checks += 1
-                result = result.model_copy(update={"output": {"verification": {
-                    "status": "partial" if self.checks == 1 else "passed"}}})
+                result = result.model_copy(update={"output": {"verification": {"status": "passed"}}})
             return result
     workflow = branching_workflow().model_copy(update={"planning_relations": tuple(
         TaskPlanRelation(sourceKey=f"step:{a}", targetKey=f"step:{b}", relationType="depends_on")
@@ -264,8 +265,8 @@ def test_node_rerun_reenters_settled_verification_region_with_existing_loop_auth
         "taskBindings": base.execution_state["taskBindings"], "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json")})
     attach(runtime, Planner())
     source = asyncio.run(runtime.execute_prepared_run(run.run_id))
-    assert source.status == WorkflowStatus.COMPLETED and agent.checks == 2
-    assert source.execution_state["loopIterations"] == {"ctrl_verification_loop_1": 1}
+    assert source.status == WorkflowStatus.COMPLETED and agent.checks == 1
+    assert source.execution_state["loopIterations"] == {}
     service = RuntimePlanningInteraction(runtime)
     proposal = preview(service, run.run_id, "rerun_node", step="C")
     assert proposal["action"]["executeStepIds"] == ["B", "C", "D"]
@@ -273,7 +274,6 @@ def test_node_rerun_reenters_settled_verification_region_with_existing_loop_auth
     receipt = apply(service, run.run_id, proposal)
     child_id = receipt["receipt"]["runId"]
     recovered, new_agent = runtime_at(tmp_path, LoopAgent(), workflow=workflow)
-    new_agent.checks = 2
     attach(recovered, Planner())
     result = asyncio.run(recovered.execute_prepared_run(child_id))
     assert result.status == WorkflowStatus.COMPLETED and new_agent.calls == ["B", "C", "D"]
@@ -281,3 +281,6 @@ def test_node_rerun_reenters_settled_verification_region_with_existing_loop_auth
     downstream = preview(RuntimePlanningInteraction(recovered), child_id, "rerun_node", step="D", key="downstream")
     assert downstream["action"]["executeStepIds"] == ["D"]
     assert downstream["action"]["reusedStepIds"] == ["A", "B", "C", "E"]
+    receipt = apply(RuntimePlanningInteraction(recovered), child_id, downstream)
+    result = asyncio.run(recovered.execute_prepared_run(receipt["receipt"]["runId"]))
+    assert result.status == WorkflowStatus.COMPLETED and new_agent.calls == ["B", "C", "D", "D"]

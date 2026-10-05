@@ -442,7 +442,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         # reconcile here; any other active marker remains a hard reject.
         if (
             source_state.control_frames
-            or (not restart_from_step and (source_state.loop_iterations or source_state.loop_paths))
+            or source_state.loop_iterations
+            or source_state.loop_paths
             or source_state.blackboard_snapshots
             or source_state.debate_sessions
             or source_state.review_payload

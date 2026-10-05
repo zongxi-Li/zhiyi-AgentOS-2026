@@ -71,6 +71,8 @@ class RuntimeTaskOperations:
                 raise ValueError("原样重跑需要一个已结束且未被替换的任务")
             execute, reuse = [s.step_id for s in run.steps], []
         else:
+            if intent.kind == "recover" and run.status != WorkflowStatus.FAILED:
+                raise ValueError("失败恢复需要已结束的失败任务；暂停中的任务请回答问题或提交补充要求")
             if intent.kind == "recover" and not step_id:
                 failed = [s.step_id for s in run.steps if s.status.value == "failed"]
                 if len(failed) != 1:

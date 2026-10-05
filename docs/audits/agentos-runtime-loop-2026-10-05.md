@@ -387,3 +387,58 @@ Playwright 检查实际 Vue 组件的模型/权限菜单及 300px 侧栏，实�
 验证结果：前端全量 **599 passed / 92 files，114.82 秒**；Runtime Loop 与注册表完整相关文件 **65 passed，122.10 秒**；Python Copilot/绑定/归属专项 **7 passed**；Java SSE/Review 控制器 **8 tests，0 failures/errors**。全量后补充重开面板保持原操作 ID 的保护，最终组件及 SSE 传输专项 **14 passed**；标准 build:web（含 TypeScript 检查）通过，Vite 16.99 秒，生成器删除的原类型声明已单独恢复。测试覆盖正文先于完成到达、未完成时无持久化事实、断开后完成并可幂等取回、失败无保存、档位透传、跨 Run 旧响应、初始缓存展示与最新状态门禁。
 
 Playwright 检查实际组件：思考菜单、回复完成前正文可见、角色标题数为零、300px 侧栏无横向溢出，控制台无错误或警告；截图 copilot-thinking-menu.png、copilot-streaming.png、copilot-stream-narrow.png 仍为标注的受控数据。运行中的 backend 已重启加载 SSE 路由，五服务健康；真实 9050 网关返回 SSE **200**，未注册模型产生预期 error 终止事件（约 33ms），证明实际路由及协议可达，不调用付费模型、不修改任务状态。正常真实提供商输出流与整段长程任务在线验收尚未执行。日志为 output/agentos-runtime-loop/stream-*。
+
+### 12.8 Copilot 受控操作与断点重跑
+
+Copilot 现在是用户意图进入既有 Runtime Loop 的入口。新增 `runtime/planning_operations.py` 管理结构化操作方案和确认回执，复用 Runtime facade、Recovery、Workflow Store 和 RunExecutionCoordinator；没有新增 Workflow、图执行器或恢复引擎。普通模型对话可以提出 typed action，也可以从输入框左下角“任务操作”菜单直接指定操作和节点。显式菜单的预览不需要模型调用。
+
+当前完整链路为：用户消息或节点选择 → Copilot 提出操作意图 → 后端校验所有权、权限、当前状态、Checkpoint 与证据 → 保存不可变方案并展示重跑/复用范围 → 用户确认 → Run lock 内重查 revision 与实际影响范围 → 既有确定性组件准备 successor Run 或持久化补充要求 → 原协调器投递执行 → Runtime 在可信执行边界重新观察 → Planner 决策 → Scheduler、Recovery、Semantic Revision、Auditor 落实各自职责。模型输出方案不代表操作已经执行；回执只表明运行已提交或要求已保存。
+
+| 操作 | 实际行为 |
+| --- | --- |
+| 原样重跑 | 终态且未被替换的 Run，沿用该 Run 的计划、输入、绑定、插件范围和冻结验收，创建同 Mission 的 successor；不读取后来修改的 Mission 输入替换原材料 |
+| 从指定节点重跑 | 新 Run 重跑指定可执行 step 及因果下游，其余已完成且可验证的节点提交复用；依赖边及编译后的通信边共同参与影响范围 |
+| 已结束的验证循环 | 编译后的 ControlManifest 决定循环边界；触及循环内节点时，控制节点、body entry/exit、条件生产者及其下游作为整体失效，原图重新执行循环与迭代限制 |
+| 恢复失败任务 | 仅 FAILED Run，经原 Recovery 的失败节点/已提交上游复用 authority 创建 successor；暂停任务通过回答问题或补充要求重新进入 Planner，不能借恢复操作审批审核 |
+| 提交补充要求 | RUNNING/RETRYING 或没有未答问题的 Planner 等待；先独立持久化用户输入，执行片段结束并解决局部控制/审核后再唤醒 Planner |
+
+第一批断点操作支持严格通信的依赖图，以及已结束且没有遗留迭代状态的 bounded verification loop。活跃控制帧、loopIterations/loopPaths、未解决的节点/控制审核、blackboard/debate/consensus，以及其他控制类型继续拒绝。不能仅重跑一个生产者却留下消费者的旧结果。复用证据检查可跨多代 successor 追溯原提交和审核；新尝试与复用步骤沿原身份投影落实，原 Run、Checkpoint 与 Artifact 不被覆盖。
+
+补充要求采用 Workflow Store 的独立 `run_planning_inputs` inbox，SQLite 与 Memory 实现保持一致，每条有 sourceRunId、operationId、正文和时间，且全血缘最多 32 条。它属于可追溯的用户声明，不是已验证业务事实、工具权限或新的冻结验收。普通长对话仍不作为 Planner 的无限历史上下文。Planner 在无活动执行片段、无待处理审核和局部控制帧的边界导入新要求，新增稀疏 `user_input` wake；模型不可用时等待，不能静默忽略要求。输入在模型决定期间到达会使旧决定失效，原 Runtime 重读状态再决策。Checkpoint 等待、冷启动、Recovery 和 Semantic Revision replacement 均继承尚未消费的输入及既有规划预算。
+
+确认按 proposalId 派生幂等键。重复点击、丢失响应后重试和已生成 child、尚未保存回执的中断都复用已有结果；确认时不能更换目标、升级只读权限或使用过期 revision。节点 successor 在复用提交和身份事件全部准备后才发布，避免重启时观察到半初始化 Run。SQLite outbox 同秒事件改为按插入序号保持因果顺序，避免 Attempt 的字母序 ID 先于 Run 创建事件被投影。新增回归覆盖发布前中断，重试后只出现一个可见 child。
+
+检查还修复了上一阶段文档验收对 Python 全局递归限制的隐式依赖：JSON 文档在解析前有明确的 128 层嵌套上限，字符串中的括号/转义不计入层数。超深文档为 parser_limit/unverified，不能因其他测试提高递归限制而改变验收事实。
+
+验证期间发现原 Runtime 在真实验证循环第二次执行时，执行记忆可能使用不含 iteration 的 `memory:{run}:{step}` 键而发生不同输出冲突；该路径在创建原 Run 时即复现，不由断点操作引起。本轮未扩展重构 Memory authority，也未放开带遗留迭代状态的 source。下一阶段应结合尝试身份、Checkpoint 和执行记忆解决这个循环重入问题，再扩大断点支持范围。
+
+#### 人工验收
+
+按用户要求停止本轮浏览器自动验收。此前的浏览器截图属于上一轮样式/流式验证；本轮仅打开了受控预览，随后关闭浏览器和预览服务器，不把它记为操作验收。
+
+1. 打开一个已结束且未被替换的当前 Run，将输入框权限设为“按需确认”。打开左下角“任务操作”，选择一个节点，再点“从指定节点重跑”。此时只应出现方案卡，不应开始执行。
+2. 核对卡片中的重新执行与复用步骤。普通依赖图包含所选节点和下游；验证循环内节点包含整段验证区域。点击“确认操作”，再点“查看新运行”。Run ID 必须改变，Mission 不变，原记录仍可查看。
+3. 检查新运行的步骤与轨迹：影响范围内有新执行/模型调用，其余可复用步骤沿旧提交血缘完成；产物来自新 Run 的真实输出。重复确认或刷新重试不应创建第二个 child。
+4. 分别检查“原样重跑”和 FAILED Run 的“恢复失败任务”；检查只读模式不能准备或确认任务操作。暂停审核不能通过任务操作绕过，过期方案应要求刷新。
+5. 在较长的执行中或普通 Planner 等待时，填写要求并选择“提交补充要求”，确认后观察 `planner.runtime.*` / `user_input` 和后续规划。若已有 Planner 问题，走现有“回答问题”入口。该测试检查用户交互真正进入 Loop，不以普通聊天回复或确认回执代替规划结果。
+
+#### 更改区与服务边界
+
+此前实现阶段没有执行 stage、git commit、reset 或数据清理，`RuntimeInspector.vue` 保持原哈希，日志和测试数据仍集中在忽略目录 `output/agentos-runtime-loop/`、`.tmp-tests/`。另一个并行会话在验证期间创建了 `aa4cef8b` 工作区基线快照并开始资源平面重构，随后移除了旧消费者仍导入的 ResourceProfile，使当前工作树暂时无法收集 Runtime 测试。没有回滚或覆盖其资源文件；最后的断点/Runtime 回归在该快照的隔离源码副本中覆盖本会话最后修改后执行。隔离验证不代表并行资源重构已通过验收。本次提交仅包含下文列明的 Copilot 操作边界修正，不包含并行资源平面改动。
+
+新增 Java 网关路由已通过现有 backend 的重启编译加载。在资源重构开始前，真实 9050 → Java → Python 链路 GET 返回 200；两个新操作入口的空请求均为 422，只读操作请求均为 409，SSE 无效模型请求仍为 200 + error，未创建真实任务、持久化真实操作方案或调用付费模型。这些结果证明当时路由可达，不替代重构完成后的服务和人工执行验收。
+
+#### 本轮测试结果
+
+| 范围 | 结果 | 说明 |
+| --- | --- | --- |
+| AgentOS 全量 | 913 passed / 3 failed，295.37 秒 | 最后完整运行保留已记录的 trace 同时间排序、schema 期望版本、旧 outbox fixture 三项失败；此前偶发 edge/cloud 进程超时单独复跑通过，最后全量也通过该案例 |
+| 最终相关 Runtime 回归 | 89 passed，185.52 秒 | 并行资源改动发生后，在隔离快照覆盖最后的 Recovery/操作代码，包含 11 项新操作用例、完整 Planning Loop、既有单节点恢复和文档验收；全量之后新增的 settled-loop/链式下游重跑真实执行亦纳入此组 |
+| 最后补充权限/暂停边界检查 | 2 passed，7.61 秒 | 最后明确 recover 仅用于 FAILED，拒绝把 Planner 暂停预览为可直接恢复的操作；普通补充要求唤醒和既有失败恢复仍通过 |
+| 应用层 API、协调器、组装 | 65 passed，43.85 秒 | 包含新预览/确认接口、owner 隔离、successor 进入原协调器的执行链 |
+| 前端全量 | 602 passed / 92 files，136.36 秒 | 包含选节点→预览→确认→新 Run 导航和只读门禁；受影响三组专项 47 passed |
+| Java 控制器 | 9 tests，0 failures/errors | Review 6、Event 3；新操作转发保留目标 ID、revision、状态和回执 |
+| 标准 build:web | 通过，Vite 24.02 秒 | 包含 TypeScript 检查；生成器顺带删除的既有 RoleManagementPanel 类型声明已恢复 |
+| 源码检查 | Ruff / 受影响 diff --check 通过 | RuntimeInspector 原哈希不变；未处理其他并行模块的改动 |
+
+最后全量先于 settled-loop 最终收敛，后者由完整相关 Runtime 回归覆盖；不是“整个当前工作树全绿”。日志为 operations-agentos-full-final.txt、operations-isolated-runtime-final.txt、operations-final-permission.txt、operations-app-full.txt、operations-frontend-full.txt、operations-java.txt、operations-build.txt 及 operations-live-*.txt。下一阶段优先处理循环重入的 Memory/Attempt/Checkpoint 身份一致性，再扩展其他控制类型的断点语义与终态任务带新要求的语义续作。
