@@ -557,6 +557,9 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
       })
     } catch (error: unknown) {
       const status = responseStatus(error)
+      if ((error as { response?: { data?: { code?: string } } })?.response?.data?.code === 'AGENTOS_CONTRACT_INVALID') {
+        throw error
+      }
       const transientFailure = status !== null && TRANSIENT_PROJECTION_STATUSES.has(status)
       const pendingProjection404 = !transientFailure && Boolean(runId) && status === 404
       if ((!transientFailure && !pendingProjection404) || attempt >= workspaceProjectionRetryDelays.length) {
@@ -954,7 +957,7 @@ onBeforeUnmount(() => {
 .mission-workspace-view { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
 .workspace-loading-pane { display: grid; place-items: center; align-content: center; gap: 8px; box-sizing: border-box; height: 100%; padding: 22px; color: var(--text-secondary); font-size: 12px; text-align: center; }
 .workspace-loading-pane__watermark,
-.workspace-main-state__watermark { display: block; object-fit: contain; opacity: .2; filter: grayscale(1) saturate(.55) contrast(.82) brightness(1.1); mix-blend-mode: screen; animation: workspace-state-pulse 2.4s ease-in-out infinite; }
+.workspace-main-state__watermark { display: block; object-fit: contain; animation: workspace-state-pulse 3.2s ease-in-out infinite; }
 .workspace-loading-pane__watermark { width: 78px; height: 78px; }
 .workspace-main-state__watermark { width: 148px; height: 148px; }
 .workspace-loading-pane strong { color: var(--text-primary); font-size: 13px; }
@@ -968,7 +971,7 @@ onBeforeUnmount(() => {
 .workspace-main-state button { margin-top: 3px; }
 
 @keyframes workspace-state-pulse {
-  0%, 100% { opacity: .42; transform: scale(.88); }
+  0%, 100% { opacity: .85; transform: scale(.985); }
   50% { opacity: 1; transform: scale(1); }
 }
 

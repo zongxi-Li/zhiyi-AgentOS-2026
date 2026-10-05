@@ -41,6 +41,7 @@ export const createMissionApi = () => ({
     options: { signal?: AbortSignal } = {}
   ): Promise<PageResponse<MissionListItem>> {
     const response = await agentosRequest.get<PageResponse<MissionListItem>>('/missions', {
+      timeout: 10000,
       params: {
         status: params.status || undefined,
         page: params.page,

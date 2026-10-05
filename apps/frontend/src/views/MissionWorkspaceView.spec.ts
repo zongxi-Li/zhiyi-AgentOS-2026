@@ -629,6 +629,16 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.text()).toContain('重新加载')
   })
 
+  it('shows a contract error immediately instead of retrying a deterministic 502', async () => {
+    const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace').mockRejectedValue({
+      response: { status: 502, data: { code: 'AGENTOS_CONTRACT_INVALID' } }
+    })
+    const { wrapper } = await mountWorkspace()
+    expect(getWorkspace).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Mission Workspace unavailable')
+    expect(wrapper.text()).not.toContain('Loading Mission Workspace')
+  })
+
   it('waits for a deferred Run identity projection after the Runtime Run is accepted', async () => {
     vi.useFakeTimers()
     try {
