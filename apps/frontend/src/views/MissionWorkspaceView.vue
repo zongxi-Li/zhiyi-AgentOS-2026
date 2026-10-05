@@ -10,7 +10,7 @@
       :bottom-panel-collapsed-height="0"
       :right-pane-min-width="280"
       :right-pane-default-width="320"
-      :right-pane-max-width="520"
+      :right-pane-max-width="960"
       storage-key="zhiyi.mission.workspace.layout.v3"
     >
       <template #left>
@@ -79,6 +79,7 @@
           :view="activeAuxiliaryView"
           :component-props="auxiliaryViewProps"
           @open-file="emit('open-workspace-file', $event)"
+          @select-run="selectRun"
         />
         <RuntimeInspector
           v-else

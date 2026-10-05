@@ -92,6 +92,19 @@ class ModelCompatibilityRegistry:
                     candidates.append(candidate)
                     candidates.sort()
 
+    def list_models(self) -> tuple[dict[str, str], ...]:
+        """Expose healthy exact routes without credentials or network probes."""
+        with self._lock:
+            routes = tuple(sorted(self._routes))
+        models = []
+        for provider, model in routes:
+            try:
+                self.resolve(provider, model)
+            except LookupError:
+                continue
+            models.append({"id": f"{provider}/{model}", "provider": provider, "model": model})
+        return tuple(models)
+
     def resolve(
         self,
         provider: str,

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import threading
 import time
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -77,6 +78,9 @@ class _ContractPlanningLLM:
 
     def generate_json(self, prompt: str, schema: dict, **_kwargs) -> dict:
         self.prompts.append(prompt)
+        if "observationId" in schema.get("properties", {}):
+            request = json.loads(prompt)
+            return {"observationId": request["observationId"], "action": "complete", "reason": "contract review work completed"}
         if "primaryGoal" in (schema.get("properties") or {}):
             return {
                 "primaryGoal": "审查软件合同并生成风险报告",
@@ -1302,6 +1306,283 @@ async def test_v2_create_mission_is_idempotent_and_rejects_fingerprint_conflicts
             )
             assert conflict.status_code == 409
             assert conflict.json() == {"detail": "clientRequestId conflict"}
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_api_caller_acceptance_flows_through_planning_commits_and_completion(tmp_path) -> None:
+    class JsonDeliveryAgent(_ContractE2EAgent):
+        async def run(self, context):
+            result = await super().run(context)
+            if context.step.capability == "artifact_generation":
+                result.output["artifact"].update({"mediaType": "application/json",
+                    "content": json.dumps(result.output["deliverable"], ensure_ascii=False)})
+            return result
+
+    runtime = _runtime(tmp_path, with_identity=True, agent=JsonDeliveryAgent())
+    model = _ContractPlanningLLM()
+    runtime.set_intent_llm(model)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    acceptance = {"criteria": [{"criterionId": "section-present", "artifactKey": "final",
+        "taskKey": "generate-contract-report", "pointer": "/sections/0/content", "operator": "exists"}]}
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/agentos/v2/missions", json={
+                "title": "Structured document acceptance", "workflowId": "api-workflow",
+                "input": {"planningMode": "dynamic", "capabilityProfile": "standard", "taskAcceptance": acceptance},
+            })
+            assert response.status_code == 202, response.text
+            run_id = response.json()["runId"]
+            for _ in range(200):
+                run = runtime.get_status(run_id)
+                if run.status in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.WAITING_REVIEW}:
+                    break
+                await asyncio.sleep(0.05)
+            assert run.status == WorkflowStatus.COMPLETED, run.error
+            assert run.input["taskAcceptance"] == run.execution_state["taskAcceptance"]
+            observation = run.execution_state["planningLoop"]["current"]["observation"]
+            check, = observation["taskAcceptanceResults"]
+            assert check["outcome"] == "passed" and check["sourceRunId"] == run_id and check["commitId"]
+            assert check["scope"] == "document_requirement"
+            assert any('"taskAcceptance"' in prompt for prompt in model.prompts)
+    finally:
+        await coordinator.shutdown()
+
+
+@pytest.mark.parametrize("condition_kind", ["until", "node_available"])
+async def test_api_background_coordinator_wakes_planner_from_trusted_state(tmp_path, condition_kind) -> None:
+    runtime = _runtime(tmp_path, with_identity=True, agent=_ContractE2EAgent())
+    issued = None
+    if condition_kind == "node_available":
+        # A real local placement remains available while the target remote node is offline.
+        runtime.node_service.register(NodeProfile(nodeId="api-agent", memoryMb=4096), NodeSnapshot(nodeId="api-agent"))
+        runtime.node_service.heartbeat("api-agent", available_memory_mb=4096)
+        issued = runtime.node_service.register_remote(NodeProfile(nodeId="wake-node", deploymentTier=DeploymentTier.EDGE,
+            ownerScope="tenant-a", executionEndpoint=ResourceEndpoint(protocol="https", address="https://wake.example.test/execute")),
+            NodeSnapshot(nodeId="wake-node"))
+    class Model(_ContractPlanningLLM):
+        def __init__(self):
+            super().__init__()
+            self.observations = []
+        def generate_json(self, prompt, schema, **kwargs):
+            if "observationId" not in schema["properties"]:
+                return super().generate_json(prompt, schema, **kwargs)
+            request = json.loads(prompt)
+            assert "observationId" in schema["properties"]
+            self.observations.append(request["observation"])
+            decision = {"observationId": request["observationId"], "action": "complete", "reason": "use current durable state"}
+            if len(self.observations) == 1:
+                condition = {"kind": "node_available", "nodeId": "wake-node"} if issued else {
+                    "kind": "until", "notBefore": (datetime.now(timezone.utc) + timedelta(milliseconds=200)).isoformat()}
+                decision.update(action="wait", waitFor=condition)
+            return decision
+    model = Model()
+    runtime.set_intent_llm(model)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/agentos/v2/missions", json={
+                "title": "Wait and wake", "workflowId": "api-workflow",
+                "input": {"planningMode": "dynamic", "capabilityProfile": "standard"}})
+            assert response.status_code == 202, response.text
+            run_id = response.json()["runId"]
+            if issued:
+                for _ in range(200):
+                    if runtime.get_status(run_id).status == WorkflowStatus.WAITING_REVIEW:
+                        break
+                    await asyncio.sleep(0.05)
+                assert len(model.observations) == 1
+                path = "/agentos/v2/nodes/wake-node/observation"
+                body = json.dumps({"observationSequence": 1, "availableMemoryMb": 4096}).encode()
+                missing = await client.post(path, content=body, headers={"content-type": "application/json"})
+                assert missing.status_code == 401
+                await coordinator.reconcile_waits()
+                assert runtime.get_status(run_id).status == WorkflowStatus.WAITING_REVIEW
+                timestamp = int(datetime.now(timezone.utc).timestamp())
+                nonce = "planning-wake-node-observation"
+                observed = await client.post(path, content=body, headers={"content-type": "application/json",
+                    "X-Node-Credential-Id": issued.credential_id, "X-Node-Timestamp": str(timestamp), "X-Node-Nonce": nonce,
+                    "X-Node-Signature": build_resource_signature(issued.secret, method="POST", path=path,
+                        timestamp=timestamp, nonce=nonce, body=body)})
+                assert observed.status_code == 200, observed.text
+            for _ in range(200):
+                run = runtime.get_status(run_id)
+                if run.status in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED}:
+                    break
+                await asyncio.sleep(0.05)
+            assert run.status == WorkflowStatus.COMPLETED, (
+                run.execution_state["planningLoop"]["current"].get("rejection"),
+                [(o["wakeReason"], o["remainingStepIds"], o["completionBlockers"], o["failedStepIds"]) for o in model.observations])
+            assert [o["wakeReason"] for o in model.observations] == ["exhausted", "condition"]
+            assert model.observations[-1]["conditionWake"]["condition"]["kind"] == condition_kind
+            assert sum(e.payload.get("runtimeEvent") == "planner.runtime.woken" for e in run.trace) == 1
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_api_copilot_conversation_and_answer_resume_real_runtime(tmp_path):
+    class Model(_ContractPlanningLLM):
+        observations = []
+        chat_calls = 0
+        def generate_json(self, prompt, schema, **kwargs):
+            if "content" in schema["properties"]:
+                self.chat_calls += 1
+                return {"content": "当前任务已暂停，请回答是否包含税费。"}
+            if "observationId" not in schema["properties"]:
+                return super().generate_json(prompt, schema, **kwargs)
+            request = json.loads(prompt)
+            self.observations.append(request["observation"])
+            decision = {"observationId": request["observationId"], "action": "complete", "reason": "current work accepted"}
+            if len(self.observations) == 1:
+                decision.update(action="wait", question={"prompt": "是否包含税费？", "choices": ["包含", "不包含"]})
+            else:
+                assert request["observation"]["humanAnswers"][0]["answer"] == "包含税费"
+            return decision
+    runtime = _runtime(tmp_path, with_identity=True, agent=_ContractE2EAgent())
+    model = Model()
+    runtime.set_intent_llm(model)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post("/agentos/v2/missions", json={"title": "Interactive task", "workflowId": "api-workflow",
+                "input": {"planningMode": "dynamic", "capabilityProfile": "standard"}})
+            assert created.status_code == 202
+            run_id = created.json()["runId"]
+            for _ in range(200):
+                if runtime.get_status(run_id).status == WorkflowStatus.WAITING_REVIEW:
+                    break
+                await asyncio.sleep(0.05)
+            path = f"/agentos/v2/runs/{run_id}/copilot"
+            state = (await client.get(path)).json()
+            assert state["question"]["prompt"] == "是否包含税费？"
+            message = {"content": "解释当前问题", "operationId": "message-1"}
+            sent = await client.post(path + "/messages", json=message)
+            assert sent.status_code == 200 and "暂停" in sent.json()["assistant"]
+            assert (await client.post(path + "/messages", json=message)).json() == sent.json()
+            assert model.chat_calls == 1 and len(model.observations) == 1
+            assert len((await client.get(path)).json()["exchanges"]) == 1
+            answer = {"answer": "包含税费", "operationId": "answer-1", "questionId": state["question"]["questionId"], "expectedRevision": state["revision"]}
+            stale = await client.post(path + "/answers", json={**answer, "expectedRevision": state["revision"] - 1})
+            assert stale.status_code == 409
+            accepted = await client.post(path + "/answers", json=answer)
+            assert accepted.status_code == 202
+            for _ in range(200):
+                if runtime.get_status(run_id).status == WorkflowStatus.COMPLETED:
+                    break
+                await asyncio.sleep(0.05)
+            assert runtime.get_status(run_id).status == WorkflowStatus.COMPLETED
+            assert model.observations[-1]["wakeReason"] == "user_input"
+            assert (await client.post(path + "/answers", json=answer)).status_code == 202
+    finally:
+        await coordinator.shutdown()
+
+
+@pytest.mark.parametrize("method,suffix,body", [
+    ("GET", "", None),
+    ("POST", "/messages", {"content": "查看私有任务", "operationId": "m-1"}),
+    ("POST", "/messages/stream", {"content": "查看私有任务", "operationId": "m-1"}),
+    ("POST", "/answers", {"questionId": "q-1", "answer": "同意", "expectedRevision": 0, "operationId": "a-1"}),
+    ("POST", "/actions/preview", {"kind": "rerun_node", "stepId": "A", "content": "重跑", "operationId": "p-1", "permission": "task_collaboration"}),
+    ("POST", "/actions", {"proposalId": "p-1", "expectedRevision": 0, "permission": "task_collaboration"}),
+])
+async def test_copilot_interfaces_keep_run_owner_isolation(tmp_path, method, suffix, body):
+    runtime = _runtime(tmp_path)
+    mission = runtime.create_mission("Private task", workflow_id="api-workflow", input={
+        "authenticatedUserId": "owner-1", "authenticatedTenantId": "tenant-a"})
+    _, run = runtime.prepare_run(mission.mission_id)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    token = _trusted_user_context.set(TrustedUserContext(user_id="other-2", subject="other-2", role="operator", tenant_id="tenant-a"))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.request(method, f"/agentos/v2/runs/{run.run_id}/copilot{suffix}", json=body)
+            assert response.status_code == 404
+            assert response.json()["detail"] == "run not found"
+            assert runtime.workflow_store.list_copilot_exchanges(run.run_id) == []
+    finally:
+        _trusted_user_context.reset(token)
+        await coordinator.shutdown()
+
+
+async def test_copilot_node_rerun_preview_confirmation_and_idempotent_execution(tmp_path):
+    class Model(_ContractPlanningLLM):
+        def generate_json(self, prompt, schema, **kwargs):
+            if "observationId" in schema.get("properties", {}):
+                request = json.loads(prompt)
+                return {"observationId": request["observationId"], "action": "continue" if request["observation"]["remainingStepIds"] else "complete", "reason": "current state"}
+            return super().generate_json(prompt, schema, **kwargs)
+    runtime = _runtime(tmp_path, with_identity=True, agent=_ContractE2EAgent())
+    runtime.set_intent_llm(Model())
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI(); app.include_router(create_router(runtime, coordinator))
+    async def completed(run_id):
+        for _ in range(200):
+            if runtime.get_status(run_id).status == WorkflowStatus.COMPLETED:
+                return
+            await asyncio.sleep(0.05)
+        assert runtime.get_status(run_id).status == WorkflowStatus.COMPLETED
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/agentos/v2/missions", json={"title": "Operator rerun", "workflowId": "api-workflow", "input": {"planningMode": "dynamic", "capabilityProfile": "standard"}})
+            run_id = response.json()["runId"]; await completed(run_id)
+            source = runtime.get_status(run_id); target_step = source.steps[1].step_id
+            path = f"/agentos/v2/runs/{run_id}/copilot/actions"
+            request = {"kind": "rerun_node", "stepId": target_step, "operationId": "from-middle", "content": "从分析节点重跑", "permission": "task_collaboration"}
+            readonly = await client.post(path + "/preview", json={**request, "permission": "read_only"})
+            assert readonly.status_code == 409
+            proposal_response = await client.post(path + "/preview", json=request)
+            assert proposal_response.status_code == 200, proposal_response.text
+            proposal = proposal_response.json()
+            assert proposal["action"]["reusedStepIds"] == [source.steps[0].step_id]
+            assert runtime.workflow_store.list_runs(mission_id=source.mission_id).total == 1
+            confirmation = {"proposalId": "from-middle", "expectedRevision": proposal["action"]["expectedRevision"], "permission": "task_collaboration"}
+            accepted = await client.post(path, json=confirmation)
+            assert accepted.status_code == 202, accepted.text
+            child_id = accepted.json()["receipt"]["runId"]; await completed(child_id)
+            assert (await client.post(path, json=confirmation)).json() == accepted.json()
+            assert runtime.get_status(run_id).status == WorkflowStatus.COMPLETED
+            assert runtime.workflow_store.list_runs(mission_id=source.mission_id).total == 2
+            child = runtime.get_status(child_id)
+            assert child.execution_state["nodeRerun"]["targetStepId"] == target_step
+            assert child.execution_state["planningLoop"]["current"]["observation"]["steps"][0]["auditOutcome"] == "allow"
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_copilot_stream_api_returns_validated_exchange_and_idempotent_replay(tmp_path):
+    runtime = _runtime(tmp_path)
+    class Model:
+        calls = 0
+        async def stream_generate_json(self, **kwargs):
+            self.calls += 1
+            yield {"eventType": "model.output.delta", "payload": {"delta": '{"content":"实时'}}
+            yield {"eventType": "model.output.delta", "payload": {"delta": '回复"}'}}
+            yield {"eventType": "model.completed", "payload": {"data": {"content": "实时回复"}}}
+    model = Model()
+    runtime.set_intent_llm(model)
+    mission = runtime.create_mission("stream probe", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(mission.mission_id)
+    coordinator = RunExecutionCoordinator(runtime)
+    app = FastAPI()
+    app.include_router(create_router(runtime, coordinator))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            path = f"/agentos/v2/runs/{run.run_id}/copilot/messages/stream"
+            for _ in range(2):
+                response = await client.post(path, json={"operationId": "stream-1", "content": "explain"})
+                assert response.status_code == 200 and response.headers["content-type"].startswith("text/event-stream")
+                events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+                assert events[-1]["type"] == "completed" and events[-1]["exchange"]["assistant"] == "实时回复"
+            assert model.calls == 1 and len(runtime.workflow_store.list_copilot_exchanges(run.run_id)) == 1
+            invalid = await client.post(path, json={"operationId": "bad", "content": "explain", "reasoningEffort": "arbitrary"})
+            assert invalid.status_code == 422
     finally:
         await coordinator.shutdown()
 

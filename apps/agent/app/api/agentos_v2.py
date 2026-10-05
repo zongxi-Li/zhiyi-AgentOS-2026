@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
-from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus
+from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus, WorkflowStatus
 from contracts.content import ContentKind
 from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
@@ -41,6 +41,9 @@ from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
 from app.tools.permissions import normalize_relative_path
 from runtime import ExecutionRuntime
+from runtime.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest
+from runtime.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
+from runtime.review import ReviewConflictError
 from runtime.v2 import IdentityQueryService
 from runtime.v2.workspace import (
     MissionWorkspaceProjection,
@@ -624,6 +627,7 @@ def create_router(
     coordinator: RunExecutionCoordinator,
 ) -> APIRouter:
     router = APIRouter(prefix="/agentos/v2")
+    interaction = RuntimePlanningInteraction(runtime)
     identity_adapter = getattr(runtime, "identity_lifecycle", None)
     identity_repositories = getattr(identity_adapter, "repositories", None)
     identity_queries = (
@@ -1305,6 +1309,7 @@ def create_router(
                 observed_at=request.observed_at,
             )
             versioned = node_service.snapshot(node_id)
+            coordinator.notify_state_changed()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="node not found") from exc
         except StaleResourceObservation as exc:
@@ -2675,6 +2680,69 @@ def create_router(
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail="evolution rollback conflict") from exc
         return version.model_dump(by_alias=True, mode="json")
+
+    @router.get("/runs/{run_id}/copilot")
+    async def get_copilot(run_id: str):
+        run = load_run(run_id, readonly=True)
+        return interaction.view(run_id, run)
+
+    @router.post("/runs/{run_id}/copilot/messages")
+    async def copilot_message(run_id: str, request: CopilotMessageRequest):
+        load_run(run_id)
+        try:
+            return await interaction.message(run_id, request)
+        except ReviewConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid conversation request or model response") from exc
+        except Exception as exc:
+            logger.exception("Copilot model unavailable", extra={"runId": run_id})
+            raise HTTPException(status_code=503, detail="任务模型暂时不可用，请稍后重试") from exc
+
+    @router.post("/runs/{run_id}/copilot/messages/stream")
+    async def copilot_message_stream(run_id: str, request: CopilotMessageRequest):
+        load_run(run_id)
+
+        async def events():
+            async for event in interaction.stream_message(run_id, request):
+                yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @router.post("/runs/{run_id}/copilot/answers", status_code=202)
+    async def copilot_answer(run_id: str, request: PlannerAnswerRequest):
+        load_run(run_id)
+        try:
+            run = await interaction.answer(run_id, request)
+        except ReviewConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if run.status == WorkflowStatus.RETRYING:
+            await coordinator.submit(run_id)
+        return interaction.view(run_id)
+
+    @router.post("/runs/{run_id}/copilot/actions/preview")
+    async def copilot_action_preview(run_id: str, request: TaskOperationPreviewRequest):
+        load_run(run_id)
+        try:
+            return await interaction.preview_operation(run_id, request)
+        except (ValueError, KeyError, ReviewConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/runs/{run_id}/copilot/actions", status_code=202)
+    async def copilot_action_apply(run_id: str, request: TaskOperationApplyRequest):
+        load_run(run_id)
+        try:
+            receipt = await interaction.operations.apply(run_id, request)
+        except (ValueError, KeyError, ReviewConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        target_id = receipt["receipt"]["runId"]
+        target = load_run(target_id)
+        if target.status in {WorkflowStatus.PENDING, WorkflowStatus.RETRYING}:
+            await coordinator.submit(target_id)
+        return receipt
 
     @router.post(
         "/runs/{run_id}/reviews",

@@ -27,6 +27,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -74,6 +75,20 @@ class AgentOsEventControllerTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("hello")));
 
         verify(sseGateway).openGet("/ai/agentos/v2/runs/run_1/events");
+    }
+
+    @Test
+    void copilotStreamUsesTheExistingPostSseGateway() throws Exception {
+        when(sseGateway.openPost(any(), any())).thenReturn(Mono.just(ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
+                .body(Flux.just(ServerSentEvent.builder("{\"type\":\"content\",\"content\":\"partial\"}").build()))));
+        MvcResult started = mockMvc.perform(post("/api/agentos/v2/runs/run_1/copilot/messages/stream")
+                .contentType(MediaType.APPLICATION_JSON).accept(MediaType.TEXT_EVENT_STREAM)
+                .content("{\"operationId\":\"op\",\"content\":\"hello\",\"reasoningEffort\":\"high\"}"))
+                .andExpect(request().asyncStarted()).andReturn();
+        mockMvc.perform(asyncDispatch(started)).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("partial")));
+        verify(sseGateway).openPost(org.mockito.ArgumentMatchers.eq("/ai/agentos/v2/runs/run_1/copilot/messages/stream"), any());
     }
 
     @Test

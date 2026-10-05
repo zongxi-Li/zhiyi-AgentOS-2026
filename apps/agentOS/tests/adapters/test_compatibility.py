@@ -48,6 +48,14 @@ class _ModelAdapter:
         )
 
 
+def test_model_directory_only_exposes_healthy_registered_routes():
+    registry = ModelCompatibilityRegistry()
+    for name, available in [("ok", True), ("offline", False)]:
+        registry.register(_ModelAdapter(_manifest(capability_id=f"test.{name}", kind=CapabilityKind.MODEL,
+            provider="test", capabilities=[name]), available=available))
+    assert registry.list_models() == ({"id": "test/ok", "provider": "test", "model": "ok"},)
+
+
 class _CapabilityAdapter:
     """同时满足 Agent、技能和工具协议的最小适配器。"""
 

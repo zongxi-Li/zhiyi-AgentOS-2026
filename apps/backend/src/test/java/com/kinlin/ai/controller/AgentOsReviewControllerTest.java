@@ -35,6 +35,27 @@ class AgentOsReviewControllerTest {
     }
 
     @Test
+    void copilotForwardsConversationAndClarificationWithoutLosingStatusOrIds() throws Exception {
+        String path = "/ai/agentos/v2/runs/run_001/copilot";
+        gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of(
+                "runId", "run_001", "question", Map.of("questionId", "q-1", "prompt", "Include tax?"))));
+        mockMvc.perform(get("/api/agentos/v2/runs/run_001/copilot"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.question.questionId").value("q-1"));
+        assertEquals(path, gateway.lastGetPath);
+        gateway.postResponses.put(path + "/answers", RecordingAgentOsGateway.response(202, Map.of("status", "retrying")));
+        mockMvc.perform(post("/api/agentos/v2/runs/run_001/copilot/answers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"questionId\":\"q-1\",\"answer\":\"yes\",\"expectedRevision\":3,\"operationId\":\"a-1\"}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("retrying"));
+        assertEquals(path + "/answers", gateway.lastPostPath);
+        assertEquals("q-1", ((Map<?, ?>) gateway.lastPostBody).get("questionId"));
+        gateway.postResponses.put(path + "/messages", RecordingAgentOsGateway.response(503, Map.of("detail", "model unavailable")));
+        mockMvc.perform(post("/api/agentos/v2/runs/run_001/copilot/messages")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"content\":\"hello\",\"operationId\":\"m-1\"}"))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
     void reviewListingUsesTheOwnedSubresourcePath() throws Exception {
         String path = "/ai/agentos/v2/runs/run_001/reviews";
         gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of(
@@ -46,6 +67,23 @@ class AgentOsReviewControllerTest {
                 .andExpect(jsonPath("$.items[0].decision").value("approved"));
 
         assertEquals(path, gateway.lastGetPath);
+    }
+
+    @Test
+    void copilotActionsPreserveTargetRevisionAndRuntimeReceipt() throws Exception {
+        String path = "/ai/agentos/v2/runs/run_001/copilot/actions";
+        gateway.postResponses.put(path + "/preview", RecordingAgentOsGateway.response(200, Map.of(
+                "action", Map.of("stepId", "B", "expectedRevision", 7))));
+        mockMvc.perform(post("/api/agentos/v2/runs/run_001/copilot/actions/preview")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"kind\":\"rerun_node\",\"stepId\":\"B\",\"operationId\":\"p\",\"permission\":\"task_collaboration\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.action.stepId").value("B"));
+        assertEquals(path + "/preview", gateway.lastPostPath);
+        assertEquals("B", ((Map<?, ?>) gateway.lastPostBody).get("stepId"));
+        gateway.postResponses.put(path, RecordingAgentOsGateway.response(202, Map.of("receipt", Map.of("runId", "child"))));
+        mockMvc.perform(post("/api/agentos/v2/runs/run_001/copilot/actions")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"proposalId\":\"p\",\"expectedRevision\":7,\"permission\":\"task_collaboration\"}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.receipt.runId").value("child"));
+        assertEquals(7, ((Map<?, ?>) gateway.lastPostBody).get("expectedRevision"));
     }
 
     @Test

@@ -31,6 +31,7 @@ from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 from app.execution.wiring import (
     GatewayIntentLLM,
+    RegisteredPlannerLLM,
     bind_registered_planner_llm,
     build_default_runtime,
     build_model_setup,
@@ -248,3 +249,18 @@ def test_planner_registry_binding_skips_unconfigured_gateway_model() -> None:
         assert isinstance(runtime._intent_llm, GatewayIntentLLM)
     finally:
         set_llm_gateway_for_tests(None)
+
+
+def test_copilot_model_binding_is_isolated_from_runtime_default():
+    from types import SimpleNamespace
+    class Registry:
+        def resolve(self, provider, model):
+            assert (provider, model) == ("test", "other")
+        def list_models(self):
+            return ({"id": "test/other", "provider": "test", "model": "other"},)
+    runtime = SimpleNamespace(default_model_binding={"provider": "test", "model": "default"}, model_registry=Registry())
+    default = RegisteredPlannerLLM(runtime)
+    selected = default.for_model("test", "other")
+    assert selected.model == "other" and selected._model_runtime.model == "other"
+    assert default.model == runtime.default_model_binding["model"] == "default"
+    assert selected.copilot_models()[0]["id"] == "test/other"

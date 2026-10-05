@@ -35,10 +35,39 @@ public class AgentOsReviewController {
         this.gateway = gateway;
     }
 
+    @GetMapping("/runs/{runId}/copilot")
+    public ResponseEntity<Map<String, Object>> getCopilot(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/copilot"));
+    }
+
+    @PostMapping("/runs/{runId}/copilot/messages")
+    public ResponseEntity<Map<String, Object>> copilotMessage(
+            @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.run(runId) + "/copilot/messages", body));
+    }
+
+    @PostMapping("/runs/{runId}/copilot/answers")
+    public ResponseEntity<Map<String, Object>> answerPlanner(
+            @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.run(runId) + "/copilot/answers", body));
+    }
+
     @GetMapping("/runs/{runId}/reviews")
     public ResponseEntity<QueryResponse> getReviews(@PathVariable String runId) {
         return AgentOsControllerSupport.projectedResponse(
                 gateway.get(AgentOsPaths.run(runId) + "/reviews"), RunProjectionMapper::reviews);
+    }
+
+    @PostMapping("/runs/{runId}/copilot/actions/preview")
+    public ResponseEntity<Map<String, Object>> previewCopilotAction(
+            @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.run(runId) + "/copilot/actions/preview", body));
+    }
+
+    @PostMapping("/runs/{runId}/copilot/actions")
+    public ResponseEntity<Map<String, Object>> applyCopilotAction(
+            @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.run(runId) + "/copilot/actions", body));
     }
 
     @PostMapping("/runs/{runId}/reviews")

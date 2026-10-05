@@ -126,6 +126,8 @@ const mountWorkspace = async (
   vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue({ runId: 'run_2', events: [], productions: [], consumptions: [], interactions: [] })
   vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
   vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
+  vi.spyOn(agentosApi, 'getCopilot').mockResolvedValue({ runId: 'run_2', status: 'completed', revision: 0,
+    modelAvailable: false, question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
   const wrapper = mount(MissionWorkspaceView, {
     global: {
       plugins: [router],

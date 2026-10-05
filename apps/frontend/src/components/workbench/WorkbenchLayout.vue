@@ -11,7 +11,7 @@
     :style="{
       '--workbench-left-width': `${leftPaneWidth}px`,
       '--workbench-right-width': `${effectiveRightPaneWidth}px`,
-      '--workbench-right-max-width': `${rightPaneMaxWidth}px`
+      '--workbench-right-max-width': `${rightMaxWidth}px`
     }"
   >
     <div class="workbench-layout__body">
@@ -25,7 +25,7 @@
         side="left"
         :value="leftPaneWidth"
         :min="LEFT_MIN_WIDTH"
-        :max="leftMaxWidth"
+        :max="maxWidthFor('left')"
         :ariaLabel="leftAutoHidden ? '拖动或单击恢复左侧任务导航并调整宽度' : '调整左侧任务导航宽度'"
         @resize-start="startResize('left', $event)"
         @resize-keydown="handleResizeKeydown('left', $event)"
@@ -76,7 +76,7 @@
         side="right"
         :value="effectiveRightPaneWidth"
         :min="rightPaneMinWidth"
-        :max="rightMaxForHandle"
+        :max="maxWidthFor('right')"
         :ariaLabel="rightAutoHidden ? '拖动恢复右侧运行详情并调整宽度' : '调整右侧运行详情宽度'"
         @resize-start="startResize('right', $event)"
         @resize-keydown="handleResizeKeydown('right', $event)"
@@ -130,7 +130,7 @@ const props = withDefaults(defineProps<{
   bottomPanelDefaultCollapsed: false,
   rightPaneMinWidth: 300,
   rightPaneDefaultWidth: 400,
-  rightPaneMaxWidth: 640,
+  rightPaneMaxWidth: 960,
   storageKey: 'zhiyi.acg.workbench.layout.v1'
 })
 
@@ -166,6 +166,7 @@ const {
   resizingSide,
   leftPaneVisible,
   rightPaneVisible,
+  maxWidthFor,
   toggleRightPane,
   restoreLeftPane,
   startResize,
@@ -184,14 +185,6 @@ watch(rightPaneVisible, visible => {
 const leftVisible = computed(() => props.showLeft && leftPaneVisible.value)
 
 const LEFT_MIN_WIDTH = 240
-const leftMaxWidth = computed(() => {
-  const available = layout.containerWidth.value - 560 - (rightPaneVisible.value ? effectiveRightPaneWidth.value + 8 : 0) - 8
-  return Math.max(LEFT_MIN_WIDTH, Math.min(520, available > 0 ? available : 520))
-})
-const rightMaxForHandle = computed(() => {
-  const available = layout.containerWidth.value - 560 - (leftVisible.value ? leftPaneWidth.value + 8 : 0) - 8
-  return Math.max(props.rightPaneMinWidth, Math.min(rightMaxWidth.value, available > 0 ? available : rightMaxWidth.value))
-})
 </script>
 
 <style scoped>

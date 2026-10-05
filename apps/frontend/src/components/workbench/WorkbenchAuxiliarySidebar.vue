@@ -10,6 +10,7 @@
         :is="view.component"
         v-bind="componentProps"
         @open-file="emit('open-file', $event)"
+        @select-run="emit('select-run', $event)"
       />
     </div>
   </aside>
@@ -26,6 +27,7 @@ defineProps<{
 
 const emit = defineEmits<{
   'open-file': [request: WorkspaceFileOpenRequest]
+  'select-run': [runId: string]
 }>()
 </script>
 

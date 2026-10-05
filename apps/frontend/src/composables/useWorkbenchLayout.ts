@@ -25,7 +25,7 @@ export interface UseWorkbenchLayoutOptions {
 
 const DEFAULT_STORAGE_KEY = 'zhiyi.acg.workbench.layout.v1'
 const DEFAULT_LEFT: WorkbenchPaneConfig = { minWidth: 240, defaultWidth: 320, maxWidth: 520 }
-const DEFAULT_RIGHT: WorkbenchPaneConfig = { minWidth: 300, defaultWidth: 400, maxWidth: 640 }
+const DEFAULT_RIGHT: WorkbenchPaneConfig = { minWidth: 300, defaultWidth: 400, maxWidth: 960 }
 const DEFAULT_MAIN_MIN_WIDTH = 560
 const HANDLE_WIDTH = 8
 
@@ -282,8 +282,11 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
     if (typeof window !== 'undefined') {
       window.addEventListener('resize', handleViewportResize)
     }
+    // 视口可能在挂载后仍在 settles（Tauri 窗口创建/缩放、停靠布局变化），
+    // resize 事件不保证已经带着最终宽度来过，这里主动量一次。
+    handleViewportResize()
     if (typeof ResizeObserver !== 'undefined' && containerRef.value) {
-      resizeObserver = new ResizeObserver(() => syncAutoHidden())
+      resizeObserver = new ResizeObserver(() => handleViewportResize())
       resizeObserver.observe(containerRef.value)
     }
     syncAutoHidden()
@@ -312,6 +315,7 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
     resizingSide,
     leftPaneVisible,
     rightPaneVisible,
+    maxWidthFor,
     toggleRightPane,
     restoreLeftPane,
     startResize,

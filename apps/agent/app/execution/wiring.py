@@ -115,12 +115,28 @@ def _run_coroutine_sync(factory):
 class RegisteredPlannerLLM:
     """Bridge planner calls to the Runtime-owned model registry."""
 
-    def __init__(self, runtime: ExecutionRuntime) -> None:
+    def __init__(self, runtime: ExecutionRuntime, binding: dict[str, Any] | None = None) -> None:
         self._runtime = runtime
+        self._binding = dict(binding) if binding is not None else None
+
+    def copilot_models(self):
+        from app.llm.capabilities import provider_model_capabilities
+        return tuple({**route, "reasoningEfforts": list(caps.reasoning_efforts or []),
+            "defaultReasoningEffort": caps.default_reasoning_effort}
+            for route in self._runtime.model_registry.list_models()
+            for caps in [provider_model_capabilities(route["model"], "", route["provider"])])
+
+    def for_model(self, provider: str, model: str):
+        self._runtime.model_registry.resolve(provider, model)
+        return RegisteredPlannerLLM(self._runtime, {"provider": provider, "model": model})
+
+    @property
+    def binding(self):
+        return self._binding if self._binding is not None else self._runtime.default_model_binding or {}
 
     @property
     def _model_runtime(self) -> RegisteredModelRuntime:
-        binding = self._runtime.default_model_binding or {}
+        binding = self.binding
         return RegisteredModelRuntime(
             registry=self._runtime.model_registry,
             provider=str(binding.get("provider") or ""),
@@ -130,11 +146,11 @@ class RegisteredPlannerLLM:
 
     @property
     def provider(self) -> str:
-        return str((self._runtime.default_model_binding or {}).get("provider") or "")
+        return str(self.binding.get("provider") or "")
 
     @property
     def model(self) -> str:
-        return str((self._runtime.default_model_binding or {}).get("model") or "")
+        return str(self.binding.get("model") or "")
 
     def is_available(self) -> bool:
         if not self.provider or not self.model:

@@ -8,10 +8,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import java.util.Map;
 
 /**
  * EVENT ownership: the runtime event SSE entry. Pure delegation to
@@ -27,6 +30,12 @@ public class AgentOsEventController {
     @Autowired
     public AgentOsEventController(AiSseGatewayService sseGateway) {
         this.sseGateway = sseGateway;
+    }
+
+    @PostMapping(value = "/runs/{runId}/copilot/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> streamCopilot(
+            @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return sseGateway.openPost(AgentOsPaths.run(runId) + "/copilot/messages/stream", body);
     }
 
     @GetMapping(value = "/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
