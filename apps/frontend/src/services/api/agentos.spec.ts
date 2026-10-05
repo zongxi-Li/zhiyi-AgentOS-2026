@@ -56,6 +56,27 @@ describe('AgentOS v2 application API', () => {
     expect(page.items[0]).toMatchObject({ status: 'completed', phase: 'completed', percent: 100, totalSteps: 0 })
   })
 
+  it('preserves file bytes as FormData while ordinary requests still use JSON', async () => {
+    const file = new File(['Upload integration check'], 'check.txt', { type: 'text/plain' })
+    const originalAdapter = agentosRequest.defaults.adapter
+    const requests: Array<{ data: unknown; contentType: unknown }> = []
+    agentosRequest.defaults.adapter = async config => {
+      requests.push({ data: config.data, contentType: config.headers.getContentType() })
+      return { data: {}, status: 201, statusText: 'Created', headers: {}, config }
+    }
+    try {
+      await agentosApi.uploadAttachment(file)
+      await agentosApi.createMaterial('Context')
+      expect(requests[0].data).toBeInstanceOf(FormData)
+      expect((requests[0].data as FormData).get('file')).toBe(file)
+      expect(requests[0].contentType).not.toBe('application/json')
+      expect(requests[1].contentType).toBe('application/json')
+      expect(JSON.parse(requests[1].data as string)).toEqual({ content: 'Context', mediaType: 'text/plain' })
+    } finally {
+      agentosRequest.defaults.adapter = originalAdapter
+    }
+  })
+
   it('decodes persisted intermediate output at the shared API boundary', async () => {
     const signal = new AbortController().signal
     const content = {

@@ -3,6 +3,7 @@ package com.kinlin.ai.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.client.AgentOsClient;
 import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
+import com.kinlin.ai.exception.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -39,8 +40,17 @@ class AgentOsArtifactControllerTest {
         objectMapper = new ObjectMapper();
         gateway = new RecordingAgentOsGateway();
         mockMvc = MockMvcBuilders.standaloneSetup(new AgentOsArtifactController(gateway))
-                .setControllerAdvice(new AgentOsGatewayExceptionHandler())
+                .setControllerAdvice(new AgentOsGatewayExceptionHandler(), new GlobalExceptionHandler())
                 .build();
+    }
+
+    @Test
+    void rejectsJsonUploadsWithUnsupportedMediaTypeInsteadOfInternalError() throws Exception {
+        mockMvc.perform(post("/api/agentos/v2/attachments")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"file\":{}}"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.error").value("UNSUPPORTED_MEDIA_TYPE"))
+                .andExpect(jsonPath("$.supportedMediaTypes[0]").value("multipart/form-data"));
     }
 
     @Test

@@ -4,10 +4,7 @@ import { attachAuthToken, handleUnauthorizedError } from '@/utils/requestAuth'
 
 export const agentosRequest = axios.create({
   baseURL: apiUrl('/api/agentos/v2'),
-  timeout: 240000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  timeout: 240000
 })
 
 agentosRequest.interceptors.request.use(attachAuthToken)
