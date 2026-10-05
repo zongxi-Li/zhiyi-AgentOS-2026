@@ -10,7 +10,7 @@ from app.llm.providers.openai_compatible_provider import LLMProviderError, OpenA
 
 logger = logging.getLogger(__name__)
 
-_AUDIT_ONLY_ARGUMENTS = frozenset({"prompt_version", "prompt_template_hash"})
+_AUDIT_ONLY_ARGUMENTS = frozenset({"prompt_version", "prompt_template_hash", "prompt_metadata"})
 
 
 class UnavailableLLMProvider:

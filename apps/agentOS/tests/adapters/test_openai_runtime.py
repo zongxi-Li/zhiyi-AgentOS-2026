@@ -43,6 +43,31 @@ class _JsonTransport:
         }
 
 
+def test_deepseek_field_repair_keeps_original_wire_prefix_and_current_schema():
+    runtime = OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(capabilityId="ds", kind=CapabilityKind.MODEL,
+            displayName="DS", provider="deepseek", capabilities=["deepseek-flash"]),
+        transport=_JsonTransport(),
+    )
+    original_schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    patch_schema = {"type": "object", "properties": {"patch": {"type": "object"}}}
+    original_messages = [{"role": "system", "content": "stable authority"},
+                         {"role": "user", "content": "stable source materials"}]
+    original = runtime._build_payload(ModelInvocationRequest(requestId="original", model="deepseek-flash",
+        messages=original_messages, responseSchema=original_schema), "deepseek-flash")
+    repaired = runtime._build_payload(ModelInvocationRequest(requestId="repair", model="deepseek-flash",
+        messages=original_messages + [{"role": "assistant", "content": "prior generated data"},
+                                      {"role": "user", "content": "bounded runtime operation"}],
+        responseSchema=patch_schema, prefixResponseSchema=original_schema), "deepseek-flash")
+    assert repaired["messages"][:2] == original["messages"]
+    assert repaired["messages"][-1]["role"] == "user"
+    assert repaired["messages"][-2]["role"] == "system"
+    assert '"patch"' in repaired["messages"][-2]["content"]
+    assert original_messages[0]["content"] == "stable authority"
+    assert "prefixResponseSchema" not in repaired
+    assert repaired["response_format"] == {"type": "json_object"}
+
+
 def test_openai_compatible_runtime_maps_json_request_and_response() -> None:
     """注入式传输应收到标准请求，并把 JSON 文本映射为统一模型响应。"""
     transport = _JsonTransport()

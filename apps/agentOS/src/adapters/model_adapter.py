@@ -159,6 +159,8 @@ class StructuredGenerationRuntime(Protocol):
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         prompt_metadata: Dict[str, Any] | None = None,
+        continuation: list[dict[str, str]] | None = None,
+        prefix_schema: Dict[str, Any] | None = None,
     ) -> StructuredGenerationResult:
         """在给定 Schema、预算和超时内生成并解析一个 JSON 结果。
 

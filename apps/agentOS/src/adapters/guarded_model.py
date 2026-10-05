@@ -136,6 +136,10 @@ class GuardedModelRuntime:
         """保留原运行时的可用性语义，不因包装器自行推断远端状态。"""
         return self.delegate.is_available()
 
+    @property
+    def supports_continuation(self) -> bool:
+        return bool(getattr(self.delegate, "supports_continuation", False))
+
     async def generate_json(
         self,
         *,
@@ -150,6 +154,8 @@ class GuardedModelRuntime:
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         prompt_metadata: dict | None = None,
+        continuation: list[dict[str, str]] | None = None,
+        prefix_schema: dict | None = None,
     ) -> StructuredGenerationResult:
         """在本地保护边界内调用模型，并只暴露稳定、无正文的错误。"""
         if timeout_seconds <= 0:
@@ -172,6 +178,10 @@ class GuardedModelRuntime:
                     delegate_kwargs["reasoning_effort"] = reasoning_effort
                 if temperature is not None:
                     delegate_kwargs["temperature"] = temperature
+                if continuation is not None:
+                    delegate_kwargs["continuation"] = continuation
+                if prefix_schema is not None:
+                    delegate_kwargs["prefix_schema"] = prefix_schema
                 return await self._gate.call(
                     lambda: asyncio.wait_for(
                         self.delegate.generate_json(**delegate_kwargs),

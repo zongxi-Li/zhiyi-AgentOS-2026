@@ -452,7 +452,10 @@ class OpenAICompatibleRuntime:
                 schema_instruction = (
                     "Return exactly one JSON object that strictly validates against this JSON Schema. "
                     "Do not omit required fields, add undeclared fields, or change required array sizes.\n"
-                    + json.dumps(request.response_schema, ensure_ascii=False, separators=(",", ":"))
+                    + json.dumps(
+                        request.prefix_response_schema if request.prefix_response_schema is not None else request.response_schema,
+                        ensure_ascii=False, separators=(",", ":"),
+                    )
                 )
                 if payload["messages"] and payload["messages"][0].get("role") == "system":
                     payload["messages"][0]["content"] = (
@@ -465,6 +468,13 @@ class OpenAICompatibleRuntime:
                         {"role": "system", "content": schema_instruction},
                         *payload["messages"],
                     ]
+                if request.prefix_response_schema is not None:
+                    payload["messages"].insert(len(payload["messages"]) - 1, {
+                        "role": "system",
+                        "content": "CURRENT CONTINUATION OUTPUT CONTRACT: This replaces only the earlier output schema, "
+                        "not the evidence or authority rules. Return exactly the JSON object matching this schema:\n"
+                        + json.dumps(request.response_schema, ensure_ascii=False, separators=(",", ":")),
+                    })
             else:
                 payload["response_format"] = {
                     "type": "json_schema",

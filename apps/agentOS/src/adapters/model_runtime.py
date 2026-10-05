@@ -46,6 +46,8 @@ class RegisteredModelRuntime:
     和限流由外层 ``GuardedModelRuntime`` 统一控制；此桥接层仅负责合同转换。
     """
 
+    supports_continuation = True
+
     def __init__(
         self,
         *,
@@ -107,6 +109,8 @@ class RegisteredModelRuntime:
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         prompt_metadata: dict[str, Any] | None = None,
+        continuation: list[dict[str, str]] | None = None,
+        prefix_schema: dict[str, Any] | None = None,
     ) -> StructuredGenerationResult:
         """把原生 JSON 生成请求转换为统一模型调用，并返回安全审计投影。"""
         # thinking_mode 的供应商映射发生在适配器层；本桥接只转发显式声明的
@@ -156,6 +160,15 @@ class RegisteredModelRuntime:
         messages = ([{"role": "system", "content": system_prompt}] if system_prompt else []) + [
             {"role": "user", "content": prompt}
         ]
+        if continuation is not None:
+            if not isinstance(continuation, list) or not continuation or any(
+                not isinstance(item, dict) or set(item) != {"role", "content"} or item["role"] not in {"assistant", "user"}
+                or not isinstance(item["content"], str) for item in continuation
+            ) or continuation[-1]["role"] != "user":
+                raise StructuredGenerationError("MODEL_CONTINUATION_INVALID", "continuation must end in user data")
+            messages.extend(dict(item) for item in continuation)
+        if prefix_schema is not None and not continuation:
+            raise StructuredGenerationError("MODEL_CONTINUATION_INVALID", "a prefix contract requires continuation messages")
         safe_prompt_metadata = self._prompt_metadata(
             prompt_metadata=prompt_metadata,
             system_prompt=system_prompt,
@@ -221,7 +234,8 @@ class RegisteredModelRuntime:
                 provider_family=capability.provider or self.provider,
                 model=capability.model or self.model,
                 model_version=capability.version or self.version,
-                behavior_options=options,
+                behavior_options={**options, **({"prefixResponseSchemaHash": canonical_hash(prefix_schema)}
+                                               if prefix_schema is not None else {})},
             )
             candidate_prompt_audit = {
                 **safe_prompt_metadata,
@@ -239,6 +253,7 @@ class RegisteredModelRuntime:
                 model=self.model,
                 messages=messages,
                 responseSchema=dict(schema),
+                prefixResponseSchema=prefix_schema,
                 options=options,
                 commitId=commit_id,
             )
@@ -604,12 +619,22 @@ class RegisteredModelRuntime:
             # as parseable keeps compatible fake streams useful without relaxing
             # TTFT/idle/total ownership.
             completed = True
+        # Usage is reported before JSON decoding. A malformed answer still
+        # consumed provider tokens and must remain measurable when repaired.
+        completed_audit = {
+            **safe_audit,
+            "provider": capability.provider or self.provider,
+            "model": capability.model or self.model,
+            "usage": dict(stream_usage),
+            "finishReason": finish_reason,
+            "latencyMs": round((self._clock() - started) * 1000),
+        }
         if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
             raise StructuredGenerationError(
                 "MODEL_OUTPUT_EXHAUSTED",
                 "model provider exhausted its output capacity before completing the response",
                 retryable=False,
-                audit=safe_audit,
+                audit=completed_audit,
             )
         if public_activity_pending:
             yield emit("model.activity", activity_payload(0.0))
@@ -619,7 +644,7 @@ class RegisteredModelRuntime:
             raise StructuredGenerationError(
                 "MODEL_OUTPUT_INVALID_JSON",
                 "streamed model output is not valid JSON",
-                audit=safe_audit,
+                audit=completed_audit,
             ) from exc
         yield emit("model.completed", {
             "receivedLength": sum(map(len, buffer)),

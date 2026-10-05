@@ -213,9 +213,10 @@ class _GenericRecoveryModel:
 class _JsonThenContractRepairModel:
     """Reproduce invalid JSON followed by a valid but incomplete payload."""
 
-    def __init__(self, *, complete_contract_repair: bool = True) -> None:
+    def __init__(self, *, complete_contract_repair: bool = True, continuation: bool = False) -> None:
         self.calls: list[dict] = []
         self.complete_contract_repair = complete_contract_repair
+        self.supports_continuation = continuation
 
     def is_available(self) -> bool:
         return True
@@ -226,6 +227,12 @@ class _JsonThenContractRepairModel:
             raise StructuredGenerationError(
                 "MODEL_OUTPUT_INVALID_JSON",
                 "provider returned invalid JSON",
+                audit={
+                    "provider": "test", "model": "test",
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+                    "finishReason": "stop", "latencyMs": 10,
+                    "prompt": "PRIVATE-PROMPT", "data": "PRIVATE-RESPONSE",
+                },
             )
         if len(self.calls) == 2:
             data = {"solution_design": {"overview": "lightweight option"}}
@@ -245,6 +252,10 @@ class _JsonThenContractRepairModel:
             }
         else:
             data = {"solution_design": {"overview": "still incomplete"}}
+        if len(self.calls) > 2 and "patch" in kwargs["schema"].get("properties", {}):
+            data = {"patch": {"solution_design": {
+                "phases": data["solution_design"]["phases"],
+            }}} if self.complete_contract_repair else {"patch": {}}
         return StructuredGenerationResult(data=data, provider="test", model="test")
 
 
@@ -571,9 +582,10 @@ def test_generic_output_exhaustion_decomposes_and_pairwise_reduces() -> None:
     assert result.model_invocations[0]["outputExhausted"] is True
 
 
-def test_invalid_json_repair_does_not_consume_contract_repair() -> None:
+@pytest.mark.parametrize("continuation", [False, True])
+def test_invalid_json_repair_does_not_consume_contract_repair(continuation) -> None:
     agent = NativeGeneralAgent()
-    model = _JsonThenContractRepairModel()
+    model = _JsonThenContractRepairModel(continuation=continuation)
     descriptor = build_default_capability_catalog().get("solution_design")
     task = RuntimeMissionRecord(
         missionId="task-json-contract-repair",
@@ -611,16 +623,29 @@ def test_invalid_json_repair_does_not_consume_contract_repair() -> None:
 
     assert len(model.calls) == 3
     assert model.calls[1]["prompt_version"].endswith(".json-repair1")
-    assert model.calls[2]["prompt_version"].endswith(".repair1")
+    assert model.calls[2]["prompt_version"].endswith(".field-repair1" if continuation else ".repair1")
+    if continuation:
+        assert model.calls[0]["prompt"] == model.calls[1]["prompt"] == model.calls[2]["prompt"]
+        assert model.calls[2]["prefix_schema"] == model.calls[0]["schema"]
+        assert model.calls[1]["continuation"][-1]["role"] == "user"
+        assert model.calls[2]["continuation"][0]["role"] == "assistant"
+        assert result.output["solution_design"]["overview"] == "lightweight option"
     assert model.calls[0]["prompt_metadata"] == model.calls[1]["prompt_metadata"]
     assert model.calls[1]["prompt_metadata"] == model.calls[2]["prompt_metadata"]
     assert result.output["solution_design"]["phases"][0]["name"] == "pilot"
-    assert len(result.model_invocations) == 2
+    assert len(result.model_invocations) == 3
+    assert result.model_invocations[0]["usage"] == {"prompt_tokens": 100, "completion_tokens": 30}
+    assert result.model_invocations[0]["effectiveReason"] == "invalid_json_before_repair"
+    assert result.model_invocations[1]["effectiveReason"] == "retry_json_repair"
+    assert result.model_invocations[2]["effectiveReason"] == "retry_contract_repair"
+    assert "PRIVATE-PROMPT" not in str(result.model_invocations)
+    assert "PRIVATE-RESPONSE" not in str(result.model_invocations)
 
 
-def test_contract_repair_remains_bounded_after_invalid_json_repair() -> None:
+@pytest.mark.parametrize("continuation", [False, True])
+def test_contract_repair_remains_bounded_after_invalid_json_repair(continuation) -> None:
     agent = NativeGeneralAgent()
-    model = _JsonThenContractRepairModel(complete_contract_repair=False)
+    model = _JsonThenContractRepairModel(complete_contract_repair=False, continuation=continuation)
     descriptor = build_default_capability_catalog().get("solution_design")
     task = RuntimeMissionRecord(
         missionId="task-bounded-contract-repair",

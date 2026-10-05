@@ -48,11 +48,15 @@ def test_openai_provider_defensively_filters_audit_only_parameters() -> None:
     parameters = provider._adapt_parameters({
         "prompt_version": "task-decomposition.v1",
         "prompt_template_hash": "hash-2",
+        "system_prompt": "trusted policy",
+        "prompt_metadata": {"preset": "planner"},
         "max_tokens": 1024,
     })
 
     assert "prompt_version" not in parameters
     assert "prompt_template_hash" not in parameters
+    assert "system_prompt" not in parameters
+    assert "prompt_metadata" not in parameters
     assert parameters["max_tokens"] == 1024
 
 

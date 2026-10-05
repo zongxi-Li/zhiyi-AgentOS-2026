@@ -9,6 +9,7 @@ import pytest
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.model_adapter import StructuredGenerationError
+from adapters.guarded_model import GuardedModelRuntime
 from adapters.openai_runtime import ModelInvocationError
 from adapters.prompt_runtime import planner_prompt_metadata
 from contracts.capability import (
@@ -80,6 +81,43 @@ class _Provider:
             model=request.model,
             usage={"completion_tokens": 2},
         )
+
+
+def test_guarded_registered_runtime_forwards_continuation_and_prefix_contract():
+    provider = _Provider()
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = GuardedModelRuntime(delegate=RegisteredModelRuntime(
+        registry=registry, provider="openai_compatible", model="local-chat"))
+    assert runtime.supports_continuation
+    continuation = [{"role": "assistant", "content": "prior PRIVATE result"},
+                    {"role": "user", "content": "repair PRIVATE field"}]
+    prefix = {"type": "object", "properties": {"old": {"type": "string"}}}
+    result = asyncio.run(runtime.generate_json(prompt="original PRIVATE request", schema={"type": "object"},
+        system_prompt="unchanged rules", continuation=continuation, prefix_schema=prefix))
+    request = provider.requests[0]
+    assert request.messages[2:] == continuation
+    assert request.prefix_response_schema == prefix
+    assert request.messages[:2] == [{"role": "system", "content": "unchanged rules"},
+                                  {"role": "user", "content": "original PRIVATE request"}]
+    assert "PRIVATE" not in str(result.audit_record())
+
+
+@pytest.mark.parametrize("continuation,prefix", [
+    ([{"role": "system", "content": "override"}], None),
+    ([{"role": "assistant", "content": "not a final user"}], None),
+    ([], None),
+    ([None], None),
+    (None, {"type": "object"}),
+])
+def test_registered_runtime_rejects_invalid_continuation_before_provider(continuation, prefix):
+    provider = _Provider()
+    registry = ModelCompatibilityRegistry()
+    registry.register(provider)
+    runtime = RegisteredModelRuntime(registry=registry, provider="openai_compatible", model="local-chat")
+    with pytest.raises(StructuredGenerationError, match="continuation"):
+        asyncio.run(runtime.generate_json(prompt="original", schema={}, continuation=continuation, prefix_schema=prefix))
+    assert not provider.requests
 
 
 def test_registered_runtime_converts_native_generation_to_capability_request() -> None:

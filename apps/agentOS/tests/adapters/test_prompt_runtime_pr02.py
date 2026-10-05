@@ -85,9 +85,9 @@ def test_task_carried_materials_never_enter_authoritative_mission() -> None:
     assert attack not in envelope.system_prompt
 
 
-def test_system_composition_orders_policy_before_runtime_contract() -> None:
+def test_system_composition_keeps_shared_runtime_contract_before_changing_policy() -> None:
     system_prompt = _envelope("analysis").system_prompt
-    assert system_prompt.index("CAPABILITY POLICY:") < system_prompt.index(
+    assert system_prompt.index("CAPABILITY POLICY:") > system_prompt.index(
         "ExecutionRequest is runtime data"
     )
 

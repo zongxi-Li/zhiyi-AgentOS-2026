@@ -139,6 +139,27 @@ def test_structured_runtime_propagates_stable_commit_id(monkeypatch):
     assert gateway.kwargs[0]["commit_id"] == "commit:run:step:0"
 
 
+def test_structured_runtime_preserves_prompt_contract_through_guard(monkeypatch):
+    from adapters.guarded_model import GuardedModelRuntime
+
+    gateway = _Gateway()
+    monkeypatch.setattr("app.execution.model_runtime.get_llm_gateway", lambda: gateway)
+    delegate = GatewayStructuredGenerationRuntime(max_concurrency=1)
+    try:
+        runtime = GuardedModelRuntime(delegate=delegate, retries=0)
+        result = asyncio.run(runtime.generate_json(
+            prompt="task", schema={"type": "object"}, system_prompt="Trusted execution policy",
+            prompt_metadata={"preset": "executor"}, prompt_version="test.v1", temperature=0.2,
+        ))
+        assert result.data == {"answer": "task"}
+        assert gateway.kwargs[0]["system_prompt"] == "Trusted execution policy"
+        assert gateway.kwargs[0]["prompt_metadata"] == {"preset": "executor"}
+        assert gateway.kwargs[0]["prompt_version"] == "test.v1"
+        assert gateway.kwargs[0]["temperature"] == 0.2
+    finally:
+        delegate.close()
+
+
 def test_structured_runtime_forwards_timeout_budget_to_gateway(monkeypatch):
     """档位守护预算必须下探到 provider 层：内层留 5 秒余量先于守护触发。
 

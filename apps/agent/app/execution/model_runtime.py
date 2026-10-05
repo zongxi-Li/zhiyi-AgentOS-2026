@@ -81,12 +81,15 @@ class GatewayStructuredGenerationRuntime:
         *,
         prompt: str,
         schema: Dict[str, Any],
+        system_prompt: str | None = None,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
         timeout_seconds: float = 120.0,
         max_output_tokens: int | None = None,
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
+        prompt_metadata: Dict[str, Any] | None = None,
     ) -> StructuredGenerationResult:
         gateway = get_llm_gateway()
         if gateway.provider_name in {"", "mock", "unavailable"}:
@@ -99,6 +102,9 @@ class GatewayStructuredGenerationRuntime:
 
         def invoke() -> Dict[str, Any]:
             kwargs: Dict[str, Any] = {
+                "system_prompt": system_prompt,
+                "prompt_metadata": prompt_metadata,
+                "prompt_version": prompt_version,
                 "thinking_mode": thinking_mode,
                 "commit_id": commit_id,
                 # 档位守护预算必须下探到 provider 连接层，否则客户端构造期
@@ -109,6 +115,8 @@ class GatewayStructuredGenerationRuntime:
             }
             if reasoning_effort is not None:
                 kwargs["reasoning_effort"] = reasoning_effort
+            if temperature is not None:
+                kwargs["temperature"] = temperature
             if max_output_tokens is not None:
                 kwargs["max_tokens"] = max_output_tokens
             return gateway.generate_json(prompt, schema, **kwargs)

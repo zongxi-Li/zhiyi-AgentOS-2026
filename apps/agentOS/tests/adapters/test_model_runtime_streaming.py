@@ -159,6 +159,36 @@ def test_stream_failure_audit_keeps_prompt_identity_without_raw_prompt() -> None
     assert "TOP SECRET" not in str(audit)
 
 
+@pytest.mark.parametrize("finish,body,code", [
+    ("stop", "PRIVATE-INVALID-JSON", "MODEL_OUTPUT_INVALID_JSON"),
+    ("length", '{"answer":', "MODEL_OUTPUT_EXHAUSTED"),
+])
+def test_consumed_stream_usage_survives_decoding_and_capacity_failure(finish, body, code):
+    class _MalformedAdapter(_ClosingStreamingAdapter):
+        def astream(self, request):
+            async def iterator():
+                yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta=body,
+                                       provider="fixture", model="fixture-model")
+                yield ModelStreamEvent(requestId=request.request_id, eventType="completed",
+                                       provider="fixture", model="fixture-model",
+                                       metadata={"finishReason": finish, "usage": {"prompt_tokens": 101, "completion_tokens": 31}})
+            return iterator()
+    registry = ModelCompatibilityRegistry()
+    registry.register(_MalformedAdapter())
+    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model")
+    async def collect():
+        async for _ in runtime.stream_generate_json(prompt="PRIVATE-PROMPT", schema={"type": "object"}, run_id="run-malformed"):
+            pass
+    with pytest.raises(StructuredGenerationError) as captured:
+        asyncio.run(collect())
+    assert captured.value.code == code
+    assert captured.value.audit["usage"] == {"prompt_tokens": 101, "completion_tokens": 31}
+    assert captured.value.audit["finishReason"] == finish
+    assert captured.value.audit["model"] == "fixture-model"
+    assert "PRIVATE-PROMPT" not in str(captured.value.audit)
+    assert "PRIVATE-INVALID-JSON" not in str(captured.value.audit)
+
+
 def test_registered_model_runtime_accepts_fenced_streamed_json() -> None:
     class _FencedAdapter(_ClosingStreamingAdapter):
         def astream(self, request: ModelInvocationRequest):

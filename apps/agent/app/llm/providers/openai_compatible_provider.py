@@ -114,12 +114,13 @@ class OpenAICompatibleProvider:
 
     def generate_text(self, prompt: str, **kwargs) -> str:
         timeout_budget = _pop_timeout_budget(kwargs)
+        system_prompt = kwargs.pop("system_prompt", None)
         try:
             adapted = self._adapt_parameters(kwargs)
             completion = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a careful assistant. Return only the requested content."},
+                    {"role": "system", "content": system_prompt or "You are a careful assistant. Return only the requested content."},
                     {"role": "user", "content": prompt},
                 ],
                 **adapted,
@@ -153,6 +154,7 @@ class OpenAICompatibleProvider:
         ``MODEL_TIMEOUT`` 码上浮（可重试语义），并携带实际生效预算供审计对账。
         """
         timeout_budget = _pop_timeout_budget(kwargs)
+        system_prompt = kwargs.pop("system_prompt", None)
         capabilities = provider_model_capabilities(self.model, self.base_url)
         budget_field = getattr(capabilities, "max_tokens_field", None) or "max_tokens"
         requested_budget = kwargs.get("max_tokens")
@@ -187,7 +189,7 @@ class OpenAICompatibleProvider:
                 messages=[
                     {
                         "role": "system",
-                        "content": self._json_system_prompt(schema),
+                        "content": "\n\n".join(filter(None, (system_prompt, self._json_system_prompt(schema)))),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -278,6 +280,7 @@ class OpenAICompatibleProvider:
             if key not in {
                 "thinking_mode", "reasoning_effort", "commit_id",
                 "prompt_version", "prompt_template_hash",
+                "system_prompt", "prompt_metadata",
             } and value is not None
         }
         if kwargs.get("reasoning_effort") is not None:
