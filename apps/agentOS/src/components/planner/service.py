@@ -23,6 +23,7 @@ from contracts.planning import (
     TaskPlan,
     TaskPlanPatch,
 )
+from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation
 from service.agents import AgentRegistry
 from support.acg.schema import ACGBlueprint, ControlNode
 from support.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
@@ -129,6 +130,15 @@ class PlanResult:
 
 
 class PlanningEngine:
+    def decide_runtime(self, *, observation: RuntimePlanningObservation, task_plan: TaskPlan) -> RuntimePlanningDecision:
+        """Re-observe current durable state without retaining a conversation."""
+        from .runtime_decision import decide_runtime
+
+        return decide_runtime(
+            observation=observation, task_plan=task_plan,
+            llm=self.intent_parser.llm,
+        )
+
     @staticmethod
     def _plan_progress_payload(task_plan: TaskPlan) -> dict[str, Any]:
         """Return the bounded semantic TaskPlan projection exposed to the UI."""

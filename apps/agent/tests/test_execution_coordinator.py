@@ -70,3 +70,37 @@ async def test_submit_accepts_in_place_retry_with_original_started_at() -> None:
     assert await coordinator.submit("run-retrying") is True
     await asyncio.wait_for(executed.wait(), timeout=1)
     await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_durable_wake_redelivery_and_event_burst_share_one_managed_task() -> None:
+    started, release = asyncio.Event(), asyncio.Event()
+    run = SimpleNamespace(status=SimpleNamespace(value="retrying"), started_at=object())
+    calls = []
+    runtime = SimpleNamespace(workflow_store=SimpleNamespace(get_run=lambda run_id: run))
+    async def prepare():
+        return ["waiting-run"] if run.status.value == "retrying" else []
+    async def execute(run_id):
+        calls.append(run_id)
+        started.set()
+        await release.wait()
+        run.status.value = "completed"
+    runtime.prepare_planning_wakeups = prepare
+    runtime.execute_prepared_run = execute
+    coordinator = RunExecutionCoordinator(runtime)
+    try:
+        await coordinator.reconcile_waits()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        for _ in range(10):
+            coordinator.notify_state_changed()
+        await asyncio.gather(*(coordinator.reconcile_waits() for _ in range(10)))
+        assert calls == ["waiting-run"]
+        release.set()
+        while coordinator.is_active("waiting-run"):
+            await asyncio.sleep(0)
+        await coordinator.reconcile_waits()
+        assert calls == ["waiting-run"]
+    finally:
+        release.set()
+        await coordinator.shutdown()
+    assert coordinator._wake_task.done()

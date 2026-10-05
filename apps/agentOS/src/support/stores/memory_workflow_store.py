@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Dict, Sequence
+from copy import deepcopy
 import hashlib
 import json
 
@@ -40,6 +41,34 @@ class MemoryWorkflowStore(WorkflowStore):
         self._runs: Dict[str, RuntimeRunRecord] = {}
         self._terminal_run_statuses: Dict[str, WorkflowStatus] = {}
         self._lifecycle_outbox: Dict[str, dict] = {}
+        self._copilot_exchanges: dict[tuple[str, str], dict] = {}
+        self._planning_inputs: dict[tuple[str, str], dict] = {}
+
+    def list_planning_inputs(self, run_id: str) -> list[dict]:
+        return deepcopy([v for (owner, _), v in self._planning_inputs.items() if owner == run_id])
+
+    def save_planning_input(self, run_id: str, operation_id: str, payload: dict) -> None:
+        key = (run_id, operation_id)
+        existing = self._planning_inputs.get(key)
+        if existing is not None:
+            if existing["content"] != payload["content"]:
+                raise ValueError("planning input operation conflict")
+            return
+        if len(self.list_planning_inputs(run_id)) >= 32:
+            raise ValueError("planning input budget exhausted")
+        self._planning_inputs[key] = deepcopy(payload)
+
+    def list_copilot_exchanges(self, run_id: str, *, limit: int = 30) -> list[dict]:
+        return deepcopy([v for (owner, _), v in self._copilot_exchanges.items() if owner == run_id][-min(max(limit, 1), 100):])
+
+    def get_copilot_exchange(self, run_id: str, operation_id: str) -> dict | None:
+        return deepcopy(self._copilot_exchanges.get((run_id, operation_id)))
+
+    def save_copilot_exchange(self, run_id: str, operation_id: str, payload: dict) -> None:
+        key = (run_id, operation_id)
+        if key in self._copilot_exchanges:
+            raise ValueError("conversation exchange already exists")
+        self._copilot_exchanges[key] = deepcopy(payload)
 
     def save_mission(self, task: RuntimeMissionRecord) -> None:
         """按任务标识保存内存对象；调用方保留传入任务所有权。"""
@@ -221,6 +250,10 @@ class MemoryWorkflowStore(WorkflowStore):
         }:
             raise RuntimeRunRecordNotTerminalError(run_id, run.status)
         self._runs.pop(run_id)
+        for key in [key for key in self._copilot_exchanges if key[0] == run_id]:
+            self._copilot_exchanges.pop(key)
+        for key in [key for key in self._planning_inputs if key[0] == run_id]:
+            self._planning_inputs.pop(key)
         self._terminal_run_statuses.pop(run_id, None)
         mission_deleted = False
         if delete_orphan_mission and not any(item.mission_id == run.mission_id for item in self._runs.values()):

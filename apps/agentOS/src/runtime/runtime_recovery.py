@@ -50,6 +50,29 @@ def _normalize_runtime_engine(runtime_engine: str) -> str:
 class RuntimeRecoveryCoordinator(CollaboratorAccess):
     """应用层恢复协调器：决定已定时，把动作落到 Runtime 可执行的操作上。"""
 
+    @staticmethod
+    def node_rerun_cut(graph, package, step_id):
+        """Invalidate causal consumers, treating each declared loop as one region.
+
+        The compiled control manifest owns loop boundaries. Re-entering any
+        part restarts both body endpoints and its condition producer; the
+        original graph remains responsible for routing and iteration limits.
+        """
+        causal_edges = list(graph.edges)
+        causal_edges.extend((r.producer_step_id, r.consumer_step_id) for r in package.communication_manifest.rules)
+        for rule in package.control_manifest.rules:
+            if rule.loop is None:
+                raise ValueError("node rerun currently supports dependency graphs and bounded loops")
+            members = {rule.loop.body_entry_id, rule.loop.body_exit_id, rule.loop.condition.source_step_id}
+            causal_edges.extend((member, rule.control_id) for member in members)
+            causal_edges.extend((rule.control_id, member) for member in members)
+        cut = {step_id}
+        while True:
+            expanded = cut | {target for origin, target in causal_edges if origin in cut}
+            if cut == expanded:
+                return cut
+            cut = expanded
+
     def __init__(
         self,
         *,
@@ -87,6 +110,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         不在本方法内执行（与迁移前的执行异常路径逐行一致）。
         """
         from components.recovery import RecoveryService, failure_event_from_exception
+
+        self._terminalize_active_execution(run, "ACG execution interrupted before commit")
 
         failure = failure_event_from_exception(
             error,
@@ -187,6 +212,18 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 if self._normalize_waiting_review_after_restart(run):
                     run.updated_at = utc_now()
                     self.workflow_store.save_run(run)
+                continue
+            if isinstance(run.execution_state.get("planningLoop"), dict) and isinstance(run.acg_blueprint, dict):
+                # The same Runtime resumes via its normal prepared-run entry. No
+                # execution occurs during startup scanning; queued work is visible.
+                from contracts.runtime_planning import RuntimePlanningState
+                loop = RuntimePlanningState.model_validate(run.execution_state["planningLoop"])
+                run.execution_state["planningLoop"] = loop.model_copy(update={"restart_pending": True}).model_dump(by_alias=True, mode="json")
+                run.status = WorkflowStatus.RETRYING
+                run.lifecycle_phase = WorkflowProgressPhase.RECOVERY
+                run.lifecycle_message = "从持久化任务状态恢复 Planner 控制环"
+                run.updated_at = utc_now()
+                self.workflow_store.save_run(run)
                 continue
             if run.status not in {
                 WorkflowStatus.PENDING,
@@ -311,6 +348,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         idempotency_key: str | None = None,
         idempotency_fingerprint: str | None = None,
         reuse_source_run: bool = False,
+        validate_only: bool = False,
+        restart_from_step: bool = False,
     ) -> RuntimeRunRecord:
         """Prepare a successor Run that resumes from a failed ACG step.
 
@@ -327,6 +366,9 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             raise ValueError("single-step retry reason must not be empty")
 
         source = self.workflow_store.get_run(source_run_id)
+        from contracts.task_acceptance import frozen_task_acceptance
+
+        acceptance = frozen_task_acceptance(source)
         in_place_requests = source.execution_state.get("inPlaceRetryRequests")
         if reuse_source_run and idempotency_key and isinstance(in_place_requests, dict):
             previous_fingerprint = in_place_requests.get(idempotency_key)
@@ -340,7 +382,15 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 if existing.idempotency_fingerprint != idempotency_fingerprint:
                     raise ValueError("idempotency key conflicts with the single-step retry request")
                 return existing
-        if source.status is not WorkflowStatus.FAILED:
+        if restart_from_step and reuse_source_run:
+            raise ValueError("node rerun requires a successor Run")
+        if restart_from_step and source.status not in {
+            WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED,
+        }:
+            raise ValueError("node rerun requires a terminal, nonsuperseded source Run")
+        if not restart_from_step and source.status is not WorkflowStatus.FAILED and not (
+            validate_only and source.status in {WorkflowStatus.RUNNING, WorkflowStatus.WAITING_REVIEW}
+        ):
             raise ValueError("single-step retry requires a failed source Run")
         if expected_runtime_revision is not None and source.runtime_revision != expected_runtime_revision:
             raise ValueError("source Run changed after the retry request was prepared")
@@ -371,10 +421,12 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             raise ValueError("single-step retry target must be an executable ACG step")
         if target_spec.communication_mode != "STRICT_CONTRACT":
             raise ValueError("single-step retry target must use STRICT_CONTRACT communication")
-        if source_step.status is not StepStatus.FAILED:
+        if not restart_from_step and source_step.status is not StepStatus.FAILED:
             raise ValueError("single-step retry target must be failed")
         source_state = acg_execution_state_from_run(source)
-        if source_state.output_refs.get(step_id):
+        if validate_only and (source_state.review_payload or {}).get("subjectType") == "planner":
+            source_state.review_payload = None
+        if not restart_from_step and source_state.output_refs.get(step_id):
             raise ValueError("single-step retry target already has a committed output")
 
         stale_active_step_ids = set(source_state.active_step_ids)
@@ -390,14 +442,48 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         # reconcile here; any other active marker remains a hard reject.
         if (
             source_state.control_frames
-            or source_state.loop_iterations
-            or source_state.loop_paths
+            or (not restart_from_step and (source_state.loop_iterations or source_state.loop_paths))
             or source_state.blackboard_snapshots
             or source_state.debate_sessions
             or source_state.review_payload
             or source_state.control_review_decisions
         ):
             raise ValueError("single-step retry does not support control or review state")
+        invalidated = set()
+        if restart_from_step:
+            # Only strict communication and settled bounded loops are safe for
+            # this cut. Other control semantics retain their own authority.
+            if (any(spec.communication_mode != "STRICT_CONTRACT"
+                    or (spec.kind == "control" and spec.control_type != "loop")
+                    for spec in graph.node_specs.values()) or source_state.consensus_results
+                    or any(r.mode.value != "STRICT_CONTRACT" for r in package.communication_manifest.rules)):
+                raise ValueError("node rerun requires strict dependencies and settled bounded loops")
+            invalidated = self.node_rerun_cut(graph, package, step_id)
+            checkpoint = self.checkpoint_store.load(run_id=source.run_id, checkpoint_id=source_state.checkpoint_id) if source_state.checkpoint_id else None
+            if checkpoint is None:
+                raise ValueError("node rerun requires a persisted checkpoint")
+            persisted = ACGExecutionState.model_validate(checkpoint)
+            if (persisted.run_id != source.run_id or persisted.graph_id != source_state.graph_id
+                    or persisted.graph_version != source_state.graph_version
+                    or persisted.output_refs != source_state.output_refs
+                    or persisted.completed_step_ids != source_state.completed_step_ids
+                    or persisted.skipped_step_ids != source_state.skipped_step_ids):
+                raise ValueError("node rerun checkpoint does not match committed state")
+            from runtime.planning_observation import RuntimePlanningObservationBuilder
+            inspector = RuntimePlanningObservationBuilder(collaborators=self.ports,
+                load_goal=lambda _: "", validate_references=lambda **_: None)
+            for reusable_id in set(source_state.completed_step_ids) - invalidated:
+                if graph.node_specs[reusable_id].kind != "step":
+                    continue
+                _, audit, owner_id = inspector._committed(source.run_id, reusable_id, source_state.output_refs[reusable_id])
+                if audit.outcome == "review" or source.get_step(reusable_id).requires_review:
+                    owner = self.workflow_store.get_run(owner_id)
+                    if not any(e.event_type == TraceEventType.REVIEW_DECIDED and e.step_id == reusable_id
+                               and e.payload.get("decision") == "approved" for e in owner.trace):
+                        raise ValueError("node rerun cannot reuse unresolved human review")
+            source_state = source_state.model_copy(deep=True)
+            source_state.completed_step_ids = [s for s in source_state.completed_step_ids if s not in invalidated]
+            source_state.skipped_step_ids = [s for s in source_state.skipped_step_ids if s not in invalidated]
         settled = set(source_state.completed_step_ids) | set(source_state.skipped_step_ids)
         resumable_step_ids = {
             node_id
@@ -434,6 +520,9 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 source_state.output_summaries.get(reusable_step_id, ""),
             ))
 
+        if validate_only:
+            return source
+
         copied_refs: dict[str, str] = {}
         copied_summaries: dict[str, str] = {}
         if reuse_source_run:
@@ -460,12 +549,15 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 enabled_plugin_ids=list(source.enabled_plugin_ids),
                 defer_acg_planning=False,
                 input_override={
+                    **deepcopy(source.input),
+                    "taskAcceptance": acceptance.model_dump(by_alias=True, mode="json") if acceptance else None,
                     "acgBlueprint": deepcopy(source.acg_blueprint),
                     "taskPlan": deepcopy(task_plan),
                     "taskBindings": deepcopy(task_bindings),
                 },
                 parent_run_id=source.run_id,
-                rerun_reason="resume_failed",
+                rerun_reason="node_rerun" if restart_from_step else "resume_failed",
+                **({"persist_run": False, "execution_scope_override": source.execution_scope} if restart_from_step else {}),
             )
             if retry.run_id == source.run_id:
                 raise ValueError("single-step retry cannot reuse the source Run")
@@ -526,6 +618,12 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             "retryTargetStepId": step_id,
             "reusedStepIds": sorted(copied_refs),
         })
+        if restart_from_step:
+            retry.execution_state["nodeRerun"] = {
+                "sourceRunId": source.run_id, "targetStepId": step_id,
+                "invalidatedStepIds": sorted(invalidated),
+                "reusedStepIds": sorted(copied_refs),
+            }
         # A resumed node is a new Attempt even when the operator chooses
         # to keep the same Run identity.  Retaining the failed attempt's
         # generated IDs would replay its projection keys with different
@@ -648,7 +746,24 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             },
         )
         retry.updated_at = utc_now()
+        if reuse_source_run and self.identity_lifecycle is not None:
+            # Persist the retry lifecycle transition itself. Snapshots are read
+            # against current runtime truth during reconciliation, so snapshots
+            # alone can lose FAILED -> RETRYING once execution has advanced.
+            reused_projection_events.append({
+                "eventId": f"run.retry_prepared:{retry.run_id}:{retry.recovery_count}",
+                "eventType": "run.retry_prepared", "aggregateId": retry.run_id,
+                "payload": {"runId": retry.run_id, "recoveryCount": retry.recovery_count},
+            })
+        if not reuse_source_run and isinstance(source.execution_state.get("planningLoop"), dict):
+            from contracts.runtime_planning import successor_planning_state
+            retry.execution_state["planningLoop"] = successor_planning_state(source.execution_state["planningLoop"],
+                self.workflow_store.list_planning_inputs(source.run_id))
         if reused_projection_events:
+            if restart_from_step:
+                from support.stores.workflow_store import lifecycle_run_payload
+                reused_projection_events.insert(0, {"eventId": f"node-rerun-prepared:{retry.run_id}",
+                    "eventType": "run.prepared", "aggregateId": retry.run_id, "payload": lifecycle_run_payload(retry)})
             self.workflow_store.save_run_with_events(retry, reused_projection_events)
         else:
             self.workflow_store.save_run(retry)

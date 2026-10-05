@@ -16,6 +16,7 @@ from components.planner.acg_semantic_validator import validate_bound_acg_semanti
 from contracts.compiled_acg import CompiledACGPackage
 from contracts.execution import WorkflowProgressPhase
 from contracts.planning import TaskImplementationBinding, TaskPlan
+from contracts.task_acceptance import frozen_task_acceptance
 from contracts.recovery import (
     GraphPatchRef,
     GraphPatchResult,
@@ -80,6 +81,7 @@ class SemanticRevisionService(CollaboratorAccess):
         run: RuntimeRunRecord,
     ) -> GraphPatchResult | PreparedSemanticRevision:
         """Validate and compile a replacement without persisting the transition."""
+        frozen_task_acceptance(run)
 
         if (run.runtime_engine or "").strip().lower() != "acg":
             raise ValueError("semantic patching is only available for ACG runs")
@@ -205,7 +207,7 @@ class SemanticRevisionService(CollaboratorAccess):
             "completedStepIds": [],
             "activeStepIds": [],
             "provenance": None,
-            "executionState": self._fresh_replacement_execution_state(run),
+            "executionState": self._fresh_replacement_execution_state(run, self.workflow_store.list_planning_inputs(run.run_id)),
             "runtimeRevision": 0,
             "acgBlueprint": outcome_blueprint.model_dump(by_alias=True, mode="json"),
             "createdAt": now,
@@ -291,6 +293,11 @@ class SemanticRevisionService(CollaboratorAccess):
         else:
             applied_metadata.append(patch_entry)
         outcome_blueprint.metadata["appliedGraphPatches"] = applied_metadata
+        # Patch lineage is part of the canonical blueprint hash. Freeze the
+        # executable package after adding it, not from the pre-commit graph.
+        compiled_package = ACGGraphCompiler().compile_package(
+            outcome_blueprint, run_id=new_run.run_id,
+        )
         new_run.acg_blueprint = outcome_blueprint.model_dump(by_alias=True, mode="json")
         new_run.execution_state.update({
             "workflowVersion": prepared.workflow.version,
@@ -393,7 +400,7 @@ class SemanticRevisionService(CollaboratorAccess):
 
     @staticmethod
     def _fresh_replacement_execution_state(
-        source: RuntimeRunRecord,
+        source: RuntimeRunRecord, pending_inputs=(),
     ) -> dict[str, Any]:
         source_state = (
             source.execution_state if isinstance(source.execution_state, dict) else {}
@@ -410,11 +417,15 @@ class SemanticRevisionService(CollaboratorAccess):
             "plannerAlgorithmVersion",
             "evolutionPolicyVersion",
             "evolutionPolicy",
+            "taskAcceptance",
         )
         fresh: dict[str, Any] = {"engineMigration": "langgraph_pending"}
         for key in inherited_planning_context:
             if key in source_state:
                 fresh[key] = deepcopy(source_state[key])
+        if isinstance(source_state.get("planningLoop"), dict):
+            from contracts.runtime_planning import successor_planning_state
+            fresh["planningLoop"] = successor_planning_state(source_state["planningLoop"], pending_inputs)
         return fresh
 
 

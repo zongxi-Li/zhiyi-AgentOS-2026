@@ -223,7 +223,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         rows = self._fetch_all(
             """SELECT event_id, event_type, aggregate_id, payload, attempts
                FROM lifecycle_outbox WHERE status != 'applied'
-               ORDER BY created_at, event_id LIMIT ?""",
+               ORDER BY created_at, rowid LIMIT ?""",
             (max(1, limit),),
         )
         return [dict(row) for row in rows]
@@ -722,6 +722,8 @@ class SQLiteWorkflowStore(WorkflowStore):
             }:
                 raise RuntimeRunRecordNotTerminalError(run_id, run.status)
             conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM run_copilot_exchanges WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM run_planning_inputs WHERE run_id = ?", (run_id,))
             mission_deleted = False
             if delete_orphan_mission:
                 referenced = conn.execute(
@@ -750,6 +752,15 @@ class SQLiteWorkflowStore(WorkflowStore):
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS run_planning_inputs (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL, payload TEXT NOT NULL,
+                UNIQUE(run_id, operation_id))""")
+            # Conversation bodies stay outside mutable execution snapshots.
+            conn.execute("""CREATE TABLE IF NOT EXISTS run_copilot_exchanges (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL, payload TEXT NOT NULL,
+                UNIQUE(run_id, operation_id))""")
             journal_mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
             if str(journal_mode).lower() != "wal":
                 raise RuntimeError(f"SQLite WAL mode is required, got: {journal_mode}")
@@ -937,6 +948,41 @@ class SQLiteWorkflowStore(WorkflowStore):
         conn.execute("PRAGMA synchronous=FULL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
+
+    def list_copilot_exchanges(self, run_id: str, *, limit: int = 30) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM run_copilot_exchanges WHERE run_id = ? "
+                "ORDER BY sequence DESC LIMIT ?", (run_id, min(max(limit, 1), 100))).fetchall()
+        return [json.loads(row[0]) for row in reversed(rows)]
+
+    def list_planning_inputs(self, run_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM run_planning_inputs WHERE run_id=? ORDER BY sequence", (run_id,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def save_planning_input(self, run_id: str, operation_id: str, payload: dict) -> None:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT payload FROM run_planning_inputs WHERE run_id=? AND operation_id=?", (run_id, operation_id)).fetchone()
+            if row:
+                if json.loads(row[0])["content"] != payload["content"]:
+                    raise ValueError("planning input operation conflict")
+                return
+            if conn.execute("SELECT COUNT(*) FROM run_planning_inputs WHERE run_id=?", (run_id,)).fetchone()[0] >= 32:
+                raise ValueError("planning input budget exhausted")
+            conn.execute("INSERT INTO run_planning_inputs(run_id,operation_id,payload) VALUES(?,?,?)",
+                (run_id, operation_id, json.dumps(payload, ensure_ascii=False)))
+
+    def get_copilot_exchange(self, run_id: str, operation_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload FROM run_copilot_exchanges WHERE run_id=? AND operation_id=?",
+                (run_id, operation_id)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_copilot_exchange(self, run_id: str, operation_id: str, payload: dict) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT INTO run_copilot_exchanges(run_id, operation_id, payload) VALUES(?, ?, ?)",
+                (run_id, operation_id, json.dumps(payload, ensure_ascii=False)))
 
     def checkpoint(self) -> tuple[int, int, int]:
         """在维护操作前刷写已提交 WAL 页，返回 SQLite checkpoint 三元计数。"""

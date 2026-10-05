@@ -133,6 +133,8 @@ Recommend/agent/models/
 backups/
 .tmp-*
 output/frontend-startup-*.md
+# Local AgentOS runtime-loop test logs; architecture reports remain under docs/audits.
+/output/agentos-runtime-loop/
 artifacts/infra-rfc-v1.1/runtime/
 artifacts/windows/
 

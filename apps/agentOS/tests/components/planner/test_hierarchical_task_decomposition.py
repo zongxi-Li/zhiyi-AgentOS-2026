@@ -241,13 +241,14 @@ def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wordin
             requiredCapabilities=["verification"],
             estimatedComplexity=ComplexityLevel.SIMPLE,
         ),
-        task_input={},
+        task_input={"taskAcceptance": {"criteria": [{"criterionId": "declared-document-status", "pointer": "/status", "operator": "equals", "expected": "ready"}]}},
     )
 
     assert '"capabilityId":"verification"' in prompt
     assert '"dependsOn":["task_understanding"]' in prompt
     assert '"capabilityId":"task_understanding"' in prompt
     assert '"planningRequest"' in prompt
+    assert '"taskAcceptance"' in prompt and '"criterionId":"declared-document-status"' in prompt
     assert "Mission contract:" not in prompt
     from adapters.prompt_runtime import planner_system_prompt
     assert "source is the prerequisite or producer" in planner_system_prompt()

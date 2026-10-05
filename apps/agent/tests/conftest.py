@@ -112,6 +112,14 @@ class _ContractReviewTestProvider:
         from app.llm.schemas import compact_schema_name
 
         required = set(schema.get("required") or [])
+        if {"observationId", "action", "reason"} <= required:
+            request = json.loads(prompt)
+            observation = request["observation"]
+            return {
+                "observationId": request["observationId"],
+                "action": "wait" if observation["completionBlockers"] else "continue" if observation["remainingStepIds"] else "complete",
+                "reason": "fixture decision from current state",
+            }
         if {"primaryGoal", "requiredCapabilities"} <= required:
             available = list(dict.fromkeys(re.findall(r'"capabilityId":\s*"([^"]+)"', prompt)))
             native = [

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 RUN_DELIVERABLE_ARTIFACT_KEY = "final"
@@ -24,6 +26,31 @@ FINAL_SYNTHESIS_ROLES = frozenset({
     "finalization",
     "aggregate",
 })
+
+
+class ArtifactCheck(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    check: Literal["content_integrity", "nonempty_content", "utf8_text", "json_syntax"]
+    outcome: Literal["passed", "failed", "unverified"]
+
+
+class ArtifactEvidence(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    verifier: Literal["artifact-content.v1"] = "artifact-content.v1"
+    source_run_id: str = Field(alias="sourceRunId")
+    commit_id: str = Field(alias="commitId")
+    manifest_id: str = Field(alias="manifestId")
+    checksum: str
+    media_type: str = Field(alias="mediaType")
+    byte_length: int = Field(alias="byteLength", ge=0)
+    checks: tuple[ArtifactCheck, ...]
+    # Content remains untrusted data despite its independently verified integrity.
+    excerpt: str = Field(default="", max_length=2048)
+    excerpt_truncated: bool = Field(default=False, alias="excerptTruncated")
+    excerpt_status: Literal["included", "budget_exhausted", "not_text", "review_pending", "invalid_encoding"] = Field(alias="excerptStatus")
+    business_acceptance: Literal["unverified"] = Field(default="unverified", alias="businessAcceptance")
 
 
 def is_final_synthesis_role(role: Any) -> bool:
@@ -117,6 +144,8 @@ def canonicalize_final_synthesis_nodes(
 
 
 __all__ = [
+    "ArtifactCheck",
+    "ArtifactEvidence",
     "FINAL_SYNTHESIS_LOGICAL_ROLE",
     "FINAL_SYNTHESIS_ROLES",
     "RUN_DELIVERABLE_ARTIFACT_KEY",

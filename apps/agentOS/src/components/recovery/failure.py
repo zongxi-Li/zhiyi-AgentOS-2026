@@ -8,6 +8,7 @@ from contracts.recovery import FailureEvent, FailureSource, FailureType
 
 
 _CLASSIFICATIONS: dict[str, tuple[FailureSource, FailureType, str, bool]] = {
+    "ExecutionDeniedError": (FailureSource.AUDIT, FailureType.POLICY, "EXECUTION_AUDIT_DENIED", False),
     "ResourceNotFoundError": (FailureSource.SCHEDULER, FailureType.CAPACITY, "RESOURCE_UNAVAILABLE", True),
     "SchedulerNoEligibleResource": (FailureSource.SCHEDULER, FailureType.CAPACITY, "NO_ELIGIBLE_RESOURCE", False),
     "SchedulerAllocationTimeout": (FailureSource.SCHEDULER, FailureType.CAPACITY, "SCHEDULER_CAPACITY_TIMEOUT", True),

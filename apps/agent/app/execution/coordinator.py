@@ -24,6 +24,8 @@ class RunExecutionCoordinator:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
         self._accepting = True
+        self._wake_signal = asyncio.Event()
+        self._wake_task: asyncio.Task[None] | None = None
 
     async def submit(self, run_id: str) -> bool:
         """Submit one new or explicitly retrying Run once in this process."""
@@ -41,6 +43,7 @@ class RunExecutionCoordinator:
                 return False
             task = asyncio.create_task(self._run_managed(run_id), name=f"workflow-run:{run_id}")
             self._tasks[run_id] = task
+            self._ensure_wait_monitor()
         logger.info("run_submitted", extra={"runId": run_id})
         return True
 
@@ -73,12 +76,53 @@ class RunExecutionCoordinator:
                 flush_identity_outbox(raise_on_failure=False)
             except Exception:
                 logger.exception("identity outbox startup reconciliation crashed")
+        store = getattr(self.runtime, "workflow_store", None)
+        for run in store.list_non_terminal_runs(limit=orphan_limit) if store is not None else ():
+            if run.status.value == "retrying" and (run.execution_state.get("planningLoop") or {}).get("restartPending"):
+                await self.submit(run.run_id)
+        self._ensure_wait_monitor()
+        await self.reconcile_waits()
         return closed
+
+    def notify_state_changed(self) -> None:
+        """A state-change hint only; authoritative ledgers decide whether to wake."""
+        self._wake_signal.set()
+
+    def _ensure_wait_monitor(self) -> None:
+        if not callable(getattr(self.runtime, "prepare_planning_wakeups", None)):
+            return
+        if self._wake_task is None or self._wake_task.done():
+            self._wake_task = asyncio.create_task(self._watch_waits(), name="workflow-planning-waits")
+
+    async def reconcile_waits(self) -> None:
+        prepare = getattr(self.runtime, "prepare_planning_wakeups", None)
+        if prepare is None or not self._accepting:
+            return
+        for run_id in await prepare():
+            await self.submit(run_id)
+
+    async def _watch_waits(self) -> None:
+        while self._accepting:
+            self._wake_signal.clear()
+            try:
+                await self.reconcile_waits()
+            except Exception:
+                logger.exception("Planner wait reconciliation failed")
+            try:
+                # Timers and missed notifications use the same durable checks.
+                # No model is called while a condition remains unsatisfied.
+                await asyncio.wait_for(self._wake_signal.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
 
     async def shutdown(self) -> None:
         async with self._lock:
             self._accepting = False
             tasks = list(self._tasks.values())
+            monitor = self._wake_task
+        if monitor is not None:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
         for task in tasks:
             task.cancel()
         if tasks:

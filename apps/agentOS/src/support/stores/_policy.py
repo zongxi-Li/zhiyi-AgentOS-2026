@@ -34,7 +34,7 @@ def acg_review_subject(payload: object) -> tuple[str, str]:
             subject_type, subject_id = "step", step_id
         elif isinstance(control_id, str) and control_id:
             subject_type, subject_id = "control", control_id
-    if subject_type not in {"step", "control"}:
+    if subject_type not in {"step", "control", "planner"}:
         raise ValueError("ACG review payload has no valid subjectType")
     if not isinstance(subject_id, str) or not subject_id:
         raise ValueError("ACG review payload has no subjectId")
@@ -45,6 +45,8 @@ def acg_review_subject(payload: object) -> tuple[str, str]:
         raise ValueError("ACG step review payload also declares a controlId")
     if subject_type == "control" and step_id is not None:
         raise ValueError("ACG control review payload also declares a stepId")
+    if subject_type == "planner" and (step_id is not None or control_id is not None):
+        raise ValueError("Planner barrier cannot impersonate a step or control review")
     return subject_type, subject_id
 
 
@@ -92,6 +94,12 @@ def validate_run_state(run: RuntimeRunRecord) -> None:
             )
         return
     blueprint = run.acg_blueprint if isinstance(run.acg_blueprint, dict) else {}
+    if subject_type == "planner":
+        if subject_id != blueprint.get("graphId") or not isinstance(run.execution_state.get("planningLoop"), dict):
+            raise ValueError("Planner barrier must belong to this run's graph and planning state")
+        if statuses & {StepStatus.RUNNING, StepStatus.RETRYING, StepStatus.WAITING_REVIEW}:
+            raise ValueError("Planner barrier cannot contain active workers or unresolved node review")
+        return
     nodes = blueprint.get("nodes") if isinstance(blueprint.get("nodes"), list) else []
     subject = next(
         (item for item in nodes if isinstance(item, dict) and item.get("nodeId") == subject_id),

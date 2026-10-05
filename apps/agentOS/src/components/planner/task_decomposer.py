@@ -868,6 +868,7 @@ class TaskDecomposer:
             "objective": (task_input or {}).get("objective") or profile.primary_goal,
             "constraints": (task_input or {}).get("constraints") or profile.key_constraints,
             "expectedArtifacts": (task_input or {}).get("expectedArtifacts") or profile.expected_artifacts,
+            **({"taskAcceptance": task_input["taskAcceptance"]} if (task_input or {}).get("taskAcceptance") else {}),
             "verificationRequirements": profile.verification_requirements,
             "sourceRegistry": [
                 *self._source_registry(profile),

@@ -16,7 +16,8 @@ def test_native_v4_prompt_preserves_planned_task_semantics_without_expression_ca
         source_refs=["meter-data"],
         logical_role="alternative-analysis",
         task_title="Mission",
-        task_input={"constraints": ["budget cap"], "expectedArtifacts": ["cost table"]},
+        task_input={"constraints": ["budget cap"], "expectedArtifacts": ["cost table"],
+            "taskAcceptance": {"criteria": [{"criterionId": "declared-cost-limit", "pointer": "/cost", "operator": "at_most", "expected": 100}]}},
         context_data={},
         source_data={},
         evidence_refs=[],
@@ -29,6 +30,7 @@ def test_native_v4_prompt_preserves_planned_task_semantics_without_expression_ca
     assert "Calculate candidate A lifecycle cost" in prompt
     assert "Formula, inputs, units and assumptions are present" in prompt
     assert "budget cap" in prompt and "cost table" in prompt
+    assert '"taskAcceptance"' in prompt and '"criterionId":"declared-cost-limit"' in prompt
     assert '"requestType":"ExecutionRequest"' in prompt
     assert '"trustClass":"runtime_authoritative"' in prompt
     assert "at most 8" not in prompt

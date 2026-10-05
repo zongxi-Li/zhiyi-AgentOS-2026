@@ -499,7 +499,8 @@ def test_native_agent_maps_persisted_fragments_and_reduces_as_balanced_tree(tmp_
     assert "reduced in 2 level(s)" in result.summary
 
 
-def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -> None:
+@pytest.mark.parametrize("json_requirement", [False, True], ids=["markdown", "json-acceptance"])
+def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly(json_requirement, tmp_path) -> None:
     agent = NativeGeneralAgent()
     model = _ArtifactRecoveryModel()
     descriptor = build_default_capability_catalog().get("artifact_generation")
@@ -510,6 +511,13 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
     run = RuntimeRunRecord(
         missionId=task.mission_id, workflowId="native", domain="general", runtimeEngine="acg"
     )
+    if json_requirement:
+        from contracts.task_acceptance import TaskAcceptanceSpec
+        spec = TaskAcceptanceSpec(criteria=({"criterionId": "required-second-section", "pointer": "/sections/1/content",
+            "operator": "exists"},))
+        task.input["taskAcceptance"] = spec.model_dump(by_alias=True, mode="json")
+        run.input["taskAcceptance"] = spec.model_dump(by_alias=True, mode="json")
+        run.execution_state["taskAcceptance"] = spec.model_dump(by_alias=True, mode="json")
     context = AgentRunContext(
         task=task,
         run=run,
@@ -551,6 +559,20 @@ def test_artifact_output_exhaustion_uses_sections_and_deterministic_assembly() -
     assert result.output["artifact"]["metadata"]["logicalRole"] == "final_synthesis"
     assert result.output["verification"]["status"] == "passed"
     assert len(result.model_invocations) == 5
+    assert result.output["artifact"]["mediaType"] == ("application/json" if json_requirement else "text/markdown")
+    if json_requirement:
+        from components.auditor.artifact_acceptance import inspect_artifact
+        from components.auditor.task_acceptance import evaluate_task_acceptance
+        assert json.loads(result.output["artifact"]["content"]) == result.output["deliverable"]
+        store = SQLiteContentManifestStore(tmp_path / "native-artifact.sqlite3")
+        manifest = store.create_from_bytes(content=result.output["artifact"]["content"].encode(),
+            kind=ContentKind.ARTIFACT, owner_type="run", owner_id=run.run_id, media_type="application/json")
+        evidence, _ = inspect_artifact(store=store, artifact={"manifestId": manifest.manifest_id, "checksum": manifest.checksum},
+            owner_id=run.run_id, commit_id="commit:artifact", excerpt_budget=0, review_resolved=True)
+        check, = evaluate_task_acceptance(store=store, spec=spec, candidates=[{
+            "artifactKey": "final", "taskKey": "delivery", "evidence": evidence, "reviewResolved": True}])
+        assert check.outcome == "passed" and check.scope == "document_requirement"
+        store.close()
 
 
 def test_generic_output_exhaustion_decomposes_and_pairwise_reduces() -> None:

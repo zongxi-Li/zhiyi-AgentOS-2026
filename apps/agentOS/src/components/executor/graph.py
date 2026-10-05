@@ -73,6 +73,10 @@ class ACGChannelError(ValueError):
     """同一 Pregel 轮次对一个单值状态通道进行了非法的并发写入。"""
 
 
+class ExecutionDeniedError(RuntimeError):
+    """The existing audit authority rejected a result before graph admission."""
+
+
 class ACGSuperstepError(RuntimeError):
     """一个超步内发生节点异常后，携带失败与已取消步骤标识。"""
 
@@ -581,7 +585,7 @@ class ACGExecutionGraph:
         # 严重风险由审计器给出 deny。此时节点结果不能进入 State，也不能产生
         # outputRef、memoryRef 或下游调度条件；Runtime 会将该异常收敛为失败。
         if result.get("auditOutcome") == "deny":
-            raise RuntimeError(
+            raise ExecutionDeniedError(
                 f"execution denied at {step_id}: {result.get('auditDecisionRef') or 'policy decision'}"
             )
         if isinstance(result.get("routeValue"), dict):

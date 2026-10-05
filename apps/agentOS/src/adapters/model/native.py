@@ -23,6 +23,7 @@ from contracts.artifacts import (
     final_synthesis_output_schema,
 )
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, utc_now
+from contracts.task_acceptance import frozen_task_acceptance
 from adapters.model.native_prompt import (
     NativeCapabilityPromptBuilder,
     prompt_version_for_capability,
@@ -1265,12 +1266,22 @@ class NativeGeneralAgent(BaseAgent):
         artifact_identity = canonicalize_artifact_identity(
             {"artifactKey": requested_key}, context.step.logical_role
         )
+        # Preserve the native semantic output and its Markdown user answer.
+        # A caller's document predicates select a sealed JSON projection of
+        # that same deliverable, rather than a second model-generated body.
+        acceptance = frozen_task_acceptance(context.run)
+        task_key = next((b.get("planNodeKey") for b in context.run.execution_state.get("taskBindings", [])
+            if b.get("acgNodeId") == context.step.step_id), None)
+        json_document = acceptance is not None and any(
+            c.artifact_key == artifact_identity["artifactKey"] and (c.task_key is None or c.task_key == task_key)
+            for c in acceptance.criteria
+        )
         normalized["artifact"] = {
             "artifactId": artifact_id,
             **artifact_identity,
             "title": str(deliverable.get("title") or context.task.title),
-            "mediaType": "text/markdown",
-            "content": final_answer,
+            "mediaType": "application/json" if json_document else "text/markdown",
+            "content": json.dumps(deliverable, ensure_ascii=False, allow_nan=False) if json_document else final_answer,
             "structuredData": deliverable,
         }
         # Keep the singular envelope for the existing runtime contract while

@@ -49,6 +49,7 @@ from contracts.planning import (
     TaskImplementationBinding,
     TaskPlan,
 )
+from contracts.task_acceptance import frozen_task_acceptance
 from components.planner.acg_semantic_validator import (
     validate_bound_acg_semantics,
 )
@@ -97,7 +98,7 @@ from components.planner.service import (
     normalize_capability_profile,
 )
 from runtime.binding import RuntimeBindingService
-from runtime.acg_execution import ACGExecutionService, ExecutionRunCancelled
+from runtime.acg_execution import ACGExecutionService, ExecutionRunCancelled, ExecutionStateChanged
 from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 from runtime.review import ReviewConflictError, ReviewService
 from runtime.runtime_recovery import RuntimeRecoveryCoordinator
@@ -106,6 +107,8 @@ from runtime.state_persistence import (
     ACGStatePersistenceService,
     acg_execution_state_from_run,
 )
+from runtime.planning_loop import RuntimePlanningCoordinator
+from runtime.planning_application import RuntimePlanningApplication
 from runtime.dependencies import PluginScopeError, PluginScopeResolver
 from support.packs.registry import register_installed_packs
 from adapters.model.native import register_native_runtime
@@ -441,6 +444,27 @@ class ExecutionRuntime(CollaboratorAccess):
             mark_running_for_new_run=self.mission_manager.mark_running_for_new_run,
             mark_completed=self.mission_manager.mark_completed,
             mark_waiting_review=self.mission_manager.mark_waiting_review,
+            observe_boundary=lambda run, state, reason: self.runtime_planning_coordinator.boundary(run, state, reason),
+        )
+        self.runtime_planning_coordinator = RuntimePlanningCoordinator(
+            collaborators=self.ports,
+            load_goal=lambda mission_id: self.mission_manager.get_mission(mission_id).title,
+            planner_for_run=self._planning_engine_for_run,
+            validate_references=self._validate_acg_state_references,
+            apply_decision=self._apply_runtime_planning_decision,
+            guarded_save=self._save_runtime_planning_round,
+        )
+        self.runtime_planning_application = RuntimePlanningApplication(
+            collaborators=self.ports, state_persistence=self.acg_state_persistence,
+            recovery=self.runtime_recovery_coordinator, binding=self.runtime_binding_service,
+            semantic_revision=self.semantic_revision_service, mission_manager=self.mission_manager,
+            set_lifecycle=self._set_run_lifecycle, flush_identity=self._flush_identity_outbox,
+        )
+        from runtime.planning_wait import RuntimePlanningWaitService
+        self.runtime_planning_wait_service = RuntimePlanningWaitService(
+            collaborators=self.ports, state_machine=self.state_machine,
+            validate_references=self._validate_acg_state_references,
+            flush_identity=self._flush_identity_outbox,
         )
         self.run_lock_manager = run_lock_manager or GLOBAL_RUN_LOCK_MANAGER
         # 每个 run 同时只允许一个活跃执行体：并发 start/resume/审核恢复在入口处
@@ -601,6 +625,8 @@ class ExecutionRuntime(CollaboratorAccess):
         input_override: Optional[dict] = None,
         parent_run_id: Optional[str] = None,
         rerun_reason: Optional[str] = None,
+        persist_run: bool = True,
+        execution_scope_override: RunExecutionScope | None = None,
     ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
         """持久化可查询运行；API 可把耗时 ACG 规划交给同一 Runtime 的后台阶段。"""
 
@@ -630,6 +656,8 @@ class ExecutionRuntime(CollaboratorAccess):
             intent=task.intent,
         )
         scope = self.plugin_scope_resolver.build_scope(resolved_plugins)
+        if execution_scope_override is not None:
+            scope = execution_scope_override.model_copy(deep=True)
         workflow = self._resolve_workflow(
             task,
             workflow_id,
@@ -648,6 +676,15 @@ class ExecutionRuntime(CollaboratorAccess):
         run_input = dict(task.input)
         if input_override is not None:
             run_input.update(input_override)
+        if run_input.get("taskAcceptance") is None:
+            run_input.pop("taskAcceptance", None)
+        if "taskAcceptance" in run_input:
+            from contracts.task_acceptance import TaskAcceptanceSpec
+            if not is_acg:
+                raise ValueError("task acceptance requires the ACG Runtime Loop")
+            run_input["taskAcceptance"] = TaskAcceptanceSpec.model_validate(
+                run_input["taskAcceptance"]
+            ).model_dump(by_alias=True, mode="json")
         capability_profile = normalize_capability_profile(run_input.get("capabilityProfile"))
         run_input["capabilityProfile"] = capability_profile
         planning_diversity = normalize_planning_diversity(
@@ -692,6 +729,7 @@ class ExecutionRuntime(CollaboratorAccess):
             executionScope=scope,
             legacyPluginScope=False,
             executionState={
+                **({"taskAcceptance": deepcopy(run_input["taskAcceptance"])} if "taskAcceptance" in run_input else {}),
                 **({"engineMigration": "langgraph_pending"} if is_acg else {}),
                 **({"parentRunId": parent_run_id, "sourceRunId": parent_run_id} if parent_run_id else {}),
                 **({"rerunReason": rerun_reason} if rerun_reason else {}),
@@ -736,8 +774,11 @@ class ExecutionRuntime(CollaboratorAccess):
                 ],
             },
         )
-        self.workflow_store.save_run(run)
+        if persist_run:
+            self.workflow_store.save_run(run)
         if (
+            persist_run
+            and
             self.identity_lifecycle is not None
             and is_acg
             and not defer_acg_planning
@@ -753,6 +794,13 @@ class ExecutionRuntime(CollaboratorAccess):
             },
         )
         return task, run
+
+    def prepare_node_rerun(self, source_run_id: str, step_id: str, **kwargs) -> RuntimeRunRecord:
+        """Create a successor with the selected dependency cut invalidated."""
+        with self.run_lock_manager.lock_for(source_run_id):
+            return self.runtime_recovery_coordinator.prepare_single_step_retry(
+                source_run_id, step_id, restart_from_step=True, **kwargs,
+            )
 
     def prepare_single_step_retry(
         self,
@@ -791,6 +839,7 @@ class ExecutionRuntime(CollaboratorAccess):
         scope: RunExecutionScope,
     ) -> None:
         """Run the existing L1-L3 plan/build/compile path for one persisted Run."""
+        frozen_task_acceptance(run)
         provided_explicit = run.input.get("acgBlueprint") or run.acg_blueprint or None
         explicit_blueprint = isinstance(provided_explicit, dict) and bool(provided_explicit.get("nodes"))
         # 显式 Blueprint 兼容入口（必须同时提供 taskPlan/bindings）没有 Planner
@@ -863,7 +912,10 @@ class ExecutionRuntime(CollaboratorAccess):
         )
         if self.identity_lifecycle is not None and task_plan is None:
             raise ValueError("identity-enabled ACG execution requires Planner output")
+        if run.execution_state.get("taskAcceptance") is not None and task_plan is None:
+            raise ValueError("task acceptance requires a persisted TaskPlan")
         run.execution_state.pop("planningDeferred", None)
+        self.runtime_planning_coordinator.initialize(run)
         if task_plan is not None and not explicit_blueprint:
             self._append_planner_event(run, {"kind": "completed"})
 
@@ -930,6 +982,7 @@ class ExecutionRuntime(CollaboratorAccess):
                     isinstance(run.execution_state.get("singleStepRetry"), dict)
                     or isinstance(run.execution_state.get("checkpointResume"), dict)
                     or isinstance(run.execution_state.get("inPlaceRetry"), dict)
+                    or isinstance(run.execution_state.get("planningLoop"), dict)
                 )
                 else None
             )
@@ -987,15 +1040,52 @@ class ExecutionRuntime(CollaboratorAccess):
         """
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
+        frozen_task_acceptance(run)
         if not self._claim_execution_slot(run.run_id):
             raise ValueError(f"run {run.run_id} already has an active execution")
-        try:
-            return await self.acg_execution_service.execute(
-                run, state=state, command=command
-            )
-        finally:
-            self._release_execution_slot(run.run_id)
-            self._discard_run_cancellation(run.run_id)
+        while True:
+            executed_run_id = run.run_id
+            try:
+                result = await self.acg_execution_service.execute(run, state=state, command=command)
+            finally:
+                self._release_execution_slot(executed_run_id)
+                self._discard_run_cancellation(executed_run_id)
+            successor_id = result.execution_state.get("supersededByRunId")
+            if result.status == WorkflowStatus.SUPERSEDED and successor_id and isinstance(result.execution_state.get("planningLoop"), dict):
+                run = self.workflow_store.get_run(successor_id)
+            elif result.status == WorkflowStatus.RETRYING and isinstance(result.execution_state.get("planningLoop"), dict):
+                run = result
+            else:
+                return result
+            frozen_task_acceptance(run)
+            if not self._claim_execution_slot(run.run_id):
+                raise ValueError(f"run {run.run_id} already has an active execution")
+            state = acg_execution_state_from_run(run)
+            command = None
+
+    def _save_runtime_planning_round(self, run: RuntimeRunRecord) -> None:
+        """Model calls run outside the lock; stale/cancelled decisions cannot commit."""
+        with self.run_lock_manager.lock_for(run.run_id):
+            self._assert_runtime_planning_current(run)
+            run.runtime_revision += 1
+            run.updated_at = utc_now()
+            self.workflow_store.save_run(run)
+
+    def _assert_runtime_planning_current(self, run: RuntimeRunRecord) -> None:
+        latest = self.workflow_store.get_run(run.run_id)
+        if latest.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run.run_id):
+            raise ExecutionRunCancelled("runtime planning stopped by terminal lifecycle")
+        if latest.runtime_revision != run.runtime_revision:
+            raise ExecutionStateChanged("runtime changed while Planner was deciding")
+        known = {(i.get("sourceRunId"), i.get("operationId")) for i in (run.execution_state.get("planningLoop") or {}).get("userInputs", [])}
+        if any((i["sourceRunId"], i["operationId"]) not in known for i in self.workflow_store.list_planning_inputs(run.run_id)):
+            raise ExecutionStateChanged("operator input arrived while Planner was deciding")
+
+    async def _apply_runtime_planning_decision(self, run, state, observation, decision, loop) -> str:
+        """Retain lifecycle locking; deterministic application lives in its service."""
+        async with self.run_lock_manager.lock_for(run.run_id):
+            self._assert_runtime_planning_current(run)
+            return self.runtime_planning_application.apply(run, state, observation, decision, loop)
 
     def _project_acg_event(
         self, run: RuntimeRunRecord, state: ACGExecutionState, event: dict
@@ -1693,7 +1783,70 @@ class ExecutionRuntime(CollaboratorAccess):
 
     async def close_orphaned_runs(self, *, limit: int = 200) -> list[str]:
         """Delegate restart recovery while retaining the public facade API."""
+        await self._recover_pending_planning_transitions(limit=limit)
         return self.runtime_recovery_coordinator.close_orphaned_runs(limit=limit)
+
+    async def prepare_planning_wakeups(self, *, page_size: int = 200, now=None) -> list[str]:
+        """Reconcile stored waits with current authorities; never call a model.
+
+        Use the existing paged Run query so older waits cannot be starved by
+        the latest N active Runs. Collect ids before changing query membership.
+        """
+        if not 1 <= page_size <= 500:
+            raise ValueError("planning wakeup page_size must be between 1 and 500")
+        candidates, page = [], 1
+        while True:
+            result = self.workflow_store.list_runs(statuses=(WorkflowStatus.WAITING_REVIEW, WorkflowStatus.RETRYING),
+                page=page, page_size=page_size)
+            candidates.extend(r.run_id for r in result.items if
+                (r.execution_state.get("planningLoop") or {}).get("waiting")
+                or (r.execution_state.get("planningLoop") or {}).get("userInputPending")
+                or self.workflow_store.list_planning_inputs(r.run_id))
+            if page * page_size >= result.total:
+                break
+            page += 1
+            await asyncio.sleep(0)
+        ready = []
+        for run_id in candidates:
+            async with self.run_lock_manager.lock_for(run_id):
+                with self._execution_slot_guard:
+                    active = run_id in self._active_execution_slots
+                if active:
+                    continue
+                try:
+                    run = self.workflow_store.get_run(run_id)
+                    if self.runtime_planning_wait_service.prepare(run, now=now):
+                        ready.append(run_id)
+                except (ValueError, KeyError):
+                    # Corrupt wait metadata must neither execute nor block other waits.
+                    logger.exception("Planner wait reconciliation rejected", extra={"runId": run_id})
+        return ready
+
+    async def _recover_pending_planning_transitions(self, *, limit: int) -> None:
+        """Replay durable decisions interrupted between authority applications."""
+        from contracts.runtime_planning import RuntimePlanningState
+        for run in self.workflow_store.list_all_runs(limit=limit):
+            raw = run.execution_state.get("planningLoop")
+            if not isinstance(raw, dict):
+                continue
+            loop = RuntimePlanningState.model_validate(raw)
+            current = loop.current
+            if current is None or current.decision is None or current.status != "applied":
+                continue
+            if run.status == WorkflowStatus.FAILED and current.decision.action == "recover":
+                key = f"planner:{current.observation_id}"
+                if key in (run.execution_state.get("inPlaceRetryRequests") or {}):
+                    continue
+                self.prepare_single_step_retry(
+                    run.run_id, current.observation.failed_step_ids[0], reason="runtime_planner",
+                    idempotency_key=key, idempotency_fingerprint=current.observation_id,
+                    reuse_source_run=True,
+                )
+            elif run.status == WorkflowStatus.WAITING_REVIEW and current.decision.action == "revise" and (run.execution_state.get("reviewPayload") or {}).get("subjectType") == "planner":
+                await self._apply_runtime_planning_decision(
+                    run, acg_execution_state_from_run(run), current.observation,
+                    current.decision, loop,
+                )
 
 
     @staticmethod

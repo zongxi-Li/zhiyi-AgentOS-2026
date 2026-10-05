@@ -78,6 +78,8 @@ class ReviewService(CollaboratorAccess):
             raise ValueError("review checkpoint does not exist for this run")
         restored = ACGExecutionState.model_validate(checkpoint_data)
         subject_type, subject_id = acg_review_subject(restored.review_payload)
+        if subject_type == "planner" and (restored.review_payload or {}).get("question"):
+            raise ReviewConflictError("Planner clarification requires an answer, not review approval")
         if decision.step_id != subject_id:
             raise ReviewConflictError("review decision does not match the persisted ACG subject")
         step = run.get_step(subject_id) if subject_type == "step" else None

@@ -34,7 +34,7 @@ from components.executor import (
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
 from components.mission_manager.state_machine import StateMachine
-from contracts.resource import BindingRequirement, DeploymentTier
+from contracts.resource import BindingRequirement, DeploymentTier, ExecutionBinding
 from contracts.execution import WorkflowProgressPhase
 from contracts.workflow import (
     RuntimeMissionRecord,
@@ -78,6 +78,10 @@ class ExecutionRunCancelled(RuntimeError):
     """
 
 
+class ExecutionStateChanged(RuntimeError):
+    """A concurrent authority changed the state observed by runtime planning."""
+
+
 class ACGExecutionService(CollaboratorAccess):
     """执行一个已物化的 canonical ACG Run，或从检查点恢复继续推进。
 
@@ -111,6 +115,7 @@ class ACGExecutionService(CollaboratorAccess):
         mark_running_for_new_run: Callable[[RuntimeMissionRecord, str], None],
         mark_completed: Callable[[RuntimeMissionRecord], None],
         mark_waiting_review: Callable[[RuntimeMissionRecord], None],
+        observe_boundary: Callable[..., Awaitable[str]] | None = None,
     ) -> None:
         # 端口：与 facade 共享的窄回调，命名保持原调用点语义。
         self._load_mission = load_mission
@@ -127,6 +132,7 @@ class ACGExecutionService(CollaboratorAccess):
         self._mark_completed = mark_completed
         self._mark_waiting_review = mark_waiting_review
         self._record_execution_failure = record_execution_failure
+        self._observe_boundary = observe_boundary
         # 协作者经共享上下文按引用读取：facade 属性写入即时可见，无派发前重对齐。
         self.state_machine = state_machine
         self.state_persistence = state_persistence
@@ -151,6 +157,11 @@ class ACGExecutionService(CollaboratorAccess):
         """
         if run.status in self._terminal_run_statuses:
             return run
+        is_resuming = state is not None and (
+            run.status in {WorkflowStatus.RUNNING, WorkflowStatus.RETRYING, WorkflowStatus.WAITING_REVIEW}
+            or bool(state.completed_step_ids or state.checkpoint_id)
+            or bool(run.execution_state.get("checkpointResume"))
+        )
         task = self._load_mission(run.mission_id)
         workflow = self._load_workflow(run)
         blueprint_data = run.acg_blueprint
@@ -208,6 +219,19 @@ class ACGExecutionService(CollaboratorAccess):
             self._mark_running(task)
         cancel_requested = self._cancellation_event(run.run_id)
         try:
+            if self._observe_boundary is not None and (is_resuming or command is not None):
+                # Human/control review is resolved by the graph's resume command,
+                # before Planner may observe it. Planner never approves a review.
+                if command is not None:
+                    graph._prepare_resume(execution_state, command)
+                    command = None
+                wake_reason = "restart" if (run.execution_state.get("planningLoop") or {}).get("restartPending") else "resume"
+                boundary_action = await self._observe_boundary(run, execution_state, wake_reason)
+                if boundary_action == "stop":
+                    return run
+                if boundary_action == "complete":
+                    self.state_persistence.persist(run, execution_state)
+                    return self._complete_run(run, execution_state, blueprint, task)
             stream = (
                 graph.astream(execution_state, scheduled_runner)
                 if command is None
@@ -223,26 +247,27 @@ class ACGExecutionService(CollaboratorAccess):
                 ):
                     break
                 self._project_event(run, execution_state, event)
+                if self._observe_boundary is not None and event.get("type") == "superstep_completed":
+                    if await self._observe_boundary(run, execution_state, "progress") == "stop":
+                        await stream.aclose()
+                        return run
             if cancel_requested.is_set():
                 return await self._finalize_cancelled_run(run, execution_state)
             self.state_persistence.persist(run, execution_state)
-            run.output = self._acg_output(execution_state, blueprint)
-            run = self._set_run_lifecycle(
-                run,
-                status=WorkflowStatus.COMPLETED,
-                phase=WorkflowProgressPhase.COMPLETED,
-                message=self._lifecycle_messages[WorkflowProgressPhase.COMPLETED],
-            )
-            self._mark_completed(task)
-            self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
-            self.workflow_store.save_run(run)
-            self._publish_run_terminal_event(run, "run.completed")
-            if self.identity_lifecycle is not None:
-                self._flush_identity_outbox()
-            return run
+            if self._observe_boundary is not None:
+                if await self._observe_boundary(run, execution_state, "exhausted") != "complete":
+                    return run
+            return self._complete_run(run, execution_state, blueprint, task)
         except ExecutionRunCancelled:
             # 节点执行体在调度边界感知到取消；与主循环 break 走同一条收敛路径。
             return await self._finalize_cancelled_run(run, execution_state)
+        except ExecutionStateChanged:
+            latest = self.workflow_store.get_run(run.run_id)
+            if latest.status in self._terminal_run_statuses or latest.status == WorkflowStatus.WAITING_REVIEW:
+                return latest
+            latest = self._set_run_lifecycle(latest, status=WorkflowStatus.RETRYING, phase=WorkflowProgressPhase.RECOVERY)
+            self.workflow_store.save_run(latest)
+            return latest
         except ExecutionInterrupt as interrupt:
             self.state_persistence.persist(run, execution_state)
             checkpoint_id = self.state_persistence.save_checkpoint(
@@ -287,6 +312,29 @@ class ACGExecutionService(CollaboratorAccess):
             # 失败投影与 recoveryOutcome 持久化归 RuntimeRecoveryCoordinator；
             # 本服务只负责检测失败并收敛安全终态（端口由 facade 接线）。
             self._record_execution_failure(run, execution_state, exc)
+            if self._observe_boundary is not None and isinstance(run.execution_state.get("planningLoop"), dict):
+                execution_state.active_step_ids = []
+                self.state_persistence.persist(run, execution_state)
+                try:
+                    await self._observe_boundary(run, execution_state, "failure")
+                except ExecutionRunCancelled:
+                    return await self._finalize_cancelled_run(run, execution_state)
+                except ExecutionStateChanged:
+                    latest = self.workflow_store.get_run(run.run_id)
+                    if latest.status not in self._terminal_run_statuses and latest.status != WorkflowStatus.WAITING_REVIEW:
+                        latest = self._set_run_lifecycle(latest, status=WorkflowStatus.RETRYING, phase=WorkflowProgressPhase.RECOVERY)
+                        self.workflow_store.save_run(latest)
+                    return latest
+                except Exception:
+                    # Invalid commit/audit/manifest references cannot be laundered
+                    # into a new planning observation via the failure path.
+                    await self._fail_run_safely(run.run_id,
+                        error_code="runtime_observation_invalid",
+                        error_message="Cannot form a trustworthy runtime planning observation")
+                    raise
+                if run.status == WorkflowStatus.FAILED:
+                    raise
+                return run
             await self._fail_run_safely(
                 run.run_id,
                 error_code="acg_execution_failed",
@@ -977,6 +1025,20 @@ class ACGExecutionService(CollaboratorAccess):
                     outcomes={outcome},
                 )
 
+    def _complete_run(self, run, state, blueprint, task):
+        """Finalize through the same lifecycle after an authorized completion."""
+        run.output = self._acg_output(state, blueprint)
+        run = self._set_run_lifecycle(run, status=WorkflowStatus.COMPLETED,
+            phase=WorkflowProgressPhase.COMPLETED,
+            message=self._lifecycle_messages[WorkflowProgressPhase.COMPLETED])
+        self._mark_completed(task)
+        self.trace_store.append(run, TraceEventType.RUN_COMPLETED, observation="ACG workflow completed")
+        self.workflow_store.save_run(run)
+        self._publish_run_terminal_event(run, "run.completed")
+        if self.identity_lifecycle is not None:
+            self._flush_identity_outbox()
+        return run
+
     def _build_runner(
         self,
         *,
@@ -1004,6 +1066,12 @@ class ACGExecutionService(CollaboratorAccess):
                 # allocation. Preparation must not force a concrete resource.
                 continue
             node_binding = node_agent_bindings.get(step_id)
+            if not isinstance(node_binding, dict):
+                persisted = (run.execution_state.get("executionBindings") or {}).get(step_id)
+                if isinstance(persisted, dict):
+                    binding = ExecutionBinding.model_validate(persisted)
+                    if binding.resource_id == resource_id:
+                        node_binding = binding.metadata
             node_id = str(node_binding.get("nodeId") or "") if isinstance(node_binding, dict) else ""
             agent_id = str(node_binding.get("agentId") or resource_id) if isinstance(node_binding, dict) else resource_id
             adapter = self._node_execution_adapter(node_id) if node_id else None

@@ -163,6 +163,7 @@ class NativeCapabilityPromptBuilder:
         for source_key, target_key in (
             ("constraints", "constraints"),
             ("expectedArtifacts", "expectedArtifacts"),
+            ("taskAcceptance", "taskAcceptance"),
         ):
             value = task_input.get(source_key)
             if value:

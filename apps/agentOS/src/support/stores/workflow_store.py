@@ -232,6 +232,24 @@ def lifecycle_run_event_type(run: RuntimeRunRecord) -> str | None:
 class WorkflowStore(ABC):
     """RuntimeMissionRecord 和 RuntimeRunRecord 状态的持久化边界。"""
 
+    def list_planning_inputs(self, run_id: str) -> list[dict]:
+        """Durable operator input inbox; separate from bounded chat history."""
+        raise NotImplementedError
+
+    def save_planning_input(self, run_id: str, operation_id: str, payload: dict) -> None:
+        raise NotImplementedError
+
+    def list_copilot_exchanges(self, run_id: str, *, limit: int = 30) -> list[dict]:
+        """Bounded read of conversation bodies, separate from Run snapshots."""
+        raise NotImplementedError
+
+    def get_copilot_exchange(self, run_id: str, operation_id: str) -> dict | None:
+        raise NotImplementedError
+
+    def save_copilot_exchange(self, run_id: str, operation_id: str, payload: dict) -> None:
+        """Append an immutable, idempotency-keyed successful conversation exchange."""
+        raise NotImplementedError
+
     @abstractmethod
     def save_mission(self, task: RuntimeMissionRecord) -> None:
         """持久化任务；实现应定义覆盖和并发语义。"""

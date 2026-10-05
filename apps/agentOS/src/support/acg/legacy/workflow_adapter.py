@@ -68,6 +68,7 @@ def promote_workflow_to_acg(
             stepType="agent",
             goal=definition.name,
             capability=definition.capability,
+            logicalRole=definition.logical_role,
             inputSpec=dict(definition.input),
             outputSpec=dict(definition.output_spec),
             reviewRequired=definition.review_required,
