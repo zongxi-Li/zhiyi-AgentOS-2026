@@ -50,6 +50,7 @@ from runtime.v2.workspace import (
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
+from contracts.runtime_events import RuntimeEvent
 from components.attachments import AttachmentError
 from contracts.attachments import InputAttachmentStatus
 from app.api.agentos_contracts import (
@@ -2496,9 +2497,22 @@ def create_router(
     async def stream_runtime_events(run_id: str):
         # Authorize before opening the long-lived broker subscription.  The
         # broker is run-scoped, but it is not an access-control boundary.
-        load_run(run_id)
+        run = load_run(run_id)
 
         async def body():
+            terminal_event = {
+                "completed": "run.completed",
+                "failed": "run.failed",
+                "cancelled": "run.cancelled",
+            }.get(run.status.value)
+            if terminal_event:
+                event = RuntimeEvent(
+                    eventType=terminal_event, runId=run_id, sequence=0,
+                    payload={"status": run.status.value},
+                )
+                payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+                yield f"event: {event.event_type}\ndata: {payload}\n\n"
+                return
             try:
                 async for event in runtime_event_broker.subscribe(run_id):
                     payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)

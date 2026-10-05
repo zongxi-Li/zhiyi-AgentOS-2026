@@ -24,4 +24,11 @@ class RuntimeEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-__all__ = ["RuntimeEvent"]
+# Live progress is disposable; durable lifecycle events carry references and summaries.
+TRANSIENT_RUNTIME_EVENT_TYPES = frozenset({
+    "model.output.delta", "model.activity", "planner.model.activity",
+    "planner.model.output.delta", "planner.draft.updated",
+})
+
+
+__all__ = ["RuntimeEvent", "TRANSIENT_RUNTIME_EVENT_TYPES"]

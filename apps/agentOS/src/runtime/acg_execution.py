@@ -67,6 +67,7 @@ from support.stores._policy import acg_review_subject
 from runtime.execution_migration import ExecutionEngineMigratingError
 from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 from runtime.state_persistence import ACGStatePersistenceService
+from contracts.runtime_events import TRANSIENT_RUNTIME_EVENT_TYPES
 
 
 class ExecutionRunCancelled(RuntimeError):
@@ -1192,6 +1193,8 @@ class ACGExecutionService(CollaboratorAccess):
             ]
             for runtime_event in event.get("runtimeEvents") or []:
                 if not isinstance(runtime_event, dict):
+                    continue
+                if runtime_event.get("eventType") in TRANSIENT_RUNTIME_EVENT_TYPES:
                     continue
                 target = runtime_event.get("nodeId") or step_id
                 payload = {key: value for key, value in runtime_event.items() if key not in {"eventId", "eventType", "runId", "nodeId"}}

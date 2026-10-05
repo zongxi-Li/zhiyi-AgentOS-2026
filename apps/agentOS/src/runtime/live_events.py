@@ -6,16 +6,10 @@ from threading import Lock
 from collections import defaultdict
 from typing import AsyncIterator
 
-from contracts.runtime_events import RuntimeEvent
+from contracts.runtime_events import RuntimeEvent, TRANSIENT_RUNTIME_EVENT_TYPES
 
 
-COALESCIBLE_EVENT_TYPES = frozenset({
-    "model.output.delta",
-    "model.activity",
-    "planner.model.activity",
-    "planner.model.output.delta",
-    "planner.draft.updated",
-})
+COALESCIBLE_EVENT_TYPES = TRANSIENT_RUNTIME_EVENT_TYPES
 
 CRITICAL_EVENT_TYPES = frozenset({
     "node.completed",

@@ -30,6 +30,7 @@ from adapters.model.native_prompt import (
 from support.acg.native_capabilities import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
 from components.communicator.contracts import ContextPack, input_revision
 from runtime.live_events import runtime_event_broker
+from contracts.runtime_events import TRANSIENT_RUNTIME_EVENT_TYPES
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"
@@ -372,10 +373,11 @@ class NativeGeneralAgent(BaseAgent):
                     prompt_version=base_prompt_version,
                     commit_id=context.commit_id,
                 ):
-                    event_record = runtime_event.model_dump(by_alias=True, mode="json")
-                    if runtime_event.event_type == "model.completed":
-                        event_record["payload"] = {k: v for k, v in runtime_event.payload.items() if k != "data"}
-                    runtime_events.append(event_record)
+                    if runtime_event.event_type not in TRANSIENT_RUNTIME_EVENT_TYPES:
+                        event_record = runtime_event.model_dump(by_alias=True, mode="json")
+                        if runtime_event.event_type == "model.completed":
+                            event_record["payload"] = {k: v for k, v in runtime_event.payload.items() if k != "data"}
+                        runtime_events.append(event_record)
                     await runtime_event_broker.publish(context.run.run_id, runtime_event)
                     if runtime_event.event_type == "model.completed":
                         stream_completed_payload = dict(runtime_event.payload)

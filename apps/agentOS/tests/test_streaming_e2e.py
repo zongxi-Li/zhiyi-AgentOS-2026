@@ -30,6 +30,7 @@ class _FakeStreamingProvider:
             ("node.started", {}),
             ("model.started", {"provider": "fake", "model": "fake-1"}),
             ("model.first_token", {}),
+            ("model.activity", {"receivedChunks": 1}),
             ("model.output.delta", {"delta": '{"task_summary":"ok"}'}),
             ("model.completed", {"data": {"task_summary": "ok", "constraints": [], "success_criteria": [], "assumptions": [], "open_questions": []}}),
             ("node.completed", {}),
@@ -53,14 +54,16 @@ def test_fake_provider_native_agent_broker_timeline_and_sse_shape(monkeypatch) -
         result = await agent.run(context)
         assert result.output["task_summary"] == "ok"
         events = [queue.get_nowait() for _ in range(queue.qsize())]
-        assert [event.event_type for event in events] == ["node.started", "model.started", "model.first_token", "model.output.delta", "model.completed", "node.completed"]
-        assert events[3].payload["delta"]
-        assert "data" not in events[4].payload
+        assert [event.event_type for event in events] == ["node.started", "model.started", "model.first_token", "model.activity", "model.output.delta", "model.completed", "node.completed"]
+        assert events[4].payload["delta"]
+        assert "data" not in events[5].payload
+        durable_types = [event["eventType"] for event in result.runtime_events]
+        assert durable_types == ["node.started", "model.started", "model.first_token", "model.completed", "node.completed"]
         return events
 
     events = asyncio.run(scenario())
     # SSE uses the same alias-based JSON envelope as the broker contract.
-    payload = events[3].model_dump(by_alias=True, mode="json")
+    payload = events[4].model_dump(by_alias=True, mode="json")
     assert payload["eventType"] == "model.output.delta"
     assert payload["runId"] == events[3].run_id
 

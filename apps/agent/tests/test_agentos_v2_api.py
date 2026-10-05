@@ -358,6 +358,29 @@ async def test_v2_output_uses_identity_access_without_loading_full_runtime_run(t
         assert missing.status_code == 404
 
 
+def test_v2_terminal_run_events_finish_without_waiting_for_a_live_publisher(tmp_path, monkeypatch) -> None:
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("Terminal event stream", workflow_id="api-workflow")
+    broker = RuntimeEventBroker()
+
+    def reject_subscription(*args, **kwargs):
+        raise AssertionError("terminal Run must not subscribe to future events")
+
+    monkeypatch.setattr(broker, "subscribe", reject_subscription)
+    monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    with TestClient(app) as client:
+        for status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED):
+            _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+            run.status = status
+            runtime.workflow_store.save_run(run)
+            response = client.get(f"/agentos/v2/runs/{run.run_id}/events")
+            assert response.status_code == 200
+            assert response.text.startswith(f"event: run.{status.value}\n")
+            assert f'"status": "{status.value}"' in response.text
+
+
 def test_v2_runtime_events_endpoint_streams_http_before_publisher_finishes(tmp_path, monkeypatch) -> None:
     runtime = _runtime(tmp_path)
     task = runtime.create_mission("Runtime event HTTP stream", workflow_id="api-workflow")

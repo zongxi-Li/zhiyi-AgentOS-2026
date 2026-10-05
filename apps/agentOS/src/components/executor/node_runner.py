@@ -33,7 +33,7 @@ from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryM
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from contracts.content import ContentKind
 from service.agents.base import BaseAgent, AgentRunContext
-from contracts.runtime_events import RuntimeEvent
+from contracts.runtime_events import RuntimeEvent, TRANSIENT_RUNTIME_EVENT_TYPES
 from runtime.live_events import runtime_event_broker
 
 from .graph import ACGExecutionState
@@ -633,7 +633,10 @@ class ACGNodeRunner:
             "memoryEvent": memory_event_payload,
             # 条件值只在当前 Pregel 轮次内供控制节点选择分支，绝不写入持久化 State。
             "routeValue": controlled,
-            "runtimeEvents": list(getattr(output, "runtime_events", []) or []),
+            "runtimeEvents": [
+                event for event in (getattr(output, "runtime_events", []) or [])
+                if event.get("eventType") not in TRANSIENT_RUNTIME_EVENT_TYPES
+            ],
         }
         if not requires_review:
             result["memoryRef"] = (
