@@ -125,6 +125,39 @@ describe('AcgHistoryPanel control plane', () => {
     wrapper.unmount()
   })
 
+  it('shows terminal history without opening a row and without a running animation', async () => {
+    vi.mocked(workflowApi.listRuns).mockResolvedValue({
+      items: [summary({ status: 'completed', phase: 'executing', totalSteps: 0, percent: null })],
+      total: 1, page: 1, pageSize: 50
+    })
+    const { wrapper } = await mountConsole()
+    expect(wrapper.get('.run-status').text()).toBe('执行完成')
+    expect(wrapper.find('.run-mini-progress.indeterminate').exists()).toBe(false)
+    expect(wrapper.get('.run-item__metrics').text()).toContain('步骤统计未加载')
+    expect(wrapper.text()).not.toContain('规模计算中')
+    expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('retains a newer observed completion and step counts across lightweight list refreshes', async () => {
+    vi.mocked(workflowApi.listRuns).mockResolvedValue({
+      items: [summary({ runtimeRevision: 1, totalSteps: 0, percent: null })],
+      total: 1, page: 1, pageSize: 50
+    })
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({
+      status: 'completed', phase: 'completed', percent: 100, completedSteps: 4,
+      runtimeRevision: 2, updatedAt: '2026-07-22T00:02:00Z'
+    }))
+    const { wrapper } = await mountConsole('?tab=acg&runId=run_1')
+    await flushPromises()
+    await wrapper.get('.console-refresh').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.run-status').text()).toBe('执行完成')
+    expect(wrapper.get('.run-item__metrics').text()).toContain('4/4 步')
+    expect(wrapper.get('.run-mini-progress span').attributes('style')).toContain('100%')
+    wrapper.unmount()
+  })
+
   it('restores a selected Run from URL without starting a workflow or loading full ACG during planning', async () => {
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({ runId: 'run_url', phase: 'planning', percent: null }))
     const { wrapper } = await mountConsole('?tab=acg&runId=run_url')

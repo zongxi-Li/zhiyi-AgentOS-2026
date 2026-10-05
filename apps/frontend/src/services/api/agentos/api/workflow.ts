@@ -5,9 +5,9 @@ import { runPath } from '../paths'
 import type { WorkflowApiDependencies } from '../dependencies'
 
 const phaseOf = (run: WorkflowRun): WorkflowProgressPhase => {
+  if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') return run.status
   if (run.lifecyclePhase) return run.lifecyclePhase
   if (run.status === 'waiting_review') return 'review'
-  if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') return run.status
   if (run.status === 'pending' || run.status === 'planning') return 'planning'
   return 'executing'
 }
@@ -17,7 +17,7 @@ const projectProgress = (run: WorkflowRun): WorkflowProgress => {
   const count = (status: StepStatus) => steps.filter(step => step.status === status).length
   const completed = count('completed') + count('skipped_by_condition')
   const total = steps.length
-  const percent = total ? Math.round((completed / total) * 10000) / 100 : null
+  const percent = run.status === 'completed' ? 100 : total ? Math.round((completed / total) * 10000) / 100 : null
   return {
     missionId: run.missionId,
     runId: run.runId,

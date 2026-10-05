@@ -47,6 +47,15 @@ describe('AgentOS v2 application API', () => {
   })
   beforeEach(() => vi.restoreAllMocks())
 
+  it('shows completed lightweight history rows as completed even with a stale execution phase', async () => {
+    vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: {
+      items: [{ ...run, lifecyclePhase: 'executing', steps: [], completedStepIds: [], outputs: [] }],
+      total: 1, page: 1, pageSize: 20
+    } } as never)
+    const page = await agentosApi.listWorkflowRuns({ summary: true })
+    expect(page.items[0]).toMatchObject({ status: 'completed', phase: 'completed', percent: 100, totalSteps: 0 })
+  })
+
   it('starts a run through the v2 gateway and preserves clientRequestId', async () => {
     const signal = new AbortController().signal
     const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: run } as never)

@@ -91,7 +91,7 @@
             >
               <button type="button" class="run-item" @click="activateRun(run.runId, true)">
                 <span class="run-item__top">
-                  <span class="run-status" :class="run.phase || run.status">{{ phaseLabel(run.phase, run.status) }}</span>
+                  <span class="run-status" :class="TERMINAL.has(run.status) ? run.status : run.phase || run.status">{{ phaseLabel(run.phase, run.status) }}</span>
                   <time>{{ formatRelativeTime(run.updatedAt) }}</time>
                 </span>
                 <strong>{{ run.title || run.workflowId }}</strong>
@@ -103,9 +103,9 @@
                 <span v-if="run.percent != null" class="run-mini-progress" aria-hidden="true">
                   <span :style="{ width: `${clampPercent(run.percent)}%` }"></span>
                 </span>
-                <span v-else class="run-mini-progress indeterminate" aria-hidden="true"><span></span></span>
+                <span v-else-if="!TERMINAL.has(run.status)" class="run-mini-progress indeterminate" aria-hidden="true"><span></span></span>
                 <span class="run-item__metrics">
-                  <span>{{ run.totalSteps > 0 ? `${run.completedSteps}/${run.totalSteps} 步` : '规模计算中' }}</span>
+                  <span>{{ run.totalSteps > 0 ? `${run.completedSteps}/${run.totalSteps} 步` : '步骤统计未加载' }}</span>
                   <span v-if="run.source === 'chat'">来自 Chat</span>
                   <span v-else-if="run.source === 'acg'">来自 ACG</span>
                   <span v-else-if="run.source === 'legacy_agent_chat'">来自主对话</span>
@@ -450,6 +450,7 @@ const filters = reactive({
 let listTimer: ReturnType<typeof setTimeout> | null = null
 let listController: AbortController | null = null
 let listGeneration = 0
+const observedProgress = new Map<string, WorkflowProgress>()
 let healthController: AbortController | null = null
 let healthGeneration = 0
 const detailControllers = new Set<AbortController>()
@@ -554,7 +555,21 @@ const loadRuns = async (force = false) => {
   try {
     const page = await workflowApi.listRuns(listParams(), { signal: listController.signal })
     if (generation !== listGeneration) return
-    runs.value = page.items || []
+    runs.value = (page.items || []).map(item => {
+      const observed = observedProgress.get(item.runId)
+      if (!observed) return item
+      // Summary responses omit step bodies. Keep detail facts at the same revision,
+      // and never let an older list response undo a newer observed completion.
+      const incomingRevision = item.runtimeRevision
+      const observedRevision = observed.runtimeRevision
+      if (incomingRevision != null && observedRevision != null && incomingRevision !== observedRevision) {
+        return incomingRevision > observedRevision ? item : { ...item, ...observed }
+      }
+      const incomingTime = Date.parse(item.updatedAt || '')
+      const observedTime = Date.parse(observed.updatedAt || '')
+      if (Number.isFinite(incomingTime) && Number.isFinite(observedTime) && incomingTime > observedTime) return item
+      return { ...item, ...observed }
+    })
     totalRuns.value = page.total || 0
     workflowRunsStore.mergeSummaries(runs.value)
     listError.value = ''
@@ -715,6 +730,7 @@ const loadSelectedDetail = async (options: { full?: boolean; acg?: boolean; revi
 
 function handleProgressChanged(current: WorkflowProgress, previous: WorkflowProgress | null) {
   if (current.runId !== selectedRunId.value) return
+  observedProgress.set(current.runId, current)
   workflowRunsStore.updateObservedState(current.runId, current.status, current.phase, current.updatedAt)
   const index = runs.value.findIndex(item => item.runId === current.runId)
   if (index >= 0) runs.value[index] = { ...runs.value[index], ...current }
@@ -815,7 +831,7 @@ onBeforeUnmount(() => {
 const phaseLabel = (phase: string, status: string) => ({
   understanding: '理解任务', planning: '规划任务', graph_building: '构建 ACG', executing: '执行节点',
   recovery: '恢复执行', review: '等待审核', completed: '执行完成', failed: '执行失败', cancelled: '已取消'
-}[phase] || ({ pending: '等待中', running: '运行中', retrying: '恢复中', waiting_review: '等待审核' }[status] || status))
+}[TERMINAL.has(status) ? status : phase] || ({ pending: '等待中', running: '运行中', retrying: '恢复中', waiting_review: '等待审核' }[status] || status))
 const shortIdentity = (value: string) => value.length > 22 ? `${value.slice(0, 11)}...${value.slice(-7)}` : value
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value))
 const formatTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '准备中'
