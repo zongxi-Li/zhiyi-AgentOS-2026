@@ -237,6 +237,16 @@ def test_workspace_graph_entry_and_graph_node_mapping_do_not_create_content(tmp_
         assert equipment_task.latest_attempt_id is not None
         equipment_artifact = next(entry for entry in projection.entries if entry.kind is WorkspaceEntryKind.ARTIFACT)
         assert equipment_artifact.parent_entry_id == equipment_task.entry_id
+        assert equipment_artifact.created_at.utcoffset().total_seconds() == 0
+        # Existing rows predate timezone-aware ContentManifest serialization.
+        with _storage.transaction() as db:
+            legacy = dict(db.execute("SELECT * FROM artifacts WHERE origin_run_id = ?", (run.run_id,)).fetchone())
+            legacy.update(artifact_id="artifact_0123456789ab", created_at="2026-10-04 14:49:39")
+            legacy["content_ref"] += "-legacy"
+            db.execute(f"INSERT INTO artifacts ({','.join(legacy)}) VALUES ({','.join('?' for _ in legacy)})",
+                       tuple(legacy.values()))
+        historical = service.repositories.artifacts.get("artifact_0123456789ab")
+        assert historical.model_dump(by_alias=True, mode="json")["createdAt"] == "2026-10-04T14:49:39Z"
     finally:
         _close(foundation)
 

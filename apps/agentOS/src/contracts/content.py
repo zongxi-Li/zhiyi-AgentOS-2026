@@ -12,6 +12,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from contracts.timestamps import UTCTimestamp
+
 
 class ContentKind(str, Enum):
     MATERIAL = "material"
@@ -57,7 +59,7 @@ class ContentManifest(BaseModel):
     estimated_tokens: int | None = Field(default=None, alias="estimatedTokens", ge=0)
     chunking_version: str = Field(default="content-bytes.v1", alias="chunkingVersion")
     sealed: bool = False
-    created_at: datetime = Field(
+    created_at: UTCTimestamp = Field(
         default_factory=lambda: datetime.now(timezone.utc), alias="createdAt"
     )
 

@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
 from components.content import ContentWorksetSession, SQLiteContentManifestStore
 from contracts.content import ContentKind, WorksetSpec
+
+
+@pytest.mark.parametrize("stored, expected", [
+    ("2026-10-04 14:49:39", "2026-10-04T14:49:39Z"),
+    ("2026-10-04T22:49:39+08:00", "2026-10-04T14:49:39Z"),
+])
+def test_manifest_timestamp_is_utc_when_reading_existing_rows(tmp_path, stored, expected):
+    path = tmp_path / "content.sqlite3"
+    store = SQLiteContentManifestStore(path)
+    try:
+        manifest = store.create_manifest(kind=ContentKind.ARTIFACT, owner_type="run", owner_id="run-1")
+        assert manifest.created_at.utcoffset().total_seconds() == 0
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE content_manifests SET created_at = ? WHERE manifest_id = ?",
+                       (stored, manifest.manifest_id))
+        restored = store.get_manifest(manifest.manifest_id)
+        assert restored.model_dump(by_alias=True, mode="json")["createdAt"] == expected
+    finally:
+        store.close()
 
 
 def test_large_material_reassembles_exactly_across_cursor_pages(tmp_path) -> None:

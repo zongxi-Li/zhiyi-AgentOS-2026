@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from contracts.timestamps import UTCTimestamp
+
 from contracts.identity import (
     AttemptId,
     ArtifactId,
@@ -146,7 +148,7 @@ class Artifact(DomainModel):
     media_type: str = Field(alias="mediaType", min_length=1)
     content_ref: str = Field(alias="contentRef", min_length=1)
     checksum: str = Field(min_length=64, max_length=64)
-    created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
+    created_at: UTCTimestamp = Field(default_factory=utc_now, alias="createdAt")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
