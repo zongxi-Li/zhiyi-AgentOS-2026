@@ -23,7 +23,7 @@ from .crypto import ResourceSecretBox
 from .health import ResourceHealthMonitor
 from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
 from .registry import ResourceRegistry
-from .store import InMemoryResourceStore, ResourceCredentialRecord, ResourceStore
+from .store import InMemoryResourceStore, ResourceCredentialRecord, ResourceStore, VersionConflict
 
 
 @dataclass(frozen=True)
@@ -112,6 +112,20 @@ class ResourceService:
             capacity,
             expected_capacity=expected_capacity,
         )
+
+    def set_enabled(self, resource_id: str, *, enabled: bool) -> ResourceProfile:
+        """切换资源的调度开关，并保持 agent 目录投影的 enabled 一致。
+
+        ``profile.enabled`` 是调度可用性的权威判据；agent 目录资源把同一开关
+        镜像进 ``metadata.agent.enabled``，供旧目录候选过滤读取，两处必须同变。
+        """
+        profile = self.profile(resource_id)
+        metadata = dict(profile.metadata)
+        agent_metadata = metadata.get("agent")
+        if isinstance(agent_metadata, dict):
+            metadata["agent"] = {**agent_metadata, "enabled": enabled}
+        updated = profile.model_copy(update={"enabled": enabled, "metadata": metadata})
+        return self.store.update_profile(updated)
 
     def snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
         """读取调度决策所需的最新版本快照。"""
@@ -260,6 +274,49 @@ class ResourceService:
             latency_ms=latency_ms,
             observed_at=observed_at,
         )
+
+    def observe_execution(
+        self,
+        resource_id: str,
+        *,
+        success: bool,
+        latency_ms: float,
+        observed_at: datetime | None = None,
+    ) -> ResourceHealth:
+        """记录一次进程内执行结果：健康 EMA 与目录快照的时延/可靠性同步更新。
+
+        与 observe_remote 的边界：执行结果是执行链路自己的真实信号，不要求
+        远端层级；利用率与槽位仍归调度器记账，这里不做任何推算。
+        """
+        self.registry.get(resource_id)
+        health = self.health_monitor.observe(
+            resource_id,
+            success=success,
+            latency_ms=latency_ms,
+            observed_at=observed_at,
+        )
+        timestamp = observed_at or datetime.now().astimezone()
+        for _ in range(3):
+            current = self.store.get_snapshot(resource_id)
+            # model_copy(update=) 只认字段名，不认别名；别名键会被静默忽略。
+            updated = current.snapshot.model_copy(update={
+                "observed_at": timestamp,
+                "observation_sequence": current.snapshot.observation_sequence + 1,
+                "latency_ms": latency_ms,
+                "reliability": health.reliability,
+                "health_status": (
+                    ResourceHealthStatus.ONLINE
+                    if success
+                    else current.snapshot.health_status
+                ),
+            })
+            try:
+                self.store.update_snapshot(updated, expected_version=current.version)
+                break
+            except VersionConflict:
+                # 并发完成回写时以最新版本为基准重放一次快照合并。
+                continue
+        return health
 
     def observe_remote(
         self,

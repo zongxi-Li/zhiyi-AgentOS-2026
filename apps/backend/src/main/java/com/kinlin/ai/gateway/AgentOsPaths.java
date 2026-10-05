@@ -63,6 +63,11 @@ public final class AgentOsPaths {
         return UPSTREAM_ROOT + "/runs";
     }
 
+    /** One catalog resource's upstream sub-action path (usage/history/enabled/probe…). */
+    public static String resource(String resourceId) {
+        return resources() + "/" + segment(resourceId);
+    }
+
     public static String run(String runId) {
         return runs() + "/" + segment(runId);
     }

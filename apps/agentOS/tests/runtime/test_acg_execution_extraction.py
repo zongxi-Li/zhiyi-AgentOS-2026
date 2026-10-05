@@ -316,3 +316,34 @@ def test_workflow_runtime_has_no_acg_execution_residual() -> None:
         "ACGNodeRunner(",
     ):
         assert forbidden not in source, f"workflow_runtime.py must not retain {forbidden}"
+
+
+def test_successful_execution_observes_resource_health() -> None:
+    runtime = _runtime_with(WorkflowDefinition(
+        workflowId="observed-run", name="observed", domain="general", runtimeEngine="acg",
+        steps=[
+            WorkflowStepDefinition(
+                stepId="extract", name="extract", agentName="runner",
+                outputSpec={"type": "object", "properties": {"title": {"type": "string"}}},
+            ),
+        ],
+    ), _RunAgent(AgentProfile(agentName="runner", domain="general")))
+    task = runtime.create_mission("observed", workflow_id="observed-run")
+    _, run = runtime.prepare_run(task.mission_id)
+
+    completed = asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    assert completed.status.value == "completed"
+    resource_service = runtime.legacy_resource_service
+    snapshot = resource_service.snapshot("runner")
+    # 目录行的延迟/可靠性来自执行观测；观测时间是真实回写而非注册时刻。
+    assert snapshot.snapshot.latency_ms is not None
+    assert snapshot.snapshot.latency_ms >= 0
+    assert snapshot.snapshot.reliability is not None
+    assert snapshot.snapshot.observed_at is not None
+    assert snapshot.snapshot.utilization == 0.0  # 利用率归调度器记账，这里不得伪造
+    health = resource_service.health_monitor.health("runner")
+    assert health.latency_ms is not None
+    list_events = getattr(resource_service.health_monitor.store, "list_events", None)
+    if list_events is not None:  # SQLite 生产库持久化事件；内存测试库允许无历史查询
+        assert list_events("runner"), "execution observation must persist a health event for the trend sparkline"

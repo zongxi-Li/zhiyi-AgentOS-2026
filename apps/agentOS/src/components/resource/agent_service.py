@@ -53,6 +53,11 @@ class AgentService:
     def profiles(self) -> list[AgentProfile]:
         return self.store.list_profiles()
 
+    def set_enabled(self, agent_id: str, *, enabled: bool) -> AgentProfile:
+        """切换 Agent 台账的调度开关；与资源目录的 enabled 联动由调用方负责。"""
+        profile = self.store.get_profile(agent_id)
+        return self.store.update_profile(profile.model_copy(update={"enabled": enabled}))
+
     def candidates(
         self, *, capabilities: list[str], only_idle: bool = True
     ) -> list[tuple[AgentProfile, VersionedAgentSnapshot]]:

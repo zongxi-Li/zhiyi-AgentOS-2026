@@ -41,6 +41,17 @@
       </div>
     </div>
 
+    <div v-if="domainOptions.length" class="resource-domain-filter" role="group" aria-label="按领域筛选">
+      <button type="button" :class="{ active: !selectedDomain }" @click="selectedDomain = ''">全部</button>
+      <button
+        v-for="domain in domainOptions"
+        :key="domain.name"
+        type="button"
+        :class="{ active: selectedDomain === domain.name }"
+        @click="selectedDomain = selectedDomain === domain.name ? '' : domain.name"
+      >{{ domain.name }}<small>{{ domain.count }}</small></button>
+    </div>
+
     <section v-if="loading && !resources.length" class="resource-state" role="status">
       <strong>正在读取 ResourceService</strong>
       <span>只读加载系统 Resource profile…</span>
@@ -64,7 +75,7 @@
         <div class="resource-list">
           <article v-for="item in group.items" :key="item.profile.resourceId" class="resource-row" @click="openDetail(item)">
             <div class="resource-row__identity">
-              <span class="resource-row__icon" aria-hidden="true">
+              <span class="resource-row__icon" aria-hidden="true" :style="{ '--tile-tone': resourceTypeMeta(item.profile.resourceType).tone }">
                 <el-icon><component :is="resourceTypeIcon(item.profile.resourceType)" /></el-icon>
                 <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
               </span>
@@ -94,7 +105,7 @@
   </section>
 
   <el-drawer v-model="drawerOpen" :title="selectedResource ? selectedResource.profile.resourceId : '资源详情'" size="440px" append-to-body class="resource-detail-drawer">
-    <ResourceDetailPanel v-if="selectedResource" :item="selectedResource" />
+    <ResourceDetailPanel v-if="selectedResource" :item="selectedResource" @enabled-changed="handleEnabledChanged" />
   </el-drawer>
 </template>
 
@@ -104,11 +115,12 @@ import { Search } from '@element-plus/icons-vue'
 import { agentosApi, type RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
-import { formatCapacity, formatMetric, formatPercent, healthLabel } from '@/utils/resourceFormat'
+import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeMeta } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const searchText = ref('')
+const selectedDomain = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 const selectedResource = ref<RuntimeResourceItem | null>(null)
@@ -148,15 +160,31 @@ const computeTotals = computed(() => {
   return { cpu, memory, gpu, hasCapacity }
 })
 
+const domainOptions = computed(() => {
+  const counts = new Map<string, number>()
+  for (const item of resources.value) {
+    for (const domain of item.profile.domains || []) {
+      counts.set(domain, (counts.get(domain) || 0) + 1)
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, count]) => ({ name, count }))
+})
+
 const filteredResources = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase()
-  if (!query) return resources.value
-  return resources.value.filter(item => [
-    item.profile.resourceId,
-    item.profile.resourceType,
-    ...item.profile.capabilities,
-    item.profile.deploymentTier || ''
-  ].some(value => (value || '').toLocaleLowerCase().includes(query)))
+  const domain = selectedDomain.value
+  return resources.value.filter(item => {
+    if (domain && !(item.profile.domains || []).includes(domain)) return false
+    if (!query) return true
+    return [
+      item.profile.resourceId,
+      item.profile.resourceType,
+      ...item.profile.capabilities,
+      item.profile.deploymentTier || ''
+    ].some(value => (value || '').toLocaleLowerCase().includes(query))
+  })
 })
 
 const filteredCount = computed(() => filteredResources.value.length)
@@ -181,6 +209,20 @@ const utilizationPercent = (value: number | null | undefined) => {
 const openDetail = (item: RuntimeResourceItem) => {
   selectedResource.value = item
   drawerOpen.value = true
+}
+
+const handleEnabledChanged = (payload: { resourceId: string; enabled: boolean }) => {
+  for (const item of resources.value) {
+    if (item.profile.resourceId === payload.resourceId) {
+      item.profile.enabled = payload.enabled
+    }
+  }
+  if (selectedResource.value?.profile.resourceId === payload.resourceId) {
+    selectedResource.value = {
+      ...selectedResource.value,
+      profile: { ...selectedResource.value.profile, enabled: payload.enabled }
+    }
+  }
 }
 
 const loadResources = async () => {
@@ -253,6 +295,12 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-summary__metric--tier.is-tier-terminal strong { color: var(--accent-color, #6f668f); }
 .resource-summary__metric--tier.is-tier-local strong { color: var(--text-secondary); }
 .resource-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0 12px; color: var(--text-muted); font-size: 11px; }
+.resource-domain-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 12px; }
+.resource-domain-filter button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--border-light); border-radius: 999px; color: var(--text-secondary); background: var(--bg-input); cursor: pointer; font: inherit; font-size: 10px; transition: var(--transition); }
+.resource-domain-filter button:hover { border-color: var(--primary-line); color: var(--primary-color); }
+.resource-domain-filter button.active { border-color: color-mix(in srgb, var(--primary-color) 62%, transparent); color: var(--primary-color); background: var(--primary-fade); }
+.resource-domain-filter button small { color: var(--text-muted); font-size: 9px; }
+.resource-domain-filter button.active small { color: var(--primary-color); }
 .resource-search { display: flex; align-items: center; gap: 9px; width: min(500px, 100%); min-height: 42px; padding: 0 11px; border: 1px solid var(--border-light); border-radius: var(--radius-control, 6px); color: var(--text-muted); background: var(--resource-inset); transition: var(--transition); }
 .resource-search:hover, .resource-search:focus-within, .resource-search.has-query { border-color: var(--primary-line); background: var(--bg-input); }
 .resource-search__icon { display: inline-grid; place-items: center; color: var(--primary-color); }
@@ -280,15 +328,17 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-row:last-child { border-bottom: 0; }
 .resource-row:hover { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--primary-color); }
 .resource-row__identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.resource-row__icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border: 1px solid var(--primary-line); border-radius: var(--radius-control, 6px); color: var(--primary-color); background: var(--primary-fade); }
+.resource-row__icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px; color: color-mix(in srgb, var(--tile-tone, var(--primary-color)) 40%, #e9f5ff); background: linear-gradient(145deg, color-mix(in srgb, var(--tile-tone, var(--primary-color)) 34%, transparent), color-mix(in srgb, var(--tile-tone, var(--primary-color)) 10%, transparent) 55%, color-mix(in srgb, var(--tile-tone, var(--primary-color)) 24%, transparent)), var(--bg-input); border: 1px solid color-mix(in srgb, var(--tile-tone, var(--primary-color)) 46%, transparent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 0 12px color-mix(in srgb, var(--tile-tone, var(--primary-color)) 16%, transparent); transition: box-shadow var(--transition), border-color var(--transition); }
+.resource-row__icon .el-icon { font-size: 18px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
+.resource-row:hover .resource-row__icon { border-color: color-mix(in srgb, var(--tile-tone, var(--primary-color)) 70%, transparent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 18px color-mix(in srgb, var(--tile-tone, var(--primary-color)) 30%, transparent); }
 .resource-row__health-dot { position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px; border: 2px solid var(--resource-surface); border-radius: 50%; background: var(--warning); }
 .resource-row__health-dot.is-online { background: var(--success); }
 .resource-row__health-dot.is-degraded { background: var(--warning); }
 .resource-row__health-dot.is-offline { background: var(--danger); }
 .resource-row__identity div { min-width: 0; }
-.resource-row__identity strong, .resource-row__identity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-row__identity strong, .resource-row__identity span:not(.resource-row__icon) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-row__identity strong { color: var(--text-primary); font: 600 11px var(--font-mono, monospace); }
-.resource-row__identity span { margin-top: 4px; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
+.resource-row__identity span:not(.resource-row__icon) { margin-top: 4px; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
 .resource-row__identity .resource-row__meta { display: inline-flex; align-items: center; gap: 5px; }
 .resource-row__capabilities { display: flex; gap: 5px; min-width: 0; flex-wrap: wrap; }
 .resource-row__capabilities span { padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--border-light) 82%, var(--primary-color)); border-radius: 4px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-input) 76%, transparent); font: 10px var(--font-mono, monospace); }

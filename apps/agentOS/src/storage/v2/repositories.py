@@ -39,6 +39,7 @@ from domain.identity_graph.bindings import (
     BlueprintNodeBinding,
     ExecutionBinding,
     ProvenanceLink,
+    ResourceUsageRecord,
     RunArtifactBinding,
     RunArtifactDisposition,
     TaskBinding,
@@ -938,6 +939,52 @@ class SQLiteExecutionBindingRepository(_SQLiteRepository):
             metadata=_load_json(row["metadata_json"], {}),
             createdAt=row["created_at"],
         )
+
+    def list_for_resource(self, resource_id: str, *, limit: int = 10) -> list[ResourceUsageRecord]:
+        """按绑定时间倒序返回某资源最近的 attempt 使用记录。
+
+        身份图内直接 JOIN attempts 与 semantic_tasks，不触工作流库：
+        资源目录只需 runId/attempt 事实，运行状态细节由运行记忆页承担。
+        """
+        if limit < 1:
+            raise ValueError("resource usage limit must be positive")
+        with self.storage.read() as conn:
+            rows = conn.execute(
+                """
+                SELECT b.binding_id, b.attempt_id, b.acg_node_id, b.agent_id,
+                       b.model_id, b.created_at AS bound_at,
+                       a.run_id, a.task_id, a.attempt_number, a.status AS attempt_status,
+                       a.started_at, a.finished_at,
+                       t.mission_id, t.title AS task_title, t.semantic_key
+                FROM execution_bindings b
+                JOIN attempts a ON a.attempt_id = b.attempt_id
+                LEFT JOIN semantic_tasks t ON t.task_id = a.task_id
+                WHERE b.resource_id = ?
+                ORDER BY b.created_at DESC, b.binding_id DESC
+                LIMIT ?
+                """,
+                (resource_id, limit),
+            ).fetchall()
+        return [
+            ResourceUsageRecord(
+                bindingId=row["binding_id"],
+                attemptId=row["attempt_id"],
+                runId=row["run_id"],
+                taskId=row["task_id"],
+                missionId=row["mission_id"],
+                taskTitle=row["task_title"],
+                semanticTaskKey=row["semantic_key"],
+                acgNodeId=row["acg_node_id"],
+                agentId=row["agent_id"],
+                modelId=row["model_id"],
+                attemptNumber=int(row["attempt_number"]),
+                attemptStatus=str(row["attempt_status"]),
+                startedAt=row["started_at"],
+                finishedAt=row["finished_at"],
+                boundAt=row["bound_at"],
+            )
+            for row in rows
+        ]
 
 
 class SQLiteArtifactRepository(_SQLiteRepository):

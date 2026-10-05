@@ -70,6 +70,10 @@ class ResourceStore(Protocol):
         """CAS 更新同一资源的静态容量并同步可用槽位。"""
         ...
 
+    def update_profile(self, profile: ResourceProfile) -> ResourceProfile:
+        """持久化一份新的静态画像（启用开关等管理动作）；未知标识抛 ``KeyError``。"""
+        ...
+
     def register_remote(
         self,
         profile: ResourceProfile,
@@ -229,6 +233,18 @@ class InMemoryResourceStore:
             self._profiles[resource_id] = profile.model_copy(update={"capacity": capacity})
             self._snapshots[resource_id] = versioned
             return self._copy_versioned(versioned)
+
+    def update_profile(self, profile: ResourceProfile) -> ResourceProfile:
+        with self._lock:
+            try:
+                current = self._profiles[profile.resource_id]
+            except KeyError as error:
+                raise KeyError(f"unknown resource: {profile.resource_id}") from error
+            if profile.resource_id != current.resource_id:
+                raise ValueError("resource profile identity is immutable")
+            updated = profile.model_copy(deep=True)
+            self._profiles[profile.resource_id] = updated
+            return updated.model_copy(deep=True)
 
     def save_credential(self, record: ResourceCredentialRecord) -> None:
         with self._lock:
@@ -523,6 +539,29 @@ class SQLiteResourceStore:
                     snapshot=updated_snapshot.model_copy(deep=True),
                     version=version + 1,
                 )
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def update_profile(self, profile: ResourceProfile) -> ResourceProfile:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT profile_json FROM resources WHERE resource_id = ?",
+                    (profile.resource_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"unknown resource: {profile.resource_id}")
+                current = ResourceProfile.model_validate(json.loads(str(row[0])))
+                if profile.resource_id != current.resource_id:
+                    raise ValueError("resource profile identity is immutable")
+                self._connection.execute(
+                    "UPDATE resources SET profile_json = ? WHERE resource_id = ?",
+                    (self._json(profile), profile.resource_id),
+                )
+                self._connection.commit()
+                return profile.model_copy(deep=True)
             except Exception:
                 self._connection.rollback()
                 raise

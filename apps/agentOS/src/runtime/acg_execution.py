@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 import json
+import logging
 import threading
 from time import monotonic
 from typing import Any
@@ -18,6 +19,8 @@ from typing import Any
 from contracts.identity import new_attempt_id, new_step_execution_id
 from contracts.artifacts import is_final_synthesis_role
 from support.acg.schema import RuntimeBlueprintSpec
+
+logger = logging.getLogger(__name__)
 from components.communicator import (
     CommunicationBroker,
     CommunicatorService,
@@ -658,6 +661,11 @@ class ACGExecutionService(CollaboratorAccess):
                 execution_started = monotonic()
                 result = await runner(step_id, state)
                 execution_outcome = "completed"
+                self._observe_resource_execution(
+                    selected_resource_id,
+                    success=True,
+                    latency_ms=(monotonic() - execution_started) * 1000,
+                )
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.succeeded:{step_execution_id}", "step.succeeded", step_execution_id,
                     {"runId": run.run_id, "attemptId": attempt_id,
@@ -715,6 +723,11 @@ class ACGExecutionService(CollaboratorAccess):
                         self.node_service.heartbeat(node_id, success=False)
                     else:
                         self.legacy_resource_service.set_health(selected_resource_id, healthy=False)
+                self._observe_resource_execution(
+                    selected_resource_id,
+                    success=False,
+                    latency_ms=(monotonic() - execution_started) * 1000,
+                )
                 self.workflow_store.save_run_with_events(run, [self._lifecycle_event(
                     f"step.failed:{step_execution_id}", "step.failed", step_execution_id,
                     {"runId": run.run_id, "attemptId": attempt_id,
@@ -771,6 +784,20 @@ class ACGExecutionService(CollaboratorAccess):
             attempt_id=attempt_id,
             requirement=requirement,
         )
+
+    def _observe_resource_execution(self, resource_id: str, *, success: bool, latency_ms: float) -> None:
+        """把一次 attempt 的真实执行结果回写资源观测（延迟/可靠性/健康事件）。
+
+        观测属于旁路信号：任何失败只降级为日志，绝不影响执行主流程。
+        """
+        resource_service = getattr(self, "legacy_resource_service", None)
+        observe = getattr(resource_service, "observe_execution", None) if resource_service is not None else None
+        if observe is None:
+            return
+        try:
+            observe(resource_id, success=success, latency_ms=max(0.0, latency_ms))
+        except Exception as exc:  # 观测永远不阻断执行
+            logger.warning("resource observation failed for %s: %s", resource_id, exc)
 
     def _release_lease(self, lease_id: str, *, use_two_layer: bool) -> bool:
         if use_two_layer and isinstance(self.scheduler_service, TwoLayerSchedulerService):

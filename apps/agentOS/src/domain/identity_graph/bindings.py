@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 
 from contracts.identity import (
     AttemptId,
+    MissionId,
     ArtifactId,
     ArtifactKey,
     BindingId,
@@ -108,6 +109,27 @@ class ProvenanceLink(DomainModel):
         return self
 
 
+
+class ResourceUsageRecord(DomainModel):
+    """一次 attempt 对某资源的绑定投影，供资源目录回溯最近使用。"""
+
+    binding_id: BindingId = Field(alias="bindingId")
+    attempt_id: AttemptId = Field(alias="attemptId")
+    run_id: RunId = Field(alias="runId")
+    task_id: TaskId = Field(alias="taskId")
+    mission_id: MissionId | None = Field(default=None, alias="missionId")
+    task_title: str | None = Field(default=None, alias="taskTitle")
+    semantic_task_key: SemanticTaskKey | None = Field(default=None, alias="semanticTaskKey")
+    acg_node_id: str | None = Field(default=None, alias="acgNodeId")
+    agent_id: LogicalAgentId = Field(alias="agentId")
+    model_id: str = Field(alias="modelId")
+    attempt_number: int = Field(alias="attemptNumber")
+    attempt_status: str = Field(alias="attemptStatus")
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
+    bound_at: datetime = Field(alias="boundAt")
+
+
 __all__ = [
     "BlueprintNodeBinding",
     "ExecutionBinding",
@@ -115,4 +137,5 @@ __all__ = [
     "RunArtifactBinding",
     "RunArtifactDisposition",
     "TaskBinding",
+    "ResourceUsageRecord",
 ]

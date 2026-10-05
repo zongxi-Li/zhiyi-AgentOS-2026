@@ -1,5 +1,5 @@
 import { agentosRequest } from '../client'
-import type { IdentityProjectionHealth, ModelCallUsage, ResourceRegistrationRequest, RunContextPacksResponse, RunExecutionTree, RunProvenanceProjection, RunResourceUsage, RuntimeResourceItem } from '../types'
+import type { IdentityProjectionHealth, ModelCallUsage, ResourceCredentialMetadata, ResourceHealthEvent, ResourceRegistrationRequest, ResourceUsageRecord, RunContextPacksResponse, RunExecutionTree, RunProvenanceProjection, RunResourceUsage, RuntimeResourceItem } from '../types'
 import { runPath } from '../paths'
 
 export const createRuntimeApi = () => ({
@@ -50,6 +50,50 @@ export const createRuntimeApi = () => ({
 
   async registerResource(payload: ResourceRegistrationRequest): Promise<{ resourceId: string }> {
     const response = await agentosRequest.post<{ resourceId: string }>('/resources/register', payload)
+    return response.data
+  },
+
+  async listResourceUsage(
+    resourceId: string,
+    options: { limit?: number; signal?: AbortSignal } = {}
+  ): Promise<{ resourceId: string; items: ResourceUsageRecord[]; total: number }> {
+    const response = await agentosRequest.get(`/resources/${encodeURIComponent(resourceId)}/usage`, {
+      params: { limit: options.limit || 12 },
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async getResourceHealthHistory(
+    resourceId: string,
+    options: { limit?: number; signal?: AbortSignal } = {}
+  ): Promise<{ resourceId: string; items: ResourceHealthEvent[]; total: number }> {
+    const response = await agentosRequest.get(`/resources/${encodeURIComponent(resourceId)}/health-history`, {
+      params: { limit: options.limit || 40 },
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async getResourceCredential(resourceId: string, options: { signal?: AbortSignal } = {}): Promise<ResourceCredentialMetadata> {
+    const response = await agentosRequest.get(`/resources/${encodeURIComponent(resourceId)}/credential`, {
+      signal: options.signal
+    })
+    return response.data
+  },
+
+  async setResourceEnabled(resourceId: string, enabled: boolean): Promise<{ resourceId: string; enabled: boolean; agentLedgerSynced: boolean }> {
+    const response = await agentosRequest.post(`/resources/${encodeURIComponent(resourceId)}/enabled`, { enabled })
+    return response.data
+  },
+
+  async rotateResourceCredential(resourceId: string): Promise<{ resourceId: string; credentialId: string; secret: string }> {
+    const response = await agentosRequest.post(`/resources/${encodeURIComponent(resourceId)}/credential/rotate`)
+    return response.data
+  },
+
+  async probeResource(resourceId: string): Promise<{ resourceId: string; healthy: boolean; reliability: number; latencyMs: number | null; lastHeartbeat: string | null }> {
+    const response = await agentosRequest.post(`/resources/${encodeURIComponent(resourceId)}/probe`)
     return response.data
   },
 

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         BlueprintNodeBinding,
         ExecutionBinding,
         ProvenanceLink,
+        ResourceUsageRecord,
         RunArtifactBinding,
         TaskBinding,
     )
@@ -117,6 +118,9 @@ class BlueprintNodeBindingRepository(Protocol):
 class ExecutionBindingRepository(Protocol):
     def add(self, binding: ExecutionBinding) -> None: ...
     def get_for_attempt(self, attempt_id: AttemptId) -> ExecutionBinding | None: ...
+    def list_for_resource(
+        self, resource_id: str, *, limit: int = 10
+    ) -> list["ResourceUsageRecord"]: ...
 
 
 class ArtifactRepository(Protocol):

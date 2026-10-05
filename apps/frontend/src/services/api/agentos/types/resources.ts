@@ -92,6 +92,38 @@ export interface ResourceRegistrationRequest {
   profile: RuntimeResourceProfile
   snapshot: RuntimeResourceSnapshot
 }
+/** 资源最近一次 attempt 绑定投影（execution_bindings JOIN attempts 的只读行）。 */
+export interface ResourceUsageRecord {
+  bindingId: string
+  attemptId: string
+  runId: string
+  taskId: string
+  missionId?: string | null
+  taskTitle?: string | null
+  semanticTaskKey?: string | null
+  acgNodeId?: string | null
+  agentId: string
+  modelId: string
+  attemptNumber: number
+  attemptStatus: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  boundAt: string
+}
+/** 资源健康事件历史行（resource_health_events，倒序）。 */
+export interface ResourceHealthEvent {
+  observedAt?: string | null
+  reliability?: number | null
+  latencyMs?: number | null
+  lastHeartbeat?: string | null
+  version: number
+}
+/** 资源凭据元数据：仅 id 与年龄，秘密材料只在轮换响应中出现一次。 */
+export interface ResourceCredentialMetadata {
+  resourceId: string
+  credentialId: string
+  createdAt: string
+}
 export interface ResourceBindingObservation extends ResourceUseQuery {
   attemptId: string
   taskId: string

@@ -66,6 +66,48 @@ public class AgentOsArtifactController {
                 gateway.post(AgentOsPaths.resources() + "/register", body));
     }
 
+    @GetMapping("/resources/{resourceId}/usage")
+    public ResponseEntity<Map<String, Object>> getResourceUsage(
+            @PathVariable String resourceId,
+            @RequestParam(defaultValue = "12") int limit
+    ) {
+        return AgentOsControllerSupport.response(gateway.get(
+                AgentOsPaths.query(AgentOsPaths.resource(resourceId) + "/usage", Map.of("limit", String.valueOf(limit)))));
+    }
+
+    @GetMapping("/resources/{resourceId}/health-history")
+    public ResponseEntity<Map<String, Object>> getResourceHealthHistory(
+            @PathVariable String resourceId,
+            @RequestParam(defaultValue = "40") int limit
+    ) {
+        return AgentOsControllerSupport.response(gateway.get(
+                AgentOsPaths.query(AgentOsPaths.resource(resourceId) + "/health-history", Map.of("limit", String.valueOf(limit)))));
+    }
+
+    @GetMapping("/resources/{resourceId}/credential")
+    public ResponseEntity<Map<String, Object>> getResourceCredential(@PathVariable String resourceId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.resource(resourceId) + "/credential"));
+    }
+
+    @PostMapping("/resources/{resourceId}/enabled")
+    public ResponseEntity<Map<String, Object>> setResourceEnabled(
+            @PathVariable String resourceId,
+            @RequestBody Map<String, Object> body
+    ) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.resource(resourceId) + "/enabled", body));
+    }
+
+    @PostMapping("/resources/{resourceId}/credential/rotate")
+    public ResponseEntity<Map<String, Object>> rotateResourceCredential(@PathVariable String resourceId) {
+        return AgentOsControllerSupport.response(
+                gateway.post(AgentOsPaths.resource(resourceId) + "/credential/rotate", Map.of()));
+    }
+
+    @PostMapping("/resources/{resourceId}/probe")
+    public ResponseEntity<Map<String, Object>> probeResource(@PathVariable String resourceId) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.resource(resourceId) + "/probe", Map.of()));
+    }
+
     @GetMapping("/runs/{runId}/artifacts")
     public ResponseEntity<QueryResponse> getArtifacts(@PathVariable String runId) {
         return AgentOsControllerSupport.projectedResponse(

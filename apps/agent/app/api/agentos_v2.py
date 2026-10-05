@@ -129,6 +129,12 @@ class RemoteResourceObservationRequest(BaseModel):
     )
 
 
+class ResourceEnabledRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    enabled: bool
+
+
 class RemoteNodeObservationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -1015,6 +1021,151 @@ def create_router(
                     },
                 })
         return {"items": items, "total": len(items)}
+
+    @router.get("/resources/{resource_id}/usage")
+    async def get_resource_usage(resource_id: str, limit: int = Query(default=12, ge=1, le=50)):
+        """Return the resource's most recent attempt bindings from the identity graph.
+
+        Read-only join over ``execution_bindings``/``attempts``: the catalog only
+        answers "which attempt used this resource, when, with which agent/model".
+        Run lifecycle detail stays owned by the run surfaces.
+        """
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource query source unavailable")
+        try:
+            resource_service.profile(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        repositories = getattr(runtime, "identity_lifecycle", None)
+        repositories = getattr(repositories, "repositories", None) if repositories is not None else None
+        binding_repository = getattr(repositories, "execution_bindings", None) if repositories is not None else None
+        list_for_resource = getattr(binding_repository, "list_for_resource", None)
+        if list_for_resource is None:
+            raise HTTPException(status_code=503, detail="resource usage source unavailable")
+        records = list_for_resource(resource_id, limit=limit)
+        return {
+            "resourceId": resource_id,
+            "items": [record.model_dump(by_alias=True, mode="json") for record in records],
+            "total": len(records),
+        }
+
+    @router.get("/resources/{resource_id}/health-history")
+    async def get_resource_health_history(resource_id: str, limit: int = Query(default=40, ge=1, le=200)):
+        """Return the resource's persisted heartbeat/observation event history."""
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource query source unavailable")
+        try:
+            resource_service.profile(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        list_events = getattr(resource_service.health_monitor.store, "list_events", None)
+        if list_events is None:
+            raise HTTPException(status_code=503, detail="resource health history unavailable")
+        events = list_events(resource_id, limit=limit)
+        return {
+            "resourceId": resource_id,
+            "items": [
+                {
+                    "observedAt": (
+                        event.updated_at.isoformat() if event.updated_at is not None else None
+                    ),
+                    "reliability": event.reliability,
+                    "latencyMs": event.latency_ms,
+                    "lastHeartbeat": (
+                        event.last_heartbeat.isoformat()
+                        if event.last_heartbeat is not None
+                        else None
+                    ),
+                    "version": event.version,
+                }
+                for event in events
+            ],
+            "total": len(events),
+        }
+
+    @router.get("/resources/{resource_id}/credential")
+    async def get_resource_credential(resource_id: str):
+        """Return credential metadata only (id + age); never the secret material."""
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource credential source unavailable")
+        try:
+            resource_service.profile(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        try:
+            record = resource_service.credential(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource credential not found") from exc
+        return {
+            "resourceId": record.resource_id,
+            "credentialId": record.credential_id,
+            "createdAt": record.created_at.isoformat(),
+        }
+
+    @router.post("/resources/{resource_id}/enabled")
+    async def set_resource_enabled(resource_id: str, request: ResourceEnabledRequest):
+        """Toggle the resource's scheduling switch in the catalog and agent ledger."""
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource mutation source unavailable")
+        try:
+            profile = resource_service.profile(resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        # 启停是本地调度管理动作，不涉及凭据签发：任何已认证用户可操作；
+        # 凭据类动作（rotate/register）仍保持 operator 门槛。
+        if current_trusted_user() is None:
+            raise HTTPException(status_code=401, detail="trusted user context required")
+        try:
+            updated = resource_service.set_enabled(resource_id, enabled=request.enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource not found") from exc
+        agent_service = getattr(runtime, "agent_service", None)
+        agent_synced = False
+        if agent_service is not None and isinstance(updated.metadata.get("agent"), dict):
+            try:
+                agent_service.set_enabled(resource_id, enabled=request.enabled)
+                agent_synced = True
+            except KeyError:
+                agent_synced = False
+        return {
+            "resourceId": updated.resource_id,
+            "enabled": updated.enabled,
+            "agentLedgerSynced": agent_synced,
+        }
+
+    @router.post("/resources/{resource_id}/probe")
+    async def probe_resource(resource_id: str):
+        """Actively refresh the wired local runtime's health projection on demand."""
+        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
+        if resource_service is None:
+            raise HTTPException(status_code=503, detail="resource probe source unavailable")
+        if current_trusted_user() is None:
+            raise HTTPException(status_code=401, detail="trusted user context required")
+        local_resource = getattr(runtime, "local_runtime_resource", None)
+        transport = getattr(runtime, "local_runtime_transport", None)
+        projector = getattr(runtime, "local_runtime_health_projector", None)
+        wired_profile = getattr(local_resource, "profile", None)
+        wired_id = str(getattr(wired_profile, "resource_id", "") or "")
+        if not wired_id or resource_id != wired_id or transport is None or projector is None:
+            raise HTTPException(
+                status_code=409,
+                detail="active probe is only supported for the wired local runtime resource",
+            )
+        healthy = await projector.refresh(transport)
+        health = resource_service.health_monitor.health(resource_id)
+        return {
+            "resourceId": resource_id,
+            "healthy": healthy,
+            "reliability": health.reliability,
+            "latencyMs": health.latency_ms,
+            "lastHeartbeat": (
+                health.last_heartbeat.isoformat() if health.last_heartbeat is not None else None
+            ),
+        }
 
     @router.get("/nodes")
     async def get_nodes():

@@ -39,6 +39,10 @@ class AgentStore(Protocol):
         """按可选期望版本原子更新快照；过期版本抛出 ``VersionConflict``。"""
         ...
 
+    def update_profile(self, profile: AgentProfile) -> AgentProfile:
+        """持久化一份新的 Agent 画像（启用开关等管理动作）；未知标识抛 ``KeyError``。"""
+        ...
+
 
 class InMemoryAgentStore:
     """面向单进程运行的 Agent 注册存储。"""
@@ -102,6 +106,18 @@ class InMemoryAgentStore:
             )
             self._snapshots[snapshot.agent_id] = versioned
             return self._copy(versioned)
+
+    def update_profile(self, profile: AgentProfile) -> AgentProfile:
+        with self._lock:
+            try:
+                current = self._profiles[profile.agent_id]
+            except KeyError as error:
+                raise KeyError(f"unknown agent: {profile.agent_id}") from error
+            if profile.agent_id != current.agent_id:
+                raise ValueError("agent profile identity is immutable")
+            updated = profile.model_copy(deep=True)
+            self._profiles[profile.agent_id] = updated
+            return updated.model_copy(deep=True)
 
     @staticmethod
     def _copy(value: VersionedAgentSnapshot) -> VersionedAgentSnapshot:
@@ -184,6 +200,23 @@ class SQLiteAgentStore:
             "SELECT profile_json FROM agents ORDER BY agent_id"
         ).fetchall()
         return [AgentProfile.model_validate(json.loads(str(row[0]))) for row in rows]
+
+    def update_profile(self, profile: AgentProfile) -> AgentProfile:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT profile_json FROM agents WHERE agent_id = ?", (profile.agent_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown agent: {profile.agent_id}")
+            current = AgentProfile.model_validate(json.loads(str(row[0])))
+            if profile.agent_id != current.agent_id:
+                raise ValueError("agent profile identity is immutable")
+            self._connection.execute(
+                "UPDATE agents SET profile_json = ? WHERE agent_id = ?",
+                (self._json(profile), profile.agent_id),
+            )
+            self._connection.commit()
+            return profile.model_copy(deep=True)
 
     def update_snapshot(
         self, snapshot: AgentSnapshot, *, expected_version: int | None = None
