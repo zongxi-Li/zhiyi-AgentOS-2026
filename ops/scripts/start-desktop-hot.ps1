@@ -20,13 +20,13 @@ if (-not $npm) {
   exit 1
 }
 
-if (-not (Test-Path (Join-Path $frontendDir 'node_modules'))) {
-  Pause-Launcher "缺少前端依赖，请先执行：`n  Set-Location `"$frontendDir`"`n  npm ci"
+if (-not (Test-Path (Join-Path $frontendDir 'node_modules\.bin\vite.cmd'))) {
+  Pause-Launcher "缺少前端依赖或 Vite，请先执行：`n  Set-Location `"$frontendDir`"`n  npm ci"
   exit 1
 }
 
-if (-not (Test-Path (Join-Path $desktopDir 'node_modules'))) {
-  Pause-Launcher "缺少桌面依赖，请先执行：`n  Set-Location `"$desktopDir`"`n  npm ci"
+if (-not (Test-Path (Join-Path $desktopDir 'node_modules\.bin\tauri.cmd'))) {
+  Pause-Launcher "缺少桌面依赖或 Tauri CLI，请先执行：`n  Set-Location `"$desktopDir`"`n  npm ci"
   exit 1
 }
 
