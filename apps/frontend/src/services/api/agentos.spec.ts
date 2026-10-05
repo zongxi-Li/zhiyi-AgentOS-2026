@@ -56,6 +56,23 @@ describe('AgentOS v2 application API', () => {
     expect(page.items[0]).toMatchObject({ status: 'completed', phase: 'completed', percent: 100, totalSteps: 0 })
   })
 
+  it('decodes persisted intermediate output at the shared API boundary', async () => {
+    const signal = new AbortController().signal
+    const content = {
+      summary: '活动整体方案',
+      agenda: [{ title: '交流讨论', minutes: 30, required: true, note: null }],
+      kind: 'user-defined'
+    }
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: {
+      runId: 'run/1', outputRef: 'output:design/1', content: outputValue(content)
+    } } as never)
+
+    await expect(agentosApi.getRunOutput('run/1', 'output:design/1', { signal })).resolves.toEqual({
+      runId: 'run/1', outputRef: 'output:design/1', content
+    })
+    expect(get).toHaveBeenCalledWith('/runs/run%2F1/outputs/output%3Adesign%2F1', { signal })
+  })
+
   it('starts a run through the v2 gateway and preserves clientRequestId', async () => {
     const signal = new AbortController().signal
     const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: run } as never)

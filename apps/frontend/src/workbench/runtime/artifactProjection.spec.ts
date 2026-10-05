@@ -68,4 +68,23 @@ describe('artifactProjection', () => {
     expect(unknown.artifactKind).toBe('unknown')
     expect(renderArtifactDocument(unknown)).toContain('custom payload')
   })
+
+  it('preserves nested records in intermediate results instead of displaying record placeholders', () => {
+    const document = projectArtifactDocument({
+      entry: { ...entry, semanticTaskKey: 'solution_design' },
+      output: { design: { groups: [
+        { name: '第一组', count: 8, activities: [{ title: '阅读交流', duration: 30 }] },
+        { name: '第二组', count: 7, activities: [{ title: '成果分享', duration: 20 }] }
+      ] } }
+    })
+    const markdown = renderArtifactDocument(document)
+    expect(markdown).toContain('第一组')
+    expect(markdown).toContain('阅读交流')
+    expect(markdown).toContain('30')
+    expect(markdown).toContain('第二组')
+    expect(markdown).toContain('成果分享')
+    expect(markdown).not.toContain('记录')
+    const ids = document.blocks.filter(block => block.gutter).map(block => block.blockId)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
 })

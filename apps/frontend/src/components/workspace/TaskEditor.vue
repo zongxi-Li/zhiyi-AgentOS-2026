@@ -7,6 +7,7 @@
     :document="artifactDocument"
     :stage-output-content="stageOutputContent"
     :stage-output-available="stageOutputAvailable"
+    :stage-output-loading="stageOutputLoading"
     :stage-output-error="stageOutputError"
     :selected-symbol-id="selectedSymbolId"
     :result-id-prefix="resultIdPrefix"
@@ -91,7 +92,11 @@ watch([outputRunId, outputRef], async ([runId, refValue], _previous, onCleanup) 
   stageOutputLoading.value = true
   try {
     const result = await agentosApi.getRunOutput(runId, refValue, { signal: controller.signal })
-    persistedStageOutput.value = formatStageOutput(result.content)
+    if (controller.signal.aborted) return
+    persistedStageOutput.value = result.content == null ? '' : formatStageOutput(result.content)
+    if (result.content == null || persistedStageOutput.value.trim() === '') {
+      stageOutputError.value = '步骤已完成，但结果正文为空。'
+    }
   } catch {
     if (!controller.signal.aborted) stageOutputError.value = '阶段结果暂时无法读取。'
   } finally {
@@ -99,7 +104,14 @@ watch([outputRunId, outputRef], async ([runId, refValue], _previous, onCleanup) 
   }
 }, { immediate: true })
 
-const stageOutputContent = computed(() => liveNode.value?.outputBuffer || persistedStageOutput.value)
+const stageOutputContent = computed(() => {
+  const node = liveNode.value
+  // A completed stream can be partial or truncated; the committed result is authoritative.
+  if (node && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(node.status) && node.outputBuffer) {
+    return node.outputBuffer
+  }
+  return persistedStageOutput.value
+})
 const stageOutputAvailable = computed(() => Boolean(
   outputRef.value || liveNode.value || stageOutputLoading.value || stageOutputError.value
 ))

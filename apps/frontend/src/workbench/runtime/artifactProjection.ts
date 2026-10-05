@@ -310,16 +310,29 @@ const finalReportProjector = (entry: WorkspaceEntry, value: JsonRecord): Artifac
   return documentModel(entry, 'final_report', summary, blocks, value)
 }
 
-const genericValue = (value: unknown, depth = 0): ArtifactDocumentBlockDraft[] => {
+const genericValue = (value: unknown, depth = 0, path = 'output'): ArtifactDocumentBlockDraft[] => {
   // Fallback only: known schemas must be handled by a dedicated projector above.
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return [{ type: 'paragraph', text: text(value) }]
   }
-  if (Array.isArray(value)) return [{ type: 'list', items: value.map(item => text(item) || '记录').filter(Boolean) }]
+  if (Array.isArray(value)) {
+    if (value.every(item => item == null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      return [{ type: 'list', items: value.map(item => item == null ? 'null' : text(item)).filter(Boolean) }]
+    }
+    return value.flatMap((item, index) => {
+      const blockId = `${path}-${index + 1}`
+      const title = isRecord(item) ? firstText(item, ['title', 'name', 'id']) : ''
+      return [
+        { blockId, type: 'heading' as const, level: 3 as const, text: title || `条目 ${index + 1}` },
+        ...genericValue(item, depth + 1, blockId)
+      ]
+    })
+  }
   if (!isRecord(value)) return []
   return Object.entries(value).flatMap(([key, item]) => {
-    const heading = { type: 'heading' as const, level: depth > 0 ? 3 as const : 2 as const, text: key.replace(/[_-]+/g, ' ') }
-    const nested = genericValue(item, depth + 1)
+    const blockId = `${path}-${key}`
+    const heading = { blockId, type: 'heading' as const, level: depth > 0 ? 3 as const : 2 as const, text: key.replace(/[_-]+/g, ' ') }
+    const nested = genericValue(item, depth + 1, blockId)
     return [heading, ...nested]
   })
 }

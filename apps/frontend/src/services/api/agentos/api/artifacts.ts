@@ -2,6 +2,7 @@ import { agentosRequest } from '../client'
 import type { ArtifactContentResponse, ArtifactDetail, RunOutputResponse } from '../types'
 import { runPath } from '../paths'
 import type { ArtifactApiDependencies } from '../dependencies'
+import { decodeOutputContent, type OutputContentValue } from './acg'
 
 const readBlobText = async (blob: Blob): Promise<string> => {
   if (typeof blob.text === 'function') return blob.text()
@@ -19,11 +20,11 @@ export const createArtifactsApi = (getApi: () => ArtifactApiDependencies) => ({
     outputRef: string,
     options: { signal?: AbortSignal } = {}
   ): Promise<RunOutputResponse> {
-    const response = await agentosRequest.get<RunOutputResponse>(
+    const response = await agentosRequest.get<Omit<RunOutputResponse, 'content'> & { content: OutputContentValue }>(
       `${runPath(runId)}/outputs/${encodeURIComponent(outputRef)}`,
       { signal: options.signal }
     )
-    return response.data
+    return { ...response.data, content: decodeOutputContent(response.data.content) }
   },
 
   async getArtifactDetail(

@@ -35,7 +35,10 @@
 
     <div class="task-document__body">
       <article class="task-document__canvas">
-        <div class="task-document__blocks" aria-label="Artifact document blocks">
+        <p v-if="!stageOutputContent && stageOutputLoading" role="status">{{ stageOutputPlaceholder }}</p>
+        <p v-else-if="!stageOutputContent && stageOutputError" role="alert">{{ stageOutputError }}</p>
+        <p v-else-if="!stageOutputContent && isTerminal" role="status">{{ stageOutputPlaceholder }}</p>
+        <div v-else class="task-document__blocks" aria-label="Artifact document blocks">
           <div
             v-for="group in blockGroups"
             :key="group.blockId"
@@ -69,7 +72,7 @@
         <details v-if="stageOutputAvailable" class="task-document__source">
           <summary>原始结构化结果（调试）</summary>
           <StageOutputRenderer
-            :value="stageOutputContent || stageOutputError || '等待模型输出…'"
+            :value="stageOutputContent || stageOutputError || stageOutputPlaceholder"
             :selected-id="selectedSymbolId"
             :id-prefix="resultIdPrefix"
             @select="emit('selectResult', $event)"
@@ -102,6 +105,7 @@ const props = defineProps<{
   document: ArtifactDocumentModel
   stageOutputContent: string
   stageOutputAvailable: boolean
+  stageOutputLoading?: boolean
   stageOutputError: string
   selectedSymbolId?: string | null
   resultIdPrefix: string
@@ -121,6 +125,15 @@ const emit = defineEmits<{
 const documentFilename = computed(() => {
   const normalized = props.entry.name.trim()
   return /\.(md|markdown)$/i.test(normalized) ? normalized : `${normalized || 'task'}.md`
+})
+
+const isTerminal = computed(() => ['completed', 'succeeded', 'failed', 'cancelled', 'skipped'].includes(props.entry.status || ''))
+const stageOutputPlaceholder = computed(() => {
+  if (props.stageOutputLoading) return '正在读取已保存的步骤结果…'
+  if (isTerminal.value) {
+    return '没有可读取的步骤结果正文。'
+  }
+  return '等待模型输出…'
 })
 
 const statusLabel = (status?: string | null) => ({

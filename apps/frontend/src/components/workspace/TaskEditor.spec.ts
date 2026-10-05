@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
+import { agentosApi, agentosRequest, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 import { RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import TaskEditor from './TaskEditor.vue'
 
@@ -28,6 +28,69 @@ const mountEditor = (runtimeStore: RunRuntimeStore | null = null) => mount(TaskE
 
 describe('TaskEditor stage output', () => {
   afterEach(() => vi.restoreAllMocks())
+
+  it('shows result loading instead of a task objective for a completed step', async () => {
+    let resolveOutput!: (value: { runId: string; outputRef: string; content: unknown }) => void
+    vi.spyOn(agentosApi, 'getRunOutput').mockImplementation(() => new Promise(resolve => { resolveOutput = resolve }))
+    const wrapper = mountEditor()
+    await wrapper.setProps({ entry: { ...task, status: 'completed', objective: '这只是任务描述' } })
+    expect(wrapper.get('[role="status"]').text()).toBe('正在读取已保存的步骤结果…')
+    expect(wrapper.text()).not.toContain('这只是任务描述')
+    expect(wrapper.text()).not.toContain('等待模型输出')
+    resolveOutput({ runId: 'run_1', outputRef: 'output:node_1', content: { summary: '已保存的结果' } })
+    await flushPromises()
+    expect(wrapper.get('.task-document__blocks').text()).toContain('已保存的结果')
+  })
+
+  it('uses the persisted result after a live node completes', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({
+      runId: 'run_1', outputRef: 'output:node_1', content: { summary: '完整结果' }
+    })
+    const runtimeStore = new RunRuntimeStore('run_1')
+    runtimeStore.apply({
+      eventId: 'delta', eventType: 'model.output.delta', runId: 'run_1', nodeId: 'node_1',
+      attemptId: 'attempt_1', sequence: 1, payload: { delta: '残留片段' }
+    })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    runtimeStore.apply({
+      eventId: 'complete', eventType: 'node.completed', runId: 'run_1', nodeId: 'node_1',
+      attemptId: 'attempt_1', sequence: 2, payload: {}
+    })
+    const wrapper = mountEditor(runtimeStore)
+    await flushPromises()
+    expect(wrapper.get('.task-document__blocks').text()).toContain('完整结果')
+    expect(wrapper.text()).not.toContain('残留片段')
+  })
+
+  it('reports an empty completed output instead of waiting for the model', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({
+      runId: 'run_1', outputRef: 'output:node_1', content: null
+    })
+    const wrapper = mountEditor()
+    await wrapper.setProps({ entry: { ...task, status: 'completed' } })
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('结果正文为空')
+    expect(wrapper.text()).not.toContain('等待模型输出')
+  })
+
+  it('projects the encoded gateway output into the step document', async () => {
+    vi.spyOn(agentosRequest, 'get').mockResolvedValue({ data: {
+      runId: 'run_1', outputRef: 'output:node_1', content: {
+        kind: 'object', members: [
+          { name: 'summary', value: { kind: 'string', text: '活动整体方案设计' } },
+          { name: 'decision', value: { kind: 'string', text: '分组交流并共享阅读心得' } }
+        ]
+      }
+    } } as never)
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const body = wrapper.get('.task-document__blocks').text()
+    expect(body).toContain('活动整体方案设计')
+    expect(body).toContain('分组交流并共享阅读心得')
+    expect(body).not.toContain('members')
+    expect(body).not.toContain('kind')
+  })
 
   it('loads and displays a persisted node result without calling it a formal Artifact', async () => {
     vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({
