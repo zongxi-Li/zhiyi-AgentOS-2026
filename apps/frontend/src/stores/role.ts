@@ -3,7 +3,6 @@ import { ref, computed } from 'vue'
 import { roleApi, type Role, type RoleCreateRequest } from '@/services/api/role'
 
 export const useRoleStore = defineStore('role', () => {
-  const builtinRoles = ref<Role[]>([])
   const customRoles = ref<Role[]>([])
   const currentRole = ref<Role | null>(null)
   const favorites = ref<string[]>([])
@@ -11,11 +10,11 @@ export const useRoleStore = defineStore('role', () => {
   const rolesLoadedAt = ref(0)
 
   const ROLES_CACHE_TTL_MS = 30_000
-  let loadBuiltinPromise: Promise<Role[]> | null = null
   let loadCustomPromise: Promise<Role[]> | null = null
   let loadRolesPromise: Promise<void> | null = null
 
-  const roles = computed(() => [...builtinRoles.value, ...customRoles.value])
+  // 内置角色（律师/教师/程序员/作家）已随 2026-10 深度下线删除，角色体系只保留用户自建角色。
+  const roles = computed(() => [...customRoles.value])
 
   const favoriteRoles = computed(() => {
     return roles.value.filter((r) => favorites.value.includes(r.id))
@@ -34,28 +33,6 @@ export const useRoleStore = defineStore('role', () => {
   const loadFavorites = () => {
     const stored = localStorage.getItem('role_favorites')
     if (stored) favorites.value = JSON.parse(stored)
-  }
-
-  const loadBuiltinRoles = async (force = false) => {
-    if (!force && builtinRoles.value.length > 0) return builtinRoles.value
-    if (loadBuiltinPromise) return loadBuiltinPromise
-
-    loadBuiltinPromise = roleApi
-      .getBuiltinRoles()
-      .then((data) => {
-        builtinRoles.value = Array.isArray(data) ? data : []
-        return builtinRoles.value
-      })
-      .catch((error) => {
-        console.warn('[roleStore] loadBuiltinRoles failed:', error)
-        if (!Array.isArray(builtinRoles.value)) builtinRoles.value = []
-        return builtinRoles.value
-      })
-      .finally(() => {
-        loadBuiltinPromise = null
-      })
-
-    return loadBuiltinPromise
   }
 
   const loadCustomRoles = async (force = false) => {
@@ -89,7 +66,7 @@ export const useRoleStore = defineStore('role', () => {
     loadRolesPromise = (async () => {
       loading.value = true
       try {
-        await Promise.all([loadBuiltinRoles(force), loadCustomRoles(force)])
+        await loadCustomRoles(force)
         rolesLoadedAt.value = Date.now()
       } catch (error) {
         console.warn('[roleStore] loadRoles fallback after error:', error)
@@ -125,11 +102,7 @@ export const useRoleStore = defineStore('role', () => {
   }
 
   const addRole = (role: Role) => {
-    if ((role as any).isBuiltin) {
-      builtinRoles.value.push(role)
-    } else {
-      customRoles.value.push(role)
-    }
+    customRoles.value.push(role)
   }
 
   const createRole = async (request: RoleCreateRequest) => {
@@ -181,7 +154,6 @@ export const useRoleStore = defineStore('role', () => {
   }
 
   return {
-    builtinRoles,
     customRoles,
     roles,
     currentRole,
@@ -190,7 +162,6 @@ export const useRoleStore = defineStore('role', () => {
     favoriteRoles,
     toggleFavorite,
     loadFavorites,
-    loadBuiltinRoles,
     loadCustomRoles,
     loadRoles,
     selectRole,

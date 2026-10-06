@@ -19,16 +19,6 @@
         <option value="failed">需处理</option>
         <option value="completed">已完成</option>
       </select>
-      <select
-        v-model="roleFilter"
-        class="acg-run-filter"
-        aria-label="按角色筛选 ACG 记录"
-        @change="handleRoleFilterChange"
-      >
-        <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
       <span v-if="refreshing && runs.length" class="acg-run-refreshing">更新中</span>
     </div>
 
@@ -130,14 +120,8 @@ import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
 import {
-  ACG_HISTORY_ROLE_OPTIONS,
-  ACG_HISTORY_ROLE_CHANGE_EVENT,
   ACG_RUN_INVALIDATED_EVENT,
-  ACG_HISTORY_SOURCES,
-  acgHistoryRoleDomain,
-  loadAcgHistoryRole,
-  saveAcgHistoryRole,
-  type AcgHistoryRole
+  ACG_HISTORY_SOURCES
 } from '@/utils/acgHistoryFilter'
 
 defineProps<{ activeRunId?: string }>()
@@ -157,7 +141,6 @@ const refreshing = ref(false)
 const loadError = ref('')
 const searchKeyword = ref('')
 const statusFilter = ref<'all' | RunGroupKey>('all')
-const roleFilter = ref<AcgHistoryRole>(loadAcgHistoryRole())
 const selectedRunId = ref('')
 const actionMenuElement = ref<HTMLElement | null>(null)
 const actionMenu = reactive<{ run: WorkflowRunSummary | null; x: number; y: number }>({ run: null, x: 0, y: 0 })
@@ -303,7 +286,6 @@ const loadRuns = (silent = false): Promise<void> => {
         {
           sources: ACG_HISTORY_SOURCES,
           statuses: RUN_LIST_STATUSES,
-          domain: acgHistoryRoleDomain(roleFilter.value),
           summary: true,
           page: 1,
           pageSize: RUN_LIST_PAGE_SIZE,
@@ -395,22 +377,6 @@ const deleteActionMission = async () => {
 const handleActionDismiss = (event: PointerEvent) => { if (!actionMenuElement.value?.contains(event.target as Node)) closeActionMenu() }
 const handleActionKeydown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeActionMenu() }
 
-const handleRoleFilterChange = () => {
-  saveAcgHistoryRole(roleFilter.value)
-  loadController?.abort()
-  loadPromise = null
-  void loadRuns()
-}
-
-const handleRoleFilterSync = (event: Event) => {
-  const role = (event as CustomEvent<AcgHistoryRole>).detail
-  if (!ACG_HISTORY_ROLE_OPTIONS.some(option => option.value === role) || role === roleFilter.value) return
-  roleFilter.value = role
-  loadController?.abort()
-  loadPromise = null
-  void loadRuns()
-}
-
 const scheduleRefresh = () => {
   if (unmounted) return
   if (refreshTimer !== null) window.clearTimeout(refreshTimer)
@@ -441,7 +407,6 @@ const handleRunInvalidated = (event: Event) => {
 onMounted(() => {
   window.addEventListener('acg-runs-refresh', handleRunsRefresh)
   window.addEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
-  window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   window.addEventListener('pointerdown', handleActionDismiss)
   window.addEventListener('keydown', handleActionKeydown)
   void loadRuns().finally(scheduleRefresh)
@@ -453,7 +418,6 @@ onUnmounted(() => {
   if (refreshTimer !== null) window.clearTimeout(refreshTimer)
   window.removeEventListener('acg-runs-refresh', handleRunsRefresh)
   window.removeEventListener(ACG_RUN_INVALIDATED_EVENT, handleRunInvalidated)
-  window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   window.removeEventListener('pointerdown', handleActionDismiss)
   window.removeEventListener('keydown', handleActionKeydown)
 })

@@ -143,10 +143,10 @@ const props = withDefaults(defineProps<{
   aggregating?: boolean
 }>(), {
   clients: () => [
-    { id: 'c1', label: '律师 Agent', active: true, accuracy: 87.3, dataSize: 12450 },
-    { id: 'c2', label: '教师 Agent', active: true, accuracy: 84.6, dataSize: 8920 },
-    { id: 'c3', label: '程序员 Agent', active: true, accuracy: 86.1, dataSize: 15380 },
-    { id: 'c4', label: '作家 Agent', active: true, accuracy: 83.2, dataSize: 6740 }
+    { id: 'c1', label: 'Agent A', active: true, accuracy: 87.3, dataSize: 12450 },
+    { id: 'c2', label: 'Agent B', active: true, accuracy: 84.6, dataSize: 8920 },
+    { id: 'c3', label: 'Agent C', active: true, accuracy: 86.1, dataSize: 15380 },
+    { id: 'c4', label: 'Agent D', active: true, accuracy: 83.2, dataSize: 6740 }
   ],
   globalVersion: '3.2',
   aggregating: false

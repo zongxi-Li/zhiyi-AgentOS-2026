@@ -158,14 +158,6 @@
                 <div class="chat-submenu-section-head">
                     <span class="chat-submenu-section-title">{{ workspaceMode === 'agent' ? '工程项目' : '对话记录' }}</span>
                   <div class="chat-submenu-section-tools">
-                    <label v-if="workspaceMode === 'agent'" class="acg-role-filter acg-role-filter--sidebar">
-                        <select v-model="agentHistoryRole" aria-label="按角色筛选工程项目" @change="handleAgentHistoryRoleChange">
-                        <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
-                          {{ option.label }}
-                        </option>
-                      </select>
-                      <el-icon class="acg-role-filter__chevron" aria-hidden="true"><ArrowDown /></el-icon>
-                    </label>
                     <span v-if="workspaceHistoryCount" class="chat-project-count" :aria-label="`${workspaceHistoryCount} 个项目`">
                       {{ workspaceHistoryCount }}
                     </span>
@@ -452,7 +444,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowDown, ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
+  ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
   Clock, Setting, SwitchButton,
   Monitor, Cpu, Coin,
   Fold
@@ -463,7 +455,6 @@ import { authApi } from '@/services/api/auth'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { agentosApi, type MissionListItem } from '@/services/api/agentos'
-import { workflowApi } from '@/services/api/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { useUserStore } from '@/stores/user'
@@ -473,15 +464,6 @@ import {
   getConversationWorkspace,
   removeConversationWorkspace
 } from '@/utils/conversationWorkspace'
-import {
-  ACG_HISTORY_ROLE_OPTIONS,
-  ACG_HISTORY_ROLE_CHANGE_EVENT,
-  ACG_HISTORY_SOURCES,
-  acgHistoryRoleDomain,
-  loadAcgHistoryRole,
-  saveAcgHistoryRole,
-  type AcgHistoryRole
-} from '@/utils/acgHistoryFilter'
 import { isDesktop } from '@/platform'
 import { plainMissionTitle } from '@/utils/missionTitle'
 
@@ -518,7 +500,6 @@ type SidebarActionTarget =
   | { kind: 'chat'; conversation: Conversation }
 const sidebarActionMenu = reactive<{ target: SidebarActionTarget | null; x: number; y: number }>({ target: null, x: 0, y: 0 })
 const sidebarActionMenuElement = ref<HTMLElement | null>(null)
-const agentHistoryRole = ref<AcgHistoryRole>(loadAcgHistoryRole())
 let conversationLoadGeneration = 0
 let conversationLoadController: AbortController | null = null
 let conversationLoadPromise: Promise<void> | null = null
@@ -622,21 +603,7 @@ const loadRecentConversations = (): Promise<void> => {
           { signal: controller.signal }
         )
         if (requestGeneration !== conversationLoadGeneration || requestedWorkspace !== workspaceMode.value) return
-        let projects = missionPage.items || []
-        if (agentHistoryRole.value !== 'all') {
-          const roleRuns = await workflowApi.listRuns(
-            {
-              sources: ACG_HISTORY_SOURCES,
-              domain: acgHistoryRoleDomain(agentHistoryRole.value),
-              summary: true,
-              page: 1,
-              pageSize: SIDEBAR_PROJECT_PAGE_SIZE
-            },
-            { signal: controller.signal }
-          )
-          const roleMissionIds = new Set((roleRuns.items || []).map(run => run.missionId))
-          projects = projects.filter(project => roleMissionIds.has(project.missionId))
-        }
+        const projects = missionPage.items || []
         if (requestGeneration !== conversationLoadGeneration || requestedWorkspace !== workspaceMode.value) return
         recentAgentProjects.value = projects
         return
@@ -661,26 +628,6 @@ const loadRecentConversations = (): Promise<void> => {
   })()
   conversationLoadPromise = pending
   return pending
-}
-
-const handleAgentHistoryRoleChange = () => {
-  saveAcgHistoryRole(agentHistoryRole.value)
-  conversationLoadController?.abort()
-  conversationLoadPromise = null
-  conversationLoadWorkspace = null
-  void loadRecentConversations()
-}
-
-const handleAgentHistoryRoleSync = (event: Event) => {
-  const role = (event as CustomEvent<AcgHistoryRole>).detail
-  if (!ACG_HISTORY_ROLE_OPTIONS.some(option => option.value === role) || role === agentHistoryRole.value) return
-  agentHistoryRole.value = role
-  if (workspaceMode.value === 'agent') {
-    conversationLoadController?.abort()
-    conversationLoadPromise = null
-    conversationLoadWorkspace = null
-    void loadRecentConversations()
-  }
 }
 
 const handleChatNavToggle = () => {
@@ -1252,7 +1199,6 @@ const guardNativeFileDrop = (event: DragEvent): void => {
 onMounted(() => {
   window.addEventListener('history-refresh', handleHistoryRefresh)
   window.addEventListener('acg-runs-refresh', handleHistoryRefresh)
-  window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleAgentHistoryRoleSync)
   window.addEventListener('conversation-workspace-change', handleConversationWorkspaceChange)
   window.addEventListener('dragover', guardNativeFileDrop)
   window.addEventListener('drop', guardNativeFileDrop)
@@ -1269,7 +1215,6 @@ onUnmounted(() => {
   stopChatPanelResize()
   window.removeEventListener('history-refresh', handleHistoryRefresh)
   window.removeEventListener('acg-runs-refresh', handleHistoryRefresh)
-  window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleAgentHistoryRoleSync)
   window.removeEventListener('conversation-workspace-change', handleConversationWorkspaceChange)
   window.removeEventListener('dragover', guardNativeFileDrop)
   window.removeEventListener('drop', guardNativeFileDrop)
@@ -1749,57 +1694,6 @@ onUnmounted(() => {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
-}
-
-.acg-role-filter--sidebar {
-  position: relative;
-  min-width: 0;
-  display: block;
-}
-
-.acg-role-filter--sidebar select {
-  width: 90px;
-  height: 28px;
-  padding: 0 25px 0 9px;
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  outline: 0;
-  appearance: none;
-  background: color-mix(in srgb, var(--bg-card) 86%, transparent);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0;
-  cursor: pointer;
-  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
-}
-
-.acg-role-filter--sidebar select:hover {
-  border-color: var(--primary-line);
-  background: var(--bg-card);
-  color: var(--primary-color);
-}
-
-.acg-role-filter--sidebar select:focus-visible {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px var(--primary-fade);
-}
-
-.acg-role-filter__chevron {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  color: var(--text-disabled);
-  font-size: 11px;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: color 0.16s ease;
-}
-
-.acg-role-filter--sidebar:hover .acg-role-filter__chevron,
-.acg-role-filter--sidebar:focus-within .acg-role-filter__chevron {
-  color: var(--primary-color);
 }
 
 .chat-submenu-refreshing {

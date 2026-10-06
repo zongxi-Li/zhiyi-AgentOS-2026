@@ -94,10 +94,10 @@ const isEmptyGraph = computed(() => initialized.value && !loading.value && !erro
 const emptyDescription = computed(() => {
   if (currentRoleId.value) {
     const roleName = roleStore.currentRole?.name || '当前角色'
-    return `${roleName} 暂无知识图谱数据。内置图谱仅包含律师、教师、程序员、作家角色；如果你使用的是自定义角色，需要先上传该角色的知识文档。`
+    return `${roleName} 暂无知识图谱数据。需要先上传该角色的知识文档，才会生成对应的图谱。`
   }
 
-  return '当前还没有可展示的知识图谱数据。请先上传文档，或切换到律师、教师、程序员、作家等已内置知识的角色。'
+  return '当前还没有可展示的知识图谱数据。选择角色并上传知识文档后即可生成。'
 })
 
 let network: Network | null = null

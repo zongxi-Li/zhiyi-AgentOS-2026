@@ -70,10 +70,10 @@ const props = withDefaults(defineProps<{
   minClients?: number
 }>(), {
   clients: () => [
-    { id: 'c1', label: '律师Agent', weight: 0.30, uploaded: true },
-    { id: 'c2', label: '教师Agent', weight: 0.22, uploaded: true },
-    { id: 'c3', label: '程序员Agent', weight: 0.30, uploaded: true },
-    { id: 'c4', label: '作家Agent', weight: 0.18, uploaded: true }
+    { id: 'c1', label: 'Agent A', weight: 0.30, uploaded: true },
+    { id: 'c2', label: 'Agent B', weight: 0.22, uploaded: true },
+    { id: 'c3', label: 'Agent C', weight: 0.30, uploaded: true },
+    { id: 'c4', label: 'Agent D', weight: 0.18, uploaded: true }
   ],
   aggregating: false,
   minClients: 3

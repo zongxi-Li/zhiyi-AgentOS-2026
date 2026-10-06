@@ -217,10 +217,10 @@ const tabs = [
 ]
 
 const topologyClients = ref([
-  { id: 'c1', label: '律师Agent', active: true, accuracy: 87.3, dataSize: 12450 },
-  { id: 'c2', label: '教师Agent', active: true, accuracy: 84.6, dataSize: 8920 },
-  { id: 'c3', label: '程序员Agent', active: true, accuracy: 86.1, dataSize: 15380 },
-  { id: 'c4', label: '作家Agent', active: true, accuracy: 83.2, dataSize: 6740 }
+  { id: 'c1', label: 'Agent A', active: true, accuracy: 87.3, dataSize: 12450 },
+  { id: 'c2', label: 'Agent B', active: true, accuracy: 84.6, dataSize: 8920 },
+  { id: 'c3', label: 'Agent C', active: true, accuracy: 86.1, dataSize: 15380 },
+  { id: 'c4', label: 'Agent D', active: true, accuracy: 83.2, dataSize: 6740 }
 ])
 
 const accuracyHistory = ref([62.1, 68.4, 73.7, 77.9, 81.2, 83.5, 85.1, 86.3, 87.0, 87.3])
@@ -228,10 +228,10 @@ const lossHistory = ref([1.24, 1.05, 0.89, 0.76, 0.64, 0.55, 0.48, 0.42, 0.38, 0
 const roundHistory = ref([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
 const aggClients = ref([
-  { id: 'c1', label: '律师Agent', weight: 0.30, uploaded: true },
-  { id: 'c2', label: '教师Agent', weight: 0.22, uploaded: true },
-  { id: 'c3', label: '程序员Agent', weight: 0.30, uploaded: true },
-  { id: 'c4', label: '作家Agent', weight: 0.18, uploaded: true }
+  { id: 'c1', label: 'Agent A', weight: 0.30, uploaded: true },
+  { id: 'c2', label: 'Agent B', weight: 0.22, uploaded: true },
+  { id: 'c3', label: 'Agent C', weight: 0.30, uploaded: true },
+  { id: 'c4', label: 'Agent D', weight: 0.18, uploaded: true }
 ])
 
 const privacyMechanisms = ref([
@@ -250,10 +250,10 @@ const versionHistory = ref([
 ])
 
 const models = ref([
-  { id: 'lawyer', name: '律师Agent模型', version: '3.2', status: 'online', statusText: '在线', accuracy: 87.3, efficiency: 82, color: '#496b8f' },
-  { id: 'teacher', name: '教师Agent模型', version: '2.8', status: 'online', statusText: '在线', accuracy: 84.6, efficiency: 79, color: '#10b981' },
-  { id: 'programmer', name: '程序员Agent模型', version: '4.1', status: 'training', statusText: '训练中', accuracy: 86.1, efficiency: 85, color: '#6f668f' },
-  { id: 'writer', name: '作家Agent模型', version: '2.3', status: 'ready', statusText: '就绪', accuracy: 83.2, efficiency: 76, color: '#f59e0b' }
+  { id: 'lawyer', name: 'Agent A 模型', version: '3.2', status: 'online', statusText: '在线', accuracy: 87.3, efficiency: 82, color: '#496b8f' },
+  { id: 'teacher', name: 'Agent B 模型', version: '2.8', status: 'online', statusText: '在线', accuracy: 84.6, efficiency: 79, color: '#10b981' },
+  { id: 'programmer', name: 'Agent C 模型', version: '4.1', status: 'training', statusText: '训练中', accuracy: 86.1, efficiency: 85, color: '#6f668f' },
+  { id: 'writer', name: 'Agent D 模型', version: '2.3', status: 'ready', statusText: '就绪', accuracy: 83.2, efficiency: 76, color: '#f59e0b' }
 ])
 
 const activeClientsCount = computed(() => topologyClients.value.filter(c => c.active).length)

@@ -56,14 +56,6 @@
             </select>
           </label>
           <label>
-            <span>角色</span>
-            <select v-model="filters.role" aria-label="按角色筛选 ACG 记录" @change="applyFilters">
-              <option v-for="option in ACG_HISTORY_ROLE_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-          </label>
-          <label>
             <span>Workflow / Task</span>
             <input v-model="filters.query" placeholder="输入稳定 ID" @keyup.enter="applyFilters" />
           </label>
@@ -286,15 +278,7 @@ import {
 } from '@/services/api/workflow'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { isWorkflowReviewPending } from '@/utils/workflowReviewState'
-import {
-  ACG_HISTORY_ROLE_OPTIONS,
-  ACG_HISTORY_ROLE_CHANGE_EVENT,
-  ACG_HISTORY_SOURCES,
-  acgHistoryRoleDomain,
-  loadAcgHistoryRole,
-  saveAcgHistoryRole,
-  type AcgHistoryRole
-} from '@/utils/acgHistoryFilter'
+import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
 
 const DEFAULT_STATUSES = ['pending', 'planning', 'running', 'retrying', 'waiting_review', 'completed', 'failed', 'cancelled']
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
@@ -442,7 +426,6 @@ const terminalDetailCache = new Map<string, { run: WorkflowRun; acg: AcgView }>(
 
 const filters = reactive({
   status: '' as WorkflowStatus | '',
-  role: loadAcgHistoryRole() as AcgHistoryRole,
   recordState: (route.query.recordState === 'archived' ? 'archived' : 'active') as 'active' | 'archived',
   query: '',
   page: 1
@@ -499,7 +482,6 @@ const listParams = () => {
     workflowId: query.startsWith('task_') ? undefined : query || undefined,
     missionId: query.startsWith('mission_') ? query : undefined,
     sources: ACG_HISTORY_SOURCES,
-    domain: acgHistoryRoleDomain(filters.role),
     recordState: filters.recordState,
     summary: true,
     page: filters.page,
@@ -587,7 +569,6 @@ const loadRuns = async (force = false) => {
 }
 
 const applyFilters = () => {
-  saveAcgHistoryRole(filters.role)
   filters.page = 1
   void loadRuns(true)
 }
@@ -599,13 +580,6 @@ const setRecordState = (recordState: 'active' | 'archived') => {
   void loadRuns(true)
 }
 
-const handleRoleFilterSync = (event: Event) => {
-  const role = (event as CustomEvent<AcgHistoryRole>).detail
-  if (!ACG_HISTORY_ROLE_OPTIONS.some(option => option.value === role) || role === filters.role) return
-  filters.role = role
-  filters.page = 1
-  void loadRuns(true)
-}
 const changePage = (offset: number) => {
   filters.page = Math.min(totalPages.value, Math.max(1, filters.page + offset))
   void loadRuns(true)
@@ -809,14 +783,12 @@ watch(() => progressTracker.syncError.value, error => {
 
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibility)
-  window.addEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   void refreshOverview(true)
 })
 
 onBeforeUnmount(() => {
   stopPanelResize?.()
   document.removeEventListener('visibilitychange', handleVisibility)
-  window.removeEventListener(ACG_HISTORY_ROLE_CHANGE_EVENT, handleRoleFilterSync)
   clearListTimer()
   listGeneration += 1
   listController?.abort()

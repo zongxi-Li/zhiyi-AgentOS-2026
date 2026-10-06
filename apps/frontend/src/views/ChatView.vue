@@ -653,7 +653,7 @@ import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
-import { ACG_HISTORY_SOURCES, acgHistoryRoleDomain, loadAcgHistoryRole } from '@/utils/acgHistoryFilter'
+import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
 import { loadModelSettings } from '@/config/modelSettings'
 
 const { t } = useI18n()
@@ -1335,7 +1335,6 @@ const loadMissionRecords = async () => {
     if (isAgentMode.value) {
       const page = await workflowApi.listRuns({
         sources: ACG_HISTORY_SOURCES,
-        domain: acgHistoryRoleDomain(loadAcgHistoryRole()),
         summary: true,
         page: 1,
         pageSize: 8

@@ -30,11 +30,6 @@ const isRateLimitError = (error: unknown) => {
 }
 
 export const roleApi = {
-  async getBuiltinRoles(): Promise<Role[]> {
-    const response = await request.get<Role[]>('/roles/builtin')
-    return Array.isArray(response.data) ? response.data : []
-  },
-
   async getCustomRoles(): Promise<Role[]> {
     try {
       const response = await request.get<Role[]>('/roles/custom')

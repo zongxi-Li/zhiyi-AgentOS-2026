@@ -92,28 +92,13 @@ describe('AcgRunManager', () => {
     const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
     await flushPromises()
 
-    expect(wrapper.findAll('.acg-run-filter')).toHaveLength(2)
+    expect(wrapper.findAll('.acg-run-filter')).toHaveLength(1)
     expect(wrapper.find('select[aria-label="筛选任务记录"]').exists()).toBe(false)
     expect(wrapper.find('.acg-run-manage strong').text()).toBe('查看运行历史记录')
     expect(workflowApi.listRuns).toHaveBeenCalledWith(
       expect.objectContaining({ recordState: 'active' }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
-    wrapper.unmount()
-  })
-
-  it('filters the combined ACG history by role domain', async () => {
-    const wrapper = mount(AcgRunManager, { global: { stubs: { 'el-icon': true } } })
-    await flushPromises()
-
-    await wrapper.find('select[aria-label="按角色筛选 ACG 记录"]').setValue('lawyer')
-    await flushPromises()
-
-    expect(workflowApi.listRuns).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sources: ACG_HISTORY_SOURCES, domain: 'legal' }),
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
-    expect(localStorage.getItem('acg.history.role')).toBe('lawyer')
     wrapper.unmount()
   })
 
