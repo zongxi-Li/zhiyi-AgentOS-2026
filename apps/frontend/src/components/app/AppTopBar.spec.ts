@@ -3,6 +3,28 @@ import { createWebHistory, createRouter, type Router } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
 import AppTopBar from './AppTopBar.vue'
 
+const platformState = vi.hoisted(() => ({ desktop: false }))
+
+vi.mock('@/platform', () => ({
+  isDesktop: () => platformState.desktop,
+  platform: {
+    get platform() { return platformState.desktop ? 'desktop' : 'web' },
+    get dragRegionProps() { return platformState.desktop ? { 'data-tauri-drag-region': '' } : {} }
+  }
+}))
+
+vi.mock('@/services/api/agentos', () => ({
+  agentosApi: {
+    listMissions: vi.fn(async () => ({
+      items: [
+        { missionId: 'mission_1', title: '第一个任务', runCount: 2, latestRunId: 'run_9' },
+        { missionId: 'mission_2', title: '**强调**标题', runCount: 0, latestRunId: null }
+      ],
+      total: 2
+    }))
+  }
+}))
+
 const routes = [
   { path: '/', component: { template: '<div />' } },
   { path: '/agentos/acg', component: { template: '<div />' } },
@@ -52,8 +74,92 @@ describe('AppTopBar', () => {
     await wrapper.get('input').trigger('keydown.esc')
 
     expect(wrapper.emitted('menu')).toHaveLength(1)
-    expect(wrapper.emitted('navigate')).toEqual([['/history?tab=acg']])
+    expect(wrapper.emitted('navigate')).toEqual([['/agentos/resources']])
     expect(wrapper.get('input').element).toHaveProperty('value', '')
+  })
+
+  it('opens the projects dropdown, lands on the hub, and routes through its menu items', async () => {
+    const { wrapper } = await mountTopBar()
+
+    await wrapper.get('[aria-haspopup="menu"]').trigger('click')
+    expect(wrapper.emitted('navigate')).toEqual([['/agentos/projects']])
+    const menu = wrapper.get('[role="menu"]')
+    expect(menu.text()).toContain('新建 Mission')
+    expect(menu.text()).toContain('打开 Mission')
+
+    await menu.findAll('[role="menuitem"]')[1].trigger('click')
+    const events = wrapper.emitted('navigate')
+    expect(events).toHaveLength(2)
+    expect(events![1]).toEqual(['/agentos/acg'])
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+  })
+
+  it('closes the projects dropdown on Escape and outside pointerdown', async () => {
+    const { wrapper } = await mountTopBar()
+    const trigger = wrapper.get('[aria-haspopup="menu"]')
+
+    await trigger.trigger('click')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(true)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+
+    await trigger.trigger('click')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(true)
+    // 真实外点落在 body 元素上；直接派发到 window 会让 target 非 Node，绕过组件防御分支
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+  })
+
+  it('opens the recent-missions submenu and enters a mission directly', async () => {
+    const { wrapper } = await mountTopBar()
+
+    await wrapper.get('[aria-haspopup="menu"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="menu"][aria-label="项目操作"]').text()).toContain('最近 Mission')
+
+    await wrapper.get('[data-menu-submenu-trigger]').trigger('click')
+    await flushPromises()
+
+    const submenu = wrapper.get('[role="menu"][aria-label="最近 Mission"]')
+    const items = submenu.findAll('[role="menuitem"]')
+    expect(items).toHaveLength(3)
+    expect(items[0].text()).toContain('第一个任务')
+    expect(items[0].text()).toContain('2 次运行')
+
+    await items[0].trigger('click')
+    const events = wrapper.emitted('navigate')
+    expect(events![events!.length - 1]).toEqual(['/agentos/missions/mission_1/workspace?runId=run_9'])
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+  })
+
+  it('reopens the recent-missions submenu instantly from cache and routes 更多… to the full list', async () => {
+    const { wrapper } = await mountTopBar()
+
+    await wrapper.get('[aria-haspopup="menu"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-menu-submenu-trigger]').trigger('click')
+    await flushPromises()
+    // 收起（再点触发器即关闭整套）后重新展开
+    await wrapper.get('[aria-haspopup="menu"]').trigger('click')
+    await wrapper.get('[aria-haspopup="menu"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-menu-submenu-trigger]').trigger('click')
+    await flushPromises()
+
+    // 缓存命中：任务行已在，不出现加载/错误提示行
+    const submenu = wrapper.get('[role="menu"][aria-label="最近 Mission"]')
+    expect(submenu.text()).toContain('第一个任务')
+    expect(submenu.find('.app-topbar__dropdown-note').exists()).toBe(false)
+
+    const items = submenu.findAll('[role="menuitem"]')
+    expect(items).toHaveLength(3)
+    await items[2].trigger('click')
+    const events = wrapper.emitted('navigate')
+    expect(events![events!.length - 1]).toEqual(['/agentos/acg'])
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
   })
 
   it('focuses the command center with Ctrl/Cmd+K', async () => {
@@ -123,7 +229,7 @@ describe('AppTopBar', () => {
     await option.trigger('mousedown')
     await option.trigger('click')
 
-    expect(wrapper.emitted('navigate')).toEqual([['/history?tab=acg']])
+    expect(wrapper.emitted('navigate')).toEqual([['/history']])
   })
 
   it('uses the logo as the single navigation toggle', async () => {
@@ -152,6 +258,30 @@ describe('AppTopBar', () => {
     expect(wrapper.find('.desktop-window-controls').exists()).toBe(false)
     expect(wrapper.find('[aria-label="关闭"]').exists()).toBe(false)
     expect(wrapper.find('[data-tauri-drag-region]').exists()).toBe(false)
+  })
+
+  it('keeps every topbar surface draggable in the desktop shell', async () => {
+    // Tauri 拖动区只认被点中的元素：网格包裹层若不带 drag-region，
+    // 顶栏空白处（含窗口控件两侧）按下时 target 落在包裹层上，窗口就拖不动了。
+    platformState.desktop = true
+    try {
+      const { wrapper } = await mountTopBar()
+
+      const surfaces = [
+        '.app-topbar',
+        '.app-topbar__left',
+        '.app-topbar__brand-zone',
+        '.app-topbar__menu-links',
+        '.app-topbar__command',
+        '.app-topbar__right'
+      ]
+      for (const selector of surfaces) {
+        expect(wrapper.get(selector).attributes('data-tauri-drag-region')).toBe('')
+      }
+      wrapper.unmount()
+    } finally {
+      platformState.desktop = false
+    }
   })
 
   it('starts with both history buttons disabled', async () => {

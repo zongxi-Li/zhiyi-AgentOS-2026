@@ -155,6 +155,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/agentos/projects',
+    name: 'ProjectsHub',
+    component: () => import('@/views/ProjectsHubView.vue'),
+    meta: {
+      title: '项目',
+      requiresAuth: true
+    }
+  },
+  {
     path: '/agentos/resources',
     name: 'ResourceCenter',
     component: () => import('@/views/ResourceCenterView.vue'),

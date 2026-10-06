@@ -58,26 +58,6 @@
                   <span v-if="!mainSidebarCompact" class="chat-nav-label">ACG 动态群体智能引擎</span>
                 </button>
               </div>
-
-              <div v-if="!mainSidebarCompact" class="menu-group-title">{{ $t('nav.knowledge') }}</div>
-              <el-menu-item index="/rag">
-                <el-icon><Search /></el-icon>
-                <span>{{ $t('nav.rag') }}</span>
-              </el-menu-item>
-              <el-menu-item index="/history">
-                <el-icon><Clock /></el-icon>
-                <span>{{ $t('nav.history') }}</span>
-              </el-menu-item>
-
-              <div v-if="!mainSidebarCompact" class="menu-group-title">{{ $t('nav.system') }}</div>
-              <el-menu-item index="/agentos/memory">
-                <el-icon><Coin /></el-icon>
-                <span>运行记忆</span>
-              </el-menu-item>
-              <el-menu-item index="/agentos/resources">
-                <el-icon><Cpu /></el-icon>
-                <span>资源中心</span>
-              </el-menu-item>
             </el-menu>
           </div>
 
@@ -318,22 +298,6 @@
                 <img class="acg-nav-logo" src="/acglogo.webp" alt="" aria-hidden="true" />
                 <span>ACG 动态群体智能引擎</span>
               </el-menu-item>
-
-              <div class="menu-group-title">{{ $t('nav.knowledge') }}</div>
-              <el-menu-item index="/rag">
-                <el-icon><Search /></el-icon>
-                <span>{{ $t('nav.rag') }}</span>
-              </el-menu-item>
-              <el-menu-item index="/history">
-                <el-icon><Clock /></el-icon>
-                <span>{{ $t('nav.history') }}</span>
-              </el-menu-item>
-
-              <div class="menu-group-title">{{ $t('nav.system') }}</div>
-              <el-menu-item index="/agentos/resources">
-                <el-icon><Cpu /></el-icon>
-                <span>资源中心</span>
-              </el-menu-item>
             </el-menu>
 
             <div class="sidebar-footer drawer-footer">
@@ -445,9 +409,9 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled, Search,
+  ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled,
   Clock, Setting, SwitchButton,
-  Monitor, Cpu, Coin,
+  Monitor, Cpu,
   Fold
 } from '@element-plus/icons-vue'
 import AppTopBar from '@/components/app/AppTopBar.vue'
@@ -1158,11 +1122,8 @@ const isRouteScrollable = computed(() => {
 const activeMenu = computed(() => {
   const path = route.path
   if (path === '/chat' || path.startsWith('/chat')) return '/chat'
-  if (path.startsWith('/agentos/resources')) return '/agentos/resources'
   if (path.startsWith('/agentos/acg') || isMissionWorkspacePath(path)) return '/agentos/acg'
-  if (path === '/rag' || path.startsWith('/rag')) return '/rag'
   if (path === '/settings' || path.startsWith('/settings')) return '/settings'
-  if (path.startsWith('/history')) return '/history'
   if (path.startsWith('/user')) return '/user'
   return path
 })
