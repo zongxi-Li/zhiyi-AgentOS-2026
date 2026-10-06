@@ -2,13 +2,13 @@
   <section class="acg-copilot" aria-label="ACG Copilot 任务助手">
     <div class="context-strip"><el-icon><Share /></el-icon><span :title="targetTitle">{{ targetTitle }}</span><small>{{ statusLabel }}</small></div>
     <nav class="copilot-tabs" aria-label="助手视图">
-      <button :class="{ active: tab === 'chat' }" @click="tab = 'chat'">对话 <i v-if="state?.question" class="attention-dot"></i></button>
+      <button :class="{ active: tab === 'chat' }" @click="tab = 'chat'">对话 <i v-if="state?.question || state?.review" class="attention-dot"></i></button>
       <button :class="{ active: tab === 'trace' }" @click="tab = 'trace'">轨迹 <small v-if="trajectory.length">{{ trajectory.length }}</small></button>
     </nav>
 
     <div v-if="tab === 'chat'" ref="messageList" class="conversation" aria-live="polite" @scroll="trackScroll">
       <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
-      <div v-else-if="!messages.length && !state?.question" class="empty-state">
+      <div v-else-if="!messages.length && !state?.question && !state?.review" class="empty-state">
         <img class="empty-watermark" src="/logo.webp" alt="" aria-hidden="true" />
         <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
         <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
@@ -31,7 +31,23 @@
         <div v-if="state.question.choices.length" class="question-choices"><button v-for="choice in state.question.choices" :key="choice" :disabled="busy" @click="draft = choice; answering = true; focusComposer()">{{ choice }}</button></div>
         <button v-if="state" class="reply-link" @click="answering = true; focusComposer()">回答后继续规划 <el-icon><ArrowRight /></el-icon></button>
       </article>
-      <div v-if="state?.decision && state.status === 'waiting_review' && !state.question" class="wait-note"><el-icon><Clock /></el-icon><span>{{ state.decision.reason }}</span></div>
+      <article v-if="state?.review && !state.question" class="review-card">
+          <div class="question-heading"><el-icon><Clock /></el-icon><strong>{{ state.review.decisionRejected ? (state.decision?.action === 'recover' ? '任务暂停，未能自动恢复' : '任务暂停，下一步尚未执行') : state.review.subjectType === 'planner' ? '等待继续条件确认' : '请审核当前步骤的结果' }}</strong></div>
+          <p>{{ state.review.decisionRejected ? '系统未能执行建议的处理方案，任务仍处于暂停状态。可先查看失败详情，再说明需要补充的材料或调整的执行要求，生成新的处理方案。' : state.review.subjectType === 'planner' ? '确认下方说明中的等待条件已满足后，系统会重新判断能否继续执行。' : '请检查当前步骤的结果。批准后继续执行后续工作；拒绝将结束本次运行，保留已有记录。' }}</p>
+        <ul v-if="failedSteps.length"><li v-for="step in failedSteps" :key="step.stepId">{{ step.name }} · 执行失败</li></ul>
+          <details><summary>{{ state.review.decisionRejected ? '查看技术详情' : '查看等待原因与处理建议' }}</summary><p>暂停记录：{{ state.review.reason }}</p><p v-if="state.decision?.reason">运行决策：{{ state.decision.reason }}</p></details>
+          <textarea v-model="reviewComment" rows="2" maxlength="2000" :placeholder="state.review.subjectType === 'planner' ? '说明要补充的材料或调整的执行要求…' : '填写审核意见…'" aria-label="审核意见" :disabled="busy" />
+        <div class="review-actions">
+          <button v-if="state.review.canApprove" :disabled="busy || loading || permission !== 'task_collaboration' || historical" @click="submitReview('approved')">{{ state.review.subjectType === 'planner' ? '确认条件已满足' : '批准并继续' }}</button>
+            <button v-if="state.review.subjectType === 'planner'" :disabled="busy || loading || permission !== 'task_collaboration' || historical || !reviewComment.trim()" @click="submitReviewInput">预览调整方案</button>
+          <button v-if="failedSteps.length" @click="tab = 'trace'">查看失败详情</button>
+            <button :disabled="busy || loading || permission !== 'task_collaboration' || historical" @click="submitReview('rejected')">{{ state.review.subjectType === 'planner' ? '结束本次运行' : '拒绝并结束本次运行' }}</button>
+        </div>
+        <small v-if="permission !== 'task_collaboration'">切换为“按需确认”权限后可操作。</small>
+        <small v-if="historical">请前往当前运行处理审核。</small>
+          <small v-else-if="state.review.subjectType === 'planner'">先填写调整要求并预览方案；确认后，系统才会据此重新规划。</small>
+      </article>
+      <div v-else-if="state?.decision && state.status === 'waiting_review' && !state.question" class="wait-note"><el-icon><Clock /></el-icon><span>{{ state.decision.reason }}</span></div>
     </div>
 
     <div v-else class="trajectory-view">
@@ -50,6 +66,7 @@
       <small class="trace-footnote">点击展开详情，查看所属步骤、调用链和运行结果。</small>
     </div>
 
+    <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
     <div v-if="historical" class="readonly-note">正在查看历史运行 · 任务助手仍可协作。<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">前往当前运行</button></div>
     <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null">
@@ -110,6 +127,8 @@ const state = ref<CopilotState | null>(null)
 const sessionOwnerToken = localStorage.getItem('token')
 const tab = ref<'chat' | 'trace'>('chat')
 const draft = ref(''), error = ref(''), traceSearch = ref('')
+const reviewComment = ref(''), reviewReceipt = ref('')
+let reviewRequest: { subject: string; revision: string; decision: string; comment: string; id: string } | undefined
 const loading = ref(false), busy = ref(false), answering = ref(false)
 const messageList = ref<HTMLElement>(), composerInput = ref<HTMLTextAreaElement>()
 const followBottom = ref(true)
@@ -134,6 +153,7 @@ const modelCalls = ref<ModelCallUsage[]>([]), callCursor = ref<string | null>(nu
 let generation = 0, timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
 const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
+const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
 const statusLabel = computed(() => ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
 const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
 const canSend = computed(() => !!props.runId && !!state.value && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
@@ -242,6 +262,27 @@ async function prepareOperation(kind: CopilotActionKind) {
   } catch (e) { if (token === generation) error.value = errorMessage(e) }
   finally { if (token === generation) busy.value = false }
 }
+async function submitReviewInput() {
+  if (!reviewComment.value.trim()) return
+  draft.value = reviewComment.value.trim()
+  await prepareOperation('user_input')
+  tab.value = 'chat'
+}
+async function submitReview(decision: 'approved' | 'rejected') {
+  const review = state.value?.review, id = props.runId, token = generation
+  if (!review || !id || busy.value || props.historical || permission.value !== 'task_collaboration' || (decision === 'approved' && !review.canApprove)) return
+  const comment = reviewComment.value.trim()
+  if (!reviewRequest || reviewRequest.subject !== review.subjectId || reviewRequest.revision !== review.expectedRunUpdatedAt || reviewRequest.decision !== decision || reviewRequest.comment !== comment) reviewRequest = { subject: review.subjectId, revision: review.expectedRunUpdatedAt, decision, comment, id: crypto.randomUUID() }
+  busy.value = true; error.value = ''
+  try {
+    await agentosApi.applyWorkflowReview(id, { stepId: review.subjectId, decision, comment, operationId: reviewRequest.id, expectedRunUpdatedAt: review.expectedRunUpdatedAt })
+    if (token !== generation) return
+    reviewReceipt.value = decision === 'approved' ? '审核已提交，正在重新判断下一步。' : '已拒绝，本次运行已结束。'
+    reviewRequest = undefined; reviewComment.value = ''
+    await refresh(true)
+  } catch (e) { if (token === generation) { error.value = errorMessage(e); await refresh(true) } }
+  finally { if (token === generation) busy.value = false }
+}
 async function confirmAction(proposalId: string, action: CopilotAction, sourceRunId?: string) {
   if (!props.runId || busy.value || permission.value !== 'task_collaboration') return
   const id = props.runId, token = generation
@@ -262,6 +303,7 @@ watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
   generation++; controller?.abort(); controller = new AbortController(); clearTimeout(timer)
   state.value = null; draft.value = ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
+  reviewComment.value = ''; reviewReceipt.value = ''; reviewRequest = undefined
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null
   reasoningEffort.value = ''; streamContent.value = ''; pendingUser.value = ''
   modelCalls.value = []; callCursor.value = null; callError.value = ''; callsLoading.value = false
@@ -278,6 +320,14 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); clearT
 </script>
 
 <style scoped>
+.review-card { margin: 16px 0; padding: 18px; border: 1px solid var(--cp-border); border-radius: 12px; background: var(--wb-surface-section); font-size: 13px; line-height: 1.7; }
+.review-card strong { color: var(--wb-text); }
+.review-card p { margin: 10px 0; }
+.review-card details { color: var(--wb-text-secondary); margin: 12px 0; }
+.review-card textarea { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid var(--cp-border); border-radius: 8px; background: transparent; color: inherit; resize: vertical; font: inherit; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.review-actions button { padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--wb-accent-soft); color: var(--wb-accent); cursor: pointer; }
+.review-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); }
 button { font:inherit; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.4; }

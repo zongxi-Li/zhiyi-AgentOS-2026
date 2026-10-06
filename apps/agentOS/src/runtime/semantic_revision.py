@@ -178,6 +178,11 @@ class SemanticRevisionService(CollaboratorAccess):
         )
         outcome_blueprint = semantic_result.blueprint
         next_plan = semantic_result.next_plan
+        # A revision cannot turn logical source labels into readable material
+        # identities or acquire another task's inputs by guessing a manifest ID.
+        for node in next_plan.nodes:
+            if node.workset is not None:
+                node.workset.validate_sources(run.input.get("materialRefs") or ())
         next_bindings = semantic_result.next_bindings
         self.validate_blueprint_agents(
             outcome_blueprint,

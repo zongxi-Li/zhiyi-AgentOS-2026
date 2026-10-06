@@ -38,7 +38,7 @@ from .complexity import (
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v6"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v7"
 
 _SCHEMA = {
     "type": "object",
@@ -61,7 +61,7 @@ _SCHEMA = {
                     "workset": {
                         "type": ["object", "null"],
                         "properties": {
-                            "sourceManifestRefs": {"type": "array", "items": {"type": "string"}},
+                            "sourceManifestRefs": {"type": "array", "items": {"type": "string"}, "description": "Only existing material_manifest refs from planningRequest.sourceRegistry. Never constraint refs, expected_artifact refs, task keys or future outputs. Omit workset when no registered material exists."},
                             "unitKind": {"type": "string", "enum": ["chunk", "section", "item"]},
                             "cursorStrategy": {"type": "string"},
                             "packingPolicy": {"type": "string", "enum": ["api_capacity"]},
@@ -508,6 +508,7 @@ class TaskDecomposer:
                     )
                 try:
                     normalized_rows = self._validated_detail_tasks(detail_result, batch)
+                    self._validate_workset_sources(normalized_rows, task_input)
                 except TaskDecompositionError as detail_error:
                     if detail_repaired:
                         raise
@@ -528,6 +529,7 @@ class TaskDecomposer:
                         run_id=run_id,
                     )
                     normalized_rows = self._validated_detail_tasks(detail_result, batch)
+                    self._validate_workset_sources(normalized_rows, task_input)
                 detailed_tasks.extend(normalized_rows)
                 self.last_audit["stages"].append({"stage": "detail", "keys": batch_keys})
                 self._publish_draft(
@@ -929,6 +931,7 @@ class TaskDecomposer:
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(tasks, list) or not tasks:
             raise TaskDecompositionError("decomposer returned no tasks")
+        self._validate_workset_sources(tasks, task_input)
         nodes: list[PlannedTask] = []
         key_map: dict[str, str] = {}
         raw_parent_keys: list[str | None] = []
@@ -1076,6 +1079,17 @@ class TaskDecomposer:
         )
         self._validate_coverage(plan, profile)
         return plan
+
+    @staticmethod
+    def _validate_workset_sources(tasks, task_input) -> None:
+        allowed = set((task_input or {}).get("materialRefs") or ())
+        for task in tasks:
+            try:
+                spec = TaskDecomposer._normalize_workset_spec(task.get("workset"))
+                if spec is not None:
+                    spec.validate_sources(allowed)
+            except ValueError as exc:
+                raise TaskDecompositionError(f"task {task.get('key')}: {exc}") from exc
 
     @staticmethod
     def _normalize_workset_spec(raw: Any) -> WorksetSpec | None:

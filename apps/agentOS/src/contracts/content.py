@@ -103,6 +103,15 @@ class WorksetSpec(BaseModel):
     parallelism_policy: str = Field(default="scheduler_managed", alias="parallelismPolicy")
     estimated_unit_count: int | None = Field(default=None, alias="estimatedUnitCount", ge=0)
 
+    def validate_sources(self, material_refs) -> None:
+        invalid = set(self.source_manifest_refs) - set(material_refs)
+        if invalid:
+            raise ValueError(
+                f"workset references unregistered materials: {sorted(invalid)}. "
+                "Use only registered materialRefs; constraints and expected artifacts are not input materials. "
+                "Omit workset if this task uses task input or upstream task outputs."
+            )
+
 
 __all__ = [
     "ContentFragmentRef",

@@ -274,8 +274,7 @@ const formatDuration = (ms: number) => {
   const minutes = Math.floor(total / 60)
   const seconds = total % 60
   if (minutes) return `${minutes}m ${String(seconds).padStart(2, '0')}s`
-  const precise = ms / 1000
-  return `${Number(precise.toFixed(1))}s`
+  return `${total}s`
 }
 const durationText = computed(() => {
   void nowTick.value

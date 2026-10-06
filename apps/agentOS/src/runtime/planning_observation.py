@@ -149,6 +149,7 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             steps=tuple(facts), remainingStepIds=remaining,
             failureId=failure.get("failureId"), failureType=failure.get("failureType"),
             failureReason=failure.get("reasonCode"), failureSource=failure.get("source"),
+            failureMessage=str(failure["message"])[:500] if failure.get("message") else None,
             failureStepId=(failure.get("details") or {}).get("stepId"),
             recoveryAction=(run.execution_state.get("recoveryOutcome") or {}).get("action") if failure else None,
             failedStepIds=tuple(s.step_id for s in run.steps if s.status == StepStatus.FAILED),

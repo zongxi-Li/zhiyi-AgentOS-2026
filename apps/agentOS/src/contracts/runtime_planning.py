@@ -171,6 +171,7 @@ class RuntimePlanningObservation(PlanningContract):
     failure_id: str | None = Field(default=None, alias="failureId")
     failure_type: str | None = Field(default=None, alias="failureType")
     failure_reason: str | None = Field(default=None, alias="failureReason")
+    failure_message: str | None = Field(default=None, alias="failureMessage", max_length=500)
     failure_source: str | None = Field(default=None, alias="failureSource")
     failure_step_id: str | None = Field(default=None, alias="failureStepId")
     recovery_action: str | None = Field(default=None, alias="recoveryAction")
@@ -188,7 +189,7 @@ class RuntimePlanningObservation(PlanningContract):
 
     def fingerprint(self) -> str:
         payload = self.model_dump(by_alias=True, mode="json")
-        for key in ("failureReason", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
+        for key in ("failureReason", "failureMessage", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
             if not payload[key]:
                 del payload[key]
         if payload["conditionWake"] is not None:

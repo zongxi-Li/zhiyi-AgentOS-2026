@@ -14,6 +14,7 @@ from contracts.workflow import TraceEventType, WorkflowStatus, utc_now
 from runtime.review import ReviewConflictError
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.planning_operations import RuntimeTaskOperations, TaskOperationIntent
+from support.stores._policy import acg_review_subject
 
 
 class CopilotMessageRequest(BaseModel):
@@ -72,11 +73,23 @@ class RuntimePlanningInteraction:
         latest = store.list_mission_run_summaries([run.mission_id],
             owner_user_id=run.input.get("authenticatedUserId"),
             owner_tenant_id=run.input.get("authenticatedTenantId"))[run.mission_id].latest_run
+        review = None
+        payload = run.execution_state.get("reviewPayload") or {}
+        if run.status == WorkflowStatus.WAITING_REVIEW and payload and not question:
+            subject_type, subject_id = acg_review_subject(payload)
+            rejected = bool(current and current.status == "rejected" and payload.get("subjectType") == "planner")
+            review = {
+                "subjectId": subject_id, "subjectType": subject_type,
+                "reason": payload.get("reason", ""), "reasonCode": payload.get("reasonCode", ""),
+                "canApprove": not rejected, "decisionRejected": rejected,
+                "expectedRunUpdatedAt": run.updated_at.isoformat(),
+            }
         return {"runId": run_id, "missionId": run.mission_id,
             "latestRunId": latest.run_id if latest else run_id,
             "taskPermission": store.get_task_copilot_permission(run.mission_id),
             "status": run.status.value, "revision": run.runtime_revision,
             "question": question, "humanAnswers": [a.model_dump(by_alias=True, mode="json") for a in loop.human_answers],
+            "review": review,
             "exchanges": store.list_task_copilot_exchanges(run.mission_id),
             "decision": current.decision.model_dump(by_alias=True, mode="json") if current and current.decision else None,
             "steps": [{"stepId": s.step_id, "name": s.name, "status": s.status.value} for s in run.steps],

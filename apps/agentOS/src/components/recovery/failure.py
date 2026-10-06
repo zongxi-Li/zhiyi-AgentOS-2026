@@ -8,6 +8,7 @@ from contracts.recovery import FailureEvent, FailureSource, FailureType
 
 
 _CLASSIFICATIONS: dict[str, tuple[FailureSource, FailureType, str, bool]] = {
+    "MaterialSourceError": (FailureSource.EXECUTOR, FailureType.CONTRACT, "CONTENT_SOURCE_INVALID", False),
     "ExecutionDeniedError": (FailureSource.AUDIT, FailureType.POLICY, "EXECUTION_AUDIT_DENIED", False),
     "ResourceNotFoundError": (FailureSource.SCHEDULER, FailureType.CAPACITY, "RESOURCE_UNAVAILABLE", True),
     "SchedulerNoEligibleResource": (FailureSource.SCHEDULER, FailureType.CAPACITY, "NO_ELIGIBLE_RESOURCE", False),
@@ -53,6 +54,8 @@ def failure_event_from_exception(
     else:
         resolved_source, failure_type, reason_code, retryable = mapped
     details = {"exceptionType": type(classified).__name__}
+    if type(classified).__name__ == "MaterialSourceError":
+        details.update(stepId=classified.step_id, manifestId=classified.manifest_id)
     if type(classified).__name__ in {"SchedulerNoEligibleResource", "SchedulerAllocationTimeout"}:
         structured_reason = getattr(classified, "reason_code", None)
         if structured_reason in {"NO_ELIGIBLE_RESOURCE", "NO_MODEL_ENDPOINT", "SCHEDULER_CAPACITY_TIMEOUT"}:

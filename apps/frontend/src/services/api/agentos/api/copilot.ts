@@ -26,6 +26,7 @@ export interface CopilotState {
   humanAnswers: { questionId: string; sourceRunId: string; prompt: string; answer: string; answeredAt: string }[]
   exchanges: CopilotExchange[]
   decision: { action: string; reason: string } | null
+  review?: { subjectId: string; subjectType: string; reason: string; reasonCode: string; canApprove: boolean; decisionRejected: boolean; expectedRunUpdatedAt: string } | null
   steps: { stepId: string; name: string; status: string }[]
 }
 export const createCopilotApi = () => ({

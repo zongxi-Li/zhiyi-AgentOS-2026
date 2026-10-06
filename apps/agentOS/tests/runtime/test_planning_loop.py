@@ -328,6 +328,11 @@ def test_failed_verification_does_not_certify_completion(tmp_path):
     assert planner.observations[0].steps[0].verification_report == "failed"
     assert result.execution_state["planningLoop"]["current"]["status"] == "rejected"
     assert result.execution_state["reviewPayload"]["subjectType"] == "planner"
+    from runtime.planning_interaction import RuntimePlanningInteraction
+    review = RuntimePlanningInteraction(runtime).view(run.run_id)["review"]
+    assert review["decisionRejected"] and not review["canApprove"]
+    assert review["subjectId"] == result.execution_state["reviewPayload"]["subjectId"]
+    assert review["expectedRunUpdatedAt"] == result.updated_at.isoformat()
 
 
 def test_wait_survives_restart_and_review_resumes_through_planner(tmp_path):
@@ -402,6 +407,44 @@ def test_transient_failure_recovers_without_replaying_completed_work(tmp_path):
     assert result.status == WorkflowStatus.COMPLETED
     assert agent.calls == ["A", "B", "B"]
     assert [o.wake_reason for o in planner.observations] == ["failure", "resume", "exhausted"]
+    assert planner.observations[0].failure_message == "temporary failure"
+
+
+@pytest.mark.parametrize("action", ["recover", "revise"])
+def test_invalid_material_preserves_diagnostic_and_rejects_unchanged_retry(tmp_path, action):
+    workflow = WorkflowDefinition(workflowId="seq", name="source preflight", domain="general", runtimeEngine="acg",
+        planningNodes=(PlannedTask(key="step:A", title="A", objective="do A"), PlannedTask(key="step:B", title="B", objective="do B")),
+        planningRelations=(TaskPlanRelation(sourceKey="step:A", targetKey="step:B", relationType="depends_on"),), steps=(
+        WorkflowStepDefinition(stepId="A", name="A", agentName="runner", nextStepId="B"),
+        WorkflowStepDefinition(stepId="B", name="B", agentName="runner", input={"workset": {"sourceManifestRefs": ["artifact:2"]}}),
+    ))
+    runtime, agent, run = prepared(tmp_path, workflow=workflow)
+    def choose(o, p):
+        patch = None
+        if action == "revise":
+            from contracts.content import WorksetSpec
+            node = next(n for n in p.nodes if n.key == "step:B").model_copy(update={
+                "workset": WorksetSpec(sourceManifestRefs=["manifest_other_task"]),
+                "capability_requirements": ("task_understanding",),
+            })
+            patch = TaskPlanPatch(missionId=p.mission_id, basePlanVersion=1, planVersion=2,
+                replaceKeys=("step:B",), addNodes=(node,))
+        return RuntimePlanningDecision(observationId=o.fingerprint(), action=action, reason="invalid repair", taskPlanPatch=patch)
+    planner = Planner(choose)
+    attach(runtime, planner)
+    result = asyncio.run(runtime.execute_prepared_run(run.run_id))
+    assert result.status == WorkflowStatus.WAITING_REVIEW
+    assert agent.calls == ["A"]
+    observation = planner.observations[0]
+    assert observation.failure_reason == "CONTENT_SOURCE_INVALID"
+    assert observation.failure_step_id == "B"
+    assert "artifact:2: not found" in observation.failure_message
+    current = result.execution_state["planningLoop"]["current"]
+    assert current["status"] == "rejected"
+    reason = "Recovery authority has no supported retry" if action == "recover" else "unregistered materials"
+    assert reason in current["rejection"]
+    assert reason in result.execution_state["reviewPayload"]["reason"]
+    assert runtime.get_status(run.run_id).status == WorkflowStatus.WAITING_REVIEW
 
 
 def test_registered_planner_path_uses_fresh_observation_contract(tmp_path):
@@ -639,7 +682,7 @@ def test_reference_only_round_fingerprint_remains_backward_compatible():
     old_payload.pop("conditionWake")
     old_payload.pop("humanAnswers")
     old_payload.pop("userInputs")
-    for key in ("failureReason", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
+    for key in ("failureReason", "failureMessage", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
         old_payload.pop(key)
     for step in old_payload["steps"]:
         step.pop("artifactEvidence")

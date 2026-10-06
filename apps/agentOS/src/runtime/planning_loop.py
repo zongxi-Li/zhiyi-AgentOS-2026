@@ -135,10 +135,11 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             applied_loop = loop.model_copy(update={"current": current.model_copy(update={"status": "applied"})})
             return await self.apply_decision(run, state, observation, decision, applied_loop)
         except (ValueError, KeyError) as exc:
-            rejected = current.model_copy(update={"status": "rejected", "rejection": type(exc).__name__})
+            rejection = f"{type(exc).__name__}: {str(exc)[:500]}"
+            rejected = current.model_copy(update={"status": "rejected", "rejection": rejection})
             loop = loop.model_copy(update={"current": rejected})
             self._save(run, loop, "rejected")
-            safe_wait = RuntimePlanningDecision(observationId=observation_id, action="wait", reason="Deterministic authority rejected Planner decision")
+            safe_wait = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=f"Deterministic authority rejected Planner decision: {rejection}")
             return await self.apply_decision(run, state, observation, safe_wait, loop)
 
     def _save(self, run: RuntimeRunRecord, loop: RuntimePlanningState, stage: str) -> None:

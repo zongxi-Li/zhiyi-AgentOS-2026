@@ -425,13 +425,54 @@ def test_staged_detail_normalizes_legacy_model_workset_shape() -> None:
         mission_id="mission_0123456789ab",
         profile=_profile(),
         strategy="dynamic_generation",
-        task_input={"_effectiveCapabilityProfile": "full"},
+        task_input={"_effectiveCapabilityProfile": "full", "materialRefs": ["manifest_source"]},
         use_llm=True,
     )
 
     assert plan.nodes[0].workset is not None
     assert plan.nodes[0].workset.source_manifest_refs == ("manifest_source",)
     assert plan.nodes[0].workset.cursor_strategy == "sequence"
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_staged_invalid_material_reference_is_repaired_before_compilation(repair_succeeds) -> None:
+    from copy import deepcopy
+    outline = {"tasks": [
+        {"key": "understand", "title": "Understand", "capabilityId": "task_understanding", "logicalRole": "task", "sourceRefs": []},
+        {"key": "analyze", "title": "Analyze", "capabilityId": "analysis", "logicalRole": "task", "sourceRefs": []},
+    ]}
+    invalid = {"tasks": [
+        {**outline["tasks"][0], "objective": "Resolve goals", "acceptanceCriteria": ["scope is explicit"], "decompositionRationale": "entry", "workset": {"sourceManifestRefs": ["artifact:2", "constraint:9"]}},
+        {**outline["tasks"][1], "objective": "Analyze assumptions", "acceptanceCriteria": ["analysis is traceable"], "decompositionRationale": "analysis"},
+    ]}
+    repaired = deepcopy(invalid)
+    repaired["tasks"][0].pop("workset")
+    relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
+    llm = _SequencePlanLLM(outline, invalid, repaired if repair_succeeds else invalid, relations)
+    if not repair_succeeds:
+        with pytest.raises(TaskDecompositionError, match="unregistered materials"):
+            TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+                mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
+                task_input={"_effectiveCapabilityProfile": "full"}, use_llm=True,
+            )
+        assert len(llm.calls) == 3  # One correction, no graph compilation or endless repair.
+        return
+    plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+        mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
+        task_input={"_effectiveCapabilityProfile": "full"}, use_llm=True,
+    )
+    assert all(node.workset is None for node in plan.nodes)
+    assert len(llm.calls) == 4
+    assert "unregistered materials" in llm.calls[2]["prompt"]
+
+
+@pytest.mark.parametrize("ref", ["artifact:2", "constraint:9", "manifest_other"])
+def test_workset_rejects_every_source_outside_registered_materials(ref) -> None:
+    with pytest.raises(TaskDecompositionError, match="unregistered materials"):
+        TaskDecomposer._validate_workset_sources(
+            [{"key": "extract", "workset": {"sourceManifestRefs": [ref]}}],
+            {"materialRefs": ["manifest_owned"]},
+        )
 
 
 def test_empty_staged_outline_is_repaired_once() -> None:

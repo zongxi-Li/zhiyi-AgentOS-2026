@@ -9,6 +9,30 @@ from components.content import ContentWorksetSession, SQLiteContentManifestStore
 from contracts.content import ContentKind, WorksetSpec
 
 
+@pytest.mark.parametrize("invalid_kind", ["missing", "unsealed", "output"])
+def test_workset_preflights_all_sources_before_creating_results(tmp_path, invalid_kind):
+    from components.content.workset import MaterialSourceError
+    from components.recovery.failure import failure_event_from_exception
+    store = SQLiteContentManifestStore(tmp_path / "invalid.sqlite3")
+    valid = store.create_from_bytes(content=b"valid", kind=ContentKind.MATERIAL, owner_type="user", owner_id="u")
+    bad_id = "artifact:2"
+    if invalid_kind != "missing":
+        bad = store.create_manifest(kind=ContentKind.MATERIAL if invalid_kind == "unsealed" else ContentKind.INTERMEDIATE,
+            owner_type="user", owner_id="u", media_type="text/plain")
+        bad_id = bad.manifest_id
+        if invalid_kind == "output":
+            store.append_fragment(manifest_id=bad_id, sequence=0, content=b"output")
+            store.seal_manifest(bad_id)
+    count = store._db.execute("select count(*) from content_manifests").fetchone()[0]
+    with pytest.raises(MaterialSourceError) as caught:
+        ContentWorksetSession(store=store, spec=WorksetSpec(sourceManifestRefs=[valid.manifest_id, bad_id]),
+            run_id="run-1", step_id="extract", commit_id="commit-1")
+    assert store._db.execute("select count(*) from content_manifests").fetchone()[0] == count
+    event = failure_event_from_exception(caught.value, subject_ref="run:run-1")
+    assert event.reason_code == "CONTENT_SOURCE_INVALID" and not event.retryable
+    assert event.details["stepId"] == "extract" and event.details["manifestId"] == bad_id
+
+
 @pytest.mark.parametrize("stored, expected", [
     ("2026-10-04 14:49:39", "2026-10-04T14:49:39Z"),
     ("2026-10-04T22:49:39+08:00", "2026-10-04T14:49:39Z"),

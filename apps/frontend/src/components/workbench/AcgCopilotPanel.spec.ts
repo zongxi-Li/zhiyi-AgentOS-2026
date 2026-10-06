@@ -5,10 +5,40 @@ import { agentosApi } from '@/services/api/agentos'
 import type { CopilotState } from '@/services/api/agentos/api/copilot'
 import { clearCopilotSession } from './copilotSessionCache'
 
-vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn() } }))
+vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn() } }))
 const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision: 3, modelAvailable: true,
   question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
 const wrappers: ReturnType<typeof mount>[] = []
+const review = (rejected = false) => ({ subjectId: 'graph-1', subjectType: 'planner', reason: 'Recovery authority rejected proposal', reasonCode: 'PLANNER_WAIT', canApprove: !rejected, decisionRejected: rejected, expectedRunUpdatedAt: '2026-10-06T12:00:00Z' })
+
+describe('explicit review interaction', () => {
+  it('shows a rejected proposal as blocked and previews new requirements without approving failed work', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: review(true), decision: { action: 'recover', reason: 'Retry failed nodes' }, steps: [{ stepId: 'A', name: '提取事实', status: 'failed' }] })
+    vi.mocked(agentosApi.previewCopilotAction).mockResolvedValue({ operationId: 'proposal', user: '恢复', assistant: '待确认', createdAt: '2026-10-06T12:00:00Z', observedRevision: 3 })
+    const w = await panel()
+    expect(w.find('.empty-state').exists()).toBe(false)
+    expect(w.get('.review-card').text()).toContain('任务暂停，未能自动恢复')
+    expect(w.get('.review-card').text()).toContain('提取事实')
+    expect(w.get('.review-card').text()).not.toContain('确认条件已满足')
+    await w.get('[aria-label="审核意见"]').setValue('修正失败节点后重新规划')
+    const button = w.findAll('.review-actions button').find(b => b.text() === '预览调整方案')!
+    await button.trigger('click'); await flushPromises()
+    expect(agentosApi.previewCopilotAction).toHaveBeenCalledWith('run-1', 'user_input', '修正失败节点后重新规划', expect.any(String), 'task_collaboration', undefined)
+    expect(agentosApi.applyWorkflowReview).not.toHaveBeenCalled()
+    expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
+  })
+  it('submits the persisted review subject and revision, then shows a receipt after the card disappears', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: review() })
+    vi.mocked(agentosApi.applyWorkflowReview).mockResolvedValue({} as any)
+    const w = await panel()
+    await w.get('[aria-label="审核意见"]').setValue('条件已满足')
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue(state())
+    await w.get('.review-actions button').trigger('click'); await flushPromises()
+    expect(agentosApi.applyWorkflowReview).toHaveBeenCalledWith('run-1', { stepId: 'graph-1', decision: 'approved', comment: '条件已满足', operationId: expect.any(String), expectedRunUpdatedAt: '2026-10-06T12:00:00Z' })
+    expect(w.find('.review-card').exists()).toBe(false)
+    expect(w.get('[role="status"]').text()).toContain('审核已提交')
+  })
+})
 async function panel(props = {}) {
   const wrapper = mount(AcgCopilotPanel, { props: { runId: 'run-1', ...props }, global: { stubs: { ElIcon: { template: '<span><slot /></span>' } } } })
   wrappers.push(wrapper)
