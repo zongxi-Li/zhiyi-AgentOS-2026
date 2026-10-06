@@ -18,6 +18,7 @@ def test_run_snapshot_outbox_excludes_execution_bodies() -> None:
         workflowId="workflow-1",
         domain="general",
         runtimeEngine="acg",
+        acgBlueprint={"graphId": "graph-1"},
         input={"secret": "must-not-leave-runtime"},
         output={"body": "must-not-leave-runtime"},
         trace=[],
@@ -25,6 +26,8 @@ def test_run_snapshot_outbox_excludes_execution_bodies() -> None:
             "compiledPackageId": "pkg-1",
             "compiledPackageChecksum": "a" * 64,
             "compiledPackageVersion": 2,
+            "taskPlan": {"steps": [{"stepId": "step-1"}]},
+            "taskBindings": [{"stepId": "step-1", "agentId": "agent-1"}],
             "outputRefs": {"step-1": "artifact:output:1"},
         },
     )

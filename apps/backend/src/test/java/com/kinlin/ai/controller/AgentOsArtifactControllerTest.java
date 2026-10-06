@@ -149,6 +149,72 @@ class AgentOsArtifactControllerTest {
     }
 
     @Test
+    void resourceUsageHealthAndCredentialReadsProjectTypedRowsWithoutInternalBodies() throws Exception {
+        String usagePath = "/ai/agentos/v2/resources/resource_001/usage?limit=12";
+        Map<String, Object> usageRow = new java.util.LinkedHashMap<>();
+        usageRow.put("bindingId", "binding_001");
+        usageRow.put("attemptId", "attempt_001");
+        usageRow.put("runId", "run_001");
+        usageRow.put("taskId", "task_001");
+        usageRow.put("missionId", "mission_001");
+        usageRow.put("taskTitle", "尽调");
+        usageRow.put("semanticTaskKey", "analyze");
+        usageRow.put("acgNodeId", "node_7");
+        usageRow.put("agentId", "agent-1");
+        usageRow.put("modelId", "glm-5.3");
+        usageRow.put("attemptNumber", 2);
+        usageRow.put("attemptStatus", "completed");
+        usageRow.put("startedAt", "2026-10-06T00:00:00Z");
+        usageRow.put("finishedAt", "2026-10-06T00:05:00Z");
+        usageRow.put("boundAt", "2026-10-06T00:00:00Z");
+        gateway.getResponses.put(usagePath, RecordingAgentOsGateway.response(200, Map.of(
+                "resourceId", "resource_001",
+                "items", List.of(usageRow),
+                "total", 1)));
+        mockMvc.perform(get("/api/agentos/v2/resources/{resourceId}/usage", "resource_001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resourceId").value("resource_001"))
+                .andExpect(jsonPath("$.items[0].bindingId").value("binding_001"))
+                .andExpect(jsonPath("$.items[0].attemptNumber").value(2))
+                .andExpect(jsonPath("$.items[0].modelId").value("glm-5.3"))
+                .andExpect(jsonPath("$.total").value(1));
+        assertEquals(usagePath, gateway.lastGetPath);
+
+        String healthPath = "/ai/agentos/v2/resources/resource_001/health-history?limit=40";
+        gateway.getResponses.put(healthPath, RecordingAgentOsGateway.response(200, Map.of(
+                "resourceId", "resource_001",
+                "items", List.of(Map.of(
+                        "observedAt", "2026-10-06T00:00:00Z", "reliability", 0.98, "latencyMs", 120,
+                        "lastHeartbeat", "2026-10-06T00:00:00Z", "version", 4)),
+                "total", 1)));
+        mockMvc.perform(get("/api/agentos/v2/resources/{resourceId}/health-history", "resource_001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resourceId").value("resource_001"))
+                .andExpect(jsonPath("$.items[0].reliability").value(0.98))
+                .andExpect(jsonPath("$.items[0].latencyMs").value(120))
+                .andExpect(jsonPath("$.items[0].version").value(4))
+                .andExpect(jsonPath("$.total").value(1));
+        assertEquals(healthPath, gateway.lastGetPath);
+
+        String credentialPath = "/ai/agentos/v2/resources/resource_001/credential";
+        gateway.getResponses.put(credentialPath, RecordingAgentOsGateway.response(200, Map.of(
+                "resourceId", "resource_001", "credentialId", "cred_001",
+                "createdAt", "2026-10-06T00:00:00Z", "secretMaterial", "SECRET")));
+        mockMvc.perform(get("/api/agentos/v2/resources/{resourceId}/credential", "resource_001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resourceId").value("resource_001"))
+                .andExpect(jsonPath("$.credentialId").value("cred_001"))
+                .andExpect(jsonPath("$.createdAt").value("2026-10-06T00:00:00Z"))
+                .andExpect(jsonPath("$.secretMaterial").doesNotExist());
+        assertEquals(credentialPath, gateway.lastGetPath);
+
+        gateway.getResponses.put(healthPath, RecordingAgentOsGateway.response(200, Map.of("resourceId", "resource_001")));
+        mockMvc.perform(get("/api/agentos/v2/resources/{resourceId}/health-history", "resource_001"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"));
+    }
+
+    @Test
     void artifactMetadataAndFragmentsKeepUpstreamPagination() throws Exception {
         String fragmentsPath = "/ai/agentos/v2/runs/run%20001/artifacts/manifest%20001/fragments"
                 + "?cursor=5&pageSize=10";

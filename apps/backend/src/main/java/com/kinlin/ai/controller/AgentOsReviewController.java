@@ -7,6 +7,7 @@ import com.kinlin.ai.dto.agentos.AgentOsReviewResponse;
 import com.kinlin.ai.dto.agentos.AgentOsRetryRequest;
 import com.kinlin.ai.dto.agentos.AgentOsRunResponse;
 import com.kinlin.ai.gateway.AgentOsPaths;
+import com.kinlin.ai.projection.copilot.mapper.CopilotProjectionMapper;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import jakarta.validation.Valid;
@@ -36,8 +37,9 @@ public class AgentOsReviewController {
     }
 
     @GetMapping("/runs/{runId}/copilot")
-    public ResponseEntity<Map<String, Object>> getCopilot(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/copilot"));
+    public ResponseEntity<QueryResponse> getCopilot(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.run(runId) + "/copilot"), CopilotProjectionMapper::view);
     }
 
     @PostMapping("/runs/{runId}/copilot/permission")

@@ -38,9 +38,16 @@ class AgentOsReviewControllerTest {
     void copilotForwardsConversationAndClarificationWithoutLosingStatusOrIds() throws Exception {
         String path = "/ai/agentos/v2/runs/run_001/copilot";
         gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of(
-                "runId", "run_001", "question", Map.of("questionId", "q-1", "prompt", "Include tax?"))));
+                "runId", "run_001", "missionId", "mission_001", "status", "waiting_review", "revision", 3,
+                "question", Map.of("questionId", "q-1", "prompt", "Include tax?"),
+                "decision", Map.of("observationId", "obs-1", "action", "wait", "reason", "ask",
+                        "taskPlanPatch", Map.of("internal", "PATCH")))));
         mockMvc.perform(get("/api/agentos/v2/runs/run_001/copilot"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.question.questionId").value("q-1"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.question.questionId").value("q-1"))
+                .andExpect(jsonPath("$.missionId").value("mission_001"))
+                .andExpect(jsonPath("$.revision").value(3))
+                .andExpect(jsonPath("$.decision.action").value("wait"))
+                .andExpect(jsonPath("$.decision.taskPlanPatch").doesNotExist());
         assertEquals(path, gateway.lastGetPath);
         gateway.postResponses.put(path + "/answers", RecordingAgentOsGateway.response(202, Map.of("status", "retrying")));
         mockMvc.perform(post("/api/agentos/v2/runs/run_001/copilot/answers")

@@ -33,4 +33,4 @@ def test_v2_schema_is_independent_and_complete() -> None:
     assert "tasks" not in tables
     assert "runs" not in tables
     assert foreign_keys == 1
-    assert schema_version == CURRENT_SCHEMA_VERSION == 2
+    assert schema_version == CURRENT_SCHEMA_VERSION == 3

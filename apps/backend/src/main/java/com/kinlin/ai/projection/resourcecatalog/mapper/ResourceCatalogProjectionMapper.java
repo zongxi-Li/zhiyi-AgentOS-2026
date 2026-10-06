@@ -11,6 +11,9 @@ import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCatalogProfileQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCatalogQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCatalogSnapshotQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.ResourceComputeCapacityQuery;
+import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCredentialQuery;
+import com.kinlin.ai.projection.resourcecatalog.dto.ResourceHealthHistoryQuery;
+import com.kinlin.ai.projection.resourcecatalog.dto.ResourceUsageHistoryQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.NodeCatalogQuery;
 
 import static com.kinlin.ai.projection.common.mapper.QueryWire.bool;
@@ -136,5 +139,51 @@ public final class ResourceCatalogProjectionMapper {
                 integer(raw, "availableSlots"),
                 decimal(raw, "reliability"),
                 text(raw, "observedAt"));
+    }
+
+    /** Recent attempt bindings of one resource: identity facts, never run-state detail. */
+    public static ResourceUsageHistoryQuery usageHistory(Map<String, Object> wire) {
+        if (wire.get("items") == null) {
+            throw invalid();
+        }
+        return new ResourceUsageHistoryQuery(
+                requiredText(wire, "resourceId"),
+                items(wire.get("items"), ResourceCatalogProjectionMapper::usageItem),
+                integer(wire, "total"));
+    }
+
+    private static ResourceUsageHistoryQuery.Item usageItem(Map<?, ?> raw) {
+        return new ResourceUsageHistoryQuery.Item(
+                requiredText(raw, "bindingId"), requiredText(raw, "attemptId"),
+                requiredText(raw, "runId"), requiredText(raw, "taskId"),
+                text(raw, "missionId"), text(raw, "taskTitle"), text(raw, "semanticTaskKey"),
+                text(raw, "acgNodeId"), requiredText(raw, "agentId"), requiredText(raw, "modelId"),
+                integer(raw, "attemptNumber"), text(raw, "attemptStatus"),
+                text(raw, "startedAt"), text(raw, "finishedAt"), requiredText(raw, "boundAt"));
+    }
+
+    /** Persisted heartbeat/observation rows, newest first; measurements may be unobserved. */
+    public static ResourceHealthHistoryQuery healthHistory(Map<String, Object> wire) {
+        if (wire.get("items") == null) {
+            throw invalid();
+        }
+        return new ResourceHealthHistoryQuery(
+                requiredText(wire, "resourceId"),
+                items(wire.get("items"), ResourceCatalogProjectionMapper::healthEvent),
+                integer(wire, "total"));
+    }
+
+    private static ResourceHealthHistoryQuery.Event healthEvent(Map<?, ?> raw) {
+        return new ResourceHealthHistoryQuery.Event(
+                text(raw, "observedAt"), decimal(raw, "reliability"), decimal(raw, "latencyMs"),
+                text(raw, "lastHeartbeat"), integer(raw, "version"));
+    }
+
+    /** Credential metadata only; the secret material never appears in a query response. */
+    public static ResourceCredentialQuery credential(Map<String, Object> wire) {
+        return new ResourceCredentialQuery(
+                requiredText(wire, "resourceId"),
+                requiredText(wire, "credentialId"),
+                requiredText(wire, "createdAt"));
     }
 }

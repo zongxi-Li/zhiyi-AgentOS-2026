@@ -2,19 +2,31 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from components.auditor.governance.trace import TraceStore
-from contracts.workflow import TraceEventType, RuntimeRunRecord
+from contracts.workflow import TraceEvent, TraceEventType, RuntimeRunRecord, utc_now
 
 
 def test_workspace_trace_keeps_lifecycle_and_full_export_preserves_stream() -> None:
     store = TraceStore()
     run = RuntimeRunRecord(missionId="task-1", workflowId="workflow-1", domain="general", runtimeEngine="acg")
-    for name in ["model.output.delta", "model.activity", "model.completed", "model.stream.failure"]:
-        event = store.build_event(
-            run, event_type=TraceEventType("runtime_event_classified"),
-            observation=name, payload={"runtimeEvent": name},
+    # Windows 时钟粒度会让快速连续事件共享 created_at，而导出按 (createdAt, eventId) 排序，
+    # 随机 eventId 会把同刻事件的顺序变成掷硬币；固定单调时间戳，断言只约束过滤语义。
+    base = utc_now()
+    events = [
+        TraceEvent(
+            runId=run.run_id,
+            eventType=TraceEventType("runtime_event_classified"),
+            observation=name,
+            payload={"runtimeEvent": name},
+            createdAt=base + timedelta(microseconds=index),
         )
-        store.append_batch(run, [event])
+        for index, name in enumerate(
+            ["model.output.delta", "model.activity", "model.completed", "model.stream.failure"]
+        )
+    ]
+    store.append_batch(run, events)
     compact = store.export_json(run, workspace=True)
     assert compact["eventCount"] == 4
     assert [event["observation"] for event in compact["events"]] == ["model.completed", "model.stream.failure"]

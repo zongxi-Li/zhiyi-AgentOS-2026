@@ -78,26 +78,29 @@ public class AgentOsArtifactController {
     }
 
     @GetMapping("/resources/{resourceId}/usage")
-    public ResponseEntity<Map<String, Object>> getResourceUsage(
+    public ResponseEntity<QueryResponse> getResourceUsage(
             @PathVariable String resourceId,
             @RequestParam(defaultValue = "12") int limit
     ) {
-        return AgentOsControllerSupport.response(gateway.get(
-                AgentOsPaths.query(AgentOsPaths.resource(resourceId) + "/usage", Map.of("limit", String.valueOf(limit)))));
+        return AgentOsControllerSupport.projectedResponse(gateway.get(
+                AgentOsPaths.query(AgentOsPaths.resource(resourceId) + "/usage", Map.of("limit", String.valueOf(limit)))),
+                ResourceCatalogProjectionMapper::usageHistory);
     }
 
     @GetMapping("/resources/{resourceId}/health-history")
-    public ResponseEntity<Map<String, Object>> getResourceHealthHistory(
+    public ResponseEntity<QueryResponse> getResourceHealthHistory(
             @PathVariable String resourceId,
             @RequestParam(defaultValue = "40") int limit
     ) {
-        return AgentOsControllerSupport.response(gateway.get(
-                AgentOsPaths.query(AgentOsPaths.resource(resourceId) + "/health-history", Map.of("limit", String.valueOf(limit)))));
+        return AgentOsControllerSupport.projectedResponse(gateway.get(
+                AgentOsPaths.query(AgentOsPaths.resource(resourceId) + "/health-history", Map.of("limit", String.valueOf(limit)))),
+                ResourceCatalogProjectionMapper::healthHistory);
     }
 
     @GetMapping("/resources/{resourceId}/credential")
-    public ResponseEntity<Map<String, Object>> getResourceCredential(@PathVariable String resourceId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.resource(resourceId) + "/credential"));
+    public ResponseEntity<QueryResponse> getResourceCredential(@PathVariable String resourceId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.resource(resourceId) + "/credential"),
+                ResourceCatalogProjectionMapper::credential);
     }
 
     @PostMapping("/resources/{resourceId}/enabled")

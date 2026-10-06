@@ -48,6 +48,10 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       globals: true,
       css: false,
+      // 全量 625 条 jsdom 用例在并行 worker 下存在负载型计时抖动（断言调用次数/
+      // 列表渲染条数的用例偶发漂移，单跑必现通过）；失败重跑一次吸收调度抖动，
+      // 确定性失败仍然两次都挂，不会被掩盖。
+      retry: 1,
       server: {
         deps: {
           inline: ['element-plus']
