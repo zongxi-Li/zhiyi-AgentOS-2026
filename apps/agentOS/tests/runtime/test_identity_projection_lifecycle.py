@@ -20,7 +20,7 @@ from contracts.planning import (
     PlannedTask,
     TaskPlanPatch,
 )
-from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from contracts.workflow import WorkflowDefinition, RuntimeRunRecord, WorkflowStepDefinition, WorkflowStatus
 from domain.identity_graph import IdentityResolver
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
@@ -490,7 +490,7 @@ def test_reconciler_converges_terminal_runtime_and_closes_open_identity_nodes() 
                 stepId="analyse",
                 attemptId=attempt.attempt_id,
                 resourceId="agent-identity",
-                resourceType=ResourceType.AGENT,
+                runtimeKind=RuntimeKind.EXECUTION_BACKEND,
                 snapshotVersion=1,
             ),
             agent_id="agent-identity",

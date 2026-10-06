@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from components.executor.graph import ACGExecutionGraph
-from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from domain.identity_graph import IdentityRelation, IdentityResolver
 from domain.models import RunStatus, MissionStatus
 from domain.repository import IdentityConflictError
@@ -80,7 +80,7 @@ def _runtime_binding(run_id: str, attempt_id: str, step_id: str) -> RuntimeExecu
         stepId=step_id,
         attemptId=attempt_id,
         resourceId="agent-contract-1",
-        resourceType=ResourceType.AGENT,
+        runtimeKind=RuntimeKind.EXECUTION_BACKEND,
         snapshotVersion=3,
         metadata={"score": 0.95},
     )

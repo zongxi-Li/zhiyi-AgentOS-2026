@@ -52,12 +52,20 @@ def test_scheduler_has_no_dag_readiness_dependency() -> None:
         assert imports.isdisjoint(forbidden_modules), path
 
 
-def test_resource_directory_has_no_independent_truth_containers() -> None:
-    """The legacy directory is a facade, not a second registry or health store."""
-    from components.resource.directory import ResourceDirectory
+def test_resource_plane_is_the_only_resource_state_authority() -> None:
+    """资源平面只有一个状态权威；目录/独立注册表门面已随重构删除。"""
+    resource_root = SRC / "components" / "resource"
+    remaining = {path.name for path in resource_root.glob("*.py")}
+    assert remaining.isdisjoint({
+        "directory.py", "agent_directory.py", "agent_service.py",
+        "agent_store.py", "node_service.py", "registry.py",
+    })
+    from components.resource.service import ResourcePlane
 
-    directory = ResourceDirectory()
-    assert set(vars(directory)) == {"resource_service"}
+    plane = ResourcePlane()
+    # Node/Runtime/ModelEndpoint 状态都收敛在同一服务实例里。
+    assert hasattr(plane, "register_runtime") and hasattr(plane, "register_node")
+    assert hasattr(plane, "upsert_model_endpoint") and hasattr(plane, "runtime_candidates")
 
 
 def test_local_runtime_is_only_a_contract_and_transport_boundary() -> None:

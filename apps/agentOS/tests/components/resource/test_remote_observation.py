@@ -1,144 +1,151 @@
-from __future__ import annotations
+"""远程 Runtime 观测合同：外部观测是唯一权威，序列号防回退。
+
+带端点的 Runtime 的存活与负载只认外部上报（heartbeat source=external /
+observe_remote_runtime），进程内代码不得替远端刷新状态。
+"""
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
-from components.resource.service import ResourceService
-from components.resource.store import SQLiteResourceStore
+from components.resource.service import ResourcePlane
+from components.resource.store import SQLiteResourceStore, StaleResourceObservation
 from contracts.resource import (
-    DeploymentTier,
+    HealthStatus,
+    Placement,
     ResourceEndpoint,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
+    RuntimeKind,
+    RuntimeProfile,
+    RuntimeSnapshot,
+    TrustLevel,
 )
 
 
-NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
-
-
-def _register_edge() -> ResourceService:
-    resources = ResourceService(heartbeat_timeout=timedelta(seconds=30))
-    resources.register(
-        ResourceProfile(
-            resourceId="edge-01",
-            resourceType=ResourceType.WORKER,
-            deploymentTier=DeploymentTier.EDGE,
-            capabilities=["vision.infer"],
-            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-01:9000"),
-        ),
-        ResourceSnapshot(
-            resourceId="edge-01",
-            availableSlots=1,
-            utilization=0.0,
-            healthStatus=ResourceHealthStatus.UNKNOWN,
-        ),
+def _plane(**overrides) -> ResourcePlane:
+    values = dict(
+        heartbeat_timeout=timedelta(minutes=5),
     )
-    return resources
+    values.update(overrides)
+    return ResourcePlane(**values)
+
+
+def _remote_profile(plane: ResourcePlane, runtime_id: str = "runtime:edge-exec-1") -> RuntimeProfile:
+    plane.ensure_node("node:edge-1", placement=Placement.EDGE, trust=TrustLevel.TRUSTED)
+    profile = RuntimeProfile(
+        runtimeId=runtime_id,
+        kind=RuntimeKind.EXECUTION_BACKEND,
+        nodeId="node:edge-1",
+        placement=Placement.EDGE,
+        capabilities=["repo.read"],
+        trust=TrustLevel.TRUSTED,
+        endpoint=ResourceEndpoint(protocol="https", address=f"https://edge-1/{runtime_id}"),
+        ownerScope="scope-a",
+        capacity=4,
+    )
+    snapshot = RuntimeSnapshot(
+        runtimeId=runtime_id,
+        availableSlots=4,
+        utilization=0.0,
+        healthStatus=HealthStatus.UNKNOWN,
+    )
+    plane.register_remote_runtime(profile, snapshot)
+    return profile
 
 
 def test_remote_heartbeat_is_authoritative_and_expires_without_refresh() -> None:
-    resources = _register_edge()
+    plane = _plane(heartbeat_timeout=timedelta(minutes=5))
+    _remote_profile(plane)
 
-    online = resources.heartbeat("edge-01", received_at=NOW, source="external")
-    stale = resources.health_monitor.health("edge-01", now=NOW + timedelta(seconds=31))
-
-    assert online.healthy is True
-    assert stale.healthy is False
+    now = datetime.now(timezone.utc)
+    health = plane.heartbeat_runtime("runtime:edge-exec-1", received_at=now, source="external")
+    assert health.healthy
+    assert plane.health_monitor.health("runtime:edge-exec-1", now=now + timedelta(minutes=1)).healthy
+    # 无持续心跳时健康随时间自然过期。
+    later = now + timedelta(minutes=6)
+    assert not plane.health_monitor.health("runtime:edge-exec-1", now=later).healthy
 
 
 def test_local_runtime_cannot_refresh_remote_resource() -> None:
-    resources = _register_edge()
-
-    with pytest.raises(ValueError, match="external heartbeat"):
-        resources.heartbeat("edge-01", received_at=NOW, source="local")
+    plane = _plane()
+    _remote_profile(plane)
+    with pytest.raises(ValueError):
+        plane.heartbeat_runtime("runtime:edge-exec-1", source="local")
 
 
 def test_remote_observation_updates_snapshot_and_health_atomically() -> None:
-    resources = _register_edge()
+    plane = _plane()
+    _remote_profile(plane)
 
-    health = resources.observe_remote(
-        "edge-01",
-        available_slots=3,
-        utilization=0.25,
-        latency_ms=18,
-        observed_at=NOW,
+    health = plane.observe_remote_runtime(
+        "runtime:edge-exec-1",
+        available_slots=2,
+        utilization=0.5,
+        latency_ms=180.0,
+        observation_sequence=1,
     )
-    snapshot = resources.snapshot("edge-01")
-
-    assert health.healthy is True
-    assert snapshot.snapshot.available_slots == 3
-    assert snapshot.snapshot.utilization == 0.25
-    assert snapshot.snapshot.latency_ms == 18
-    assert snapshot.snapshot.observation_sequence == 0
-    assert snapshot.snapshot.health_status is ResourceHealthStatus.ONLINE
+    versioned = plane.runtime_snapshot("runtime:edge-exec-1")
+    assert versioned.version == 2
+    assert versioned.snapshot.available_slots == 2
+    assert versioned.snapshot.utilization == pytest.approx(0.5)
+    assert versioned.snapshot.latency_ms == pytest.approx(180.0)
+    assert health.healthy
+    assert health.latency_ms == pytest.approx(180.0)
 
 
 def test_remote_observation_rejects_older_sequence_without_mutating_snapshot() -> None:
-    resources = _register_edge()
+    plane = _plane()
+    _remote_profile(plane)
+    plane.observe_remote_runtime(
+        "runtime:edge-exec-1",
+        available_slots=1,
+        utilization=0.75,
+        observation_sequence=5,
+    )
+    before = plane.runtime_snapshot("runtime:edge-exec-1")
 
-    resources.observe_remote(
-        "edge-01",
+    with pytest.raises(StaleResourceObservation):
+        plane.observe_remote_runtime(
+            "runtime:edge-exec-1",
+            available_slots=4,
+            utilization=0.0,
+            observation_sequence=4,
+        )
+    assert plane.runtime_snapshot("runtime:edge-exec-1") == before
+
+
+def test_sqlite_remote_observation_rejects_older_sequence(tmp_path: Path) -> None:
+    plane = ResourcePlane(store=SQLiteResourceStore(tmp_path / "plane.sqlite3"))
+    _remote_profile(plane, "runtime:edge-exec-2")
+    plane.observe_remote_runtime(
+        "runtime:edge-exec-2",
         available_slots=3,
         utilization=0.25,
-        latency_ms=18,
-        observed_at=NOW,
         observation_sequence=2,
     )
-
-    with pytest.raises(ValueError, match="stale observation"):
-        resources.observe_remote(
-            "edge-01",
-            available_slots=0,
-            utilization=1.0,
-            latency_ms=900,
-            observed_at=NOW - timedelta(seconds=1),
-            observation_sequence=1,
-        )
-
-    snapshot = resources.snapshot("edge-01")
-    assert snapshot.snapshot.observation_sequence == 2
-    assert snapshot.snapshot.available_slots == 3
-
-
-def test_sqlite_remote_observation_rejects_older_sequence(tmp_path) -> None:
-    store = SQLiteResourceStore(tmp_path / "resources.sqlite3")
-    resources = ResourceService(store=store)
-    try:
-        resources.register(
-            ResourceProfile(
-                resourceId="edge-sqlite",
-                resourceType=ResourceType.WORKER,
-                deploymentTier=DeploymentTier.EDGE,
-                capabilities=["vision.infer"],
-                executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-sqlite:9000"),
-            ),
-            ResourceSnapshot(
-                resourceId="edge-sqlite",
-                availableSlots=1,
-                utilization=0.0,
-                healthStatus=ResourceHealthStatus.UNKNOWN,
-            ),
-        )
-        resources.observe_remote(
-            "edge-sqlite",
-            available_slots=1,
+    with pytest.raises(StaleResourceObservation):
+        plane.observe_remote_runtime(
+            "runtime:edge-exec-2",
+            available_slots=4,
             utilization=0.0,
             observation_sequence=2,
-            observed_at=NOW,
         )
+    plane.store.close()
 
-        with pytest.raises(ValueError, match="stale observation"):
-            resources.observe_remote(
-                "edge-sqlite",
-                available_slots=0,
-                utilization=1.0,
-                observation_sequence=1,
-                observed_at=NOW,
-            )
 
-        assert resources.snapshot("edge-sqlite").snapshot.observation_sequence == 2
-    finally:
-        store.close()
+def test_remote_observation_requires_endpoint_runtime() -> None:
+    plane = _plane()
+    plane.ensure_node("node:device:local", placement=Placement.DEVICE)
+    plane.register_runtime(RuntimeProfile(
+        runtimeId="runtime:embedded",
+        nodeId="node:device:local",
+        placement=Placement.DEVICE,
+        capabilities=["exec.agents"],
+    ))
+    with pytest.raises(ValueError):
+        plane.observe_remote_runtime(
+            "runtime:embedded",
+            available_slots=1,
+            utilization=0.0,
+            observation_sequence=1,
+        )

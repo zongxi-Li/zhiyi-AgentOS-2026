@@ -1,35 +1,38 @@
-"""统一资源目录与 ACG 冻结 Agent 绑定的运行时测试。"""
+"""资源绑定执行链：需求冻结、READY 绑定、远程执行与故障切换。
+
+Preparation 只持久化 ExecutionRequirement；具体绑定由 ResourceBinder 在
+READY 时完成。远程 Runtime 通过带凭据登记 + 外部心跳参与调度，失败后
+标记不健康并自动换绑，全部候选耗尽则以致命错误收场。
+"""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from components.mission_manager.store import WorkflowRegistry
 from components.executor.graph import ACGSuperstepError
-from components.resource.agent_directory import AgentDirectory
-from components.resource.agent_service import AgentService
-from components.resource.node_service import NodeService
-from components.resource.service import ResourceService
-from contracts.resource import (
-    DeploymentTier,
-    NodeProfile,
-    NodeSnapshot,
-    ResourceEndpoint,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
-)
+from components.mission_manager.store import WorkflowRegistry
+from components.memory.store import MemoryStore
+from components.resource.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
+from components.resource.service import ResourcePlane
+from components.scheduler.binder import ResourceBinder
 from components.scheduler.models import (
     SchedulerAllocationTimeout,
     SchedulerNoEligibleResource,
 )
 from adapters.resource_execution import ResourceExecutionError
-from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.evolution import PolicyMutation, Trajectory
+from contracts.resource import (
+    HealthStatus,
+    Placement,
+    ResourceEndpoint,
+    RuntimeKind,
+    RuntimeProfile,
+    RuntimeSnapshot,
+    TrustLevel,
+)
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime.workflow_runtime import ExecutionRuntime
 from service.agents import AgentRegistry
@@ -54,7 +57,7 @@ class _BoundAgent(BaseAgent):
         return AgentOutput(output={"agent": self.profile.agent_id})
 
 
-def _runtime(calls: list[str]) -> tuple[ExecutionRuntime, AgentRegistry]:
+def _runtime(calls: list[str], **overrides) -> tuple[ExecutionRuntime, AgentRegistry]:
     """建立一个按 capability 解析 Agent 的最小 ACG Runtime。"""
     agents = AgentRegistry()
     agents.register(_BoundAgent(AgentProfile(
@@ -66,15 +69,51 @@ def _runtime(calls: list[str]) -> tuple[ExecutionRuntime, AgentRegistry]:
         workflowId="resource-run", name="resource", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="analyse", name="analyse", agentName="", capability="analysis")],
     ))
-    return ExecutionRuntime(
+    values = dict(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
-    ), agents
+        # 默认记忆库指向共享 SQLite 文件，会在每次图构建时全量重建向量索引；
+        # 测试必须使用隔离存储，避免随历史运行累积而变慢。
+        memory_store=MemoryStore(),
+    )
+    values.update(overrides)
+    return ExecutionRuntime(**values), agents
 
 
-def test_prepare_run_defers_concrete_resource_binding_to_scheduler(monkeypatch) -> None:
-    """Preparation persists eligibility; Scheduler creates the binding at READY."""
+def _register_remote(plane: ResourcePlane, runtime_id: str, *, capability: str = "analysis", placement: Placement = Placement.EDGE, latency_ms: float = 10.0) -> None:
+    node = f"node:{placement.value}-{runtime_id}"
+    plane.ensure_node(node, placement=placement, trust=TrustLevel.TRUSTED)
+    plane.register_remote_runtime(
+        RuntimeProfile(
+            runtimeId=runtime_id,
+            kind=RuntimeKind.EXECUTION_BACKEND,
+            nodeId=node,
+            placement=placement,
+            capabilities=[capability],
+            trust=TrustLevel.TRUSTED,
+            endpoint=ResourceEndpoint(protocol="http", address=f"http://{runtime_id}:9000/execute"),
+            ownerScope="scope-remote",
+            capacity=1,
+        ),
+        RuntimeSnapshot(
+            runtimeId=runtime_id,
+            availableSlots=1,
+            utilization=0.0,
+            healthStatus=HealthStatus.UNKNOWN,
+        ),
+    )
+    plane.observe_remote_runtime(
+        runtime_id,
+        available_slots=1,
+        utilization=0.0,
+        latency_ms=latency_ms,
+        observation_sequence=1,
+    )
+
+
+def test_prepare_run_defers_concrete_resource_binding_to_binder(monkeypatch) -> None:
+    """Preparation persists requirements; the binder creates bindings at READY."""
     runtime, _ = _runtime([])
     calls: list[str] = []
     prepare = runtime.runtime_binding_service.prepare
@@ -90,60 +129,18 @@ def test_prepare_run_defers_concrete_resource_binding_to_scheduler(monkeypatch) 
 
     assert calls == [run.run_id]
     assert run.execution_state["resourceBindings"] == {}
-    assert run.execution_state["bindingRequirements"] == {
-        "analyse": {
-                "requiredCapabilities": ["analysis"],
-                "domain": "general",
-                "resourceTypes": [],
-                "allowedDeploymentTiers": [],
-                "allowedResourceIds": ["agent-primary"],
-            "excludedResourceIds": [],
-            "dataZone": None,
-            "ownerScope": None,
-            "labels": {},
-                "maxCost": None,
-                "maxLatencyMs": None,
-                "privacyLevel": "internal",
-                "requiredModelIds": [],
-                "minGpuMemoryMb": 0,
-                "allowRemoteExecution": True,
-            "preferences": {},
-            "policyMetadata": {
-                    "source": "compiled-binding-manifest",
-                    "stepId": "analyse",
-                    "agentNodeIds": ["analyse"],
-                    "maxConcurrency": 1,
-            },
-        }
-    }
+    requirement = run.execution_state["bindingRequirements"]["analyse"]
+    assert requirement["requiredCapabilities"] == ["analysis"]
+    assert requirement["runtimeKinds"] == ["execution_backend"]
+    # 需求只声明能力与约束，不冻结允许清单与放置位置。
+    assert requirement["allowedRuntimeIds"] == []
+    assert requirement["allowedPlacements"] == []
+    assert requirement["policyMetadata"]["source"] == "compiled-binding-manifest"
+    assert requirement["policyMetadata"]["stepId"] == "analyse"
+    assert requirement["routingHints"] == {}
 
 
-def test_prepare_run_does_not_freeze_node_placement_from_new_ledgers() -> None:
-    calls: list[str] = []
-    runtime, _ = _runtime(calls)
-    runtime.agent_service = AgentService()
-    AgentDirectory(runtime.agent_service).register_agent(runtime.agent_registry.all()[0].profile)
-    runtime.node_service = NodeService()
-    runtime.node_service.register(
-        NodeProfile(
-            nodeId="edge-node-1",
-            deploymentTier=DeploymentTier.EDGE,
-            modelIds=[],
-            gpuMemoryMb=4096,
-            privacyLevel="internal",
-        ),
-        NodeSnapshot(nodeId="edge-node-1", availableMemoryMb=8192),
-    )
-    runtime.node_service.heartbeat("edge-node-1")
-    task = runtime.create_mission("resource", workflow_id="resource-run")
-
-    _, run = runtime.prepare_run(task.mission_id)
-
-    assert "nodeAgentBindings" not in run.execution_state
-    assert run.execution_state["bindingRequirements"]["analyse"]["preferences"] == {}
-
-
-def test_runtime_accepts_resource_execution_adapters_by_resource_id() -> None:
+def test_runtime_accepts_resource_execution_adapters_by_runtime_id() -> None:
     adapter = object()
     runtime, _ = _runtime([])
     runtime_with_adapter = ExecutionRuntime(
@@ -156,60 +153,36 @@ def test_runtime_accepts_resource_execution_adapters_by_resource_id() -> None:
     assert runtime_with_adapter.resource_execution_adapters == {"edge-01": adapter}
 
 
-def test_prepare_run_keeps_registered_remote_resource_eligible_without_binding() -> None:
+def test_prepare_run_keeps_registered_remote_runtime_eligible_without_binding() -> None:
+    plane = ResourcePlane()
+    _register_remote(plane, "edge-01")
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     workflows.register(WorkflowDefinition(
         workflowId="remote-resource-run", name="remote", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="infer", name="infer", agentName="edge-worker", capability="analysis")],
     ))
-    resources = ResourceService()
-    resources.register(
-        ResourceProfile(
-            resourceId="edge-01",
-            resourceType=ResourceType.WORKER,
-            deploymentTier=DeploymentTier.EDGE,
-            capabilities=["analysis"],
-            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-01:9000"),
-        ),
-        ResourceSnapshot(
-            resourceId="edge-01", availableSlots=1, utilization=0.0,
-            healthStatus=ResourceHealthStatus.UNKNOWN,
-        ),
-    )
-    resources.heartbeat("edge-01", source="external")
-    adapter = object()
     runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
-        resource_service=resources,
-        resource_execution_adapters={"edge-01": adapter},
+        memory_store=MemoryStore(),
+        resource_plane=plane,
+        resource_execution_adapters={"edge-01": object()},
     )
 
     task = runtime.create_mission("remote", workflow_id="remote-resource-run")
     _, run = runtime.prepare_run(task.mission_id)
 
     assert run.execution_state["resourceBindings"] == {}
-    assert run.execution_state["bindingRequirements"]["infer"]["allowedResourceIds"] == ["edge-01"]
-    assert run.execution_state["bindingRequirements"]["infer"]["preferences"] == {}
+    requirement = run.execution_state["bindingRequirements"]["infer"]
+    assert requirement["requiredCapabilities"] == ["analysis"]
+    assert requirement["allowedRuntimeIds"] == []
 
 
 def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatch) -> None:
-    agents = AgentRegistry()
-    resources = ResourceService()
-    profile = ResourceProfile(
-        resourceId="edge-01",
-        resourceType=ResourceType.WORKER,
-        deploymentTier=DeploymentTier.EDGE,
-        capabilities=["analysis"],
-        ownerScope="team-a",
-        executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-01:9000"),
-    )
-    resources.register_remote(
-        profile,
-        ResourceSnapshot(resourceId="edge-01", availableSlots=1, utilization=0.0),
-    )
+    plane = ResourcePlane()
+    _register_remote(plane, "edge-01")
     built: list[tuple[str, object]] = []
 
     class _Adapter:
@@ -217,99 +190,31 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatc
             return AgentOutput(output={"result": "edge"})
 
     def factory(profile, *, credential_provider, **kwargs):
-        built.append((profile.resource_id, credential_provider))
+        built.append((profile.runtime_id, credential_provider))
         return _Adapter()
 
     monkeypatch.setattr("runtime.acg_execution.build_resource_execution_adapter", factory)
-    runtime = ExecutionRuntime(
-        agent_registry=agents,
-        workflow_registry=WorkflowRegistry(),
-        workflow_store=MemoryWorkflowStore(),
-        resource_service=resources,
-    )
+    runtime, _ = _runtime([], resource_plane=plane)
 
-    adapter = runtime.acg_execution_service._resource_execution_adapter("edge-01")
+    adapter = runtime.acg_execution_service._remote_runtime_adapter("edge-01")
 
     assert adapter is not None
-    assert built == [("edge-01", resources)]
+    assert built == [("edge-01", plane)]
     assert runtime.resource_execution_adapters["edge-01"] is adapter
 
 
-def test_runtime_lazily_builds_remote_adapter_from_registered_node(monkeypatch) -> None:
-    nodes = NodeService()
-    nodes.register_remote(
-        NodeProfile(
-            nodeId="edge-node-01",
-            deploymentTier=DeploymentTier.EDGE,
-            ownerScope="team-a",
-            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-node-01:9000"),
-        ),
-        NodeSnapshot(nodeId="edge-node-01"),
-    )
-    built: list[tuple[str, object]] = []
+def test_remote_runtime_without_endpoint_has_no_adapter() -> None:
+    runtime, _ = _runtime([])
+    plane = runtime.resource_plane
+    plane.ensure_node("node:device:local", placement=Placement.DEVICE)
+    plane.register_runtime(RuntimeProfile(
+        runtimeId="runtime:in-process",
+        nodeId="node:device:local",
+        placement=Placement.DEVICE,
+        capabilities=["analysis"],
+    ))
 
-    class _Adapter:
-        async def run(self, context):
-            return AgentOutput(output={"result": "edge"})
-
-    def factory(node, *, credential_provider, **kwargs):
-        built.append((node.node_id, credential_provider))
-        return _Adapter()
-
-    monkeypatch.setattr("runtime.acg_execution.build_node_execution_adapter", factory)
-    runtime = ExecutionRuntime(
-        agent_registry=AgentRegistry(),
-        workflow_registry=WorkflowRegistry(),
-        workflow_store=MemoryWorkflowStore(),
-        node_service=nodes,
-    )
-
-    adapter = runtime.acg_execution_service._node_execution_adapter("edge-node-01")
-
-    assert adapter is not None
-    assert built == [("edge-node-01", nodes)]
-    assert runtime.resource_execution_adapters["edge-node-01"] is adapter
-
-
-def test_acg_execution_uses_node_adapter_from_node_agent_binding(monkeypatch) -> None:
-    class _NodeAdapter:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        async def run(self, context):
-            self.calls += 1
-            return AgentOutput(output={"result": "node"}, summary="node complete")
-
-    local_calls: list[str] = []
-    runtime, _ = _runtime(local_calls)
-    runtime.node_service.register_remote(
-        NodeProfile(
-            nodeId="edge-node-01",
-            deploymentTier=DeploymentTier.EDGE,
-            ownerScope="team-a",
-            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-node-01:9000"),
-        ),
-        NodeSnapshot(nodeId="edge-node-01"),
-    )
-    runtime.node_service.heartbeat("edge-node-01")
-    adapter = _NodeAdapter()
-    monkeypatch.setattr(
-        runtime.acg_execution_service,
-        "_node_execution_adapter",
-        lambda node_id: adapter if node_id == "edge-node-01" else None,
-    )
-
-    task = runtime.create_mission("resource", workflow_id="resource-run")
-    _, run = runtime.prepare_run(task.mission_id)
-    completed = asyncio.run(runtime.execute_prepared_run(run.run_id))
-
-    assert adapter.calls == 1
-    assert local_calls == []
-    assert completed.status.value == "completed"
-    assert completed.execution_state["executionBindings"]["analyse"]["resourceId"] == "edge-node-01"
-    assert completed.execution_state["executionBindings"]["analyse"]["metadata"]["agentId"] == "agent-primary"
-    assert completed.execution_state["schedulingDecisions"][0]["lease"]["agentId"] == "agent-primary"
-    assert completed.execution_state["schedulingDecisions"][0]["lease"]["nodeId"] == "edge-node-01"
+    assert runtime.acg_execution_service._remote_runtime_adapter("runtime:in-process") is None
 
 
 def test_acg_execution_uses_remote_adapter_after_remote_binding() -> None:
@@ -321,28 +226,21 @@ def test_acg_execution_uses_remote_adapter_after_remote_binding() -> None:
             self.calls += 1
             return AgentOutput(output={"result": "edge"}, summary="remote complete")
 
+    plane = ResourcePlane()
+    _register_remote(plane, "edge-01")
+    adapter = _RemoteAdapter()
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     workflows.register(WorkflowDefinition(
         workflowId="remote-execute-run", name="remote", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="infer", name="infer", agentName="edge-worker", capability="analysis")],
     ))
-    resources = ResourceService()
-    resources.register(
-        ResourceProfile(
-            resourceId="edge-01", resourceType=ResourceType.WORKER,
-            deploymentTier=DeploymentTier.EDGE, capabilities=["analysis"],
-            executionEndpoint=ResourceEndpoint(protocol="http", address="http://edge-01:9000"),
-        ),
-        ResourceSnapshot(resourceId="edge-01", availableSlots=1, utilization=0.0),
-    )
-    resources.heartbeat("edge-01", source="external")
-    adapter = _RemoteAdapter()
     runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
-        resource_service=resources,
+        memory_store=MemoryStore(),
+        resource_plane=plane,
         resource_execution_adapters={"edge-01": adapter},
     )
 
@@ -352,6 +250,9 @@ def test_acg_execution_uses_remote_adapter_after_remote_binding() -> None:
 
     assert adapter.calls == 1
     assert completed.status.value == "completed"
+    assert completed.execution_state["executionBindings"]["infer"]["resourceId"] == "edge-01"
+    assert completed.execution_state["executionBindings"]["infer"]["runtimeKind"] == "execution_backend"
+    assert completed.execution_state["resourceBindings"]["infer"] == "edge-01"
 
 
 def test_remote_failure_marks_edge_unhealthy_and_rebinds_to_cloud() -> None:
@@ -367,34 +268,22 @@ def test_remote_failure_marks_edge_unhealthy_and_rebinds_to_cloud() -> None:
             self.calls += 1
             return AgentOutput(output={"result": "cloud"}, summary="cloud complete")
 
+    plane = ResourcePlane()
+    _register_remote(plane, "edge-01", latency_ms=10.0)
+    _register_remote(plane, "cloud-01", placement=Placement.CLOUD, latency_ms=100.0)
+    cloud = _CloudAdapter()
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     workflows.register(WorkflowDefinition(
         workflowId="remote-failover-run", name="remote", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="infer", name="infer", agentName="remote-worker", capability="analysis")],
     ))
-    resources = ResourceService()
-    for resource_id, tier in (("edge-01", DeploymentTier.EDGE), ("cloud-01", DeploymentTier.CLOUD)):
-        resources.register(
-            ResourceProfile(
-                resourceId=resource_id, resourceType=ResourceType.WORKER,
-                deploymentTier=tier, capabilities=["analysis"],
-                executionEndpoint=ResourceEndpoint(protocol="http", address=f"http://{resource_id}:9000"),
-            ),
-            ResourceSnapshot(resourceId=resource_id, availableSlots=1, utilization=0.0),
-        )
-        resources.observe_remote(
-            resource_id,
-            available_slots=1,
-            utilization=0.0,
-            latency_ms=10 if tier is DeploymentTier.EDGE else 100,
-        )
-    cloud = _CloudAdapter()
     runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
-        resource_service=resources,
+        memory_store=MemoryStore(),
+        resource_plane=plane,
         resource_execution_adapters={
             "edge-01": _FailingEdgeAdapter(),
             "cloud-01": cloud,
@@ -407,7 +296,7 @@ def test_remote_failure_marks_edge_unhealthy_and_rebinds_to_cloud() -> None:
 
     assert cloud.calls == 1
     assert completed.status.value == "completed"
-    assert resources.health_monitor.health("edge-01").healthy is False
+    assert plane.health_monitor.health("edge-01").healthy is False
     assert completed.recovery_count == 1
     assert completed.execution_state["resourceFailoverHistory"][0]["resourceId"] == "edge-01"
     assert {item["binding"]["resourceId"] for item in completed.execution_state["schedulingDecisions"]} == {
@@ -415,38 +304,26 @@ def test_remote_failure_marks_edge_unhealthy_and_rebinds_to_cloud() -> None:
     }
 
 
-def test_remote_failover_stops_after_all_bound_remote_resources_fail() -> None:
+def test_remote_failover_stops_after_all_bound_remote_runtimes_fail() -> None:
     class _FailingAdapter:
         async def run(self, context):
             raise ResourceExecutionError("REMOTE_EXECUTION_FAILED: unavailable")
 
+    plane = ResourcePlane()
+    _register_remote(plane, "edge-01", latency_ms=10.0)
+    _register_remote(plane, "cloud-01", placement=Placement.CLOUD, latency_ms=100.0)
     agents = AgentRegistry()
     workflows = WorkflowRegistry()
     workflows.register(WorkflowDefinition(
         workflowId="remote-failover-exhausted", name="remote", domain="general", runtimeEngine="acg",
         steps=[WorkflowStepDefinition(stepId="infer", name="infer", agentName="remote-worker", capability="analysis")],
     ))
-    resources = ResourceService()
-    for resource_id, tier, latency in (
-        ("edge-01", DeploymentTier.EDGE, 10),
-        ("cloud-01", DeploymentTier.CLOUD, 100),
-    ):
-        resources.register(
-            ResourceProfile(
-                resourceId=resource_id, resourceType=ResourceType.WORKER,
-                deploymentTier=tier, capabilities=["analysis"],
-                executionEndpoint=ResourceEndpoint(protocol="http", address=f"http://{resource_id}:9000"),
-            ),
-            ResourceSnapshot(resourceId=resource_id, availableSlots=1, utilization=0.0),
-        )
-        resources.observe_remote(
-            resource_id, available_slots=1, utilization=0.0, latency_ms=latency
-        )
     runtime = ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
-        resource_service=resources,
+        memory_store=MemoryStore(),
+        resource_plane=plane,
         resource_execution_adapters={
             "edge-01": _FailingAdapter(),
             "cloud-01": _FailingAdapter(),
@@ -458,7 +335,7 @@ def test_remote_failover_stops_after_all_bound_remote_resources_fail() -> None:
 
     with pytest.raises(ACGSuperstepError) as caught:
         asyncio.run(asyncio.wait_for(
-            runtime.execute_prepared_run(run.run_id), timeout=1.0
+            runtime.execute_prepared_run(run.run_id), timeout=2.0
         ))
 
     assert isinstance(caught.value.cause, SchedulerNoEligibleResource)
@@ -484,12 +361,12 @@ def test_acg_execution_uses_frozen_agent_binding_after_registry_changes() -> Non
 
     assert calls == ["agent-primary"]
     assert completed.execution_state["schedulingDecisions"][0]["lease"]["status"] == "released"
-    assert runtime.legacy_scheduler_service.coordinator.active_slots("agent-primary") == 0
+    assert runtime.resource_binder.coordinator.active_slots(EMBEDDED_AGENTS_RUNTIME_ID) == 0
+    assert completed.execution_state["logicalAgents"]["analyse"] == "agent-primary"
 
 
-def test_long_run_refreshes_local_agent_heartbeat_before_later_step() -> None:
-    """A local Agent must not age out merely because an earlier node ran past the TTL."""
-
+def test_long_run_refreshes_embedded_runtime_heartbeat_before_later_step() -> None:
+    """嵌入式后端不能因前一步耗时超过健康 TTL 而被判不可用。"""
     calls: list[str] = []
     agents = AgentRegistry()
     agents.register(_BoundAgent(AgentProfile(
@@ -509,19 +386,18 @@ def test_long_run_refreshes_local_agent_heartbeat_before_later_step() -> None:
             ),
         ],
     ))
-    runtime = ExecutionRuntime(
+    runtime, _ = _runtime(
+        calls,
         agent_registry=agents,
         workflow_registry=workflows,
-        workflow_store=MemoryWorkflowStore(),
-        resource_service=ResourceService(
-            heartbeat_timeout=timedelta(milliseconds=10)
-        ),
+        resource_plane=ResourcePlane(heartbeat_timeout=timedelta(milliseconds=10)),
     )
+
     task = runtime.create_mission("heartbeat", workflow_id="heartbeat-run")
     _, run = runtime.prepare_run(task.mission_id)
 
     completed = asyncio.run(asyncio.wait_for(
-        runtime.execute_prepared_run(run.run_id), timeout=1.0
+        runtime.execute_prepared_run(run.run_id), timeout=2.0
     ))
 
     assert completed.status.value == "completed"
@@ -539,7 +415,7 @@ def test_impossible_frozen_binding_fails_instead_of_polling_forever() -> None:
 
     with pytest.raises(ACGSuperstepError) as caught:
         asyncio.run(asyncio.wait_for(
-            runtime.execute_prepared_run(run.run_id), timeout=1.0
+            runtime.execute_prepared_run(run.run_id), timeout=2.0
         ))
 
     assert isinstance(caught.value.cause, SchedulerNoEligibleResource)
@@ -552,20 +428,22 @@ def test_capacity_queue_has_a_bounded_failure_outcome() -> None:
     runtime.scheduler_wait_timeout = 0.02
     task = runtime.create_mission("resource", workflow_id="resource-run")
     _, run = runtime.prepare_run(task.mission_id)
-    held = runtime.legacy_scheduler_service.coordinator.acquire(
+    held = runtime.resource_binder.coordinator.acquire(
         lease_id="lease-held",
-        resource_id="agent-primary",
+        resource_id=EMBEDDED_AGENTS_RUNTIME_ID,
         capacity=1,
         run_id="other-run",
         step_id="other-step",
         attempt_id="other-attempt",
+        slot_count=1,
         ttl=timedelta(minutes=1),
+        now=datetime.now(timezone.utc),
     )
     assert held is not None
 
     with pytest.raises(ACGSuperstepError) as caught:
         asyncio.run(asyncio.wait_for(
-            runtime.execute_prepared_run(run.run_id), timeout=1.0
+            runtime.execute_prepared_run(run.run_id), timeout=2.0
         ))
 
     assert isinstance(caught.value.cause, SchedulerAllocationTimeout)

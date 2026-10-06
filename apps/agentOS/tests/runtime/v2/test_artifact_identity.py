@@ -14,7 +14,7 @@ from components.executor.node_runner import ACGNodeRunner
 from contracts.artifacts import final_synthesis_output_schema
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
-from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from domain.identity_graph import RunArtifactDisposition
 from domain.repository import IdentityConflictError
 from runtime.v2 import (
@@ -62,7 +62,7 @@ def _runtime_binding(run_id: str, attempt_id: str, step_id: str) -> RuntimeExecu
         stepId=step_id,
         attemptId=attempt_id,
         resourceId="agent-equipment",
-        resourceType=ResourceType.AGENT,
+        runtimeKind=RuntimeKind.EXECUTION_BACKEND,
         snapshotVersion=1,
     )
 

@@ -13,8 +13,8 @@ from adapters.resource_execution import (
     normalize_execution_endpoint,
 )
 from adapters.resource_execution import ResourceCredentialProvider
-from contracts.resource import ResourceEndpoint, ResourceProfile, ResourceType, DeploymentTier
-from components.resource.auth import build_resource_signature
+from contracts.resource import ResourceEndpoint, RuntimeKind, RuntimeProfile
+from contracts.resource_signing import build_resource_signature
 from service.agents.base import AgentOutput
 
 
@@ -167,12 +167,12 @@ async def test_http_adapter_reads_rotated_credential_for_next_request() -> None:
 
 
 def test_build_resource_execution_adapter_uses_remote_profile_endpoint() -> None:
-    profile = ResourceProfile(
-        resourceId="edge-01",
-        resourceType=ResourceType.WORKER,
-        deploymentTier=DeploymentTier.EDGE,
+    profile = RuntimeProfile(
+        runtimeId="edge-01",
+        kind=RuntimeKind.EXECUTION_BACKEND,
+        nodeId="node:edge-1",
         capabilities=["analysis"],
-        executionEndpoint=ResourceEndpoint(protocol="https", address="https://edge.example.test/execute"),
+        endpoint=ResourceEndpoint(protocol="https", address="https://edge.example.test/execute"),
     )
     adapter = build_resource_execution_adapter(
         profile,

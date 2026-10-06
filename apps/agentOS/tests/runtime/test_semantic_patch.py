@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from components.executor import GraphPatchConflictError, InMemoryExecutionValueStore
 from components.mission_manager.store import WorkflowRegistry
 from components.planner.topology import TopologyCompileError
-from components.resource.service import ResourceService
+from components.memory.store import MemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.planning import (
     PlannedTask,
@@ -21,12 +21,12 @@ from contracts.planning import (
 )
 from contracts.recovery import GraphPatch, SemanticPatchRequest
 from contracts.resource import (
-    DeploymentTier,
+    HealthStatus,
+    Placement,
     ResourceEndpoint,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
+    RuntimeKind,
+    RuntimeProfile,
+    RuntimeSnapshot,
 )
 from contracts.workflow import (
     TraceEventType,
@@ -87,6 +87,8 @@ def _paused(tmp_path):
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
+        # 默认记忆库指向共享 SQLite 文件并随测试积累变慢；这里强制隔离。
+        memory_store=MemoryStore(),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "cp.sqlite3"),
         execution_value_store=InMemoryExecutionValueStore(),
         identity_lifecycle=IdentityProjectionBridge(
@@ -192,25 +194,28 @@ def test_semantic_replacement_uses_normal_local_and_remote_candidate_registratio
         monkeypatch.setattr(
             runtime.runtime_binding_service, "prepare", record_prepare
         )
-        resources: ResourceService = runtime.legacy_resource_service
-        resources.register(
-            ResourceProfile(
-                resourceId="edge-01",
-                resourceType=ResourceType.WORKER,
-                deploymentTier=DeploymentTier.EDGE,
+        plane = runtime.resource_plane
+        plane.ensure_node("node:edge-1", placement=Placement.EDGE)
+        plane.register_remote_runtime(
+            RuntimeProfile(
+                runtimeId="edge-01",
+                kind=RuntimeKind.EXECUTION_BACKEND,
+                nodeId="node:edge-1",
+                placement=Placement.EDGE,
                 capabilities=["task_understanding"],
-                executionEndpoint=ResourceEndpoint(
-                    protocol="http", address="http://edge-01:9000"
+                endpoint=ResourceEndpoint(
+                    protocol="http", address="http://edge-01:9000/execute"
                 ),
+                ownerScope="scope-edge",
             ),
-            ResourceSnapshot(
-                resourceId="edge-01",
+            RuntimeSnapshot(
+                runtimeId="edge-01",
                 availableSlots=1,
                 utilization=0.0,
-                healthStatus=ResourceHealthStatus.UNKNOWN,
+                healthStatus=HealthStatus.UNKNOWN,
             ),
         )
-        resources.heartbeat("edge-01", source="external")
+        plane.heartbeat_runtime("edge-01", source="external")
         old = ACGBlueprint.model_validate(paused.acg_blueprint)
         request = _request(
             mission,
@@ -235,9 +240,11 @@ def test_semantic_replacement_uses_normal_local_and_remote_candidate_registratio
 
         assert prepared_run_ids == [replacement.run_id]
         assert replacement.execution_state["resourceBindings"] == {}
-        assert replacement.execution_state["bindingRequirements"]["C"][
-            "allowedResourceIds"
-        ] == ["runner", "edge-01"]
+        requirement = replacement.execution_state["bindingRequirements"]["C"]
+        assert requirement["requiredCapabilities"] == ["task_understanding"]
+        assert requirement["runtimeKinds"] == ["execution_backend"]
+        # 需求不再冻结允许清单：嵌入式 Agent 与远程后端在 READY 时同台竞争。
+        assert requirement["allowedRuntimeIds"] == []
     finally:
         lifecycle.close()
 

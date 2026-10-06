@@ -1,9 +1,12 @@
-"""Shared resource-store contract and restart semantics."""
+"""RuntimeStore 的存储合同：登记、版本 CAS、凭据与模型端点。
 
-from __future__ import annotations
+InMemory 与 SQLite 两个实现必须满足同一份合同；SQLite 额外验证跨进程
+重启的持久化语义与旧表自愈。
+"""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -11,176 +14,212 @@ from components.resource.store import (
     InMemoryResourceStore,
     ResourceCredentialRecord,
     SQLiteResourceStore,
+    StaleResourceObservation,
     VersionConflict,
 )
-from contracts.resource import ResourceHealthStatus, ResourceProfile, ResourceSnapshot, ResourceType
+from contracts.resource import (
+    HealthStatus,
+    ModelEndpointProfile,
+    Placement,
+    ResourceEndpoint,
+    RuntimeKind,
+    RuntimeProfile,
+    RuntimeSnapshot,
+    TrustLevel,
+)
 
 
-def _profile(resource_id: str) -> ResourceProfile:
-    return ResourceProfile(
-        resourceId=resource_id,
-        resourceType=ResourceType.AGENT,
-        capabilities=["analyse"],
-        domains=["general"],
+def _profile(runtime_id: str = "runtime:worker-1", **overrides) -> RuntimeProfile:
+    values = dict(
+        runtimeId=runtime_id,
+        kind=RuntimeKind.EXECUTION_BACKEND,
+        nodeId="node:edge-1",
+        placement=Placement.EDGE,
+        capabilities=["repo.read"],
+        trust=TrustLevel.TRUSTED,
+        endpoint=ResourceEndpoint(protocol="https", address="https://edge-1.internal/exec"),
+        ownerScope="scope-a",
+        capacity=2,
     )
+    values.update(overrides)
+    return RuntimeProfile(**values)
 
 
-def _snapshot(resource_id: str, *, slots: int = 1) -> ResourceSnapshot:
-    return ResourceSnapshot(
-        resourceId=resource_id,
+def _snapshot(runtime_id: str, *, seq: int = 0, slots: int = 2) -> RuntimeSnapshot:
+    return RuntimeSnapshot(
+        runtimeId=runtime_id,
         availableSlots=slots,
         utilization=0.0,
-        healthStatus=ResourceHealthStatus.ONLINE,
+        healthStatus=HealthStatus.ONLINE,
+        observationSequence=seq,
     )
 
 
-@pytest.fixture(params=("memory", "sqlite"))
-def store(request, tmp_path: Path):
-    value = (
-        InMemoryResourceStore()
-        if request.param == "memory"
-        else SQLiteResourceStore(tmp_path / "resources.sqlite3")
+def _credential(runtime_id: str, *, credential_id: str | None = None) -> ResourceCredentialRecord:
+    return ResourceCredentialRecord(
+        resource_id=runtime_id,
+        credential_id=credential_id or f"rc_{runtime_id}",
+        owner_scope="scope-a",
+        secret_digest="0" * 64,
+        encrypted_secret="sealed-secret",
+        created_at=datetime.now(timezone.utc),
     )
-    yield value
-    close = getattr(value, "close", None)
-    if callable(close):
-        close()
 
 
-def test_resource_store_contract_create_get_list_duplicate_and_cas(store) -> None:
-    original = _snapshot("b")
-    first = store.register(_profile("b"), original)
-    store.register(_profile("a"), _snapshot("a"))
+@pytest.fixture(params=["memory", "sqlite"])
+def store(request, tmp_path):
+    if request.param == "memory":
+        yield InMemoryResourceStore()
+        return
+    sqlite_store = SQLiteResourceStore(tmp_path / "plane.sqlite3")
+    yield sqlite_store
+    sqlite_store.close()
 
-    assert first.version == 1
-    assert store.get_profile("b").resource_type is ResourceType.AGENT
-    assert [item.resource_id for item in store.list_profiles()] == ["a", "b"]
-    assert store.register(_profile("b"), original).version == 1
 
-    updated = store.update_snapshot(_snapshot("b", slots=0), expected_version=1)
+def test_runtime_store_contract_create_get_list_duplicate_and_cas(store) -> None:
+    first = store.register(_profile("runtime:a"), _snapshot("runtime:a"))
+    second = store.register(_profile("runtime:b"), _snapshot("runtime:b"))
+    assert first.version == 1 and second.version == 1
+
+    assert store.get_profile("runtime:a").capabilities == ["repo.read"]
+    assert [profile.runtime_id for profile in store.list_profiles()] == ["runtime:a", "runtime:b"]
+
+    with pytest.raises(ValueError):
+        store.register(_profile("runtime:a"), _snapshot("runtime:a"))
+
+    updated = store.update_snapshot(
+        _snapshot("runtime:a", seq=1, slots=1), expected_version=1
+    )
     assert updated.version == 2
-    assert updated.snapshot.available_slots == 0
-    scaled = store.update_capacity("b", 4, expected_capacity=1)
-    assert scaled.version == 3
-    assert scaled.snapshot.available_slots == 3
-    assert scaled.snapshot.utilization == 0.25
-    assert store.get_profile("b").capacity == 4
     with pytest.raises(VersionConflict):
-        store.update_capacity("b", 5, expected_capacity=1)
+        store.update_snapshot(_snapshot("runtime:a", seq=2), expected_version=1)
+    with pytest.raises(StaleResourceObservation):
+        store.update_snapshot(_snapshot("runtime:a", seq=0))
+
     with pytest.raises(VersionConflict):
-        store.update_snapshot(_snapshot("b"), expected_version=1)
-    with pytest.raises(ValueError, match="already registered"):
-        store.register(_profile("b").model_copy(update={"capacity": 2}), _snapshot("b"))
+        store.update_capacity("runtime:a", 8, expected_capacity=99)
+    rescaled = store.update_capacity("runtime:a", 8, expected_capacity=2)
+    # 一个已占槽位在扩容后仍保持占用，利用率按新容量重算。
+    assert rescaled.snapshot.available_slots == 7
+    assert rescaled.snapshot.utilization == pytest.approx(1 / 8)
+    assert store.get_profile("runtime:a").capacity == 8
+
+    with pytest.raises(KeyError):
+        store.update_profile(_profile("runtime:other"))
 
 
 def test_sqlite_restart_keeps_profile_but_downgrades_snapshot_health(tmp_path: Path) -> None:
-    path = tmp_path / "resources.sqlite3"
-    first = SQLiteResourceStore(path)
-    first.register(_profile("worker-1"), _snapshot("worker-1"))
-    first.close()
+    db_path = tmp_path / "plane.sqlite3"
+    store = SQLiteResourceStore(db_path)
+    store.register(_profile("runtime:a"), _snapshot("runtime:a"))
+    store.update_snapshot(_snapshot("runtime:a", seq=3, slots=1))
+    store.close()
 
-    restarted = SQLiteResourceStore(path)
-    try:
-        assert restarted.get_profile("worker-1") == _profile("worker-1")
-        restored = restarted.get_snapshot("worker-1")
-        assert restored.version == 1
-        assert restored.snapshot.health_status is ResourceHealthStatus.UNKNOWN
-    finally:
-        restarted.close()
+    reopened = SQLiteResourceStore(db_path)
+    profile = reopened.get_profile("runtime:a")
+    versioned = reopened.get_snapshot("runtime:a")
+    reopened.close()
+    assert profile.capabilities == ["repo.read"]
+    assert versioned.version == 2
+    # 重启后没有活跃健康信号来源，快照健康降级为 UNKNOWN 而不是沿用旧值。
+    assert versioned.snapshot.health_status is HealthStatus.UNKNOWN
+    assert versioned.snapshot.observation_sequence == 3
 
 
-def test_resource_store_rotates_credential_without_changing_profile_or_snapshot(store) -> None:
-    profile = _profile("credential-rotation")
-    original_snapshot = _snapshot("credential-rotation")
-    store.register(profile, original_snapshot)
-    original = ResourceCredentialRecord(
-        resource_id="credential-rotation",
-        credential_id="rc_old",
-        owner_scope="tenant-a",
-        secret_digest="old-digest",
-        encrypted_secret="old-encrypted",
-        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+def test_runtime_store_rotates_credential_without_changing_profile_or_snapshot(store) -> None:
+    store.register_remote(_profile("runtime:a"), _snapshot("runtime:a"), _credential("runtime:a"))
+    before_profile = store.get_profile("runtime:a")
+    before_snapshot = store.get_snapshot("runtime:a")
+
+    store.rotate_credential(_credential("runtime:a", credential_id="rc_rotated"))
+
+    assert store.get_credential("runtime:a").credential_id == "rc_rotated"
+    assert store.get_profile("runtime:a") == before_profile
+    assert store.get_snapshot("runtime:a") == before_snapshot
+
+
+def test_runtime_store_rotation_requires_an_existing_credential(store) -> None:
+    store.register(_profile("runtime:a"), _snapshot("runtime:a"))
+    with pytest.raises(KeyError):
+        store.rotate_credential(_credential("runtime:a", credential_id="rc_new"))
+
+
+def test_runtime_store_register_remote_writes_profile_snapshot_and_credential_as_one_unit(store) -> None:
+    versioned = store.register_remote(
+        _profile("runtime:a"), _snapshot("runtime:a"), _credential("runtime:a")
     )
-    replacement = ResourceCredentialRecord(
-        resource_id="credential-rotation",
-        credential_id="rc_new",
-        owner_scope="tenant-a",
-        secret_digest="new-digest",
-        encrypted_secret="new-encrypted",
-        created_at=datetime(2026, 9, 3, 0, 1, tzinfo=timezone.utc),
+    assert versioned.version == 1
+    assert store.get_credential("runtime:a").credential_id == "rc_runtime:a"
+
+
+def test_runtime_store_register_remote_rolls_back_when_credential_write_fails(store) -> None:
+    store.register_remote(_profile("runtime:a"), _snapshot("runtime:a"), _credential("runtime:a"))
+    with pytest.raises(ValueError):
+        store.register_remote(
+            _profile("runtime:b"),
+            _snapshot("runtime:b"),
+            _credential("runtime:b", credential_id="rc_runtime:a"),
+        )
+    with pytest.raises(KeyError):
+        store.get_profile("runtime:b")
+
+
+def test_model_endpoint_upsert_detects_changes_and_bumps_version(store) -> None:
+    endpoint = ModelEndpointProfile(
+        endpointId="model:zhipu/glm-4.6",
+        provider="zhipu",
+        model="glm-4.6",
+        contextWindowTokens=200_000,
     )
-    store.save_credential(original)
+    _, created = store.upsert_model_endpoint(endpoint)
+    assert created
 
-    store.rotate_credential(replacement)
+    _, unchanged = store.upsert_model_endpoint(endpoint)
+    assert not unchanged
 
-    assert store.get_credential("credential-rotation") == replacement
-    assert store.get_profile("credential-rotation") == profile
-    assert store.get_snapshot("credential-rotation").snapshot == original_snapshot
-    assert store.get_snapshot("credential-rotation").version == 1
-
-
-def test_resource_store_rotation_requires_an_existing_credential(store) -> None:
-    profile = _profile("credential-without-current")
-    snapshot = _snapshot("credential-without-current")
-    store.register(profile, snapshot)
-    replacement = ResourceCredentialRecord(
-        resource_id="credential-without-current",
-        credential_id="rc_new",
-        owner_scope="tenant-a",
-        secret_digest="new-digest",
-        encrypted_secret="new-encrypted",
-        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    updated, changed = store.upsert_model_endpoint(
+        endpoint.model_copy(update={"context_window_tokens": 128_000})
     )
+    assert changed and updated.version == 2
 
-    with pytest.raises(KeyError, match="credential not found"):
-        store.rotate_credential(replacement)
-
-    assert store.get_profile("credential-without-current") == profile
-    assert store.get_snapshot("credential-without-current").snapshot == snapshot
+    store.delete_model_endpoint(endpoint.endpoint_id)
+    with pytest.raises(KeyError):
+        store.get_model_endpoint(endpoint.endpoint_id)
 
 
-def test_resource_store_register_remote_writes_profile_snapshot_and_credential_as_one_unit(store) -> None:
-    profile = _profile("remote-atomic")
-    snapshot = _snapshot("remote-atomic")
-    credential = ResourceCredentialRecord(
-        resource_id="remote-atomic",
-        credential_id="rc-atomic",
-        owner_scope="tenant-a",
-        secret_digest="digest",
-        encrypted_secret="encrypted",
-        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+def test_sqlite_store_self_heals_by_dropping_legacy_resource_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "plane.sqlite3"
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(
+        "CREATE TABLE resources (resource_id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
     )
-
-    registered = store.register_remote(profile, snapshot, credential)
-
-    assert registered.version == 1
-    assert store.get_profile("remote-atomic") == profile
-    assert store.get_snapshot("remote-atomic").snapshot == snapshot
-    assert store.get_credential("remote-atomic") == credential
-
-
-def test_resource_store_register_remote_rolls_back_when_credential_write_fails(store) -> None:
-    store.register(_profile("existing"), _snapshot("existing"))
-    store.save_credential(ResourceCredentialRecord(
-        resource_id="existing",
-        credential_id="rc-duplicate",
-        owner_scope="tenant-a",
-        secret_digest="digest",
-        encrypted_secret="encrypted",
-        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
-    ))
-    candidate = ResourceCredentialRecord(
-        resource_id="remote-rollback",
-        credential_id="rc-duplicate",
-        owner_scope="tenant-a",
-        secret_digest="digest-2",
-        encrypted_secret="encrypted-2",
-        created_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    legacy.execute(
+        "INSERT INTO resources VALUES ('worker-1', ?)", ('{"resourceType": "worker"}',)
     )
+    legacy.commit()
+    legacy.close()
 
-    with pytest.raises((ValueError, KeyError)):
-        store.register_remote(_profile("remote-rollback"), _snapshot("remote-rollback"), candidate)
+    store = SQLiteResourceStore(db_path)
+    store.register(_profile("runtime:fresh"), _snapshot("runtime:fresh"))
+    profiles = [profile.runtime_id for profile in store.list_profiles()]
+    store.close()
 
-    with pytest.raises(KeyError, match="unknown resource"):
-        store.get_profile("remote-rollback")
-    assert store.get_credential("existing").credential_id == "rc-duplicate"
+    assert profiles == ["runtime:fresh"]
+    check = sqlite3.connect(db_path)
+    tables = {
+        row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    check.close()
+    assert "resources" not in tables
+
+
+def test_nonce_can_be_consumed_only_once_until_expiry(store) -> None:
+    now = datetime.now(timezone.utc)
+    expiry = now + timedelta(minutes=5)
+    assert store.consume_nonce("runtime:a", "nonce-1", expiry, now=now)
+    assert not store.consume_nonce("runtime:a", "nonce-1", expiry, now=now)
+    # 不同 Runtime 的同名 nonce 互不干扰。
+    assert store.consume_nonce("runtime:b", "nonce-1", expiry, now=now)
+    # 过期 nonce 在下一次消费时被清理后可复用。
+    later = expiry + timedelta(seconds=1)
+    assert store.consume_nonce("runtime:a", "nonce-1", expiry + timedelta(minutes=6), now=later)

@@ -6,7 +6,7 @@ import pytest
 from components.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
-from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from domain.models import RunStatus
 from domain.repository import IdentityConflictError
 from runtime.v2 import (
@@ -39,7 +39,7 @@ def _runtime_binding(run_id: str, attempt_id: str, node_id: str) -> RuntimeExecu
         stepId=node_id,
         attemptId=attempt_id,
         resourceId="agent-workspace",
-        resourceType=ResourceType.AGENT,
+        runtimeKind=RuntimeKind.EXECUTION_BACKEND,
         snapshotVersion=1,
     )
 

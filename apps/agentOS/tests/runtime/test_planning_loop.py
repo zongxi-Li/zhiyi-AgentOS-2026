@@ -56,7 +56,7 @@ class Planner:
         return RuntimePlanningDecision(observationId=observation.fingerprint(), action="complete" if not observation.remaining_step_ids else "continue", reason="based on persisted facts")
 
 
-def runtime_at(tmp_path, agent=None, workflow=None, *, node_service=None):
+def runtime_at(tmp_path, agent=None, workflow=None, *, resource_plane=None):
     agent = agent or Agent()
     agents = AgentRegistry()
     agents.register(agent)
@@ -79,13 +79,13 @@ def runtime_at(tmp_path, agent=None, workflow=None, *, node_service=None):
         decision_store=SQLiteDecisionStore(db_path=tmp_path / "audit.sqlite3"),
         content_manifest_store=content_store,
         identity_lifecycle=IdentityProjectionBridge(lifecycle, lifecycle.repositories, content_store),
-        node_service=node_service,
+        resource_plane=resource_plane,
     )
     return runtime, agent
 
 
-def prepared(tmp_path, agent=None, workflow=None, *, input=None, node_service=None):
-    runtime, agent = runtime_at(tmp_path, agent, workflow, node_service=node_service)
+def prepared(tmp_path, agent=None, workflow=None, *, input=None, resource_plane=None):
+    runtime, agent = runtime_at(tmp_path, agent, workflow, resource_plane=resource_plane)
     mission = runtime.create_mission("semantic patch", workflow_id="seq", input=input)
     _, run = runtime.prepare_run(mission.mission_id)
     return runtime, agent, run
@@ -871,24 +871,30 @@ def test_wait_and_pending_wake_survive_restart(tmp_path, claim_before_restart):
 
 
 def test_node_wait_checks_persisted_current_health_after_restart(tmp_path):
-    from components.resource.node_service import NodeService
     from components.resource.node_store import SQLiteNodeStore
+    from components.resource.service import ResourcePlane
     from contracts.resource import NodeProfile, NodeSnapshot
-    nodes = NodeService(store=SQLiteNodeStore(tmp_path / "nodes.sqlite3"))
-    nodes.register(NodeProfile(nodeId="execution-node", memoryMb=4096), NodeSnapshot(nodeId="execution-node"))
-    nodes.heartbeat("execution-node", available_memory_mb=4096)
-    runtime, agent, run = prepared(tmp_path, node_service=nodes)
-    nodes.register(NodeProfile(nodeId="waiting-node"), NodeSnapshot(nodeId="waiting-node"))
+    nodes = ResourcePlane(node_store=SQLiteNodeStore(tmp_path / "nodes.sqlite3"))
+    nodes.register_node(
+        NodeProfile(nodeId="execution-node"),
+        NodeSnapshot(nodeId="execution-node", lastHeartbeat=None),
+    )
+    nodes.heartbeat_node("execution-node", available_memory_mb=4096)
+    runtime, agent, run = prepared(tmp_path, resource_plane=nodes)
+    nodes.register_node(NodeProfile(nodeId="waiting-node"), NodeSnapshot(nodeId="waiting-node"))
     attach(runtime, wait_planner({"kind": "node_available", "nodeId": "waiting-node"}))
     paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
     assert agent.calls == ["A", "B"], paused.execution_state.get("failureEvents")
     assert asyncio.run(runtime.prepare_planning_wakeups()) == []
-    nodes.heartbeat("waiting-node", queued_tasks=1)
+    nodes.heartbeat_node("waiting-node", queued_tasks=1)
     assert asyncio.run(runtime.prepare_planning_wakeups()) == []
-    nodes.heartbeat("waiting-node", success=False)
+    nodes.heartbeat_node("waiting-node", success=False)
     assert asyncio.run(runtime.prepare_planning_wakeups()) == []
-    nodes.heartbeat("waiting-node")
-    recovered, agent2 = runtime_at(tmp_path, node_service=NodeService(store=SQLiteNodeStore(tmp_path / "nodes.sqlite3")))
+    nodes.heartbeat_node("waiting-node")
+    recovered, agent2 = runtime_at(
+        tmp_path,
+        resource_plane=ResourcePlane(node_store=SQLiteNodeStore(tmp_path / "nodes.sqlite3")),
+    )
     planner = wait_planner({"kind": "node_available", "nodeId": "waiting-node"})
     attach(recovered, planner)
     assert asyncio.run(recovered.prepare_planning_wakeups()) == [run.run_id]

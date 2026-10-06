@@ -1,110 +1,73 @@
-"""资源启用/停用开关的服务级契约：资源画像与 agent 目录投影必须同变。"""
-
-from __future__ import annotations
+"""Runtime 启停合同：调度开关只影响候选资格，不改观测与凭据。"""
 
 import pytest
 
-from components.resource.agent_service import AgentService
-from components.resource.agent_store import InMemoryAgentStore
-from components.resource.service import ResourceService
-from components.resource.store import InMemoryResourceStore
+from components.scheduler.binder import ResourceBinder
+from components.resource.service import ResourcePlane
 from contracts.resource import (
-    AgentProfile,
-    AgentSnapshot,
-    AgentState,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
+    ExecutionRequirement,
+    Placement,
+    RuntimeKind,
+    RuntimeProfile,
+    TrustLevel,
 )
 
 
-def _agent_resource(resource_id: str = "case_intake") -> tuple[ResourceService, AgentService]:
-    resource_service = ResourceService(store=InMemoryResourceStore())
-    resource_service.register(
-        ResourceProfile(
-            resourceId=resource_id,
-            resourceType=ResourceType.AGENT,
-            capabilities=["agent:case_intake", "case_intake"],
-            domains=["legal"],
-            enabled=True,
-            metadata={
-                "directoryKind": "agent",
-                "agent": {
-                    "agent_id": resource_id,
-                    "agent_name": "Case Intake",
-                    "domain": "legal",
-                    "capabilities": ["case_intake"],
-                    "version": "v1",
-                    "priority": 10,
-                    "enabled": True,
-                    "resource_id": None,
-                    "labels": [],
-                },
-            },
-        ),
-        ResourceSnapshot(
-            resourceId=resource_id,
-            availableSlots=1,
-            utilization=0.0,
-            healthStatus=ResourceHealthStatus.ONLINE,
-        ),
-    )
-    agent_service = AgentService(store=InMemoryAgentStore())
-    agent_service.register(
-        AgentProfile(
-            agentId=resource_id,
-            capabilities=["case_intake"],
-            metadata={"agentName": "Case Intake", "domain": "legal"},
-        ),
-        AgentSnapshot(agentId=resource_id, state=AgentState.IDLE),
-    )
-    return resource_service, agent_service
+def _plane_with_runtime(capacity: int = 2) -> ResourcePlane:
+    plane = ResourcePlane()
+    plane.ensure_node("node:edge-1", placement=Placement.EDGE, trust=TrustLevel.TRUSTED)
+    plane.register_runtime(RuntimeProfile(
+        runtimeId="runtime:edge-exec-1",
+        kind=RuntimeKind.EXECUTION_BACKEND,
+        nodeId="node:edge-1",
+        placement=Placement.EDGE,
+        capabilities=["repo.read"],
+        trust=TrustLevel.TRUSTED,
+        capacity=capacity,
+    ))
+    return plane
 
 
-def test_set_enabled_flips_profile_and_agent_metadata() -> None:
-    resource_service, _ = _agent_resource()
+def _mark_healthy(plane: ResourcePlane) -> None:
+    plane.heartbeat_runtime("runtime:edge-exec-1")
 
-    updated = resource_service.set_enabled("case_intake", enabled=False)
+
+def test_set_enabled_flips_profile_without_touching_snapshot_or_credential() -> None:
+    plane = _plane_with_runtime()
+    _mark_healthy(plane)
+    before = plane.runtime_snapshot("runtime:edge-exec-1")
+
+    updated = plane.set_runtime_enabled("runtime:edge-exec-1", enabled=False)
 
     assert updated.enabled is False
-    stored = resource_service.profile("case_intake")
-    assert stored.enabled is False
-    assert stored.metadata["agent"]["enabled"] is False
+    assert plane.runtime("runtime:edge-exec-1").enabled is False
+    # 启停是管理动作：观测快照与版本不受影响。
+    assert plane.runtime_snapshot("runtime:edge-exec-1") == before
 
 
-def test_disabled_resource_is_not_a_scheduling_candidate() -> None:
-    resource_service, _ = _agent_resource()
-    resource_service.heartbeat("case_intake")
+def test_disabled_runtime_is_not_a_scheduling_candidate() -> None:
+    plane = _plane_with_runtime()
+    _mark_healthy(plane)
+    assert plane.runtime_candidates(["repo.read"])
 
-    assert resource_service.candidates(["case_intake"])
+    plane.set_runtime_enabled("runtime:edge-exec-1", enabled=False)
+    assert plane.runtime_candidates(["repo.read"]) == []
 
-    resource_service.set_enabled("case_intake", enabled=False)
-
-    assert resource_service.candidates(["case_intake"]) == []
+    binder = ResourceBinder(plane)
+    decisions = binder.evaluate(ExecutionRequirement(requiredCapabilities=["repo.read"]))
+    assert decisions and decisions[0].accepted is False
+    assert "DISABLED" in decisions[0].reasons
 
 
 def test_set_enabled_round_trip_restores_scheduling() -> None:
-    resource_service, _ = _agent_resource()
-    resource_service.heartbeat("case_intake")
-
-    resource_service.set_enabled("case_intake", enabled=False)
-    resource_service.set_enabled("case_intake", enabled=True)
-
-    assert resource_service.candidates(["case_intake"])
+    plane = _plane_with_runtime()
+    _mark_healthy(plane)
+    plane.set_runtime_enabled("runtime:edge-exec-1", enabled=False)
+    plane.set_runtime_enabled("runtime:edge-exec-1", enabled=True)
+    assert plane.runtime_candidates(["repo.read"])
 
 
-def test_agent_ledger_set_enabled_updates_store_profile() -> None:
-    _, agent_service = _agent_resource()
-
-    updated = agent_service.set_enabled("case_intake", enabled=False)
-
-    assert updated.enabled is False
-    assert agent_service.profile("case_intake").enabled is False
-
-
-def test_set_enabled_unknown_resource_raises_key_error() -> None:
-    resource_service, _ = _agent_resource()
-
+def test_set_enabled_unknown_runtime_raises_key_error() -> None:
+    plane = ResourcePlane()
     with pytest.raises(KeyError):
-        resource_service.set_enabled("missing_resource", enabled=False)
+        plane.set_runtime_enabled("runtime:missing", enabled=False)

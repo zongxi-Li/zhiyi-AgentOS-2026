@@ -334,16 +334,18 @@ def test_successful_execution_observes_resource_health() -> None:
     completed = asyncio.run(runtime.execute_prepared_run(run.run_id))
 
     assert completed.status.value == "completed"
-    resource_service = runtime.legacy_resource_service
-    snapshot = resource_service.snapshot("runner")
+    plane = runtime.resource_plane
+    from components.resource.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
+
+    snapshot = plane.runtime_snapshot(EMBEDDED_AGENTS_RUNTIME_ID)
     # 目录行的延迟/可靠性来自执行观测；观测时间是真实回写而非注册时刻。
     assert snapshot.snapshot.latency_ms is not None
     assert snapshot.snapshot.latency_ms >= 0
     assert snapshot.snapshot.reliability is not None
     assert snapshot.snapshot.observed_at is not None
     assert snapshot.snapshot.utilization == 0.0  # 利用率归调度器记账，这里不得伪造
-    health = resource_service.health_monitor.health("runner")
+    health = plane.health_monitor.health(EMBEDDED_AGENTS_RUNTIME_ID)
     assert health.latency_ms is not None
-    list_events = getattr(resource_service.health_monitor.store, "list_events", None)
+    list_events = getattr(plane.health_monitor.store, "list_events", None)
     if list_events is not None:  # SQLite 生产库持久化事件；内存测试库允许无历史查询
-        assert list_events("runner"), "execution observation must persist a health event for the trend sparkline"
+        assert list_events(EMBEDDED_AGENTS_RUNTIME_ID), "execution observation must persist a health event for the trend sparkline"
