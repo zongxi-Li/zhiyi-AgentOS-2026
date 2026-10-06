@@ -60,7 +60,7 @@
         </section>
 
         <section v-if="loading && !missions.length" class="project-list__state" role="status">
-          <BrandLoader title="正在加载项目" subtitle="读取 Mission Project 列表…" />
+          <BrandLoader :size="96" title="正在加载项目" subtitle="读取 Mission Project 列表…" />
         </section>
         <section v-else-if="errorMessage" class="project-list__state project-list__state--error" role="alert">
           <strong>项目列表暂时不可用</strong>
