@@ -29,7 +29,7 @@ from components.attachments import (
     PdfTextExtractor,
     PlainTextExtractor,
 )
-from components.resource.service import ResourceService
+from components.resource.service import ResourcePlane
 from components.resource.local_runtime import (
     LOCAL_RUNTIME_RESOURCE_CAPABILITIES,
     LocalRuntimeHealthProjector,
@@ -39,16 +39,11 @@ from components.resource.local_runtime import (
 from contracts.local_runtime import LocalRuntimeAuthorizationRef
 from components.resource.health import ResourceHealthMonitor
 from components.resource.health_store import SQLiteResourceHealthStore
-from components.resource.store import SQLiteResourceStore
-from components.resource.agent_service import AgentService
-from components.resource.agent_directory import AgentDirectory
-from components.resource.agent_store import SQLiteAgentStore
-from components.resource.node_service import NodeService
 from components.resource.node_store import SQLiteNodeStore
+from components.resource.store import SQLiteResourceStore
+from components.scheduler.binder import ResourceBinder
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.scheduler.leases import RedisLeaseCoordinator
-from components.scheduler.service import SchedulerService
-from components.scheduler.two_layer_service import TwoLayerSchedulerService
 from components.mission_manager.store import WorkflowRegistry
 from runtime import ApplicationSetup, ExecutionRuntime
 from adapters.guarded_model import GuardedModelRuntime
@@ -76,7 +71,6 @@ _DEFAULT_DATABASES = {
     "AGENTOS_AUDIT_DB": "data/audit_decisions.sqlite3",
     "AGENTOS_RESOURCE_DB": "data/resources.sqlite3",
     "AGENTOS_NODE_DB": "data/nodes.sqlite3",
-    "AGENTOS_AGENT_DB": "data/agents.sqlite3",
     "AGENTOS_RESOURCE_HEALTH_DB": "data/resource_health.sqlite3",
     "AGENTOS_EVOLUTION_DB": "data/evolution.sqlite3",
 }
@@ -236,10 +230,10 @@ def configure_runtime(
 
 
 def sync_agent_registry_to_ledger(runtime: ExecutionRuntime) -> None:
-    """Project callable application Agents into the persistent Agent ledger."""
-    directory = AgentDirectory(runtime.agent_service)
-    for agent in runtime.agent_registry.all():
-        directory.register_agent(agent.profile)
+    """Project callable application Agents into the embedded runtime resource."""
+    from components.resource.embedded_runtime import register_embedded_agents_runtime
+
+    register_embedded_agents_runtime(runtime.resource_plane, runtime.agent_registry.all())
 
 
 def build_model_setup(
@@ -280,7 +274,43 @@ def build_model_setup(
         model_registry=runtime.model_registry,
     )
     runtime.default_model_binding = setup.default_model_binding
+    _sync_model_endpoints_from_registry(runtime)
     return setup
+
+
+def _sync_model_endpoints_from_registry(runtime: ExecutionRuntime) -> None:
+    """把模型注册表的当前路由投影为资源平面的模型端点目录。
+
+    模型端点是资源事实（provider/model/上下文窗口/特性），与执行后端
+    相互独立；任务侧的 ModelDemand 依据这份目录完成绑定。
+    """
+
+    def describe(provider: str, model: str):
+        try:
+            adapter = runtime.model_registry.resolve(provider, model)
+        except LookupError:
+            return None
+        try:
+            return adapter.describe_model(model)
+        except Exception:
+            return None
+
+    routes = [
+        {"provider": route.get("provider"), "model": route.get("model")}
+        for route in runtime.model_registry.list_models()
+    ]
+    plane = getattr(runtime, "resource_plane", None)
+    if plane is None:
+        return
+    try:
+        plane.sync_model_endpoints(routes, describe_model=describe)
+    except Exception:
+        # 端点目录是调度增强，不是启动前置条件；失败降级为日志。
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "model endpoint sync failed", exc_info=True
+        )
 
 
 def build_default_runtime(
@@ -302,44 +332,24 @@ def build_default_runtime(
     workflow_path = _workflow_db_path(env)
     acquire_workflow_instance_lock(str(workflow_path))
 
-    node_service = NodeService(
-        store=SQLiteNodeStore(_database_path(env, "AGENTOS_NODE_DB")),
-        credential_key=resource_credential_key,
-    )
-    agent_service = AgentService(
-        store=SQLiteAgentStore(_database_path(env, "AGENTOS_AGENT_DB")),
-    )
-    resource_health_store = SQLiteResourceHealthStore(
-        _database_path(env, "AGENTOS_RESOURCE_HEALTH_DB")
-    )
-    resource_service = ResourceService(
+    resource_plane = ResourcePlane(
         store=SQLiteResourceStore(_database_path(env, "AGENTOS_RESOURCE_DB")),
+        node_store=SQLiteNodeStore(_database_path(env, "AGENTOS_NODE_DB")),
         health_monitor=ResourceHealthMonitor(
-            store=resource_health_store,
+            store=SQLiteResourceHealthStore(
+                _database_path(env, "AGENTOS_RESOURCE_HEALTH_DB")
+            ),
             heartbeat_timeout=timedelta(seconds=float(env.get("AGENTOS_RESOURCE_HEARTBEAT_TIMEOUT_SECONDS") or 60)),
         ),
         credential_key=resource_credential_key,
     )
     coordination_url = str(env.get("AGENTOS_COORDINATION_REDIS_URL") or "").strip()
-    scheduler_service = None
-    legacy_scheduler_service = None
+    coordinator = None
     if coordination_client is not None or coordination_url:
         coordinator = RedisLeaseCoordinator(
             coordination_client or _build_coordination_client(env)
         )
-        scheduler_service = TwoLayerSchedulerService(
-            node_service=node_service,
-            agent_service=agent_service,
-            coordinator=coordinator,
-        )
-        legacy_scheduler_service = SchedulerService(
-            coordinator=coordinator,
-        )
-    else:
-        scheduler_service = TwoLayerSchedulerService(
-            node_service=node_service,
-            agent_service=agent_service,
-        )
+    resource_binder = ResourceBinder(resource_plane, coordinator=coordinator)
     identity_service = AcgIdentityLifecycleService.from_sqlite(
         Path(str(
             env.get("AGENTOS_IDENTITY_DB")
@@ -387,11 +397,8 @@ def build_default_runtime(
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
         content_manifest_store=content_manifest_store,
         memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
-        node_service=node_service,
-        agent_service=agent_service,
-        resource_service=resource_service,
-        scheduler_service=scheduler_service,
-        legacy_scheduler_service=legacy_scheduler_service,
+        resource_plane=resource_plane,
+        resource_binder=resource_binder,
         evolution_service=EvolutionService(
             store=SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB")),
             proposal_threshold=1,
@@ -428,19 +435,19 @@ def build_default_runtime(
             in {"1", "true", "yes", "on"},
         )
         registered_local_runtime = ensure_local_runtime_resource(
-            resource_service, local_runtime_config
+            resource_plane, local_runtime_config
         )
         local_runtime_transport = HttpLocalRuntimeTransport(
-            resource_id=registered_local_runtime.profile.resource_id,
-            address=registered_local_runtime.profile.execution_endpoint.address,
-            credential_provider=resource_service,
+            resource_id=registered_local_runtime.profile.runtime_id,
+            address=registered_local_runtime.profile.endpoint.address,
+            credential_provider=resource_plane,
             timeout_seconds=float(env.get("AGENTOS_LOCAL_RUNTIME_TIMEOUT_SECONDS") or 120),
         )
         runtime.local_runtime_resource = registered_local_runtime
         runtime.local_runtime_transport = local_runtime_transport
         runtime.local_runtime_client = LocalRuntimeClient(local_runtime_transport)
         runtime.local_runtime_health_projector = LocalRuntimeHealthProjector(
-            resource_service, registered_local_runtime.profile.resource_id
+            resource_plane, registered_local_runtime.profile.runtime_id
         )
         workspace_id = str(env.get("AGENTOS_LOCAL_RUNTIME_WORKSPACE_ID") or "").strip()
         grant_id = str(env.get("AGENTOS_LOCAL_RUNTIME_GRANT_ID") or "").strip()
@@ -464,20 +471,17 @@ def build_default_runtime(
 
 def close_runtime(runtime: ExecutionRuntime) -> None:
     """Close resources created by this composition root without changing workflow state."""
-    legacy_resource_service = getattr(runtime, "legacy_resource_service", None)
-    legacy_scheduler_service = getattr(runtime, "legacy_scheduler_service", None)
+    resource_plane = getattr(runtime, "resource_plane", None)
     resources = (
         runtime.workflow_store,
         runtime.checkpoint_store,
         runtime.execution_value_store,
         runtime.content_manifest_store,
         runtime.memory_store,
-        getattr(legacy_resource_service, "store", None),
-        getattr(getattr(legacy_resource_service, "health_monitor", None), "store", None),
-        runtime.node_service.store,
-        runtime.agent_service.store,
-        getattr(legacy_scheduler_service, "coordinator", None),
-        getattr(runtime.scheduler_service, "coordinator", None),
+        getattr(resource_plane, "store", None),
+        getattr(getattr(resource_plane, "health_monitor", None), "store", None),
+        getattr(resource_plane, "node_store", None),
+        getattr(getattr(runtime, "resource_binder", None), "coordinator", None),
         runtime.evolution_service.store,
         runtime.provenance_store,
         runtime.decision_store,

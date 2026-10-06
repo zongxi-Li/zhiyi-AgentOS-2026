@@ -1,7 +1,7 @@
 """Chat-facing adapter for the AgentOS-owned Local Runtime boundary.
 
 This module deliberately contains no filesystem implementation and no transport
-construction.  The composition root injects the existing ResourceService,
+construction.  The composition root injects the existing ResourcePlane,
 LocalRuntimeClient, health projector, and a server-issued authorization
 reference.  Model arguments remain business arguments only.
 """
@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping
 
 from adapters.local_runtime import LocalRuntimeClient
 from components.resource.local_runtime import LocalRuntimeHealthTransport, LocalRuntimeHealthProjector
-from components.resource.service import ResourceService
+from components.resource.service import ResourcePlane
 from contracts.capability import CapabilityInvocation
 from contracts.local_runtime import (
     LocalRuntimeAuthorizationRef,
@@ -22,7 +22,7 @@ from contracts.local_runtime import (
     ExecutionSecurityProfile,
     LocalRuntimeExecutionLimits,
 )
-from contracts.resource import DeploymentTier, ResourceType
+from contracts.resource import Placement, RuntimeKind
 
 from app.tools.contracts import ToolPayload
 
@@ -61,7 +61,7 @@ class LocalRuntimeToolExecutor:
     def __init__(
         self,
         *,
-        resource_service: ResourceService,
+        resource_plane: ResourcePlane,
         client: LocalRuntimeClient,
         health_projector: LocalRuntimeHealthProjector,
         health_transport: LocalRuntimeHealthTransport,
@@ -69,7 +69,7 @@ class LocalRuntimeToolExecutor:
         authorization: LocalRuntimeAuthorizationRef,
         limits: LocalRuntimeExecutionLimits | None = None,
     ) -> None:
-        self.resource_service = resource_service
+        self.resource_plane = resource_plane
         self.client = client
         self.health_projector = health_projector
         self.health_transport = health_transport
@@ -209,15 +209,15 @@ class LocalRuntimeToolExecutor:
         if not healthy:
             raise LocalRuntimeToolError("LOCAL_RUNTIME_UNAVAILABLE", "Local Runtime is unavailable.")
         try:
-            candidates = self.resource_service.candidates([capability_id])
+            candidates = self.resource_plane.runtime_candidates([capability_id])
         except Exception as exc:
             raise LocalRuntimeToolError("LOCAL_RUNTIME_UNAVAILABLE", "Local Runtime is unavailable.") from exc
         selected = [
             candidate
             for candidate in candidates
-            if candidate.profile.resource_id == self.resource_id
-            and candidate.profile.resource_type is ResourceType.WORKER
-            and candidate.profile.deployment_tier is DeploymentTier.TERMINAL
+            if candidate.profile.runtime_id == self.resource_id
+            and candidate.profile.kind is RuntimeKind.EXECUTION_BACKEND
+            and candidate.profile.placement is Placement.DEVICE
             and capability_id in candidate.profile.capabilities
         ]
         if not selected:
@@ -421,7 +421,7 @@ class LocalRuntimeToolExecutor:
 
     def supports_capability(self, capability_id: str) -> bool:
         try:
-            profile = self.resource_service.profile(self.resource_id)
+            profile = self.resource_plane.runtime(self.resource_id)
         except Exception:
             return False
         return capability_id in profile.capabilities

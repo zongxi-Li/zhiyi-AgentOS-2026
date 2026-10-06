@@ -17,7 +17,8 @@ from contracts.local_runtime import (
     LocalRuntimeExecutionLimits,
     LocalRuntimeExecutionResult,
 )
-from contracts.resource import DeploymentTier, ResourceType
+from components.resource.service import ResourcePlane
+from contracts.resource import Placement, RuntimeKind, RuntimeProfile
 
 
 class _HealthProjector:
@@ -30,21 +31,21 @@ class _HealthProjector:
         return self.healthy
 
 
-class _ResourceService:
-    def __init__(self, *, candidate=True):
-        self.candidate = candidate
-        self.calls = []
+_FILE_CAPABILITIES = ("fs.read", "fs.list", "fs.write", "fs.patch")
 
-    def candidates(self, capabilities):
-        self.calls.append(list(capabilities))
-        if not self.candidate:
-            return []
-        return [SimpleNamespace(profile=SimpleNamespace(
-            resource_id="runtime-1",
-            resource_type=ResourceType.WORKER,
-            deployment_tier=DeploymentTier.TERMINAL,
-            capabilities=["fs.read", "fs.list", "fs.write", "fs.patch"],
-        ))]
+
+def _resource_plane(capabilities=_FILE_CAPABILITIES) -> ResourcePlane:
+    plane = ResourcePlane()
+    plane.ensure_node("node:device:chat", placement=Placement.DEVICE)
+    plane.register_runtime(RuntimeProfile(
+        runtimeId="runtime-1",
+        kind=RuntimeKind.EXECUTION_BACKEND,
+        nodeId="node:device:chat",
+        placement=Placement.DEVICE,
+        capabilities=list(capabilities),
+    ))
+    plane.heartbeat_runtime("runtime-1")
+    return plane
 
 
 class _Client:
@@ -64,34 +65,8 @@ class _Client:
         )
 
 
-class _ShellResourceService(_ResourceService):
-    def profile(self, _resource_id):
-        return SimpleNamespace(capabilities=[
-            "fs.read", "fs.list", "fs.write", "fs.patch", "shell.exec"
-        ])
-
-    def candidates(self, capabilities):
-        self.calls.append(list(capabilities))
-        return [SimpleNamespace(profile=SimpleNamespace(
-            resource_id="runtime-1",
-            resource_type=ResourceType.WORKER,
-            deployment_tier=DeploymentTier.TERMINAL,
-            capabilities=["fs.read", "fs.list", "fs.write", "fs.patch", "shell.exec"],
-        ))]
 
 
-class _ReadOnlyResourceService(_ResourceService):
-    def profile(self, _resource_id):
-        return SimpleNamespace(capabilities=["fs.read", "fs.list"])
-
-    def candidates(self, capabilities):
-        self.calls.append(list(capabilities))
-        return [SimpleNamespace(profile=SimpleNamespace(
-            resource_id="runtime-1",
-            resource_type=ResourceType.WORKER,
-            deployment_tier=DeploymentTier.TERMINAL,
-            capabilities=["fs.read", "fs.list"],
-        ))]
 
 
 class _ShellClient:
@@ -129,7 +104,7 @@ class _ShellClient:
 
 def _executor(*, healthy=True, candidate=True, client=None):
     return LocalRuntimeToolExecutor(
-        resource_service=_ResourceService(candidate=candidate),
+        resource_plane=(_resource_plane() if candidate else ResourcePlane()),
         client=client or _Client(),
         health_projector=_HealthProjector(healthy=healthy),
         health_transport=object(),
@@ -244,9 +219,9 @@ def test_file_tools_are_unavailable_without_runtime_and_never_fallback(monkeypat
 
 def test_chat_catalog_only_advertises_runtime_granted_file_capabilities(monkeypatch):
     monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
-    resource_service = _ReadOnlyResourceService()
+    plane = _resource_plane(("fs.read", "fs.list"))
     executor = LocalRuntimeToolExecutor(
-        resource_service=resource_service,
+        resource_plane=plane,
         client=_Client(),
         health_projector=_HealthProjector(),
         health_transport=object(),
@@ -267,10 +242,10 @@ def test_chat_catalog_only_advertises_runtime_granted_file_capabilities(monkeypa
 
 def test_run_command_uses_host_approved_local_runtime_and_streams_events(monkeypatch):
     monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
-    resource_service = _ShellResourceService()
+    plane = _resource_plane((*_FILE_CAPABILITIES, "shell.exec"))
     client = _ShellClient()
     executor = LocalRuntimeToolExecutor(
-        resource_service=resource_service,
+        resource_plane=plane,
         client=client,
         health_projector=_HealthProjector(),
         health_transport=object(),
@@ -317,9 +292,9 @@ def test_run_command_uses_host_approved_local_runtime_and_streams_events(monkeyp
 def test_run_command_permission_is_one_time_and_exposes_no_host_authority(monkeypatch):
     async def scenario():
         monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
-        resource_service = _ShellResourceService()
+        plane = _resource_plane((*_FILE_CAPABILITIES, "shell.exec"))
         executor = LocalRuntimeToolExecutor(
-            resource_service=resource_service,
+            resource_plane=plane,
             client=_ShellClient(),
             health_projector=_HealthProjector(),
             health_transport=object(),

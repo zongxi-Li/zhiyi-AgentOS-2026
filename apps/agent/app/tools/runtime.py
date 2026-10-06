@@ -949,18 +949,16 @@ def configure_chat_tool_runtime(execution_runtime: object) -> AgentsToolRuntime:
     """Bind Chat to the already-composed AgentOS Local Runtime authority."""
     global _chat_runtime
     client = getattr(execution_runtime, "local_runtime_client", None)
-    resource_service = getattr(execution_runtime, "resource_service", None)
-    if resource_service is None:
-        resource_service = getattr(execution_runtime, "legacy_resource_service", None)
+    resource_plane = getattr(execution_runtime, "resource_plane", None)
     resource = getattr(execution_runtime, "local_runtime_resource", None)
     health_projector = getattr(execution_runtime, "local_runtime_health_projector", None)
     health_transport = getattr(execution_runtime, "local_runtime_transport", None)
     authorization = getattr(execution_runtime, "local_runtime_authorization", None)
-    resource_id = getattr(getattr(resource, "profile", None), "resource_id", None)
+    resource_id = getattr(getattr(resource, "profile", None), "runtime_id", None)
     executor = None
-    if all((client, resource_service, resource_id, health_projector, health_transport, authorization)):
+    if all((client, resource_plane, resource_id, health_projector, health_transport, authorization)):
         executor = LocalRuntimeToolExecutor(
-            resource_service=resource_service,
+            resource_plane=resource_plane,
             client=client,
             health_projector=health_projector,
             health_transport=health_transport,

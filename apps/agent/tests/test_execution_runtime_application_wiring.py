@@ -8,25 +8,17 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
 from components.content import SQLiteContentManifestStore
+from components.resource.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
 from components.resource.store import SQLiteResourceStore
-from components.resource.agent_store import SQLiteAgentStore
 from components.resource.health_store import SQLiteResourceHealthStore
 from components.resource.node_store import SQLiteNodeStore
 from components.recovery.checkpoint import ACGCheckpointStore
+from components.scheduler.binder import ResourceBinder
 from components.scheduler.leases import RedisLeaseCoordinator
-from components.scheduler.two_layer_service import TwoLayerSchedulerService
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from runtime import ExecutionRuntime
-from contracts.resource import (
-    DeploymentTier,
-    NodeProfile,
-    NodeSnapshot,
-    ResourceEndpoint,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
-)
+from contracts.resource import NodeProfile, NodeSnapshot, Placement
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 from app.execution.wiring import (
@@ -119,13 +111,11 @@ def test_application_builds_the_single_execution_runtime_with_authoritative_reso
         assert isinstance(runtime.memory_store, SQLiteMemoryStore)
         assert isinstance(runtime.provenance_store, SQLiteProvenanceStore)
         assert isinstance(runtime.decision_store, SQLiteDecisionStore)
-        assert isinstance(runtime.node_service.store, SQLiteNodeStore)
-        assert isinstance(runtime.agent_service.store, SQLiteAgentStore)
-        assert isinstance(runtime.scheduler_service, TwoLayerSchedulerService)
-        assert runtime.resource_service is not None
-        assert isinstance(runtime.resource_service.store, SQLiteResourceStore)
-        assert isinstance(runtime.resource_service.health_monitor.store, SQLiteResourceHealthStore)
-        assert runtime.legacy_resource_service is runtime.resource_service
+        assert isinstance(runtime.resource_plane.node_store, SQLiteNodeStore)
+        assert isinstance(runtime.resource_binder, ResourceBinder)
+        assert runtime.resource_binder.plane is runtime.resource_plane
+        assert isinstance(runtime.resource_plane.store, SQLiteResourceStore)
+        assert isinstance(runtime.resource_plane.health_monitor.store, SQLiteResourceHealthStore)
         assert isinstance(runtime.evolution_service.store, SQLiteEvolutionStore)
         assert runtime.tool_runtime is tools
         assert isinstance(runtime._model_runtime, GuardedModelRuntime)
@@ -134,10 +124,14 @@ def test_application_builds_the_single_execution_runtime_with_authoritative_reso
         assert runtime.require_planner_identity is True
         assert runtime.identity_lifecycle is not None
         assert runtime.agent_registry.all()
-        assert runtime.agent_service.profiles()
-        assert {
-            profile.agent_id for profile in runtime.agent_service.profiles()
-        }.issuperset({runtime.agent_registry.agent_id(agent) for agent in runtime.agent_registry.all()})
+        # 逻辑 Agent 注册表整体投影为一个嵌入式执行后端，而非逐个登记为资源。
+        embedded = runtime.resource_plane.runtime(EMBEDDED_AGENTS_RUNTIME_ID)
+        registry_capabilities = {
+            capability
+            for agent in runtime.agent_registry.all()
+            for capability in agent.profile.capabilities
+        }
+        assert set(embedded.capabilities).issuperset(registry_capabilities)
         assert runtime.workflow_registry.all()
         assert {manifest.pack_id for manifest in runtime.plugin_manifests} == {
             "education",
@@ -159,15 +153,11 @@ def test_application_node_store_persists_remote_credentials(tmp_path: Path) -> N
         intent_llm=_InjectedIntentLLM(),
     )
     try:
-        issued = runtime.node_service.register_remote(
+        issued = runtime.resource_plane.register_remote_node(
             NodeProfile(
                 nodeId="wired-node",
-                deploymentTier=DeploymentTier.EDGE,
+                placement=Placement.EDGE,
                 ownerScope="tenant-a",
-                executionEndpoint=ResourceEndpoint(
-                    protocol="https",
-                    address="https://wired-node.example.test/execute",
-                ),
             ),
             NodeSnapshot(nodeId="wired-node"),
         )
@@ -218,8 +208,8 @@ def test_application_wires_an_injected_redis_lease_coordinator(tmp_path: Path) -
         coordination_client=client,
     )
     try:
-        assert isinstance(runtime.legacy_scheduler_service.coordinator, RedisLeaseCoordinator)
-        assert runtime.legacy_scheduler_service.coordinator.client is client
+        assert isinstance(runtime.resource_binder.coordinator, RedisLeaseCoordinator)
+        assert runtime.resource_binder.coordinator.client is client
     finally:
         close_runtime(runtime)
     assert client.closed is True

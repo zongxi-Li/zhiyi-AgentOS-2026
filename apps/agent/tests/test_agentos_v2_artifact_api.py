@@ -11,7 +11,7 @@ from app.execution.coordinator import RunExecutionCoordinator
 from components.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
-from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from runtime.v2 import (
     AcgIdentityLifecycleService,
     IdentityProjectionBridge,
@@ -63,7 +63,7 @@ async def test_v2_artifact_api_is_binding_first_and_manifest_backed(tmp_path):
                 stepId="api-node",
                 attemptId=attempt.attempt_id,
                 resourceId="api-agent",
-                resourceType=ResourceType.AGENT,
+                runtimeKind=RuntimeKind.EXECUTION_BACKEND,
                 snapshotVersion=1,
             ),
             agent_id="api-agent",

@@ -12,7 +12,7 @@ from app.execution.coordinator import RunExecutionCoordinator
 from components.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
-from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, ResourceType
+from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from contracts.workflow import WorkflowStatus
 from domain.models import RunStatus
 from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge, PlannerIdentityBridge
@@ -70,7 +70,7 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
                 stepId="api-step-node",
                 attemptId=attempt.attempt_id,
                 resourceId="api-agent",
-                resourceType=ResourceType.AGENT,
+                runtimeKind=RuntimeKind.EXECUTION_BACKEND,
                 snapshotVersion=1,
             ),
             agent_id="api-agent",

@@ -24,7 +24,7 @@ from components.resource.local_runtime import (
     LocalRuntimeResourceConfig,
     ensure_local_runtime_resource,
 )
-from components.resource.service import ResourceService
+from components.resource.service import ResourcePlane
 from components.resource.store import InMemoryResourceStore
 from contracts.local_runtime import LocalRuntimeAuthorizationRef
 
@@ -89,7 +89,7 @@ def test_chat_agents_runtime_reaches_independent_local_runtime(tmp_path):
 
     transport = None
     try:
-        resource_service = ResourceService(
+        plane = ResourcePlane(
             store=InMemoryResourceStore(),
             health_monitor=ResourceHealthMonitor(
                 store=InMemoryResourceHealthStore(),
@@ -97,7 +97,7 @@ def test_chat_agents_runtime_reaches_independent_local_runtime(tmp_path):
             ),
         )
         registered = ensure_local_runtime_resource(
-            resource_service,
+            plane,
             LocalRuntimeResourceConfig(
                 resource_id=resource_id,
                 owner_scope="chat-e2e",
@@ -109,16 +109,16 @@ def test_chat_agents_runtime_reaches_independent_local_runtime(tmp_path):
         transport = HttpLocalRuntimeTransport(
             resource_id=resource_id,
             address=address,
-            credential_provider=resource_service,
+            credential_provider=plane,
             timeout_seconds=5,
         )
         _wait_for_health(transport, process)
         executor = LocalRuntimeToolExecutor(
-            resource_service=resource_service,
+            resource_plane=plane,
             client=LocalRuntimeClient(transport),
-            health_projector=LocalRuntimeHealthProjector(resource_service, resource_id),
+            health_projector=LocalRuntimeHealthProjector(plane, resource_id),
             health_transport=transport,
-            resource_id=registered.profile.resource_id,
+            resource_id=registered.profile.runtime_id,
             authorization=LocalRuntimeAuthorizationRef(
                 grantId=grant_id,
                 workspaceId=workspace_id,

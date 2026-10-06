@@ -29,13 +29,10 @@ from components.resource.auth import (
     ResourceRequestReplay,
 )
 from contracts.resource import (
-    ComputeCapacity,
     NodeProfile,
     NodeSnapshot,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
+    RuntimeProfile,
+    RuntimeSnapshot,
 )
 from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
@@ -156,8 +153,8 @@ class RemoteNodeObservationRequest(BaseModel):
 class RemoteResourceRegistrationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    profile: ResourceProfile
-    snapshot: ResourceSnapshot
+    profile: RuntimeProfile
+    snapshot: RuntimeSnapshot
 
 
 class NodeRegistrationRequest(BaseModel):
@@ -390,51 +387,86 @@ def _context_pack_summary(step_id: str, context_ref: str, payload: dict[str, Any
     }
 
 
-def _project_node_as_legacy_resource(profile: NodeProfile, snapshot: NodeSnapshot) -> tuple[ResourceProfile, ResourceSnapshot]:
-    capabilities = list(profile.model_ids) or [profile.node_type.value]
-    resource = ResourceProfile(
-        resourceId=profile.node_id,
-        resourceType=ResourceType(profile.node_type.value),
-        deploymentTier=profile.deployment_tier,
-        capabilities=capabilities,
-        labels=profile.labels,
-        location=profile.location,
-        dataZone=profile.data_zone,
-        ownerScope=profile.owner_scope,
-        privacyLevel=profile.privacy_level,
-        executionEndpoint=profile.execution_endpoint,
-        computeCapacity=ComputeCapacity(
-            cpuCores=profile.cpu_cores,
-            memoryMb=profile.memory_mb,
-            gpuType=profile.gpu_type,
-            gpuMemoryMb=profile.gpu_memory_mb,
-        ),
-        modelIds=list(profile.model_ids),
-        enabled=profile.enabled,
-        metadata={**profile.metadata, "legacyProjection": "node"},
-        version=profile.version,
+_RUNTIME_KIND_TO_LEGACY_TYPE = {
+    "execution_backend": "worker",
+    "model_server": "model",
+    "tool_service": "tool",
+}
+
+
+def _project_runtime_profile(profile: RuntimeProfile, node: NodeProfile | None = None) -> dict[str, Any]:
+    """把 Runtime 画像投影为资源中心既有行形状（resourceType/deploymentTier）。"""
+    compute = (
+        node.compute.model_dump(by_alias=True, mode="json")
+        if node is not None
+        else {}
     )
-    legacy_snapshot = ResourceSnapshot(
-        resourceId=profile.node_id,
-        observationSequence=snapshot.observation_sequence,
-        observedAt=snapshot.observed_at,
-        availableSlots=0 if snapshot.health_status.value in {"stale", "offline"} else 1,
-        utilization=max(snapshot.cpu_utilization, snapshot.gpu_utilization),
-        healthStatus=(
-            ResourceHealthStatus.OFFLINE
-            if snapshot.health_status.value in {"stale", "offline"}
-            else ResourceHealthStatus.ONLINE
+    return {
+        "resourceId": profile.runtime_id,
+        "resourceType": _RUNTIME_KIND_TO_LEGACY_TYPE.get(profile.kind.value, "worker"),
+        "runtimeKind": profile.kind.value,
+        "deploymentTier": profile.placement.value,
+        "capabilities": list(profile.capabilities),
+        "domains": list(profile.domains),
+        "labels": dict(profile.labels),
+        "location": profile.location,
+        "dataZone": profile.data_zone,
+        "costMetadata": dict(profile.cost_metadata),
+        "capacity": profile.capacity,
+        "ownerScope": profile.owner_scope,
+        "privacyLevel": None,
+        "executionEndpoint": (
+            profile.endpoint.model_dump(by_alias=True, mode="json")
+            if profile.endpoint is not None
+            else None
         ),
-        latencyMs=snapshot.latency_ms,
-        metrics={
-            **snapshot.metrics,
-            "cpuUtilization": snapshot.cpu_utilization,
-            "gpuUtilization": snapshot.gpu_utilization,
-            "availableMemoryMb": float(snapshot.available_memory_mb),
-            "queuedTasks": float(snapshot.queued_tasks),
+        "computeCapacity": compute,
+        "modelIds": list(profile.model_ids),
+        "enabled": profile.enabled,
+        "metadata": dict(profile.metadata),
+        "version": profile.version,
+        "nodeId": profile.node_id,
+        "trust": profile.trust.value,
+    }
+
+
+def _project_model_endpoint(endpoint) -> dict[str, Any]:
+    """把模型端点投影为资源中心的 model 行；与执行后端行并列展示。"""
+    capabilities = ["model.generate"]
+    features = endpoint.features.model_dump(by_alias=True)
+    capabilities.extend(sorted(key for key, value in features.items() if value is True))
+    return {
+        "resourceId": endpoint.endpoint_id,
+        "resourceType": "model",
+        "runtimeKind": "model_endpoint",
+        "deploymentTier": endpoint.placement.value,
+        "capabilities": capabilities,
+        "domains": [],
+        "labels": dict(endpoint.labels),
+        "location": None,
+        "dataZone": None,
+        "costMetadata": dict(endpoint.cost_metadata),
+        "capacity": 1,
+        "ownerScope": None,
+        "privacyLevel": None,
+        "executionEndpoint": None,
+        "computeCapacity": {},
+        "modelIds": [endpoint.model],
+        "enabled": endpoint.enabled,
+        "metadata": {
+            **dict(endpoint.metadata),
+            "provider": endpoint.provider,
+            "model": endpoint.model,
+            "modelVersion": endpoint.model_version,
+            "contextWindowTokens": endpoint.context_window_tokens,
+            "maxOutputTokens": endpoint.max_output_tokens,
+            "features": features,
+            "tier": endpoint.tier,
         },
-    )
-    return resource, legacy_snapshot
+        "version": endpoint.version,
+        "nodeId": None,
+        "trust": None,
+    }
 
 
 def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
@@ -958,28 +990,32 @@ def create_router(
 
     @router.get("/resources")
     async def get_resources():
-        """Return the ResourceService's static profiles and last observations.
+        """Return the ResourcePlane's runtime and model-endpoint catalog.
 
         This is a read-only system projection.  In particular, the persisted
         snapshot health is deliberately returned as-is: the API must not turn
         resource registration or scheduler eligibility into an ``online`` or
         ``healthy`` claim.
         """
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource query source unavailable")
 
         items: list[dict[str, Any]] = []
-        for profile in resource_service.profiles():
-            versioned = resource_service.snapshot(profile.resource_id)
-            health = resource_service.health_monitor.health(profile.resource_id)
+        for profile in plane.runtimes():
+            versioned = plane.runtime_snapshot(profile.runtime_id)
+            health = plane.health_monitor.health(profile.runtime_id)
             health_status = (
                 "online"
                 if health.healthy
                 else ("unknown" if health.last_heartbeat is None else "offline")
             )
+            try:
+                host_node = plane.node(profile.node_id)
+            except KeyError:
+                host_node = None
             items.append({
-                "profile": profile.model_dump(by_alias=True, mode="json"),
+                "profile": _project_runtime_profile(profile, host_node),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
                 "snapshotVersion": versioned.version,
                 "health": {
@@ -992,39 +1028,29 @@ def create_router(
                         if health.last_heartbeat is not None
                         else None
                     ),
-                    "healthSource": type(resource_service.health_monitor.store).__name__,
+                    "healthSource": type(plane.health_monitor.store).__name__,
                 },
             })
-        seen_resource_ids = {item["profile"]["resourceId"] for item in items}
-        node_service = getattr(runtime, "node_service", None)
-        if node_service is not None:
-            for node_profile in node_service.profiles():
-                if node_profile.node_id in seen_resource_ids:
-                    continue
-                versioned = node_service.snapshot(node_profile.node_id)
-                legacy_profile, legacy_snapshot = _project_node_as_legacy_resource(
-                    node_profile,
-                    versioned.snapshot,
-                )
-                health = node_service.health(node_profile.node_id)
-                items.append({
-                    "profile": legacy_profile.model_dump(by_alias=True, mode="json"),
-                    "snapshot": legacy_snapshot.model_dump(by_alias=True, mode="json"),
-                    "snapshotVersion": versioned.version,
-                    "health": {
-                        "healthy": health.status.value not in {"stale", "offline"},
-                        "status": health.status.value,
-                        "reliability": 1.0 / (1.0 + health.consecutive_failures),
-                        "latencyMs": versioned.snapshot.latency_ms,
-                        "lastHeartbeat": (
-                            health.last_heartbeat.isoformat()
-                            if health.last_heartbeat is not None
-                            else None
-                        ),
-                        "healthSource": type(node_service.health_monitor).__name__,
-                        "legacyProjection": "node",
-                    },
-                })
+        for endpoint in plane.model_endpoints():
+            items.append({
+                "profile": _project_model_endpoint(endpoint),
+                "snapshot": {
+                    "runtimeId": endpoint.endpoint_id,
+                    "healthStatus": "online" if endpoint.enabled else "offline",
+                    "availableSlots": 0 if endpoint.runtime_id else 1,
+                    "utilization": 0.0,
+                    "metrics": {},
+                },
+                "snapshotVersion": endpoint.version,
+                "health": {
+                    "healthy": endpoint.enabled,
+                    "status": "online" if endpoint.enabled else "offline",
+                    "reliability": None,
+                    "latencyMs": None,
+                    "lastHeartbeat": None,
+                    "healthSource": "model-endpoint-catalog",
+                },
+            })
         return {"items": items, "total": len(items)}
 
     @router.get("/resources/{resource_id}/usage")
@@ -1035,11 +1061,11 @@ def create_router(
         answers "which attempt used this resource, when, with which agent/model".
         Run lifecycle detail stays owned by the run surfaces.
         """
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource query source unavailable")
         try:
-            resource_service.profile(resource_id)
+            plane.runtime(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
         repositories = getattr(runtime, "identity_lifecycle", None)
@@ -1058,14 +1084,14 @@ def create_router(
     @router.get("/resources/{resource_id}/health-history")
     async def get_resource_health_history(resource_id: str, limit: int = Query(default=40, ge=1, le=200)):
         """Return the resource's persisted heartbeat/observation event history."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource query source unavailable")
         try:
-            resource_service.profile(resource_id)
+            plane.runtime(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
-        list_events = getattr(resource_service.health_monitor.store, "list_events", None)
+        list_events = getattr(plane.health_monitor.store, "list_events", None)
         if list_events is None:
             raise HTTPException(status_code=503, detail="resource health history unavailable")
         events = list_events(resource_id, limit=limit)
@@ -1093,15 +1119,15 @@ def create_router(
     @router.get("/resources/{resource_id}/credential")
     async def get_resource_credential(resource_id: str):
         """Return credential metadata only (id + age); never the secret material."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource credential source unavailable")
         try:
-            resource_service.profile(resource_id)
+            plane.runtime(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
         try:
-            record = resource_service.credential(resource_id)
+            record = plane.runtime_credential(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource credential not found") from exc
         return {
@@ -1113,11 +1139,11 @@ def create_router(
     @router.post("/resources/{resource_id}/enabled")
     async def set_resource_enabled(resource_id: str, request: ResourceEnabledRequest):
         """Toggle the resource's scheduling switch in the catalog and agent ledger."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource mutation source unavailable")
         try:
-            profile = resource_service.profile(resource_id)
+            plane.runtime(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
         # 启停是本地调度管理动作，不涉及凭据签发：任何已认证用户可操作；
@@ -1125,28 +1151,20 @@ def create_router(
         if current_trusted_user() is None:
             raise HTTPException(status_code=401, detail="trusted user context required")
         try:
-            updated = resource_service.set_enabled(resource_id, enabled=request.enabled)
+            updated = plane.set_runtime_enabled(resource_id, enabled=request.enabled)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
-        agent_service = getattr(runtime, "agent_service", None)
-        agent_synced = False
-        if agent_service is not None and isinstance(updated.metadata.get("agent"), dict):
-            try:
-                agent_service.set_enabled(resource_id, enabled=request.enabled)
-                agent_synced = True
-            except KeyError:
-                agent_synced = False
         return {
-            "resourceId": updated.resource_id,
+            "resourceId": updated.runtime_id,
             "enabled": updated.enabled,
-            "agentLedgerSynced": agent_synced,
+            "agentLedgerSynced": False,
         }
 
     @router.post("/resources/{resource_id}/probe")
     async def probe_resource(resource_id: str):
         """Actively refresh the wired local runtime's health projection on demand."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource probe source unavailable")
         if current_trusted_user() is None:
             raise HTTPException(status_code=401, detail="trusted user context required")
@@ -1154,14 +1172,14 @@ def create_router(
         transport = getattr(runtime, "local_runtime_transport", None)
         projector = getattr(runtime, "local_runtime_health_projector", None)
         wired_profile = getattr(local_resource, "profile", None)
-        wired_id = str(getattr(wired_profile, "resource_id", "") or "")
+        wired_id = str(getattr(wired_profile, "runtime_id", "") or "")
         if not wired_id or resource_id != wired_id or transport is None or projector is None:
             raise HTTPException(
                 status_code=409,
                 detail="active probe is only supported for the wired local runtime resource",
             )
         healthy = await projector.refresh(transport)
-        health = resource_service.health_monitor.health(resource_id)
+        health = plane.health_monitor.health(resource_id)
         return {
             "resourceId": resource_id,
             "healthy": healthy,
@@ -1175,13 +1193,13 @@ def create_router(
     @router.get("/nodes")
     async def get_nodes():
         """Return the Node table's static profiles and last observations."""
-        node_service = getattr(runtime, "node_service", None)
-        if node_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="node query source unavailable")
         items: list[dict[str, Any]] = []
-        for profile in node_service.profiles():
-            versioned = node_service.snapshot(profile.node_id)
-            health = node_service.health(profile.node_id)
+        for profile in plane.nodes():
+            versioned = plane.node_snapshot(profile.node_id)
+            health = plane.node_health(profile.node_id)
             items.append({
                 "profile": profile.model_dump(by_alias=True, mode="json"),
                 "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
@@ -1200,32 +1218,47 @@ def create_router(
 
     @router.get("/agents")
     async def get_agents():
-        """Return the Agent table's static profiles and last observations."""
-        agent_service = getattr(runtime, "agent_service", None)
-        if agent_service is None:
+        """Return the logical agents callable through the embedded runtime.
+
+        逻辑 Agent 不是资源；这个投影只描述嵌入式执行后端内可解析的角色，
+        选择权威仍在资源平面的 Runtime 绑定。
+        """
+        agent_registry = getattr(runtime, "agent_registry", None)
+        if agent_registry is None:
             raise HTTPException(status_code=503, detail="agent query source unavailable")
         items: list[dict[str, Any]] = []
-        for profile in agent_service.profiles():
-            versioned = agent_service.snapshot(profile.agent_id)
+        for agent in agent_registry.all():
+            profile = agent.profile
+            agent_id = str(agent_registry.agent_id(agent))
             items.append({
-                "profile": profile.model_dump(by_alias=True, mode="json"),
-                "snapshot": versioned.snapshot.model_dump(by_alias=True, mode="json"),
-                "snapshotVersion": versioned.version,
+                "profile": {
+                    "agentId": agent_id,
+                    "agentName": profile.agent_name,
+                    "domain": profile.domain,
+                    "capabilities": list(profile.capabilities),
+                    "riskLevel": profile.risk_level,
+                    "description": profile.description,
+                    "enabled": profile.enabled,
+                    "source": profile.source,
+                    "modelProvider": profile.model_provider,
+                    "modelName": profile.model_name,
+                },
+                "snapshotVersion": 1,
             })
         return {"items": items, "total": len(items)}
 
     @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_resource(request: RemoteResourceRegistrationRequest):
         """Register a remote resource and issue its one-time credential secret."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource registration source unavailable")
         profile = request.profile
-        if request.snapshot.resource_id != profile.resource_id:
-            raise HTTPException(status_code=422, detail="profile and snapshot resourceId must match")
+        if request.snapshot.runtime_id != profile.runtime_id:
+            raise HTTPException(status_code=422, detail="profile and snapshot runtimeId must match")
         require_resource_operator(str(profile.owner_scope or ""))
         try:
-            issued = resource_service.register_remote(profile, request.snapshot)
+            issued = plane.register_remote_runtime(profile, request.snapshot)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
@@ -1239,15 +1272,15 @@ def create_router(
     @router.post("/nodes/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_node(request: NodeRegistrationRequest):
         """Register a remote node and issue its one-time credential secret."""
-        node_service = getattr(runtime, "node_service", None)
-        if node_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="node registration source unavailable")
         profile = request.profile
         if request.snapshot.node_id != profile.node_id:
             raise HTTPException(status_code=422, detail="profile and snapshot nodeId must match")
         require_resource_operator(str(profile.owner_scope or ""))
         try:
-            issued = node_service.register_remote(profile, request.snapshot)
+            issued = plane.register_remote_node(profile, request.snapshot)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
@@ -1269,8 +1302,8 @@ def create_router(
         node_signature: str | None = Header(default=None, alias="X-Node-Signature"),
     ):
         """Accept a signed remote node heartbeat and update the Node ledger."""
-        node_service = getattr(runtime, "node_service", None)
-        if node_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="node observation source unavailable")
         if not all((node_credential_id, node_timestamp, node_nonce, node_signature)):
             raise HTTPException(status_code=401, detail="node authentication headers are required")
@@ -1279,7 +1312,7 @@ def create_router(
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=401, detail="node request timestamp is invalid") from exc
         try:
-            NodeRequestAuthenticator(node_service).authenticate(
+            NodeRequestAuthenticator(plane).authenticate(
                 node_id=node_id,
                 credential_id=node_credential_id,
                 method=raw_request.method,
@@ -1298,7 +1331,7 @@ def create_router(
         except ResourceRequestInvalid as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         try:
-            health = node_service.observe_remote(
+            health = plane.observe_node(
                 node_id,
                 observation_sequence=request.observation_sequence,
                 cpu_utilization=request.cpu_utilization,
@@ -1308,7 +1341,7 @@ def create_router(
                 latency_ms=request.latency_ms,
                 observed_at=request.observed_at,
             )
-            versioned = node_service.snapshot(node_id)
+            versioned = plane.node_snapshot(node_id)
             coordinator.notify_state_changed()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="node not found") from exc
@@ -1334,16 +1367,16 @@ def create_router(
     @router.post("/resources/{resource_id}/credential/rotate")
     async def rotate_remote_resource_credential(resource_id: str):
         """Rotate a remote resource credential and return the new secret once."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource credential source unavailable")
         try:
-            profile = resource_service.profile(resource_id)
+            profile = plane.runtime(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
         require_resource_operator(str(profile.owner_scope or ""))
         try:
-            issued = resource_service.rotate_credential(resource_id)
+            issued = plane.rotate_runtime_credential(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
@@ -1367,8 +1400,8 @@ def create_router(
         resource_signature: str | None = Header(default=None, alias="X-Resource-Signature"),
     ):
         """Accept a remote node's heartbeat plus its latest schedulable snapshot."""
-        resource_service = getattr(runtime, "resource_service", None) or getattr(runtime, "legacy_resource_service", None)
-        if resource_service is None:
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
             raise HTTPException(status_code=503, detail="resource observation source unavailable")
         if not all((resource_credential, resource_timestamp, resource_nonce, resource_signature)):
             raise HTTPException(status_code=401, detail="resource authentication headers are required")
@@ -1377,7 +1410,7 @@ def create_router(
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=401, detail="resource request timestamp is invalid") from exc
         try:
-            ResourceRequestAuthenticator(resource_service).authenticate(
+            ResourceRequestAuthenticator(plane).authenticate(
                 resource_id=resource_id,
                 credential_id=resource_credential,
                 method=raw_request.method,
@@ -1396,7 +1429,7 @@ def create_router(
         except ResourceRequestInvalid as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         try:
-            health = resource_service.observe_remote(
+            health = plane.observe_remote_runtime(
                 resource_id,
                 available_slots=request.available_slots,
                 utilization=request.utilization,
@@ -1404,7 +1437,7 @@ def create_router(
                 observed_at=request.observed_at,
                 observation_sequence=request.observation_sequence,
             )
-            versioned = resource_service.snapshot(resource_id)
+            versioned = plane.runtime_snapshot(resource_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resource not found") from exc
         except StaleResourceObservation as exc:
