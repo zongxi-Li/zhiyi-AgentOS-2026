@@ -3,7 +3,7 @@
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.layout.v1">
       <template #main>
         <main class="resource-center__main" aria-label="资源中心" data-max-width="1400px">
-          <WorkspacePageHero eyebrow="RESOURCE CENTER" title="资源中心" description="统一管理 Agent、Skills、MCP 工具与模型等异构运行时资源。">
+          <WorkspacePageHero eyebrow="RESOURCE CENTER" title="资源中心" description="查看设备与节点承载的执行、模型和工具服务，以及可用模型端点。">
             <template #actions>
               <button class="resource-action resource-action--primary" type="button" @click="openRegistration">
                 <el-icon aria-hidden="true"><Plus /></el-icon>

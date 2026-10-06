@@ -146,6 +146,21 @@ class ResourcePlane:
         if existing == profile:
             return existing
         if existing.metadata.get("managedBy") != "bootstrap":
+            # Older local bootstrap records predate the ownership marker. Adopt
+            # only an otherwise identical device profile without credentials.
+            legacy_local = (
+                existing.placement is Placement.DEVICE
+                and existing.trust is TrustLevel.HOST_TRUSTED
+                and existing.owner_scope is None
+                and not existing.metadata
+                and metadata == {"managedBy": "bootstrap"}
+                and existing.model_copy(update={"metadata": metadata}) == profile
+            )
+            if legacy_local:
+                try:
+                    self.node_store.get_credential(node_id)
+                except KeyError:
+                    return self.node_store.update_profile(profile)
             raise ValueError(f"node conflicts with a non-bootstrap registration: {node_id}")
         return self.node_store.update_profile(profile)
 

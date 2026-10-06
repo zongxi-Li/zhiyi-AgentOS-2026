@@ -32,7 +32,16 @@ public record ResourceCatalogProfileQuery(
         List<String> modelIds,
         List<ResourceLabelQuery> labels,
         List<ResourceCostQuery> costMetadata,
-        ResourceComputeCapacityQuery computeCapacity
+        ResourceComputeCapacityQuery computeCapacity,
+        String runtimeKind,
+        String displayName,
+        String nodeId,
+        String trust,
+        String hostRuntimeId,
+        String provider,
+        String model,
+        Long contextWindowTokens,
+        Long maxOutputTokens
 ) implements QueryResponse {
 
     /** One stable filter label; dynamic keys are data rows, never a Map field. */

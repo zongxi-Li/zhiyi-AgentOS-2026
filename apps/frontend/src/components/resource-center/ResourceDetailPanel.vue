@@ -16,14 +16,16 @@
       <h3>运行状态</h3>
       <dl class="resource-detail__kv">
         <div><dt>健康状态</dt><dd :class="`is-${item.snapshot.healthStatus}`">{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
-        <div><dt>可用槽位</dt><dd>{{ item.snapshot.availableSlots }} / {{ item.profile.capacity }}</dd></div>
-        <div><dt>利用率</dt><dd>{{ formatPercent(item.snapshot.utilization) }}</dd></div>
-        <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
-        <div><dt>可靠性</dt><dd>{{ formatPercent(item.snapshot.reliability) }}</dd></div>
+        <template v-if="!isModelEndpoint">
+          <div><dt>可用槽位</dt><dd>{{ item.snapshot.availableSlots ?? '未观测' }} / {{ item.profile.capacity }}</dd></div>
+          <div><dt>利用率</dt><dd>{{ formatPercent(item.snapshot.utilization) }}</dd></div>
+          <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
+          <div><dt>可靠性</dt><dd>{{ formatPercent(item.snapshot.reliability) }}</dd></div>
+        </template>
         <div>
           <dt>参与调度</dt>
           <dd class="resource-detail__toggle">
-            <el-switch
+            <el-switch v-if="!isModelEndpoint"
               :model-value="item.profile.enabled"
               :loading="enabledPending"
               size="small"
@@ -85,16 +87,17 @@
     <section v-if="item.profile.computeCapacity" class="resource-detail__section">
       <h3>算力画像</h3>
       <dl class="resource-detail__kv">
-        <div><dt>CPU</dt><dd>{{ item.profile.computeCapacity.cpuCores }} 核</dd></div>
-        <div><dt>内存</dt><dd>{{ Math.round(item.profile.computeCapacity.memoryMb / 1024) }} GB</dd></div>
-        <div><dt>GPU</dt><dd>{{ item.profile.computeCapacity.gpuType || 'GPU' }} {{ Math.round(item.profile.computeCapacity.gpuMemoryMb / 1024) }} GB</dd></div>
-        <div><dt>带宽</dt><dd>{{ item.profile.computeCapacity.bandwidthMbps }} Mbps</dd></div>
+        <div><dt>登记算力</dt><dd>{{ formatCapacity(item.profile.computeCapacity) }}</dd></div>
       </dl>
     </section>
 
     <section class="resource-detail__section">
-      <h3>部署与端点</h3>
+      <h3>部署与归属</h3>
       <dl class="resource-detail__kv">
+        <div><dt>资源类型</dt><dd>{{ resourceTypeMeta(item.profile.runtimeKind || item.profile.resourceType).label }}</dd></div>
+        <div v-if="item.profile.nodeId"><dt>宿主节点</dt><dd>{{ item.profile.nodeId }}</dd></div>
+        <div v-if="item.profile.hostRuntimeId"><dt>宿主服务</dt><dd>{{ item.profile.hostRuntimeId }}</dd></div>
+        <div v-if="item.profile.trust"><dt>信任等级</dt><dd>{{ item.profile.trust }}</dd></div>
         <div><dt>部署层级</dt><dd>{{ tierLabel(item.profile.deploymentTier) }}</dd></div>
         <div><dt>隐私级别</dt><dd>{{ item.profile.privacyLevel || '未标注' }}</dd></div>
         <div><dt>数据域</dt><dd>{{ item.profile.dataZone || '未标注' }}</dd></div>
@@ -102,6 +105,17 @@
         <div><dt>归属</dt><dd>{{ item.profile.ownerScope || '未标注' }}</dd></div>
         <!-- 执行端点与凭据引用已随 N1.2 投影迁移从资源目录移除（任务书：资源目录无 endpoint/credential）。 -->
       </dl>
+    </section>
+
+    <section v-if="isModelEndpoint" class="resource-detail__section">
+      <h3>模型端点</h3>
+      <dl class="resource-detail__kv">
+        <div><dt>供应商</dt><dd>{{ item.profile.provider || '未登记' }}</dd></div>
+        <div><dt>模型</dt><dd>{{ item.profile.model || item.profile.modelIds?.[0] || '未登记' }}</dd></div>
+        <div><dt>上下文窗口</dt><dd>{{ formatMetric(item.profile.contextWindowTokens, 'tokens') }}</dd></div>
+        <div><dt>最大输出</dt><dd>{{ formatMetric(item.profile.maxOutputTokens, 'tokens') }}</dd></div>
+      </dl>
+      <p class="resource-detail__empty">模型端点由模型配置同步；这里展示注册状态，不代表实际调用已验证。</p>
     </section>
 
     <section v-if="item.profile.capabilities.length" class="resource-detail__section">
@@ -167,7 +181,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { agentosApi, type ResourceCredentialMetadata, type ResourceHealthEvent, type ResourceUsageRecord, type RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
-import { formatDate, formatMetric, formatPercent, healthLabel, resourceTypeMeta, tierLabel } from '@/utils/resourceFormat'
+import { formatDate, formatMetric, formatPercent, healthLabel, resourceTypeMeta, tierLabel, formatCapacity } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 const props = defineProps<{ item: RuntimeResourceItem }>()
@@ -182,8 +196,9 @@ const usageError = ref('')
 const healthEvents = ref<ResourceHealthEvent[]>([])
 const credential = ref<ResourceCredentialMetadata | null>(null)
 const rotatePending = ref(false)
+const isModelEndpoint = computed(() => props.item.profile.runtimeKind === 'model_endpoint')
 
-const canProbe = computed(() => props.item.profile.deploymentTier === 'terminal' || props.item.profile.resourceType === 'worker')
+const canProbe = computed(() => !isModelEndpoint.value && props.item.profile.deploymentTier !== 'device' && props.item.profile.deploymentTier !== 'local' && props.item.profile.resourceType === 'worker')
 
 const loadDetailData = async () => {
   const resourceId = props.item.profile.resourceId
@@ -193,6 +208,7 @@ const loadDetailData = async () => {
   healthEvents.value = []
   credential.value = null
   probeResult.value = null
+  if (isModelEndpoint.value) return
   const [usage, history, credentialResult] = await Promise.allSettled([
     agentosApi.listResourceUsage(resourceId, { limit: 12 }),
     agentosApi.getResourceHealthHistory(resourceId, { limit: 40 }),

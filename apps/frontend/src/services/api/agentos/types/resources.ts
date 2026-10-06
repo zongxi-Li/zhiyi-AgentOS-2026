@@ -7,48 +7,7 @@ export interface RuntimeResourceEndpoint {
   protocol: 'local' | 'http' | 'https' | 'grpc' | string
   address: string
 }
-export interface RuntimeComputeCapacity {
-  cpuCores: number
-  memoryMb: number
-  gpuType?: string | null
-  gpuMemoryMb: number
-  bandwidthMbps: number
-}
-export interface RuntimeResourceProfile {
-  resourceId: string
-  resourceType: RuntimeResourceType
-  deploymentTier?: RuntimeDeploymentTier | null
-  capabilities: string[]
-  domains: string[]
-  labels: Record<string, string>
-  location?: string | null
-  dataZone?: string | null
-  costMetadata: Record<string, number>
-  capacity: number
-  ownerScope?: string | null
-  privacyLevel?: string | null
-  executionEndpoint?: RuntimeResourceEndpoint | null
-  computeCapacity?: RuntimeComputeCapacity
-  modelIds?: string[]
-  enabled: boolean
-  metadata: Record<string, unknown>
-  version: number
-}
-export interface RuntimeResourceSnapshot {
-  resourceId: string
-  observedAt: string
-  availableSlots: number
-  utilization: number
-  healthStatus: RuntimeResourceHealth
-  reliability?: number | null
-  latencyMs?: number | null
-  metrics: Record<string, number>
-}
-/**
- * /resources 查询响应行：仅含资源目录消费方读取的字段（响应收窄）。
- * RuntimeResourceProfile/RuntimeResourceSnapshot 完整形状仍用于注册命令；
- * labels/costMetadata 动态键以后端 typed 键值行表达，详情面板做行化适配。
- */
+/** Resource catalog read projection; command contracts are declared separately. */
 export interface RuntimeResourceItem {
   profile: RuntimeResourceCatalogProfile
   snapshot: RuntimeResourceCatalogSnapshot
@@ -56,6 +15,15 @@ export interface RuntimeResourceItem {
 }
 
 export interface RuntimeResourceCatalogProfile {
+  runtimeKind?: 'execution_backend' | 'model_server' | 'tool_service' | 'model_endpoint' | string | null
+  displayName?: string | null
+  nodeId?: string | null
+  trust?: string | null
+  hostRuntimeId?: string | null
+  provider?: string | null
+  model?: string | null
+  contextWindowTokens?: number | null
+  maxOutputTokens?: number | null
   resourceId: string
   resourceType: RuntimeResourceType
   deploymentTier?: RuntimeDeploymentTier | null
@@ -89,8 +57,26 @@ export interface RuntimeResourceCatalogSnapshot {
   observedAt?: string | null
 }
 export interface ResourceRegistrationRequest {
-  profile: RuntimeResourceProfile
-  snapshot: RuntimeResourceSnapshot
+  profile: {
+    runtimeId: string; kind: 'execution_backend' | 'model_server' | 'tool_service'
+    nodeId: string; displayName: string; placement: 'edge' | 'cloud'; trust: string
+    capabilities: string[]; domains: string[]; capacity: number; ownerScope: string
+    endpoint: RuntimeResourceEndpoint; modelIds: string[]; enabled: boolean
+  }
+  snapshot: { runtimeId: string; availableSlots: number; utilization: number; healthStatus: 'unknown' }
+}
+export interface ResourceRegistrationResult {
+  resourceId?: string; nodeId?: string; credentialId: string; secret: string; ownerScope: string
+}
+export interface NodeCatalogItem {
+  profile: { nodeId: string; displayName: string; placement: string; trust: string;
+    ownerScope?: string | null; enabled: boolean; computeCapacity?: RuntimeResourceCatalogProfile['computeCapacity'] }
+  healthStatus: string; snapshotVersion: number
+}
+export interface NodeRegistrationRequest {
+  profile: { nodeId: string; displayName: string; placement: 'edge' | 'cloud'; trust: string; ownerScope: string;
+    computeCapacity: { cpuCores: number; memoryMb: number; gpuMemoryMb: number; bandwidthMbps: number; gpuType: string | null } }
+  snapshot: { nodeId: string; healthStatus: 'offline' }
 }
 /** 资源最近一次 attempt 绑定投影（execution_bindings JOIN attempts 的只读行）。 */
 export interface ResourceUsageRecord {

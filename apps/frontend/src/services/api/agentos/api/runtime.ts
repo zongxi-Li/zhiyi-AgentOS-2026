@@ -1,6 +1,7 @@
 import { agentosRequest } from '../client'
 import type { IdentityProjectionHealth, ModelCallUsage, ResourceCredentialMetadata, ResourceHealthEvent, ResourceRegistrationRequest, ResourceUsageRecord, RunContextPacksResponse, RunExecutionTree, RunProvenanceProjection, RunResourceUsage, RuntimeResourceItem } from '../types'
 import { runPath } from '../paths'
+import type { NodeCatalogItem, NodeRegistrationRequest, ResourceRegistrationResult } from '../types'
 
 export const createRuntimeApi = () => ({
   async getRunResourceUsage(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunResourceUsage> {
@@ -43,13 +44,23 @@ export const createRuntimeApi = () => ({
 
   async listResources(options: { signal?: AbortSignal } = {}): Promise<{ items: RuntimeResourceItem[]; total: number }> {
     const response = await agentosRequest.get<{ items: RuntimeResourceItem[]; total: number }>('/resources', {
-      signal: options.signal
+      signal: options.signal, timeout: 15000
     })
     return response.data
   },
 
-  async registerResource(payload: ResourceRegistrationRequest): Promise<{ resourceId: string }> {
-    const response = await agentosRequest.post<{ resourceId: string }>('/resources/register', payload)
+  async registerResource(payload: ResourceRegistrationRequest): Promise<ResourceRegistrationResult> {
+    const response = await agentosRequest.post<ResourceRegistrationResult>('/resources/register', payload, { timeout: 15000 })
+    return response.data
+  },
+
+  async listNodes(options: { signal?: AbortSignal } = {}): Promise<{ items: NodeCatalogItem[]; total: number }> {
+    const response = await agentosRequest.get('/nodes', { signal: options.signal, timeout: 15000 })
+    return response.data
+  },
+
+  async registerNode(payload: NodeRegistrationRequest): Promise<ResourceRegistrationResult> {
+    const response = await agentosRequest.post('/nodes/register', payload, { timeout: 15000 })
     return response.data
   },
 

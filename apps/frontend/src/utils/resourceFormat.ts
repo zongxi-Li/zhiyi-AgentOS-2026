@@ -3,6 +3,7 @@ import type { ResourceFailoverObservation } from '@/services/api/agentos'
 /** 端-边-云部署层级的中文标签。 */
 export const tierLabel = (value?: string | null): string => ({
   local: '本地',
+  device: '本机设备',
   terminal: '端侧',
   edge: '边缘',
   cloud: '云端'
@@ -16,7 +17,8 @@ export const resourceTypeLabel = (value?: string | null): string => ({
   tool: 'Tool',
   worker: 'Worker',
   skill: 'Skill',
-  mcp: 'MCP'
+  mcp: 'MCP',
+  execution_backend: '执行后端', model_server: '模型服务', tool_service: '工具服务', model_endpoint: '模型端点'
 }[value || ''] || value || '未分类')
 
 /** 资源类型徽章色调，概览/详情/注册表单共用，避免三处硬编码色值。 */
@@ -70,15 +72,22 @@ export const formatCapacity = (capacity?: {
   bandwidthMbps?: number | null
 } | null): string => {
   if (!capacity) return '未观测'
-  const parts = [`${capacity.cpuCores ?? 0}核`, `${Math.round((capacity.memoryMb ?? 0) / 1024)}G 内存`]
+  const parts: string[] = []
+  if ((capacity.cpuCores ?? 0) > 0) parts.push(`${capacity.cpuCores}核`)
+  if ((capacity.memoryMb ?? 0) > 0) parts.push(`${Number(((capacity.memoryMb ?? 0) / 1024).toFixed(1))}G 内存`)
   if (capacity.gpuType) {
     parts.push(`${capacity.gpuType} ${Math.round((capacity.gpuMemoryMb ?? 0) / 1024)}G`)
   } else if (capacity.gpuMemoryMb) {
     parts.push(`GPU ${Math.round(capacity.gpuMemoryMb / 1024)}G`)
   }
-  parts.push(`${capacity.bandwidthMbps ?? 0}Mbps`)
-  return parts.join(' · ')
+  if ((capacity.bandwidthMbps ?? 0) > 0) parts.push(`${capacity.bandwidthMbps}Mbps`)
+  return parts.join(' · ') || '未登记'
 }
+
+/** New placements and legacy tiers converge without dropping unknown rows. */
+export const resourcePlacement = (value?: string | null): string => (
+  value === 'local' || value === 'terminal' || !value ? 'device' : value
+)
 
 /** 故障转移事件的单行摘要。 */
 export const failoverSummary = (event: ResourceFailoverObservation): string => {

@@ -163,3 +163,38 @@ def test_in_memory_node_store_matches_sqlite_contract() -> None:
     assert updated.version == 2
     store.save_credential(_credential("node:edge-1"))
     assert store.get_credential("node:edge-1").credential_id == "nc_node:edge-1"
+
+
+def test_legacy_local_bootstrap_is_adopted_without_losing_snapshot(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-nodes.sqlite3"
+    store = SQLiteNodeStore(path)
+    node_id = "node:device:local"
+    store.register(NodeProfile(nodeId=node_id, placement=Placement.DEVICE,
+        trust=TrustLevel.HOST_TRUSTED, displayName="本机设备节点"), _snapshot(node_id, seq=7))
+    store.close()
+    reopened = SQLiteNodeStore(path)
+    plane = ResourcePlane(node_store=reopened)
+    profile = plane.ensure_node(node_id, display_name="本机设备节点")
+    assert profile.metadata == {"managedBy": "bootstrap"}
+    assert reopened.get_snapshot(node_id).snapshot.observation_sequence == 7
+    assert plane.ensure_node(node_id, display_name="本机设备节点") == profile
+    reopened.close()
+    persisted = SQLiteNodeStore(path)
+    assert persisted.get_profile(node_id).metadata == {"managedBy": "bootstrap"}
+    persisted.close()
+
+
+@pytest.mark.parametrize("conflict", ["credential", "trust", "owner", "metadata"])
+def test_bootstrap_does_not_adopt_conflicting_local_node(conflict: str) -> None:
+    store = InMemoryNodeStore()
+    node_id = "node:device:local"
+    changes = {"trust": {"trust": TrustLevel.UNTRUSTED},
+        "owner": {"ownerScope": "external"}, "metadata": {"metadata": {"managedBy": "external"}}}
+    profile = NodeProfile(nodeId=node_id, placement=Placement.DEVICE,
+        displayName="本机设备节点", **({"trust": TrustLevel.HOST_TRUSTED} | changes.get(conflict, {})))
+    store.register(profile, _snapshot(node_id))
+    if conflict == "credential":
+        store.save_credential(_credential(node_id))
+    with pytest.raises(ValueError, match="non-bootstrap"):
+        ResourcePlane(node_store=store).ensure_node(node_id, display_name="本机设备节点")
+    assert store.get_profile(node_id) == profile

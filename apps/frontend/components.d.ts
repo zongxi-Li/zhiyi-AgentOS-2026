@@ -121,7 +121,6 @@ declare module 'vue' {
     ResourceRegistrationDialog: typeof import('./src/components/resource-center/ResourceRegistrationDialog.vue')['default']
     ResourceTypeBadge: typeof import('./src/components/resource-center/ResourceTypeBadge.vue')['default']
     RoleCard: typeof import('./src/components/RoleCard.vue')['default']
-    RoleManagementPanel: typeof import('./src/components/resource-center/RoleManagementPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     RunBreadcrumb: typeof import('./src/components/workspace/RunBreadcrumb.vue')['default']

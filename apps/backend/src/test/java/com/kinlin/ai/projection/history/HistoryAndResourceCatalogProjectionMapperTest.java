@@ -163,4 +163,19 @@ class HistoryAndResourceCatalogProjectionMapperTest {
                         "snapshot", row("utilization", 0.5))),
                 "total", 1)));
     }
+
+    @Test
+    void catalogPreservesRuntimeIdentityAndModelEnvelopeWithoutOpenMetadata() throws Exception {
+        JsonNode body = json(ResourceCatalogProjectionMapper.catalog(row("items", List.of(row(
+                "profile", row("resourceId", "endpoint-1", "runtimeKind", "model_endpoint", "displayName", "model-1",
+                        "deploymentTier", "cloud", "hostRuntimeId", "runtime:model", "provider", "provider-1",
+                        "model", "model-1", "contextWindowTokens", 8192, "maxOutputTokens", 4096,
+                        "metadata", Map.of("credential", SECRET)),
+                "snapshot", row("healthStatus", "unknown"), "snapshotVersion", 1)), "total", 1)));
+        JsonNode profile = body.path("items").get(0).path("profile");
+        assertEquals("model_endpoint", profile.path("runtimeKind").asText());
+        assertEquals("runtime:model", profile.path("hostRuntimeId").asText());
+        assertEquals(8192, profile.path("contextWindowTokens").asInt());
+        assertFalse(MAPPER.writeValueAsString(body).contains(SECRET));
+    }
 }

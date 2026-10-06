@@ -66,6 +66,17 @@ public class AgentOsArtifactController {
                 gateway.post(AgentOsPaths.resources() + "/register", body));
     }
 
+    @GetMapping("/nodes")
+    public ResponseEntity<QueryResponse> getNodes() {
+        return AgentOsControllerSupport.projectedResponse(
+                gateway.get(AgentOsPaths.nodes()), ResourceCatalogProjectionMapper::nodes);
+    }
+
+    @PostMapping("/nodes/register")
+    public ResponseEntity<Map<String, Object>> registerNode(@RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.nodes() + "/register", body));
+    }
+
     @GetMapping("/resources/{resourceId}/usage")
     public ResponseEntity<Map<String, Object>> getResourceUsage(
             @PathVariable String resourceId,

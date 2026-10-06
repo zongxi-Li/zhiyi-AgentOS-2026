@@ -210,7 +210,7 @@ class QueryProjectionArchitectureTest {
         }
         if (controller == AgentOsArtifactController.class) {
             return List.of("getArtifacts", "getArtifact", "getArtifactFragments",
-                    "getOutput", "getLegacyOutputs", "getResources", "getMaterial", "getAttachment")
+                    "getOutput", "getLegacyOutputs", "getResources", "getNodes", "getMaterial", "getAttachment")
                     .contains(method.getName());
         }
         if (controller == AgentOsObservationController.class) {

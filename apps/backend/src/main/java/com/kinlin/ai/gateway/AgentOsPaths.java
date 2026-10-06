@@ -51,6 +51,10 @@ public final class AgentOsPaths {
         return UPSTREAM_ROOT + "/missions";
     }
 
+    public static String nodes() {
+        return UPSTREAM_ROOT + "/nodes";
+    }
+
     public static String mission(String missionId) {
         return missions() + "/" + segment(missionId);
     }

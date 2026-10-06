@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { agentosApi } from '@/services/api/agentos'
@@ -19,6 +19,7 @@ const createTestRouter = async () => {
 }
 
 describe('ResourceCenterView', () => {
+  beforeEach(() => { vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 }) })
   afterEach(() => vi.restoreAllMocks())
 
   it('renders ResourceService health as unknown without inventing availability metrics', async () => {

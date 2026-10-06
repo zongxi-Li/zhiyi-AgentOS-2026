@@ -54,6 +54,24 @@ class AgentOsArtifactControllerTest {
     }
 
     @Test
+    void nodesUseTypedReadProjectionAndExistingRegistrationAuthority() throws Exception {
+        gateway.getResponses.put("/ai/agentos/v2/nodes", RecordingAgentOsGateway.response(200, Map.of(
+                "items", List.of(Map.of("profile", Map.of("nodeId", "node:edge:1", "placement", "edge",
+                        "trust", "trusted", "ownerScope", "scope", "metadata", Map.of("secret", "SECRET")),
+                        "health", Map.of("status", "stale"), "snapshotVersion", 7)), "total", 1)));
+        mockMvc.perform(get("/api/agentos/v2/nodes")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].profile.nodeId").value("node:edge:1"))
+                .andExpect(jsonPath("$.items[0].healthStatus").value("stale"))
+                .andExpect(jsonPath("$.items[0].profile.metadata").doesNotExist());
+        gateway.postResponses.put("/ai/agentos/v2/nodes/register", RecordingAgentOsGateway.response(201,
+                Map.of("nodeId", "node:edge:2", "credentialId", "nc-2", "secret", "one-time")));
+        mockMvc.perform(post("/api/agentos/v2/nodes/register").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"profile\":{\"nodeId\":\"node:edge:2\"},\"snapshot\":{\"nodeId\":\"node:edge:2\"}}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.credentialId").value("nc-2"));
+        assertEquals("/ai/agentos/v2/nodes/register", gateway.lastPostPath);
+    }
+
+    @Test
     void materialAndAttachmentReadsProjectPublicFieldsAndPreserveGatewayErrors() throws Exception {
         String materialPath = "/ai/agentos/v2/materials/m1";
         gateway.getResponses.put(materialPath, RecordingAgentOsGateway.response(200,

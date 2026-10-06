@@ -11,6 +11,7 @@ import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCatalogProfileQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCatalogQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.ResourceCatalogSnapshotQuery;
 import com.kinlin.ai.projection.resourcecatalog.dto.ResourceComputeCapacityQuery;
+import com.kinlin.ai.projection.resourcecatalog.dto.NodeCatalogQuery;
 
 import static com.kinlin.ai.projection.common.mapper.QueryWire.bool;
 import static com.kinlin.ai.projection.common.mapper.QueryWire.decimal;
@@ -50,6 +51,19 @@ public final class ResourceCatalogProjectionMapper {
                 integer(raw, "snapshotVersion"));
     }
 
+    public static NodeCatalogQuery nodes(Map<String, Object> wire) {
+        if (wire.get("items") == null) throw invalid();
+        return new NodeCatalogQuery(items(wire.get("items"), raw -> {
+            Map<?, ?> p = object(raw.get("profile"));
+            Map<?, ?> health = object(raw.get("health"));
+            return new NodeCatalogQuery.NodeItem(new NodeCatalogQuery.NodeProfile(
+                    requiredText(p, "nodeId"), text(p, "displayName"), text(p, "placement"),
+                    text(p, "trust"), text(p, "ownerScope"), bool(p, "enabled"),
+                    p.get("computeCapacity") == null ? null : computeCapacity(object(p.get("computeCapacity")))),
+                    text(health, "status"), integer(raw, "snapshotVersion"));
+        }), integer(wire, "total"));
+    }
+
     private static ResourceCatalogProfileQuery profile(Map<?, ?> raw) {
         return new ResourceCatalogProfileQuery(
                 requiredText(raw, "resourceId"),
@@ -68,7 +82,11 @@ public final class ResourceCatalogProjectionMapper {
                 labels(raw.get("labels")),
                 costMetadata(raw.get("costMetadata")),
                 raw.get("computeCapacity") == null
-                        ? null : computeCapacity(object(raw.get("computeCapacity"))));
+                        ? null : computeCapacity(object(raw.get("computeCapacity"))),
+                text(raw, "runtimeKind"), text(raw, "displayName"),
+                text(raw, "nodeId"), text(raw, "trust"), text(raw, "hostRuntimeId"),
+                text(raw, "provider"), text(raw, "model"),
+                integer(raw, "contextWindowTokens"), integer(raw, "maxOutputTokens"));
     }
 
     /** Dynamic catalog maps keep their readers as typed key-value rows. */

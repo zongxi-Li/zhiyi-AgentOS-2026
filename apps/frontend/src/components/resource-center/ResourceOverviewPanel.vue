@@ -14,14 +14,14 @@
         </div>
         <div class="resource-summary__metric resource-summary__metric--compute">
           <span>总算力</span>
-          <strong>{{ computeTotals.hasCapacity ? `${computeTotals.cpu}核` : '未观测' }}</strong>
-          <small v-if="computeTotals.hasCapacity">{{ computeTotals.memory }}G 内存<template v-if="computeTotals.gpu > 0"> · {{ computeTotals.gpu }}G GPU</template></small>
+          <strong>{{ computeTotals.hasCapacity ? (computeTotals.cpu > 0 ? `${computeTotals.cpu}核` : 'CPU 未登记') : '未观测' }}</strong>
+          <small v-if="computeTotals.hasCapacity">{{ computeTotals.memory > 0 ? `${computeTotals.memory}G 内存` : '内存未登记' }}<template v-if="computeTotals.gpu > 0"> · {{ computeTotals.gpu }}G GPU</template></small>
           <small v-else>未登记算力</small>
         </div>
         <div class="resource-summary__metric resource-summary__metric--health">
           <span>健康分布</span>
           <strong>{{ healthyResourceCount }}</strong>
-          <small>在线 · {{ degradedResourceCount }} 降级 · {{ offlineResourceCount }} 离线</small>
+          <small>在线 · {{ degradedResourceCount }} 降级 · {{ offlineResourceCount }} 离线 · {{ unknownResourceCount }} 未知</small>
         </div>
       </div>
     </div>
@@ -52,6 +52,15 @@
       >{{ domain.name }}<small>{{ domain.count }}</small></button>
     </div>
 
+    <section class="resource-node-catalog" aria-label="承载节点">
+      <h3>承载节点 <small>{{ nodes.length }} 个</small></h3>
+      <p v-if="nodesError" role="status">{{ nodesError }}</p>
+      <div v-for="node in nodes" :key="node.profile.nodeId" class="resource-node-row">
+        <strong>{{ node.profile.displayName || node.profile.nodeId }}</strong>
+        <span>{{ node.profile.nodeId }}</span><span>{{ tierLabel(node.profile.placement) }}</span>
+        <span>{{ node.healthStatus }}</span><span>{{ formatCapacity(node.profile.computeCapacity) }}</span>
+      </div>
+    </section>
     <section v-if="loading && !resources.length" class="resource-state" role="status">
       <BrandLoader title="正在读取 ResourceService" subtitle="只读加载系统 Resource profile…" />
     </section>
@@ -79,8 +88,9 @@
                 <i :class="`resource-row__health-dot is-${item.snapshot.healthStatus}`"></i>
               </span>
               <div>
-                <strong>{{ item.profile.resourceId }}</strong>
-                <span class="resource-row__meta"><ResourceTypeBadge :type="item.profile.resourceType" /> · v{{ item.profile.version }}</span>
+                <strong>{{ item.profile.displayName || item.profile.resourceId }}</strong>
+                <span class="resource-row__meta"><ResourceTypeBadge :type="item.profile.runtimeKind || item.profile.resourceType" /> · v{{ item.profile.version }}</span>
+                <span class="resource-row__meta">{{ item.profile.resourceId }}<template v-if="item.profile.nodeId"> · {{ item.profile.nodeId }}</template></span>
               </div>
             </div>
             <div class="resource-row__capabilities">
@@ -111,13 +121,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { agentosApi, type RuntimeResourceItem } from '@/services/api/agentos'
+import { agentosApi, type RuntimeResourceItem, type NodeCatalogItem } from '@/services/api/agentos'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
 import ResourceTypeBadge from './ResourceTypeBadge.vue'
-import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeMeta } from '@/utils/resourceFormat'
+import BrandLoader from '@/components/common/BrandLoader.vue'
+import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeMeta, resourcePlacement, tierLabel } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
 
 const resources = ref<RuntimeResourceItem[]>([])
+const nodes = ref<NodeCatalogItem[]>([])
+const nodesError = ref('')
 const searchText = ref('')
 const selectedDomain = ref('')
 const loading = ref(false)
@@ -128,8 +141,7 @@ const searchInput = ref<HTMLInputElement | null>(null)
 let controller: AbortController | null = null
 
 const TIER_ORDER: Array<{ id: string; label: string }> = [
-  { id: 'local', label: '本地' },
-  { id: 'terminal', label: '端侧' },
+  { id: 'device', label: '本机设备' },
   { id: 'edge', label: '边缘' },
   { id: 'cloud', label: '云端' }
 ]
@@ -137,10 +149,11 @@ const TIER_ORDER: Array<{ id: string; label: string }> = [
 const healthyResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'online').length)
 const degradedResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'degraded').length)
 const offlineResourceCount = computed(() => resources.value.filter(item => item.snapshot.healthStatus === 'offline').length)
+const unknownResourceCount = computed(() => resources.value.filter(item => !['online', 'degraded', 'offline'].includes(item.snapshot.healthStatus)).length)
 
 const tierStats = computed(() => TIER_ORDER.map(tier => ({
   ...tier,
-  count: resources.value.filter(item => (item.profile.deploymentTier || 'local') === tier.id).length
+  count: resources.value.filter(item => resourcePlacement(item.profile.deploymentTier) === tier.id).length
 })))
 
 const computeTotals = computed(() => {
@@ -148,15 +161,20 @@ const computeTotals = computed(() => {
   let memory = 0
   let gpu = 0
   let hasCapacity = false
-  for (const item of resources.value) {
+  const seenNodes = new Set<string>()
+  const entries = nodes.value.length ? nodes.value.map(n => ({ profile: { nodeId: n.profile.nodeId, computeCapacity: n.profile.computeCapacity, runtimeKind: 'node' } })) : resources.value
+  for (const item of entries) {
+    if (item.profile.runtimeKind === 'model_endpoint') continue
+    if (item.profile.nodeId && seenNodes.has(item.profile.nodeId)) continue
+    if (item.profile.nodeId) seenNodes.add(item.profile.nodeId)
     const capacity = item.profile.computeCapacity
     if (!capacity) continue
-    hasCapacity = true
-    cpu += capacity.cpuCores
-    memory += Math.round(capacity.memoryMb / 1024)
-    gpu += Math.round(capacity.gpuMemoryMb / 1024)
+    if ((capacity.cpuCores ?? 0) > 0 || (capacity.memoryMb ?? 0) > 0 || (capacity.gpuMemoryMb ?? 0) > 0) hasCapacity = true
+    cpu += capacity.cpuCores ?? 0
+    memory += (capacity.memoryMb ?? 0) / 1024
+    gpu += (capacity.gpuMemoryMb ?? 0) / 1024
   }
-  return { cpu, memory, gpu, hasCapacity }
+  return { cpu, memory: Number(memory.toFixed(1)), gpu: Number(gpu.toFixed(1)), hasCapacity }
 })
 
 const domainOptions = computed(() => {
@@ -180,22 +198,22 @@ const filteredResources = computed(() => {
     return [
       item.profile.resourceId,
       item.profile.resourceType,
+      item.profile.displayName || '', item.profile.nodeId || '', item.profile.runtimeKind || '',
       ...item.profile.capabilities,
       item.profile.deploymentTier || ''
     ].some(value => (value || '').toLocaleLowerCase().includes(query))
   })
 })
 
-const filteredCount = computed(() => filteredResources.value.length)
-
 const groupedResources = computed(() => {
   const groups = new Map<string, RuntimeResourceItem[]>()
   for (const item of filteredResources.value) {
-    const tier = item.profile.deploymentTier || 'local'
+    const tier = resourcePlacement(item.profile.deploymentTier)
     if (!groups.has(tier)) groups.set(tier, [])
     groups.get(tier)!.push(item)
   }
-  return TIER_ORDER
+  const tiers = [...TIER_ORDER, ...[...groups.keys()].filter(id => !TIER_ORDER.some(t => t.id === id)).map(id => ({ id, label: `其他位置 · ${id}` }))]
+  return tiers
     .filter(tier => groups.has(tier.id))
     .map(tier => ({ tier: tier.id, label: tier.label, items: groups.get(tier.id)! }))
 })
@@ -230,6 +248,12 @@ const loadResources = async () => {
   const requestController = controller
   loading.value = true
   errorMessage.value = ''
+  nodesError.value = ''
+  void agentosApi.listNodes({ signal: requestController.signal }).then(response => {
+    if (!requestController.signal.aborted && controller === requestController) nodes.value = response.items
+  }).catch(() => {
+    if (!requestController.signal.aborted && controller === requestController) nodesError.value = '节点目录暂时不可用，服务目录仍可单独查看。'
+  })
   try {
     const response = await agentosApi.listResources({ signal: requestController.signal })
     if (requestController.signal.aborted || controller !== requestController) return
@@ -258,6 +282,11 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 </script>
 
 <style scoped>
+.resource-node-catalog { margin: 18px 0; padding: 14px 18px; border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-card); }
+.resource-node-catalog h3 { margin: 0 0 10px; font-size: 12px; }
+.resource-node-catalog small, .resource-node-catalog p { color: var(--text-muted); font-size: 11px; }
+.resource-node-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding: 9px 0; font-size: 11px; }
+.resource-node-row span { color: var(--text-secondary); }
 .resource-overview-panel {
   --resource-surface: color-mix(in srgb, var(--bg-card) 92%, var(--bg-panel));
   --resource-inset: color-mix(in srgb, var(--bg-input) 78%, var(--bg-card));
@@ -291,8 +320,7 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-summary__metric--tier strong { color: var(--text-secondary); }
 .resource-summary__metric--tier.is-tier-cloud strong { color: var(--primary-color); }
 .resource-summary__metric--tier.is-tier-edge strong { color: var(--success); }
-.resource-summary__metric--tier.is-tier-terminal strong { color: var(--accent-color, #6f668f); }
-.resource-summary__metric--tier.is-tier-local strong { color: var(--text-secondary); }
+.resource-summary__metric--tier.is-tier-device strong { color: var(--text-secondary); }
 .resource-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0 12px; color: var(--text-muted); font-size: 11px; }
 .resource-domain-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 12px; }
 .resource-domain-filter button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--border-light); border-radius: 999px; color: var(--text-secondary); background: var(--bg-input); cursor: pointer; font: inherit; font-size: 10px; transition: var(--transition); }
@@ -318,8 +346,7 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-tier-group__header strong { font-size: 12px; font-weight: 650; }
 .resource-tier-group__count { margin-left: auto; color: var(--text-muted); font: 10px var(--font-mono, monospace); }
 .resource-tier-group__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary-color); }
-.is-tier-local .resource-tier-group__dot { background: var(--text-secondary); }
-.is-tier-terminal .resource-tier-group__dot { background: var(--accent-color, #6f668f); }
+.is-tier-device .resource-tier-group__dot { background: var(--text-secondary); }
 .is-tier-edge .resource-tier-group__dot { background: var(--success); }
 .is-tier-cloud .resource-tier-group__dot { background: var(--primary-color); }
 .resource-list { overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-card, 9px); background: var(--resource-surface); box-shadow: var(--shadow-sm); }
