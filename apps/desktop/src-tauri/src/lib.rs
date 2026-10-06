@@ -10,9 +10,13 @@ fn setup_fullscreen_shortcut(app: &mut tauri::App) -> tauri::Result<()> {
     let fullscreen_shortcut = Shortcut::new(None, Code::F11);
     let key_down = Arc::new(Mutex::new(false));
     let toggle_in_flight = Arc::new(Mutex::new(false));
+    // 进入全屏前窗口是否处于最大化：Windows 上对最大化窗口直接 set_fullscreen
+    // 会出现任务栏隐藏但窗口不铺满屏幕的中间态，必须先 unmaximize 再全屏。
+    let maximized_before_fullscreen = Arc::new(Mutex::new(false));
     let handler_shortcut = fullscreen_shortcut.clone();
     let handler_key_down = Arc::clone(&key_down);
     let handler_toggle_in_flight = Arc::clone(&toggle_in_flight);
+    let handler_maximized = Arc::clone(&maximized_before_fullscreen);
 
     app.handle().plugin(
         tauri_plugin_global_shortcut::Builder::new()
@@ -66,7 +70,24 @@ fn setup_fullscreen_shortcut(app: &mut tauri::App) -> tauri::Result<()> {
                 }
 
                 if let Ok(fullscreen) = window.is_fullscreen() {
-                    let _ = window.set_fullscreen(!fullscreen);
+                    if fullscreen {
+                        let _ = window.set_fullscreen(false);
+                        if let Ok(mut was_maximized) = handler_maximized.lock() {
+                            if *was_maximized {
+                                let _ = window.maximize();
+                            }
+                            *was_maximized = false;
+                        }
+                    } else {
+                        let was_maximized = window.is_maximized().unwrap_or(false);
+                        if let Ok(mut flag) = handler_maximized.lock() {
+                            *flag = was_maximized;
+                        }
+                        if was_maximized {
+                            let _ = window.unmaximize();
+                        }
+                        let _ = window.set_fullscreen(true);
+                    }
                 }
 
                 if let Ok(mut in_flight) = handler_toggle_in_flight.lock() {
