@@ -8,7 +8,7 @@ import logging
 import pytest
 
 from adapters.http_transport import HttpTransportError
-from adapters.openai_runtime import ModelInvocationError, OpenAICompatibleRuntime
+from adapters.openai_runtime import ModelInvocationError, OpenAICompatibleRuntime, decode_json_object
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -16,6 +16,20 @@ from contracts.capability import (
 )
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
 from support.acg.models import build_default_capability_catalog
+
+
+def test_markdown_literal_control_whitespace_is_decoded_without_regenerating_content():
+    text = '{"deliverable":{"content":"# Title\nA\tB\r\nEnd"}}'
+    assert decode_json_object(text) == {"deliverable": {"content": "# Title\nA\tB\r\nEnd"}}
+
+
+@pytest.mark.parametrize("text", [
+    '{"content":"unfinished\n}', '{"content":"text\n"',
+    '{"content":"text\n\u0000"}', '{"content":"text\n","count":}',
+])
+def test_json_whitespace_tolerance_does_not_invent_structure_or_accept_control_bytes(text):
+    with pytest.raises(ModelInvocationError):
+        decode_json_object(text)
 
 
 class _JsonTransport:

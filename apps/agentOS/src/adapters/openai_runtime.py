@@ -146,7 +146,21 @@ def decode_json_object(content: object) -> dict[str, Any]:
     for candidate in dict.fromkeys(candidates):
         try:
             parsed = json.loads(candidate)
-        except (TypeError, json.JSONDecodeError):
+        except json.JSONDecodeError as exc:
+            # Markdown strings sometimes contain literal newlines/tabs. This
+            # changes escaping only, never invents syntax or edits field values.
+            # Other control bytes, broken quotes and truncated objects still fail.
+            if exc.msg.startswith("Invalid control character") and not any(
+                ord(char) < 32 and char not in "\n\r\t" for char in candidate
+            ):
+                try:
+                    parsed = json.loads(candidate, strict=False)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    return parsed
+            continue
+        except TypeError:
             continue
         if isinstance(parsed, dict):
             return parsed
