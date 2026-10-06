@@ -2214,3 +2214,55 @@ async def test_resource_usage_declares_model_before_first_call(tmp_path) -> None
     assert body["capability"]["maxOutputTokens"] == 384000
     assert body["capabilitySource"] == "declared"
     assert body["outputPolicy"] == "catalog_default"
+
+
+async def test_v2_delete_endpoint_soft_deletes_terminal_run(tmp_path) -> None:
+    """删除端点只对终态 Run 软删：列表退场、直达 404、重复删除幂等。"""
+    runtime = _runtime(tmp_path, with_identity=True)
+    task = runtime.create_mission("delete endpoint probe", workflow_id="api-workflow")
+    run = await runtime.start(task.mission_id, workflow_id="api-workflow")
+    assert run.status is WorkflowStatus.COMPLETED
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.delete("/agentos/v2/runs/run_does_not_exist")
+        assert missing.status_code == 404
+
+        deleted = await client.delete(f"/agentos/v2/runs/{run.run_id}")
+        assert deleted.status_code == 200
+        body = deleted.json()
+        assert body["runId"] == run.run_id
+        assert body["recordState"] == "deleted"
+        assert body["deletedAt"]
+
+        # 直达读取与工作区 Run 列表按 404 / 退场收敛。
+        detail = await client.get(f"/agentos/v2/runs/{run.run_id}")
+        assert detail.status_code == 404
+        workspace = await client.get(f"/agentos/v2/missions/{task.mission_id}/workspace")
+        assert workspace.status_code == 200
+        assert all(
+            item["runId"] != run.run_id
+            for item in workspace.json()["runs"]
+        )
+
+        # 重复删除幂等：仍返回当前 deleted 状态而不是冲突。
+        again = await client.delete(f"/agentos/v2/runs/{run.run_id}")
+        assert again.status_code == 200
+        assert again.json()["recordState"] == "deleted"
+
+
+async def test_v2_delete_endpoint_rejects_active_run_as_conflict(tmp_path) -> None:
+    """未终态的 Run 拒绝删除：返回 409 且不改变记录状态。"""
+    runtime = _runtime(tmp_path)
+    task = runtime.create_mission("delete conflict probe", workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    assert run.status is WorkflowStatus.PENDING
+
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.delete(f"/agentos/v2/runs/{run.run_id}")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "run is not terminal"
+        assert runtime.workflow_store.get_run(run.run_id).record_state.value == "active"

@@ -8,6 +8,7 @@ import pytest
 
 from contracts.workflow import (
     MissionRecordState,
+    RunRecordState,
     RuntimeMissionRecord,
     RuntimeRunRecord,
     WorkflowProgressPhase,
@@ -114,6 +115,54 @@ def test_mission_record_state_rejects_active_runs(store_factory, tmp_path: Path)
     with pytest.raises(RuntimeRunRecordNotTerminalError):
         store.set_mission_record_state(mission.mission_id, MissionRecordState.ARCHIVED)
     assert store.get_mission(mission.mission_id).record_state is MissionRecordState.ACTIVE
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
+)
+def test_run_record_state_soft_delete_hides_run_from_lists(store_factory, tmp_path: Path) -> None:
+    store = store_factory(tmp_path)
+    mission = RuntimeMissionRecord(missionId="mission_run_delete", title="Mission")
+    store.save_mission(mission)
+    kept = RuntimeRunRecord(
+        runId="run_delete_kept", missionId=mission.mission_id, workflowId="workflow-1",
+        domain="general", runtimeEngine="acg", status=WorkflowStatus.COMPLETED,
+    )
+    removed = kept.model_copy(update={"run_id": "run_delete_removed"})
+    running = kept.model_copy(update={"run_id": "run_delete_running", "status": WorkflowStatus.RUNNING})
+    superseded = kept.model_copy(update={"run_id": "run_delete_superseded", "status": WorkflowStatus.SUPERSEDED})
+    for run in (kept, removed, running, superseded):
+        store.save_run(run)
+
+    deleted = store.set_run_record_state(removed.run_id, RunRecordState.DELETED)
+    assert deleted.record_state is RunRecordState.DELETED
+    assert deleted.deleted_at is not None
+    # 直达读取保留历史；列表与 Mission 汇总不再出现。
+    assert store.get_run(removed.run_id).record_state is RunRecordState.DELETED
+    assert [item.run_id for item in store.list_runs(page_size=10).items] == [
+        "run_delete_superseded", "run_delete_running", "run_delete_kept",
+    ]
+    assert [item.run_id for item in store.list_run_overviews(page_size=10).items] == [
+        "run_delete_superseded", "run_delete_running", "run_delete_kept",
+    ]
+    assert len(store.list_all_runs()) == 4
+    summaries = store.list_mission_run_summaries([mission.mission_id])
+    assert summaries[mission.mission_id].run_count == 3
+    assert summaries[mission.mission_id].latest_run is not None
+    assert summaries[mission.mission_id].latest_run.run_id == "run_delete_superseded"
+
+    # 已删记录状态不可再变更；重复删除按同一不变量拒绝（API 层收敛为幂等）。
+    with pytest.raises(ValueError, match="immutable"):
+        store.set_run_record_state(removed.run_id, RunRecordState.DELETED)
+
+    # 非终态 Run 拒绝删除；SUPERSEDED 属终态，允许软删。
+    with pytest.raises(RuntimeRunRecordNotTerminalError):
+        store.set_run_record_state(running.run_id, RunRecordState.DELETED)
+    store.set_run_record_state(superseded.run_id, RunRecordState.DELETED)
+    assert [item.run_id for item in store.list_run_overviews(page_size=10).items] == [
+        "run_delete_running", "run_delete_kept",
+    ]
 
 
 @pytest.mark.parametrize(

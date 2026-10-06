@@ -10,6 +10,7 @@ import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.run.mapper.RunProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,7 +24,8 @@ import java.util.Map;
 
 /**
  * RUN ownership: run create (the route is mission-nested, the lifecycle is a
- * run's), run read / list with the complete history filter contract, and cancel.
+ * run's), run read / list with the complete history filter contract, cancel,
+ * and soft delete.
  */
 @RestController
 @RequestMapping("/api/agentos/v2")
@@ -87,5 +89,10 @@ public class AgentOsRunController {
         return AgentOsControllerSupport.typedResponse(gateway.postTyped(
                 AgentOsPaths.run(runId) + "/cancel", Map.of(), AgentOsOperationResponse.class
         ));
+    }
+
+    @DeleteMapping("/runs/{runId}")
+    public ResponseEntity<Map<String, Object>> deleteRun(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(gateway.delete(AgentOsPaths.run(runId)));
     }
 }

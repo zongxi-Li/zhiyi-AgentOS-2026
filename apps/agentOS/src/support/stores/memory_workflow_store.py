@@ -8,7 +8,7 @@ from copy import deepcopy
 import hashlib
 import json
 
-from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
+from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import (
     TERMINAL_RUN_STATUSES,
     matches_run,
@@ -282,6 +282,27 @@ class MemoryWorkflowStore(WorkflowStore):
             mission_deleted=mission_deleted,
         )
 
+    def set_run_record_state(self, run_id: str, state: RunRecordState) -> RuntimeRunRecord:
+        """更新终态运行的用户管理状态；非终态抛专用错误，已删除不可再变更。"""
+        try:
+            run = self._runs[run_id]
+        except KeyError as exc:
+            raise KeyError(f"workflow run not found: {run_id}") from exc
+        if run.status not in {
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.CANCELLED,
+            WorkflowStatus.SUPERSEDED,
+        }:
+            raise RuntimeRunRecordNotTerminalError(run_id, run.status)
+        if run.record_state is RunRecordState.DELETED:
+            raise ValueError("deleted run record state is immutable")
+        now = utc_now()
+        run.record_state = state
+        run.updated_at = now
+        run.deleted_at = now if state is RunRecordState.DELETED else None
+        return run.model_copy(deep=True)
+
     def list_missions(
         self,
         *,
@@ -346,6 +367,8 @@ class MemoryWorkflowStore(WorkflowStore):
             )
         }
         for run in self._runs.values():
+            if run.record_state is RunRecordState.DELETED:
+                continue
             if run.mission_id not in summaries or not matches_run(
                 run,
                 status=None,
@@ -406,7 +429,8 @@ class MemoryWorkflowStore(WorkflowStore):
         runs = [
             run.model_copy(deep=True)
             for run in self._runs.values()
-            if (
+            if run.record_state is not RunRecordState.DELETED
+            and (
                 expected_record_state is None
                 or self._tasks[run.mission_id].record_state.value == expected_record_state
             ) and matches_run(

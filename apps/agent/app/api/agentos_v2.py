@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user
-from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RuntimeRunRecord, StepStatus, WorkflowStatus
+from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RunRecordState, RuntimeRunRecord, StepStatus, WorkflowStatus
 from contracts.content import ContentKind
 from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
@@ -275,6 +275,12 @@ def _require_access(run: RuntimeRunRecord) -> None:
     tenant = str(run.input.get("authenticatedTenantId") or "")
     if actor is None or actor.user_id != owner or (tenant and actor.tenant_id != tenant):
         raise HTTPException(status_code=404, detail="run not found")
+
+
+def _identity_run_deleted(run: Any) -> bool:
+    """Identity 侧 Run 的软删除标记存于 metadata；与 runtime 的 recordState 语义一致。"""
+    metadata = getattr(run, "metadata", None)
+    return isinstance(metadata, dict) and metadata.get("recordState") == "deleted"
 
 
 def _state(run: RuntimeRunRecord) -> dict[str, Any]:
@@ -709,7 +715,7 @@ def create_router(
     def require_run_access(run_id: str):
         query = require_identity_queries()
         run = identity_repositories.runs.get(run_id)
-        if run is None:
+        if run is None or _identity_run_deleted(run):
             raise HTTPException(status_code=404, detail="run not found")
         require_mission_owner_access(run.mission_id)
         return query, run
@@ -721,6 +727,8 @@ def create_router(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
         _require_access(run)
+        if run.record_state is RunRecordState.DELETED:
+            raise HTTPException(status_code=404, detail="run not found")
         return run
 
     def project(run: RuntimeRunRecord) -> dict[str, Any]:
@@ -1535,6 +1543,16 @@ def create_router(
     ):
         mission_detail = require_mission_access(mission_id)
         actor = current_trusted_user()
+
+        if run_id:
+            # 显式请求的 Run 若已被软删除，工作区按 404 收敛，避免残留投影
+            # 让已删 Run 通过直达链接复活动。
+            try:
+                requested_runtime_run = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
+            except KeyError:
+                requested_runtime_run = None
+            if requested_runtime_run is not None and requested_runtime_run.record_state is RunRecordState.DELETED:
+                raise HTTPException(status_code=404, detail="run not found")
 
         runtime_status_map = {
             "pending": RunStatus.PENDING,
@@ -2852,6 +2870,38 @@ def create_router(
         except InvalidStateTransition as exc:
             raise HTTPException(status_code=409, detail="run cannot be cancelled") from exc
         return project_control_run(run, OperationResponse, operation="cancel")
+
+    @router.delete("/runs/{run_id}")
+    async def delete_run(run_id: str):
+        """软删除一个终态 Run：runtime 记录状态置 deleted，Identity 行并入同标记。
+
+        两侧列表查询随即过滤，直达读取按 404 收敛；重复删除幂等返回当前状态。
+        这里不走 ``load_run``——它对已删 Run 抛 404，会挡住幂等重放。
+        """
+        try:
+            existing = getattr(runtime, "get_status_cached", runtime.get_status)(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        _require_access(existing)
+        try:
+            updated = runtime.workflow_store.set_run_record_state(run_id, RunRecordState.DELETED)
+        except RuntimeRunRecordNotTerminalError as exc:
+            raise HTTPException(status_code=409, detail="run is not terminal") from exc
+        except ValueError as exc:
+            if str(exc) == "deleted run record state is immutable":
+                # DELETE 在 API 边界幂等：identity 行可能仍持旧标记，重复删除
+                # 应收敛到当前状态而不是抛出误导性冲突。
+                updated = existing
+            else:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if identity_repositories is not None and identity_repositories.runs.get(run_id) is not None:
+            identity_repositories.runs.mark_deleted(run_id)
+        return {
+            "runId": updated.run_id,
+            "missionId": updated.mission_id,
+            "recordState": updated.record_state.value,
+            "deletedAt": updated.deleted_at.isoformat() if updated.deleted_at else None,
+        }
 
     return router
 

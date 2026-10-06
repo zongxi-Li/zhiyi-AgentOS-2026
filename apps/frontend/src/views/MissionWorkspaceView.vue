@@ -137,9 +137,11 @@
           :rerun-pending="rerunPending"
           :rerun-disabled-reason="rerunDisabledReason"
           :rerun-label="rerunLabel"
+          :deleting-run-id="deletingRunId"
           @update:model-value="selectPanelTab($event, collapsed, setCollapsed)"
           @select-run="selectRun"
           @rerun="rerunSelectedRun"
+          @delete-run="deletePickerRun"
           @toggle="setCollapsed(!collapsed)"
         />
       </template>
@@ -691,8 +693,11 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   }
 }
 
-const persistRunInUrl = async (runId: string) => {
-  await router.replace({ query: { ...route.query, runId } })
+const persistRunInUrl = async (runId: string | null) => {
+  const query = { ...route.query }
+  if (runId) query.runId = runId
+  else delete query.runId
+  await router.replace({ query })
 }
 
 const selectRun = async (runId: string) => {
@@ -823,6 +828,57 @@ const rerunSelectedRun = async () => {
     if (!isAbortError(error)) loadError.value = rerunErrorMessage(error)
   } finally {
     rerunPending.value = false
+  }
+}
+
+const deletingRunId = ref<string | null>(null)
+
+const deleteRunErrorMessage = (error: unknown) => {
+  const status = responseStatus(error)
+  if (status === 401 || status === 403) return '当前账户无权删除这个 Run'
+  if (status === 404) return 'Run 不存在或已被删除'
+  if (status === 409) return '运行尚未结束，暂时不能删除'
+  return '删除 Run 失败，请稍后重试'
+}
+
+const deletePickerRun = async (runId: string) => {
+  if (deletingRunId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `Run ${runId} 将从运行列表移除，执行审计事实仍会保留。`,
+      '删除 Run',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        customClass: 'destructive-confirm',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch {
+    return
+  }
+  deletingRunId.value = runId
+  loadError.value = ''
+  try {
+    await agentosApi.deleteWorkflowRun(runId)
+    ElMessage.success(`Run ${runId} 已删除`)
+    const remaining = (projection.value?.runs || []).filter(item => item.runId !== runId)
+    if (selectedRunId.value === runId || projection.value?.activeRun?.runId === runId) {
+      // 被删的是当前 Run：优先切到剩余 Run 的默认选择，全部删完则回到
+      // Mission 级空工作区。
+      const nextRunId = defaultRunId(remaining)
+      selectedRunId.value = nextRunId
+      currentRunId.value = nextRunId
+      await persistRunInUrl(nextRunId)
+      await loadWorkspace(nextRunId)
+      return
+    }
+    await loadWorkspace()
+  } catch (error: unknown) {
+    if (!isAbortError(error)) ElMessage.error(deleteRunErrorMessage(error))
+  } finally {
+    deletingRunId.value = null
   }
 }
 

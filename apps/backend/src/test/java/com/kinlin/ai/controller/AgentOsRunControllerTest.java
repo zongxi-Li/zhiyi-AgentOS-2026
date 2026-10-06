@@ -16,12 +16,13 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import com.kinlin.ai.projection.run.dto.RunQuery;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** RUN ownership: mission-nested create, history filter list, read, cancel. */
+/** RUN ownership: mission-nested create, history filter list, read, cancel, soft delete. */
 class AgentOsRunControllerTest {
 
     private MockMvc mockMvc;
@@ -128,5 +129,24 @@ class AgentOsRunControllerTest {
                 .andExpect(jsonPath("$.code").value("AGENTOS_REQUEST_REJECTED"))
                 .andExpect(jsonPath("$.message").value("run cannot be cancelled"));
         assertEquals(conflictPath, gateway.lastPostPath);
+    }
+
+    @Test
+    void runDeleteForwardsEncodedIdentityAndKeepsConflictStatus() throws Exception {
+        String deletedPath = "/ai/agentos/v2/runs/run%20001";
+        gateway.deleteResponses.put(deletedPath, RecordingAgentOsGateway.response(200, Map.of(
+                "runId", "run 001", "recordState", "deleted", "deletedAt", "2026-10-06T00:00:00Z")));
+        mockMvc.perform(delete("/api/agentos/v2/runs/{runId}", "run 001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recordState").value("deleted"));
+        assertEquals(deletedPath, gateway.lastDeletePath);
+
+        String conflictPath = "/ai/agentos/v2/runs/run_002";
+        gateway.deleteResponses.put(conflictPath, RecordingAgentOsGateway.response(409, new LinkedHashMap<>(Map.of(
+                "detail", "run is not terminal"))));
+        mockMvc.perform(delete("/api/agentos/v2/runs/{runId}", "run_002"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("run is not terminal"));
+        assertEquals(conflictPath, gateway.lastDeletePath);
     }
 }

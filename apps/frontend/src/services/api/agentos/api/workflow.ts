@@ -201,5 +201,9 @@ export const createWorkflowApi = (getApi: () => WorkflowApiDependencies) => ({
   async cancelWorkflowRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<WorkflowRun> {
     const response = await agentosRequest.post<WorkflowRun>(`${runPath(runId)}/cancel`, {}, { signal: options.signal })
     return response.data
+  },
+
+  async deleteWorkflowRun(runId: string, options: { signal?: AbortSignal } = {}): Promise<void> {
+    await agentosRequest.delete(runPath(runId), { signal: options.signal })
   }
 })

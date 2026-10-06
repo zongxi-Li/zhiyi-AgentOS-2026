@@ -26,21 +26,32 @@
             <span aria-hidden="true">+</span>
             <span>{{ rerunPending ? '正在创建…' : rerunLabel }}</span>
           </button>
-          <button
-            v-for="run in orderedRuns"
-            :key="run.runId"
-            class="workbench-status-bar__run-item"
-            :class="{ 'is-current': run.runId === runId }"
-            type="button"
-            role="option"
-            :aria-selected="run.runId === runId"
-            @click="chooseRun(run.runId)"
-          >
-            <span class="workbench-status-bar__run-dot" :style="{ background: statusSemanticColor(run.status) }" aria-hidden="true"></span>
-            <code class="workbench-status-bar__run-item-id">{{ run.runId }}</code>
-            <span class="workbench-status-bar__run-item-state">{{ runStateLabel(run.status) }}</span>
-            <el-icon v-if="run.runId === runId" class="workbench-status-bar__run-item-check" aria-hidden="true"><Check /></el-icon>
-          </button>
+          <div v-for="run in orderedRuns" :key="run.runId" class="workbench-status-bar__run-row" role="presentation">
+            <button
+              class="workbench-status-bar__run-item"
+              :class="{ 'is-current': run.runId === runId }"
+              type="button"
+              role="option"
+              :aria-selected="run.runId === runId"
+              @click="chooseRun(run.runId)"
+            >
+              <span class="workbench-status-bar__run-dot" :style="{ background: statusSemanticColor(run.status) }" aria-hidden="true"></span>
+              <code class="workbench-status-bar__run-item-id">{{ run.runId }}</code>
+              <span class="workbench-status-bar__run-item-state">{{ runStateLabel(run.status) }}</span>
+              <el-icon v-if="run.runId === runId" class="workbench-status-bar__run-item-check" aria-hidden="true"><Check /></el-icon>
+            </button>
+            <button
+              v-if="runDeletable(run)"
+              class="workbench-status-bar__run-delete"
+              type="button"
+              :aria-label="`删除 ${run.runId}`"
+              :title="`删除 ${run.runId}`"
+              :disabled="deletingRunId === run.runId"
+              @click.stop="requestDeleteRun(run.runId)"
+            >
+              <el-icon aria-hidden="true"><Delete /></el-icon>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -83,7 +94,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowDown, ArrowUp, Check } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Check, Delete } from '@element-plus/icons-vue'
 import type { WorkbenchBottomTab } from './WorkbenchBottomPanel.vue'
 import { statusSemanticColor } from '@/utils/statusSemantic'
 
@@ -108,12 +119,15 @@ const props = withDefaults(defineProps<{
   rerunPending?: boolean
   rerunDisabledReason?: string
   rerunLabel?: string
+  /** Run whose delete request is in flight; its button shows a busy state. */
+  deletingRunId?: string | null
 }>(), {
   runs: () => [],
   canRerun: false,
   rerunPending: false,
   rerunDisabledReason: '当前运行尚未结束',
-  rerunLabel: '再次运行'
+  rerunLabel: '再次运行',
+  deletingRunId: null
 })
 
 const emit = defineEmits<{
@@ -121,6 +135,7 @@ const emit = defineEmits<{
   toggle: []
   'select-run': [runId: string]
   rerun: []
+  'delete-run': [runId: string]
 }>()
 
 const runDotColor = computed(() => statusSemanticColor(props.runStatus))
@@ -162,6 +177,13 @@ const requestRerun = () => {
   if (!props.canRerun || props.rerunPending) return
   runPickerOpen.value = false
   emit('rerun')
+}
+
+const terminalRunStatuses = new Set(['completed', 'succeeded', 'failed', 'cancelled', 'superseded'])
+const runDeletable = (run: WorkbenchRunSummary) => terminalRunStatuses.has((run.status || '').toLowerCase())
+const requestDeleteRun = (runId: string) => {
+  if (props.deletingRunId === runId) return
+  emit('delete-run', runId)
 }
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
@@ -243,6 +265,14 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(14px);
 }
 
+.workbench-status-bar__run-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.workbench-status-bar__run-row .workbench-status-bar__run-item { flex: 1 1 auto; min-width: 0; }
+
 .workbench-status-bar__run-action,
 .workbench-status-bar__run-item {
   display: inline-flex;
@@ -258,6 +288,29 @@ onBeforeUnmount(() => {
   text-align: left;
   cursor: pointer;
 }
+
+.workbench-status-bar__run-delete {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wb-text-muted);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, color .12s ease, background .12s ease;
+}
+
+.workbench-status-bar__run-delete .el-icon { font-size: 12px; }
+.workbench-status-bar__run-row:hover .workbench-status-bar__run-delete,
+.workbench-status-bar__run-delete:focus-visible { opacity: 1; }
+.workbench-status-bar__run-delete:hover:not(:disabled) { color: var(--wb-danger, #d4574e); background: var(--wb-hover); }
+.workbench-status-bar__run-delete:disabled { cursor: not-allowed; opacity: .6; }
 
 .workbench-status-bar__run-action { color: var(--wb-text-muted); }
 .workbench-status-bar__run-action:hover:not(:disabled) { color: var(--wb-text); background: var(--wb-hover); }

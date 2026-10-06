@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
+from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import matches_mission, reject_terminal_overwrite, validate_run_state
 from support.stores.workflow_store import (
     RuntimeMissionRunSummary,
@@ -188,8 +188,9 @@ class SQLiteWorkflowStore(WorkflowStore):
                    run_id, mission_id, payload, updated_at,
                    status, owner_user_id, owner_tenant_id,
                    domain, workflow_id, lifecycle_phase, lifecycle_message,
-                   source, current_step_id, started_at, created_at, runtime_revision
-               ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   source, current_step_id, started_at, created_at, runtime_revision,
+                   record_state
+               ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(run_id) DO UPDATE SET
                    mission_id=excluded.mission_id,
                    payload=excluded.payload,
@@ -205,7 +206,8 @@ class SQLiteWorkflowStore(WorkflowStore):
                    current_step_id=excluded.current_step_id,
                    started_at=excluded.started_at,
                    created_at=excluded.created_at,
-                   runtime_revision=excluded.runtime_revision""",
+                   runtime_revision=excluded.runtime_revision,
+                   record_state=excluded.record_state""",
             (
                 run.run_id,
                 run.mission_id,
@@ -215,6 +217,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                 owner_user_id,
                 owner_tenant_id,
                 *SQLiteWorkflowStore._run_summary_values(run),
+                run.record_state.value,
             ),
         )
         return True
@@ -384,6 +387,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                         ) AS position
                     FROM runs
                     WHERE mission_id IN ({run_placeholders})
+                      AND COALESCE(record_state, 'active') != 'deleted'
                       AND (owner_user_id IS NULL OR owner_user_id = '' OR owner_user_id = ?)
                       AND (
                           owner_user_id IS NULL OR owner_user_id = ''
@@ -452,6 +456,9 @@ class SQLiteWorkflowStore(WorkflowStore):
         """
         clauses: list[str] = []
         params: list = []
+        # 软删除的 Run 从所有用户列表退场；直达读取（get_run）不受此限制，
+        # 由 API 层按 404 语义收敛。record_state 是摘要列，不碰 payload。
+        clauses.append("COALESCE(r.record_state, 'active') != 'deleted'")
         if expected_status is not None:
             clauses.append("r.status = ?")
             params.append(expected_status)
@@ -751,6 +758,35 @@ class SQLiteWorkflowStore(WorkflowStore):
             mission_deleted=mission_deleted,
         )
 
+    def set_run_record_state(self, run_id: str, state: RunRecordState) -> RuntimeRunRecord:
+        """在单事务中更新终态运行的用户管理状态；记录状态仅落 payload，随列表过滤。"""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT payload FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"workflow run not found: {run_id}")
+            run = RuntimeRunRecord.model_validate(json.loads(row["payload"]))
+            if run.status not in {
+                WorkflowStatus.COMPLETED, WorkflowStatus.FAILED,
+                WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED,
+            }:
+                raise RuntimeRunRecordNotTerminalError(run_id, run.status)
+            if run.record_state is RunRecordState.DELETED:
+                raise ValueError("deleted run record state is immutable")
+            now = utc_now()
+            run.record_state = state
+            run.updated_at = now
+            run.deleted_at = now if state is RunRecordState.DELETED else None
+            payload = json.dumps(run.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+            conn.execute(
+                "UPDATE runs SET payload = ?, updated_at = ?, record_state = ? WHERE run_id = ?",
+                (payload, now.isoformat(), run.record_state.value, run_id),
+            )
+            conn.commit()
+        return run
+
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS task_copilot_permissions (
@@ -798,7 +834,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                 ("domain", "TEXT"), ("workflow_id", "TEXT"), ("lifecycle_phase", "TEXT"),
                 ("lifecycle_message", "TEXT"), ("source", "TEXT"), ("current_step_id", "TEXT"),
                 ("started_at", "TEXT"), ("created_at", "TEXT"),
-                ("runtime_revision", "INTEGER"),
+                ("runtime_revision", "INTEGER"), ("record_state", "TEXT"),
             ):
                 if column not in run_columns:
                     conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {column_type}")
@@ -815,24 +851,42 @@ class SQLiteWorkflowStore(WorkflowStore):
                        )
                    WHERE status IS NULL"""
             )
-            self._backfill_run_summary_columns(conn)
             conn.execute(
-                """CREATE INDEX IF NOT EXISTS idx_runs_mission_updated_at
-                   ON runs(mission_id, updated_at DESC, run_id DESC)"""
+                """UPDATE runs
+                   SET record_state = COALESCE(json_extract(payload, '$.recordState'), 'active')
+                   WHERE record_state IS NULL"""
             )
+            self._backfill_run_summary_columns(conn)
             # Run payloads sit between the key columns and the summary
             # columns, so reading any tail column from the table b-tree walks
             # the row's overflow chain (tens of MB per heavy run). This
             # covering index serves list/overview queries entirely from index
-            # pages and never touches payloads.
-            conn.execute(
-                """CREATE INDEX IF NOT EXISTS idx_runs_owner_overview
-                   ON runs(owner_user_id, owner_tenant_id, updated_at DESC, run_id DESC,
-                           mission_id, workflow_id, domain, status,
-                           lifecycle_phase, lifecycle_message, source,
-                           current_step_id, started_at, created_at,
-                           runtime_revision)"""
-            )
+            # pages and never touches payloads. record_state participates in
+            # every list filter, so both indexes carry it; a definition change
+            # rebuilds instead of silently keeping the stale shape.
+            for index_name, index_sql in (
+                (
+                    "idx_runs_mission_updated_at",
+                    """CREATE INDEX IF NOT EXISTS idx_runs_mission_updated_at
+                       ON runs(mission_id, record_state, updated_at DESC, run_id DESC)""",
+                ),
+                (
+                    "idx_runs_owner_overview",
+                    """CREATE INDEX IF NOT EXISTS idx_runs_owner_overview
+                       ON runs(owner_user_id, owner_tenant_id, record_state, updated_at DESC,
+                               run_id DESC, mission_id, workflow_id, domain, status,
+                               lifecycle_phase, lifecycle_message, source,
+                               current_step_id, started_at, created_at,
+                               runtime_revision)""",
+                ),
+            ):
+                indexed = {
+                    str(row[2])
+                    for row in conn.execute(f"PRAGMA index_info({index_name})").fetchall()
+                }
+                if "record_state" not in indexed:
+                    conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+                conn.execute(index_sql)
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS lifecycle_outbox (
                        event_id TEXT PRIMARY KEY,

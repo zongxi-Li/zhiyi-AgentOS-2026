@@ -92,6 +92,12 @@ class MissionRecordState(str, Enum):
     DELETED = "deleted"
 
 
+class RunRecordState(str, Enum):
+    """Run 在用户运行列表中的管理状态，与执行生命周期正交；仅终态 Run 可删除。"""
+    ACTIVE = "active"
+    DELETED = "deleted"
+
+
 class WorkflowDefinitionType(str, Enum):
     """区分可执行模板与规划器引导定义；两者的注册身份相同但运行入口不同。"""
 
@@ -419,6 +425,9 @@ class RuntimeRunRecord(CoreModel):
     execution_state: Dict[str, Any] = Field(default_factory=dict, alias="executionState")
     created_at: datetime = Field(default_factory=utc_now, alias="createdAt")
     updated_at: datetime = Field(default_factory=utc_now, alias="updatedAt")
+    # Run 记录管理状态：软删除标记，与执行生命周期正交；历史载荷缺省视为 active。
+    record_state: RunRecordState = Field(default=RunRecordState.ACTIVE, alias="recordState")
+    deleted_at: Optional[datetime] = Field(default=None, alias="deletedAt")
     # Run 投影版本不属于 ACGExecutionState，因此不会污染确定性 checkpoint。
     # 历史 Run 缺少该字段时由 Pydantic 回退为 0，查询层仍可使用 updatedAt。
     runtime_revision: int = Field(default=0, alias="runtimeRevision", ge=0)

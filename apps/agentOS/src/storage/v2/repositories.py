@@ -514,7 +514,10 @@ class SQLiteRunRepository(_SQLiteRepository):
     def list_for_mission(self, mission_id: MissionId) -> list[WorkflowRun]:
         with self.storage.read() as conn:
             rows = conn.execute(
-                "SELECT * FROM workflow_runs_v2 WHERE mission_id = ? ORDER BY rowid",
+                """SELECT * FROM workflow_runs_v2
+                   WHERE mission_id = ?
+                     AND COALESCE(json_extract(metadata_json, '$.recordState'), 'active') != 'deleted'
+                   ORDER BY rowid""",
                 (mission_id,),
             ).fetchall()
         return [self._from_row(row) for row in rows]
@@ -530,6 +533,7 @@ class SQLiteRunRepository(_SQLiteRepository):
             rows = conn.execute(
                 f"""SELECT * FROM workflow_runs_v2
                     WHERE mission_id IN ({placeholders})
+                      AND COALESCE(json_extract(metadata_json, '$.recordState'), 'active') != 'deleted'
                     ORDER BY mission_id, rowid""",
                 requested_ids,
             ).fetchall()
@@ -633,6 +637,13 @@ class SQLiteRunRepository(_SQLiteRepository):
         run = self.get(run_id)
         assert run is not None
         return run
+
+    def mark_deleted(self, run_id: RunId) -> WorkflowRun:
+        """软删除：把 ``recordState=deleted`` 并入 Run metadata，使其退出全部列表查询。
+
+        只合并不覆盖，后续 lifecycle 投影只更新状态/时间列，不会冲掉该标记。
+        """
+        return self.merge_metadata(run_id, {"recordState": "deleted"})
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> WorkflowRun:

@@ -108,4 +108,56 @@ describe('WorkbenchStatusBar', () => {
     expect(wrapper.emitted('rerun')).toBeUndefined()
     wrapper.unmount()
   })
+
+  it('offers delete only for terminal runs and emits delete-run without switching selection', async () => {
+    const wrapper = mount(WorkbenchStatusBar, {
+      props: {
+        tabs,
+        modelValue: 'problems',
+        collapsed: false,
+        runId: 'run_2',
+        runStatus: 'running',
+        runs: [
+          { runId: 'run_1', status: 'succeeded' },
+          { runId: 'run_2', status: 'running' },
+          { runId: 'run_3', status: 'failed' }
+        ],
+        deletingRunId: null
+      }
+    })
+
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    // 活跃 Run（running）不出现删除按钮，终态 Run 各有一个；当前 Run 置顶后
+    // 第一个删除按钮属于 run_1（succeeded）。
+    const deleteButtons = wrapper.findAll('.workbench-status-bar__run-delete')
+    expect(deleteButtons).toHaveLength(2)
+
+    await deleteButtons[0].trigger('click')
+    expect(wrapper.emitted('delete-run')).toEqual([['run_1']])
+
+    // 点击删除不应触发所在行的 select-run。
+    expect(wrapper.emitted('select-run')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('disables the delete button while that run deletion is in flight', async () => {
+    const wrapper = mount(WorkbenchStatusBar, {
+      props: {
+        tabs,
+        modelValue: 'problems',
+        collapsed: false,
+        runId: 'run_1',
+        runStatus: 'succeeded',
+        runs: [{ runId: 'run_1', status: 'succeeded' }],
+        deletingRunId: 'run_1'
+      }
+    })
+
+    await wrapper.find('.workbench-status-bar__run-trigger').trigger('click')
+    const button = wrapper.find('.workbench-status-bar__run-delete')
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('delete-run')).toBeUndefined()
+    wrapper.unmount()
+  })
 })

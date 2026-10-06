@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Generic, Sequence, TypeVar
 
-from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
+from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 
 
 T = TypeVar("T")
@@ -291,6 +291,11 @@ class WorkflowStore(ABC):
     @abstractmethod
     def delete_run(self, run_id: str, *, delete_orphan_mission: bool = True) -> RuntimeRunRecordDeleteResult:
         """删除终态运行，可选清除无其他运行引用的任务；未终态时抛出专用错误。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_run_record_state(self, run_id: str, state: RunRecordState) -> RuntimeRunRecord:
+        """原子校验 Run 已终止并更新其用户管理状态（软删除）；未终态时抛出专用错误。"""
         raise NotImplementedError
 
     @abstractmethod
