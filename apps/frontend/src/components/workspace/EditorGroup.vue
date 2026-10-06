@@ -40,7 +40,8 @@
           @click="emit('selectAuxiliary', view.id)"
         >
           <span class="editor-auxiliary-trigger__mark" aria-hidden="true">
-            <el-icon><component :is="view.icon" /></el-icon>
+            <img v-if="view.iconImage" class="editor-auxiliary-trigger__img" :src="view.iconImage" alt="" />
+            <el-icon v-else><component :is="view.icon" /></el-icon>
           </span>
         </button>
         <button
@@ -269,6 +270,7 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   font-size: 15px;
   transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out), color 140ms var(--ease-out), box-shadow 140ms var(--ease-out);
 }
+.editor-auxiliary-trigger__img { width: 16px; height: 16px; object-fit: contain; }
 .editor-inspector-trigger:hover .editor-inspector-trigger__mark,
 .editor-inspector-trigger:focus-visible .editor-inspector-trigger__mark,
 .editor-auxiliary-trigger:hover .editor-auxiliary-trigger__mark,

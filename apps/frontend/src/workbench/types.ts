@@ -86,6 +86,8 @@ export interface AuxiliaryViewContribution {
   title: string
   order: number
   icon?: Component
+  /** 图片图标（如品牌花环）；设置后触发按钮优先渲染它而非 icon 组件 */
+  iconImage?: string
   component: Component
   when: (context: WorkbenchContext) => boolean
   getProps?: (context: WorkbenchContext) => Record<string, unknown>
