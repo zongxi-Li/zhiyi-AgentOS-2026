@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from components.resource.embedded_runtime import register_embedded_agents_runtime
+from components.resource.embedded_runtime import register_embedded_agents_runtime, EMBEDDED_AGENTS_RUNTIME_ID
 from components.resource.service import ResourcePlane
 from contracts.authority import RuntimeResourceId
 from contracts.compiled_acg import BindingManifest
@@ -90,6 +90,11 @@ class RuntimeBindingService:
         run.execution_state.pop("nodeAgentBindings", None)
         run.execution_state["bindingRequirements"] = requirements
         run.execution_state["modelBindings"] = model_bindings
+
+    def refresh_embedded_runtime(self) -> None:
+        """The local process owns this liveness signal, including while idle."""
+        register_embedded_agents_runtime(self.resource_plane, self.agent_registry.all())
+        self.resource_plane.heartbeat_runtime(EMBEDDED_AGENTS_RUNTIME_ID, source="local")
 
     def validate_blueprint_agents(
         self,

@@ -3,7 +3,9 @@
 from components.auditor.artifact_acceptance import OBSERVATION_EXCERPT_BYTES, inspect_artifact
 from components.auditor.task_acceptance import evaluate_task_acceptance
 from contracts.planning import TaskPlan, TaskImplementationBinding
-from contracts.runtime_planning import RuntimePlanningObservation, RuntimePlanningState, StepObservation
+from contracts.runtime_planning import (RuntimePlanningObservation, RuntimePlanningState, StepObservation,
+    RuntimeResourceObservation, RuntimeResourceCandidate, RuntimeResourceFailover, requirement_fingerprint)
+from contracts.resource import ExecutionRequirement
 from contracts.workflow import StepStatus, TraceEventType
 from contracts.task_acceptance import frozen_task_acceptance
 from runtime.ports import CollaboratorAccess
@@ -110,15 +112,48 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             for p in self.resource_plane.nodes()
         )
         planning = RuntimePlanningState.model_validate(run.execution_state.get("planningLoop") or {})
+        requirements = run.execution_state.get("bindingRequirements") or {}
+        # Prefer failed steps; cap the observation rather than exporting the registry.
+        targets = sorted(remaining, key=lambda step_id: (run.get_step(step_id).status != StepStatus.FAILED,
+            remaining.index(step_id)))[:16]
+        resource_facts = []
+        for step_id in targets:
+            if step_id not in requirements:
+                continue
+            requirement = ExecutionRequirement.model_validate(requirements[step_id])
+            readiness = self.resource_binder.assess(requirement)
+            candidates = readiness.candidates[:16]
+            nodes = {self.resource_plane.runtime(c.resource_id).node_id for c in candidates}
+            resource_facts.append(RuntimeResourceObservation(
+                stepId=step_id, requirementId=requirement_fingerprint(requirement),
+                requiredCapabilities=tuple(requirement.required_capabilities),
+                runtimeKinds=tuple(k.value for k in requirement.runtime_kinds),
+                allowedPlacements=tuple(p.value for p in requirement.allowed_placements),
+                minTrust=requirement.min_trust.value if requirement.min_trust else None,
+                domain=requirement.domain, maxCost=requirement.max_cost,
+                maxLatencyMs=requirement.max_latency_ms, allowRemoteExecution=requirement.allow_remote_execution,
+                modelDemand=requirement.model, ready=readiness.ready, reason=readiness.reason,
+                candidates=tuple(RuntimeResourceCandidate(runtimeId=c.resource_id, accepted=c.accepted,
+                    reasons=tuple(r.value for r in c.reasons), snapshotVersion=readiness.runtime_versions[c.resource_id])
+                    for c in candidates), candidateCount=len(readiness.candidates),
+                nodeVersions={n: readiness.node_versions[n] for n in sorted(nodes)},
+                modelEndpointVersions=dict(list(readiness.model_endpoint_versions.items())[:16]),
+            ))
+        failovers = tuple(RuntimeResourceFailover(stepId=item["stepId"], runtimeId=item["resourceId"])
+            for item in (run.execution_state.get("resourceFailoverHistory") or [])[-16:]
+            if isinstance(item, dict) and item.get("stepId") and item.get("resourceId"))
         return RuntimePlanningObservation(
             missionId=run.mission_id, runId=run.run_id, graphId=state.graph_id,
             graphVersion=state.graph_version, planVersion=plan.plan_version,
             checkpointId=state.checkpoint_id, wakeReason=reason, goal=self.load_goal(run.mission_id),
             steps=tuple(facts), remainingStepIds=remaining,
             failureId=failure.get("failureId"), failureType=failure.get("failureType"),
+            failureReason=failure.get("reasonCode"), failureSource=failure.get("source"),
+            failureStepId=(failure.get("details") or {}).get("stepId"),
             recoveryAction=(run.execution_state.get("recoveryOutcome") or {}).get("action") if failure else None,
             failedStepIds=tuple(s.step_id for s in run.steps if s.status == StepStatus.FAILED),
             completionBlockers=tuple(blockers), resources=resources,
+            resourceRequirements=tuple(resource_facts), resourceFailovers=failovers,
             taskAcceptance=acceptance, taskAcceptanceResults=acceptance_results,
             conditionWake=planning.waiting.wake if reason == "condition" and planning.waiting else None,
             humanAnswers=planning.human_answers,

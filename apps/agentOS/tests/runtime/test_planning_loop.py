@@ -639,6 +639,8 @@ def test_reference_only_round_fingerprint_remains_backward_compatible():
     old_payload.pop("conditionWake")
     old_payload.pop("humanAnswers")
     old_payload.pop("userInputs")
+    for key in ("failureReason", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
+        old_payload.pop(key)
     for step in old_payload["steps"]:
         step.pop("artifactEvidence")
     digest = hashlib.sha256(json.dumps(old_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()

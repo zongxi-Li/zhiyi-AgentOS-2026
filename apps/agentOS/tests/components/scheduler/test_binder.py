@@ -311,6 +311,51 @@ def test_evaluate_is_read_only() -> None:
     assert plane.runtime_snapshot("runtime:edge-exec-1") == before
 
 
+def test_assessment_checks_model_and_actual_lease_capacity_without_reserving():
+    plane = _plane()
+    _register(plane, "runtime:edge-exec-1", capacity=1)
+    binder = ResourceBinder(plane)
+    demand = _requirement(model=ModelDemand(requiredFeatures=["json_schema"]))
+    assert binder.assess(demand).reason == "NO_MODEL_ENDPOINT"
+    plane.upsert_model_endpoint(ModelEndpointProfile(endpointId="model:fixture", provider="fixture",
+        model="fixture", features={"jsonSchema": True}))
+    before = plane.runtime_snapshot("runtime:edge-exec-1")
+    assert binder.assess(demand).ready
+    assert binder.coordinator.active_slots("runtime:edge-exec-1") == 0
+    assert plane.runtime_snapshot("runtime:edge-exec-1") == before
+    binding = binder.bind_ready(run_id="other", step_id="busy", attempt_id="1", requirement=demand)
+    assert binder.assess(demand).reason == "NO_CAPACITY"
+    # Repeated allocation of the same attempt remains idempotent when full.
+    again = binder.bind_ready(run_id="other", step_id="busy", attempt_id="1", requirement=demand)
+    assert again.lease.lease_id == binding.lease.lease_id
+    binder.release(binding.lease.lease_id)
+    assert binder.assess(demand).ready
+
+
+def test_zero_snapshot_slots_are_temporary_capacity_not_fatal_ineligibility():
+    plane = _plane()
+    profile = _register(plane, "runtime:edge-exec-1")
+    snapshot = plane.runtime_snapshot(profile.runtime_id)
+    plane.store.update_snapshot(snapshot.snapshot.model_copy(update={"available_slots": 0}),
+        expected_version=snapshot.version)
+    binder = ResourceBinder(plane)
+    assert binder.assess(_requirement()).reason == "NO_CAPACITY"
+    result = binder.bind_ready(run_id="run", step_id="step", attempt_id="1", requirement=_requirement())
+    assert result.reason == "NO_CAPACITY" and result.reason not in FATAL_SCHEDULING_REASONS
+
+
+def test_unavailable_coordination_never_claims_readiness():
+    from components.scheduler.models import SchedulerUnavailable
+    plane = _plane()
+    _register(plane, "runtime:edge-exec-1")
+    class Unavailable:
+        def active_slots(self, resource_id, *, now=None):
+            raise SchedulerUnavailable("unavailable")
+    binder = ResourceBinder(plane, coordinator=Unavailable())
+    report = binder.assess(_requirement())
+    assert not report.ready and report.reason == "COORDINATION_UNAVAILABLE"
+
+
 def test_lease_ttl_expires_and_capacity_recovers() -> None:
     from datetime import datetime, timezone
 

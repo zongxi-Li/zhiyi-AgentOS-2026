@@ -52,6 +52,13 @@ def failure_event_from_exception(
             retryable = False
     else:
         resolved_source, failure_type, reason_code, retryable = mapped
+    details = {"exceptionType": type(classified).__name__}
+    if type(classified).__name__ in {"SchedulerNoEligibleResource", "SchedulerAllocationTimeout"}:
+        structured_reason = getattr(classified, "reason_code", None)
+        if structured_reason in {"NO_ELIGIBLE_RESOURCE", "NO_MODEL_ENDPOINT", "SCHEDULER_CAPACITY_TIMEOUT"}:
+            reason_code = structured_reason
+        details.update(stepId=getattr(classified, "step_id", None),
+            candidateReasons=getattr(classified, "candidate_reasons", []))
     message = str(classified).strip() or type(classified).__name__
     digest = hashlib.sha256(
         f"{subject_ref}|{resolved_source.value}|{reason_code}|{message}".encode("utf-8")
@@ -64,7 +71,7 @@ def failure_event_from_exception(
         reasonCode=reason_code,
         message=message[:500],
         retryable=retryable,
-        details={"exceptionType": type(classified).__name__},
+        details=details,
     )
 
 

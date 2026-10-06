@@ -1,6 +1,7 @@
 """Planner's fresh-state runtime decision boundary. No runtime mutation authority."""
 
 import json
+from datetime import datetime, timezone
 
 from contracts.planning import TaskPlan
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation
@@ -21,6 +22,7 @@ def decide_runtime(*, observation: RuntimePlanningObservation, task_plan: TaskPl
         )
         return RuntimePlanningDecision(observationId=observation_id, action=action, reason="Deterministic Planner policy over current persisted facts")
     prompt = json.dumps({
+        "currentTime": datetime.now(timezone.utc).isoformat(),
         "observationId": observation_id,
         "observation": observation.model_dump(by_alias=True, mode="json"),
         "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
@@ -43,6 +45,15 @@ def decide_runtime(*, observation: RuntimePlanningObservation, task_plan: TaskPl
             "resource bindings, executable nodes or bypass human review. wait preserves state for external "
             "resolution; optional waitFor declares either until with a timezone-aware notBefore, or "
             "node_available with an observed nodeId. The latter observes readiness, not a lease or binding. "
+            "For resource blockers, prefer requirement_available with an observed remaining stepId, its "
+            "exact requirementId and a timezone-aware expiresAt within the next 24 hours. resourceRequirements "
+            "are bounded Binder assessments of frozen task demand, not authority to select resources or weaken "
+            "constraints. NO_MODEL_ENDPOINT differs from NO_ELIGIBLE_RESOURCE and temporary NO_CAPACITY. "
+            "An online node alone cannot resolve a missing runtime capability or model feature. "
+            "resourceFailovers list prior deterministic failover attempts, not successful work. "
+            "When conditionWake.outcome is expired, ask for external resolution, revise or abort rather than "
+            "blindly retrying. Readiness never reserves capacity; failed work still requires Recovery, which "
+            "may refuse unsupported control state. Use failureReason and failureSource to distinguish blockers. "
             "Without waitFor or question, wait requires explicit external review. "
             "If a missing user choice or clarification blocks progress, wait with question: a concise prompt "
             "and optional choices (at most five). Do not ask the user to approve completed work through a question. "

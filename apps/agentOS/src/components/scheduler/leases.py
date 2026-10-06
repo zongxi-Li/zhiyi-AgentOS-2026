@@ -69,6 +69,8 @@ return active_slots
 
 
 class LeaseCoordinator(Protocol):
+    def active_slots(self, resource_id: str, *, now: datetime | None = None) -> int: ...
+
     def acquire(
         self,
         *,

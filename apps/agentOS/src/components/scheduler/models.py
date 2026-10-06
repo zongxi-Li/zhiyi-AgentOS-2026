@@ -56,6 +56,19 @@ class ReadyNodeSchedulingResult(BaseModel):
     reason: str | None = None
 
 
+class RequirementReadiness(BaseModel):
+    """Current eligibility evidence; no reservation or execution authorization."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+    ready: bool
+    reason: str | None = None
+    candidates: list[CandidateDecision] = Field(default_factory=list)
+    runtime_versions: dict[str, int] = Field(default_factory=dict, alias="runtimeVersions")
+    node_versions: dict[str, int] = Field(default_factory=dict, alias="nodeVersions")
+    model_endpoint_versions: dict[str, int] = Field(default_factory=dict, alias="modelEndpointVersions")
+    available_runtime_ids: tuple[str, ...] = Field(default=(), alias="availableRuntimeIds")
+
+
 class SchedulerUnavailable(RuntimeError):
     """Coordination state cannot safely allocate a lease."""
 
@@ -63,9 +76,27 @@ class SchedulerUnavailable(RuntimeError):
 class SchedulerNoEligibleResource(RuntimeError):
     """The frozen binding policy has no executable resource in this Runtime."""
 
+    def __init__(self, message: str, *, reason="NO_ELIGIBLE_RESOURCE", step_id=None, candidates=()):
+        super().__init__(message)
+        self.reason_code = reason
+        self.step_id = step_id
+        self.candidate_reasons = [
+            {"resourceId": item.resource_id, "reasons": [r.value for r in item.reasons]}
+            for item in candidates[:16]
+        ]
+
 
 class SchedulerAllocationTimeout(TimeoutError):
     """A READY node could not obtain capacity within its bounded queue window."""
+
+    def __init__(self, message: str, *, step_id=None, candidates=()):
+        super().__init__(message)
+        self.reason_code = "SCHEDULER_CAPACITY_TIMEOUT"
+        self.step_id = step_id
+        self.candidate_reasons = [
+            {"resourceId": item.resource_id, "reasons": [r.value for r in item.reasons]}
+            for item in candidates[:16]
+        ]
 
 
 __all__ = [
@@ -73,6 +104,7 @@ __all__ = [
     "CandidateDecision",
     "FilterReason",
     "ReadyNodeSchedulingResult",
+    "RequirementReadiness",
     "SchedulerAllocationTimeout",
     "SchedulerNoEligibleResource",
     "SchedulerUnavailable",

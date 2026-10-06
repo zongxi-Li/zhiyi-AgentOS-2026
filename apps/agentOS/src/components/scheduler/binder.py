@@ -25,7 +25,7 @@ from contracts.resource import (
 )
 
 from .leases import InMemoryLeaseCoordinator, LeaseCoordinator
-from .models import CandidateDecision, FilterReason, ReadyNodeSchedulingResult
+from .models import CandidateDecision, FilterReason, ReadyNodeSchedulingResult, RequirementReadiness, SchedulerUnavailable
 
 #: 路由先验的最大评分权重；语义提示永远无法逆转硬约束排序一个数量级。
 _ROUTING_HINT_WEIGHT = 0.05
@@ -196,6 +196,39 @@ class ResourceBinder:
         decisions.sort(key=lambda item: (not item.accepted, -(item.score or 0.0), item.resource_id))
         return decisions
 
+    def assess(self, requirement: ExecutionRequirement, *, now: datetime | None = None) -> RequirementReadiness:
+        """Inspect runtime, model and lease capacity through the existing authorities.
+
+        Reading active slots may expire old leases, but never acquires a lease.
+        This is a readiness hint: bind_ready must still perform atomic allocation.
+        """
+        current = now or datetime.now(timezone.utc)
+        candidates = self.evaluate(requirement, now=current)
+        eligible = [c for c in candidates if not set(c.reasons) - {FilterReason.NO_CAPACITY}]
+        endpoints = self.plane.model_candidates(requirement.model, now=current) if requirement.model else []
+        runtime_versions = {c.resource_id: self.plane.runtime_snapshot(c.resource_id).version for c in candidates}
+        node_ids = {self.plane.runtime(c.resource_id).node_id for c in candidates}
+        node_versions = {node_id: self.plane.node_snapshot(node_id).version for node_id in node_ids}
+        model_versions = {c.endpoint.endpoint_id: c.endpoint.version for c in endpoints}
+        reason = None
+        available = ()
+        if not eligible:
+            reason = "NO_ELIGIBLE_RESOURCE"
+        elif requirement.model and not endpoints:
+            reason = "NO_MODEL_ENDPOINT"
+        else:
+            try:
+                available = tuple(c.resource_id for c in eligible if c.accepted
+                    and self.coordinator.active_slots(c.resource_id, now=current)
+                    < self.plane.runtime(c.resource_id).capacity)
+                if not available:
+                    reason = "NO_CAPACITY"
+            except SchedulerUnavailable:
+                reason = "COORDINATION_UNAVAILABLE"
+        return RequirementReadiness(ready=reason is None, reason=reason, candidates=candidates,
+            runtimeVersions=runtime_versions, nodeVersions=node_versions, modelEndpointVersions=model_versions,
+            availableRuntimeIds=available)
+
     def bind_ready(
         self,
         *,
@@ -207,25 +240,24 @@ class ResourceBinder:
     ) -> ReadyNodeSchedulingResult:
         """为 READY 步骤选择 Runtime、授予租约并冻结执行绑定。"""
         current = now or datetime.now(timezone.utc)
-        evaluations = self.evaluate(requirement, now=current)
+        assessment = self.assess(requirement, now=current)
+        evaluations = assessment.candidates
         model_binding = None
         if requirement.model is not None:
-            endpoints = self.plane.model_candidates(requirement.model, now=current)
-            if endpoints:
-                best = endpoints[0].endpoint
+            if assessment.model_endpoint_versions:
+                best = self.plane.model_endpoint(next(iter(assessment.model_endpoint_versions)))
                 model_binding = ModelEndpointBinding(
                     endpointId=best.endpoint_id,
                     provider=best.provider,
                     model=best.model,
                     version=best.model_version,
                 )
-        has_accepted = any(item.accepted for item in evaluations)
-        if requirement.model is not None and model_binding is None and has_accepted:
+        if assessment.reason in {"NO_MODEL_ENDPOINT", "NO_ELIGIBLE_RESOURCE"}:
             # 有可执行后端但模型端点缺失是配置缺口，不是容量问题。
             return ReadyNodeSchedulingResult(
                 status="queued",
                 candidates=evaluations,
-                reason="NO_MODEL_ENDPOINT",
+                reason=assessment.reason,
             )
         for decision in evaluations:
             if not decision.accepted:
@@ -292,7 +324,7 @@ class ResourceBinder:
         return ReadyNodeSchedulingResult(
             status="queued",
             candidates=evaluations,
-            reason="NO_CAPACITY" if has_accepted else "NO_ELIGIBLE_RESOURCE",
+            reason="NO_CAPACITY",
         )
 
     def release(self, lease_id: str) -> bool:

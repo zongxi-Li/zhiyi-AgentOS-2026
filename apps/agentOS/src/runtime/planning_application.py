@@ -4,9 +4,12 @@ Called under the facade's short run lock. It neither invokes a model nor owns
 execution, locking, graph mutation algorithms or a second lifecycle.
 """
 
+from datetime import timedelta
+
 from contracts.execution import WorkflowProgressPhase
 from contracts.recovery import GraphPatchResult, SemanticPatchRequest
-from contracts.runtime_planning import RuntimePlanningWait
+from contracts.runtime_planning import RuntimePlanningWait, requirement_fingerprint
+from contracts.resource import ExecutionRequirement
 from contracts.workflow import WorkflowStatus, utc_now
 from runtime.ports import CollaboratorAccess
 
@@ -28,6 +31,15 @@ class RuntimePlanningApplication(CollaboratorAccess):
         if decision.wait_for is not None:
             if decision.wait_for.kind == "node_available":
                 self.resource_plane.node(decision.wait_for.node_id)
+            if decision.wait_for.kind == "requirement_available":
+                condition = decision.wait_for
+                now = utc_now()
+                if not now < condition.expires_at <= now + timedelta(hours=24):
+                    raise ValueError("resource wait deadline must be within the next 24 hours")
+                requirement = ExecutionRequirement.model_validate(
+                    run.execution_state["bindingRequirements"][condition.step_id])
+                if requirement_fingerprint(requirement) != condition.requirement_id:
+                    raise ValueError("resource wait targets a changed frozen requirement")
             waiting = RuntimePlanningWait(observationId=observation.fingerprint(), condition=decision.wait_for)
         loop = loop.model_copy(update={"waiting": waiting, "user_input_pending": False})
         run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
@@ -44,6 +56,14 @@ class RuntimePlanningApplication(CollaboratorAccess):
             run.__dict__.update(failed.__dict__)
             return "stop"
         if decision.action == "recover":
+            if observation.failure_source == "scheduler":
+                requirement = ExecutionRequirement.model_validate(
+                    run.execution_state["bindingRequirements"][observation.failed_step_ids[0]])
+                fact = next(r for r in observation.resource_requirements
+                    if r.step_id == observation.failed_step_ids[0])
+                if (requirement_fingerprint(requirement) != fact.requirement_id
+                        or not self.resource_binder.assess(requirement).ready):
+                    raise ValueError("resource eligibility changed while Planner was deciding")
             # Reuse the Recovery authority's full validation before terminalizing
             # the source. A rejected proposal must leave a recoverable wait barrier.
             self.recovery.prepare_single_step_retry(

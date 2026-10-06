@@ -12,6 +12,12 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 from contracts.artifacts import ArtifactEvidence
 from contracts.planning import TaskPlanPatch
 from contracts.task_acceptance import TaskAcceptanceSpec, TaskAcceptanceResult
+from contracts.resource import ExecutionRequirement, ModelDemand
+
+
+def requirement_fingerprint(requirement: ExecutionRequirement) -> str:
+    return hashlib.sha256(json.dumps(requirement.model_dump(by_alias=True, mode="json"),
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 class PlanningContract(BaseModel):
@@ -21,12 +27,21 @@ class PlanningContract(BaseModel):
 class RuntimeWaitCondition(PlanningContract):
     """Finite readiness predicates; neither callbacks nor execution approval."""
 
-    kind: Literal["until", "node_available"]
+    kind: Literal["until", "node_available", "requirement_available"]
     not_before: AwareDatetime | None = Field(default=None, alias="notBefore")
     node_id: str | None = Field(default=None, alias="nodeId", min_length=1, max_length=128)
+    step_id: str | None = Field(default=None, alias="stepId", min_length=1, max_length=128)
+    requirement_id: str | None = Field(default=None, alias="requirementId", min_length=64, max_length=64)
+    expires_at: AwareDatetime | None = Field(default=None, alias="expiresAt")
 
     @model_validator(mode="after")
     def exact_condition(self):
+        if self.kind == "requirement_available":
+            if (not self.step_id or not self.requirement_id or self.expires_at is None
+                    or self.node_id is not None or self.not_before is not None):
+                raise ValueError("requirement_available requires only stepId, requirementId and expiresAt")
+        elif any(value is not None for value in (self.step_id, self.requirement_id, self.expires_at)):
+            raise ValueError("only requirement_available can carry a frozen requirement and deadline")
         if self.kind == "until" and (self.not_before is None or self.node_id is not None):
             raise ValueError("until requires only a timezone-aware notBefore")
         if self.kind == "node_available" and (self.node_id is None or self.not_before is not None):
@@ -41,6 +56,17 @@ class RuntimeConditionWake(PlanningContract):
     node_snapshot_version: int | None = Field(default=None, alias="nodeSnapshotVersion")
     node_observation_sequence: int | None = Field(default=None, alias="nodeObservationSequence")
     node_health: Literal["online"] | None = Field(default=None, alias="nodeHealth")
+    outcome: Literal["ready", "expired"] | None = None
+    runtime_versions: dict[str, int] = Field(default_factory=dict, alias="runtimeVersions")
+    node_versions: dict[str, int] = Field(default_factory=dict, alias="nodeVersions")
+    model_endpoint_versions: dict[str, int] = Field(default_factory=dict, alias="modelEndpointVersions")
+
+    @model_validator(mode="after")
+    def resource_proof(self):
+        if self.condition.kind == "requirement_available":
+            if self.outcome is None or (self.outcome == "ready" and not self.runtime_versions):
+                raise ValueError("resource wake requires readiness evidence or explicit expiry")
+        return self
 
 
 class RuntimePlanningWait(PlanningContract):
@@ -48,6 +74,12 @@ class RuntimePlanningWait(PlanningContract):
     condition: RuntimeWaitCondition
     armed_at: AwareDatetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="armedAt")
     wake: RuntimeConditionWake | None = None
+
+    @model_validator(mode="after")
+    def wake_ownership(self):
+        if self.wake and (self.wake.observation_id != self.observation_id or self.wake.condition != self.condition):
+            raise ValueError("planning wake must belong to its original wait")
+        return self
 
 
 class RuntimeQuestion(PlanningContract):
@@ -93,6 +125,38 @@ class RuntimeUserInput(PlanningContract):
     submitted_at: AwareDatetime = Field(alias="submittedAt")
 
 
+class RuntimeResourceCandidate(PlanningContract):
+    runtime_id: str = Field(alias="runtimeId")
+    accepted: bool
+    reasons: tuple[str, ...] = ()
+    snapshot_version: int = Field(alias="snapshotVersion")
+
+
+class RuntimeResourceObservation(PlanningContract):
+    step_id: str = Field(alias="stepId")
+    requirement_id: str = Field(alias="requirementId")
+    required_capabilities: tuple[str, ...] = Field(alias="requiredCapabilities")
+    runtime_kinds: tuple[str, ...] = Field(alias="runtimeKinds")
+    allowed_placements: tuple[str, ...] = Field(alias="allowedPlacements")
+    min_trust: str | None = Field(default=None, alias="minTrust")
+    domain: str | None = None
+    max_cost: float | None = Field(default=None, alias="maxCost")
+    max_latency_ms: float | None = Field(default=None, alias="maxLatencyMs")
+    allow_remote_execution: bool = Field(default=True, alias="allowRemoteExecution")
+    model_demand: ModelDemand | None = Field(default=None, alias="modelDemand")
+    ready: bool
+    reason: str | None = None
+    candidates: tuple[RuntimeResourceCandidate, ...] = Field(default=(), max_length=16)
+    candidate_count: int = Field(alias="candidateCount", ge=0)
+    node_versions: dict[str, int] = Field(default_factory=dict, alias="nodeVersions")
+    model_endpoint_versions: dict[str, int] = Field(default_factory=dict, alias="modelEndpointVersions")
+
+
+class RuntimeResourceFailover(PlanningContract):
+    step_id: str = Field(alias="stepId")
+    runtime_id: str = Field(alias="runtimeId")
+
+
 class RuntimePlanningObservation(PlanningContract):
     mission_id: str = Field(alias="missionId")
     run_id: str = Field(alias="runId")
@@ -106,11 +170,16 @@ class RuntimePlanningObservation(PlanningContract):
     remaining_step_ids: tuple[str, ...] = Field(alias="remainingStepIds")
     failure_id: str | None = Field(default=None, alias="failureId")
     failure_type: str | None = Field(default=None, alias="failureType")
+    failure_reason: str | None = Field(default=None, alias="failureReason")
+    failure_source: str | None = Field(default=None, alias="failureSource")
+    failure_step_id: str | None = Field(default=None, alias="failureStepId")
     recovery_action: str | None = Field(default=None, alias="recoveryAction")
     failed_step_ids: tuple[str, ...] = Field(default=(), alias="failedStepIds")
     completion_blockers: tuple[str, ...] = Field(default=(), alias="completionBlockers")
     # Resource truth comes from the existing directory/health services, never a model.
     resources: tuple[tuple[str, str], ...] = ()
+    resource_requirements: tuple[RuntimeResourceObservation, ...] = Field(default=(), alias="resourceRequirements", max_length=16)
+    resource_failovers: tuple[RuntimeResourceFailover, ...] = Field(default=(), alias="resourceFailovers", max_length=16)
     task_acceptance: TaskAcceptanceSpec | None = Field(default=None, alias="taskAcceptance")
     task_acceptance_results: tuple[TaskAcceptanceResult, ...] = Field(default=(), alias="taskAcceptanceResults")
     condition_wake: RuntimeConditionWake | None = Field(default=None, alias="conditionWake")
@@ -119,6 +188,16 @@ class RuntimePlanningObservation(PlanningContract):
 
     def fingerprint(self) -> str:
         payload = self.model_dump(by_alias=True, mode="json")
+        for key in ("failureReason", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
+            if not payload[key]:
+                del payload[key]
+        if payload["conditionWake"] is not None:
+            for key in ("outcome", "runtimeVersions", "nodeVersions", "modelEndpointVersions"):
+                if not payload["conditionWake"][key]:
+                    del payload["conditionWake"][key]
+            for key in ("stepId", "requirementId", "expiresAt"):
+                if payload["conditionWake"]["condition"][key] is None:
+                    del payload["conditionWake"]["condition"][key]
         if not payload["humanAnswers"]:
             del payload["humanAnswers"]
         if not payload["userInputs"]:

@@ -1765,6 +1765,10 @@ class ExecutionRuntime(CollaboratorAccess):
                 break
             page += 1
             await asyncio.sleep(0)
+        if any(((self.workflow_store.get_run(run_id).execution_state.get("planningLoop") or {})
+                .get("waiting") or {}).get("condition", {}).get("kind") == "requirement_available"
+                for run_id in candidates):
+            self.runtime_binding_service.refresh_embedded_runtime()
         ready = []
         for run_id in candidates:
             async with self.run_lock_manager.lock_for(run_id):

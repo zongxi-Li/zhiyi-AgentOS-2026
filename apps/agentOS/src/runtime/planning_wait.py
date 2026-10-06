@@ -2,7 +2,8 @@
 
 from components.executor import ACGExecutionState
 from contracts.execution import WorkflowProgressPhase
-from contracts.runtime_planning import RuntimeConditionWake, RuntimePlanningState
+from contracts.runtime_planning import RuntimeConditionWake, RuntimePlanningState, requirement_fingerprint
+from contracts.resource import ExecutionRequirement
 from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
 from runtime.ports import CollaboratorAccess
 from runtime.state_persistence import acg_execution_state_from_run
@@ -72,6 +73,25 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         if condition.kind == "until":
             if timestamp < condition.not_before:
                 return False
+        elif condition.kind == "requirement_available":
+            if condition.step_id in set(state.completed_step_ids) | set(state.skipped_step_ids):
+                raise ValueError("resource wait targets settled work")
+            requirement = ExecutionRequirement.model_validate(
+                run.execution_state["bindingRequirements"][condition.step_id])
+            if requirement_fingerprint(requirement) != condition.requirement_id:
+                raise ValueError("resource wait requirement changed after arming")
+            if timestamp >= condition.expires_at:
+                proof = {"outcome": "expired"}
+            else:
+                readiness = self.resource_binder.assess(requirement, now=timestamp)
+                if not readiness.ready:
+                    return False
+                accepted = readiness.available_runtime_ids[:16]
+                nodes = {self.resource_plane.runtime(runtime_id).node_id for runtime_id in accepted}
+                proof = {"outcome": "ready",
+                    "runtimeVersions": {r: readiness.runtime_versions[r] for r in accepted},
+                    "nodeVersions": {n: readiness.node_versions[n] for n in sorted(nodes)},
+                    "modelEndpointVersions": dict(list(readiness.model_endpoint_versions.items())[:16])}
         else:
             try:
                 profile = self.resource_plane.node(condition.node_id)

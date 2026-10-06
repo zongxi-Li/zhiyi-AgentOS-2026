@@ -85,12 +85,19 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             loop = loop.model_copy(update={"last_verification_refs": refs})
         if reason in {"resume", "restart"} and any(s.status == StepStatus.FAILED for s in run.steps):
             reason = "failure"
-        if reason in {"resume", "restart"} and loop.current and loop.current.status in {"observed", "decided"}:
+        replayed_observation = None
+        if reason in {"resume", "restart", "failure"} and loop.current and loop.current.status in {"observed", "decided"}:
             previous = loop.current.observation
             replay = self.observe(run, state, previous.wake_reason)
+            if not previous.resource_requirements and previous.failure_source is None:
+                # Rounds written before resource observations retain their
+                # original idempotency identity and already-persisted decision.
+                replay = replay.model_copy(update={"resource_requirements": (), "resource_failovers": (),
+                    "failure_reason": None, "failure_source": None, "failure_step_id": None})
             if replay.fingerprint() == loop.current.observation_id:
                 reason = previous.wake_reason
-        observation = self.observe(run, state, reason)
+                replayed_observation = previous
+        observation = replayed_observation or self.observe(run, state, reason)
         observation_id = observation.fingerprint()
         current = loop.current
         if current is None or current.observation_id != observation_id:
@@ -165,9 +172,20 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         if decision.wait_for is not None and decision.wait_for.kind == "node_available":
             if decision.wait_for.node_id not in {node_id for node_id, _ in observation.resources}:
                 raise ValueError("Planner wait targets an unobserved node")
+        if decision.wait_for is not None and decision.wait_for.kind == "requirement_available":
+            condition = decision.wait_for
+            fact = next((r for r in observation.resource_requirements if r.step_id == condition.step_id), None)
+            if (condition.step_id not in observation.remaining_step_ids or fact is None
+                    or fact.requirement_id != condition.requirement_id or fact.ready):
+                raise ValueError("Planner wait must target a current observed blocked requirement")
         if decision.action == "recover":
             if observation.recovery_action not in {"retry", "rebind"} or len(observation.failed_step_ids) != 1:
                 raise ValueError("Recovery authority has no supported retry for this failure")
+            if observation.failure_source == "scheduler":
+                fact = next((r for r in observation.resource_requirements
+                    if r.step_id == observation.failed_step_ids[0]), None)
+                if fact is None or not fact.ready:
+                    raise ValueError("Scheduler recovery requires currently eligible resources")
         if decision.action == "revise":
             if observation.failure_type in {"policy", "storage"}:
                 raise ValueError("Semantic revision cannot bypass integrity or policy failures")

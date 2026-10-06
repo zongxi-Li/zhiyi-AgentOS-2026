@@ -154,6 +154,7 @@ class ACGExecutionService(CollaboratorAccess):
         *,
         state: ACGExecutionState | None = None,
         command: ExecutionResumeCommand | None = None,
+        _resume_planning: bool = True,
     ) -> RuntimeRunRecord:
         """执行或续跑融合 ACG，并把图状态投影为既有运行合同。
 
@@ -225,7 +226,7 @@ class ACGExecutionService(CollaboratorAccess):
             self._mark_running(task)
         cancel_requested = self._cancellation_event(run.run_id)
         try:
-            if self._observe_boundary is not None and (is_resuming or command is not None):
+            if self._observe_boundary is not None and _resume_planning and (is_resuming or command is not None):
                 # Human/control review is resolved by the graph's resume command,
                 # before Planner may observe it. Planner never approves a review.
                 if command is not None:
@@ -314,6 +315,9 @@ class ACGExecutionService(CollaboratorAccess):
                     return await self.execute(
                         run,
                         state=execution_state,
+                        # Keep bounded failover within the authorized fragment;
+                        # a real process restart retains the normal boundary.
+                        _resume_planning=False,
                     )
             # 失败投影与 recoveryOutcome 持久化归 RuntimeRecoveryCoordinator；
             # 本服务只负责检测失败并收敛安全终态（端口由 facade 接线）。
@@ -498,6 +502,12 @@ class ACGExecutionService(CollaboratorAccess):
             if step_id in committed_step_ids:
                 continue
             step = run.get_step(step_id)
+            if step_id in execution_bindings:
+                # A remote failure can precede NodeRunner's attempt counter.
+                # Its binding/start events already exist, so the new binding
+                # must use a new Attempt instead of conflicting with that key.
+                step.attempt = max(step.attempt, step.retry_count) + 1
+                step.retry_count += 1
             if step.status in {
                 StepStatus.FAILED,
                 StepStatus.CANCELLED,
@@ -592,12 +602,14 @@ class ACGExecutionService(CollaboratorAccess):
                     )
                     raise SchedulerNoEligibleResource(
                         f"{decision.reason}:{step_id}: "
-                        f"{rejected or 'no registered candidates'}"
+                        f"{rejected or 'no registered candidates'}",
+                        reason=decision.reason, step_id=step_id, candidates=decision.candidates,
                     )
                 if monotonic() >= allocation_deadline:
                     raise SchedulerAllocationTimeout(
                         f"SCHEDULER_CAPACITY_TIMEOUT:{step_id}: "
-                        f"no lease after {self.scheduler_wait_timeout:g}s"
+                        f"no lease after {self.scheduler_wait_timeout:g}s",
+                        step_id=step_id, candidates=decision.candidates,
                     )
                 if self._cancellation_requested(run.run_id):
                     raise ExecutionRunCancelled(
