@@ -139,10 +139,10 @@ onBeforeUnmount(() => controller?.abort())
 
 <style scoped>
 .artifact-editor { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-section); color: var(--wb-text); box-shadow: var(--wb-shadow-section); }
-.artifact-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 54px; padding: 9px 16px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
+.artifact-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 40px; padding: 5px 14px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
 .artifact-editor__title { min-width: 0; }
 .artifact-editor__eyebrow { display: block; color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
-.artifact-editor__title strong { display: block; margin: 3px 0; overflow: hidden; color: var(--wb-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-editor__title strong { display: block; margin: 1px 0; overflow: hidden; color: var(--wb-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-editor__title small { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 .artifact-editor__actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .artifact-editor__actions button { min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); color: var(--wb-text-secondary); background: transparent; cursor: pointer; font-size: 11px; }

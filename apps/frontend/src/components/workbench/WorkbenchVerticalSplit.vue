@@ -244,7 +244,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 8px 0 0;
+  padding: 0;
   background: var(--wb-surface-shell);
 }
 

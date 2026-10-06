@@ -68,29 +68,7 @@ const handlePointerEnd = (event: PointerEvent) => {
   outline: none;
 }
 
-.workbench-horizontal-resize-handle::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 3px;
-  height: 1px;
-  background: var(--wb-border, var(--border-light));
-  opacity: .7;
-  transition: top 120ms ease, height 120ms ease, background-color 120ms ease, opacity 120ms ease;
-}
-
-.workbench-horizontal-resize-handle:hover::after,
-.workbench-horizontal-resize-handle:focus-visible::after,
-.workbench-horizontal-resize-handle.is-dragging::after {
-  top: 2px;
-  height: 2px;
-  background: var(--wb-accent, var(--primary-color));
-  opacity: 1;
-}
-
 .workbench-horizontal-resize-handle:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--wb-accent, var(--primary-color)) 42%, transparent);
-  outline-offset: -1px;
+  outline: none;
 }
 </style>

@@ -187,9 +187,9 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 
 <style scoped>
 .editor-group { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; color: var(--wb-text); background: var(--wb-surface-shell); }
-.editor-tabs { --editor-tab-bg: var(--wb-surface-1); display: flex; align-items: stretch; min-height: var(--wb-tab-height); overflow: hidden; border-bottom: 0; background: var(--editor-tab-bg); }
+.editor-tabs { --editor-tab-bg: var(--wb-surface-1); display: flex; align-items: stretch; min-height: var(--editor-rail-height, var(--wb-tab-height)); overflow: hidden; border-bottom: 0; background: var(--editor-tab-bg); }
 .editor-tabs__scroll { display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--wb-border-strong) transparent; }
-.editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 38px; background: var(--editor-tab-bg); }
+.editor-tabs__actions { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 32px; background: var(--editor-tab-bg); }
 .editor-tab { display: flex; align-items: center; flex: 1 1 0; min-width: 100px; max-width: 300px; box-sizing: border-box; border-right: 0; background: var(--editor-tab-bg); }
 .editor-tab:hover { background: var(--wb-hover); }
 .editor-tab.is-active { background: var(--wb-surface-shell); box-shadow: none; }
@@ -216,12 +216,12 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
   left: 0;
   z-index: 1;
   display: grid;
-  flex: 0 0 38px;
+  flex: 0 0 32px;
   place-items: center;
-  width: 38px;
-  min-width: 38px;
-  min-height: var(--wb-tab-height);
-  padding: 0 6px;
+  width: 32px;
+  min-width: 32px;
+  min-height: var(--editor-rail-height, var(--wb-tab-height));
+  padding: 0;
   border: 0;
   border-right: 0;
   color: var(--wb-text-muted);
@@ -249,11 +249,12 @@ const tabStatusMark = (entry: WorkspaceEntry) => {
 .editor-auxiliary-trigger {
   z-index: 1;
   display: grid;
-  flex: 1 1 auto;
+  flex: 0 0 32px;
   place-items: center;
-  width: 38px;
-  min-height: var(--wb-tab-height);
-  padding: 0 6px;
+  width: 32px;
+  min-width: 32px;
+  min-height: var(--editor-rail-height, var(--wb-tab-height));
+  padding: 0;
   border: 0;
   color: var(--wb-text-muted);
   background: var(--editor-tab-bg);

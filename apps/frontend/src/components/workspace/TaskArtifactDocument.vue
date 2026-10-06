@@ -1,16 +1,18 @@
 <template>
   <section class="task-editor" aria-label="Artifact document editor">
-    <header class="task-document__header">
-      <nav class="task-document__breadcrumb" aria-label="Document breadcrumb">
-        <button type="button" @click="openMission">{{ missionTitle }}</button>
-        <span aria-hidden="true">/</span>
-        <span>Run {{ runNumber }}</span>
-        <span aria-hidden="true">/</span>
-        <span>Steps</span>
-        <span aria-hidden="true">/</span>
-        <strong>{{ documentFilename }}</strong>
-      </nav>
+    <!-- 面包屑必须是滚动容器的直接子元素：sticky 只在父容器范围内生效，
+         留在 header 里会随 header 一起滚出视口 -->
+    <nav class="task-document__breadcrumb" aria-label="Document breadcrumb">
+      <button type="button" @click="openMission">{{ missionTitle }}</button>
+      <span aria-hidden="true">/</span>
+      <span>Run {{ runNumber }}</span>
+      <span aria-hidden="true">/</span>
+      <span>Steps</span>
+      <span aria-hidden="true">/</span>
+      <strong>{{ documentFilename }}</strong>
+    </nav>
 
+    <header class="task-document__header">
       <div class="task-document__heading-row">
         <div class="task-document__heading task-editor__heading">
           <div class="task-document__filename">
@@ -194,9 +196,10 @@ const openMission = () => emit('openEntry', {
 </script>
 
 <style scoped>
-.task-editor { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; background: var(--wb-surface-shell); color: var(--wb-text); }
-.task-document__header { flex: 0 0 auto; width: 100%; box-sizing: border-box; padding: 15px clamp(20px, 4vw, 64px) 12px; }
-.task-document__breadcrumb { display: flex; align-items: center; gap: 7px; min-width: 0; margin-bottom: 17px; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); white-space: nowrap; }
+/* 滚动宿主是整节：面包屑 sticky 钉顶常驻，标题行与正文随内容一起滚 */
+.task-editor { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; background: var(--wb-surface-shell); color: var(--wb-text); }
+.task-document__header { flex: 0 0 auto; width: 100%; box-sizing: border-box; padding: 0 clamp(20px, 4vw, 64px) 12px; }
+.task-document__breadcrumb { position: sticky; top: 0; z-index: 4; flex: 0 0 auto; display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0 0 5px; padding: 15px clamp(20px, 4vw, 64px) 12px; overflow: hidden; background: var(--wb-surface-shell); color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); white-space: nowrap; }
 .task-document__breadcrumb button { flex: 0 1 auto; min-width: 0; overflow: hidden; padding: 0; border: 0; color: var(--wb-text-secondary); background: transparent; cursor: pointer; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
 .task-document__breadcrumb button:hover { color: var(--wb-accent); text-decoration: underline; }
 .task-document__breadcrumb strong { min-width: 0; overflow: hidden; color: var(--wb-text-secondary); font-weight: 500; text-overflow: ellipsis; }
@@ -217,7 +220,7 @@ const openMission = () => emit('openEntry', {
 .task-document__actions button:hover:not(:disabled) { color: var(--wb-accent); border-color: color-mix(in srgb, var(--wb-accent) 42%, var(--wb-border)); background: var(--wb-accent-soft); }
 .task-document__actions button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 1px; }
 .task-document__actions button:disabled { color: var(--text-disabled); cursor: not-allowed; }
-.task-document__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.task-document__body { flex: 0 0 auto; }
 .task-document__canvas { width: min(calc(100% - 48px), 920px); margin: 0 auto; padding: 28px 0 56px; }
 .task-document__blocks { min-width: 0; }
 .task-document__block { display: grid; grid-template-columns: minmax(32px, 40px) minmax(0, 1fr); column-gap: 12px; align-items: start; min-width: 0; }

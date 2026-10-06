@@ -1013,14 +1013,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.mission-workspace-view { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
+.mission-workspace-view { --editor-rail-height: 32px; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
 .mission-workspace-view :deep(.workbench-pane--left),
 .mission-workspace-view :deep(.workbench-pane--right) { box-sizing: border-box; }
 .mission-workspace-view :deep(.editor-group__surface) { padding: 0; }
 .mission-workspace-view :deep(.artifact-editor),
 .mission-workspace-view :deep(.mission-editor) { border: 0; border-radius: 0; box-shadow: none; background: var(--wb-surface-shell); }
-.mission-workspace-view :deep(.editor-tabs) { box-sizing: border-box; height: var(--wb-tab-height); }
-.mission-workspace-view :deep(.secondary-sidebar__header) { box-sizing: border-box; height: var(--wb-tab-height); min-height: var(--wb-tab-height); }
+.mission-workspace-view :deep(.editor-tabs) { box-sizing: border-box; height: var(--editor-rail-height, var(--wb-tab-height)); }
+.mission-workspace-view :deep(.secondary-sidebar__header) { box-sizing: border-box; height: var(--editor-rail-height, var(--wb-tab-height)); min-height: var(--editor-rail-height, var(--wb-tab-height)); }
 .mission-workspace-view :deep(.workspace-explorer__header-card) { padding-bottom: 10px; border: 0; background: transparent; }
 .mission-workspace-view :deep(.workspace-explorer__project-card) { margin-top: 0; border: 0; box-shadow: none; }
 .mission-workspace-view :deep(.workspace-explorer__mark) { border: 0; }
