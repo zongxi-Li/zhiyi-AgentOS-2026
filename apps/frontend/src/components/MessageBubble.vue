@@ -617,6 +617,10 @@ const formatTime = (date: Date) => {
 }
 
 .message-bubble.user {
+  /* 行宽限制为消息列（780px 内容宽 + 两侧 28px 内边距），
+     让用户气泡右缘贴齐居中列而不是飞到面板最右侧 */
+  width: min(100%, 836px);
+  margin-inline: auto;
   justify-content: flex-end;
 }
 

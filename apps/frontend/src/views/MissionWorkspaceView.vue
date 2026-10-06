@@ -3,6 +3,7 @@
     <!-- 320px is the visual default; a deliberate drag may widen the Inspector
          until the shared workbench main-column constraint is reached. -->
     <WorkbenchLayout
+      shared-dock-geometry
       :show-right="true"
       :show-bottom-panel="Boolean(projection)"
       bottom-panel-storage-key="zhiyi.mission.workspace.bottom-panel.v1"
@@ -956,6 +957,22 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mission-workspace-view { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
+.mission-workspace-view :deep(.workbench-pane--left),
+.mission-workspace-view :deep(.workbench-pane--right) { box-sizing: border-box; }
+.mission-workspace-view :deep(.editor-group__surface) { padding: 0; }
+.mission-workspace-view :deep(.artifact-editor),
+.mission-workspace-view :deep(.mission-editor) { border: 0; border-radius: 0; box-shadow: none; background: var(--wb-surface-shell); }
+.mission-workspace-view :deep(.editor-tabs) { box-sizing: border-box; height: var(--wb-tab-height); }
+.mission-workspace-view :deep(.secondary-sidebar__header) { box-sizing: border-box; height: var(--wb-tab-height); min-height: var(--wb-tab-height); }
+.mission-workspace-view :deep(.workspace-explorer__header-card) { padding-bottom: 10px; border: 0; background: transparent; }
+.mission-workspace-view :deep(.workspace-explorer__project-card) { margin-top: 0; border: 0; box-shadow: none; }
+.mission-workspace-view :deep(.workspace-explorer__mark) { border: 0; }
+.mission-workspace-view :deep(.editor-document__header),
+.mission-workspace-view :deep(.mission-editor__meta),
+.mission-workspace-view :deep(.resource-list__row),
+.mission-workspace-view :deep(.resource-switch-list),
+.mission-workspace-view :deep(.markdown-body h1),
+.mission-workspace-view :deep(.markdown-body h2) { border: 0; }
 .workspace-loading-pane { display: grid; place-items: center; align-content: center; gap: 8px; box-sizing: border-box; height: 100%; padding: 22px; color: var(--text-secondary); font-size: 12px; text-align: center; }
 .workspace-loading-pane__watermark,
 .workspace-main-state__watermark { display: block; object-fit: contain; animation: workspace-state-pulse 3.2s ease-in-out infinite; }

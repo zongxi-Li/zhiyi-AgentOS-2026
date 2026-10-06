@@ -4,6 +4,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type AcgView, type WorkflowRun } from '@/services/api/agentos'
 import { workflowApi, type WorkflowProgress } from '@/services/api/workflow'
+import { conversationApi } from '@/services/api/conversation'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import AcgRunInspector from '@/components/agentos/AcgRunInspector.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
@@ -13,6 +14,11 @@ let chatStoreMock: ReturnType<typeof createChatStoreMock>
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/stores/chat', () => ({ useChatStore: () => chatStoreMock }))
+vi.mock('@/services/api/conversation', () => ({
+  conversationApi: {
+    getUserConversations: vi.fn()
+  }
+}))
 vi.mock('@/services/api/workflow', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/api/workflow')>()
   return {
@@ -249,6 +255,79 @@ describe('ChatView ACG progress integration', () => {
     await wrapper.get('.composer-tools-toggle').trigger('click')
     expect(wrapper.find('.composer-tools-menu').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  it('shows the Chat conversation info rail with real session data and hides it in Agent mode', async () => {
+    vi.mocked(conversationApi.getUserConversations).mockResolvedValue([
+      {
+        id: 'conv_1',
+        userId: 'user_1',
+        contextId: 'conversation_1',
+        title: '**你好你好**',
+        createdAt: '2026-10-02T14:53:00+08:00',
+        updatedAt: '2026-10-02T14:55:00+08:00'
+      }
+    ])
+    chatStoreMock.contextId = 'conversation_1'
+    chatStoreMock.contextUsedTokens = 1280
+    chatStoreMock.contextWindowTokens = 128000
+    chatStoreMock.messages = [
+      { id: 1, role: 'user', content: '你好', createdAt: new Date('2026-10-02T14:53:00+08:00'), tokensUsed: 120 },
+      {
+        id: 2,
+        role: 'assistant',
+        content: '你好！有什么可以帮你的？',
+        createdAt: new Date('2026-10-02T14:55:00+08:00'),
+        modelInfo: 'deepseek-flash',
+        tokensUsed: 340,
+        sources: [{ title: '产品白皮书', url: 'https://example.com/whitepaper' }]
+      }
+    ] as Array<Record<string, unknown>>
+
+    vi.useFakeTimers()
+    try {
+      const { wrapper } = await mountPage('?workspace=chat&contextId=conversation_1')
+      // 信息卡元数据走 600ms 防抖刷新（首轮回复后后端才生成标题）
+      await vi.advanceTimersByTimeAsync(700)
+      await flushPromises()
+
+      expect(wrapper.find('.chat-info-dock').exists()).toBe(true)
+      expect(wrapper.get('.chat-info-card__title').text()).toBe('你好你好')
+      const metrics = wrapper.get('.chat-info-card__metrics').text()
+      expect(metrics).toContain('deepseek-flash')
+      expect(metrics).toContain('2 条 · 1 轮')
+      expect(metrics).toContain('460')
+      expect(metrics).toContain('上下文')
+      expect(wrapper.get('.chat-info-card__sources').text()).toContain('产品白皮书')
+
+      // 停靠宽度可调整并持久化：键盘 ±8 步进写回 localStorage 与行内样式
+      const dock = wrapper.get('.chat-info-dock')
+      const readDockWidth = () => Number(dock.attributes('style')?.match(/width:\s*(\d+)px/)?.[1] || 0)
+      const widthBefore = readDockWidth()
+      expect(widthBefore).toBeGreaterThan(0)
+      expect(localStorage.getItem('chat.chat_info_width')).toBeNull()
+
+      await dock.get('.chat-info-dock__resizer').trigger('keydown', { key: 'ArrowLeft' })
+      await flushPromises()
+      expect(readDockWidth()).toBe(widthBefore + 8)
+      expect(localStorage.getItem('chat.chat_info_width')).toBe(String(widthBefore + 8))
+
+      // 收起后仅剩窄轨，可再展开
+      await dock.get('.chat-info-dock__collapse').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.chat-info-card').exists()).toBe(false)
+      expect(localStorage.getItem('chat.chat_info_collapsed')).toBe('1')
+      await wrapper.get('.chat-info-dock__expand').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.chat-info-card').exists()).toBe(true)
+      wrapper.unmount()
+
+      const agentPage = await mountPage('?workspace=agent&contextId=conversation_1')
+      expect(agentPage.wrapper.find('.chat-info-dock').exists()).toBe(false)
+      agentPage.wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('routes a general Agent task through dynamic ACG parameters', async () => {

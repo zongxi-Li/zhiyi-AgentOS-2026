@@ -285,12 +285,14 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
   min-height: 27px;
   padding: 0 7px;
   cursor: pointer;
+  /* 一级标题（OVERVIEW/STEPS/OUTPUT）用强调蓝与条目行区分，参考 VS Code Docker 侧栏分区头 */
+  color: var(--wb-accent, var(--primary-color));
   font-size: 10px;
   font-weight: 750;
   letter-spacing: .08em;
 }
 
-.workspace-tree__section-toggle:hover { color: var(--wb-text); }
+.workspace-tree__section-toggle:hover { color: color-mix(in srgb, var(--wb-accent, var(--primary-color)) 60%, var(--wb-text)); }
 .workspace-tree__section-toggle small { margin-left: auto; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 
 .workspace-tree__items { padding: 1px 0 4px; }
@@ -307,7 +309,13 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 }
 
 .workspace-tree__entry:hover { border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-hover); }
-.workspace-tree__entry.is-active { border-left-color: var(--wb-accent); border-radius: var(--wb-radius-sm); color: var(--wb-text); background: var(--wb-selected); }
+.workspace-tree__entry.is-active {
+  /* 选中态走 Agent 侧栏工程项目行的简洁样式：平底+主色文字，不描边不加左侧色条 */
+  border-left-color: transparent;
+  border-radius: var(--wb-radius-sm);
+  color: var(--primary-color, var(--wb-accent));
+  background: var(--wb-selected);
+}
 .workspace-tree__entry.is-selected-symbol { color: var(--wb-text); background: color-mix(in srgb, var(--wb-selected) 58%, transparent); }
 .workspace-tree__entry.is-legacy { color: var(--wb-warning); }
 .workspace-tree__entry.is-task { min-height: 32px; padding-left: 6px; }
@@ -315,7 +323,7 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 .workspace-tree__children { padding-bottom: 2px; }
 .workspace-tree__order { flex: 0 0 20px; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-align: right; }
 .workspace-tree__entry-icon { flex: 0 0 auto; color: var(--wb-text-muted); }
-.workspace-tree__entry.is-active .workspace-tree__entry-icon { color: var(--wb-accent); }
+.workspace-tree__entry.is-active .workspace-tree__entry-icon { color: var(--primary-color, var(--wb-accent)); }
 .workspace-tree__entry-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-tree__task-state { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--wb-text-muted); font: 11px var(--font-mono, monospace); }
 .workspace-tree__task-state-icon { display: inline-grid; place-items: center; width: 16px; height: 16px; }

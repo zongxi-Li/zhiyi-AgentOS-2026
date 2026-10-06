@@ -2,6 +2,7 @@
 <template>
   <div class="chat-view detail-interface">
     <div
+      ref="chatMainRef"
       class="chat-main"
       :class="[
         {
@@ -20,6 +21,10 @@
         :class="{ 'hero-mode': showHeroMode }"
         :aria-busy="isLoadingConversation || isStreamingChat"
       >
+        <header v-if="!isAgentMode" class="chat-workspace-header">
+          <el-icon aria-hidden="true"><ChatDotRound /></el-icon>
+          <span>{{ conversationInfo.title }}</span>
+        </header>
         <Transition name="context-panel-slide" :css="!workspaceModeSwitching" @after-leave="finishContextPanelClose">
           <section
             v-if="isAgentMode && contextPanelOpen"
@@ -603,14 +608,116 @@
           </div>
       </aside>
       </Transition>
+
+      <!-- Chat 模式右侧停靠信息栏：ZCode/DSH 式可拖宽、可收起、宽度持久化 -->
+      <aside
+        v-if="!isAgentMode"
+        class="chat-info-dock"
+        :class="{ collapsed: chatInfoCollapsed, resizing: chatInfoResizing }"
+        :style="{ width: `${chatInfoCollapsed ? CHAT_INFO_COLLAPSED_WIDTH : effectiveChatInfoWidth}px` }"
+        aria-label="对话信息"
+      >
+        <div
+          v-if="!chatInfoCollapsed"
+          class="chat-info-dock__resizer"
+          role="separator"
+          aria-label="调整信息栏宽度"
+          aria-orientation="vertical"
+          :aria-valuemin="CHAT_INFO_MIN_WIDTH"
+          :aria-valuemax="chatInfoMaxWidth"
+          :aria-valuenow="effectiveChatInfoWidth"
+          tabindex="0"
+          title="拖动调整宽度，双击恢复默认"
+          @pointerdown="startChatInfoResize"
+          @keydown="handleChatInfoResizeKeydown"
+          @dblclick="resetChatInfoWidth"
+        ><span aria-hidden="true"></span></div>
+
+        <template v-if="!chatInfoCollapsed">
+          <header class="chat-info-dock__header">
+            <span class="chat-info-dock__eyebrow">对话信息</span>
+            <button
+              type="button"
+              class="chat-info-dock__collapse"
+              aria-label="收起对话信息栏"
+              title="收起对话信息栏"
+              @click="setChatInfoCollapsed(true)"
+            >
+              <el-icon><DArrowRight /></el-icon>
+            </button>
+          </header>
+
+          <div class="chat-info-card">
+            <strong class="chat-info-card__title" :title="conversationInfo.title">{{ conversationInfo.title }}</strong>
+
+            <dl class="chat-info-card__metrics">
+              <div class="chat-info-card__row">
+                <dt>模型</dt>
+                <dd :title="conversationInfo.model">{{ conversationInfo.model }}</dd>
+              </div>
+              <div class="chat-info-card__row">
+                <dt>消息</dt>
+                <dd>{{ conversationInfo.messageLabel }}</dd>
+              </div>
+              <div v-if="contextUsage.visible" class="chat-info-card__row">
+                <dt>上下文</dt>
+                <dd :title="`已用 ${contextUsage.usedLabel}，共 ${contextUsage.windowLabel}`">
+                  {{ contextUsage.percent }}% · {{ contextUsage.usedLabel }} / {{ contextUsage.windowLabel }}
+                </dd>
+              </div>
+              <div class="chat-info-card__row">
+                <dt>累计 Token</dt>
+                <dd>{{ conversationInfo.tokensLabel }}</dd>
+              </div>
+              <div v-if="conversationInfo.createdAtLabel" class="chat-info-card__row">
+                <dt>开始</dt>
+                <dd>{{ conversationInfo.createdAtLabel }}</dd>
+              </div>
+              <div v-if="conversationInfo.updatedAtLabel" class="chat-info-card__row">
+                <dt>最近更新</dt>
+                <dd>{{ conversationInfo.updatedAtLabel }}</dd>
+              </div>
+            </dl>
+
+            <template v-if="conversationInfo.sources.length">
+              <div class="chat-info-card__rule" role="separator"></div>
+              <p class="chat-info-card__section">来源 <span>{{ conversationInfo.sources.length }}</span></p>
+              <ul class="chat-info-card__sources">
+                <li v-for="source in conversationInfo.sources" :key="source.key" :title="source.label">
+                  <el-icon aria-hidden="true"><Link /></el-icon>
+                  <span>{{ source.label }}</span>
+                </li>
+              </ul>
+            </template>
+          </div>
+        </template>
+
+        <div v-else class="chat-info-dock__rail">
+          <button
+            type="button"
+            class="chat-info-dock__expand"
+            aria-label="展开对话信息栏"
+            title="展开对话信息栏"
+            @click="setChatInfoCollapsed(false)"
+          >
+            <el-icon><DArrowLeft /></el-icon>
+          </button>
+        </div>
+      </aside>
     </div>
 
+    <footer v-if="!isAgentMode" class="chat-workspace-status" aria-label="对话状态">
+      <span>{{ isStreamingChat ? '正在回复' : isLoadingConversation ? '正在加载对话' : 'Chat' }}</span>
+      <span>{{ conversationInfo.messageLabel }}</span>
+      <span class="chat-workspace-status__model">{{ conversationInfo.model }}</span>
+    </footer>
     <FileManager v-model="showFileManager" @fileSelected="handleFileSelected" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { DOCK_RIGHT_DEFAULT, useDockedWorkspaceGeometry } from '@/composables/useDockedWorkspaceGeometry'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -619,8 +726,10 @@ import {
   ArrowUp,
   Clock,
   Cpu,
+  ChatDotRound,
   DArrowLeft,
   DArrowRight,
+  Link,
   Loading,
   Microphone,
   Plus,
@@ -654,6 +763,7 @@ import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
 import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
+import { plainMissionTitle } from '@/utils/missionTitle'
 import { loadModelSettings } from '@/config/modelSettings'
 
 const { t } = useI18n()
@@ -691,6 +801,7 @@ const isRecording = ref(false)
 const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLElement | null>(null)
 const chatPanelRef = ref<HTMLElement | null>(null)
+const chatMainRef = ref<HTMLElement | null>(null)
 const heroLogoFieldRef = ref<HTMLElement | null>(null)
 const heroLogoTurbulenceRef = ref<SVGFETurbulenceElement | null>(null)
 const heroLogoDisplacementRef = ref<SVGFEDisplacementMapElement | null>(null)
@@ -719,6 +830,21 @@ const agentPanelWidth = ref(
     : AGENT_PANEL_DEFAULT_WIDTH
 )
 const agentPanelResizing = ref(false)
+// —— Chat 模式右侧停靠信息栏（ZCode/DSH 式：拖宽 + 收起 + 持久化）——
+const CHAT_INFO_COLLAPSED_KEY = 'chat.chat_info_collapsed'
+const CHAT_INFO_WIDTH_KEY = 'chat.chat_info_width'
+const CHAT_INFO_DEFAULT_WIDTH = DOCK_RIGHT_DEFAULT
+const CHAT_INFO_MIN_WIDTH = 280
+const CHAT_INFO_MAX_WIDTH = 960
+const CHAT_INFO_COLLAPSED_WIDTH = 44
+const CHAT_INFO_MIN_CONVERSATION_WIDTH = 560
+const chatInfoCollapsed = ref(localStorage.getItem(CHAT_INFO_COLLAPSED_KEY) === '1')
+const dockGeometry = useDockedWorkspaceGeometry()
+const chatInfoWidth = dockGeometry.rightWidth
+const chatInfoResizing = ref(false)
+const chatInfoViewportWidth = ref(window.innerWidth)
+const chatInfoMainWidth = ref(0)
+let chatInfoResizeObserver: ResizeObserver | null = null
 const storedWorkflowPanelHeight = Number(localStorage.getItem(WORKFLOW_PANEL_HEIGHT_KEY))
 const workflowPanelHeight = ref(
   Number.isFinite(storedWorkflowPanelHeight) && storedWorkflowPanelHeight >= WORKFLOW_PANEL_MIN_HEIGHT
@@ -900,6 +1026,93 @@ const handleAgentPanelResizeKeydown = (event: KeyboardEvent) => {
 
   event.preventDefault()
   persistAgentPanelWidth()
+}
+
+// —— 信息栏停靠宽度：拖拽/键盘/双击复位，镜像 agent-panel 的交互 ——
+const chatInfoResizeStartX = ref(0)
+let chatInfoResizeStartWidth = CHAT_INFO_MIN_WIDTH
+
+const defaultChatInfoWidth = () => {
+  return clampChatInfoWidth(CHAT_INFO_DEFAULT_WIDTH)
+}
+
+const clampChatInfoWidth = (width: number) => {
+  const mainWidth = chatInfoMainWidth.value || chatInfoViewportWidth.value
+  const maxWidth = Math.max(
+    CHAT_INFO_MIN_WIDTH,
+    Math.min(CHAT_INFO_MAX_WIDTH, Math.floor(chatInfoViewportWidth.value * 0.45), mainWidth - CHAT_INFO_MIN_CONVERSATION_WIDTH)
+  )
+  return Math.min(maxWidth, Math.max(CHAT_INFO_MIN_WIDTH, Math.round(width)))
+}
+
+const chatInfoMaxWidth = computed(() => clampChatInfoWidth(CHAT_INFO_MAX_WIDTH))
+const effectiveChatInfoWidth = computed(() => clampChatInfoWidth(chatInfoWidth.value))
+
+const persistChatInfoWidth = () => {
+  localStorage.setItem(CHAT_INFO_WIDTH_KEY, String(chatInfoWidth.value))
+  dockGeometry.persist({ rightWidth: chatInfoWidth.value })
+}
+
+const handleChatInfoResizeMove = (event: PointerEvent) => {
+  if (!chatInfoResizing.value) return
+  chatInfoWidth.value = clampChatInfoWidth(chatInfoResizeStartWidth + chatInfoResizeStartX.value - event.clientX)
+}
+
+const stopChatInfoResize = () => {
+  if (!chatInfoResizing.value) return
+  chatInfoResizing.value = false
+  persistChatInfoWidth()
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('pointermove', handleChatInfoResizeMove)
+  window.removeEventListener('pointerup', stopChatInfoResize)
+  window.removeEventListener('pointercancel', stopChatInfoResize)
+}
+
+const startChatInfoResize = (event: PointerEvent) => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  chatInfoResizeStartX.value = event.clientX
+  chatInfoResizeStartWidth = effectiveChatInfoWidth.value
+  chatInfoResizing.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', handleChatInfoResizeMove)
+  window.addEventListener('pointerup', stopChatInfoResize)
+  window.addEventListener('pointercancel', stopChatInfoResize)
+}
+
+const resetChatInfoWidth = () => {
+  chatInfoWidth.value = defaultChatInfoWidth()
+  persistChatInfoWidth()
+}
+
+const handleChatInfoResizeKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Home') {
+    chatInfoWidth.value = CHAT_INFO_MIN_WIDTH
+  } else if (event.key === 'End') {
+    chatInfoWidth.value = chatInfoMaxWidth.value
+  } else if (event.key === 'ArrowLeft') {
+    chatInfoWidth.value = clampChatInfoWidth(effectiveChatInfoWidth.value + 8)
+  } else if (event.key === 'ArrowRight') {
+    chatInfoWidth.value = clampChatInfoWidth(effectiveChatInfoWidth.value - 8)
+  } else {
+    return
+  }
+
+  event.preventDefault()
+  persistChatInfoWidth()
+}
+
+const setChatInfoCollapsed = (value: boolean) => {
+  chatInfoCollapsed.value = value
+  localStorage.setItem(CHAT_INFO_COLLAPSED_KEY, value ? '1' : '0')
+}
+
+// 视口变化时回收超宽的信息栏，保证消息列可用宽度
+const handleChatInfoViewportResize = () => {
+  chatInfoViewportWidth.value = window.innerWidth
+  chatInfoMainWidth.value = chatMainRef.value?.clientWidth || 0
 }
 
 const getWorkflowPanelHardMaxHeight = () => {
@@ -1263,6 +1476,95 @@ const contextUsage = computed(() => {
 const latestAssistantMessage = computed(() => [...chatStore.messages]
   .reverse()
   .find(message => message.role === 'assistant'))
+
+// —— 对话信息栏（Chat 模式右侧）：所有取值都来自当前会话的真实消息与对话元数据 ——
+const conversationMeta = ref<Conversation | null>(null)
+let conversationMetaController: AbortController | null = null
+let conversationMetaTimer: number | null = null
+
+const loadConversationMeta = async () => {
+  if (isAgentMode.value) {
+    conversationMeta.value = null
+    return
+  }
+  const conversationKey = currentConversationId.value
+  if (!conversationKey || conversationKey.startsWith('draft:')) {
+    conversationMeta.value = null
+    return
+  }
+  conversationMetaController?.abort()
+  const controller = new AbortController()
+  conversationMetaController = controller
+  try {
+    const userId = localStorage.getItem('userId') || undefined
+    const conversations = await conversationApi.getUserConversations(userId, 'chat', { signal: controller.signal })
+    if (controller.signal.aborted) return
+    conversationMeta.value = conversations.find(item => (item.contextId || item.id) === conversationKey) || null
+  } catch {
+    // 元数据加载失败只影响信息卡展示，不打断对话
+  }
+}
+
+watch(
+  [currentConversationId, () => chatStore.messages.length],
+  () => {
+    if (conversationMetaTimer) window.clearTimeout(conversationMetaTimer)
+    // 标题由后端在首轮回复后生成，留出短暂窗口再刷新
+    conversationMetaTimer = window.setTimeout(() => { void loadConversationMeta() }, 600)
+  },
+  { immediate: true }
+)
+
+const formatInfoTime = (value?: string | Date): string => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+const conversationInfo = computed(() => {
+  const meta = conversationMeta.value
+  const firstUserMessage = chatStore.messages.find(message => message.role === 'user')
+  const title = plainMissionTitle(meta?.title, '') || plainMissionTitle(firstUserMessage?.content, '新对话')
+  const model = String(latestAssistantMessage.value?.modelInfo || '') || (() => {
+    try {
+      const settings = loadModelSettings()
+      const connection = settings.providerConnections?.[settings.provider]
+      return connection?.selectedModel || settings.selectedModel || '系统默认模型'
+    } catch {
+      return '系统默认模型'
+    }
+  })()
+  const rounds = chatStore.messages.filter(message => message.role === 'user').length
+  const tokensTotal = chatStore.messages.reduce((sum, message) => {
+    if (typeof message.tokensUsed === 'number') return sum + message.tokensUsed
+    if (typeof message.inputTokens === 'number' || typeof message.outputTokens === 'number') {
+      return sum + (message.inputTokens || 0) + (message.outputTokens || 0) + (message.reasoningTokens || 0)
+    }
+    return sum
+  }, 0)
+  const seenSources = new Set<string>()
+  const sources: Array<{ key: string; label: string }> = []
+  for (const message of chatStore.messages) {
+    for (const source of message.sources || []) {
+      const label = String(source?.title || source?.filename || '').trim()
+      if (!label) continue
+      const key = String(source?.citationId || source?.url || label)
+      if (seenSources.has(key)) continue
+      seenSources.add(key)
+      sources.push({ key, label })
+    }
+  }
+  return {
+    title,
+    model,
+    messageLabel: `${chatStore.messages.length} 条 · ${rounds} 轮`,
+    tokensLabel: tokensTotal > 0 ? tokensTotal.toLocaleString('zh-CN') : '—',
+    createdAtLabel: formatInfoTime(meta?.createdAt || chatStore.messages[0]?.createdAt),
+    updatedAtLabel: formatInfoTime(meta?.updatedAt || latestAssistantMessage.value?.createdAt),
+    sources: sources.slice(0, 4)
+  }
+})
 
 const hasAgentActivity = computed(() => {
   const assistant = latestAssistantMessage.value
@@ -2017,6 +2319,11 @@ onMounted(() => {
 onUnmounted(() => {
   cancelAnimationFrame(heroSettleFrame)
   if (heroSettleTimer) clearTimeout(heroSettleTimer)
+  conversationMetaController?.abort()
+  if (conversationMetaTimer !== null) {
+    window.clearTimeout(conversationMetaTimer)
+    conversationMetaTimer = null
+  }
 })
 
 onMounted(async () => {
@@ -2024,11 +2331,18 @@ onMounted(async () => {
   window.addEventListener('workspace-mode-change', handleWorkspaceModeChange)
   window.addEventListener('agent-new-task', handleNewAgentTask)
   window.addEventListener('resize', handleWorkflowPanelViewportResize)
+  window.addEventListener('resize', handleChatInfoViewportResize)
   window.addEventListener('pointerdown', handleMissionOutsideClick)
   if (showHeroMode.value) {
     setContextPanelOpen(false)
     setWorkflowPanelOpen(false)
     agentPanelCollapsed.value = true
+  }
+  // Measure available space without replacing the user's shared dock preference.
+  handleChatInfoViewportResize()
+  if (typeof ResizeObserver !== 'undefined' && chatMainRef.value) {
+    chatInfoResizeObserver = new ResizeObserver(handleChatInfoViewportResize)
+    chatInfoResizeObserver.observe(chatMainRef.value)
   }
   workflowPanelHeight.value = clampWorkflowPanelHeight(workflowPanelHeight.value)
 
@@ -2054,7 +2368,11 @@ onUnmounted(() => {
   window.removeEventListener('workspace-mode-change', handleWorkspaceModeChange)
   window.removeEventListener('agent-new-task', handleNewAgentTask)
   window.removeEventListener('resize', handleWorkflowPanelViewportResize)
+  window.removeEventListener('resize', handleChatInfoViewportResize)
   window.removeEventListener('pointerdown', handleMissionOutsideClick)
+  stopChatInfoResize()
+  chatInfoResizeObserver?.disconnect()
+  chatInfoResizeObserver = null
   if (railFlashTimer !== null) {
     window.clearTimeout(railFlashTimer)
     railFlashTimer = null
@@ -2206,12 +2524,46 @@ const handleHeroLogoPointerUp = () => {
   background: transparent;
 }
 
+.chat-workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 var(--wb-tab-height);
+  height: var(--wb-tab-height);
+  box-sizing: border-box;
+  padding: 0 16px;
+  background: var(--wb-surface-pane);
+  color: var(--wb-text-secondary);
+  font-size: 11px;
+}
+.chat-workspace-header .el-icon { color: var(--wb-accent); }
+.chat-workspace-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-workspace-status {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  height: var(--workbench-status-bar-height, 22px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  background: var(--wb-surface-section);
+  color: var(--wb-text-muted);
+  font-size: 10px;
+}
+.chat-workspace-status__model { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 
 .chat-main {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr;
+  /* Chat 模式第二列为停靠信息栏（宽度自持，默认 ≈ 主区对半，可拖拽调整）；
+     Agent 模式由 .has-agent-results 覆盖为工作台列 */
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0;
   padding: 0;
   transition: grid-template-columns 0.24s var(--ease-out);
@@ -2240,7 +2592,7 @@ const handleHeroLogoPointerUp = () => {
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: var(--bg-app);
+  background: var(--wb-surface-shell);
 }
 
 .context-panel {
@@ -3046,6 +3398,228 @@ const handleHeroLogoPointerUp = () => {
 /* 切回 Chat 模式时 has-agent-results 先于面板卸载移除，若不脱离布局流，
    离开中的面板会掉进网格第二行把主面板压扁，英雄区随 57% 锚点滑动。 */
 .chat-main:not(.has-agent-results) > .agent-panel { display: none; }
+
+/* —— Chat 模式右侧停靠信息栏（ZCode/DSH 式：拖宽 + 收起 + 持久化）—— */
+.chat-info-dock {
+  box-sizing: border-box;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--wb-surface-pane);
+  border-left: 0;
+  transition: width 0.16s var(--ease-out);
+}
+
+.chat-info-dock.resizing { transition: none; }
+
+.chat-info-dock__resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 12;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.chat-info-dock__resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--primary-color);
+  opacity: 0;
+  transform: scaleY(0.96);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.chat-info-dock__resizer:hover::after,
+.chat-info-dock__resizer:focus-visible::after,
+.chat-info-dock.resizing .chat-info-dock__resizer::after {
+  opacity: 0.8;
+  transform: scaleY(1);
+}
+
+.chat-info-dock__header {
+  flex: 0 0 var(--wb-tab-height);
+  height: var(--wb-tab-height);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px 0 16px;
+}
+
+.chat-info-dock__eyebrow {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+}
+
+.chat-info-dock__collapse {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.chat-info-dock__collapse:hover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.chat-info-dock__collapse:focus-visible,
+.chat-info-dock__expand:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.chat-info-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 16px 18px;
+  overflow-y: auto;
+}
+
+.chat-info-card__title {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-info-card__metrics {
+  margin: 0;
+  /* 宽信息卡下指标自动换列，窄卡退化为单列 */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 22px;
+}
+
+.chat-info-card__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.chat-info-card__row dt {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.chat-info-card__row dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-info-card__rule {
+  height: 1px;
+  background: color-mix(in srgb, var(--border-light) 78%, transparent);
+}
+
+.chat-info-card__section {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+
+.chat-info-card__section span {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--primary-fade);
+  color: var(--primary-color);
+  font-size: 10px;
+  text-align: center;
+}
+
+.chat-info-card__sources {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+
+.chat-info-card__sources li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.chat-info-card__sources .el-icon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.chat-info-card__sources span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-info-dock__rail {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding-top: 14px;
+}
+
+.chat-info-dock__expand {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.chat-info-dock__expand:hover {
+  background: var(--primary-fade);
+  color: var(--primary-color);
+}
 .agent-panel-slide-enter-active {
   transition: opacity 0.22s var(--ease-out), transform 0.22s var(--ease-out);
 }
@@ -3098,7 +3672,8 @@ const handleHeroLogoPointerUp = () => {
 .chat-workflow-review,
 .chat-workflow-error {
   order: 0;
-  width: 50%;
+  /* 与消息列（780px）对齐：不再随面板拉宽 */
+  width: min(100%, 780px);
   margin: 0 auto 7px;
 }
 .chat-workflow-error {
@@ -3114,7 +3689,7 @@ const handleHeroLogoPointerUp = () => {
 
 .workflow-run-strip {
   order: 0;
-  width: 50%;
+  width: min(100%, 780px);
   min-height: 34px;
   display: flex;
   align-items: center;
@@ -3294,7 +3869,8 @@ const handleHeroLogoPointerUp = () => {
   order: 1;
   position: relative;
   z-index: 2;
-  width: 50%;
+  /* 与消息列（780px 内容宽）对齐，宽窄面板下都保持同一列宽 */
+  width: min(100%, 780px);
   min-height: 112px;
   display: flex;
   flex-direction: column;
@@ -3854,6 +4430,15 @@ const handleHeroLogoPointerUp = () => {
 @media (max-width: 1100px) {
   .chat-main.has-agent-results {
     grid-template-columns: 1fr;
+  }
+
+  /* 窄窗口收起对话信息栏，保证消息列可用宽度 */
+  .chat-main {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-info-dock {
+    display: none;
   }
 
   .agent-panel {

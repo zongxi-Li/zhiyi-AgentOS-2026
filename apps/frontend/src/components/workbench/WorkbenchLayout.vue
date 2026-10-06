@@ -122,6 +122,7 @@ const props = withDefaults(defineProps<{
   rightPaneDefaultWidth?: number
   rightPaneMaxWidth?: number
   storageKey?: string
+  sharedDockGeometry?: boolean
 }>(), {
   showLeft: true,
   showRight: true,
@@ -145,6 +146,7 @@ const setBottomPanelCollapsed = (value: boolean) => splitRef.value?.setCollapsed
 const toggleBottomPanelCollapsed = () => splitRef.value?.toggleCollapsed()
 
 const layout = useWorkbenchLayout({
+  sharedDockGeometry: props.sharedDockGeometry,
   storageKey: props.storageKey,
   right: {
     minWidth: props.rightPaneMinWidth,

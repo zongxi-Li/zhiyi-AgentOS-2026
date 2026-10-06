@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, unref, watch, type ComputedRef, type Ref } from 'vue'
+import { useDockedWorkspaceGeometry } from './useDockedWorkspaceGeometry'
 
 export type WorkbenchPaneSide = 'left' | 'right'
 
@@ -16,6 +17,7 @@ export interface WorkbenchLayoutPersistence {
 }
 
 export interface UseWorkbenchLayoutOptions {
+  sharedDockGeometry?: boolean
   storageKey?: string
   left?: Partial<WorkbenchPaneConfig>
   right?: Partial<WorkbenchPaneConfig>
@@ -82,12 +84,13 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
   const right = mergeConfig(DEFAULT_RIGHT, options.right)
   const mainMinWidth = Math.max(0, Math.round(options.mainMinWidth ?? DEFAULT_MAIN_MIN_WIDTH))
   const persisted = readPersistence(storageKey)
+  const sharedGeometry = options.sharedDockGeometry ? useDockedWorkspaceGeometry() : null
 
   const containerRef = ref<HTMLElement | null>(null)
   const containerWidth = ref(0)
   const viewportWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
-  const leftPaneWidth = ref(Math.min(left.maxWidth, Math.max(left.minWidth, Math.round(persisted.leftPaneWidth ?? left.defaultWidth))))
-  const rightPaneWidth = ref(Math.min(right.maxWidth, Math.max(right.minWidth, Math.round(persisted.rightPaneWidth ?? right.defaultWidth))))
+  const leftPaneWidth = sharedGeometry?.leftWidth ?? ref(Math.min(left.maxWidth, Math.max(left.minWidth, Math.round(persisted.leftPaneWidth ?? left.defaultWidth))))
+  const rightPaneWidth = sharedGeometry?.rightWidth ?? ref(Math.min(right.maxWidth, Math.max(right.minWidth, Math.round(persisted.rightPaneWidth ?? right.defaultWidth))))
   const leftAutoHidden = ref(false)
   const rightAutoHidden = ref(false)
   const rightCollapsedByUser = ref(false)
@@ -145,13 +148,14 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
       rightPaneWidth: rightPaneWidth.value
     }
     writeWorkbenchLayoutPersistence(storageKey, value)
+    sharedGeometry?.persist({ leftWidth: leftPaneWidth.value, rightWidth: rightPaneWidth.value })
   }
 
   const syncAutoHidden = () => {
     const width = containerRef.value?.clientWidth || 0
     containerWidth.value = width
-    leftAutoHidden.value = leftPaneWidth.value <= left.minWidth
-    rightAutoHidden.value = rightEnabled.value && rightPaneWidth.value <= right.minWidth
+    leftAutoHidden.value = !sharedGeometry && leftPaneWidth.value <= left.minWidth
+    rightAutoHidden.value = !sharedGeometry && rightEnabled.value && rightPaneWidth.value <= right.minWidth
   }
 
   const maxWidthFor = (side: WorkbenchPaneSide) => {
@@ -293,6 +297,7 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
   })
 
   watch(rightEnabled, syncAutoHidden)
+  if (sharedGeometry) watch([leftPaneWidth, rightPaneWidth], syncAutoHidden)
 
   onBeforeUnmount(() => {
     stopResize()

@@ -8,7 +8,7 @@
           @navigate="handleTopChromeNavigate"
         />
 
-        <el-container class="app-shell-body">
+        <el-container class="app-shell-body" :class="{ 'docked-workspace-shell': isDockedWorkspaceRoute, 'is-chat-route': isChatRoute, 'has-dock-status': hasDockStatus }">
           <!-- Sidebar Navigation -->
           <el-aside
             v-if="!isImmersive && !usesDrawerNavigation"
@@ -377,10 +377,11 @@
               <Suspense>
                 <template #default>
                   <router-view v-slot="{ Component }">
-                    <!-- Route transitions can remain in a pending leave state in
-                         the Tauri WebView, hiding every later route. Keep the
-                         shell deterministic and let views own their animation. -->
-                    <component :is="Component" :key="route.path" />
+                    <Transition
+                      :name="isDockedWorkspaceRoute ? 'dock-column' : 'shell-route'"
+                    >
+                      <component :is="Component" :key="route.path" />
+                    </Transition>
                   </router-view>
                 </template>
                 <template #fallback>
@@ -466,6 +467,7 @@ import {
 } from '@/utils/conversationWorkspace'
 import { isDesktop } from '@/platform'
 import { plainMissionTitle } from '@/utils/missionTitle'
+import { DOCK_LEFT_DEFAULT, useDockedWorkspaceGeometry } from '@/composables/useDockedWorkspaceGeometry'
 
 const route = useRoute()
 const router = useRouter()
@@ -480,18 +482,19 @@ const CHAT_NAV_OPEN_KEY = 'layout.chat_nav_open'
 const chatNavOpen = ref(route.path.startsWith('/chat') && localStorage.getItem(CHAT_NAV_OPEN_KEY) === '1')
 const ACG_NAV_OPEN_KEY = 'layout.acg_nav_open'
 const isMissionWorkspacePath = (path: string) => path.startsWith('/agentos/missions/') && path.endsWith('/workspace')
+const isDockedWorkspaceRoute = computed(() => route.path.startsWith('/chat') || isMissionWorkspacePath(route.path))
+const isChatRoute = computed(() => route.path.startsWith('/chat'))
+const hasDockStatus = computed(() => isMissionWorkspacePath(route.path) || (route.path.startsWith('/chat') && workspaceMode.value === 'chat'))
+const lastMissionWorkspacePath = ref(isMissionWorkspacePath(route.path) ? route.fullPath : '')
+const lastChatRoute = ref(route.path.startsWith('/chat') ? route.fullPath : `/chat?workspace=${workspaceMode.value}`)
 const isAcgPath = (path: string) => path.startsWith('/agentos/acg') || isMissionWorkspacePath(path)
 const acgNavOpen = ref(isAcgPath(route.path) && localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0')
 const CHAT_PANEL_WIDTH_KEY = 'layout.chat_panel_width'
-const CHAT_PANEL_DEFAULT_WIDTH = 300
-const CHAT_PANEL_MIN_WIDTH = 220
-const CHAT_PANEL_MAX_WIDTH = 420
-const storedChatPanelWidth = Number(localStorage.getItem(CHAT_PANEL_WIDTH_KEY))
-const chatPanelWidth = ref(
-  Number.isFinite(storedChatPanelWidth) && storedChatPanelWidth >= CHAT_PANEL_MIN_WIDTH && storedChatPanelWidth <= CHAT_PANEL_MAX_WIDTH
-    ? storedChatPanelWidth
-    : CHAT_PANEL_DEFAULT_WIDTH
-)
+const CHAT_PANEL_DEFAULT_WIDTH = DOCK_LEFT_DEFAULT
+const CHAT_PANEL_MIN_WIDTH = 240
+const CHAT_PANEL_MAX_WIDTH = 520
+const dockGeometry = useDockedWorkspaceGeometry()
+const chatPanelWidth = dockGeometry.leftWidth
 const chatPanelResizing = ref(false)
 const recentConversations = ref<Conversation[]>([])
 const recentAgentProjects = ref<MissionListItem[]>([])
@@ -541,9 +544,9 @@ const sidebarWidth = ref(
 const sidebarResizing = ref(false)
 const isAcgRoute = computed(() => isAcgPath(route.path))
 const secondaryNavOpen = computed(() => chatNavOpen.value)
-const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value)
+const mainSidebarCompact = computed(() => sidebarCollapsed.value || secondaryNavOpen.value || isMissionWorkspacePath(route.path))
 const COLLAPSED_SIDEBAR_WIDTH = 48
-const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? COLLAPSED_SIDEBAR_WIDTH + chatPanelWidth.value : (sidebarCollapsed.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value)}px`)
+const sidebarAsideWidth = computed(() => `${secondaryNavOpen.value ? COLLAPSED_SIDEBAR_WIDTH + chatPanelWidth.value : (mainSidebarCompact.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value)}px`)
 const primarySidebarWidth = computed(() => `${mainSidebarCompact.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value}px`)
 let sidebarResizeStartX = 0
 let sidebarResizeStartWidth = SIDEBAR_DEFAULT_WIDTH
@@ -632,11 +635,11 @@ const loadRecentConversations = (): Promise<void> => {
 
 const handleChatNavToggle = () => {
   if (acgNavOpen.value) closeAcgPanel()
-  chatNavOpen.value = !chatNavOpen.value
+  chatNavOpen.value = route.path.startsWith('/chat') ? !chatNavOpen.value : true
   localStorage.setItem(CHAT_NAV_OPEN_KEY, chatNavOpen.value ? '1' : '0')
   if (chatNavOpen.value) void loadRecentConversations()
   if (!route.path.startsWith('/chat')) {
-    void router.push({ path: '/chat', query: { workspace: workspaceMode.value } })
+    void router.push(lastChatRoute.value)
   }
 }
 
@@ -657,7 +660,7 @@ const handleAcgNavToggle = () => {
   if (!isAcgPath(route.path)) {
     acgNavOpen.value = true
     localStorage.setItem(ACG_NAV_OPEN_KEY, '1')
-    void router.push('/agentos/acg')
+    void router.push(lastMissionWorkspacePath.value || '/agentos/acg')
   }
 }
 
@@ -907,11 +910,13 @@ const handleConversationWorkspaceChange = () => {
 }
 
 watch(
-  () => route.path,
-  path => {
+  () => route.fullPath,
+  fullPath => {
     closeSidebarActionMenu()
-    if (!path.startsWith('/chat') && chatNavOpen.value) closeChatPanel()
-    if (isAcgPath(path)) {
+    if (isMissionWorkspacePath(route.path)) lastMissionWorkspacePath.value = fullPath
+    if (route.path.startsWith('/chat')) lastChatRoute.value = fullPath
+    else if (!isMissionWorkspacePath(route.path) && chatNavOpen.value) closeChatPanel()
+    if (isAcgPath(route.path)) {
       if (localStorage.getItem(ACG_NAV_OPEN_KEY) !== '0') acgNavOpen.value = true
     } else {
       acgNavOpen.value = false
@@ -1079,6 +1084,7 @@ const clampChatPanelWidth = (width: number) => {
 
 const persistChatPanelWidth = () => {
   localStorage.setItem(CHAT_PANEL_WIDTH_KEY, String(chatPanelWidth.value))
+  dockGeometry.persist({ leftWidth: chatPanelWidth.value })
 }
 
 const handleChatPanelResizeMove = (event: PointerEvent) => {
@@ -2390,6 +2396,44 @@ onUnmounted(() => {
   place-items: center;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+/* Keep the application chrome still while dock contents change. */
+.docked-workspace-shell { background: var(--wb-surface-shell); }
+.docked-workspace-shell.has-dock-status { padding-bottom: var(--workbench-status-bar-height, 22px); }
+.docked-workspace-shell .app-sidebar,
+.docked-workspace-shell .primary-sidebar { transition: none; }
+.docked-workspace-shell .chat-side-panel {
+  box-sizing: border-box;
+  background: var(--wb-surface-pane);
+  box-shadow: none;
+}
+.docked-workspace-shell .workspace-switch { border: 0; box-shadow: none; }
+.docked-workspace-shell .chat-panel-enter-active,
+.docked-workspace-shell .chat-panel-leave-active { transition: opacity 160ms ease, transform 180ms var(--ease-out); }
+.docked-workspace-shell .chat-panel-enter-from,
+.docked-workspace-shell .chat-panel-leave-to { opacity: 0; transform: translateX(-14px); }
+.docked-workspace-shell .dock-column-enter-active,
+.docked-workspace-shell .dock-column-leave-active {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: opacity 180ms ease, transform 220ms var(--ease-out);
+}
+.docked-workspace-shell .dock-column-leave-active { pointer-events: none; }
+.docked-workspace-shell .dock-column-enter-from { opacity: 0; transform: translateX(var(--dock-column-enter-x)); }
+.docked-workspace-shell .dock-column-leave-to { opacity: 0; transform: translateX(var(--dock-column-leave-x)); }
+.docked-workspace-shell.is-chat-route { --dock-column-enter-x: -26px; --dock-column-leave-x: 26px; }
+.docked-workspace-shell:not(.is-chat-route) { --dock-column-enter-x: 26px; --dock-column-leave-x: -26px; }
+.docked-workspace-shell :deep(.message-list),
+.docked-workspace-shell :deep(.editor-document__body) { animation: dock-content-enter 140ms ease-out; }
+@keyframes dock-content-enter { from { opacity: .7; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .docked-workspace-shell .dock-column-enter-active,
+  .docked-workspace-shell .dock-column-leave-active,
+  .docked-workspace-shell :deep(.message-list),
+  .docked-workspace-shell :deep(.editor-document__body) { animation: none; }
 }
 
 /* Immersive Mode Overrides */
