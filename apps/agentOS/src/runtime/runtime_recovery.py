@@ -22,9 +22,13 @@ from typing import Any
 from contracts.identity import new_attempt_id, new_step_execution_id
 from components.executor import ACGExecutionState, ACGGraphCompiler
 from components.mission_manager.state_machine import StateMachine
-from components.resource.directory import ResourceNotFoundError
+
+
+class ResourceNotFoundError(KeyError):
+    """冻结范围内没有可用的替代执行资源。"""
+
 from contracts.execution import WorkflowProgressPhase
-from contracts.resource import BindingRequirement
+from contracts.resource import ExecutionRequirement
 from contracts.workflow import (
     RuntimeMissionRecord,
     RuntimeRunRecord,
@@ -781,8 +785,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         not-yet-executed step. It changes only the frozen resource projection;
         no executor, workflow state machine, or graph is duplicated.
 
-        调用方（facade）已持有 Run 锁。候选解析继续走 resource directory 的
-        eligibility helper；选择权威仍在 Scheduler / resource policy。
+        调用方（facade）已持有 Run 锁。角色候选按冻结 scope 内的逻辑 Agent
+        注册表排序；执行后端与资源选择权威仍在 ResourceBinder。
         """
         if _normalize_runtime_engine(run.runtime_engine) != "acg":
             raise ValueError("resource rebinding is only available for ACG runs")
@@ -801,29 +805,28 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         history = list(run.execution_state.get("bindingHistory") or [])
         if any(item.get("stepId") == step_id for item in history if isinstance(item, dict)):
             raise ValueError(f"alternate binding budget exhausted for step: {step_id}")
-        candidates = self.resource_directory.resolve_agent_candidates(
-            domain=self._load_workflow(run).domain,
-            capability=step.capability,
-            allowed_agent_ids=scope.agent_ids,
-            excluded_agent_ids=(current_agent_id,),
+        # 角色重绑定在嵌入式后端内完成：候选来自冻结 scope 内的逻辑 Agent
+        # 注册表，选择权威是角色解析顺序（能力优先级），不是资源调度。
+        candidates = self._alternate_logical_agents(
+            run=run, step=step, scope=scope, excluded_agent_id=current_agent_id,
         )
         if not candidates:
             raise ResourceNotFoundError(f"no healthy alternate resource for step: {step_id}")
-        selected = candidates[0]
-        # Resolve the instance now so a stale directory entry cannot enter
+        selected_agent_id = candidates[0]
+        # Resolve the instance now so a stale registry entry cannot enter
         # persisted state.
-        self.agent_registry.resolve_by_id(selected.agent_id, allowed_agent_ids=scope.agent_ids)
-        bindings[step_id] = selected.agent_id
+        self.agent_registry.resolve_by_id(selected_agent_id, allowed_agent_ids=scope.agent_ids)
+        bindings[step_id] = selected_agent_id
         run.execution_state["resourceBindings"] = bindings
         requirements = dict(run.execution_state.get("bindingRequirements") or {})
         requirement_payload = requirements.get(step_id)
         if isinstance(requirement_payload, dict):
-            requirement = BindingRequirement.model_validate(requirement_payload)
+            requirement = ExecutionRequirement.model_validate(requirement_payload)
             requirements[step_id] = requirement.model_copy(
                 update={
                     "preferences": {
                         **requirement.preferences,
-                        "resourceId": selected.agent_id,
+                        "agentRole": selected_agent_id,
                     }
                 }
             ).model_dump(by_alias=True, mode="json")
@@ -832,7 +835,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             {
                 "stepId": step_id,
                 "previousAgentId": current_agent_id,
-                "agentId": selected.agent_id,
+                "agentId": selected_agent_id,
                 "reason": reason,
             }
         )
@@ -842,16 +845,48 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             TraceEventType.RUNTIME_PATCH_APPLIED,
             observation="ACG resource binding changed at review barrier",
             step_id=step_id,
-            agent_name=selected.agent_name,
+            agent_name=selected_agent_id,
             payload={
                 "patchType": "alternate_binding",
                 "previousAgentId": current_agent_id,
-                "agentId": selected.agent_id,
+                "agentId": selected_agent_id,
                 "reason": reason,
             },
         )
         self.workflow_store.save_run(run)
-        return selected.agent_id
+        return selected_agent_id
+
+    def _alternate_logical_agents(
+        self, *, run, step, scope, excluded_agent_id: str
+    ) -> list[str]:
+        """列出冻结 scope 内具备步骤能力的候选逻辑 Agent 标识。
+
+        排序与 AgentRegistry.resolve 一致：领域精确匹配优先，其余按稳定
+        标识序；排除当前绑定与冻结范围之外的候选。
+        """
+        domain = (self._load_workflow(run).domain or "").strip().lower()
+        required = (step.capability or "").strip().lower()
+        allowed = set(scope.agent_ids) if scope.agent_ids else None
+        candidates: list[tuple[int, str]] = []
+        for agent in self.agent_registry.all():
+            agent_id = str(self.agent_registry.agent_id(agent))
+            if agent_id == excluded_agent_id:
+                continue
+            if allowed is not None and agent_id not in allowed:
+                continue
+            profile = agent.profile
+            if not profile.enabled:
+                continue
+            agent_domain = (profile.domain or "").strip().lower()
+            if agent_domain not in {domain, "general"}:
+                continue
+            if required and required not in {
+                str(item).strip().lower() for item in profile.capabilities
+            }:
+                continue
+            candidates.append((0 if agent_domain == domain else 1, agent_id))
+        candidates.sort()
+        return [agent_id for _, agent_id in candidates]
 
     def load_resume_input(
         self,

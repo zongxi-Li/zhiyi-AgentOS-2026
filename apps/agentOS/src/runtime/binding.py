@@ -1,16 +1,20 @@
-"""READY-before runtime resource eligibility preparation."""
+"""READY-before runtime resource eligibility preparation.
+
+职责边界：把编译期 ``BindingManifest``（任务声明需要什么）冻结为每个步骤
+的 ``ExecutionRequirement``，并保证嵌入式 Agent 运行时投影进入资源平面。
+本服务绝不选择具体资源——选择权威在 ``ResourceBinder``。
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-from components.resource.agent_directory import AgentDirectory
-from components.scheduler.service import SchedulerService
-from components.scheduler.two_layer_service import TwoLayerSchedulerService
+from components.resource.embedded_runtime import register_embedded_agents_runtime
+from components.resource.service import ResourcePlane
 from contracts.authority import RuntimeResourceId
 from contracts.compiled_acg import BindingManifest
-from contracts.resource import BindingRequirement, DeploymentTier
+from contracts.resource import ExecutionRequirement, RuntimeKind
 from contracts.workflow import (
     RunExecutionScope,
     RuntimeRunRecord,
@@ -27,13 +31,11 @@ class RuntimeBindingService:
         self,
         *,
         agent_registry: AgentRegistry,
-        resource_directory,
-        resource_service,
+        resource_plane: ResourcePlane,
         resource_execution_adapters: Mapping[str, object],
     ) -> None:
         self.agent_registry = agent_registry
-        self.resource_directory = resource_directory
-        self.resource_service = resource_service
+        self.resource_plane = resource_plane
         self.resource_execution_adapters = resource_execution_adapters
 
     def prepare(
@@ -43,34 +45,20 @@ class RuntimeBindingService:
         workflow: WorkflowDefinition,
         scope: RunExecutionScope,
         binding_manifest: BindingManifest,
-        agent_service,
-        scheduler_service: SchedulerService | TwoLayerSchedulerService,
-        node_service,
     ) -> None:
-        """Register candidates and persist requirements without selecting one."""
+        """Project callable agents into the plane and persist requirements.
 
-        directory = AgentDirectory(agent_service)
-        scoped_agent_ids = set(scope.agent_ids)
-        local_resource_ids: list[RuntimeResourceId] = []
-        for agent in self.agent_registry.all():
-            agent_id = self.agent_registry.agent_id(agent)
-            if scoped_agent_ids and agent_id not in scoped_agent_ids:
-                continue
-            self.resource_directory.register_agent(agent.profile)
-            directory.register_agent(agent.profile)
-            local_resource_ids.append(RuntimeResourceId(str(agent_id)))
-
-        if isinstance(scheduler_service, TwoLayerSchedulerService):
-            scheduler_service.agent_service = agent_service
-            scheduler_service.node_service = node_service
-
-        candidate_ids = [
-            *local_resource_ids,
-            *(
-                RuntimeResourceId(item)
-                for item in sorted(self.known_remote_resource_ids())
-            ),
+        步骤需求只声明能力与约束；Planner 的 Agent 绑定意图降级为
+        非权威偏好（agentRole），由执行器在嵌入式后端内解析角色。
+        """
+        scoped_agent_ids = set(scope.agent_ids) if scope.agent_ids else None
+        visible_agents = [
+            agent for agent in self.agent_registry.all()
+            if scoped_agent_ids is None
+            or self.agent_registry.agent_id(agent) in scoped_agent_ids
         ]
+        register_embedded_agents_runtime(self.resource_plane, visible_agents)
+
         requirements: dict[str, dict[str, object]] = {}
         model_bindings: dict[str, dict[str, Any] | None] = {}
         for step in run.steps:
@@ -80,19 +68,12 @@ class RuntimeBindingService:
                 raise ValueError(
                     f"BindingManifest has no capability requirement: {step.step_id}"
                 )
-            allowed_resource_ids = list(dict.fromkeys(candidate_ids))
-            allowed_manifest_ids = set(rule.allowed_resource_ids)
-            if allowed_manifest_ids:
-                allowed_resource_ids = [
-                    item for item in allowed_resource_ids
-                    if item in allowed_manifest_ids
-                ]
-            requirement = BindingRequirement(
+            role_hint = str(rule.agent_node_ids[0]) if rule.agent_node_ids else None
+            requirement = ExecutionRequirement(
                 requiredCapabilities=required_capabilities,
+                runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
                 domain=rule.domain or workflow.domain,
-                resourceTypes=[],
-                allowedResourceIds=allowed_resource_ids,
-                preferences={},
+                preferences=({"agentRole": role_hint} if role_hint else {}),
                 policyMetadata={
                     "source": "compiled-binding-manifest",
                     "stepId": step.step_id,
@@ -120,15 +101,15 @@ class RuntimeBindingService:
         """Ensure each Step has one eligible logical or remote executor."""
 
         missing: list[str] = []
-        agents_by_step: dict[str, list] = {}
+        bindings_by_step: dict[str, list] = {}
         for binding in blueprint.resource_plan.bindings:
-            agents_by_step.setdefault(binding.step_id, []).append(binding)
+            bindings_by_step.setdefault(binding.step_id, []).append(binding)
         for step in blueprint.step_nodes():
-            agents = agents_by_step.get(step.node_id, [])
-            if len(agents) != 1:
+            bindings = bindings_by_step.get(step.node_id, [])
+            if len(bindings) != 1:
                 missing.append(step.node_id)
                 continue
-            agent = agents[0]
+            agent = bindings[0]
             try:
                 self.agent_registry.resolve(
                     domain=domain,
@@ -138,10 +119,10 @@ class RuntimeBindingService:
                 )
             except KeyError:
                 remote_match = any(
-                    self._remote_resource_matches_step(
-                        resource_id, step, domain=domain
+                    self._remote_runtime_matches_step(
+                        runtime_id, step, domain=domain
                     )
-                    for resource_id in self.known_remote_resource_ids()
+                    for runtime_id in self.known_remote_runtime_ids()
                 )
                 if not remote_match:
                     missing.append(agent.planned_agent_id or step.node_id)
@@ -151,23 +132,24 @@ class RuntimeBindingService:
                 + ", ".join(sorted(set(missing)))
             )
 
-    def known_remote_resource_ids(self) -> set[str]:
-        resource_ids = set(self.resource_execution_adapters)
-        for profile in self.resource_service.profiles():
-            if profile.deployment_tier is not DeploymentTier.LOCAL:
-                resource_ids.add(profile.resource_id)
-        return resource_ids
+    def known_remote_runtime_ids(self) -> set[str]:
+        runtime_ids = set(self.resource_execution_adapters)
+        for profile in self.resource_plane.runtimes():
+            if profile.endpoint is not None:
+                runtime_ids.add(profile.runtime_id)
+        return {RuntimeResourceId(item) for item in runtime_ids}
 
-    def _remote_resource_matches_step(
-        self, resource_id: str, step, *, domain: str
+    def _remote_runtime_matches_step(
+        self, runtime_id: str, step, *, domain: str
     ) -> bool:
         try:
-            profile = self.resource_service.profile(resource_id)
-            health = self.resource_service.health_monitor.health(resource_id)
+            profile = self.resource_plane.runtime(runtime_id)
+            health = self.resource_plane.health_monitor.health(runtime_id)
         except KeyError:
             return False
         return (
             profile.enabled
+            and profile.kind is RuntimeKind.EXECUTION_BACKEND
             and health.healthy
             and (
                 not profile.domains

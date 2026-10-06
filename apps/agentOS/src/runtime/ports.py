@@ -24,12 +24,8 @@ from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.content import ContentManifestStore
 from components.executor import ExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.resource.agent_service import AgentService
-from components.resource.directory import ResourceDirectory
-from components.resource.node_service import NodeService
-from components.resource.service import ResourceService
-from components.scheduler.service import SchedulerService
-from components.scheduler.two_layer_service import TwoLayerSchedulerService
+from components.resource.service import ResourcePlane
+from components.scheduler.binder import ResourceBinder
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from service.agents import AgentRegistry
 from support.acg.capabilities import CapabilityCatalog
@@ -55,12 +51,8 @@ class RuntimeCollaborators:
     reliable_communication_store: SQLiteReliableCommunicationStore
     capability_catalog: CapabilityCatalog
     agent_registry: AgentRegistry
-    resource_directory: ResourceDirectory
-    legacy_resource_service: ResourceService
-    node_service: NodeService
-    agent_service: AgentService
-    scheduler_service: TwoLayerSchedulerService | SchedulerService
-    legacy_scheduler_service: SchedulerService
+    resource_plane: ResourcePlane
+    resource_binder: ResourceBinder
     scheduler_wait_timeout: float
     resource_execution_adapters: dict[str, ResourceExecutionAdapter]
     tool_runtime: object | None
@@ -173,54 +165,20 @@ class CollaboratorAccess:
         self.ports.agent_registry = value
 
     @property
-    def resource_directory(self) -> ResourceDirectory:
-        return self.ports.resource_directory
+    def resource_plane(self) -> ResourcePlane:
+        return self.ports.resource_plane
 
-    @resource_directory.setter
-    def resource_directory(self, value: ResourceDirectory) -> None:
-        self.ports.resource_directory = value
-
-    @property
-    def legacy_resource_service(self) -> ResourceService:
-        return self.ports.legacy_resource_service
-
-    @legacy_resource_service.setter
-    def legacy_resource_service(self, value: ResourceService) -> None:
-        self.ports.legacy_resource_service = value
+    @resource_plane.setter
+    def resource_plane(self, value: ResourcePlane) -> None:
+        self.ports.resource_plane = value
 
     @property
-    def node_service(self) -> NodeService:
-        return self.ports.node_service
+    def resource_binder(self) -> ResourceBinder:
+        return self.ports.resource_binder
 
-    @node_service.setter
-    def node_service(self, value: NodeService) -> None:
-        self.ports.node_service = value
-
-    @property
-    def agent_service(self) -> AgentService:
-        return self.ports.agent_service
-
-    @agent_service.setter
-    def agent_service(self, value: AgentService) -> None:
-        self.ports.agent_service = value
-
-    @property
-    def scheduler_service(self) -> TwoLayerSchedulerService | SchedulerService:
-        return self.ports.scheduler_service
-
-    @scheduler_service.setter
-    def scheduler_service(
-        self, value: TwoLayerSchedulerService | SchedulerService
-    ) -> None:
-        self.ports.scheduler_service = value
-
-    @property
-    def legacy_scheduler_service(self) -> SchedulerService:
-        return self.ports.legacy_scheduler_service
-
-    @legacy_scheduler_service.setter
-    def legacy_scheduler_service(self, value: SchedulerService) -> None:
-        self.ports.legacy_scheduler_service = value
+    @resource_binder.setter
+    def resource_binder(self, value: ResourceBinder) -> None:
+        self.ports.resource_binder = value
 
     @property
     def scheduler_wait_timeout(self) -> float:

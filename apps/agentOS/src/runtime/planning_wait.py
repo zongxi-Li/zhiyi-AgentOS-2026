@@ -74,9 +74,9 @@ class RuntimePlanningWaitService(CollaboratorAccess):
                 return False
         else:
             try:
-                profile = self.node_service.profile(condition.node_id)
-                snapshot = self.node_service.snapshot(condition.node_id)
-                health = self.node_service.health(condition.node_id, now=timestamp)
+                profile = self.resource_plane.node(condition.node_id)
+                snapshot = self.resource_plane.node_snapshot(condition.node_id)
+                health = self.resource_plane.node_health(condition.node_id, now=timestamp)
             except KeyError:
                 return False
             if (not profile.enabled or health.status.value != "online"

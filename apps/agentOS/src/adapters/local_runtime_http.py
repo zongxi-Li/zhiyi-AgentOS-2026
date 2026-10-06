@@ -252,7 +252,7 @@ class HttpLocalRuntimeTransport:
         return str(payload.get("state") or "")
 
     async def health(self) -> dict[str, Any]:
-        """Probe the non-sensitive health endpoint for ResourceService projection."""
+        """Probe the non-sensitive health endpoint for ResourcePlane projection."""
         try:
             response = await self._client.get(self._health_address, timeout=self.timeout_seconds)
         except (httpx.TimeoutException, httpx.HTTPError) as exc:

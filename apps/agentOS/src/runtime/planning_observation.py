@@ -105,7 +105,10 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             blockers.extend(f"expected_artifact_missing:{a}" for a in plan.expected_artifacts if a not in delivered)
         failures = run.execution_state.get("failureEvents") or []
         failure = failures[-1] if reason in {"failure", "condition", "user_input"} and failures else {}
-        resources = tuple((p.node_id, self.node_service.health(p.node_id).status.value) for p in self.node_service.profiles())
+        resources = tuple(
+            (p.node_id, self.resource_plane.node_health(p.node_id).status.value)
+            for p in self.resource_plane.nodes()
+        )
         planning = RuntimePlanningState.model_validate(run.execution_state.get("planningLoop") or {})
         return RuntimePlanningObservation(
             missionId=run.mission_id, runId=run.run_id, graphId=state.graph_id,

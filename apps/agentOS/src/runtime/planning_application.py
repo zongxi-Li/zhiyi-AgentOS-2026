@@ -27,7 +27,7 @@ class RuntimePlanningApplication(CollaboratorAccess):
         waiting = None
         if decision.wait_for is not None:
             if decision.wait_for.kind == "node_available":
-                self.node_service.profile(decision.wait_for.node_id)
+                self.resource_plane.node(decision.wait_for.node_id)
             waiting = RuntimePlanningWait(observationId=observation.fingerprint(), condition=decision.wait_for)
         loop = loop.model_copy(update={"waiting": waiting, "user_input_pending": False})
         run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
@@ -96,7 +96,6 @@ class RuntimePlanningApplication(CollaboratorAccess):
             self.binding.prepare(
                 run=prepared.replacement_run, workflow=prepared.workflow, scope=prepared.scope,
                 binding_manifest=prepared.compiled_package.binding_manifest,
-                agent_service=self.agent_service, scheduler_service=self.scheduler_service, node_service=self.node_service,
             )
             self.semantic_revision.commit(prepared)
             self.flush_identity()

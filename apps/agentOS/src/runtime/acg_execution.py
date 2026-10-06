@@ -34,7 +34,7 @@ from components.executor import (
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
 from components.mission_manager.state_machine import StateMachine
-from contracts.resource import BindingRequirement, DeploymentTier, ExecutionBinding
+from contracts.resource import ExecutionBinding, ExecutionRequirement
 from contracts.execution import WorkflowProgressPhase
 from contracts.workflow import (
     RuntimeMissionRecord,
@@ -46,16 +46,22 @@ from contracts.workflow import (
     WorkflowStatus,
     utc_now,
 )
-from components.scheduler.models import SchedulerAllocationTimeout, SchedulerNoEligibleResource
-from components.scheduler.two_layer_service import TwoLayerSchedulerService
+from components.scheduler.models import (
+    FATAL_SCHEDULING_REASONS,
+    SchedulerAllocationTimeout,
+    SchedulerNoEligibleResource,
+)
 from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCommand
 from adapters.agent_invocation import AgentInvocationAdapter
 from adapters.resource_execution import (
     ResourceAgentProxy,
     ResourceExecutionAdapter,
     ResourceExecutionError,
-    build_node_execution_adapter,
     build_resource_execution_adapter,
+)
+from components.resource.embedded_runtime import (
+    EMBEDDED_AGENTS_RUNTIME_ID,
+    register_embedded_agents_runtime,
 )
 from service.agents.base import AgentProfile
 from adapters.audited_tool_runtime import AuditedToolRuntime
@@ -361,53 +367,62 @@ class ACGExecutionService(CollaboratorAccess):
             current = chained if isinstance(chained, BaseException) else None
         return None
 
-    def _resource_execution_adapter(self, resource_id: str) -> ResourceExecutionAdapter | None:
-        """Lazily construct the adapter for a bound remote resource."""
-        existing = self.resource_execution_adapters.get(resource_id)
+    def _remote_runtime_adapter(self, runtime_id: str) -> ResourceExecutionAdapter | None:
+        """Lazily construct the signed adapter for a bound remote Runtime."""
+        existing = self.resource_execution_adapters.get(runtime_id)
         if existing is not None:
             return existing
         try:
-            profile = self.legacy_resource_service.profile(resource_id)
+            profile = self.resource_plane.runtime(runtime_id)
         except KeyError:
             return None
-        if profile.deployment_tier is DeploymentTier.LOCAL:
+        if profile.endpoint is None or profile.endpoint.protocol == "local":
             return None
         try:
             adapter = build_resource_execution_adapter(
                 profile,
-                credential_provider=self.legacy_resource_service,
+                credential_provider=self.resource_plane,
             )
         except KeyError as exc:
             raise ResourceExecutionError(
-                f"REMOTE_EXECUTION_CONFIG_INVALID: credential missing for {resource_id}"
+                f"REMOTE_EXECUTION_CONFIG_INVALID: credential missing for {runtime_id}"
             ) from exc
-        self.resource_execution_adapters[resource_id] = adapter
+        self.resource_execution_adapters[runtime_id] = adapter
         return adapter
 
-    def _node_execution_adapter(self, node_id: str) -> ResourceExecutionAdapter | None:
-        """Lazily construct the adapter for a bound remote Node ledger row."""
-        existing = self.resource_execution_adapters.get(node_id)
-        if existing is not None:
-            return existing
-        try:
-            profile = self.node_service.profile(node_id)
-        except KeyError:
-            return None
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            return None
-        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
-            return None
-        try:
-            adapter = build_node_execution_adapter(
-                profile,
-                credential_provider=self.node_service,
+    def _resolve_embedded_agent(self, *, run, step, role_hint: object):
+        """在嵌入式后端内解析逻辑 Agent 角色；这不是资源选择。
+
+        Planner 的角色提示只是解析顺序的一部分：显式角色名 → 步骤声明的
+        agent_name → 历史绑定 → 能力匹配。任何提示失败都退回下一层，
+        绝不扩大冻结的运行范围。
+        """
+        allowed = run.execution_scope.agent_ids if run.execution_scope else None
+        attempts: list[tuple[str, str]] = []
+        hint = role_hint if isinstance(role_hint, str) and role_hint.strip() else None
+        if hint:
+            attempts.append(("name", hint.strip()))
+        if step.agent_name:
+            attempts.append(("name", str(step.agent_name)))
+        previous = (run.execution_state.get("resourceBindings") or {}).get(step.step_id)
+        if previous:
+            attempts.append(("id", str(previous)))
+        for kind, value in attempts:
+            try:
+                if kind == "name":
+                    return self.agent_registry.resolve(
+                        run.domain, agent_name=value, allowed_agent_ids=allowed
+                    )
+                return self.agent_registry.resolve_by_id(value, allowed_agent_ids=allowed)
+            except KeyError:
+                continue
+        if step.capability:
+            return self.agent_registry.resolve(
+                run.domain, capability=step.capability, allowed_agent_ids=allowed
             )
-        except KeyError as exc:
-            raise ResourceExecutionError(
-                f"REMOTE_EXECUTION_CONFIG_INVALID: node credential missing for {node_id}"
-            ) from exc
-        self.resource_execution_adapters[node_id] = adapter
-        return adapter
+        raise KeyError(
+            f"EMBEDDED_AGENT_UNRESOLVED: step {step.step_id} has no eligible logical agent"
+        )
 
     def _recover_remote_acg_failure(
         self,
@@ -446,7 +461,7 @@ class ACGExecutionService(CollaboratorAccess):
             resource_id = str(binding.get("resourceId") or "")
             if resource_id not in self.resource_execution_adapters:
                 try:
-                    if self.legacy_resource_service.profile(resource_id).deployment_tier is DeploymentTier.LOCAL:
+                    if self.resource_plane.runtime(resource_id).endpoint is None:
                         continue
                 except KeyError:
                     continue
@@ -458,7 +473,7 @@ class ACGExecutionService(CollaboratorAccess):
             )
             if already_attempted:
                 continue
-            self.legacy_resource_service.set_health(resource_id, healthy=False)
+            self.resource_plane.set_runtime_health(resource_id, healthy=False)
             failed_resources.append({"stepId": step_id, "resourceId": resource_id})
 
         if not failed_resources:
@@ -517,11 +532,9 @@ class ACGExecutionService(CollaboratorAccess):
         if not isinstance(raw_requirements, dict):
             return runner
         # A recreated Runtime resumes an already-prepared run without repeating
-        # prepare_run. Re-project the current registry through the authoritative
-        # resource service so every resource starts UNKNOWN and becomes usable
-        # only after this live registration heartbeat.
-        for agent in self.agent_registry.all():
-            self.resource_directory.register_agent(agent.profile)
+        # prepare_run. Re-project the embedded agent runtime so every resource
+        # starts UNKNOWN and becomes usable only after this live registration.
+        register_embedded_agents_runtime(self.resource_plane, self.agent_registry.all())
 
         async def execute(step_id: str, state: ACGExecutionState):
             scheduling_started = monotonic()
@@ -534,7 +547,7 @@ class ACGExecutionService(CollaboratorAccess):
             payload = raw_requirements.get(step_id)
             if not isinstance(payload, dict):
                 raise ValueError(f"READY step has no binding requirement: {step_id}")
-            requirement = BindingRequirement.model_validate(payload)
+            requirement = ExecutionRequirement.model_validate(payload)
             step = run.get_step(step_id)
             attempt_number = max(step.attempt, step.retry_count) + 1
             loop_path = tuple(state.loop_paths.get(step_id, ()))
@@ -549,25 +562,21 @@ class ACGExecutionService(CollaboratorAccess):
             allocation_deadline = monotonic() + self.scheduler_wait_timeout
             retry_delay = 0.05
             while True:
-                # Registry-backed Agents execute in this process.  Their continued
-                # presence is the authoritative liveness signal; refresh only those
-                # frozen into this requirement before evaluating health.  Without
-                # this heartbeat, a valid long Run becomes permanently ineligible
-                # as soon as the one-time registration heartbeat reaches its TTL.
-                allowed_resource_ids = set(requirement.allowed_resource_ids)
-                for local_agent in self.agent_registry.all():
-                    resource_id = self.agent_registry.agent_id(local_agent)
-                    if allowed_resource_ids and resource_id not in allowed_resource_ids:
-                        continue
-                    profile = self.legacy_resource_service.profile(resource_id)
-                    if profile.deployment_tier is DeploymentTier.LOCAL:
-                        self.legacy_resource_service.heartbeat(resource_id, source="local")
-                decision = self._schedule_ready(
-                    use_two_layer=(
-                        isinstance(self.scheduler_service, TwoLayerSchedulerService)
-                        and bool(self.agent_service.profiles())
-                        and bool(self.node_service.profiles())
-                    ),
+                # The embedded agent runtime executes in this process. Its
+                # continued presence is the authoritative liveness signal;
+                # without this heartbeat a valid long Run becomes permanently
+                # ineligible once the registration heartbeat reaches its TTL.
+                try:
+                    self.resource_plane.heartbeat_runtime(
+                        EMBEDDED_AGENTS_RUNTIME_ID, source="local"
+                    )
+                    embedded_node = self.resource_plane.runtime(
+                        EMBEDDED_AGENTS_RUNTIME_ID
+                    ).node_id
+                    self.resource_plane.heartbeat_node(embedded_node)
+                except KeyError:
+                    pass
+                decision = self.resource_binder.bind_ready(
                     run_id=run.run_id,
                     step_id=step_id,
                     attempt_id=attempt_id,
@@ -575,14 +584,15 @@ class ACGExecutionService(CollaboratorAccess):
                 )
                 if decision.status == "allocated":
                     break
-                if decision.reason == "NO_ELIGIBLE_RESOURCE":
+                if (decision.reason or "") in FATAL_SCHEDULING_REASONS:
                     rejected = ", ".join(
                         f"{item.resource_id}:[{','.join(reason.value for reason in item.reasons)}]"
                         for item in decision.candidates
                         if item.reasons
                     )
                     raise SchedulerNoEligibleResource(
-                        f"NO_ELIGIBLE_RESOURCE:{step_id}: {rejected or 'no registered candidates'}"
+                        f"{decision.reason}:{step_id}: "
+                        f"{rejected or 'no registered candidates'}"
                     )
                 if monotonic() >= allocation_deadline:
                     raise SchedulerAllocationTimeout(
@@ -596,60 +606,39 @@ class ACGExecutionService(CollaboratorAccess):
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(1.0, retry_delay * 2)
             assert decision.binding is not None and decision.lease is not None
-            selected_resource_id = decision.binding.resource_id
-            node_binding = run.execution_state.get("nodeAgentBindings")
-            node_binding = node_binding.get(step_id) if isinstance(node_binding, dict) else None
-            binding_metadata = decision.binding.metadata
-            node_id = (
-                str(node_binding.get("nodeId") or "")
-                if isinstance(node_binding, dict)
-                else str(binding_metadata.get("nodeId") or "")
-            )
-            agent_id = (
-                str(node_binding.get("agentId") or selected_resource_id)
-                if isinstance(node_binding, dict)
-                else str(binding_metadata.get("agentId") or selected_resource_id)
-            )
-            remote_adapter = self._node_execution_adapter(node_id) if node_id else None
-            if remote_adapter is None:
-                remote_adapter = self._resource_execution_adapter(selected_resource_id)
+            binding = decision.binding
+            selected_resource_id = binding.resource_id
+            remote_adapter = self._remote_runtime_adapter(selected_resource_id)
             if remote_adapter is not None:
-                resource_profile = None
-                if node_id:
-                    try:
-                        node_profile = self.node_service.profile(node_id)
-                        capabilities = list(self.agent_service.profile(agent_id).capabilities)
-                    except KeyError:
-                        node_profile = None
-                        capabilities = []
-                else:
-                    node_profile = None
-                    capabilities = []
-                if not capabilities:
-                    resource_profile = self.legacy_resource_service.profile(selected_resource_id)
-                    capabilities = list(resource_profile.capabilities)
+                runtime_profile = self.resource_plane.runtime(selected_resource_id)
                 runner.resource_execution_adapters[step_id] = remote_adapter
+                remote_agent_id = binding.metadata.get("agentId") or selected_resource_id
                 runner.agents[step_id] = ResourceAgentProxy(
                     profile=AgentProfile(
-                        agentId=agent_id,
-                        agentName=step.agent_name or agent_id,
+                        agentId=str(remote_agent_id),
+                        agentName=step.agent_name or str(remote_agent_id),
                         domain=run.domain,
-                        capabilities=capabilities,
-                        enabled=(node_profile.enabled if node_profile is not None else resource_profile.enabled),
+                        capabilities=list(runtime_profile.capabilities),
+                        enabled=runtime_profile.enabled,
                     ),
                     adapter=remote_adapter,
                 )
                 selected_profile = runner.agents[step_id].profile
+                agent_id = str(selected_profile.agent_id or selected_resource_id)
             else:
                 runner.resource_execution_adapters.pop(step_id, None)
-                selected_agent = self.agent_registry.resolve_by_id(
-                    agent_id,
-                    allowed_agent_ids=(run.execution_scope.agent_ids if run.execution_scope else None),
+                selected_agent = self._resolve_embedded_agent(
+                    run=run,
+                    step=step,
+                    role_hint=requirement.preferences.get("agentRole"),
                 )
+                agent_id = str(self.agent_registry.agent_id(selected_agent))
                 runner.agents[step_id] = selected_agent
                 selected_profile = selected_agent.profile
-            model_binding = self._freeze_model_binding(
+            run.execution_state.setdefault("logicalAgents", {})[step_id] = agent_id
+            model_binding = self._resolve_model_binding(
                 step_id=step_id,
+                binding=binding,
                 profile=selected_profile,
             )
             run.execution_state.setdefault("modelBindings", {})[step_id] = model_binding
@@ -768,10 +757,7 @@ class ACGExecutionService(CollaboratorAccess):
                     ),
                 )
                 if remote_adapter is not None and isinstance(exc, ResourceExecutionError):
-                    if node_id:
-                        self.node_service.heartbeat(node_id, success=False)
-                    else:
-                        self.legacy_resource_service.set_health(selected_resource_id, healthy=False)
+                    self.resource_plane.set_runtime_health(selected_resource_id, healthy=False)
                 self._observe_resource_execution(
                     selected_resource_id,
                     success=False,
@@ -794,10 +780,7 @@ class ACGExecutionService(CollaboratorAccess):
                     "outcome": execution_outcome,
                     "resourceId": selected_resource_id,
                 }
-                released = self._release_lease(
-                    decision.lease.lease_id,
-                    use_two_layer=bool(node_id),
-                )
+                released = self.resource_binder.release(decision.lease.lease_id)
                 if released:
                     for scheduling_item in reversed(
                         run.execution_state.get("schedulingDecisions") or []
@@ -810,48 +793,17 @@ class ACGExecutionService(CollaboratorAccess):
         execute.prepare_superstep = runner.prepare_superstep
         return execute
 
-    def _schedule_ready(
-        self,
-        *,
-        use_two_layer: bool,
-        run_id: str,
-        step_id: str,
-        attempt_id: str,
-        requirement: BindingRequirement,
-    ):
-        """Choose the scheduler that owns the frozen binding's resource model."""
-        if use_two_layer and isinstance(self.scheduler_service, TwoLayerSchedulerService):
-            return self.scheduler_service.schedule_ready(
-                run_id=run_id,
-                step_id=step_id,
-                attempt_id=attempt_id,
-                requirement=requirement,
-            )
-        return self.legacy_scheduler_service.schedule_ready(
-            run_id=run_id,
-            step_id=step_id,
-            attempt_id=attempt_id,
-            requirement=requirement,
-        )
-
-    def _observe_resource_execution(self, resource_id: str, *, success: bool, latency_ms: float) -> None:
+    def _observe_resource_execution(self, runtime_id: str, *, success: bool, latency_ms: float) -> None:
         """把一次 attempt 的真实执行结果回写资源观测（延迟/可靠性/健康事件）。
 
         观测属于旁路信号：任何失败只降级为日志，绝不影响执行主流程。
         """
-        resource_service = getattr(self, "legacy_resource_service", None)
-        observe = getattr(resource_service, "observe_execution", None) if resource_service is not None else None
-        if observe is None:
-            return
         try:
-            observe(resource_id, success=success, latency_ms=max(0.0, latency_ms))
+            self.resource_plane.observe_execution(
+                runtime_id, success=success, latency_ms=max(0.0, latency_ms)
+            )
         except Exception as exc:  # 观测永远不阻断执行
-            logger.warning("resource observation failed for %s: %s", resource_id, exc)
-
-    def _release_lease(self, lease_id: str, *, use_two_layer: bool) -> bool:
-        if use_two_layer and isinstance(self.scheduler_service, TwoLayerSchedulerService):
-            return self.scheduler_service.release(lease_id)
-        return self.legacy_scheduler_service.release(lease_id)
+            logger.warning("resource observation failed for %s: %s", runtime_id, exc)
 
     @staticmethod
     def _lifecycle_event(event_id: str, event_type: str, aggregate_id: str, payload: dict) -> dict:
@@ -1051,50 +1003,39 @@ class ACGExecutionService(CollaboratorAccess):
     ) -> ACGNodeRunner:
         """按冻结插件范围解析 Agent，并组装本 run 的通信、记忆与适配依赖。"""
         steps = {step.step_id: step for step in run.steps}
-        allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
         bindings = run.execution_state.get("resourceBindings")
         if not isinstance(bindings, dict):
             bindings = {}
-        node_agent_bindings = run.execution_state.get("nodeAgentBindings")
-        node_agent_bindings = node_agent_bindings if isinstance(node_agent_bindings, dict) else {}
         agents = {}
         resource_adapters = {}
         for step_id, step in steps.items():
             resource_id = str(bindings.get(step_id) or "")
             if not resource_id:
-                # The READY wrapper will populate this step after Scheduler
+                # The READY wrapper will populate this step after the binder
                 # allocation. Preparation must not force a concrete resource.
                 continue
-            node_binding = node_agent_bindings.get(step_id)
-            if not isinstance(node_binding, dict):
-                persisted = (run.execution_state.get("executionBindings") or {}).get(step_id)
-                if isinstance(persisted, dict):
-                    binding = ExecutionBinding.model_validate(persisted)
-                    if binding.resource_id == resource_id:
-                        node_binding = binding.metadata
-            node_id = str(node_binding.get("nodeId") or "") if isinstance(node_binding, dict) else ""
-            agent_id = str(node_binding.get("agentId") or resource_id) if isinstance(node_binding, dict) else resource_id
-            adapter = self._node_execution_adapter(node_id) if node_id else None
+            persisted = (run.execution_state.get("executionBindings") or {}).get(step_id)
+            binding = (
+                ExecutionBinding.model_validate(persisted)
+                if isinstance(persisted, dict) and persisted.get("resourceId") == resource_id
+                else None
+            )
+            runtime_id = binding.resource_id if binding is not None else resource_id
+            adapter = self._remote_runtime_adapter(runtime_id)
             if adapter is None:
-                adapter = self._resource_execution_adapter(resource_id)
-            if adapter is None:
-                agents[step_id] = self.agent_registry.resolve_by_id(
-                    agent_id,
-                    allowed_agent_ids=allowed_agent_ids,
+                # 嵌入式后端：恢复期按历史绑定或能力解析逻辑 Agent。
+                agents[step_id] = self._resolve_embedded_agent(
+                    run=run, step=step, role_hint=None
                 )
                 continue
-            try:
-                capabilities = list(self.agent_service.profile(agent_id).capabilities)
-            except KeyError:
-                profile = self.legacy_resource_service.profile(resource_id)
-                capabilities = list(profile.capabilities)
+            runtime_profile = self.resource_plane.runtime(runtime_id)
             agents[step_id] = ResourceAgentProxy(
                 profile=AgentProfile(
-                    agentId=agent_id,
-                    agentName=step.agent_name or agent_id,
+                    agentId=(binding.metadata.get("agentId") if binding is not None else None) or runtime_id,
+                    agentName=step.agent_name or runtime_id,
                     domain=workflow.domain,
-                    capabilities=capabilities,
-                    enabled=True,
+                    capabilities=list(runtime_profile.capabilities),
+                    enabled=runtime_profile.enabled,
                 ),
                 adapter=adapter,
             )
@@ -1117,6 +1058,7 @@ class ACGExecutionService(CollaboratorAccess):
             )
             for node_id in steps
         }
+        allowed_agent_ids = run.execution_scope.agent_ids if run.execution_scope is not None else None
         allowed_agent_set = set(allowed_agent_ids) if allowed_agent_ids is not None else None
         allowed_tools = {
             tool_name
@@ -1600,6 +1542,37 @@ class ACGExecutionService(CollaboratorAccess):
             if output_ref:
                 return {"outputRef": output_ref}
         return {}
+
+    def _resolve_model_binding(self, *, step_id: str, binding: ExecutionBinding, profile) -> dict[str, Any] | None:
+        """优先采用绑定冻结的模型端点；无端点绑定时回退角色画像/全局默认。
+
+        模型端点绑定由 ResourceBinder 依据任务的 ModelDemand 决定；角色画像
+        里的 modelProvider/modelName 只是兼容性偏好，不构成资源事实。
+        """
+        endpoint = binding.model_binding
+        if endpoint is not None:
+            try:
+                adapter = self.model_registry.resolve(
+                    endpoint.provider, endpoint.model, version=endpoint.version
+                )
+            except LookupError as exc:
+                raise ValueError(
+                    f"MODEL_PROFILE_UNAVAILABLE: step {step_id} cannot resolve "
+                    f"{endpoint.provider}/{endpoint.model}"
+                ) from exc
+            frozen: dict[str, Any] = {
+                "provider": endpoint.provider,
+                "model": endpoint.model,
+                # This is an explicit capability fact, not permission to fall back
+                # to the synchronous gateway. NativeGeneralAgent enforces it.
+                "streamingCapability": callable(getattr(adapter, "astream", None)),
+            }
+            if endpoint.version is not None:
+                frozen["version"] = endpoint.version
+            if endpoint.endpoint_id is not None:
+                frozen["endpointId"] = endpoint.endpoint_id
+            return frozen
+        return self._freeze_model_binding(step_id=step_id, profile=profile)
 
     def _freeze_model_binding(self, *, step_id: str, profile) -> dict[str, Any] | None:
         """验证并冻结步骤的 Profile 模型路由，禁止恢复时读取可变 Profile。"""

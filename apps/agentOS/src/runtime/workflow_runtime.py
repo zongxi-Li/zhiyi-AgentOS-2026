@@ -53,12 +53,8 @@ from contracts.task_acceptance import frozen_task_acceptance
 from components.planner.acg_semantic_validator import (
     validate_bound_acg_semantics,
 )
-from components.resource.agent_service import AgentService
-from components.resource.directory import ResourceDirectory
-from components.resource.node_service import NodeService
-from components.resource.service import ResourceService
-from components.scheduler.service import SchedulerService
-from components.scheduler.two_layer_service import TwoLayerSchedulerService
+from components.resource.service import ResourcePlane
+from components.scheduler.binder import ResourceBinder
 from components.recovery.checkpoint import (
     ACGCheckpointStore,
     ExecutionResumeCommand,
@@ -244,12 +240,8 @@ class ExecutionRuntime(CollaboratorAccess):
         run_lock_manager: Optional[RunLockManager] = None,
         recovery_recipe_registry: Optional[object] = None,
         capability_catalog: CapabilityCatalog | None = None,
-        resource_service: ResourceService | None = None,
-        resource_directory: ResourceDirectory | None = None,
-        scheduler_service: TwoLayerSchedulerService | SchedulerService | None = None,
-        legacy_scheduler_service: SchedulerService | None = None,
-        node_service: NodeService | None = None,
-        agent_service: AgentService | None = None,
+        resource_plane: ResourcePlane | None = None,
+        resource_binder: ResourceBinder | None = None,
         evolution_service: EvolutionService | None = None,
         model_registry: ModelCompatibilityRegistry | None = None,
         plugin_manifests: tuple = (),
@@ -268,36 +260,12 @@ class ExecutionRuntime(CollaboratorAccess):
             raise ValueError("model_min_interval_seconds must not be negative")
         resolved_agent_registry = agent_registry or AgentRegistry()
         resolved_capability_catalog = capability_catalog or build_default_capability_catalog()
-        if resource_directory is not None:
-            directory_service = resource_directory.resource_service
-            if resource_service is not None and directory_service is not resource_service:
-                raise ValueError("ResourceDirectory must delegate to the injected ResourceService")
-            resolved_resource_directory = resource_directory
-            resolved_resource_service = resource_service or directory_service
-        else:
-            # 新账本装配下对外 resource_service 可为 None；兼容投影始终由
-            # directory 内部自建的 legacy ResourceService 支撑（旧调度器与
-            # 旧端点继续可用，旧 Resource 删除工作留待后续阶段）。
-            resolved_resource_directory = ResourceDirectory(resource_service)
-            resolved_resource_service = resource_service
-        # 旧 ResourceService 的兼容访问点：对外 resource_service 可为 None，
-        # 内部永远保留一个可用源，供旧 SchedulerService 与投影读取。
-        resolved_legacy_resource_service = (
-            resolved_resource_service or resolved_resource_directory.resource_service
+        resolved_resource_plane = resource_plane or ResourcePlane()
+        resolved_resource_binder = resource_binder or ResourceBinder(
+            resolved_resource_plane
         )
-        resolved_node_service = node_service or NodeService()
-        resolved_agent_service = agent_service or AgentService()
-        resolved_scheduler_service = scheduler_service or TwoLayerSchedulerService(
-            node_service=resolved_node_service,
-            agent_service=resolved_agent_service,
-        )
-        resolved_legacy_scheduler_service = legacy_scheduler_service or SchedulerService(
-            resource_service=resolved_legacy_resource_service
-        )
-        if resolved_legacy_scheduler_service.resource_service is None:
-            # 旧 SchedulerService 依赖 ResourceService；即使调用方只注入了
-            # coordinator，也回填兼容投影源，保证 schedule_ready/release 可用。
-            resolved_legacy_scheduler_service.resource_service = resolved_legacy_resource_service
+        if resolved_resource_binder.plane is not resolved_resource_plane:
+            raise ValueError("ResourceBinder must delegate to the injected ResourcePlane")
         # 共享协作者上下文：facade 与全部已提取服务按引用共享同一实例，属性
         # 写入即时可见，取代 PR-8C.2 的派发前逐项重对齐（测试在构造后替换
         # store、身份生命周期或调度参数时经由属性 setter 落进本上下文）。
@@ -334,12 +302,8 @@ class ExecutionRuntime(CollaboratorAccess):
             ),
             capability_catalog=resolved_capability_catalog,
             agent_registry=resolved_agent_registry,
-            resource_directory=resolved_resource_directory,
-            legacy_resource_service=resolved_legacy_resource_service,
-            node_service=resolved_node_service,
-            agent_service=resolved_agent_service,
-            scheduler_service=resolved_scheduler_service,
-            legacy_scheduler_service=resolved_legacy_scheduler_service,
+            resource_plane=resolved_resource_plane,
+            resource_binder=resolved_resource_binder,
             scheduler_wait_timeout=float(scheduler_wait_timeout),
             resource_execution_adapters=dict(resource_execution_adapters or {}),
             tool_runtime=tool_runtime,
@@ -358,7 +322,6 @@ class ExecutionRuntime(CollaboratorAccess):
             fault_hook=None,
         )
         self.workflow_registry = workflow_registry or WorkflowRegistry()
-        self.resource_service = resolved_resource_service
         self.model_max_concurrency = int(model_max_concurrency)
         self.model_min_interval_seconds = float(model_min_interval_seconds)
         self.evolution_service = evolution_service or EvolutionService()
@@ -377,8 +340,7 @@ class ExecutionRuntime(CollaboratorAccess):
         )
         self.runtime_binding_service = RuntimeBindingService(
             agent_registry=self.agent_registry,
-            resource_directory=self.resource_directory,
-            resource_service=self.legacy_resource_service,
+            resource_plane=self.resource_plane,
             resource_execution_adapters=self.resource_execution_adapters,
         )
         self.acg_state_persistence = ACGStatePersistenceService(
@@ -879,9 +841,6 @@ class ExecutionRuntime(CollaboratorAccess):
             workflow=workflow,
             scope=scope,
             binding_manifest=compiled_package.binding_manifest,
-            agent_service=self.agent_service,
-            scheduler_service=self.scheduler_service,
-            node_service=self.node_service,
         )
         run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
         run.execution_state.update(
@@ -2074,9 +2033,6 @@ class ExecutionRuntime(CollaboratorAccess):
                 workflow=prepared.workflow,
                 scope=prepared.scope,
                 binding_manifest=prepared.compiled_package.binding_manifest,
-                agent_service=self.agent_service,
-                scheduler_service=self.scheduler_service,
-                node_service=self.node_service,
             )
             result = service.commit(prepared)
             self._flush_identity_outbox()

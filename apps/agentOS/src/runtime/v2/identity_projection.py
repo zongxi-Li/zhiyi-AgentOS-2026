@@ -1192,7 +1192,7 @@ class IdentityProjectionBridge:
             modelId=model_id,
             metadata={
                 "runtimeBindingId": runtime_binding.binding_id,
-                "resourceType": runtime_binding.resource_type.value,
+                "runtimeKind": runtime_binding.runtime_kind.value,
                 "snapshotVersion": runtime_binding.snapshot_version,
                 **runtime_binding.metadata,
             },
