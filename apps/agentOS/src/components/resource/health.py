@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from .algorithms import exponential_moving_average
 from .health_store import InMemoryResourceHealthStore, ResourceHealthStore
-from .models import ResourceHealth
+from .models import RuntimeHealth
 
 
 def _utc(value: datetime) -> datetime:
@@ -38,7 +38,7 @@ class ResourceHealthMonitor:
         self.initial_reliability = initial_reliability
         self.store = store or InMemoryResourceHealthStore()
 
-    def heartbeat(self, resource_id: str, *, received_at: datetime | None = None) -> ResourceHealth:
+    def heartbeat(self, resource_id: str, *, received_at: datetime | None = None) -> RuntimeHealth:
         """记录本地接收心跳的时间，并返回新的健康投影。"""
         timestamp = _utc(received_at) if received_at is not None else datetime.now(timezone.utc)
         state = self.store.get(resource_id)
@@ -52,7 +52,7 @@ class ResourceHealthMonitor:
         )
         return self.health(resource_id, now=timestamp)
 
-    def set_health(self, resource_id: str, *, healthy: bool) -> ResourceHealth:
+    def set_health(self, resource_id: str, *, healthy: bool) -> RuntimeHealth:
         """Apply an explicit adapter observation without inventing a heartbeat."""
         current = datetime.now(timezone.utc)
         state = self.store.get(resource_id)
@@ -73,7 +73,7 @@ class ResourceHealthMonitor:
         success: bool,
         latency_ms: float,
         observed_at: datetime | None = None,
-    ) -> ResourceHealth:
+    ) -> RuntimeHealth:
         """根据一次执行结果用 EMA 平滑可靠性和时延，并视为活动信号。"""
         if latency_ms < 0:
             raise ValueError("latency_ms must be non-negative")
@@ -96,14 +96,14 @@ class ResourceHealthMonitor:
         )
         return self.health(resource_id, now=timestamp)
 
-    def health(self, resource_id: str, *, now: datetime | None = None) -> ResourceHealth:
+    def health(self, resource_id: str, *, now: datetime | None = None) -> RuntimeHealth:
         """按调用时刻计算健康状态，因此资源会在没有新心跳时自然过期。"""
         current_time = _utc(now) if now is not None else datetime.now(timezone.utc)
         state = self.store.get(resource_id)
         heartbeat = state.last_heartbeat if state else None
         naturally_healthy = heartbeat is not None and current_time - heartbeat <= self.heartbeat_timeout
         healthy = state.forced_health if state and state.forced_health is not None else naturally_healthy
-        return ResourceHealth(
+        return RuntimeHealth(
             resource_id=resource_id,
             healthy=healthy,
             reliability=state.reliability if state else self.initial_reliability,
@@ -114,5 +114,5 @@ class ResourceHealthMonitor:
     calculate = health
 
 
-# TODO: 继续补齐跨进程心跳的签名鉴权、重放保护和持久化；当前由 ResourceService
+# TODO: 继续补齐跨进程心跳的签名鉴权、重放保护和持久化；当前由 ResourcePlane
 # 接收远程观测并更新本进程监测器，尚不等同于生产级多节点健康中心。

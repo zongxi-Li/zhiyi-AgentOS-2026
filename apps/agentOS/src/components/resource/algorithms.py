@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from contracts.resource import ResourceProfile, ResourceSnapshot
+from contracts.resource import RuntimeProfile, RuntimeSnapshot
 
-from .models import ResourceHealth
+from .models import RuntimeHealth
 
 
 def exponential_moving_average(previous: float | None, observation: float, alpha: float) -> float:
@@ -21,7 +21,7 @@ def ema(previous: float | None, observation: float, alpha: float) -> float:
     return exponential_moving_average(previous, observation, alpha)
 
 
-def health_score(health: ResourceHealth, utilization: float) -> float:
+def health_score(health: RuntimeHealth, utilization: float) -> float:
     """把可靠性、时延和负载压缩为可稳定排序的健康分数。"""
     if not health.healthy:
         return 0.0
@@ -29,14 +29,14 @@ def health_score(health: ResourceHealth, utilization: float) -> float:
     return health.reliability * latency_penalty * (1.0 - utilization)
 
 
-def is_resource_available(
-    profile: ResourceProfile,
-    snapshot: ResourceSnapshot,
-    health: ResourceHealth,
+def is_runtime_available(
+    profile: RuntimeProfile,
+    snapshot: RuntimeSnapshot,
+    health: RuntimeHealth,
     required_capabilities: list[str] | tuple[str, ...] | set[str],
     labels: dict[str, str] | None = None,
 ) -> bool:
-    """判定资源是否能在当前时刻被调度，不在这里产生任何状态变更。"""
+    """判定 Runtime 是否能在当前时刻被调度，不在这里产生任何状态变更。"""
     required = set(required_capabilities)
     labels = labels or {}
     return (
@@ -48,4 +48,4 @@ def is_resource_available(
     )
 
 
-is_available = is_resource_available
+is_available = is_runtime_available

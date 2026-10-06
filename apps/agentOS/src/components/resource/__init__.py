@@ -1,4 +1,4 @@
-"""资源部件的公开入口。"""
+"""资源部件的公开入口：分层资源平面（Node / Runtime / ModelEndpoint）。"""
 
 from .health import ResourceHealthMonitor
 from .health_store import (
@@ -17,84 +17,90 @@ from .auth import (
     build_resource_signature,
 )
 from .crypto import ResourceSecretBox
-from .directory import AgentResource, ResourceConflictError, ResourceDirectory, ResourceNotFoundError
-from .models import (
-    NodeHealth,
-    ResourceCandidate,
-    ResourceHealth,
-    VersionedAgentSnapshot,
-    VersionedNodeSnapshot,
-    VersionedResourceSnapshot,
+from .embedded_runtime import (
+    EMBEDDED_AGENTS_BASE_CAPABILITY,
+    EMBEDDED_AGENTS_RUNTIME_ID,
+    register_embedded_agents_runtime,
 )
-from .agent_directory import AgentDirectory
-from .agent_service import AgentService
-from .agent_store import AgentStore, InMemoryAgentStore, SQLiteAgentStore
-from .node_health import NodeHealthMonitor, infer_load_status
-from .node_service import NodeService
-from .node_store import InMemoryNodeStore, NodeStore, SQLiteNodeStore
 from .local_runtime import (
+    DEFAULT_LOCAL_RUNTIME_NODE_ID,
     LOCAL_RUNTIME_RESOURCE_CAPABILITIES,
+    LOCAL_RUNTIME_SHELL_CAPABILITY,
     LocalRuntimeHealthProjector,
     LocalRuntimeResourceConfig,
     RegisteredLocalRuntimeResource,
     ensure_local_runtime_resource,
+    local_runtime_node_id,
     local_runtime_profile,
 )
-from .service import IssuedResourceCredential, ResourceService
+from .models import (
+    ModelEndpointCandidate,
+    NodeHealth,
+    RuntimeCandidate,
+    RuntimeHealth,
+    VersionedNodeSnapshot,
+    VersionedRuntimeSnapshot,
+)
+from .node_health import NodeHealthMonitor, infer_load_status
+from .node_store import InMemoryNodeStore, NodeStore, SQLiteNodeStore
+from .service import (
+    IssuedNodeCredential,
+    IssuedResourceCredential,
+    ResourcePlane,
+)
 from .store import (
     InMemoryResourceStore,
     ResourceCredentialRecord,
-    ResourceStore,
+    RuntimeStore,
     SQLiteResourceStore,
+    StaleResourceObservation,
     VersionConflict,
 )
 
 __all__ = [
+    "DEFAULT_LOCAL_RUNTIME_NODE_ID",
+    "EMBEDDED_AGENTS_BASE_CAPABILITY",
+    "EMBEDDED_AGENTS_RUNTIME_ID",
+    "InMemoryNodeStore",
     "InMemoryResourceStore",
+    "InMemoryResourceHealthStore",
+    "IssuedNodeCredential",
+    "IssuedResourceCredential",
     "LOCAL_RUNTIME_RESOURCE_CAPABILITIES",
-    "AgentResource",
-    "ResourceCandidate",
-    "ResourceConflictError",
-    "ResourceCredentialRecord",
-    "ResourceDirectory",
-    "ResourceHealth",
-    "ResourceHealthMonitor",
+    "LOCAL_RUNTIME_SHELL_CAPABILITY",
     "LocalRuntimeHealthProjector",
     "LocalRuntimeResourceConfig",
-    "InMemoryResourceHealthStore",
+    "ModelEndpointCandidate",
+    "NodeHealth",
+    "NodeHealthMonitor",
+    "NodeRequestAuthenticator",
+    "NodeStore",
+    "RegisteredLocalRuntimeResource",
+    "ResourceCredentialRecord",
+    "RuntimeCandidate",
+    "RuntimeHealth",
+    "RuntimeStore",
+    "ResourceHealthMonitor",
     "ResourceHealthState",
     "ResourceHealthStore",
-    "SQLiteResourceHealthStore",
-    "NodeRequestAuthenticator",
+    "ResourcePlane",
     "ResourceRequestAuthenticator",
     "ResourceRequestExpired",
     "ResourceRequestInvalid",
     "ResourceRequestNotFound",
     "ResourceRequestReplay",
     "ResourceSecretBox",
-    "ResourceNotFoundError",
-    "ResourceService",
-    "ResourceStore",
-    "RegisteredLocalRuntimeResource",
-    "SQLiteResourceStore",
-    "IssuedResourceCredential",
-    "VersionConflict",
-    "VersionedResourceSnapshot",
-    "AgentDirectory",
-    "AgentService",
-    "AgentStore",
-    "InMemoryAgentStore",
-    "SQLiteAgentStore",
-    "InMemoryNodeStore",
     "SQLiteNodeStore",
-    "NodeHealth",
-    "NodeHealthMonitor",
-    "NodeService",
-    "NodeStore",
-    "VersionedAgentSnapshot",
+    "SQLiteResourceHealthStore",
+    "SQLiteResourceStore",
+    "StaleResourceObservation",
+    "VersionConflict",
     "VersionedNodeSnapshot",
-    "infer_load_status",
+    "VersionedRuntimeSnapshot",
     "build_resource_signature",
     "ensure_local_runtime_resource",
+    "infer_load_status",
+    "local_runtime_node_id",
     "local_runtime_profile",
+    "register_embedded_agents_runtime",
 ]

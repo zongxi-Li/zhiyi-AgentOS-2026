@@ -1,8 +1,13 @@
-"""面向调度器的资源登记、观测和候选查询服务。"""
+"""资源平面：Node / Runtime / ModelEndpoint 的登记、观测与候选查询。
+
+本服务是资源状态的唯一权威入口。它回答"系统现在拥有哪些真实可调用的
+运行能力"，但不做调度决策——候选过滤、评分与租约授予由 ResourceBinder
+完成。逻辑 Agent 角色不是资源，不在这里登记。
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import secrets
@@ -10,25 +15,45 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
+from contracts.capability import ModelFeatureSet
 from contracts.resource import (
-    BindingRequirement,
-    DeploymentTier,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
+    HealthStatus,
+    ModelDemand,
+    ModelEndpointProfile,
+    NodeHealthStatus,
+    NodeProfile,
+    NodeSnapshot,
+    Placement,
+    RuntimeProfile,
+    RuntimeSnapshot,
+    TrustLevel,
 )
 
-from .algorithms import health_score, is_resource_available
+from .algorithms import health_score, is_runtime_available
 from .crypto import ResourceSecretBox
 from .health import ResourceHealthMonitor
-from .models import ResourceCandidate, ResourceHealth, VersionedResourceSnapshot
-from .registry import ResourceRegistry
-from .store import InMemoryResourceStore, ResourceCredentialRecord, ResourceStore, VersionConflict
+from .models import (
+    ModelEndpointCandidate,
+    NodeHealth,
+    RuntimeCandidate,
+    RuntimeHealth,
+    VersionedNodeSnapshot,
+    VersionedRuntimeSnapshot,
+)
+from .node_health import NodeHealthMonitor, infer_load_status
+from .node_store import InMemoryNodeStore, NodeStore
+from .store import (
+    InMemoryResourceStore,
+    ResourceCredentialRecord,
+    RuntimeStore,
+    SQLiteResourceStore,
+    StaleResourceObservation,
+)
 
 
 @dataclass(frozen=True)
 class IssuedResourceCredential:
-    """注册响应中一次性返回的资源密钥。"""
+    """注册响应中一次性返回的 Runtime 密钥。"""
 
     resource_id: str
     credential_id: str
@@ -36,45 +61,333 @@ class IssuedResourceCredential:
     secret: str
 
 
-class ResourceService:
-    """以单个协调入口向调度器暴露可立即分配的资源候选。"""
+@dataclass(frozen=True)
+class IssuedNodeCredential:
+    """远程节点登记响应中一次性返回的密钥。"""
+
+    node_id: str
+    credential_id: str
+    owner_scope: str
+    secret: str
+
+
+class ResourcePlane:
+    """以分层模型暴露可调度资源，并向 Binder 提供候选查询。"""
 
     def __init__(
         self,
-        store: ResourceStore | None = None,
+        store: RuntimeStore | None = None,
+        node_store: NodeStore | None = None,
         health_monitor: ResourceHealthMonitor | None = None,
+        node_health_monitor: NodeHealthMonitor | None = None,
         *,
         heartbeat_timeout: timedelta = timedelta(seconds=60),
         credential_key: str | bytes | None = None,
     ) -> None:
         self.store = store or InMemoryResourceStore()
-        self.registry = ResourceRegistry(self.store)
+        self.node_store = node_store or InMemoryNodeStore()
         self.health_monitor = health_monitor or ResourceHealthMonitor(
             heartbeat_timeout=heartbeat_timeout
         )
+        self.node_health_monitor = node_health_monitor or NodeHealthMonitor()
         self.secret_box = ResourceSecretBox(credential_key)
 
-    def register(self, profile: ResourceProfile, snapshot: ResourceSnapshot) -> VersionedResourceSnapshot:
-        """登记一个可调度资源及其首个负载快照。"""
-        return self.store.register(profile, snapshot)
+    # ------------------------------------------------------------------
+    # Node 层：部署实体
+    # ------------------------------------------------------------------
 
-    register_resource = register
+    def register_node(self, profile: NodeProfile, snapshot: NodeSnapshot) -> VersionedNodeSnapshot:
+        """登记节点；重复的完全一致登记幂等返回。"""
+        if profile.node_id != snapshot.node_id:
+            raise ValueError("node profile and snapshot nodeId must match")
+        try:
+            existing = self.node_store.get_profile(profile.node_id)
+        except KeyError:
+            return self.node_store.register(profile, snapshot)
+        if existing != profile:
+            raise ValueError(f"node conflicts with existing profile: {profile.node_id}")
+        return self.node_store.get_snapshot(profile.node_id)
 
-    def register_remote(
+    def ensure_node(
         self,
-        profile: ResourceProfile,
-        snapshot: ResourceSnapshot,
+        node_id: str,
+        *,
+        placement: Placement = Placement.DEVICE,
+        display_name: str = "",
+        trust: TrustLevel = TrustLevel.HOST_TRUSTED,
+        **profile_fields,
+    ) -> NodeProfile:
+        """幂等登记（或读取）节点；进程内引导路径专用。
+
+        只允许更新引导自有的节点；远程登记（带凭据、无引导标记）的节点
+        与引导声明冲突时必须显式失败，防止进程内代码静默改写外部身份。
+        """
+        metadata = dict(profile_fields.pop("metadata", None) or {})
+        metadata.setdefault("managedBy", "bootstrap")
+        profile = NodeProfile(
+            nodeId=node_id,
+            placement=placement,
+            displayName=display_name,
+            trust=trust,
+            metadata=metadata,
+            **profile_fields,
+        )
+        try:
+            existing = self.node_store.get_profile(node_id)
+        except KeyError:
+            snapshot = NodeSnapshot(
+                nodeId=node_id,
+                healthStatus=NodeHealthStatus.ONLINE,
+                lastHeartbeat=datetime.now(timezone.utc),
+            )
+            self.node_store.register(profile, snapshot)
+            self.node_health_monitor.report(node_id, success=True)
+            return profile
+        if existing == profile:
+            return existing
+        if existing.metadata.get("managedBy") != "bootstrap":
+            raise ValueError(f"node conflicts with a non-bootstrap registration: {node_id}")
+        return self.node_store.update_profile(profile)
+
+    def register_remote_node(self, profile: NodeProfile, snapshot: NodeSnapshot) -> IssuedNodeCredential:
+        """登记远程节点并生成只能在注册响应中读取一次的凭据。"""
+        if profile.placement is Placement.DEVICE:
+            raise ValueError("remote node must use a non-device placement")
+        if not profile.owner_scope:
+            raise ValueError("remote node ownerScope is required")
+        secret = secrets.token_urlsafe(32)
+        record = ResourceCredentialRecord(
+            resource_id=profile.node_id,
+            credential_id=f"nc_{uuid.uuid4().hex}",
+            owner_scope=profile.owner_scope,
+            secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+            encrypted_secret=self.secret_box.encrypt(secret),
+            created_at=datetime.now(timezone.utc),
+        )
+        self.node_store.register_remote(profile, snapshot, record)
+        return IssuedNodeCredential(
+            node_id=profile.node_id,
+            credential_id=record.credential_id,
+            owner_scope=record.owner_scope,
+            secret=secret,
+        )
+
+    def node(self, node_id: str) -> NodeProfile:
+        return self.node_store.get_profile(node_id)
+
+    def nodes(self) -> list[NodeProfile]:
+        return self.node_store.list_profiles()
+
+    def node_snapshot(self, node_id: str) -> VersionedNodeSnapshot:
+        return self.node_store.get_snapshot(node_id)
+
+    def set_node_enabled(self, node_id: str, *, enabled: bool) -> NodeProfile:
+        profile = self.node_store.get_profile(node_id)
+        return self.node_store.update_profile(
+            profile.model_copy(update={"enabled": enabled})
+        )
+
+    def node_health(self, node_id: str, *, now: datetime | None = None) -> NodeHealth:
+        live = self.node_health_monitor.health(node_id, now=now)
+        if live.last_heartbeat is not None:
+            return live
+        snapshot = self.node_store.get_snapshot(node_id).snapshot
+        if snapshot.last_heartbeat is None:
+            return live
+        current = now if now is not None else datetime.now(timezone.utc)
+        age = current.astimezone(timezone.utc) - snapshot.last_heartbeat.astimezone(timezone.utc)
+        if age > self.node_health_monitor.offline_threshold:
+            status = NodeHealthStatus.OFFLINE
+        elif age > self.node_health_monitor.stale_threshold:
+            status = NodeHealthStatus.STALE
+        else:
+            status = snapshot.health_status
+        return NodeHealth(
+            node_id=node_id,
+            status=status,
+            last_heartbeat=snapshot.last_heartbeat,
+            consecutive_failures=snapshot.consecutive_failures,
+        )
+
+    def observe_node(
+        self,
+        node_id: str,
+        *,
+        observation_sequence: int,
+        cpu_utilization: float = 0.0,
+        gpu_utilization: float = 0.0,
+        available_memory_mb: int = 0,
+        queued_tasks: int = 0,
+        latency_ms: float | None = None,
+        observed_at: datetime | None = None,
+        success: bool = True,
+    ) -> NodeHealth:
+        """接收一次已签名的远程节点观测并持久化快照与健康。"""
+        self.node_store.get_profile(node_id)
+        current = self.node_store.get_snapshot(node_id)
+        if observation_sequence <= current.snapshot.observation_sequence:
+            raise StaleResourceObservation(
+                f"stale observation for {node_id}: "
+                f"received {observation_sequence}, "
+                f"current {current.snapshot.observation_sequence}"
+            )
+        timestamp = observed_at if observed_at is not None else datetime.now(timezone.utc)
+        load = max(cpu_utilization, gpu_utilization)
+        consecutive_failures = 0 if success else current.snapshot.consecutive_failures + 1
+        snapshot = current.snapshot.model_copy(update={
+            "observation_sequence": observation_sequence,
+            "observed_at": timestamp,
+            "cpu_utilization": cpu_utilization,
+            "gpu_utilization": gpu_utilization,
+            "available_memory_mb": available_memory_mb,
+            "queued_tasks": queued_tasks,
+            "latency_ms": latency_ms,
+            "health_status": infer_load_status(queued_tasks, load),
+            "last_heartbeat": timestamp,
+            "consecutive_failures": consecutive_failures,
+        })
+        self.node_store.update_snapshot(snapshot, expected_version=current.version)
+        return self.node_health_monitor.report(
+            node_id,
+            observed_at=timestamp,
+            queued_tasks=queued_tasks,
+            utilization=load,
+            success=success,
+        )
+
+    def heartbeat_node(
+        self,
+        node_id: str,
+        *,
+        cpu_utilization: float = 0.0,
+        gpu_utilization: float = 0.0,
+        available_memory_mb: int = 0,
+        queued_tasks: int = 0,
+        latency_ms: float | None = None,
+        success: bool = True,
+        observed_at: datetime | None = None,
+    ) -> NodeHealth:
+        """进程内节点心跳：刷新快照动态字段与健康投影。"""
+        timestamp = observed_at if observed_at is not None else datetime.now(timezone.utc)
+        current = self.node_store.get_snapshot(node_id)
+        load = max(cpu_utilization, gpu_utilization)
+        consecutive_failures = 0 if success else current.snapshot.consecutive_failures + 1
+        snapshot = current.snapshot.model_copy(update={
+            "cpu_utilization": cpu_utilization,
+            "gpu_utilization": gpu_utilization,
+            "available_memory_mb": available_memory_mb,
+            "queued_tasks": queued_tasks,
+            "latency_ms": latency_ms,
+            "health_status": infer_load_status(queued_tasks, load),
+            "last_heartbeat": timestamp,
+            "observed_at": timestamp,
+            "observation_sequence": current.snapshot.observation_sequence + 1,
+            "consecutive_failures": consecutive_failures,
+        })
+        self.node_store.update_snapshot(snapshot, expected_version=current.version)
+        return self.node_health_monitor.report(
+            node_id,
+            observed_at=timestamp,
+            queued_tasks=queued_tasks,
+            utilization=load,
+            success=success,
+        )
+
+    def node_credential(self, node_id: str) -> ResourceCredentialRecord:
+        self.node_store.get_profile(node_id)
+        return self.node_store.get_credential(node_id)
+
+    def node_credential_hmac_key(self, node_id: str, credential_id: str) -> bytes:
+        record = self.node_credential(node_id)
+        if record.credential_id != credential_id:
+            raise ValueError("node credential is invalid")
+        secret = self.secret_box.decrypt(record.encrypted_secret)
+        return hashlib.sha256(secret.encode("utf-8")).digest()
+
+    def verify_node_credential(
+        self, node_id: str, credential_id: str, secret: str
+    ) -> ResourceCredentialRecord:
+        try:
+            profile = self.node_store.get_profile(node_id)
+            record = self.node_store.get_credential(node_id)
+        except KeyError as error:
+            raise ValueError("node credential not found") from error
+        expected_digest = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+        if (
+            record.credential_id != credential_id
+            or record.owner_scope != profile.owner_scope
+            or not hmac.compare_digest(record.secret_digest, expected_digest)
+        ):
+            raise ValueError("node credential is invalid")
+        return record
+
+    def consume_node_nonce(
+        self,
+        node_id: str,
+        nonce: str,
+        expires_at: datetime,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        self.node_store.get_profile(node_id)
+        current = now or datetime.now(timezone.utc)
+        return self.node_store.consume_nonce(node_id, nonce, expires_at, now=current)
+
+    # ------------------------------------------------------------------
+    # Runtime 层：承载实体（执行后端 / 模型服务 / 工具服务）
+    # ------------------------------------------------------------------
+
+    def register_runtime(
+        self, profile: RuntimeProfile, snapshot: RuntimeSnapshot | None = None
+    ) -> VersionedRuntimeSnapshot:
+        """登记或刷新进程内引导的 Runtime；带凭据的远程登记不允许走此路径。
+
+        引导路径（本进程拥有该 Runtime 的真实存活信号）允许更新能力集等
+        画像字段；capacity 变化会按已占用量重新缩放松照槽位。
+        """
+        self._validate_runtime_host(profile)
+        initial = snapshot or RuntimeSnapshot(
+            runtimeId=profile.runtime_id,
+            availableSlots=profile.capacity,
+            utilization=0.0,
+            healthStatus=HealthStatus.UNKNOWN,
+        )
+        if profile.runtime_id != initial.runtime_id:
+            raise ValueError("profile and snapshot runtime_id must match")
+        try:
+            existing = self.store.get_profile(profile.runtime_id)
+        except KeyError:
+            return self.store.register(profile, initial)
+        if existing == profile:
+            return self.store.get_snapshot(profile.runtime_id)
+        if not self._is_bootstrap_owned(existing):
+            raise ValueError(
+                f"runtime conflicts with credential-protected registration: {profile.runtime_id}"
+            )
+        if profile.capacity != existing.capacity:
+            versioned = self.store.update_capacity(
+                profile.runtime_id, profile.capacity, expected_capacity=existing.capacity
+            )
+            if existing != profile.model_copy(update={"capacity": profile.capacity}):
+                self.store.update_profile(profile)
+            return versioned
+        self.store.update_profile(profile)
+        return self.store.get_snapshot(profile.runtime_id)
+
+    def register_remote_runtime(
+        self,
+        profile: RuntimeProfile,
+        snapshot: RuntimeSnapshot,
         *,
         credential_id: str | None = None,
         secret: str | None = None,
     ) -> IssuedResourceCredential:
-        """登记远程资源并生成只能在注册响应中读取一次的凭据。"""
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            raise ValueError("remote resource must use a non-local deployment tier")
+        """登记远程 Runtime 并生成只能在注册响应中读取一次的凭据。"""
+        if profile.endpoint is None or profile.endpoint.protocol == "local":
+            raise ValueError("remote runtime requires a callable execution endpoint")
         if not profile.owner_scope:
-            raise ValueError("remote resource owner_scope is required")
-        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
-            raise ValueError("remote resource execution endpoint is required")
+            raise ValueError("remote runtime ownerScope is required")
+        self._validate_runtime_host(profile)
         if (credential_id is None) != (secret is None):
             raise ValueError("credential_id and secret must be supplied together")
         credential_id = credential_id.strip() if credential_id is not None else f"rc_{uuid.uuid4().hex}"
@@ -82,122 +395,257 @@ class ResourceService:
         if not credential_id or not secret:
             raise ValueError("remote credential_id and secret must not be empty")
         record = ResourceCredentialRecord(
-            resource_id=profile.resource_id,
+            resource_id=profile.runtime_id,
             credential_id=credential_id,
             owner_scope=profile.owner_scope,
             secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
             encrypted_secret=self.secret_box.encrypt(secret),
-            created_at=datetime.now().astimezone(),
+            created_at=datetime.now(timezone.utc),
         )
         self.store.register_remote(profile, snapshot, record)
         return IssuedResourceCredential(
-            resource_id=profile.resource_id,
+            resource_id=profile.runtime_id,
             credential_id=record.credential_id,
             owner_scope=record.owner_scope,
             secret=secret,
         )
 
-    def update_snapshot(
-        self, snapshot: ResourceSnapshot, *, expected_version: int | None = None
-    ) -> VersionedResourceSnapshot:
-        """更新动态负载观测；版本冲突交给存储层显式报告。"""
-        return self.store.update_snapshot(snapshot, expected_version=expected_version)
+    def _validate_runtime_host(self, profile: RuntimeProfile) -> None:
+        node = self.node_store.get_profile(profile.node_id)
+        if node.placement is not profile.placement:
+            raise ValueError(
+                f"runtime placement {profile.placement.value} must match host node "
+                f"{node.node_id} placement {node.placement.value}"
+            )
+        if profile.trust.rank > node.trust.rank:
+            raise ValueError(
+                f"runtime trust {profile.trust.value} exceeds host node "
+                f"{node.node_id} trust {node.trust.value}"
+            )
+        if not node.enabled:
+            raise ValueError(f"host node is disabled: {node.node_id}")
 
-    def update_capacity(
-        self, resource_id: str, capacity: int, *, expected_capacity: int
-    ) -> VersionedResourceSnapshot:
-        """以 CAS 同步已登记资源的声明容量和动态空闲槽位。"""
-        return self.store.update_capacity(
-            resource_id,
-            capacity,
-            expected_capacity=expected_capacity,
-        )
+    def _is_bootstrap_owned(self, existing: RuntimeProfile) -> bool:
+        """引导路径可更新无凭据 Runtime，或显式标记为引导管理的 Runtime。
 
-    def set_enabled(self, resource_id: str, *, enabled: bool) -> ResourceProfile:
-        """切换资源的调度开关，并保持 agent 目录投影的 enabled 一致。
-
-        ``profile.enabled`` 是调度可用性的权威判据；agent 目录资源把同一开关
-        镜像进 ``metadata.agent.enabled``，供旧目录候选过滤读取，两处必须同变。
+        远程 API 登记的 Runtime（有凭据且非引导标记）只能通过显式更新
+        路径修改，防止进程内代码静默改写外部注册身份。
         """
-        profile = self.profile(resource_id)
-        metadata = dict(profile.metadata)
-        agent_metadata = metadata.get("agent")
-        if isinstance(agent_metadata, dict):
-            metadata["agent"] = {**agent_metadata, "enabled": enabled}
-        updated = profile.model_copy(update={"enabled": enabled, "metadata": metadata})
-        return self.store.update_profile(updated)
+        if existing.metadata.get("managedBy") == "bootstrap":
+            return True
+        return not self._has_runtime_credential(existing.runtime_id)
 
-    def snapshot(self, resource_id: str) -> VersionedResourceSnapshot:
-        """读取调度决策所需的最新版本快照。"""
-        return self.store.get_snapshot(resource_id)
+    def _has_runtime_credential(self, runtime_id: str) -> bool:
+        try:
+            self.store.get_credential(runtime_id)
+        except KeyError:
+            return False
+        return True
 
-    def profile(self, resource_id: str) -> ResourceProfile:
-        """Read the authoritative static profile."""
-        return self.store.get_profile(resource_id)
+    def runtime(self, runtime_id: str) -> RuntimeProfile:
+        return self.store.get_profile(runtime_id)
 
-    def profiles(self) -> list[ResourceProfile]:
-        """List authoritative profiles in stable order."""
+    def runtimes(self) -> list[RuntimeProfile]:
         return self.store.list_profiles()
 
-    def issue_credential(self, resource_id: str) -> IssuedResourceCredential:
-        """为远程资源生成一次性可交付的资源密钥。"""
-        profile = self.registry.get(resource_id)
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            raise ValueError("resource credentials require a remote resource")
+    def runtime_snapshot(self, runtime_id: str) -> VersionedRuntimeSnapshot:
+        return self.store.get_snapshot(runtime_id)
+
+    def set_runtime_enabled(self, runtime_id: str, *, enabled: bool) -> RuntimeProfile:
+        profile = self.store.get_profile(runtime_id)
+        return self.store.update_profile(profile.model_copy(update={"enabled": enabled}))
+
+    def update_runtime_capacity(
+        self, runtime_id: str, capacity: int, *, expected_capacity: int
+    ) -> VersionedRuntimeSnapshot:
+        return self.store.update_capacity(runtime_id, capacity, expected_capacity=expected_capacity)
+
+    def heartbeat_runtime(
+        self,
+        runtime_id: str,
+        *,
+        received_at: datetime | None = None,
+        source: Literal["local", "external"] = "local",
+    ) -> RuntimeHealth:
+        """记录 Runtime 存活信号；带端点的远程 Runtime 必须由外部上报。"""
+        profile = self.store.get_profile(runtime_id)
+        if profile.endpoint is not None and source != "external":
+            raise ValueError("remote runtime heartbeat must come from an external heartbeat")
+        return self.health_monitor.heartbeat(runtime_id, received_at=received_at)
+
+    def observe_execution(
+        self,
+        runtime_id: str,
+        *,
+        success: bool,
+        latency_ms: float,
+        observed_at: datetime | None = None,
+    ) -> RuntimeHealth:
+        """记录一次执行结果：健康 EMA 与快照时延/可靠性同步更新。
+
+        执行结果是执行链路自己的真实信号，不要求远端层级；利用率与槽位
+        仍归调度器记账，这里不做任何推算。
+        """
+        self.store.get_profile(runtime_id)
+        health = self.health_monitor.observe(
+            runtime_id, success=success, latency_ms=latency_ms, observed_at=observed_at
+        )
+        timestamp = observed_at or datetime.now(timezone.utc)
+        for _ in range(3):
+            current = self.store.get_snapshot(runtime_id)
+            # model_copy(update=) 只认字段名，不认别名；别名键会被静默忽略。
+            updated = current.snapshot.model_copy(update={
+                "observed_at": timestamp,
+                "observation_sequence": current.snapshot.observation_sequence + 1,
+                "latency_ms": latency_ms,
+                "reliability": health.reliability,
+                "health_status": (
+                    HealthStatus.ONLINE if success else current.snapshot.health_status
+                ),
+            })
+            try:
+                self.store.update_snapshot(updated, expected_version=current.version)
+                break
+            except StaleResourceObservation:
+                raise
+            except Exception:
+                # 并发完成回写时以最新版本为基准重放一次快照合并。
+                continue
+        return health
+
+    def observe_remote_runtime(
+        self,
+        runtime_id: str,
+        *,
+        available_slots: int,
+        utilization: float,
+        latency_ms: float | None = None,
+        observed_at: datetime | None = None,
+        observation_sequence: int = 0,
+    ) -> RuntimeHealth:
+        """接收远程 Runtime 的一次完整观测，并同步快照与存活信号。"""
+        profile = self.store.get_profile(runtime_id)
+        if profile.endpoint is None:
+            raise ValueError("remote observation requires an endpoint-attached runtime")
+        current = self.store.get_snapshot(runtime_id)
+        if observation_sequence <= current.snapshot.observation_sequence:
+            raise StaleResourceObservation(
+                f"stale observation for {runtime_id}: "
+                f"received {observation_sequence}, "
+                f"current {current.snapshot.observation_sequence}"
+            )
+        timestamp = observed_at or datetime.now(timezone.utc)
+        updated = RuntimeSnapshot(
+            runtimeId=runtime_id,
+            observationSequence=observation_sequence,
+            observedAt=timestamp,
+            availableSlots=available_slots,
+            utilization=utilization,
+            healthStatus=HealthStatus.ONLINE,
+            latencyMs=latency_ms,
+        )
+        self.store.update_snapshot(updated, expected_version=current.version)
+        if latency_ms is None:
+            return self.health_monitor.heartbeat(runtime_id, received_at=timestamp)
+        return self.health_monitor.observe(
+            runtime_id, success=True, latency_ms=latency_ms, observed_at=timestamp
+        )
+
+    def set_runtime_health(self, runtime_id: str, *, healthy: bool) -> RuntimeHealth:
+        self.store.get_profile(runtime_id)
+        return self.health_monitor.set_health(runtime_id, healthy=healthy)
+
+    def runtime_candidates(
+        self,
+        required_capabilities: list[str] | tuple[str, ...] | set[str],
+        *,
+        labels: dict[str, str] | None = None,
+        now: datetime | None = None,
+    ) -> list[RuntimeCandidate]:
+        """返回具备所需能力、健康且仍有槽位的稳定排序候选集（不含策略约束）。"""
+        candidates: list[RuntimeCandidate] = []
+        for profile in self.store.list_profiles():
+            versioned = self.store.get_snapshot(profile.runtime_id)
+            health = self.health_monitor.health(profile.runtime_id, now=now)
+            if not is_runtime_available(
+                profile, versioned.snapshot, health, required_capabilities, labels
+            ):
+                continue
+            candidates.append(
+                RuntimeCandidate(
+                    profile=profile,
+                    snapshot=versioned,
+                    health=health,
+                    score=health_score(health, versioned.snapshot.utilization),
+                )
+            )
+        return sorted(
+            candidates, key=lambda candidate: (-candidate.score, candidate.profile.runtime_id)
+        )
+
+    # ------------------------------------------------------------------
+    # Runtime 凭据：签名的远程执行与观测
+    # ------------------------------------------------------------------
+
+    def issue_runtime_credential(self, runtime_id: str) -> IssuedResourceCredential:
+        profile = self.store.get_profile(runtime_id)
+        if profile.endpoint is None or profile.endpoint.protocol == "local":
+            raise ValueError("runtime credentials require a remote endpoint")
         if not profile.owner_scope:
-            raise ValueError("remote resource owner_scope is required")
-        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
-            raise ValueError("remote resource execution endpoint is required")
+            raise ValueError("remote runtime ownerScope is required")
+        return self._new_runtime_credential(profile)
+
+    def rotate_runtime_credential(self, runtime_id: str) -> IssuedResourceCredential:
+        profile = self.store.get_profile(runtime_id)
+        if profile.endpoint is None or profile.endpoint.protocol == "local":
+            raise ValueError("runtime credentials require a remote endpoint")
+        if not profile.owner_scope:
+            raise ValueError("remote runtime ownerScope is required")
+        issued = self._new_runtime_credential_for_rotation(profile)
+        return issued
+
+    def _new_runtime_credential(self, profile: RuntimeProfile) -> IssuedResourceCredential:
         secret = secrets.token_urlsafe(32)
         record = ResourceCredentialRecord(
-            resource_id=resource_id,
+            resource_id=profile.runtime_id,
             credential_id=f"rc_{uuid.uuid4().hex}",
-            owner_scope=profile.owner_scope,
+            owner_scope=profile.owner_scope or "",
             secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
             encrypted_secret=self.secret_box.encrypt(secret),
-            created_at=datetime.now().astimezone(),
+            created_at=datetime.now(timezone.utc),
         )
         self.store.save_credential(record)
         return IssuedResourceCredential(
-            resource_id=resource_id,
+            resource_id=profile.runtime_id,
             credential_id=record.credential_id,
             owner_scope=record.owner_scope,
             secret=secret,
         )
 
-    def rotate_credential(self, resource_id: str) -> IssuedResourceCredential:
-        """原子轮换远程资源凭据，并使旧凭据立即失效。"""
-        profile = self.registry.get(resource_id)
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            raise ValueError("resource credentials require a remote resource")
-        if not profile.owner_scope:
-            raise ValueError("remote resource owner_scope is required")
-        if profile.execution_endpoint is None or profile.execution_endpoint.protocol == "local":
-            raise ValueError("remote resource execution endpoint is required")
+    def _new_runtime_credential_for_rotation(self, profile: RuntimeProfile) -> IssuedResourceCredential:
         secret = secrets.token_urlsafe(32)
         record = ResourceCredentialRecord(
-            resource_id=resource_id,
+            resource_id=profile.runtime_id,
             credential_id=f"rc_{uuid.uuid4().hex}",
-            owner_scope=profile.owner_scope,
+            owner_scope=profile.owner_scope or "",
             secret_digest=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
             encrypted_secret=self.secret_box.encrypt(secret),
-            created_at=datetime.now().astimezone(),
+            created_at=datetime.now(timezone.utc),
         )
         self.store.rotate_credential(record)
         return IssuedResourceCredential(
-            resource_id=resource_id,
+            resource_id=profile.runtime_id,
             credential_id=record.credential_id,
             owner_scope=record.owner_scope,
             secret=secret,
         )
 
-    def verify_credential(
-        self, resource_id: str, credential_id: str, secret: str
+    def verify_runtime_credential(
+        self, runtime_id: str, credential_id: str, secret: str
     ) -> ResourceCredentialRecord:
-        """校验资源凭据并返回不含明文密钥的记录。"""
-        profile = self.registry.get(resource_id)
         try:
-            record = self.store.get_credential(resource_id)
+            profile = self.store.get_profile(runtime_id)
+            record = self.store.get_credential(runtime_id)
         except KeyError as error:
             raise ValueError("resource credential not found") from error
         expected_digest = hashlib.sha256(secret.encode("utf-8")).hexdigest()
@@ -209,205 +657,177 @@ class ResourceService:
             raise ValueError("resource credential is invalid")
         return record
 
-    def credential(self, resource_id: str) -> ResourceCredentialRecord:
-        """Read resource credential metadata without exposing a secret."""
-        self.registry.get(resource_id)
-        return self.store.get_credential(resource_id)
+    def runtime_credential(self, runtime_id: str) -> ResourceCredentialRecord:
+        self.store.get_profile(runtime_id)
+        return self.store.get_credential(runtime_id)
 
-    def credential_hmac_key(self, resource_id: str, credential_id: str) -> bytes:
-        """Decrypt a valid credential only at the signing verification seam."""
-        record = self.credential(resource_id)
+    def runtime_credential_hmac_key(self, runtime_id: str, credential_id: str) -> bytes:
+        record = self.runtime_credential(runtime_id)
         if record.credential_id != credential_id:
             raise ValueError("resource credential is invalid")
         secret = self.secret_box.decrypt(record.encrypted_secret)
         return hashlib.sha256(secret.encode("utf-8")).digest()
 
-    def current_signing_credential(self, resource_id: str) -> tuple[str, str]:
+    def current_signing_credential(self, runtime_id: str) -> tuple[str, str]:
         """Return the current credential for an outbound resource request.
 
         This is deliberately read on every execution rather than copied into an
-        Adapter at construction time, so credential rotation takes effect on
-        the next request.  The plaintext exists only across this internal
-        signing seam and is never included in a profile or response model.
+        Adapter at construction time, so credential rotation takes effect on the
+        next request.  The plaintext exists only across this internal signing
+        seam and is never included in a profile or response model.
         """
-        record = self.credential(resource_id)
+        record = self.runtime_credential(runtime_id)
         return record.credential_id, self.secret_box.decrypt(record.encrypted_secret)
+
+    def current_signing_credential_or_none(self, runtime_id: str) -> tuple[str | None, str | None]:
+        """引导路径的容错版凭据读取；未登记凭据时返回 ``(None, None)``。"""
+        try:
+            credential_id, secret = self.current_signing_credential(runtime_id)
+        except KeyError:
+            return None, None
+        return credential_id, secret
 
     def consume_nonce(
         self,
-        resource_id: str,
+        runtime_id: str,
         nonce: str,
         expires_at: datetime,
         *,
         now: datetime | None = None,
     ) -> bool:
-        self.registry.get(resource_id)
-        current = now or datetime.now().astimezone()
-        return self.store.consume_nonce(resource_id, nonce, expires_at, now=current)
+        self.store.get_profile(runtime_id)
+        current = now or datetime.now(timezone.utc)
+        return self.store.consume_nonce(runtime_id, nonce, expires_at, now=current)
 
-    def heartbeat(
-        self,
-        resource_id: str,
-        *,
-        received_at: datetime | None = None,
-        source: Literal["local", "external"] = "local",
-    ) -> ResourceHealth:
-        """记录已登记资源的存活信号，远程资源必须由外部节点主动上报。"""
-        profile = self.registry.get(resource_id)
-        if profile.deployment_tier is not DeploymentTier.LOCAL and source != "external":
-            raise ValueError("remote resource heartbeat must come from an external heartbeat")
-        return self.health_monitor.heartbeat(resource_id, received_at=received_at)
+    # ------------------------------------------------------------------
+    # ModelEndpoint 层：可绑定的模型路由
+    # ------------------------------------------------------------------
 
-    def observe(
-        self,
-        resource_id: str,
-        *,
-        success: bool,
-        latency_ms: float,
-        observed_at: datetime | None = None,
-    ) -> ResourceHealth:
-        """记录执行结果，供后续调度在可靠性和时延上作出更好选择。"""
-        self.registry.get(resource_id)
-        return self.health_monitor.observe(
-            resource_id,
-            success=success,
-            latency_ms=latency_ms,
-            observed_at=observed_at,
-        )
+    def upsert_model_endpoint(
+        self, endpoint: ModelEndpointProfile
+    ) -> tuple[ModelEndpointProfile, bool]:
+        return self.store.upsert_model_endpoint(endpoint)
 
-    def observe_execution(
-        self,
-        resource_id: str,
-        *,
-        success: bool,
-        latency_ms: float,
-        observed_at: datetime | None = None,
-    ) -> ResourceHealth:
-        """记录一次进程内执行结果：健康 EMA 与目录快照的时延/可靠性同步更新。
+    def model_endpoint(self, endpoint_id: str) -> ModelEndpointProfile:
+        return self.store.get_model_endpoint(endpoint_id)
 
-        与 observe_remote 的边界：执行结果是执行链路自己的真实信号，不要求
-        远端层级；利用率与槽位仍归调度器记账，这里不做任何推算。
+    def model_endpoints(self) -> list[ModelEndpointProfile]:
+        return self.store.list_model_endpoints()
+
+    def delete_model_endpoint(self, endpoint_id: str) -> None:
+        self.store.delete_model_endpoint(endpoint_id)
+
+    def sync_model_endpoints(
+        self, routes: list[dict], *, describe_model=None
+    ) -> dict[str, int]:
+        """把模型注册表的当前路由投影为模型端点目录。
+
+        ``routes`` 的每一项至少包含 ``provider`` 与 ``model``；
+        ``describe_model(provider, model)`` 可选，返回 ``ModelCapabilityEnvelope``
+        用于补齐上下文窗口与特性声明。由本方法建立且不在 ``routes``
+        中的端点会被移除（配置驱动收敛）。
         """
-        self.registry.get(resource_id)
-        health = self.health_monitor.observe(
-            resource_id,
-            success=success,
-            latency_ms=latency_ms,
-            observed_at=observed_at,
-        )
-        timestamp = observed_at or datetime.now().astimezone()
-        for _ in range(3):
-            current = self.store.get_snapshot(resource_id)
-            # model_copy(update=) 只认字段名，不认别名；别名键会被静默忽略。
-            updated = current.snapshot.model_copy(update={
-                "observed_at": timestamp,
-                "observation_sequence": current.snapshot.observation_sequence + 1,
-                "latency_ms": latency_ms,
-                "reliability": health.reliability,
-                "health_status": (
-                    ResourceHealthStatus.ONLINE
-                    if success
-                    else current.snapshot.health_status
-                ),
-            })
-            try:
-                self.store.update_snapshot(updated, expected_version=current.version)
-                break
-            except VersionConflict:
-                # 并发完成回写时以最新版本为基准重放一次快照合并。
+        keep: set[str] = set()
+        replaced = 0
+        removed = 0
+        for route in routes:
+            provider = str(route.get("provider") or "").strip()
+            model = str(route.get("model") or "").strip()
+            if not provider or not model:
                 continue
-        return health
+            endpoint_id = f"model:{provider}/{model}"
+            envelope = None
+            if describe_model is not None:
+                try:
+                    envelope = describe_model(provider, model)
+                except Exception:
+                    envelope = None
+            features: dict[str, bool] = {}
+            context_window = None
+            max_output = None
+            placement = Placement.CLOUD
+            if envelope is not None:
+                context_window = envelope.context_window_tokens
+                max_output = envelope.max_output_tokens
+                feature_set = envelope.features
+                features = {
+                    key: value
+                    for key, value in {
+                        "json_schema": feature_set.json_schema,
+                        "streaming": feature_set.streaming,
+                        "tools": feature_set.tools,
+                        "thinking": feature_set.thinking,
+                        "prompt_caching": feature_set.prompt_caching,
+                    }.items()
+                    if value is not None
+                }
+                if provider.lower() in {"ollama", "vllm"}:
+                    placement = Placement.DEVICE
+            endpoint = ModelEndpointProfile(
+                endpointId=endpoint_id,
+                provider=provider,
+                model=model,
+                modelVersion=(str(route.get("version")) if route.get("version") else None),
+                placement=placement,
+                contextWindowTokens=context_window,
+                maxOutputTokens=max_output,
+                features=ModelFeatureSet.model_validate(features),
+                metadata={"source": "model-registry-sync"},
+            )
+            _, changed = self.store.upsert_model_endpoint(endpoint)
+            if changed:
+                replaced += 1
+            keep.add(endpoint_id)
+        for existing in self.store.list_model_endpoints():
+            if (
+                existing.metadata.get("source") == "model-registry-sync"
+                and existing.endpoint_id not in keep
+            ):
+                self.store.delete_model_endpoint(existing.endpoint_id)
+                removed += 1
+        return {"kept": len(keep), "replaced": replaced, "removed": removed}
 
-    def observe_remote(
-        self,
-        resource_id: str,
-        *,
-        available_slots: int,
-        utilization: float,
-        latency_ms: float | None = None,
-        observed_at: datetime | None = None,
-        observation_sequence: int = 0,
-    ) -> ResourceHealth:
-        """接收远程资源的一次完整观测，并同步快照与存活信号。"""
-        profile = self.registry.get(resource_id)
-        if profile.deployment_tier is DeploymentTier.LOCAL:
-            raise ValueError("remote observation requires a non-local resource")
-        current = self.store.get_snapshot(resource_id)
-        timestamp = observed_at or datetime.now().astimezone()
-        updated = ResourceSnapshot(
-            resourceId=resource_id,
-            observationSequence=observation_sequence,
-            observedAt=timestamp,
-            availableSlots=available_slots,
-            utilization=utilization,
-            healthStatus=ResourceHealthStatus.ONLINE,
-            latencyMs=latency_ms,
-        )
-        self.store.update_snapshot(updated, expected_version=current.version)
-        if latency_ms is None:
-            return self.heartbeat(resource_id, received_at=timestamp, source="external")
-        return self.health_monitor.observe(
-            resource_id,
-            success=True,
-            latency_ms=latency_ms,
-            observed_at=timestamp,
-        )
-
-    def set_health(self, resource_id: str, *, healthy: bool) -> ResourceHealth:
-        """Record a compatibility adapter's explicit health observation."""
-        self.registry.get(resource_id)
-        return self.health_monitor.set_health(resource_id, healthy=healthy)
-
-    def candidates(
-        self,
-        required_capabilities: list[str] | tuple[str, ...] | set[str],
-        *,
-        labels: dict[str, str] | None = None,
-        now: datetime | None = None,
-    ) -> list[ResourceCandidate]:
-        """返回具备所需能力、健康且仍有槽位的稳定排序候选集。"""
-        candidates: list[ResourceCandidate] = []
-        for profile in self.registry.all():
-            versioned = self.store.get_snapshot(profile.resource_id)
-            health = self.health_monitor.health(profile.resource_id, now=now)
-            if not is_resource_available(
-                profile, versioned.snapshot, health, required_capabilities, labels
+    def model_candidates(
+        self, demand: ModelDemand | None, *, now: datetime | None = None
+    ) -> list[ModelEndpointCandidate]:
+        """按模型需求返回可用端点候选；特征未声明的端点按不支持处理。"""
+        demand = demand or ModelDemand()
+        allowed = set(demand.allowed_endpoint_ids)
+        excluded = set(demand.excluded_endpoint_ids)
+        preferred = set(demand.preferred_model_ids)
+        required_features = set(demand.required_features)
+        candidates: list[ModelEndpointCandidate] = []
+        for endpoint in self.store.list_model_endpoints():
+            if not endpoint.enabled:
+                continue
+            if allowed and endpoint.endpoint_id not in allowed:
+                continue
+            if endpoint.endpoint_id in excluded:
+                continue
+            feature_map = endpoint.features.model_dump()
+            if any(feature_map.get(feature) is not True for feature in required_features):
+                continue
+            if demand.min_context_tokens > 0 and (
+                endpoint.context_window_tokens is None
+                or endpoint.context_window_tokens < demand.min_context_tokens
             ):
                 continue
-            candidates.append(
-                ResourceCandidate(
-                    profile=profile,
-                    snapshot=versioned,
-                    health=health,
-                    score=health_score(health, versioned.snapshot.utilization),
-                )
+            score = 1.0 + (
+                0.1
+                if endpoint.model in preferred
+                or f"{endpoint.provider}/{endpoint.model}" in preferred
+                else 0.0
             )
-        return sorted(candidates, key=lambda candidate: (-candidate.score, candidate.profile.resource_id))
-
-    get_candidates = candidates
-
-    def find_candidates(
-        self, requirement: BindingRequirement, *, now: datetime | None = None
-    ) -> list[ResourceCandidate]:
-        """Resolve a frozen requirement without creating a concrete binding."""
-        allowed = set(requirement.allowed_resource_ids)
-        excluded = set(requirement.excluded_resource_ids)
-        selected = self.candidates(
-            requirement.required_capabilities,
-            labels=requirement.labels,
-            now=now,
+            candidates.append(ModelEndpointCandidate(endpoint=endpoint, score=score))
+        return sorted(
+            candidates,
+            key=lambda item: (-item.score, item.endpoint.endpoint_id),
         )
-        return [
-            candidate
-            for candidate in selected
-            if (not allowed or candidate.profile.resource_id in allowed)
-            and candidate.profile.resource_id not in excluded
-            and (not requirement.resource_types or candidate.profile.resource_type in requirement.resource_types)
-            and (requirement.domain is None or not candidate.profile.domains or requirement.domain in candidate.profile.domains or "general" in candidate.profile.domains)
-            and (requirement.data_zone is None or candidate.profile.data_zone == requirement.data_zone)
-            and (requirement.owner_scope is None or candidate.profile.owner_scope == requirement.owner_scope)
-            and (
-                requirement.max_cost is None
-                or candidate.profile.cost_metadata.get("unit", 0.0) <= requirement.max_cost
-            )
-        ]
+
+
+__all__ = [
+    "IssuedNodeCredential",
+    "IssuedResourceCredential",
+    "ResourcePlane",
+    "SQLiteResourceStore",
+]

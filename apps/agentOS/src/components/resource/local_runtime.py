@@ -1,4 +1,8 @@
-"""AgentOS Resource registration and health projection for Local Runtime."""
+"""Local Runtime 的资源平面注册与健康投影。
+
+Local Runtime 是新资源模型的第一个真实实例：一个 Device Node 承载一个
+EXECUTION_BACKEND Runtime，后者暴露 filesystem / shell 执行能力。
+"""
 
 from __future__ import annotations
 
@@ -9,15 +13,16 @@ from typing import Any, Protocol
 
 from contracts.local_runtime import LOCAL_RUNTIME_PROTOCOL_VERSION, LocalRuntimeCapability
 from contracts.resource import (
-    DeploymentTier,
+    HealthStatus,
+    Placement,
     ResourceEndpoint,
-    ResourceHealthStatus,
-    ResourceProfile,
-    ResourceSnapshot,
-    ResourceType,
+    RuntimeKind,
+    RuntimeProfile,
+    RuntimeSnapshot,
+    TrustLevel,
 )
 
-from .service import IssuedResourceCredential, ResourceService
+from .service import IssuedResourceCredential, ResourcePlane
 
 
 LOCAL_RUNTIME_RESOURCE_CAPABILITIES: tuple[str, ...] = (
@@ -27,6 +32,8 @@ LOCAL_RUNTIME_RESOURCE_CAPABILITIES: tuple[str, ...] = (
     LocalRuntimeCapability.FS_PATCH.value,
 )
 LOCAL_RUNTIME_SHELL_CAPABILITY = LocalRuntimeCapability.SHELL_EXEC.value
+
+DEFAULT_LOCAL_RUNTIME_NODE_ID = "node:device:local"
 
 
 class LocalRuntimeHealthTransport(Protocol):
@@ -44,6 +51,7 @@ class LocalRuntimeResourceConfig:
     credential_secret: str | None = None
     capabilities: tuple[str, ...] = LOCAL_RUNTIME_RESOURCE_CAPABILITIES
     shell_exec_enabled: bool = False
+    node_id: str = DEFAULT_LOCAL_RUNTIME_NODE_ID
 
     def __post_init__(self) -> None:
         if not self.resource_id.strip() or not self.owner_scope.strip():
@@ -67,22 +75,29 @@ class LocalRuntimeResourceConfig:
 
 @dataclass(frozen=True)
 class RegisteredLocalRuntimeResource:
-    profile: ResourceProfile
-    credential: IssuedResourceCredential
+    profile: RuntimeProfile
+    credential: IssuedResourceCredential | None
 
 
-def local_runtime_profile(config: LocalRuntimeResourceConfig) -> ResourceProfile:
-    """Build the only advertised Resource profile for the host runtime."""
+def local_runtime_node_id(config: LocalRuntimeResourceConfig) -> str:
+    return config.node_id
+
+
+def local_runtime_profile(config: LocalRuntimeResourceConfig) -> RuntimeProfile:
+    """构建宿主 Local Runtime 的 EXECUTION_BACKEND 画像。"""
     capabilities = list(config.capabilities)
     if config.shell_exec_enabled:
         capabilities.append(LOCAL_RUNTIME_SHELL_CAPABILITY)
-    return ResourceProfile(
-        resourceId=config.resource_id,
-        resourceType=ResourceType.WORKER,
-        deploymentTier=DeploymentTier.TERMINAL,
+    return RuntimeProfile(
+        runtimeId=config.resource_id,
+        kind=RuntimeKind.EXECUTION_BACKEND,
+        displayName="Local Runtime",
+        nodeId=config.node_id,
+        placement=Placement.DEVICE,
         capabilities=capabilities,
+        trust=TrustLevel.HOST_TRUSTED,
         ownerScope=config.owner_scope,
-        executionEndpoint=ResourceEndpoint(
+        endpoint=ResourceEndpoint(
             protocol="http",
             address=config.execution_endpoint,
             authReference=f"resource-credential:{config.resource_id}",
@@ -93,67 +108,70 @@ def local_runtime_profile(config: LocalRuntimeResourceConfig) -> ResourceProfile
         metadata={
             "runtime": "zhiyi-local-runtime",
             "protocolVersion": LOCAL_RUNTIME_PROTOCOL_VERSION,
+            "managedBy": "bootstrap",
         },
     )
 
 
 def ensure_local_runtime_resource(
-    resource_service: ResourceService,
+    plane: ResourcePlane,
     config: LocalRuntimeResourceConfig,
 ) -> RegisteredLocalRuntimeResource:
-    """Register or validate one Local Runtime through the existing ResourceService."""
+    """登记 Device Node 与其承载的 Local Runtime，并校验既有凭据一致。"""
+    plane.ensure_node(
+        config.node_id,
+        placement=Placement.DEVICE,
+        display_name="本机设备节点",
+        trust=TrustLevel.HOST_TRUSTED,
+    )
     profile = local_runtime_profile(config)
-    snapshot = ResourceSnapshot(
-        resourceId=config.resource_id,
+    snapshot = RuntimeSnapshot(
+        runtimeId=config.resource_id,
         availableSlots=config.capacity,
         utilization=0.0,
-        healthStatus=ResourceHealthStatus.UNKNOWN,
+        healthStatus=HealthStatus.UNKNOWN,
     )
-    try:
-        existing = resource_service.profile(config.resource_id)
-    except KeyError:
-        credential = resource_service.register_remote(
+    credential_id, secret = plane.current_signing_credential_or_none(config.resource_id)
+    if credential_id is None:
+        issued = plane.register_remote_runtime(
             profile,
             snapshot,
             credential_id=config.credential_id,
             secret=config.credential_secret,
         )
-        return RegisteredLocalRuntimeResource(profile=profile, credential=credential)
-    if existing != profile:
-        raise ValueError(f"local runtime resource conflicts with existing profile: {config.resource_id}")
-    record = resource_service.credential(config.resource_id)
-    credential_id, secret = resource_service.current_signing_credential(config.resource_id)
+        return RegisteredLocalRuntimeResource(profile=profile, credential=issued)
     if config.credential_id is not None and credential_id != config.credential_id:
         raise ValueError(f"local runtime credential does not match configured bootstrap: {config.resource_id}")
+    plane.register_runtime(profile, snapshot)
     return RegisteredLocalRuntimeResource(
-        profile=existing,
+        profile=profile,
         credential=IssuedResourceCredential(
             resource_id=config.resource_id,
             credential_id=credential_id,
-            owner_scope=record.owner_scope,
-            secret=secret,
+            owner_scope=profile.owner_scope or "",
+            secret=secret or "",
         ),
     )
 
 
 class LocalRuntimeHealthProjector:
-    """Project runtime health into the existing ResourceService semantics."""
+    """把 Local Runtime 的健康观测投影进资源平面。"""
 
-    def __init__(self, resource_service: ResourceService, resource_id: str) -> None:
-        self.resource_service = resource_service
+    def __init__(self, plane: ResourcePlane, resource_id: str) -> None:
+        self.plane = plane
         self.resource_id = resource_id
 
     async def refresh(self, transport: LocalRuntimeHealthTransport) -> bool:
         started = time.perf_counter()
         try:
             payload = await transport.health()
-            profile = self.resource_service.profile(self.resource_id)
+            profile = self.plane.runtime(self.resource_id)
             if not self._valid_health_payload(payload, profile):
-                self.resource_service.set_health(self.resource_id, healthy=False)
+                self.plane.set_runtime_health(self.resource_id, healthy=False)
                 return False
-            current = self.resource_service.snapshot(self.resource_id)
+            current = self.plane.runtime_snapshot(self.resource_id)
             now = datetime.now(timezone.utc)
-            self.resource_service.observe_remote(
+            self.plane.observe_remote_runtime(
                 self.resource_id,
                 available_slots=int(payload.get("availableSlots") or profile.capacity),
                 utilization=float(payload.get("utilization") or 0.0),
@@ -161,21 +179,23 @@ class LocalRuntimeHealthProjector:
                 observed_at=now,
                 observation_sequence=current.snapshot.observation_sequence + 1,
             )
+            # Local Runtime 应答即证明宿主设备节点在线。
+            self.plane.heartbeat_node(profile.node_id, observed_at=now)
             return True
         except Exception:
             try:
-                self.resource_service.set_health(self.resource_id, healthy=False)
+                self.plane.set_runtime_health(self.resource_id, healthy=False)
             except KeyError:
                 pass
             return False
 
     @staticmethod
-    def _valid_health_payload(payload: dict[str, Any], profile: ResourceProfile) -> bool:
+    def _valid_health_payload(payload: dict[str, Any], profile: RuntimeProfile) -> bool:
         capabilities = set(payload.get("capabilities") or [])
         available_slots = payload.get("availableSlots")
         utilization = payload.get("utilization")
         return (
-            payload.get("resourceId") == profile.resource_id
+            payload.get("resourceId") == profile.runtime_id
             and payload.get("protocolVersion") == LOCAL_RUNTIME_PROTOCOL_VERSION
             and payload.get("status") == "online"
             and set(profile.capabilities).issubset(capabilities)
@@ -193,11 +213,13 @@ class LocalRuntimeHealthProjector:
 
 
 __all__ = [
+    "DEFAULT_LOCAL_RUNTIME_NODE_ID",
     "LOCAL_RUNTIME_RESOURCE_CAPABILITIES",
     "LOCAL_RUNTIME_SHELL_CAPABILITY",
     "LocalRuntimeHealthProjector",
     "LocalRuntimeResourceConfig",
     "RegisteredLocalRuntimeResource",
     "ensure_local_runtime_resource",
+    "local_runtime_node_id",
     "local_runtime_profile",
 ]

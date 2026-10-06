@@ -49,6 +49,10 @@ class NodeStore(Protocol):
         """按可选期望版本原子更新快照；过期版本抛出 ``VersionConflict``。"""
         ...
 
+    def update_profile(self, profile: NodeProfile) -> NodeProfile:
+        """更新节点静态画像；节点标识不可变。"""
+        ...
+
     def save_credential(self, record: ResourceCredentialRecord) -> None:
         """保存一个节点凭据；同一节点不可静默覆盖已有凭据。"""
         ...
@@ -160,6 +164,17 @@ class InMemoryNodeStore:
                 raise ValueError(f"node credential already exists: {record.resource_id}")
             self._credentials[record.resource_id] = record
 
+    def update_profile(self, profile: NodeProfile) -> NodeProfile:
+        with self._lock:
+            try:
+                current = self._profiles[profile.node_id]
+            except KeyError as error:
+                raise KeyError(f"unknown node: {profile.node_id}") from error
+            if profile.node_id != current.node_id:
+                raise ValueError("node profile identity is immutable")
+            self._profiles[profile.node_id] = profile.model_copy(deep=True)
+            return profile.model_copy(deep=True)
+
     def rotate_credential(self, record: ResourceCredentialRecord) -> None:
         with self._lock:
             if record.resource_id not in self._profiles:
@@ -224,6 +239,15 @@ class SQLiteNodeStore:
                 PRIMARY KEY(node_id, nonce)
             )"""
         )
+        # 旧版节点画像（NodeType/privacy 等字段）无法按当前合同解析；由引导
+        # 流程重新登记，不保留跨版本迁移包袱。
+        for rowid, payload in self._connection.execute(
+            "SELECT rowid, profile_json FROM nodes"
+        ).fetchall():
+            try:
+                NodeProfile.model_validate(json.loads(str(payload)))
+            except Exception:
+                self._connection.execute("DELETE FROM nodes WHERE rowid = ?", (rowid,))
         self._connection.commit()
         self._lock = RLock()
 
@@ -368,6 +392,29 @@ class SQLiteNodeStore:
             except sqlite3.IntegrityError as error:
                 self._connection.rollback()
                 raise ValueError(f"node credential already exists: {record.resource_id}") from error
+
+    def update_profile(self, profile: NodeProfile) -> NodeProfile:
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT profile_json FROM nodes WHERE node_id = ?",
+                    (profile.node_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"unknown node: {profile.node_id}")
+                current = NodeProfile.model_validate(json.loads(str(row[0])))
+                if profile.node_id != current.node_id:
+                    raise ValueError("node profile identity is immutable")
+                self._connection.execute(
+                    "UPDATE nodes SET profile_json = ? WHERE node_id = ?",
+                    (self._json(profile), profile.node_id),
+                )
+                self._connection.commit()
+                return profile.model_copy(deep=True)
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def rotate_credential(self, record: ResourceCredentialRecord) -> None:
         with self._lock:

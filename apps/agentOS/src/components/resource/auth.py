@@ -11,7 +11,7 @@ from contracts.resource_signing import (
     canonical_resource_request as _canonical_request,
 )
 
-from .service import ResourceService
+from .service import ResourcePlane
 from .store import ResourceCredentialRecord
 
 
@@ -36,13 +36,13 @@ class ResourceRequestAuthenticator:
 
     def __init__(
         self,
-        resource_service: ResourceService,
+        plane: ResourcePlane,
         *,
         clock_skew: timedelta = timedelta(minutes=5),
     ) -> None:
         if clock_skew <= timedelta(0):
             raise ValueError("clock skew must be positive")
-        self.resource_service = resource_service
+        self.plane = plane
         self.clock_skew = clock_skew
 
     def authenticate(
@@ -60,7 +60,7 @@ class ResourceRequestAuthenticator:
     ) -> ResourceCredentialRecord:
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
-            record = self.resource_service.credential(resource_id)
+            record = self.plane.runtime_credential(resource_id)
         except KeyError as error:
             raise ResourceRequestNotFound("resource not found") from error
         if record.credential_id != credential_id:
@@ -74,7 +74,7 @@ class ResourceRequestAuthenticator:
             raise ResourceRequestExpired("resource request timestamp is expired")
 
         expected = hmac.new(
-            self.resource_service.credential_hmac_key(resource_id, credential_id),
+            self.plane.runtime_credential_hmac_key(resource_id, credential_id),
             _canonical_request(
                 method=method,
                 path=path,
@@ -88,7 +88,7 @@ class ResourceRequestAuthenticator:
             raise ResourceRequestInvalid("resource signature is invalid")
 
         expires_at = signed_at + self.clock_skew
-        if not self.resource_service.consume_nonce(
+        if not self.plane.consume_nonce(
             resource_id, nonce, expires_at, now=current
         ):
             raise ResourceRequestReplay("resource request nonce was already used")
@@ -100,13 +100,13 @@ class NodeRequestAuthenticator:
 
     def __init__(
         self,
-        node_service,
+        plane: ResourcePlane,
         *,
         clock_skew: timedelta = timedelta(minutes=5),
     ) -> None:
         if clock_skew <= timedelta(0):
             raise ValueError("clock skew must be positive")
-        self.node_service = node_service
+        self.plane = plane
         self.clock_skew = clock_skew
 
     def authenticate(
@@ -124,7 +124,7 @@ class NodeRequestAuthenticator:
     ) -> ResourceCredentialRecord:
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
-            record = self.node_service.credential(node_id)
+            record = self.plane.node_credential(node_id)
         except KeyError as error:
             raise ResourceRequestNotFound("node not found") from error
         if record.credential_id != credential_id:
@@ -138,7 +138,7 @@ class NodeRequestAuthenticator:
             raise ResourceRequestExpired("node request timestamp is expired")
 
         expected = hmac.new(
-            self.node_service.credential_hmac_key(node_id, credential_id),
+            self.plane.node_credential_hmac_key(node_id, credential_id),
             _canonical_request(
                 method=method,
                 path=path,
@@ -152,6 +152,6 @@ class NodeRequestAuthenticator:
             raise ResourceRequestInvalid("node signature is invalid")
 
         expires_at = signed_at + self.clock_skew
-        if not self.node_service.consume_nonce(node_id, nonce, expires_at, now=current):
+        if not self.plane.consume_node_nonce(node_id, nonce, expires_at, now=current):
             raise ResourceRequestReplay("node request nonce was already used")
         return record
