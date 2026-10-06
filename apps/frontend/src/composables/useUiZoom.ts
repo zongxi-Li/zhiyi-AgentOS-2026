@@ -87,6 +87,12 @@ export const zoomOut = (): void => setLevel(uiZoomState.level - 1, { announce: t
 
 export const resetZoom = (): void => setLevel(0, { announce: true })
 
+/** 直接落到任意档位（含小数，设置页滑杆用）；滚轮/快捷键在此基础上整格步进。 */
+export const setUiZoomLevel = (level: number): void => {
+  if (!Number.isFinite(level)) return
+  setLevel(level, { announce: true })
+}
+
 const handleWheel = (event: WheelEvent): void => {
   if (!runtime) return
   if (!event.ctrlKey && !event.metaKey) return
@@ -125,8 +131,9 @@ const handleKeydown = (event: KeyboardEvent): void => {
 const readStoredLevel = (): number => {
   if (!runtime) return 0
   try {
-    const stored = Number.parseInt(localStorage.getItem(runtime.storageKey) || '', 10)
-    if (Number.isInteger(stored)) return clampLevel(stored)
+    // 档位可为小数（设置页滑杆按任意比例落档），不能按整数解析。
+    const stored = Number.parseFloat(localStorage.getItem(runtime.storageKey) || '')
+    if (Number.isFinite(stored)) return clampLevel(stored)
   } catch {
     // localStorage 不可用时按默认 100% 起步。
   }

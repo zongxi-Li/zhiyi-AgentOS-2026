@@ -24,6 +24,7 @@
 
     <div class="auth-layout">
       <section v-if="!props.embedded" class="auth-intro" aria-labelledby="auth-title">
+        <div class="auth-intro__mark" aria-hidden="true"><img src="/logo.webp" alt="" /></div>
         <p class="auth-eyebrow">DYNAMIC HETEROGENEOUS AGENT SWARM</p>
         <h1 id="auth-title">让复杂工作<br /><span>在协作中涌现答案</span></h1>
         <p class="auth-intro__lead">连接知识、模型与智能体，让每一个专业任务从规划到交付持续推进。</p>
@@ -268,7 +269,9 @@ const handleRegister = async () => {
 .auth-theme-toggle { min-height: 34px; margin-left: 18px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(36, 143, 240, .2); border-radius: 999px; color: #557cae; background: rgba(255, 255, 255, .28); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease; }
 .auth-theme-toggle:hover { border-color: rgba(36, 143, 240, .5); color: var(--auth-ink); background: rgba(255, 255, 255, .62); transform: translateY(-1px); }
 .auth-layout { width: min(100% - 96px, 1420px); min-height: calc(100vh - 130px); min-height: calc(100dvh - 130px); margin: 0 auto; display: grid; grid-template-columns: minmax(360px, 1fr) minmax(420px, 520px); align-items: center; gap: clamp(70px, 11vw, 190px); padding-bottom: 44px; box-sizing: border-box; }
-.auth-intro { margin-top: -5vh; }
+.auth-intro { justify-self: end; margin-top: -5vh; }
+.auth-intro__mark { width: clamp(128px, 17vh, 180px); aspect-ratio: 1; margin: 0 auto clamp(36px, 5vh, 56px); }
+.auth-intro__mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .auth-eyebrow { margin: 0 0 22px; color: #6c8fbe; font-size: 11px; font-weight: 700; letter-spacing: .25em; }
 .auth-intro h1 { margin: 0; color: var(--auth-ink); font-size: clamp(46px, 4.5vw, 75px); font-weight: 520; line-height: 1.05; letter-spacing: -.065em; }
 .auth-intro h1 span { color: #23508d; font-weight: 450; }

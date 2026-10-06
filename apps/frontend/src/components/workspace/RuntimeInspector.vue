@@ -391,12 +391,12 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__status.is-retry i { background: var(--wb-retry); }
 .runtime-inspector__artifact { color: var(--wb-text-muted); }
 .runtime-inspector__key { min-width: 0; overflow: hidden; color: var(--wb-text); font: 11px/1.4 var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
-.runtime-inspector__tabs { display: flex; gap: 1px; min-height: 36px; padding: 0 10px; border-bottom: 0; background: var(--wb-surface-pane); overflow-x: auto; scrollbar-width: none; }
+.runtime-inspector__tabs { display: flex; gap: 2px; min-height: 38px; margin: 4px 0 2px; padding: 2px; border: 0; border-radius: 9px; background: var(--wb-surface-inset); overflow-x: auto; scrollbar-width: none; }
 .runtime-inspector__tabs::-webkit-scrollbar { display: none; }
-.runtime-inspector__tabs button { flex: 0 0 auto; min-height: 36px; padding: 0 7px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 10px; white-space: nowrap; }
-.runtime-inspector__tabs button:hover { color: var(--wb-text-secondary); }
-.runtime-inspector__tabs button.is-active { border-bottom-color: var(--wb-accent); color: var(--wb-accent); }
-.runtime-inspector__tabs button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
+.runtime-inspector__tabs button { flex: 1 0 auto; min-height: 32px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; transition: color 140ms var(--ease-out), background 140ms var(--ease-out), box-shadow 140ms var(--ease-out), transform 140ms var(--ease-out); }
+.runtime-inspector__tabs button:hover { color: var(--wb-text-secondary); background: var(--wb-hover); }
+.runtime-inspector__tabs button.is-active { color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 10%, var(--wb-surface-section)); box-shadow: none; font-weight: 650; }
+.runtime-inspector__tabs button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -1px; }
 .runtime-inspector__tab-panel { min-width: 0; }
 .runtime-inspector__task-run { display: grid; gap: 7px; }
 .runtime-inspector__task-run > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr); gap: 10px; align-items: baseline; }

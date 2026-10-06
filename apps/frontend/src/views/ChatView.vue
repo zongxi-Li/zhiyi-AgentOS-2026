@@ -8,7 +8,8 @@
           'has-agent-results': isAgentMode,
           'agent-panel-collapsed': isAgentMode && agentPanelCollapsed,
           'agent-panel-resizing': agentPanelResizing,
-          'workspace-mode-switching': workspaceModeSwitching
+          'workspace-mode-switching': workspaceModeSwitching,
+          'hero-settling': !heroSettled
         }
       ]"
       :style="agentPanelLayoutStyle"
@@ -1978,6 +1979,47 @@ watch(
   }
 )
 
+// 英雄区锚定在容器高度的 57%，若挂载/出现瞬间面板高度未稳定（残留的工作流
+// 状态让 showHeroMode 晚一拍翻真、面板先按内容高度排布再撑满），整块英雄区
+// 会从高处滑到中心。因此英雄区每次出现都重新布防：面板高度连续 3 帧不变才
+// 显示，400ms 兜底。
+const heroSettled = ref(false)
+let heroSettleFrame = 0
+let heroSettleTimer: ReturnType<typeof setTimeout> | undefined
+const startHeroSettleCheck = () => {
+  cancelAnimationFrame(heroSettleFrame)
+  if (heroSettleTimer) clearTimeout(heroSettleTimer)
+  heroSettled.value = false
+  let lastHeight = -1
+  let stableFrames = 0
+  const tick = () => {
+    const panel = chatPanelRef.value
+    const height = panel ? Math.round(panel.getBoundingClientRect().height) : 0
+    stableFrames = height > 0 && height === lastHeight ? stableFrames + 1 : 0
+    lastHeight = height
+    if (stableFrames >= 3) {
+      heroSettled.value = true
+      return
+    }
+    heroSettleFrame = requestAnimationFrame(tick)
+  }
+  heroSettleFrame = requestAnimationFrame(tick)
+  heroSettleTimer = setTimeout(() => {
+    cancelAnimationFrame(heroSettleFrame)
+    heroSettled.value = true
+  }, 400)
+}
+watch(showHeroMode, value => {
+  if (value) startHeroSettleCheck()
+})
+onMounted(() => {
+  if (showHeroMode.value) startHeroSettleCheck()
+})
+onUnmounted(() => {
+  cancelAnimationFrame(heroSettleFrame)
+  if (heroSettleTimer) clearTimeout(heroSettleTimer)
+})
+
 onMounted(async () => {
   heroLogoMotion.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   window.addEventListener('workspace-mode-change', handleWorkspaceModeChange)
@@ -2657,6 +2699,9 @@ const handleHeroLogoPointerUp = () => {
   --hero-slogan-offset-y: 236px;
 }
 
+.chat-main.hero-settling .chat-panel.hero-mode .empty-state { visibility: hidden; animation: none; }
+.chat-main.hero-settling .chat-panel.hero-mode .composer { visibility: hidden; }
+
 .chat-panel.hero-mode .messages {
   overflow: hidden;
   padding-bottom: 0;
@@ -2999,6 +3044,9 @@ const handleHeroLogoPointerUp = () => {
 }
 
 /* 右侧工作台滑入动画 */
+/* 切回 Chat 模式时 has-agent-results 先于面板卸载移除，若不脱离布局流，
+   离开中的面板会掉进网格第二行把主面板压扁，英雄区随 57% 锚点滑动。 */
+.chat-main:not(.has-agent-results) > .agent-panel { display: none; }
 .agent-panel-slide-enter-active {
   transition: opacity 0.22s var(--ease-out), transform 0.22s var(--ease-out);
 }

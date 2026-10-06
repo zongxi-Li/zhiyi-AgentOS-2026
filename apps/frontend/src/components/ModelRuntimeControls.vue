@@ -29,13 +29,13 @@
       <div class="reasoning-battery" :class="{ 'is-disabled': reasoningOptions.length < 2 }">
         <div class="reasoning-battery__meter">
           <span class="reasoning-battery__cap" aria-hidden="true"></span>
-          <div class="reasoning-battery__shell">
-            <div class="reasoning-battery__segments" aria-hidden="true">
+          <div class="reasoning-battery__case">
+            <div class="reasoning-battery__cells" aria-hidden="true">
               <span
                 v-for="(option, index) in batteryOptions"
                 :key="option.value"
                 class="reasoning-battery__segment"
-                :class="{ active: isReasoningSegmentActive(index) }"
+                :class="{ active: index < batteryActiveCount }"
               ></span>
             </div>
             <input
@@ -298,10 +298,6 @@ function selectReasoningOption(value: ThinkingMode | ReasoningEffort): void {
   persistSettings()
 }
 
-function isReasoningSegmentActive(index: number): boolean {
-  return index < batteryActiveCount.value
-}
-
 function isSelectedReasoningOption(option: { value: ThinkingMode | ReasoningEffort }): boolean {
   return String(option.value) === String(selectedReasoningOption.value?.value)
 }
@@ -435,7 +431,7 @@ function handleComposerOpen(): void {
 .composer-model-trigger:active { transform: translateY(1px); }
 .composer-model-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 .composer-model-copy { display: inline-flex; align-items: baseline; min-width: 0; gap: 5px; }
-.composer-model-effort { color: var(--primary-color); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.composer-model-effort { color: var(--text-primary); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .composer-model-separator { color: var(--text-muted); }
 .composer-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-model-trigger .el-icon { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
@@ -462,13 +458,48 @@ function handleComposerOpen(): void {
 .reasoning-battery { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 102px; padding: 0 5px 1px 11px; }
 .reasoning-battery.is-disabled { opacity: .58; }
 .reasoning-battery__meter { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; }
-.reasoning-battery__cap { width: 12px; height: 4px; border-radius: 3px 3px 1px 1px; background: color-mix(in srgb, var(--text-primary) 22%, var(--bg-panel)); }
-.reasoning-battery__shell { position: relative; width: 28px; height: 84px; padding: 3px; border: 1px solid color-mix(in srgb, var(--text-primary) 30%, var(--border-light)); border-radius: 8px; background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg-card) 42%, transparent); }
-.reasoning-battery__segments { display: flex; flex-direction: column-reverse; gap: 3px; width: 100%; height: 100%; }
-.reasoning-battery__segment { flex: 1 1 0; min-height: 0; border-radius: 4px; background: color-mix(in srgb, var(--text-primary) 12%, var(--bg-panel)); transition: background 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
-.reasoning-battery__segment.active { background: var(--accent-color); box-shadow: 0 0 10px color-mix(in srgb, var(--accent-color) 20%, transparent); }
+.reasoning-battery__cap {
+  width: 12px; height: 5px; border-radius: 2px 2px 1px 1px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 40%, var(--bg-panel)), color-mix(in srgb, var(--text-primary) 16%, var(--bg-panel)));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 1px 1px rgba(0, 0, 0, .4);
+}
+.reasoning-battery__case {
+  position: relative; width: 28px; height: 84px; padding: 3px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 18%, var(--bg-panel)), color-mix(in srgb, var(--text-primary) 7%, var(--bg-panel)));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .22),
+    inset 0 -1px 1px rgba(0, 0, 0, .35),
+    0 2px 5px rgba(0, 0, 0, .32);
+}
+.reasoning-battery__cells {
+  position: relative; display: flex; flex-direction: column-reverse; gap: 3px; width: 100%; height: 100%; padding: 2px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-primary) 9%, var(--bg-panel));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5), inset 0 -1px 0 rgba(255, 255, 255, .06);
+}
+.reasoning-battery__segment {
+  position: relative; flex: 1 1 0; min-height: 0; border-radius: 3px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .32), rgba(0, 0, 0, .1));
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45), inset 0 -1px 0 rgba(255, 255, 255, .05);
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+.reasoning-battery__segment::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .02) 50%, rgba(255, 255, 255, 0) 80%);
+}
+.reasoning-battery__segment.active {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-color) 52%, #fff) 0%,
+    var(--accent-color) 40%,
+    color-mix(in srgb, var(--accent-color) 60%, #000) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .5),
+    inset 0 -2px 3px color-mix(in srgb, var(--accent-color) 45%, #000),
+    0 0 9px color-mix(in srgb, var(--accent-color) 38%, transparent);
+}
 .reasoning-battery__input { position: absolute; top: 50%; left: 50%; width: 84px; height: 28px; margin: 0; opacity: 0; cursor: pointer; transform: translate(-50%, -50%) rotate(-90deg); z-index: 2; }
-.reasoning-battery__shell:focus-within .reasoning-battery__segments { outline: 2px solid color-mix(in srgb, var(--primary-color) 70%, transparent); outline-offset: 3px; }
+.reasoning-battery__case:focus-within .reasoning-battery__cells { outline: 2px solid color-mix(in srgb, var(--primary-color) 70%, transparent); outline-offset: 3px; }
 .reasoning-battery__options { display: grid; align-content: center; gap: 4px; min-width: 0; }
 .reasoning-battery__option { display: flex; align-items: center; gap: 7px; min-height: 28px; padding: 3px 6px; border-radius: 8px; color: var(--text-secondary); cursor: pointer; transition: background 160ms ease, color 160ms ease; }
 .reasoning-battery__option:hover,

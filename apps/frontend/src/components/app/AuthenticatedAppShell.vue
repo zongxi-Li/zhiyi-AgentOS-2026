@@ -1840,6 +1840,7 @@ onUnmounted(() => {
 }
 
 .chat-project-row {
+  position: relative;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1908,8 +1909,10 @@ onUnmounted(() => {
 }
 
 .chat-project-time {
-  flex: 0 0 auto;
-  margin-left: auto;
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
   color: var(--text-disabled);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -2576,15 +2579,35 @@ onUnmounted(() => {
 
 .chat-project-item {
   min-height: 34px;
-  padding: 6px 38px 6px 9px;
+  padding: 6px 148px 6px 9px;
 }
 
 .chat-project-row--chat .chat-project-item {
-  padding-right: 92px;
+  padding-right: 108px;
+}
+
+.chat-project-row--chat .chat-project-time {
+  max-width: 46px;
+}
+
+.chat-project-row--chat .chat-project-actions {
+  right: 50px;
 }
 
 .chat-project-time {
   color: var(--text-muted);
+}
+
+.chat-project-row:not(.chat-project-row--chat) .chat-project-time {
+  width: 96px;
+  text-align: right;
+}
+
+.chat-project-row:not(.chat-project-row--chat) .chat-project-action-trigger {
+  position: absolute;
+  top: 50%;
+  right: 112px;
+  transform: translateY(-50%);
 }
 
 .history-action {

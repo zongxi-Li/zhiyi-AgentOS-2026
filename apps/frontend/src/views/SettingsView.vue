@@ -86,12 +86,12 @@
           </div>
           <div class="setting-row setting-row-control">
             <div>
-              <strong>字体大小</strong>
-              <p>调整界面文字与控件的整体尺寸。</p>
+              <strong>界面缩放</strong>
+              <p>调整界面文字与控件的整体尺寸，等同 Ctrl+滚轮缩放。</p>
             </div>
             <div class="compact-slider">
-              <el-slider v-model="settings.fontSize" :min="12" :max="20" aria-label="字体大小" />
-              <span>{{ settings.fontSize }}px</span>
+              <el-slider v-model="uiZoomLevelModel" :min="UI_ZOOM_MIN_LEVEL" :max="UI_ZOOM_MAX_LEVEL" :step="0.01" aria-label="界面缩放" />
+              <span>{{ uiZoomPercentage(uiZoomLevelModel) }}%</span>
             </div>
           </div>
         </div>
@@ -408,7 +408,8 @@ import { useUserStore } from '@/stores/user'
 import { apiUrl } from '@/platform/api'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting } from '@element-plus/icons-vue'
-import { applyFontSize, useTheme } from '@/composables/useTheme'
+import { useTheme } from '@/composables/useTheme'
+import { UI_ZOOM_BASE, UI_ZOOM_MAX_LEVEL, UI_ZOOM_MIN_LEVEL, UI_ZOOM_STORAGE_KEY, setUiZoomLevel, uiZoomPercentage, uiZoomState } from '@/composables/useUiZoom'
 import { colorSchemes, type ColorSchemeId } from '@/themes/presets'
 import {
   applyProviderPreset,
@@ -431,7 +432,6 @@ type NavigationItem = {
 interface AppSettings {
   colorScheme: ColorSchemeId
   language: 'zh-CN' | 'en'
-  fontSize: number
   primaryColor: string
   defaultPermission: boolean
   fullAccess: boolean
@@ -524,7 +524,6 @@ const themeDetailRows = computed(() => [
 const defaultSettings = (): AppSettings => ({
   colorScheme: 'codex-dark',
   language: 'zh-CN',
-  fontSize: 14,
   primaryColor: '#4f46e5',
   defaultPermission: true,
   fullAccess: false,
@@ -572,12 +571,27 @@ const lastSavedText = computed(() => {
 
 function applyTheme(): void {
   applyColorScheme(settings.value.colorScheme)
-  applyFontSize(settings.value.fontSize)
 }
 
-watch(() => settings.value.fontSize, (fontSize) => {
-  applyFontSize(fontSize)
+// 界面缩放：档位是唯一事实源（Ctrl+滚轮/快捷键与滑杆共用，持久化在独立键）。
+const uiZoomLevelModel = computed({
+  get: () => uiZoomState.level,
+  set: (level: number) => setUiZoomLevel(level)
 })
+
+// 旧版「字体大小」(12–20px) 从未真正生效（只写了无人消费的 CSS 变量），
+// 迁移为整体缩放档位：14px = 100%。直接写存储键——本组件挂载早于 App.vue
+// 的缩放初始化，此时 setUiZoomLevel 还是空操作，由启动读取存储值生效。
+const LEGACY_BASE_FONT_SIZE = 14
+
+function migrateLegacyFontSize(legacy: unknown): void {
+  const px = Number(legacy)
+  if (!Number.isFinite(px) || px === LEGACY_BASE_FONT_SIZE) return
+  if (localStorage.getItem(UI_ZOOM_STORAGE_KEY) !== null) return
+  const level = Math.log(px / LEGACY_BASE_FONT_SIZE) / Math.log(UI_ZOOM_BASE)
+  localStorage.setItem(UI_ZOOM_STORAGE_KEY, String(level))
+  setUiZoomLevel(level)
+}
 
 function handleLanguageChange(newLang: 'zh-CN' | 'en'): void {
   locale.value = newLang
@@ -605,8 +619,9 @@ function loadSettings(): void {
   const saved = localStorage.getItem('appSettings')
   if (!saved) return
   try {
-    const parsed = JSON.parse(saved) as Partial<AppSettings> & { theme?: unknown }
-    const { theme: _legacyTheme, ...savedSettings } = parsed
+    const parsed = JSON.parse(saved) as Partial<AppSettings> & { theme?: unknown; fontSize?: unknown }
+    const { theme: _legacyTheme, fontSize: _legacyFontSize, ...savedSettings } = parsed
+    migrateLegacyFontSize(parsed.fontSize)
     settings.value = { ...defaultSettings(), ...savedSettings }
     locale.value = settings.value.language
     applyTheme()
@@ -642,6 +657,8 @@ function resetSettings(): void {
   modelSettings.value = getDefaultModelSettings()
   locale.value = 'zh-CN'
   localStorage.removeItem('appSettings')
+  localStorage.removeItem(UI_ZOOM_STORAGE_KEY)
+  setUiZoomLevel(0)
   saveModelSettings(modelSettings.value)
   applyTheme()
   lastSaved.value = new Date()
@@ -834,7 +851,6 @@ function ensureSelectedModel(models: string[]): void {
   padding: 22px 12px 14px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-light);
   background: color-mix(in srgb, var(--bg-sidebar) 78%, var(--bg-app));
 }
 

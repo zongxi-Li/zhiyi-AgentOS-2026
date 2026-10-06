@@ -121,7 +121,7 @@ watch(views, nextViews => {
 .secondary-sidebar__header { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 10px; padding: 0 12px; background: var(--wb-surface-1); }
 .secondary-sidebar__heading { min-width: 0; }
 .secondary-sidebar__heading span { display: block; color: var(--wb-text-secondary); font: 12px/1 var(--font-sans, sans-serif); font-weight: 500; }
-.secondary-sidebar__tabs { display: flex; align-self: flex-start; flex: 0 1 auto; width: min(460px, calc(100% - 28px)); max-width: calc(100% - 28px); gap: 2px; min-height: 38px; margin: 8px 14px 9px; padding: 2px; border: 0; border-radius: 9px; background: var(--wb-surface-inset); overflow-x: auto; scrollbar-width: none; }
+.secondary-sidebar__tabs { display: flex; align-self: flex-start; flex: 0 1 auto; width: calc(100% - 28px); gap: 2px; min-height: 38px; margin: 8px 14px 9px; padding: 2px; border: 0; border-radius: 9px; background: var(--wb-surface-inset); overflow-x: auto; scrollbar-width: none; }
 .secondary-sidebar__tabs::-webkit-scrollbar { display: none; }
 .secondary-sidebar__tabs button { flex: 1 0 auto; min-height: 32px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; transition: color 140ms var(--ease-out), background 140ms var(--ease-out), box-shadow 140ms var(--ease-out), transform 140ms var(--ease-out); }
 .secondary-sidebar__tabs button:hover { color: var(--wb-text-secondary); background: var(--wb-hover); }
