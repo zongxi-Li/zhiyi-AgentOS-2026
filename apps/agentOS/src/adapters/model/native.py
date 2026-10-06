@@ -107,6 +107,15 @@ class NativeGeneralAgent(BaseAgent):
             raise ValueError("prompt context fields must be a list")
         return selected
 
+    def _task_material_source(self, context: AgentRunContext, objective: str) -> dict[str, Any]:
+        supplied = {"objective": objective, **self.prompt_builder._task_source_data(context.task.input)}
+        text = json.dumps(supplied, ensure_ascii=False, sort_keys=True)
+        return {
+            "citationId": "src_task_input_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+            "title": "User-provided task materials", "content": text,
+            "provider": "task-input", "retrievedAt": utc_now().isoformat(),
+        }
+
     @staticmethod
     def _search_provider(context: AgentRunContext) -> str | None:
         """Bind web tools to the same provider that owns this ACG model run."""
@@ -133,6 +142,7 @@ class NativeGeneralAgent(BaseAgent):
         """
         objective = str(
             context.task.input.get("userIntent")
+            or context.task.input.get("taskGoal")
             or context.task.input.get("intent")
             or context.task.title
         ).strip()
@@ -143,7 +153,20 @@ class NativeGeneralAgent(BaseAgent):
             return await self._run_workset(context)
 
         task_summary = str(upstream.get("task_summary") or objective)
+        policy = (context.run.acg_blueprint or {}).get("metadata", {})
         if capability == "information_retrieval":
+            if policy.get("evidenceScope") == "task_input_only":
+                # The frozen Planner scope narrows permissions; enabled tools
+                # cannot widen a mission's evidence boundary. Keep original
+                # user materials intact, without promoting them to verified facts.
+                source = self._task_material_source(context, objective)
+                citation_id = source["citationId"]
+                return AgentOutput(
+                    output={"retrieved_information": [source["content"]], "sources": [source],
+                            "evidence_refs": [citation_id], "retrieval_mode": "task_input_only", "evidence_gaps": []},
+                    summary="Prepared supplied task materials without external retrieval.",
+                    sources=[source], evidenceRefs=[citation_id],
+                )
             if context.tool_runtime is None:
                 raise RuntimeError("read-only tool runtime is not configured")
             result = await context.tool_runtime.execute(
@@ -196,7 +219,7 @@ class NativeGeneralAgent(BaseAgent):
                     )
                     urls = [str(item.get("url") or "").strip() for item in web_rows]
                     urls = list(dict.fromkeys(url for url in urls if url))[:3]
-                    if urls:
+                    if urls and policy.get("webExtraction") == "full_text":
                         extracted = await context.tool_runtime.execute(
                             "web_extract",
                             {"urls": urls},
@@ -222,20 +245,10 @@ class NativeGeneralAgent(BaseAgent):
                         "reason": str(getattr(exc, "code", "") or type(exc).__name__),
                     })
             if not evidence_refs:
-                citation_id = "src_task_input_" + hashlib.sha256(
-                    task_summary.encode("utf-8")
-                ).hexdigest()[:16]
-                sources = [{
-                    "citationId": citation_id,
-                    "title": "User-provided task facts (offline ACG)",
-                    "filename": None,
-                    "url": None,
-                    "content": task_summary[:4000],
-                    "provider": "task-input",
-                    "retrievedAt": utc_now().isoformat(),
-                }]
-                evidence_refs = [citation_id]
-                retrieved_information = [task_summary]
+                source = self._task_material_source(context, objective)
+                sources = [source]
+                evidence_refs = [source["citationId"]]
+                retrieved_information = [source["content"]]
             evidence_refs = list(dict.fromkeys(evidence_refs))
             unique_sources: dict[str, dict[str, Any]] = {}
             for source in sources:
@@ -325,7 +338,7 @@ class NativeGeneralAgent(BaseAgent):
             source_refs=list(context.step.source_refs),
             logical_role=context.step.logical_role,
             task_title=context.task.title,
-            task_input=dict(context.task.input),
+            task_input={**context.task.input, "evidenceScope": policy.get("evidenceScope", "authorized_sources")},
             context_data=upstream,
             source_data=dict(source_data) if isinstance(source_data, dict) else {},
             context_fields=self._prompt_context_fields(context.step.input),

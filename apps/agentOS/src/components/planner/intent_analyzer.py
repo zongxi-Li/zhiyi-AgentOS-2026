@@ -21,7 +21,7 @@ from .complexity import (
 from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
 
 
-INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v2"
+INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v3"
 
 
 class IntentLLM(Protocol):
@@ -36,6 +36,14 @@ _PROFILE_SCHEMA = {
     "type": "object",
     "properties": {
         "primaryGoal": {"type": "string"},
+        "evidenceScope": {
+            "type": "string", "enum": ["task_input_only", "authorized_sources"],
+            "description": "Select task_input_only when the mission restricts evidence to supplied facts/materials, including fictional test data. This forbids local knowledge and web retrieval even if tools are enabled. Otherwise select authorized_sources; this never grants tool permissions.",
+        },
+        "webExtraction": {
+            "type": "string", "enum": ["snippets", "full_text"],
+            "description": "Use snippets for discovery or when supplied data suffices. Select full_text only when the mission requires reading source documents in detail. Do not extract full pages automatically for every search.",
+        },
         "keyConstraints": {"type": "array", "items": {"type": "string"}},
         "requiredCapabilities": {"type": "array", "items": {"type": "string"}},
         "expectedArtifacts": {"type": "array", "items": {"type": "string"}},
@@ -49,7 +57,7 @@ _PROFILE_SCHEMA = {
         "implicitRequirements": {"type": "array", "items": {"type": "string"}},
         "riskLevel": {"type": "string"},
     },
-    "required": ["primaryGoal", "requiredCapabilities", "estimatedComplexity"],
+    "required": ["primaryGoal", "requiredCapabilities", "estimatedComplexity", "evidenceScope", "webExtraction"],
 }
 
 _NATIVE_FALLBACK = ["task_understanding", "analysis", "artifact_generation"]

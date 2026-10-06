@@ -45,6 +45,45 @@ class _GlmModel:
         return SimpleNamespace(provider="openai-compatible", model="glm-5.3-flash")
 
 
+@pytest.mark.parametrize("scope,extraction,expected", [
+    ("task_input_only", "full_text", []),
+    ("authorized_sources", "snippets", ["knowledge_search", "web_search"]),
+    ("authorized_sources", "full_text", ["knowledge_search", "web_search", "web_extract"]),
+])
+def test_frozen_evidence_scope_controls_retrieval_after_run_restore(scope, extraction, expected):
+    class Tool:
+        calls = []
+
+        async def execute(self, name, arguments, **kwargs):
+            self.calls.append(name)
+            rows = [] if name == "knowledge_search" else [{"url": "https://example.org/source", "snippet": "snippet", "content": "full document"}]
+            source = SimpleNamespace(citation_id="src_web", public_dict=lambda: {"citationId": "src_web", "url": "https://example.org/source"})
+            return SimpleNamespace(text=json.dumps({"ok": True, "data": {"results": rows}}),
+                                   sources=[] if name == "knowledge_search" else [source], tool_executions=[])
+
+    task = RuntimeMissionRecord(missionId="evidence-boundary", title="Given data",
+                                input={"webSearchEnabled": True, "userIntent": "Use only the supplied facts",
+                                       "materialText": "fact " * 2000})
+    run = RuntimeRunRecord(missionId=task.mission_id, workflowId="native", domain="general", runtimeEngine="acg",
+                           acgBlueprint={"metadata": {"evidenceScope": scope, "webExtraction": extraction}})
+    # Exercise the persisted contract, rather than a transient Planner object.
+    run = RuntimeRunRecord.model_validate_json(run.model_dump_json(by_alias=True))
+    tool = Tool()
+    context = AgentRunContext(task=task, run=run,
+                              workflow=WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg"),
+                              step=WorkflowStep(stepId="retrieve", name="retrieve", agentName="native_general_agent", capability="information_retrieval"),
+                              memory=[], contextPack=ContextPack(runId=run.run_id, stepId="retrieve"),
+                              toolRuntime=None if scope == "task_input_only" else tool)
+    result = asyncio.run(NativeGeneralAgent().run(context))
+    assert tool.calls == expected
+    if scope == "task_input_only":
+        assert result.output["retrieval_mode"] == "task_input_only"
+        assert json.loads(result.output["retrieved_information"][0])["materialText"] == task.input["materialText"]
+        assert result.tool_executions == []
+    else:
+        assert ("full document" in result.output["retrieved_information"]) == (extraction == "full_text")
+
+
 class _StreamingUsageModel:
     def __init__(self) -> None:
         self.stream_kwargs: list[dict] = []

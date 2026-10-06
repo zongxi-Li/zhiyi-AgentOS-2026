@@ -42,6 +42,12 @@ class TaskSemanticProfile(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     primary_goal: str = Field(default="", alias="primaryGoal")
+    evidence_scope: Literal["task_input_only", "authorized_sources"] = Field(
+        default="authorized_sources", alias="evidenceScope"
+    )
+    web_extraction: Literal["snippets", "full_text"] = Field(
+        default="snippets", alias="webExtraction"
+    )
     key_constraints: List[str] = Field(default_factory=list, alias="keyConstraints")
     required_capabilities: List[str] = Field(default_factory=list, alias="requiredCapabilities")
     capability_candidates: List[CapabilityCandidate] = Field(

@@ -292,6 +292,8 @@ class PlanningEngine:
                     task_plan=task_plan,
                 )
                 blueprint = self.acg_lowerer.lower(lowering_input)
+                blueprint.metadata["evidenceScope"] = profile.evidence_scope
+                blueprint.metadata["webExtraction"] = profile.web_extraction
                 blueprint.metadata["topologyAudit"] = dict(
                     self.semantic_planner.last_topology_audit
                 )

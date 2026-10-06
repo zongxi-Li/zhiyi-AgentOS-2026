@@ -188,6 +188,8 @@ def build_acg_lowering_input(
         "entropyBudget": profile.entropy_budget,
         "estimatedEntropy": network.estimated_entropy,
         "expectedArtifacts": list(task_plan.expected_artifacts),
+        "evidenceScope": profile.evidence_scope,
+        "webExtraction": profile.web_extraction,
     }
     if variant_id is not None:
         metadata["planningVariantId"] = variant_id

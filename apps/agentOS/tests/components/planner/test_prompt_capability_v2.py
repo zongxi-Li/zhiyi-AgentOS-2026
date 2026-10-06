@@ -5,6 +5,18 @@ from components.planner.intent_analyzer import INTENT_PROFILE_PROMPT_VERSION, In
 from support.acg.models import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
 
 
+def test_intent_parser_preserves_typed_evidence_boundary():
+    class Model:
+        def generate_json(self, prompt, schema, **kwargs):
+            assert "evidenceScope" in schema["required"]
+            return {"primaryGoal": "Use supplied facts", "requiredCapabilities": ["analysis"],
+                    "estimatedComplexity": "simple", "evidenceScope": "task_input_only", "webExtraction": "snippets"}
+
+    profile = IntentParser(llm=Model()).parse(intent="Use supplied facts")
+    assert profile.evidence_scope == "task_input_only"
+    assert profile.model_dump(by_alias=True)["webExtraction"] == "snippets"
+
+
 def test_all_existing_capabilities_have_a_versioned_prompt_profile() -> None:
     catalog = build_default_capability_catalog()
 

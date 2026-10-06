@@ -164,6 +164,7 @@ class NativeCapabilityPromptBuilder:
             ("constraints", "constraints"),
             ("expectedArtifacts", "expectedArtifacts"),
             ("taskAcceptance", "taskAcceptance"),
+            ("evidenceScope", "evidenceScope"),
         ):
             value = task_input.get(source_key)
             if value:

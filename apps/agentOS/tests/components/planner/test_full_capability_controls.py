@@ -47,12 +47,16 @@ def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop
         profile=TaskSemanticProfile(
             primaryGoal="Design and verify", requiredCapabilities=capabilities,
             estimatedComplexity="complex", entropyBudget=1024,
+            evidenceScope="task_input_only", webExtraction="snippets",
         ),
         network=network,
         task_plan=plan,
         capability_catalog=catalog,
     )
     blueprint = ACGLowerer().lower(lowering_input)
+    restored = type(blueprint).model_validate_json(blueprint.model_dump_json(by_alias=True))
+    assert restored.metadata["evidenceScope"] == "task_input_only"
+    assert restored.metadata["webExtraction"] == "snippets"
 
     reasoning = {step.metadata["taskPlanKey"]: step.metadata["reasoningEffort"] for step in blueprint.step_nodes()}
     assert reasoning == {"understand": "high", "refine": "max", "verify": "max"}

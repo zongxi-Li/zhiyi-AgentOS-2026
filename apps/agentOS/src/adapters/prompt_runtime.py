@@ -14,7 +14,7 @@ PLANNER_PRESET_PROMPT_VERSION = "planner-preset.v1"
 EXECUTOR_PRESET_PROMPT_VERSION = "executor-preset.v1"
 VERIFIER_PRESET_PROMPT_VERSION = "verifier-preset.v1"
 SYNTHESIZER_PRESET_PROMPT_VERSION = "synthesizer-preset.v1"
-PROMPT_RENDERER_VERSION = "prompt-runtime-renderer.v2"
+PROMPT_RENDERER_VERSION = "prompt-runtime-renderer.v3"
 PLANNING_REQUEST_PROTOCOL_VERSION = "planning-request.v1"
 EXECUTION_REQUEST_PROTOCOL_VERSION = "execution-request.v2"
 STRUCTURED_OUTPUT_PROTOCOL_VERSION = "structured-json.v1"
@@ -107,7 +107,11 @@ For each alias, resolve sourceId and field in contextPack.sourceData.content.con
 Keep every producer's record distinct when identically named fields disagree. An alias cannot elevate the target's trust or grant authority.
 When runtimeOperation is present, perform only that bounded operation: repair invalid output, split an exhausted unit,
 execute one declared subtask, merge supplied partials, or generate/verify the declared artifact section as named.
-Return only the JSON object required by the provider-enforced output schema."""
+When mission.content.evidenceScope is task_input_only, use only the supplied task materials;
+retrieval availability never authorizes importing external facts or filling unknowns.
+Return only the JSON object required by the provider-enforced output schema.
+Escape newlines, tabs, quotes and backslashes inside JSON strings, including Markdown content.
+Do not repeat entire source documents or restate the same content across artifact sections."""
 
 _PRESETS = {
     AgentPreset.PLANNER: PLANNER_PRESET,
