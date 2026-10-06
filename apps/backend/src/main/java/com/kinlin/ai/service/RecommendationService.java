@@ -52,12 +52,12 @@ public class RecommendationService {
 
         if (!recentText.isBlank()) {
             List<String> keywords = extractKeywords(recentText);
-            baseSuggestions.addAll(generateQuestionsByKeywords(keywords, roleName));
-            baseSuggestions.addAll(generateSceneRecommendations(safeRequest.getScene(), recentText, roleName));
+            baseSuggestions.addAll(generateQuestionsByKeywords(keywords));
+            baseSuggestions.addAll(generateSceneRecommendations(safeRequest.getScene(), recentText));
         }
 
         if (baseSuggestions.size() < 3) {
-            baseSuggestions.addAll(getDefaultRecommendations(roleName));
+            baseSuggestions.addAll(getDefaultRecommendations());
         }
 
         return baseSuggestions.stream()
@@ -112,43 +112,11 @@ public class RecommendationService {
     /**
      * 基于关键词生成推荐问题
      */
-    private List<String> generateQuestionsByKeywords(List<String> keywords, String roleName) {
+    private List<String> generateQuestionsByKeywords(List<String> keywords) {
         List<String> questions = new ArrayList<>();
 
         if (keywords.isEmpty()) {
             return questions;
-        }
-
-        // 根据角色和关键词生成问题
-        if (roleName != null) {
-            if (roleName.contains("律师") || roleName.contains("法律")) {
-                if (keywords.contains("合同")) {
-                    questions.add("合同纠纷如何处理？");
-                    questions.add("如何起草一份有效的合同？");
-                }
-                if (keywords.contains("纠纷")) {
-                    questions.add("发生纠纷时应该采取什么措施？");
-                }
-                questions.add("常见的法律问题有哪些？");
-            } else if (roleName.contains("教师") || roleName.contains("教育")) {
-                if (keywords.contains("学习")) {
-                    questions.add("如何提高学习效率？");
-                    questions.add("有什么好的学习方法推荐？");
-                }
-                questions.add("如何制定学习计划？");
-            } else if (roleName.contains("程序") || roleName.contains("代码")) {
-                if (keywords.contains("代码") || keywords.contains("编程")) {
-                    questions.add("如何优化代码性能？");
-                    questions.add("常见的编程错误有哪些？");
-                }
-                questions.add("如何调试代码？");
-            } else if (roleName.contains("作家") || roleName.contains("写作")) {
-                if (keywords.contains("写作") || keywords.contains("文章")) {
-                    questions.add("如何提高写作水平？");
-                    questions.add("文章结构应该如何安排？");
-                }
-                questions.add("如何写出吸引人的开头？");
-            }
         }
 
         // 通用问题
@@ -165,7 +133,7 @@ public class RecommendationService {
         return questions;
     }
 
-    private List<String> generateSceneRecommendations(String scene, String text, String roleName) {
+    private List<String> generateSceneRecommendations(String scene, String text) {
         List<String> questions = new ArrayList<>();
         String normalizedScene = scene == null ? "" : scene.trim().toLowerCase(Locale.ROOT);
         String lowered = text == null ? "" : text.toLowerCase(Locale.ROOT);
@@ -184,10 +152,6 @@ public class RecommendationService {
         } else if (normalizedScene.equals("case")) {
             questions.add("补充与当前条款最接近的争议案例摘要");
             questions.add("对比近三年类似合同纠纷的裁判倾向");
-        }
-
-        if ((roleName != null && (roleName.contains("教师") || roleName.contains("教育"))) && lowered.contains("学习")) {
-            questions.add("根据当前知识点推荐下一步练习");
         }
 
         return questions;
@@ -270,37 +234,7 @@ public class RecommendationService {
     /**
      * 获取默认推荐问题
      */
-    private List<String> getDefaultRecommendations(String roleName) {
-        List<String> recommendations = new ArrayList<>();
-
-        if (roleName != null) {
-            if (roleName.contains("律师") || roleName.contains("法律")) {
-                recommendations.add("合同纠纷如何处理？");
-                recommendations.add("如何保护自己的合法权益？");
-                recommendations.add("常见的法律风险有哪些？");
-            } else if (roleName.contains("教师") || roleName.contains("教育")) {
-                recommendations.add("如何提高学习效率？");
-                recommendations.add("有什么好的学习方法？");
-                recommendations.add("如何制定学习计划？");
-            } else if (roleName.contains("程序") || roleName.contains("代码")) {
-                recommendations.add("如何优化代码性能？");
-                recommendations.add("常见的编程错误有哪些？");
-                recommendations.add("如何调试代码？");
-            } else if (roleName.contains("作家") || roleName.contains("写作")) {
-                recommendations.add("如何提高写作水平？");
-                recommendations.add("文章结构应该如何安排？");
-                recommendations.add("如何写出吸引人的开头？");
-            } else {
-                recommendations.add("能详细解释一下吗？");
-                recommendations.add("有什么建议吗？");
-                recommendations.add("还有其他相关问题吗？");
-            }
-        } else {
-            recommendations.add("能详细解释一下吗？");
-            recommendations.add("有什么建议吗？");
-            recommendations.add("还有其他相关问题吗？");
-        }
-
-        return recommendations;
+    private List<String> getDefaultRecommendations() {
+        return List.of("能详细解释一下吗？", "有什么建议吗？", "还有其他相关问题吗？");
     }
 }

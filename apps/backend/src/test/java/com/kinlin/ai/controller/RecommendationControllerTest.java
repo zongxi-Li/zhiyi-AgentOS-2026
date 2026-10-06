@@ -54,12 +54,11 @@ class RecommendationControllerTest {
     @Test
     void getContextualRecommendations_returnsStructuredItems() throws Exception {
         RecommendationContextRequest request = new RecommendationContextRequest();
-        request.setRoleName("律师");
         request.setScope("chat");
 
         RecommendationItem item = new RecommendationItem();
-        item.setText("如何保护自己的合法权益？");
-        item.setReason("当前处于律师对话场景");
+        item.setText("能详细解释一下吗？");
+        item.setReason("基于对话场景生成");
         item.setTargetAction("fill_input");
         item.setConfidence(0.91);
         item.setScope("chat");
@@ -71,8 +70,8 @@ class RecommendationControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].text").value("如何保护自己的合法权益？"))
-                .andExpect(jsonPath("$[0].reason").value("当前处于律师对话场景"))
+                .andExpect(jsonPath("$[0].text").value("能详细解释一下吗？"))
+                .andExpect(jsonPath("$[0].reason").value("基于对话场景生成"))
                 .andExpect(jsonPath("$[0].targetAction").value("fill_input"))
                 .andExpect(jsonPath("$[0].scope").value("chat"));
     }

@@ -13,9 +13,8 @@ class RecommendationServiceTest {
     private final RecommendationService recommendationService = new RecommendationService();
 
     @Test
-    void generateContextualRecommendations_emptyLawyerChat_returnsStructuredDefaults() {
+    void generateContextualRecommendations_emptyChat_returnsStructuredDefaults() {
         RecommendationContextRequest request = new RecommendationContextRequest();
-        request.setRoleName("律师");
         request.setScope("chat");
 
         List<RecommendationItem> items = recommendationService.generateContextualRecommendations(request);
@@ -33,7 +32,6 @@ class RecommendationServiceTest {
     @Test
     void generateContextualRecommendations_contractWorkbench_prefersClauseAndRiskSuggestions() {
         RecommendationContextRequest request = new RecommendationContextRequest();
-        request.setRoleName("律师");
         request.setScope("workbench");
         request.setScene("clause");
         request.setCurrentInput("请帮我补充软件开发合同的验收标准和知识产权条款");
