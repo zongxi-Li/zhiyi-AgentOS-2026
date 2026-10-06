@@ -13,14 +13,14 @@
         <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
         <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
       </div>
-      <article v-for="message in messages" :key="message.id" v-memo="[message.content, message.planner, receipts[message.proposalId], busy, loading, permission, historical]" class="message" :class="`is-${message.role}`">
+      <article v-for="message in messages" :key="message.id" v-memo="[message.content, message.planner, receipts[receiptKey(message.sourceRunId, message.proposalId)], busy, loading, permission, historical]" class="message" :class="`is-${message.role}`">
         <div v-if="message.planner" class="message-meta"><small>任务澄清</small></div>
         <div class="message-content" v-html="renderMarkdown(message.content)"></div>
         <div v-if="message.action" class="operation-card">
           <strong>{{ actionLabel(message.action.kind) }}</strong>
           <p v-if="message.action.kind === 'user_input'">在当前执行片段结束后，由 Planner 重新观察并处理补充要求。</p>
-          <template v-else><p>重新执行：{{ stepNames(message.action.executeStepIds) }}</p><p>复用结果：{{ stepNames(message.action.reusedStepIds) || '无' }}</p><small>创建新 Run，保留原运行记录与上游证据。</small></template>
-          <button type="button" :disabled="historical || busy || loading || permission !== 'task_collaboration' || !!receipts[message.proposalId]" @click="confirmAction(message.proposalId, message.action)">{{ receipts[message.proposalId] ? '已提交' : '确认操作' }}</button>
+          <template v-else><p>重新执行：{{ stepNames(message.action.executeStepIds) }}</p><p>复用结果：{{ stepNames(message.action.reusedStepIds) || '无' }}</p><p v-if="message.action.executionEnvironmentChanged">执行环境已更新：保持原计划与输入，使用当前可用能力重新执行。</p><small>创建新 Run，保留原运行记录与上游证据。</small></template>
+          <button type="button" :disabled="busy || loading || permission !== 'task_collaboration' || !!receipts[receiptKey(message.sourceRunId, message.proposalId)]" @click="confirmAction(message.proposalId, message.action, message.sourceRunId)">{{ receipts[receiptKey(message.sourceRunId, message.proposalId)] ? '已提交' : '确认操作' }}</button>
         </div>
         <div v-if="message.receipt" class="operation-receipt"><span>{{ message.receipt.kind === 'user_input' ? '等待 Planner 处理' : '运行已提交' }}</span><button v-if="message.receipt.runId !== runId" type="button" @click="emit('select-run', message.receipt.runId)">查看新运行 <el-icon><ArrowRight /></el-icon></button></div>
       </article>
@@ -28,8 +28,8 @@
       <article v-if="state?.question" class="question-card">
         <div class="question-heading"><el-icon><ChatDotRound /></el-icon><span>需要你的补充</span><small>任务已暂停</small></div>
         <p>{{ state.question.prompt }}</p>
-        <div v-if="state.question.choices.length" class="question-choices"><button v-for="choice in state.question.choices" :key="choice" :disabled="historical || busy" @click="draft = choice; answering = true; focusComposer()">{{ choice }}</button></div>
-        <button v-if="!historical" class="reply-link" @click="answering = true; focusComposer()">回答后继续规划 <el-icon><ArrowRight /></el-icon></button>
+        <div v-if="state.question.choices.length" class="question-choices"><button v-for="choice in state.question.choices" :key="choice" :disabled="busy" @click="draft = choice; answering = true; focusComposer()">{{ choice }}</button></div>
+        <button v-if="state" class="reply-link" @click="answering = true; focusComposer()">回答后继续规划 <el-icon><ArrowRight /></el-icon></button>
       </article>
       <div v-if="state?.decision && state.status === 'waiting_review' && !state.question" class="wait-note"><el-icon><Clock /></el-icon><span>{{ state.decision.reason }}</span></div>
     </div>
@@ -51,12 +51,12 @@
     </div>
 
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
-    <div v-if="historical" class="readonly-note">历史 Run · 可以查看对话与轨迹</div>
+    <div v-if="historical" class="readonly-note">正在查看历史运行 · 任务助手仍可协作。<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">前往当前运行</button></div>
     <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null">
-      <div v-if="state?.question && !historical" class="composer-mode"><button type="button" :class="{ selected: answering }" @click="answering = true">回答问题</button><button type="button" :class="{ selected: !answering }" @click="answering = false">询问助手</button></div>
-      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="answering && state?.question ? 2000 : 4000" :disabled="!runId || historical || busy" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
+      <div v-if="state?.question" class="composer-mode"><button type="button" :class="{ selected: answering }" @click="answering = true">回答问题</button><button type="button" :class="{ selected: !answering }" @click="answering = false">询问助手</button></div>
+      <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="answering && state?.question ? 2000 : 4000" :disabled="!runId || busy" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
       <div class="composer-footer">
-        <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="historical || busy || loading || !state || permission !== 'task_collaboration'" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
+        <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration'" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
           <div v-if="openMenu === 'operation'" class="picker-menu operation-menu">
             <div class="menu-heading">任务操作</div>
             <button type="button" @click="prepareOperation('rerun')"><span><strong>原样重跑</strong><small>沿用当前计划与输入，创建新运行</small></span></button>
@@ -67,15 +67,15 @@
           </div>
         </div>
         <div class="composer-picker permission-picker">
-          <button type="button" class="picker-trigger" aria-label="选择权限" aria-haspopup="menu" :aria-expanded="openMenu === 'permission'" :disabled="historical || busy || !state" @click="openMenu = openMenu === 'permission' ? null : 'permission'"><el-icon><Lock /></el-icon><span>{{ permission === 'read_only' ? '仅对话' : '按需确认' }}</span><el-icon class="chevron"><ArrowDown /></el-icon></button>
+          <button type="button" class="picker-trigger" aria-label="选择权限" aria-haspopup="menu" :aria-expanded="openMenu === 'permission'" :disabled="busy || !state" @click="openMenu = openMenu === 'permission' ? null : 'permission'"><el-icon><Lock /></el-icon><span>{{ permission === 'read_only' ? '仅对话' : '按需确认' }}</span><el-icon class="chevron"><ArrowDown /></el-icon></button>
           <div v-if="openMenu === 'permission'" class="picker-menu permission-menu" role="menu" aria-label="任务助手权限">
-            <div class="menu-heading">权限范围</div>
-            <button v-for="option in permissionOptions" :key="option.value" type="button" role="menuitemradio" :aria-checked="permission === option.value" @click="permission = option.value; openMenu = null"><el-icon><Lock v-if="option.value === 'read_only'" /><CircleCheck v-else /></el-icon><span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span><el-icon v-if="permission === option.value" class="selected-check"><Check /></el-icon></button>
+            <div class="menu-heading">权限范围 · 整个任务</div>
+            <button v-for="option in permissionOptions" :key="option.value" type="button" role="menuitemradio" :aria-checked="permission === option.value" @click="changePermission(option.value)"><el-icon><Lock v-if="option.value === 'read_only'" /><CircleCheck v-else /></el-icon><span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span><el-icon v-if="permission === option.value" class="selected-check"><Check /></el-icon></button>
             <p>权限选择不会绕过任务的审计与执行约束。</p>
           </div>
         </div>
         <div class="composer-picker model-picker">
-          <button type="button" class="picker-trigger" aria-label="选择对话模型" aria-haspopup="menu" :aria-expanded="openMenu === 'model'" :disabled="historical || busy || !state || answering && !!state.question" @click="openMenu = openMenu === 'model' ? null : 'model'"><span :title="modelLabel">{{ modelLabel }}</span><small v-if="reasoningOptions.length">· {{ effortLabel(reasoningEffort) }}</small><el-icon class="chevron"><ArrowDown /></el-icon></button>
+          <button type="button" class="picker-trigger" aria-label="选择对话模型" aria-haspopup="menu" :aria-expanded="openMenu === 'model'" :disabled="busy || !state || answering && !!state.question" @click="openMenu = openMenu === 'model' ? null : 'model'"><span :title="modelLabel">{{ modelLabel }}</span><small v-if="reasoningOptions.length">· {{ effortLabel(reasoningEffort) }}</small><el-icon class="chevron"><ArrowDown /></el-icon></button>
           <div v-if="openMenu === 'model'" class="picker-menu model-menu" role="menu" aria-label="对话模型">
             <div class="menu-heading">对话模型 <small>{{ availableModels.length }} 个可用</small></div>
             <button type="button" role="menuitemradio" :aria-checked="!selectedModel" @click="selectedModel = ''; openMenu = null"><span><strong>跟随任务模型</strong><small>{{ defaultModelLabel }}</small></span><el-icon v-if="!selectedModel" class="selected-check"><Check /></el-icon></button>
@@ -87,7 +87,7 @@
         <button class="send-button" type="submit" :disabled="!canSend" :aria-label="answering && state?.question ? '提交回答并继续' : '发送消息'"><el-icon v-if="busy" class="is-loading"><Loading /></el-icon><el-icon v-else><ArrowUp /></el-icon></button>
       </div>
     </form>
-    <div class="composer-caption">{{ historical ? '历史记录不会被修改' : answering && state?.question ? permission === 'read_only' ? '选择「按需确认」后，可提交回答并继续任务' : '回答由任务规划模型处理 · Enter 提交' : 'Enter 发送 · Shift + Enter 换行' }}</div>
+    <div class="composer-caption">{{ answering && state?.question ? permission === 'read_only' ? '选择「按需确认」后，可提交回答并继续任务' : '回答由任务规划模型处理 · Enter 提交' : 'Enter 发送 · Shift + Enter 换行' }}</div>
   </section>
 </template>
 
@@ -117,7 +117,8 @@ const composerRoot = ref<HTMLElement>(), openMenu = ref<'model' | 'permission' |
 const operationStep = ref('')
 const actionLabel = (kind: CopilotActionKind) => ({ rerun: '原样重跑', rerun_node: '从指定节点重跑', recover: '恢复失败任务', user_input: '提交补充要求' })[kind]
 const stepNames = (ids: string[]) => ids.map(id => state.value?.steps.find(s => s.stepId === id)?.name || id).join('、')
-const receipts = computed(() => Object.fromEntries((state.value?.exchanges || []).filter(e => e.receipt).map(e => [e.receipt!.proposalId, e.receipt!])))
+const receiptKey = (sourceRunId: string | undefined, proposalId: string) => `${sourceRunId || props.runId}:${proposalId}`
+const receipts = computed(() => Object.fromEntries((state.value?.exchanges || []).filter(e => e.receipt).map(e => [receiptKey(e.sourceRunId, e.receipt!.proposalId), e.receipt!])))
 const selectedModel = ref(''), permission = ref<CopilotPermission>('task_collaboration')
 const reasoningEffort = ref(''), streamContent = ref(''), pendingUser = ref('')
 const availableModels = computed(() => state.value?.models || [])
@@ -127,18 +128,18 @@ const defaultModelLabel = computed(() => availableModels.value.find(m => m.id ==
 const modelLabel = computed(() => answering.value && state.value?.question ? defaultModelLabel.value : selectedModel.value ? availableModels.value.find(m => m.id === selectedModel.value)?.model || '模型已不可用' : defaultModelLabel.value)
 const permissionOptions = [
   { value: 'read_only' as const, label: '仅对话', description: '查看状态、解释问题和提供建议' },
-  { value: 'task_collaboration' as const, label: '按需确认', description: '准备重跑、恢复或补充要求，确认后由系统验证并执行' }
+  { value: 'task_collaboration' as const, label: '按需确认', description: '对整个任务生效，跨运行持续协作；操作仍需确认与系统校验' }
 ]
 const modelCalls = ref<ModelCallUsage[]>([]), callCursor = ref<string | null>(null), callError = ref(''), callsLoading = ref(false)
 let generation = 0, timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
 const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
-const statusLabel = computed(() => props.historical ? '历史只读' : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
-const composerPlaceholder = computed(() => props.historical ? '历史任务仅供查看' : !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
-const canSend = computed(() => !!props.runId && !!state.value && !loading.value && !props.historical && !busy.value && !!draft.value.trim() && (answering.value && state.value.question ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
+const statusLabel = computed(() => ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
+const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
+const canSend = computed(() => !!props.runId && !!state.value && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed(() => [
-  ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId }] : []), { id: `${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId }]),
-  ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '' }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '' }])
+  ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }]),
+  ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }])
 ].sort((a, b) => a.time.localeCompare(b.time)))
 const lanes = ['planner', 'model', 'tool', 'execution']
 const laneLabel = (kind: string) => ({ planner: '规划', model: '模型', tool: '工具', execution: '执行' } as Record<string, string>)[kind] || kind
@@ -158,6 +159,16 @@ function focusComposer() { void nextTick(() => composerInput.value?.focus()) }
 function trackScroll() { const e = messageList.value; if (e) followBottom.value = e.scrollHeight - e.scrollTop - e.clientHeight < 80 }
 function scrollBottom() { if (followBottom.value) void nextTick(() => { const e = messageList.value; if (e) e.scrollTop = e.scrollHeight }) }
 function errorMessage(e: any) { return typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : e?.response?.data?.message || e?.message || '连接暂时不可用，请重试。你的输入已保留。' }
+async function changePermission(value: CopilotPermission) {
+  if (!props.runId || busy.value) return
+  const token = generation
+  busy.value = true; openMenu.value = null
+  try {
+    const result = await agentosApi.setCopilotPermission(props.runId, value)
+    if (token === generation) { permission.value = result.taskPermission; if (state.value) state.value.taskPermission = result.taskPermission }
+  } catch (e) { if (token === generation) error.value = errorMessage(e) }
+  finally { if (token === generation) busy.value = false }
+}
 async function refresh(silent = false) {
   const id = props.runId, token = generation
   if (!id) return
@@ -167,6 +178,7 @@ async function refresh(silent = false) {
     if (token !== generation) return
     const changedQuestion = next.question?.questionId !== state.value?.question?.questionId
     state.value = next
+    if (next.taskPermission) permission.value = next.taskPermission
     if (requestKey && next.exchanges.some(e => e.operationId === requestKey?.id)) { draft.value = ''; requestKey = undefined }
     if (changedQuestion) { answering.value = !!next.question; requestKey = undefined }
     if (!silent) error.value = ''
@@ -213,7 +225,7 @@ async function send() {
   finally { if (token === generation) { busy.value = false; streamContent.value = ''; pendingUser.value = '' } }
 }
 async function prepareOperation(kind: CopilotActionKind) {
-  if (!state.value || !props.runId || busy.value || props.historical || permission.value !== 'task_collaboration') return
+  if (!state.value || !props.runId || busy.value || permission.value !== 'task_collaboration') return
   const id = props.runId, token = generation
   const stepId = kind === 'rerun_node' ? operationStep.value : undefined
   const content = kind === 'user_input' ? draft.value.trim() : `${actionLabel(kind)}${stepId ? `：${stepNames([stepId])}` : ''}`
@@ -230,12 +242,12 @@ async function prepareOperation(kind: CopilotActionKind) {
   } catch (e) { if (token === generation) error.value = errorMessage(e) }
   finally { if (token === generation) busy.value = false }
 }
-async function confirmAction(proposalId: string, action: CopilotAction) {
-  if (!props.runId || busy.value || props.historical || permission.value !== 'task_collaboration') return
+async function confirmAction(proposalId: string, action: CopilotAction, sourceRunId?: string) {
+  if (!props.runId || busy.value || permission.value !== 'task_collaboration') return
   const id = props.runId, token = generation
   busy.value = true; error.value = ''
   try {
-    const receipt = await agentosApi.applyCopilotAction(id, proposalId, action.expectedRevision, permission.value)
+    const receipt = await agentosApi.applyCopilotAction(sourceRunId || id, proposalId, action.expectedRevision, permission.value)
     if (token !== generation) return
     if (state.value && !state.value.exchanges.some(e => e.operationId === receipt.operationId)) state.value.exchanges.push(receipt)
     await refresh(true); scrollBottom()
@@ -244,7 +256,7 @@ async function confirmAction(proposalId: string, action: CopilotAction) {
 }
 watch(() => props.graphNode?.acgNodeId || props.entry?.acgNodeId, id => { operationStep.value = id || '' }, { immediate: true })
 function onKeydown(e: KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send() } }
-function poll() { const token = generation; const terminal = ['completed', 'failed', 'cancelled', 'superseded'].includes(state.value?.status || ''); timer = setTimeout(async () => { if (!busy.value && !loading.value && !props.historical && props.runId && !document.hidden) await refresh(true); if (token === generation) poll() }, document.hidden ? 30000 : terminal ? 15000 : 3000) }
+function poll() { const token = generation; const terminal = ['completed', 'failed', 'cancelled', 'superseded'].includes(state.value?.status || ''); timer = setTimeout(async () => { if (!busy.value && !loading.value && props.runId && !document.hidden) await refresh(true); if (token === generation) poll() }, document.hidden ? 30000 : terminal ? 15000 : 3000) }
 function saveSession(id = props.runId) { if (id && state.value) saveCopilotSession(id, { state: state.value, draft: draft.value, model: selectedModel.value, permission: permission.value, effort: reasoningEffort.value, operation: requestKey }, sessionOwnerToken) }
 watch(() => props.runId, (_next, previous) => {
   saveSession(previous)

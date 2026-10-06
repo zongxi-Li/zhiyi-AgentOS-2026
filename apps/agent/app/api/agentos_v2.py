@@ -38,7 +38,7 @@ from components.mission_manager.state_machine import InvalidStateTransition
 from components.resource.store import StaleResourceObservation
 from app.tools.permissions import normalize_relative_path
 from runtime import ExecutionRuntime
-from runtime.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest
+from runtime.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
 from runtime.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
 from runtime.review import ReviewConflictError
 from runtime.v2 import IdentityQueryService
@@ -2725,6 +2725,11 @@ def create_router(
     async def get_copilot(run_id: str):
         run = load_run(run_id, readonly=True)
         return interaction.view(run_id, run)
+
+    @router.post("/runs/{run_id}/copilot/permission")
+    async def copilot_permission(run_id: str, request: CopilotPermissionRequest):
+        load_run(run_id)
+        return interaction.set_permission(run_id, request)
 
     @router.post("/runs/{run_id}/copilot/messages")
     async def copilot_message(run_id: str, request: CopilotMessageRequest):

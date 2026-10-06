@@ -43,6 +43,23 @@ class MemoryWorkflowStore(WorkflowStore):
         self._lifecycle_outbox: Dict[str, dict] = {}
         self._copilot_exchanges: dict[tuple[str, str], dict] = {}
         self._planning_inputs: dict[tuple[str, str], dict] = {}
+        self._task_copilot_permissions: dict[str, str] = {}
+
+    def get_task_copilot_permission(self, mission_id: str) -> str:
+        self.get_mission(mission_id)
+        return self._task_copilot_permissions.get(mission_id, "task_collaboration")
+
+    def set_task_copilot_permission(self, mission_id: str, permission: str) -> None:
+        self.get_mission(mission_id)
+        if permission not in {"read_only", "task_collaboration"}:
+            raise ValueError("invalid task Copilot permission")
+        self._task_copilot_permissions[mission_id] = permission
+
+    def list_task_copilot_exchanges(self, mission_id: str, *, limit: int = 30) -> list[dict]:
+        rows = [{**deepcopy(payload), "sourceRunId": owner}
+            for (owner, _), payload in self._copilot_exchanges.items()
+            if owner in self._runs and self._runs[owner].mission_id == mission_id]
+        return rows[-min(max(limit, 1), 100):]
 
     def list_planning_inputs(self, run_id: str) -> list[dict]:
         return deepcopy([v for (owner, _), v in self._planning_inputs.items() if owner == run_id])
@@ -258,6 +275,7 @@ class MemoryWorkflowStore(WorkflowStore):
         mission_deleted = False
         if delete_orphan_mission and not any(item.mission_id == run.mission_id for item in self._runs.values()):
             mission_deleted = self._tasks.pop(run.mission_id, None) is not None
+            self._task_copilot_permissions.pop(run.mission_id, None)
         return RuntimeRunRecordDeleteResult(
             run_id=run_id,
             mission_id=run.mission_id,

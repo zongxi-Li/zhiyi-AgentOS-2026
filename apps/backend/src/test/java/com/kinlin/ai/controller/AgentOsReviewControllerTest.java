@@ -56,6 +56,18 @@ class AgentOsReviewControllerTest {
     }
 
     @Test
+    void copilotPermissionUsesTheExistingOwnedRunGatewayAndReturnsTaskScope() throws Exception {
+        String path = "/ai/agentos/v2/runs/run_001/copilot/permission";
+        gateway.postResponses.put(path, RecordingAgentOsGateway.response(200,
+                Map.of("missionId", "mission_001", "taskPermission", "read_only")));
+        mockMvc.perform(post("/api/agentos/v2/runs/run_001/copilot/permission")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"permission\":\"read_only\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.missionId").value("mission_001"));
+        assertEquals(path, gateway.lastPostPath);
+        assertEquals("read_only", ((Map<?, ?>) gateway.lastPostBody).get("permission"));
+    }
+
+    @Test
     void reviewListingUsesTheOwnedSubresourcePath() throws Exception {
         String path = "/ai/agentos/v2/runs/run_001/reviews";
         gateway.getResponses.put(path, RecordingAgentOsGateway.response(200, Map.of(

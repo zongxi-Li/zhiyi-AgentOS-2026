@@ -5,7 +5,7 @@ import { agentosApi } from '@/services/api/agentos'
 import type { CopilotState } from '@/services/api/agentos/api/copilot'
 import { clearCopilotSession } from './copilotSessionCache'
 
-vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn() } }))
+vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn() } }))
 const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision: 3, modelAvailable: true,
   question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
 const wrappers: ReturnType<typeof mount>[] = []
@@ -15,9 +15,30 @@ async function panel(props = {}) {
   await flushPromises()
   return wrapper
 }
-beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
+beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.setCopilotPermission).mockImplementation(async (_, permission) => ({ missionId: 'mission-1', taskPermission: permission })); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.useRealTimers() })
 describe('task Copilot', () => {
+  it('restores task permission across runs and preserves the source of historical proposals', async () => {
+    const proposal = { sourceRunId: 'run-1', operationId: 'proposal', user: 'rerun', assistant: 'ready', createdAt: '2026-10-06T01:00:00Z', observedRevision: 3,
+      action: { kind: 'rerun' as const, stepId: null, expectedRevision: 3, executeStepIds: ['A'], reusedStepIds: [], content: 'rerun', executionEnvironmentChanged: true } }
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), runId: 'run-2', missionId: 'mission-1', latestRunId: 'run-2', taskPermission: 'read_only', exchanges: [proposal] })
+    const w = await panel({ runId: 'run-2', historical: true })
+    expect(w.get('.operation-card button').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain('执行环境已更新')
+    await w.get('[aria-label="选择权限"]').trigger('click')
+    await w.get('.permission-menu button:last-of-type').trigger('click'); await flushPromises()
+    expect(agentosApi.setCopilotPermission).toHaveBeenCalledWith('run-2', 'task_collaboration')
+    vi.mocked(agentosApi.applyCopilotAction).mockResolvedValue({ operationId: 'receipt', user: '', assistant: 'queued', createdAt: '2026-10-06T01:01:00Z', observedRevision: 0 })
+    await w.get('.operation-card button').trigger('click'); await flushPromises()
+    expect(agentosApi.applyCopilotAction).toHaveBeenCalledWith('run-1', 'proposal', 3, 'task_collaboration')
+  })
+
+  it('provides explicit navigation from historical evidence to the current task run', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), latestRunId: 'run-2', taskPermission: 'task_collaboration' })
+    const w = await panel({ historical: true })
+    await w.get('.readonly-note button').trigger('click')
+    expect(w.emitted('select-run')).toEqual([['run-2']])
+  })
   it('previews a selected node dependency cut and confirms only through the command endpoint', async () => {
     const snapshot = { ...state(), status: 'completed', steps: [{ stepId: 'A', name: '提取资料', status: 'completed' }, { stepId: 'B', name: '生成报告', status: 'completed' }] }
     vi.mocked(agentosApi.getCopilot).mockResolvedValue(snapshot)
@@ -130,13 +151,14 @@ describe('task Copilot', () => {
     expect(agentosApi.answerPlanner).toHaveBeenCalledWith('run-1', 'question-1', '包含', 3, expect.any(String), 'task_collaboration')
     expect(agentosApi.streamCopilotMessage).not.toHaveBeenCalled()
   })
-  it('does not send during IME composition and disables historical mutation', async () => {
+  it('does not send during IME composition and allows task collaboration from historical runs', async () => {
     const w = await panel()
     await w.get('textarea').setValue('输入中文')
     await w.get('textarea').trigger('keydown', { key: 'Enter', isComposing: true })
     expect(agentosApi.streamCopilotMessage).not.toHaveBeenCalled()
     await w.setProps({ historical: true })
-    expect(w.get('.send-button').attributes('disabled')).toBeDefined()
+    expect(w.get('.send-button').attributes('disabled')).toBeUndefined()
+    expect(w.text()).toContain('任务助手仍可协作')
   })
   it('routes the selected model and permission and changes the retry operation when options change', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), models: [{ id: 'provider/model-a', provider: 'provider', model: 'model-a' }], defaultModelId: 'provider/default' })

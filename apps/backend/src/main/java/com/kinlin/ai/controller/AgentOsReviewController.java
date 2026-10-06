@@ -40,6 +40,12 @@ public class AgentOsReviewController {
         return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/copilot"));
     }
 
+    @PostMapping("/runs/{runId}/copilot/permission")
+    public ResponseEntity<Map<String, Object>> copilotPermission(
+            @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.run(runId) + "/copilot/permission", body));
+    }
+
     @PostMapping("/runs/{runId}/copilot/messages")
     public ResponseEntity<Map<String, Object>> copilotMessage(
             @PathVariable String runId, @RequestBody Map<String, Object> body) {

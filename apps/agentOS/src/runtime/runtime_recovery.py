@@ -86,7 +86,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         load_workflow: Callable[[RuntimeRunRecord], WorkflowDefinition],
         prepare_successor_run: Callable[..., tuple[RuntimeMissionRecord, RuntimeRunRecord]],
         mark_retrying: Callable[[str], None],
-        mark_failed: Callable[[str], None],
+        mark_failed: Callable[[str, str], None],
         set_run_lifecycle: Callable[..., RuntimeRunRecord],
         publish_run_terminal_event: Callable[[RuntimeRunRecord, str, dict], None],
         flush_identity_outbox: Callable[..., None],
@@ -184,7 +184,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             error=error,
         )
         try:
-            self._mark_failed(run.mission_id)
+            self._mark_failed(run.mission_id, run.run_id)
         except Exception:
             logger.exception(
                 "Failed to align task status after run failure",
@@ -306,7 +306,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             "message": interruption_message,
         }
         try:
-            self._mark_failed(run.mission_id)
+            self._mark_failed(run.mission_id, run.run_id)
         except Exception:
             logger.exception(
                 "Failed to align task status after interrupted run",
@@ -400,6 +400,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             raise ValueError("source Run changed after the retry request was prepared")
         if _normalize_runtime_engine(source.runtime_engine) != "acg":
             raise ValueError("single-step retry is only available for ACG Runs")
+        # A partial replay inherits committed results; never rebase its environment.
+        self._load_workflow(source)
         blueprint_data = source.acg_blueprint
         if not isinstance(blueprint_data, dict):
             raise ValueError("single-step retry requires a persisted ACG Blueprint")

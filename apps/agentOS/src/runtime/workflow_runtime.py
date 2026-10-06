@@ -377,7 +377,7 @@ class ExecutionRuntime(CollaboratorAccess):
             load_workflow=self._workflow_for_run,
             prepare_successor_run=self.prepare_run,
             mark_retrying=self.mission_manager.mark_retrying,
-            mark_failed=self.mission_manager.mark_failed,
+            mark_failed=lambda mission_id, run_id: self.mission_manager.mark_failed_for_run(mission_id, run_id=run_id),
             set_run_lifecycle=self._set_run_lifecycle,
             publish_run_terminal_event=self._publish_run_terminal_event,
             flush_identity_outbox=self._flush_identity_outbox,
@@ -619,6 +619,7 @@ class ExecutionRuntime(CollaboratorAccess):
         )
         scope = self.plugin_scope_resolver.build_scope(resolved_plugins)
         if execution_scope_override is not None:
+            self.plugin_scope_resolver.validate_snapshot(execution_scope_override)
             scope = execution_scope_override.model_copy(deep=True)
         workflow = self._resolve_workflow(
             task,

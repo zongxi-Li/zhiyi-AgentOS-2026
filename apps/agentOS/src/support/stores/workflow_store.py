@@ -231,6 +231,17 @@ def lifecycle_run_event_type(run: RuntimeRunRecord) -> str | None:
 
 class WorkflowStore(ABC):
     """RuntimeMissionRecord 和 RuntimeRunRecord 状态的持久化边界。"""
+    @abstractmethod
+    def get_task_copilot_permission(self, mission_id: str) -> str:
+        """Return the task-wide operator policy, independently of Run snapshots."""
+
+    @abstractmethod
+    def set_task_copilot_permission(self, mission_id: str, permission: str) -> None:
+        """Persist an explicit user permission selection for this Mission."""
+
+    @abstractmethod
+    def list_task_copilot_exchanges(self, mission_id: str, *, limit: int = 30) -> list[dict]:
+        """Return bounded conversation with exact source Run attribution."""
 
     def list_planning_inputs(self, run_id: str) -> list[dict]:
         """Durable operator input inbox; separate from bounded chat history."""

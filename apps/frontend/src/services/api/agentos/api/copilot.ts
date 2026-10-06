@@ -7,6 +7,7 @@ export interface CopilotStreamEvent { type: 'content' | 'activity' | 'heartbeat'
 export interface CopilotMessageOptions { modelId?: string; permission: CopilotPermission; reasoningEffort?: string }
 
 export interface CopilotExchange {
+  sourceRunId?: string
   operationId: string; user: string; assistant: string; createdAt: string; observedRevision: number
   modelId?: string | null; permission?: CopilotPermission
   reasoningEffort?: string | null
@@ -14,9 +15,10 @@ export interface CopilotExchange {
   receipt?: { proposalId: string; runId: string; kind: CopilotActionKind; status: string; executeStepIds: string[]; reusedStepIds: string[] }
 }
 export type CopilotActionKind = 'rerun' | 'rerun_node' | 'recover' | 'user_input'
-export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string }
+export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string; capabilityCatalogRevision?: string; executionEnvironmentChanged?: boolean }
 export type CopilotPermission = 'read_only' | 'task_collaboration'
 export interface CopilotState {
+  missionId?: string; latestRunId?: string; taskPermission?: CopilotPermission
   runId: string; status: string; revision: number; modelAvailable: boolean
   models?: { id: string; provider: string; model: string; reasoningEfforts?: string[]; defaultReasoningEffort?: string | null }[]
   defaultModelId?: string | null; permissions?: CopilotPermission[]
@@ -27,6 +29,9 @@ export interface CopilotState {
   steps: { stepId: string; name: string; status: string }[]
 }
 export const createCopilotApi = () => ({
+  async setCopilotPermission(runId: string, permission: CopilotPermission): Promise<{ missionId: string; taskPermission: CopilotPermission }> {
+    return (await agentosRequest.post(`${runPath(runId)}/copilot/permission`, { permission })).data
+  },
   async previewCopilotAction(runId: string, kind: CopilotActionKind, content: string, operationId: string, permission: CopilotPermission, stepId?: string): Promise<CopilotExchange> {
     return (await agentosRequest.post(`${runPath(runId)}/copilot/actions/preview`, { kind, content, operationId, permission, ...(stepId ? { stepId } : {}) })).data
   },

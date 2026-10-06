@@ -187,6 +187,28 @@ class MissionManager:
         """将任务推进到失败；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.FAILED)
 
+    def mark_failed_for_run(self, task: RuntimeMissionRecord | str, *, run_id: str) -> RuntimeMissionRecord:
+        """Project the controlling Run's failure, including failures before execution starts."""
+        resolved = self._task(task)
+        run = self.workflow_store.get_run(run_id)
+        if run.mission_id != resolved.mission_id:
+            raise ValueError("failure Run does not belong to the mission")
+        latest = self.workflow_store.list_mission_run_summaries([resolved.mission_id],
+            owner_user_id=run.input.get("authenticatedUserId"),
+            owner_tenant_id=run.input.get("authenticatedTenantId"))[resolved.mission_id].latest_run
+        if latest is None or latest.run_id != run_id:
+            return resolved
+        if resolved.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.CANCELLED}:
+            return self.mark_failed(resolved)
+        old_status = resolved.status
+        resolved.status = WorkflowStatus.FAILED
+        resolved.updated_at = utc_now()
+        self.workflow_store.save_mission(resolved)
+        self._record_task_event(resolved, TraceEventType.TASK_STATUS_CHANGED,
+            observation=f"Task status projected for Run: {old_status.value} -> failed",
+            payload={"fromStatus": old_status.value, "toStatus": "failed", "runId": run_id, "projection": "run-failure"})
+        return resolved
+
     def mark_completed(self, task: RuntimeMissionRecord | str) -> RuntimeMissionRecord:
         """将任务推进到完成；副作用与合法性校验委托 ``transition``。"""
         return self.transition(task, WorkflowStatus.COMPLETED)

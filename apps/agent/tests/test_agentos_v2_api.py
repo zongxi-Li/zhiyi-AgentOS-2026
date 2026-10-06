@@ -1219,6 +1219,13 @@ async def test_api_copilot_conversation_and_answer_resume_real_runtime(tmp_path)
             path = f"/agentos/v2/runs/{run_id}/copilot"
             state = (await client.get(path)).json()
             assert state["question"]["prompt"] == "是否包含税费？"
+            permission = await client.post(path + "/permission", json={"permission": "read_only"})
+            assert permission.status_code == 200
+            assert permission.json()["missionId"] == state["missionId"]
+            assert (await client.get(path)).json()["taskPermission"] == "read_only"
+            blocked = await client.post(path + "/messages", json={"content": "继续", "operationId": "blocked"})
+            assert blocked.status_code == 409 and model.chat_calls == 0
+            assert (await client.post(path + "/permission", json={"permission": "task_collaboration"})).status_code == 200
             message = {"content": "解释当前问题", "operationId": "message-1"}
             sent = await client.post(path + "/messages", json=message)
             assert sent.status_code == 200 and "暂停" in sent.json()["assistant"]
@@ -1243,6 +1250,7 @@ async def test_api_copilot_conversation_and_answer_resume_real_runtime(tmp_path)
 
 @pytest.mark.parametrize("method,suffix,body", [
     ("GET", "", None),
+    ("POST", "/permission", {"permission": "task_collaboration"}),
     ("POST", "/messages", {"content": "查看私有任务", "operationId": "m-1"}),
     ("POST", "/messages/stream", {"content": "查看私有任务", "operationId": "m-1"}),
     ("POST", "/answers", {"questionId": "q-1", "answer": "同意", "expectedRevision": 0, "operationId": "a-1"}),

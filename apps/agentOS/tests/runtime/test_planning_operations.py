@@ -104,6 +104,80 @@ def test_node_rerun_rejects_missing_checkpoint_and_stale_preview(tmp_path):
     assert runtime.workflow_store.list_runs(mission_id=run.mission_id).total == 1
 
 
+def test_full_rerun_freezes_current_environment_without_reusing_old_results(tmp_path):
+    runtime, agent, run = prepared(tmp_path)
+    attach(runtime, Planner())
+    asyncio.run(runtime.execute_prepared_run(run.run_id))
+    old = runtime.workflow_store.get_run(run.run_id).model_dump(mode="json")
+    runtime.capability_catalog.get("task_understanding").description = "new native revision"
+    service = RuntimePlanningInteraction(runtime)
+    proposal = preview(service, run.run_id, "rerun")
+    assert proposal["action"]["executionEnvironmentChanged"] is True
+    receipt = apply(service, run.run_id, proposal)
+    child = runtime.workflow_store.get_run(receipt["receipt"]["runId"])
+    assert child.execution_scope != run.execution_scope
+    assert child.execution_scope.capability_catalog_revision == proposal["action"]["capabilityCatalogRevision"]
+    assert not child.execution_state.get("outputRefs")
+    assert asyncio.run(runtime.execute_prepared_run(child.run_id)).status == WorkflowStatus.COMPLETED
+    assert agent.calls == ["A", "B", "A", "B"]
+    assert runtime.workflow_store.get_run(run.run_id).model_dump(mode="json") == old
+
+
+def test_environment_drift_rejects_stale_confirmation_and_partial_rerun_before_publication(tmp_path):
+    runtime, _, run = prepared(tmp_path)
+    attach(runtime, Planner())
+    asyncio.run(runtime.execute_prepared_run(run.run_id))
+    service = RuntimePlanningInteraction(runtime)
+    proposal = preview(service, run.run_id, "rerun")
+    runtime.capability_catalog.get("task_understanding").description = "changed after preview"
+    with pytest.raises(ReviewConflictError):
+        apply(service, run.run_id, proposal)
+    with pytest.raises(ValueError, match="PLUGIN_SNAPSHOT_CHANGED"):
+        preview(service, run.run_id, "rerun_node", step="A", key="node")
+    with pytest.raises(ValueError, match="PLUGIN_SNAPSHOT_CHANGED"):
+        runtime.prepare_node_rerun(run.run_id, "A")
+    assert runtime.workflow_store.list_runs(mission_id=run.mission_id).total == 1
+
+
+def test_task_permission_and_bounded_conversation_survive_successor_and_restart(tmp_path):
+    from runtime.planning_interaction import CopilotPermissionRequest
+    runtime, _, run = prepared(tmp_path, input={"authenticatedUserId": "owner", "authenticatedTenantId": "tenant"})
+    attach(runtime, Planner())
+    asyncio.run(runtime.execute_prepared_run(run.run_id))
+    service = RuntimePlanningInteraction(runtime)
+    proposal = preview(service, run.run_id, "rerun")
+    child_id = apply(service, run.run_id, proposal)["receipt"]["runId"]
+    service.set_permission(child_id, CopilotPermissionRequest(permission="read_only"))
+    recovered, _ = runtime_at(tmp_path)
+    current = RuntimePlanningInteraction(recovered)
+    view = current.view(child_id)
+    assert view["missionId"] == run.mission_id and view["latestRunId"] == child_id
+    assert current.view(run.run_id)["latestRunId"] == child_id
+    assert view["taskPermission"] == "read_only"
+    assert all(e["sourceRunId"] == run.run_id for e in view["exchanges"])
+    with pytest.raises(ReviewConflictError, match="权限"):
+        preview(current, run.run_id, "rerun", key="blocked")
+    with pytest.raises(ReviewConflictError, match="权限"):
+        asyncio.run(current.message(child_id, CopilotMessageRequest(operationId="blocked-chat", content="rerun")))
+    current.set_permission(run.run_id, CopilotPermissionRequest(permission="task_collaboration"))
+    assert current.view(child_id)["taskPermission"] == "task_collaboration"
+    other = recovered.create_mission("other", workflow_id="seq")
+    assert recovered.workflow_store.list_task_copilot_exchanges(other.mission_id) == []
+    assert recovered.workflow_store.get_task_copilot_permission(other.mission_id) == "task_collaboration"
+
+
+def test_successor_failure_before_first_node_projects_mission_without_mutating_parent(tmp_path):
+    runtime, _, run = prepared(tmp_path, input={"authenticatedUserId": "owner", "authenticatedTenantId": "tenant"})
+    attach(runtime, Planner())
+    asyncio.run(runtime.execute_prepared_run(run.run_id))
+    service = RuntimePlanningInteraction(runtime)
+    child_id = apply(service, run.run_id, preview(service, run.run_id, "rerun"))["receipt"]["runId"]
+    failed = asyncio.run(runtime.fail_run_safely(child_id, error_code="pre_execution", error_message="environment unavailable"))
+    assert failed.status == WorkflowStatus.FAILED
+    assert runtime.workflow_store.get_mission(run.mission_id).status == WorkflowStatus.FAILED
+    assert runtime.workflow_store.get_run(run.run_id).status == WorkflowStatus.COMPLETED
+
+
 def test_confirmed_input_is_durable_during_active_fragment_and_seen_by_planner(tmp_path):
     entered, release = threading.Event(), threading.Event()
     class PausingAgent(Agent):

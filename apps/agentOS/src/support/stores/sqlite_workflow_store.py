@@ -731,6 +731,7 @@ class SQLiteWorkflowStore(WorkflowStore):
                     (mission_id,),
                 ).fetchone()
                 if referenced is None:
+                    conn.execute("DELETE FROM task_copilot_permissions WHERE mission_id = ?", (mission_id,))
                     cursor = conn.execute("DELETE FROM tasks WHERE mission_id = ?", (mission_id,))
                     mission_deleted = cursor.rowcount > 0
             orphan_runs = conn.execute(
@@ -752,6 +753,9 @@ class SQLiteWorkflowStore(WorkflowStore):
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS task_copilot_permissions (
+                mission_id TEXT PRIMARY KEY, permission TEXT NOT NULL
+                CHECK(permission IN ('read_only', 'task_collaboration')))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS run_planning_inputs (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
                 operation_id TEXT NOT NULL, payload TEXT NOT NULL,
@@ -954,6 +958,26 @@ class SQLiteWorkflowStore(WorkflowStore):
             rows = conn.execute("SELECT payload FROM run_copilot_exchanges WHERE run_id = ? "
                 "ORDER BY sequence DESC LIMIT ?", (run_id, min(max(limit, 1), 100))).fetchall()
         return [json.loads(row[0]) for row in reversed(rows)]
+
+    def get_task_copilot_permission(self, mission_id: str) -> str:
+        self.get_mission(mission_id)
+        with self._connect() as conn:
+            row = conn.execute("SELECT permission FROM task_copilot_permissions WHERE mission_id=?", (mission_id,)).fetchone()
+        return row[0] if row else "task_collaboration"
+
+    def set_task_copilot_permission(self, mission_id: str, permission: str) -> None:
+        self.get_mission(mission_id)
+        if permission not in {"read_only", "task_collaboration"}:
+            raise ValueError("invalid task Copilot permission")
+        with self._connect() as conn:
+            conn.execute("INSERT INTO task_copilot_permissions(mission_id,permission) VALUES(?,?) "
+                "ON CONFLICT(mission_id) DO UPDATE SET permission=excluded.permission", (mission_id, permission))
+
+    def list_task_copilot_exchanges(self, mission_id: str, *, limit: int = 30) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT e.run_id,e.payload FROM run_copilot_exchanges e JOIN runs r ON r.run_id=e.run_id "
+                "WHERE r.mission_id=? ORDER BY e.sequence DESC LIMIT ?", (mission_id, min(max(limit, 1), 100))).fetchall()
+        return [{**json.loads(row[1]), "sourceRunId": row[0]} for row in reversed(rows)]
 
     def list_planning_inputs(self, run_id: str) -> list[dict]:
         with self._connect() as conn:
