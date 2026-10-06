@@ -107,7 +107,7 @@
         />
       </template>
 
-      <template #bottom>
+      <template #bottom="{ setCollapsed }">
         <WorkbenchBottomPanel
           headerless
           :tabs="panelTabs"
@@ -119,6 +119,7 @@
               :contribution="resolvePanel(activeTab)"
               :component-props="panelProps(activeTab)"
               @select="selectRuntimeTarget"
+              @close="setCollapsed(true)"
             />
           </template>
         </WorkbenchBottomPanel>
