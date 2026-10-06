@@ -27,6 +27,7 @@ declare module 'vue' {
     ArtifactEditor: typeof import('./src/components/workspace/ArtifactEditor.vue')['default']
     AuthenticatedAppShell: typeof import('./src/components/app/AuthenticatedAppShell.vue')['default']
     AvatarSettingsPanel: typeof import('./src/components/AvatarSettingsPanel.vue')['default']
+    BrandLoader: typeof import('./src/components/common/BrandLoader.vue')['default']
     CallResultPanel: typeof import('./src/components/agentos/CallResultPanel.vue')['default']
     CheckpointPanel: typeof import('./src/components/agentos/CheckpointPanel.vue')['default']
     ConversationExport: typeof import('./src/components/ConversationExport.vue')['default']

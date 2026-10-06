@@ -53,8 +53,7 @@
     </div>
 
     <section v-if="loading && !resources.length" class="resource-state" role="status">
-      <strong>正在读取 ResourceService</strong>
-      <span>只读加载系统 Resource profile…</span>
+      <BrandLoader title="正在读取 ResourceService" subtitle="只读加载系统 Resource profile…" />
     </section>
     <section v-else-if="errorMessage" class="resource-state resource-state--error" role="alert">
       <strong>资源中心暂时不可用</strong>

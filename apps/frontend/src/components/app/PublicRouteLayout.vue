@@ -10,7 +10,9 @@
               </router-view>
             </template>
             <template #fallback>
-              <div class="route-loading" role="status" aria-live="polite">页面加载中…</div>
+              <div class="route-loading" role="status" aria-live="polite">
+                <BrandLoader :size="52" title="页面加载中…" />
+              </div>
             </template>
           </Suspense>
         </el-main>
@@ -21,6 +23,7 @@
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
+import BrandLoader from '@/components/common/BrandLoader.vue'
 
 const route = useRoute()
 </script>

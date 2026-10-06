@@ -60,8 +60,7 @@
         </section>
 
         <section v-if="loading && !missions.length" class="project-list__state" role="status">
-          <strong>正在加载项目</strong>
-          <span>读取 Mission Project 列表…</span>
+          <BrandLoader title="正在加载项目" subtitle="读取 Mission Project 列表…" />
         </section>
         <section v-else-if="errorMessage" class="project-list__state project-list__state--error" role="alert">
           <strong>项目列表暂时不可用</strong>
@@ -194,6 +193,7 @@ import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from
 import { useRouter } from 'vue-router'
 import { CopyDocument, Delete as DeleteIcon, Document, Download, FolderAdd, FolderOpened, Grid, List, Memo, MoreFilled, Plus, Search, Tickets, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import BrandLoader from '@/components/common/BrandLoader.vue'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import { agentosApi, type MissionListItem, type WorkflowRunSummary } from '@/services/api/agentos'
 import { downloadFile, exportMissionDetailToCsv, exportMissionDetailToJson, exportMissionDetailToMarkdown, exportMissionDetailToTxt, exportMissionsToCsv, exportMissionsToJson, exportMissionsToMarkdown, exportMissionsToTxt, type MissionDetailExport } from '@/utils/export'

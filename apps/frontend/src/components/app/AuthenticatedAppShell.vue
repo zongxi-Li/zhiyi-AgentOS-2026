@@ -392,7 +392,9 @@
                   </router-view>
                 </template>
                 <template #fallback>
-                  <div class="route-loading" role="status" aria-live="polite">页面加载中…</div>
+                  <div class="route-loading" role="status" aria-live="polite">
+                    <BrandLoader :size="52" title="页面加载中…" />
+                  </div>
                 </template>
               </Suspense>
             </el-main>
@@ -458,6 +460,7 @@ import {
 import AppTopBar from '@/components/app/AppTopBar.vue'
 import DesktopRuntimeStatus from '@/components/platform/DesktopRuntimeStatus.vue'
 import { authApi } from '@/services/api/auth'
+import BrandLoader from '@/components/common/BrandLoader.vue'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { agentosApi, type MissionListItem } from '@/services/api/agentos'
 import { workflowApi } from '@/services/api/workflow'
