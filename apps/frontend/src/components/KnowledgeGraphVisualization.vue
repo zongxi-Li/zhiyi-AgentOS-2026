@@ -524,7 +524,9 @@ const searchEntity = async () => {
   border: 1px solid rgba(99, 102, 241, 0.18);
 }
 
-.is-loading {
+/* 仅作用于加载遮罩的图标；裸 .is-loading 会命中 el-button 加载态的
+   is-loading 类（子组件根元素带父作用域属性），把整个刷新按钮转起来 */
+.loading-overlay .is-loading {
   animation: rotate 1s linear infinite;
   color: var(--primary-color);
   font-size: 32px;

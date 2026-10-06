@@ -216,7 +216,8 @@ const searchEntity = async () => {
   z-index: 10;
 }
 
-.is-loading {
+/* 同 KnowledgeGraphVisualization：裸 .is-loading 会误转 el-button 加载态 */
+.loading-overlay .is-loading {
   animation: rotate 1s linear infinite;
   color: var(--primary-color);
   font-size: 32px;
