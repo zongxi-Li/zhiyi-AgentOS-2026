@@ -41,6 +41,7 @@ class StaticQueryRouteArchitectureTest {
         var mvc = MockMvcBuilders.standaloneSetup(controllers.toArray()).build();
         var mapping = mvc.getDispatcherServlet().getWebApplicationContext().getBean(RequestMappingHandlerMapping.class);
         var seenTransports = new HashSet<Transport>();
+        var violations = new ArrayList<String>();
         int checked = 0;
         for (var entry : mapping.getHandlerMethods().entrySet()) {
             var route = entry.getKey();
@@ -52,14 +53,23 @@ class StaticQueryRouteArchitectureTest {
                 var transport = new Transport(type.getSimpleName() + "#" + method.getName(), path,
                         method.getGenericReturnType().getTypeName(), route.getProducesCondition().toString());
                 if (TRANSPORTS.contains(transport)) { seenTransports.add(transport); continue; }
-                assertFalse(transport.response().contains("byte[]") || transport.response().contains("org.springframework.core.io.Resource")
-                        || transport.response().contains("ServerSentEvent"), "unregistered transport: " + transport);
-                assertTrue(QueryProjectionArchitectureTest.strictOutputChecked(type, method),
-                        "unprojected GET or widened transport exception: " + transport);
+                if (transport.response().contains("byte[]") || transport.response().contains("org.springframework.core.io.Resource")
+                        || transport.response().contains("ServerSentEvent")) {
+                    violations.add("unregistered transport: " + transport);
+                    continue;
+                }
+                if (!QueryProjectionArchitectureTest.strictOutputChecked(type, method)) {
+                    violations.add("unprojected GET: " + transport);
+                    continue;
+                }
                 checked++;
             }
         }
         assertTrue(checked > 0, "must inspect real Spring mappings");
         assertEquals(TRANSPORTS, seenTransports, "stale or removed transport exceptions must be removed deliberately");
+        // 报全不报首：fail-fast 一轮只暴露一条违规，同批 Map-GET 会躲在它后面
+        // 整轮迁移都查不干净；收集全部违规一次性断言，失败信息即完整清单。
+        assertTrue(violations.isEmpty(), "static GETs must use strict projections or registered transports; "
+                + String.join(" | ", violations));
     }
 }

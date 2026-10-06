@@ -33,4 +33,9 @@ def test_v2_schema_is_independent_and_complete() -> None:
     assert "tasks" not in tables
     assert "runs" not in tables
     assert foreign_keys == 1
-    assert schema_version == CURRENT_SCHEMA_VERSION == 3
+    # 恒久不变式：库内 user_version 必须与声明的 CURRENT_SCHEMA_VERSION 一致，
+    # 任何一侧漂移（迁移漏设版本、常量误改）都在这里炸。
+    assert schema_version == CURRENT_SCHEMA_VERSION
+    # 刻意变更钉：升版必须伴随真实迁移与迁移记录，同一次变更内更新本字面量；
+    # 本断言失败时先确认迁移集，再改数字，不要把它当作可放行的基线失败。
+    assert CURRENT_SCHEMA_VERSION == 3
