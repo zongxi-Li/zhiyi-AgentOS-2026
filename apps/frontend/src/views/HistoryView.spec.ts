@@ -124,7 +124,7 @@ describe('HistoryView tabs', () => {
     expect(testRouter.currentRoute.value.fullPath).toBe('/history')
   })
 
-  it('renders the shared semantic hero and constrained page canvas', async () => {
+  it('renders the projects-style header with a toolbar row below the title', async () => {
     const testRouter = createRouter({
       history: createMemoryHistory(),
       routes: [{ path: '/history', component: HistoryView }]
@@ -144,7 +144,8 @@ describe('HistoryView tabs', () => {
       }
     })
 
-    expect(wrapper.get('h1').text()).toBe('历史记录')
-    expect(wrapper.get('.history-view').attributes('data-max-width')).toBe('1400px')
+    expect(wrapper.get('.history-header h1').text()).toBe('历史记录')
+    expect(wrapper.get('.history-toolbar .history-search input').attributes('placeholder')).toBe('搜索历史记录...')
+    expect(wrapper.find('[data-testid="history-tab-conversations"]').exists()).toBe(true)
   })
 })

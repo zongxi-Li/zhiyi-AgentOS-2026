@@ -1,23 +1,28 @@
 <template>
-  <div class="history-view" data-max-width="1400px">
-    <WorkspacePageHero eyebrow="HISTORY" title="历史记录" description="查看和管理对话、文件与 ACG 运行记录">
-      <template #actions>
-        <div class="history-actions">
-          <label class="history-search">
-            <el-icon><Search /></el-icon>
-            <input v-model="searchKeyword" type="search" placeholder="搜索历史记录..." />
-          </label>
-          <button type="button" class="history-action" :disabled="refreshing" @click="refresh">
-            <el-icon><Refresh /></el-icon>
-            <span>{{ refreshing ? '刷新中' : '刷新' }}</span>
-          </button>
-          <button type="button" class="history-action history-action--danger" @click="clearAll">
-            <el-icon><Delete /></el-icon>
-            <span>清空对话</span>
-          </button>
-        </div>
-      </template>
-    </WorkspacePageHero>
+  <div class="history-view">
+    <header class="history-header">
+      <div>
+        <span class="history-eyebrow">HISTORY</span>
+        <h1>历史记录</h1>
+      </div>
+    </header>
+
+    <section class="history-toolbar" aria-label="历史记录筛选">
+      <label class="history-search">
+        <el-icon aria-hidden="true"><Search /></el-icon>
+        <input v-model="searchKeyword" type="search" placeholder="搜索历史记录..." />
+      </label>
+      <div class="history-toolbar-actions">
+        <button type="button" class="history-action" :disabled="refreshing" @click="refresh">
+          <el-icon aria-hidden="true"><Refresh /></el-icon>
+          <span>{{ refreshing ? '刷新中' : '刷新' }}</span>
+        </button>
+        <button type="button" class="history-action history-action--danger" @click="clearAll">
+          <el-icon aria-hidden="true"><Delete /></el-icon>
+          <span>清空对话</span>
+        </button>
+      </div>
+    </section>
 
     <nav class="history-tabs" aria-label="历史记录类型">
       <button
@@ -72,7 +77,6 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChatLineRound, Delete, Document, Monitor, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import WorkspacePageHero from '@/components/app/WorkspacePageHero.vue'
 import ConversationList from '@/components/ConversationList.vue'
 import FileHistoryList from '@/components/FileHistoryList.vue'
 import AcgHistoryPanel from '@/components/history/AcgHistoryPanel.vue'
@@ -147,95 +151,146 @@ const clearAll = async () => {
 </script>
 
 <style scoped lang="scss">
+/* 头部与工具栏的排版对齐 ProjectListView（工程项目页）：眉标 + 大标题 + 下挂工具栏行 */
 .history-view {
-  width: min(100%, 1400px);
+  width: 100%;
   height: 100%;
   min-height: 0;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 0 clamp(18px, 3.4vw, 56px) 28px;
+  padding: 34px clamp(24px, 5vw, 76px) 28px;
   box-sizing: border-box;
-  background: var(--wb-surface-shell);
-  color: var(--wb-text);
+  background: var(--bg-app);
+  color: var(--text-primary);
 }
 
-.history-view :deep(.workspace-page-hero) {
+.history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1040px;
   width: 100%;
+  margin: 0 auto;
+  padding-bottom: 28px;
 }
 
-.history-actions {
+.history-eyebrow {
+  color: var(--primary-color);
+  font: 10px var(--font-mono, monospace);
+  letter-spacing: .14em;
+}
+
+.history-header h1 {
+  margin: 8px 0 5px;
+  font-size: 25px;
+  line-height: 1.2;
+}
+
+.history-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 7px;
+  justify-content: space-between;
+  gap: 20px;
+  max-width: 1040px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 14px 0;
 }
 
 .history-search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  width: 226px;
-  height: 34px;
-  padding: 0 10px;
+  gap: 10px;
   box-sizing: border-box;
-  border: 1px solid var(--wb-border-soft);
-  border-radius: var(--wb-radius-sm);
-  background: var(--wb-surface-inset);
-  color: var(--wb-text-secondary);
-  transition: var(--transition);
+  width: min(460px, 100%);
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-subtle) 82%, transparent);
+  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
 }
 
 .history-search:focus-within {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wb-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--primary-color) 58%, var(--border-light));
+  background: var(--surface-solid);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.history-search .el-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
 }
 
 .history-search input {
+  min-width: 0;
   width: 100%;
   border: 0;
   outline: 0;
+  color: var(--text-primary);
   background: transparent;
-  color: var(--wb-text);
-  font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
-.history-search input::placeholder { color: var(--wb-text-muted); }
+.history-search input::placeholder {
+  color: var(--text-muted);
+  opacity: .9;
+}
+
+.history-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
 .history-action {
-  height: 34px;
-  padding: 0 11px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  border: 1px solid var(--wb-border-soft);
-  border-radius: var(--wb-radius-sm);
-  background: var(--wb-surface-section);
-  color: var(--wb-text-secondary);
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
-  transition: var(--transition);
+  font-size: 11px;
+  transition: border-color 160ms var(--ease-out), color 160ms var(--ease-out), background-color 160ms var(--ease-out);
 }
 
-.history-action:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--wb-accent) 36%, var(--wb-border-soft));
-  color: var(--wb-accent);
-  background: var(--wb-hover);
+.history-action:hover:not(:disabled),
+.history-action:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--primary-line);
+  background: var(--surface-subtle);
+  outline: none;
 }
 
-.history-action:disabled { cursor: wait; opacity: .62; }
-.history-action--danger { color: var(--wb-danger); }
-.history-action--danger:hover:not(:disabled) { border-color: color-mix(in srgb, var(--wb-danger) 35%, var(--wb-border-soft)); color: var(--wb-danger); background: var(--danger-fade); }
+.history-action:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.history-action--danger { color: var(--danger); }
+.history-action--danger:hover:not(:disabled),
+.history-action--danger:focus-visible {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border-light));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
 
 .history-tabs {
   flex: none;
   min-height: 42px;
   display: flex;
   gap: 3px;
+  max-width: 1040px;
+  width: 100%;
+  margin: 0 auto;
   padding: 3px 6px 0;
   border-bottom: 1px solid var(--wb-border-soft);
   background: color-mix(in srgb, var(--wb-surface-pane) 58%, transparent);
@@ -270,7 +325,10 @@ const clearAll = async () => {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 2px 0 16px;
+  max-width: 1040px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 14px 0 16px;
   scrollbar-gutter: stable;
 }
 
@@ -279,41 +337,69 @@ const clearAll = async () => {
   min-height: 0;
 }
 
+/* 列表卡片对齐 ProjectListView 的行样式：默认透明无边框，悬停浮起 */
 .history-content :deep(.list-content) {
-  gap: 8px;
+  gap: 4px;
 }
 
 .history-content :deep(.conversation-item),
 .history-content :deep(.file-item) {
-  min-height: 70px;
-  padding: 13px 14px;
-  border: 1px solid var(--wb-border-soft);
-  border-radius: var(--wb-radius-section);
-  background: var(--wb-surface-section);
-  box-shadow: var(--wb-shadow-section);
-  transition: var(--transition);
+  min-height: 82px;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
 }
-
-.history-content :deep(.conversation-item:last-child),
-.history-content :deep(.file-item:last-child) { border-bottom: 1px solid var(--wb-border-soft); }
 
 .history-content :deep(.conversation-item:hover),
 .history-content :deep(.file-item:hover) {
-  border-color: color-mix(in srgb, var(--wb-accent) 38%, var(--wb-border-soft));
-  background: color-mix(in srgb, var(--wb-accent-soft) 24%, var(--wb-surface-section));
+  border-color: color-mix(in srgb, var(--primary-line) 42%, var(--border-light));
+  background: color-mix(in srgb, var(--primary-fade) 56%, transparent);
   box-shadow: var(--shadow-sm);
 }
 
 .history-content :deep(.item-left .avatar-wrapper),
 .history-content :deep(.item-left .file-icon-wrapper) {
-  border-color: color-mix(in srgb, var(--wb-accent) 30%, var(--wb-border-soft));
-  background: var(--wb-surface-inset);
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--primary-line) 82%, var(--border-light));
+  border-radius: 10px;
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-fade) 72%, var(--surface-subtle));
+  box-shadow: none;
+  transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), transform 180ms var(--ease-out);
+}
+
+.history-content :deep(.avatar-text) { font-size: 16px; }
+
+.history-content :deep(.conversation-item:hover .item-left .avatar-wrapper),
+.history-content :deep(.file-item:hover .item-left .file-icon-wrapper) {
+  border-color: var(--primary-line);
+  background: var(--primary-fade);
+  transform: translateY(-1px);
 }
 
 .history-content :deep(.item-header .title),
-.history-content :deep(.item-header .filename) { color: var(--wb-text); }
+.history-content :deep(.item-header .filename) {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-content :deep(.item-header .time) {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.history-content :deep(.item-main) { gap: 6px; }
+
 .history-content :deep(.item-preview),
-.history-content :deep(.item-meta) { color: var(--wb-text-secondary); }
+.history-content :deep(.item-meta) {
+  color: var(--text-muted);
+  font-size: 11px;
+}
 
 .history-content :deep(.empty-state) {
   min-height: 280px;
@@ -325,7 +411,7 @@ const clearAll = async () => {
 .history-content :deep(.loading-state) {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
   padding: 4px 0;
   min-height: 0;
   border: 0;
@@ -336,12 +422,12 @@ const clearAll = async () => {
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 76px;
-  padding: 16px 18px;
+  min-height: 82px;
+  padding: 14px 16px;
   box-sizing: border-box;
-  border: 1px solid var(--wb-border-soft);
-  border-radius: var(--wb-radius-section);
-  background: color-mix(in srgb, var(--wb-surface-section) 60%, transparent);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-subtle) 60%, transparent);
 }
 
 .history-content :deep(.skeleton-avatar),
@@ -353,8 +439,8 @@ const clearAll = async () => {
 
 .history-content :deep(.skeleton-avatar),
 .history-content :deep(.skeleton-icon) {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border-radius: 10px;
 }
 
@@ -375,10 +461,11 @@ const clearAll = async () => {
 .history-content :deep(.empty-state .empty-text) { color: var(--wb-text); }
 .history-content :deep(.empty-state .empty-hint) { color: var(--wb-text-secondary); }
 
-@media (max-width: 768px) {
-  .history-view { padding-right: 14px; padding-left: 14px; }
-  .history-actions { justify-content: flex-start; flex-wrap: wrap; }
-  .history-search { flex: 1 1 190px; width: auto; }
+@media (max-width: 720px) {
+  .history-view { padding: 24px 18px 28px; }
+  .history-toolbar { align-items: stretch; flex-direction: column; gap: 12px; padding: 12px 0; }
+  .history-search { width: 100%; }
+  .history-toolbar-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .history-tabs { overflow-x: auto; }
   .history-tabs button { flex: 0 0 auto; }
 }
