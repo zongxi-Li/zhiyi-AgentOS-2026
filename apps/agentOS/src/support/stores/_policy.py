@@ -8,6 +8,20 @@ from contracts.workflow import (
     StepStatus,
     WorkflowStatus,
 )
+from contracts.mission_semantic import run_intent_basis
+
+
+def validate_intent_basis(existing: RuntimeRunRecord | None, incoming: RuntimeRunRecord) -> None:
+    basis = run_intent_basis(incoming)
+    plan = incoming.execution_state.get("taskPlan")
+    if basis is not None and isinstance(plan, dict):
+        if (plan.get("metadata") or {}).get("missionIntentBasisRef") != basis.reference():
+            raise ValueError("TaskPlan must reference the Run's Mission intent basis")
+    if existing is None:
+        return
+    original = run_intent_basis(existing)
+    if (original is None) != (basis is None) or (original is not None and original != basis):
+        raise ValueError("persisted Mission intent basis cannot be added, removed or replaced")
 
 
 TERMINAL_RUN_STATUSES = frozenset(

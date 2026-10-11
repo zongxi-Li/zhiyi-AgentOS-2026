@@ -5,9 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from contracts.authority import LogicalAgentId
+from contracts.mission_semantic import MissionIntentBasis
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 
 
@@ -63,6 +64,7 @@ class AgentRunContext(BaseModel):
     workflow: WorkflowDefinition
     step: WorkflowStep
     memory: Any
+    mission_intent_basis: MissionIntentBasis | None = Field(default=None, alias="missionIntentBasis")
     context_pack: Optional[Any] = Field(default=None, alias="contextPack")
     # 可选的运行期补读入口。它只能读取当前节点已声明的上游引用，Agent 不会得到
     # Value Store、Broker 状态或其它步骤的完整输出集合。
@@ -77,6 +79,15 @@ class AgentRunContext(BaseModel):
     # The scheduler attempt is distinct from the idempotent commit operation.
     # Runtime streaming events must follow this identity across retries.
     attempt_id: Optional[str] = Field(default=None, alias="attemptId")
+
+    @model_validator(mode="after")
+    def bind_mission_intent(self):
+        from contracts.mission_semantic import run_intent_basis
+        persisted = run_intent_basis(self.run)
+        if self.mission_intent_basis is not None and self.mission_intent_basis != persisted:
+            raise ValueError("Agent context basis does not match its Run")
+        self.mission_intent_basis = persisted
+        return self
 
 
 class BaseAgent(ABC):

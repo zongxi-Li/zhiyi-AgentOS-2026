@@ -37,6 +37,10 @@ class MissionSemanticService:
         self._require_access(principal, mission_id, "read")
         return self.store.get_semantic_snapshot(mission_id)
 
+    def require_read_access(self, principal: SemanticPrincipal, mission_id: str) -> None:
+        """Recheck access without capturing current state, including Run replay."""
+        self._require_access(principal, mission_id, "read")
+
     def list_commits(self, principal: SemanticPrincipal, mission_id: str) -> list[SemanticCommit]:
         self._require_access(principal, mission_id, "read")
         return self.store.list_semantic_commits(mission_id)

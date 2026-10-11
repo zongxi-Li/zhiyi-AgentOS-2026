@@ -1437,6 +1437,10 @@ class ACGExecutionService(CollaboratorAccess):
         task = self._load_mission(run.mission_id)
         raw_constraints = task.input.get("constraints")
         constraints = raw_constraints if isinstance(raw_constraints, list) else []
+        from contracts.mission_semantic import run_intent_basis
+        basis = run_intent_basis(run)
+        if basis is not None:
+            constraints = [c.text for c in basis.constraints]
         raw_questions = task.input.get("openQuestions")
         open_questions = raw_questions if isinstance(raw_questions, list) else []
         service = MemoryService(store=self.memory_store)
@@ -1454,7 +1458,7 @@ class ACGExecutionService(CollaboratorAccess):
                 run_id=run.run_id,
                 phase_id=stage,
                 source_memory_refs=source_refs,
-                goal=task.title,
+                goal=basis.objective if basis is not None else task.title,
                 constraints=constraints,
                 open_questions=open_questions,
             )

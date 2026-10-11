@@ -216,6 +216,8 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
             raise ValueError(f"workflow run task does not exist: {run.mission_id}")
         validate_run_state(run)
         existing = self._runs.get(run.run_id)
+        from support.stores._policy import validate_intent_basis
+        validate_intent_basis(existing, run)
         terminal_status = self._terminal_run_statuses.get(run.run_id)
         if terminal_status is not None and _reject_terminal_status_overwrite(terminal_status, run.status):
             return False

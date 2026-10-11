@@ -178,6 +178,11 @@ class SemanticRevisionService(CollaboratorAccess):
         )
         outcome_blueprint = semantic_result.blueprint
         next_plan = semantic_result.next_plan
+        from contracts.mission_semantic import run_intent_basis
+        basis = run_intent_basis(run)
+        if basis is not None:
+            next_plan = next_plan.model_copy(deep=True,
+                update={"metadata": {**next_plan.metadata, "missionIntentBasisRef": basis.reference()}})
         # A revision cannot turn logical source labels into readable material
         # identities or acquire another task's inputs by guessing a manifest ID.
         for node in next_plan.nodes:
@@ -411,6 +416,7 @@ class SemanticRevisionService(CollaboratorAccess):
             source.execution_state if isinstance(source.execution_state, dict) else {}
         )
         inherited_planning_context = (
+            "missionIntentBasis",
             "pluginScopeResolution",
             "visibleCapabilityCount",
             "scopeExcludedAgentCount",

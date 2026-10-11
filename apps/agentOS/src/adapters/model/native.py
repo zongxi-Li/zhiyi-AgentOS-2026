@@ -140,7 +140,7 @@ class NativeGeneralAgent(BaseAgent):
         缺少能力描述、模型、证据或得到非法结果时抛出结构化或运行时异常。
         该协程不保证并发调用间共享状态隔离，隔离责任由运行时提供。
         """
-        objective = str(
+        objective = context.mission_intent_basis.objective if context.mission_intent_basis is not None else str(
             context.task.input.get("userIntent")
             or context.task.input.get("taskGoal")
             or context.task.input.get("intent")
@@ -152,7 +152,7 @@ class NativeGeneralAgent(BaseAgent):
         if context.content_workset_session is not None:
             return await self._run_workset(context)
 
-        task_summary = str(upstream.get("task_summary") or objective)
+        task_summary = objective if context.mission_intent_basis is not None else str(upstream.get("task_summary") or objective)
         policy = (context.run.acg_blueprint or {}).get("metadata", {})
         if capability == "information_retrieval":
             if policy.get("evidenceScope") == "task_input_only":
@@ -338,6 +338,7 @@ class NativeGeneralAgent(BaseAgent):
             source_refs=list(context.step.source_refs),
             logical_role=context.step.logical_role,
             task_title=context.task.title,
+            mission_intent_basis=context.mission_intent_basis,
             task_input={**context.task.input, "evidenceScope": policy.get("evidenceScope", "authorized_sources")},
             context_data=upstream,
             source_data=dict(source_data) if isinstance(source_data, dict) else {},

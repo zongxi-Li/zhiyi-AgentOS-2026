@@ -111,6 +111,10 @@ from adapters.model.native import register_native_runtime
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.workflow_store import WorkflowStore
+from contracts.mission_semantic import SemanticPrincipal, run_intent_basis
+from components.mission_manager.semantic_service import MissionSemanticService
+from components.mission_manager.semantic_resolver import MissionSemanticResolver
+from runtime.planner_input_adapter import planner_input
 
 
 logger = logging.getLogger(__name__)
@@ -236,6 +240,9 @@ class ExecutionRuntime(CollaboratorAccess):
         review_manager: Optional[ReviewManager] = None,
         evaluator: Optional[WorkflowEvaluator] = None,
         mission_manager: Optional[MissionManager] = None,
+        mission_semantic_service: MissionSemanticService | None = None,
+        allow_legacy_mission_intent: bool = False,
+        semantic_principal_provider: Callable[[], SemanticPrincipal | None] | None = None,
         execution_adapter_factories: Optional[Mapping[str, ExecutionAdapterFactory]] = None,
         run_lock_manager: Optional[RunLockManager] = None,
         recovery_recipe_registry: Optional[object] = None,
@@ -327,6 +334,11 @@ class ExecutionRuntime(CollaboratorAccess):
         self.evolution_service = evolution_service or EvolutionService()
         self.plugin_manifests = tuple(plugin_manifests)
         self.require_planner_identity = require_planner_identity
+        self.mission_semantic_service = mission_semantic_service
+        if mission_semantic_service is not None and mission_semantic_service.store is not self.workflow_store:
+            raise ValueError("Mission semantics must use the injected WorkflowStore")
+        self.allow_legacy_mission_intent = allow_legacy_mission_intent
+        self.semantic_principal_provider = semantic_principal_provider
         self.attachment_service = None
         self.orphan_cleaner = ExecutionOrphanCleaner(value_store=self.execution_value_store)
         self.review_manager = review_manager or ReviewManager(self.trace_store)
@@ -589,12 +601,21 @@ class ExecutionRuntime(CollaboratorAccess):
         rerun_reason: Optional[str] = None,
         persist_run: bool = True,
         execution_scope_override: RunExecutionScope | None = None,
+        semantic_principal: SemanticPrincipal | None = None,
+        inherit_parent_basis: bool = False,
     ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
-        """持久化可查询运行；API 可把耗时 ACG 规划交给同一 Runtime 的后台阶段。"""
-
+        """Freeze authorized Mission input before synchronous or deferred planning."""
+        if self.mission_semantic_service is not None:
+            if semantic_principal is None and self.semantic_principal_provider is not None:
+                semantic_principal = self.semantic_principal_provider()
+            if semantic_principal is None:
+                raise PermissionError("trusted semantic principal is required to prepare a Run")
+            self.mission_semantic_service.require_read_access(semantic_principal, mission_id)
         if idempotency_key:
             existing = self.workflow_store.find_run_by_idempotency_key(idempotency_key)
             if existing is not None:
+                if existing.mission_id != mission_id:
+                    raise ValueError("idempotency key belongs to another Mission")
                 if existing.idempotency_fingerprint != idempotency_fingerprint:
                     raise ValueError("idempotency key conflicts with the workflow start request")
                 return self.mission_manager.get_mission(existing.mission_id), existing
@@ -639,6 +660,25 @@ class ExecutionRuntime(CollaboratorAccess):
         run_input = dict(task.input)
         if input_override is not None:
             run_input.update(input_override)
+        basis = None
+        if inherit_parent_basis:
+            if not parent_run_id:
+                raise ValueError("basis inheritance requires a parent Run")
+            parent = self.workflow_store.get_run(parent_run_id)
+            if parent.mission_id != mission_id:
+                raise ValueError("basis parent belongs to another Mission")
+            basis = run_intent_basis(parent)
+        elif self.mission_semantic_service is not None:
+            view = MissionSemanticResolver.resolve(
+                self.mission_semantic_service.get_effective_snapshot(semantic_principal, mission_id)
+            )
+            basis = MissionSemanticResolver.freeze(view, legacy_input=run_input,
+                legacy_title=task.title, allow_legacy=self.allow_legacy_mission_intent)
+        if basis is not None and basis.source_type == "SEMANTIC" and run_input.get("acgBlueprint"):
+            if not inherit_parent_basis or any(run_input.get(k) != (
+                    parent.acg_blueprint if k == "acgBlueprint" else parent.execution_state.get(k))
+                    for k in ("acgBlueprint", "taskPlan", "taskBindings")):
+                raise ValueError("explicit semantic plans require an unchanged trusted parent package")
         if run_input.get("taskAcceptance") is None:
             run_input.pop("taskAcceptance", None)
         if "taskAcceptance" in run_input:
@@ -692,6 +732,7 @@ class ExecutionRuntime(CollaboratorAccess):
             executionScope=scope,
             legacyPluginScope=False,
             executionState={
+                **({"missionIntentBasis": basis.model_dump(by_alias=True, mode="json")} if basis is not None else {}),
                 **({"taskAcceptance": deepcopy(run_input["taskAcceptance"])} if "taskAcceptance" in run_input else {}),
                 **({"engineMigration": "langgraph_pending"} if is_acg else {}),
                 **({"parentRunId": parent_run_id, "sourceRunId": parent_run_id} if parent_run_id else {}),
@@ -812,13 +853,17 @@ class ExecutionRuntime(CollaboratorAccess):
             run,
             workflow,
         )
-        if task_plan is not None and self.identity_lifecycle is not None:
-            resolve_snapshot = getattr(
-                self.identity_lifecycle, "resolve_task_plan_snapshot", None
-            )
-            if callable(resolve_snapshot):
-                task_plan = resolve_snapshot(task_plan)
         if task_plan is not None:
+            basis = run_intent_basis(run)
+            if basis is not None:
+                if explicit_blueprint and basis.source_type == "SEMANTIC" and task_plan.metadata.get("missionIntentBasisRef") != basis.reference():
+                    raise ValueError("explicit TaskPlan is not bound to the Run's Mission basis")
+                task_plan = task_plan.model_copy(deep=True,
+                    update={"metadata": {**task_plan.metadata, "missionIntentBasisRef": basis.reference()}})
+            if self.identity_lifecycle is not None:
+                resolve_snapshot = getattr(self.identity_lifecycle, "resolve_task_plan_snapshot", None)
+                if callable(resolve_snapshot):
+                    task_plan = resolve_snapshot(task_plan)
             validate_bound_acg_semantics(
                 task_plan, blueprint, task_bindings, require_exact=True,
             )
@@ -1288,18 +1333,27 @@ class ExecutionRuntime(CollaboratorAccess):
         )
         use_planner = (
             self.require_planner_identity
+            or run_intent_basis(run) is not None
             or self.identity_lifecycle is not None
             or force_dynamic
             or bool(run.input.get("usePlanner"))
             or not workflow.steps
         )
         if use_planner:
+            basis = run_intent_basis(run)
             intent_text = str(
                 run.input.get("userIntent")
                 or run.input.get("intent")
                 or task.title
                 or workflow.description
             )
+            if basis is not None:
+                intent_text = basis.objective
+            planning_input = planner_input(basis, run.input) if basis is not None else deepcopy(run.input)
+            if self.attachment_context_builder is not None:
+                planning_input = self.attachment_context_builder.enrich(planning_input)
+            if basis is not None:
+                planning_input = planner_input(basis, planning_input)
             planning_engine = self._planning_engine_for_run(run)
 
             def planning_progress(event: dict[str, Any]) -> None:
@@ -1338,11 +1392,7 @@ class ExecutionRuntime(CollaboratorAccess):
                     planning_seed=run.planning_seed,
                     capability_catalog_revision=run.capability_catalog_revision,
                     required_capabilities=workflow.required_capabilities,
-                    task_input=(
-                        self.attachment_context_builder.enrich(dict(run.input))
-                        if self.attachment_context_builder is not None
-                        else dict(run.input)
-                    ),
+                    task_input=planning_input,
                     existing_semantic_tasks=existing_semantic_tasks,
                     capability_profile=str(run.input.get("capabilityProfile") or "auto"),
                     run_id=run.run_id,

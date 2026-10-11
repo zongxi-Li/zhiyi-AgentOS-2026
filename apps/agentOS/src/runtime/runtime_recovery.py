@@ -563,6 +563,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                     "taskBindings": deepcopy(task_bindings),
                 },
                 parent_run_id=source.run_id,
+                inherit_parent_basis=True,
                 rerun_reason="node_rerun" if restart_from_step else "resume_failed",
                 **({"persist_run": False, "execution_scope_override": source.execution_scope} if restart_from_step else {}),
             )

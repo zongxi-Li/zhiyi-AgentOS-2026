@@ -81,6 +81,15 @@ class ACGNodeRunner:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
         self.task = task
         self.run = run
+        from contracts.mission_semantic import run_intent_basis
+        self.mission_intent_basis = run_intent_basis(run)
+        if self.mission_intent_basis is not None:
+            from runtime.planner_input_adapter import planner_input
+            # Adapter-local compatibility projection, never saved as Mission state.
+            self.task = task.model_copy(deep=True, update={
+                "title": self.mission_intent_basis.objective,
+                "input": planner_input(self.mission_intent_basis, task.input),
+            })
         self.workflow = workflow
         self.steps = dict(steps)
         self.agents = dict(agents)
@@ -255,7 +264,7 @@ class ACGNodeRunner:
             pack = ContextPack(
                 runId=state.run_id,
                 stepId=step_id,
-                objective=self.workflow.description,
+                objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
                 stepGoal=step.goal or step.name,
                 evidenceRefs=[
                     f"event:{state.output_refs[source_id]}"
@@ -278,7 +287,7 @@ class ACGNodeRunner:
             pack = ContextPack(
                 runId=state.run_id,
                 stepId=step_id,
-                objective=self.workflow.description,
+                objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
                 stepGoal=step.goal or step.name,
                 evidenceRefs=[f"blackboard:{item}" for item in refs],
                 sourceStepIds=list(self.upstream_step_ids.get(step_id, ())),
@@ -301,7 +310,7 @@ class ACGNodeRunner:
                 input_spec=step.input,
                 upstream_refs=state.output_refs,
                 value_store=self.value_store,
-                objective=self.workflow.description,
+                objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
                 step_goal=step.goal or step.name,
                 token_budget=None,
                 operation_id=commit_id,
@@ -378,6 +387,7 @@ class ACGNodeRunner:
             workflow=self.workflow,
             step=step,
             memory=memories,
+            missionIntentBasis=self.mission_intent_basis,
             contextPack=pack,
             communicationReader=communication_reader,
             contentWorksetSession=workset_session,
@@ -1135,7 +1145,7 @@ class ACGNodeRunner:
         return ContextPack(
             runId=state.run_id,
             stepId=step_id,
-            objective=self.workflow.description,
+            objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
             stepGoal=step.goal or step.name,
             data=data,
             sourceData=source_data,

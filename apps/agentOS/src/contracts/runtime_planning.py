@@ -158,6 +158,7 @@ class RuntimeResourceFailover(PlanningContract):
 
 
 class RuntimePlanningObservation(PlanningContract):
+    mission_intent_basis_ref: dict | None = Field(default=None, alias="missionIntentBasisRef")
     mission_id: str = Field(alias="missionId")
     run_id: str = Field(alias="runId")
     graph_id: str = Field(alias="graphId")

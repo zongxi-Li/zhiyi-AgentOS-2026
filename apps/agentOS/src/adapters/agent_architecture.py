@@ -120,6 +120,16 @@ class FrameworkAgent(BaseAgent):
         pack = context.context_pack
         pack_data = getattr(pack, "data", {}) if pack is not None else {}
         evidence_refs = getattr(pack, "evidence_refs", []) if pack is not None else []
+        if context.mission_intent_basis is not None:
+            from runtime.planner_input_adapter import material_input
+            return {
+                "mission": context.mission_intent_basis.model_dump(by_alias=True, mode="json"),
+                "materials": material_input(context.task.input),
+                "step": {"stepId": context.step.step_id, "goal": context.step.goal,
+                         "input": dict(context.step.resolved_input)},
+                "context": {"data": dict(pack_data) if isinstance(pack_data, dict) else {},
+                            "evidenceRefs": list(evidence_refs) if isinstance(evidence_refs, list) else []},
+            }
         return {
             "task": {
                 "missionId": context.task.mission_id,

@@ -185,9 +185,11 @@ def build_resource_execution_adapter(
 def build_remote_execution_payload(context: AgentRunContext) -> dict[str, Any]:
     """Serialize only the step contract, never the full Runtime or Agent context."""
     pack = context.context_pack
+    basis = getattr(context, "mission_intent_basis", None)
     return {
         "runId": context.run.run_id,
         "missionId": context.task.mission_id,
+        **({"missionIntentBasis": basis.model_dump(by_alias=True, mode="json")} if basis is not None else {}),
         "stepId": context.step.step_id,
         "attemptId": str(getattr(pack, "attempt_id", "") or context.commit_id or ""),
         "commitId": str(context.commit_id or ""),

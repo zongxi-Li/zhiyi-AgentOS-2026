@@ -57,6 +57,20 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         if not self._mission_semantics_enabled:
             raise RuntimeError("Mission semantics require explicit schema upgrade opt-in")
 
+    def enable_existing_mission_semantics(self) -> None:
+        """Attach to an explicitly upgraded database. Never run semantic DDL here."""
+        with self._connect() as conn:
+            try:
+                versions = [row[0] for row in conn.execute("SELECT version FROM mission_semantic_schema")]
+                for table in ("mission_semantic_state", "mission_semantic_commits",
+                              "mission_semantic_receipts", "mission_semantic_outbox"):
+                    conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError("Mission semantic schema must be upgraded explicitly before activation") from exc
+            if versions != [1]:
+                raise RuntimeError(f"unsupported Mission semantic schema: {versions}")
+        self._mission_semantics_enabled = True
+
     def _init_semantic_schema(self) -> None:
         """Additive v1 migration; separate from IdentityV2's schema version.
 
@@ -227,6 +241,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         执行 UPSERT 与提交。
         """
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             if not self._upsert_run(conn, run):
                 return
             event_type = lifecycle_run_event_type(run)
@@ -248,6 +263,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
     def save_run_with_events(self, run: RuntimeRunRecord, events) -> None:
         """Commit the run snapshot and step lifecycle facts in one Execution Runtime transaction."""
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             if not self._upsert_run(conn, run):
                 return
             for event in events:
@@ -270,6 +286,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         self, old_run: RuntimeRunRecord, new_run: RuntimeRunRecord, event: dict
     ) -> None:
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             if not self._upsert_run(conn, new_run):
                 raise ValueError("replacement run already has an incompatible snapshot")
             if not self._upsert_run(conn, old_run):
@@ -292,10 +309,14 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         row = conn.execute(
             "SELECT mission_id, payload FROM runs WHERE run_id = ?", (run.run_id,)
         ).fetchone()
+        existing = None
         if row is not None:
             if str(row["mission_id"]) != run.mission_id:
                 raise ValueError(f"workflow run missionId cannot change: {run.run_id}")
             existing = RuntimeRunRecord.model_validate(json.loads(row["payload"]))
+        from support.stores._policy import validate_intent_basis
+        validate_intent_basis(existing, run)
+        if existing is not None:
             if reject_terminal_overwrite(existing, run):
                 return False
         validate_run_state(run)

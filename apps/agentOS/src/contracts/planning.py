@@ -23,6 +23,7 @@ _ALLOWED_METADATA_KEYS = {
     "degraded", "degradationReason", "promptVersion", "complexityBand",
     "planningBudget", "reasoningEffort", "reasoningPolicyReason",
     "requestedCapabilityProfile", "effectiveCapabilityProfile", "capabilityProfileReason",
+    "missionIntentBasisRef",
 }
 
 

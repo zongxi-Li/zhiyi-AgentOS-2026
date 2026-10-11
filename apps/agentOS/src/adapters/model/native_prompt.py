@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from contracts.mission_semantic import MissionIntentBasis
 
 from .prompt_context import project_prompt_context
 
@@ -84,6 +85,7 @@ class NativeCapabilityPromptBuilder:
         allowed_tools: list[str] | None = None,
         tool_observations: list[dict[str, Any]] | None = None,
         context_fields: dict[str, list[str]] | None = None,
+        mission_intent_basis: MissionIntentBasis | None = None,
     ) -> PromptEnvelope:
         """Compose trusted execution policy separately from structured runtime data."""
         descriptor = capability_descriptor.model_dump(
@@ -96,7 +98,12 @@ class NativeCapabilityPromptBuilder:
             "requestType": "ExecutionRequest",
             "mission": trust_envelope(
                 TrustClass.RUNTIME_AUTHORITATIVE,
-                self._canonical_task_scope(task_title, task_input),
+                ({"objective": mission_intent_basis.objective,
+                  "constraints": [c.model_dump(by_alias=True, mode="json") for c in mission_intent_basis.constraints],
+                  "basis": mission_intent_basis.reference(),
+                  "sourceReferences": list(mission_intent_basis.source_references),
+                  "sourceStatus": mission_intent_basis.source_status}
+                 if mission_intent_basis is not None else self._canonical_task_scope(task_title, task_input)),
             ),
             "plannedTask": trust_envelope(TrustClass.RUNTIME_AUTHORITATIVE, {
                 "goal": step_goal,

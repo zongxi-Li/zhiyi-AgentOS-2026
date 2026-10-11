@@ -9,6 +9,7 @@ from contracts.resource import ExecutionRequirement
 from contracts.workflow import StepStatus, TraceEventType
 from contracts.task_acceptance import frozen_task_acceptance
 from runtime.ports import CollaboratorAccess
+from contracts.mission_semantic import run_intent_basis
 
 
 class RuntimePlanningObservationBuilder(CollaboratorAccess):
@@ -37,6 +38,7 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
         return commit, decision, run_id
 
     def observe(self, run, state, reason) -> RuntimePlanningObservation:
+        basis = run_intent_basis(run)
         self.validate_references(run=run, state=state)
         acceptance = frozen_task_acceptance(run)
         plan = TaskPlan.model_validate(run.execution_state["taskPlan"])
@@ -145,7 +147,9 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
         return RuntimePlanningObservation(
             missionId=run.mission_id, runId=run.run_id, graphId=state.graph_id,
             graphVersion=state.graph_version, planVersion=plan.plan_version,
-            checkpointId=state.checkpoint_id, wakeReason=reason, goal=self.load_goal(run.mission_id),
+            checkpointId=state.checkpoint_id, wakeReason=reason,
+            goal=basis.objective if basis is not None else self.load_goal(run.mission_id),
+            missionIntentBasisRef=basis.reference() if basis is not None else None,
             steps=tuple(facts), remainingStepIds=remaining,
             failureId=failure.get("failureId"), failureType=failure.get("failureType"),
             failureReason=failure.get("reasonCode"), failureSource=failure.get("source"),
