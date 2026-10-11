@@ -1546,6 +1546,25 @@ def create_router(
         mission_id: str,
         run_id: str | None = Query(default=None, alias="runId"),
     ):
+        semantic_service = getattr(runtime, "mission_semantic_service", None)
+        semantic_view = None
+        if semantic_service is not None:
+            from components.mission_manager.semantic_resolver import MissionSemanticResolver
+            principal = current_semantic_principal()
+            if principal is None:
+                raise HTTPException(status_code=403, detail="trusted semantic principal is required")
+            try:
+                snapshot = semantic_service.get_effective_snapshot(principal, mission_id)
+                semantic_view = MissionSemanticResolver.resolve(snapshot)
+                semantic_record = runtime.workflow_store.get_mission(mission_id)
+                if semantic_record.record_state is MissionRecordState.DELETED:
+                    raise HTTPException(status_code=404, detail="mission not found")
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail="semantic access denied") from exc
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="mission not found") from exc
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(status_code=503, detail="mission semantic source unavailable") from exc
         mission_detail = require_mission_access(mission_id)
         actor = current_trusted_user()
 
@@ -1862,6 +1881,31 @@ def create_router(
                             for entry in projection.entries
                         ],
                     })
+        if semantic_view is not None:
+            from contracts.mission_semantic import run_intent_basis
+            from runtime.v2.workspace import with_mission_semantics
+            selected_id = projection.active_run.run_id if projection.active_run is not None else None
+            basis = None
+            basis_status = "NO_RUN"
+            if selected_id:
+                try:
+                    selected = runtime.workflow_store.get_run(selected_id)
+                except KeyError:
+                    basis_status = "RUNTIME_UNAVAILABLE"
+                else:
+                    _require_access(selected)
+                    if selected.mission_id != mission_id or selected.record_state is RunRecordState.DELETED:
+                        raise HTTPException(status_code=404, detail="run not found")
+                    try:
+                        basis = run_intent_basis(selected)
+                    except ValueError as exc:
+                        raise HTTPException(status_code=503, detail="run semantic basis unavailable") from exc
+                    basis_status = "BOUND" if basis is not None else "UNBOUND"
+            try:
+                projection = with_mission_semantics(projection, semantic_view, basis=basis,
+                    basis_status=basis_status, legacy_input=semantic_record.input, legacy_title=semantic_record.title)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=503, detail="mission semantic projection unavailable") from exc
         return projection.model_dump(
             by_alias=True,
             mode="json",

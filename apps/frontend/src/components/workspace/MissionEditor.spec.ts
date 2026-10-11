@@ -43,4 +43,19 @@ describe('MissionEditor', () => {
     expect(wrapper.find('.mission-editor').classes()).toContain('mission-editor')
     expect(wrapper.find('.editor-document__body').exists()).toBe(true)
   })
+
+  it('renders current semantic and historical Run revision labels without using legacy goal', () => {
+    const value = projection()
+    value.missionDisplay = { objective: '当前正式目标', sourceType: 'SEMANTIC' }
+    value.missionSemanticView = { missionId: 'mission_1', semanticStatus: 'INITIALIZED', missionRevision: 2,
+      objective: '当前正式目标', constraints: [], sourceReferences: [], sourceStatus: 'NOT_APPLICABLE' }
+    value.selectedRunBasisStatus = 'BOUND'
+    value.selectedRunBasis = { missionId: 'mission_1', basisSchemaVersion: 1, fingerprintVersion: 1,
+      sourceType: 'SEMANTIC', sourceRevision: 1, objective: '历史 Run 目标', constraints: [],
+      sourceReferences: [], sourceStatus: 'NOT_APPLICABLE', fingerprint: 'abc' }
+    const wrapper = mount(MissionEditor, { props: { projection: value, entry: entry('') } })
+    expect(wrapper.find('.editor-document__body h1').text()).toBe('当前正式目标')
+    expect(wrapper.text()).toContain('正式目标 · revision 2')
+    expect(wrapper.text()).toContain('SEMANTIC · revision 1')
+  })
 })

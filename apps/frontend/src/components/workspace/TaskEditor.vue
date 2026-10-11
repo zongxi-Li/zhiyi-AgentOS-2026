@@ -24,6 +24,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { runDisplayObjective } from './missionSemanticDisplay'
 import { agentosApi } from '@/services/api/agentos'
 import type {
   MissionWorkspaceProjection,
@@ -127,7 +128,7 @@ watch(artifactDocument, projection => emit('artifactProjection', {
 }), { immediate: true })
 
 const shorten = (value: string, length: number) => value.length > length ? `${value.slice(0, length)}…` : value
-const missionTitle = computed(() => shorten((props.projection.mission.goal || props.projection.mission.description || 'Mission').split(/[\n。！？!?]/)[0].trim(), 34))
+const missionTitle = computed(() => shorten(runDisplayObjective(props.projection).split(/[\n。！？!?]/)[0].trim(), 34))
 const runId = computed(() => props.entry.runId || props.projection.activeRun?.runId || null)
 const runNumber = computed(() => {
   const index = props.projection.runs.findIndex(run => run.runId === runId.value)

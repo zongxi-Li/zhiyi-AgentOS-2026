@@ -84,6 +84,34 @@ export interface WorkspaceDiagnostic {
 }
 export interface MissionWorkspaceProjection {
   mission: WorkspaceMission
+  missionSemanticView?: {
+    missionId: string
+    semanticStatus: 'UNINITIALIZED' | 'INITIALIZED'
+    missionRevision: number
+    commitId?: string | null
+    objective?: string | null
+    constraints: WorkspaceSemanticConstraint[]
+    sourceReferences: string[]
+    sourceStatus: 'NOT_APPLICABLE' | 'UNVERIFIED'
+  } | null
+  missionDisplay?: {
+    objective?: string | null
+    sourceType: 'SEMANTIC' | 'IDENTITY_COMPATIBILITY' | 'LEGACY_INPUT' | 'LEGACY_TITLE' | 'NONE'
+  } | null
+  selectedRunBasis?: {
+    basisSchemaVersion: number
+    fingerprintVersion: number
+    missionId: string
+    sourceType: 'SEMANTIC' | 'LEGACY_INPUT' | 'LEGACY_TITLE'
+    sourceRevision: number
+    commitId?: string | null
+    objective: string
+    constraints: WorkspaceSemanticConstraint[]
+    sourceReferences: string[]
+    sourceStatus: 'NOT_APPLICABLE' | 'UNVERIFIED'
+    fingerprint: string
+  } | null
+  selectedRunBasisStatus?: 'BOUND' | 'UNBOUND' | 'RUNTIME_UNAVAILABLE' | 'NO_RUN' | null
   activeRun?: WorkspaceRunSummary | null
   activeGraph?: GraphProjection | null
   runs: WorkspaceRunSummary[]
@@ -91,6 +119,12 @@ export interface MissionWorkspaceProjection {
   graphNodes: WorkspaceGraphNode[]
   inputAttachments?: InputAttachment[]
   diagnostics: WorkspaceDiagnostic[]
+}
+
+export interface WorkspaceSemanticConstraint {
+  constraintId: string
+  text: string
+  sourceRefs: string[]
 }
 
 export interface WorkspaceFileEntry {

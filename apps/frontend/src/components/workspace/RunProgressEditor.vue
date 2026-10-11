@@ -180,6 +180,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { runDisplayObjective, missionDocumentContent } from './missionSemanticDisplay'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
@@ -248,7 +249,7 @@ const stateLabel = computed(() => {
 })
 
 const shorten = (value: string, length: number) => value.length > length ? `${value.slice(0, length)}…` : value
-const goalSource = computed(() => props.projection.mission.goal || props.projection.mission.description || '运行进度')
+const goalSource = computed(() => runDisplayObjective(props.projection))
 const goalTitle = computed(() => {
   const firstLine = goalSource.value.split(/[\n。！？!?]/)[0].trim()
   return shorten(firstLine || '运行进度', 58)
@@ -640,7 +641,7 @@ const openMission = () => {
   const mission = props.projection.entries.find(entry => entry.kind === 'virtual_document' && entry.name === 'mission.md')
     || {
       entryId: 'overview:mission.md', kind: 'virtual_document' as const, name: 'mission.md', title: 'mission.md', group: 'overview', displayOrder: 0,
-      content: props.projection.mission.goal
+      content: missionDocumentContent(props.projection)
     }
   emit('openEntry', mission)
 }

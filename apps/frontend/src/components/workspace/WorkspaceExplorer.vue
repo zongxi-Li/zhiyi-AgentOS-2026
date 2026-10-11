@@ -11,8 +11,8 @@
         <div class="workspace-explorer__title-row">
           <span class="workspace-explorer__mark" aria-hidden="true"><el-icon><FolderOpened /></el-icon></span>
           <div>
-            <strong>{{ projection.mission.goal }}</strong>
-            <small>PROJECT</small>
+            <strong>{{ missionDisplayObjective(projection) }}</strong>
+            <small>PROJECT · {{ missionDisplayLabel(projection) }}</small>
           </div>
         </div>
         <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { missionDisplayObjective, missionDisplayLabel } from './missionSemanticDisplay'
 import { ArrowLeft, FolderOpened } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import { workspaceEntryIcon } from './workspaceEntryIcon'

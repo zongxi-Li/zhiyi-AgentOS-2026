@@ -17,6 +17,7 @@ from pydantic import Field
 from contracts.content import ContentKind
 from contracts.artifacts import FINAL_SYNTHESIS_LOGICAL_ROLE, is_run_deliverable_identity
 from contracts.planning import SemanticTaskRelationType
+from contracts.mission_semantic import MissionIntentBasis, MissionSemanticView
 from domain.identity_graph import RunArtifactDisposition
 from domain.models import (
     AcgBlueprint,
@@ -121,10 +122,20 @@ class WorkspaceDiagnostic(DomainModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class WorkspaceMissionDisplay(DomainModel):
+    """Request-local display selection; never written back to Identity or Mission."""
+    objective: str | None = None
+    source_type: Literal["SEMANTIC", "IDENTITY_COMPATIBILITY", "LEGACY_INPUT", "LEGACY_TITLE", "NONE"] = Field(alias="sourceType")
+
+
 class MissionWorkspaceProjection(DomainModel):
     """Stable, read-only projection consumed by a future Workspace UI."""
 
     mission: Mission
+    mission_semantic_view: MissionSemanticView | None = Field(default=None, alias="missionSemanticView")
+    mission_display: WorkspaceMissionDisplay | None = Field(default=None, alias="missionDisplay")
+    selected_run_basis: MissionIntentBasis | None = Field(default=None, alias="selectedRunBasis")
+    selected_run_basis_status: Literal["BOUND", "UNBOUND", "RUNTIME_UNAVAILABLE", "NO_RUN"] | None = Field(default=None, alias="selectedRunBasisStatus")
     active_run: WorkspaceRunSummary | None = Field(default=None, alias="activeRun")
     active_graph: dict[str, Any] | None = Field(default=None, alias="activeGraph")
     runs: list[WorkspaceRunSummary] = Field(default_factory=list)
@@ -132,6 +143,76 @@ class MissionWorkspaceProjection(DomainModel):
     graph_nodes: list[WorkspaceGraphNode] = Field(default_factory=list, alias="graphNodes")
     input_attachments: list[dict[str, Any]] = Field(default_factory=list, alias="inputAttachments")
     diagnostics: list[WorkspaceDiagnostic] = Field(default_factory=list)
+
+
+def with_mission_semantics(
+    projection: MissionWorkspaceProjection, view: MissionSemanticView, *,
+    basis: MissionIntentBasis | None, basis_status: Literal["BOUND", "UNBOUND", "RUNTIME_UNAVAILABLE", "NO_RUN"],
+    legacy_input: dict[str, Any], legacy_title: str,
+) -> MissionWorkspaceProjection:
+    """Compose already authorized data without capturing a new Run basis."""
+    view = MissionSemanticView.model_validate(view.model_dump())
+    if view.mission_id != projection.mission.mission_id:
+        raise ValueError("Workspace semantics belong to another Mission")
+    if (basis is not None) != (basis_status == "BOUND"):
+        raise ValueError("Workspace Run basis status does not match its payload")
+    if (projection.active_run is None) != (basis_status == "NO_RUN"):
+        raise ValueError("Workspace Run basis status does not match its selection")
+    if basis is not None:
+        basis = MissionIntentBasis.model_validate(basis.model_dump())
+        if basis.mission_id != view.mission_id or projection.active_run is None:
+            raise ValueError("Workspace Run basis belongs to another Mission or has no selected Run")
+    if view.semantic_status == "INITIALIZED":
+        display = WorkspaceMissionDisplay(objective=view.objective, sourceType="SEMANTIC")
+    else:
+        objective = projection.mission.goal.strip()
+        source = "IDENTITY_COMPATIBILITY" if objective else "NONE"
+        if not objective:
+            objective = next((legacy_input[k].strip() for k in ("objective", "userIntent", "taskGoal", "intent")
+                              if isinstance(legacy_input.get(k), str) and legacy_input[k].strip()), "")
+            source = "LEGACY_INPUT" if objective else "NONE"
+        if not objective and legacy_title.strip():
+            objective, source = legacy_title.strip(), "LEGACY_TITLE"
+        display = WorkspaceMissionDisplay(objective=objective or None, sourceType=source)
+    lines = [f"# {display.objective or 'Mission'}", "", "## 当前 Mission 语义",
+             f"- 状态：`{view.semantic_status}`", f"- Mission revision：`{view.mission_revision}`",
+             f"- 展示来源：`{display.source_type}`"]
+    if view.semantic_status == "UNINITIALIZED":
+        lines.append("- 正式目标尚未初始化；兼容展示内容未经正式语义提交。")
+    else:
+        lines.append(f"- Commit：`{view.commit_id}`")
+        lines.extend(["", "### 已确认约束", *[f"- {c.text}" for c in view.constraints]])
+        if not view.constraints:
+            lines.append("无已确认约束。")
+        lines.append(f"- 来源状态：`{view.source_status}`（引用不等于已验证事实）")
+    lines.extend(["", "## 所选 Run 的历史语义依据"])
+    diagnostics = list(projection.diagnostics)
+    if basis is not None:
+        lines.extend([f"- Run：`{projection.active_run.run_id}`", f"- 来源：`{basis.source_type}`",
+                      f"- 依据 revision：`{basis.source_revision}`", f"- 当时目标：{basis.objective}",
+                      f"- 来源状态：`{basis.source_status}`", *[f"- 当时约束：{c.text}" for c in basis.constraints]])
+        if basis.source_type != "SEMANTIC":
+            lines.append("- 此 Run 使用旧输入兼容依据，不代表正式语义。")
+        if basis.source_revision != view.mission_revision:
+            lines.append("- 此 Run 的历史依据与当前 Mission revision 不同；不会自动更新或重规划。")
+            diagnostics.append(WorkspaceDiagnostic(code="MISSION_RUN_REVISION_DIFFERS", severity="info",
+                message="Selected Run uses a historical Mission basis, distinct from current semantics.",
+                details={"missionRevision": view.mission_revision, "baseMissionRevision": basis.source_revision}))
+    else:
+        lines.append({"UNBOUND": "旧 Run 未绑定语义依据，不从当前 Mission 回填。",
+                      "RUNTIME_UNAVAILABLE": "所选 Run 的运行记录不可用，无法核验冻结依据。",
+                      "NO_RUN": "尚无所选 Run。"}[basis_status])
+    original = next((entry for entry in projection.entries if entry.entry_id == "overview:mission.md"), None)
+    if original and original.content and "## Mission metadata" in original.content:
+        # Keep plan/task/attachment context, without retaining the old goal heading.
+        lines.extend(["", "## Mission metadata" + original.content.split("## Mission metadata", 1)[1]])
+    document = (original or WorkspaceEntry(entryId="overview:mission.md", kind=WorkspaceEntryKind.VIRTUAL_DOCUMENT,
+                name="mission.md", group="overview", parentEntryId="folder:overview", displayOrder=1)).model_copy(
+                    update={"content": "\n".join(lines) + "\n"})
+    return projection.model_copy(update={"mission_semantic_view": view, "mission_display": display,
+        "selected_run_basis": basis, "selected_run_basis_status": basis_status, "diagnostics": diagnostics,
+        "entries": [document if entry.entry_id == document.entry_id else entry for entry in projection.entries]
+                   if original else [document, *projection.entries]})
 
 
 class MissionWorkspaceProjector:

@@ -29,6 +29,14 @@ const mountExplorer = (overrides: Partial<MissionWorkspaceProjection> = {}) => m
 })
 
 describe('WorkspaceExplorer', () => {
+  it('shows the current formal goal and its revision instead of Identity goal', () => {
+    const wrapper = mountExplorer({ missionDisplay: { objective: 'current goal', sourceType: 'SEMANTIC' },
+      missionSemanticView: { missionId: 'mission_1', semanticStatus: 'INITIALIZED', missionRevision: 2,
+        objective: 'current goal', constraints: [], sourceReferences: [], sourceStatus: 'NOT_APPLICABLE' } })
+    expect(wrapper.text()).toContain('current goal')
+    expect(wrapper.text()).toContain('revision 2')
+    expect(wrapper.text()).not.toContain('设备人员规划')
+  })
   it('renders the three projection sections, without the run switcher, and no global mission list', () => {
     const wrapper = mountExplorer()
     expect(wrapper.findAll('.workspace-tree__section')).toHaveLength(3)

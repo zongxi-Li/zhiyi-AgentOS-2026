@@ -12,6 +12,9 @@
     <div class="editor-document__body markdown-body" v-html="renderedContent" />
 
     <section class="mission-editor__meta" aria-label="Mission metadata">
+      <div class="property-row"><span>Mission 目标</span><span>{{ missionDisplayLabel(projection) }}</span></div>
+      <div v-if="projection.selectedRunBasis" class="property-row"><span>所选 Run 依据</span><span>{{ projection.selectedRunBasis.sourceType }} · revision {{ projection.selectedRunBasis.sourceRevision }}</span></div>
+      <div v-else-if="projection.selectedRunBasisStatus" class="property-row"><span>所选 Run 依据</span><span>{{ runDisplayObjective(projection) }}</span></div>
       <div class="property-row"><span>status</span><code>{{ projection.mission.status }}</code></div>
       <div v-if="projection.activeRun" class="property-row"><span>active Run</span><code>{{ projection.activeRun.runId }}</code></div>
       <div v-if="projection.activeRun" class="property-row"><span>Run status</span><code>{{ projection.activeRun.status }}</code></div>
@@ -28,6 +31,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { missionDocumentContent, missionDisplayLabel, runDisplayObjective } from './missionSemanticDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 
@@ -37,7 +41,9 @@ const props = defineProps<{
 }>()
 
 const renderedContent = computed(() => {
-  const source = props.entry.content || `# ${props.projection.mission.goal}`
+  const source = props.projection.missionSemanticView
+    ? missionDocumentContent(props.projection)
+    : props.entry.content || missionDocumentContent(props.projection)
   return renderMarkdown(source)
 })
 

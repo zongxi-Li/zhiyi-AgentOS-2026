@@ -113,6 +113,16 @@ const runtimeEvent = (sequence: number, eventType: string) => ({
 })
 
 describe('RunProgressEditor', () => {
+  it('uses selected Run history instead of the current Mission goal', () => {
+    const value = projection({ missionDisplay: { objective: 'current goal', sourceType: 'SEMANTIC' },
+      selectedRunBasisStatus: 'BOUND', selectedRunBasis: {
+        missionId: 'mission_1', basisSchemaVersion: 1, fingerprintVersion: 1, sourceType: 'SEMANTIC',
+        sourceRevision: 1, objective: 'historical goal', constraints: [], sourceReferences: [],
+        sourceStatus: 'NOT_APPLICABLE', fingerprint: 'abc' } })
+    const wrapper = mountEditor({ projection: value })
+    expect(wrapper.text()).toContain('historical goal')
+    expect(wrapper.text()).not.toContain('current goal')
+  })
   it('renders a clickable directory path for the current run document', async () => {
     const wrapper = mountEditor()
 

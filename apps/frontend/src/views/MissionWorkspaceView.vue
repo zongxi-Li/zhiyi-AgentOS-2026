@@ -194,6 +194,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
+import { missionDocumentContent } from '@/components/workspace/missionSemanticDisplay'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue'
@@ -300,7 +301,7 @@ const entriesWithProgress = computed<WorkspaceEntry[]>(() => {
         name: 'mission.md',
         group: 'overview',
         displayOrder: 1,
-        content: projection.value.mission.goal
+        content: missionDocumentContent(projection.value)
       }]
   return [progressEntry, ...missionEntry, ...projectedEntries, ...runtimeRunEntries]
 })

@@ -93,6 +93,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { missionDocumentContent } from './missionSemanticDisplay'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { StageOutputSelection } from './StageOutputRenderer.vue'
 import StageOutputRenderer from './StageOutputRenderer.vue'
@@ -191,7 +192,7 @@ const openMission = () => emit('openEntry', {
   title: 'mission.md',
   group: 'overview',
   displayOrder: 0,
-  content: props.projection.mission.goal
+  content: missionDocumentContent(props.projection)
 })
 </script>
 
