@@ -13,6 +13,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
+from contracts.mission_semantic import (
+    EffectiveMissionSnapshot, MissionSemanticAggregate, MissionSemanticOperation,
+    SemanticCommit, SemanticOperationReceipt, SemanticOperationResult,
+)
+from support.stores.mission_semantic_store import (
+    MissionSemanticStore, prepare_commit, replay, request_fingerprint, semantic_outbox, snapshot,
+)
+
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import matches_mission, reject_terminal_overwrite, validate_run_state
 from support.stores.workflow_store import (
@@ -31,16 +39,126 @@ from support.stores.workflow_store import (
 )
 
 
-class SQLiteWorkflowStore(WorkflowStore):
+class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
     """基于 SQLite 的本地持久化 WorkflowStore。"""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, *, enable_mission_semantics: bool = False):
         self.db_path = Path(db_path)
         self.busy_timeout_ms = int(os.getenv("AGENTOS_SQLITE_BUSY_TIMEOUT_MS", "5000"))
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._hydrate_cache: OrderedDict[str, tuple[bytes, RuntimeRunRecord]] = OrderedDict()
         self._hydrate_cache_lock = threading.Lock()
         self._init_schema()
+        self._mission_semantics_enabled = enable_mission_semantics
+        if enable_mission_semantics:
+            self._init_semantic_schema()
+
+    def _require_semantic_schema(self) -> None:
+        if not self._mission_semantics_enabled:
+            raise RuntimeError("Mission semantics require explicit schema upgrade opt-in")
+
+    def _init_semantic_schema(self) -> None:
+        """Additive v1 migration; separate from IdentityV2's schema version.
+
+        No legacy payload backfill. Existing tables are never dropped. Older
+        binaries can read their original tables but must not perform hard purge
+        on a database upgraded with semantic history.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("CREATE TABLE IF NOT EXISTS mission_semantic_schema (version INTEGER PRIMARY KEY)")
+            versions = [row[0] for row in conn.execute("SELECT version FROM mission_semantic_schema")]
+            if versions and versions != [1]:
+                raise RuntimeError(f"unsupported Mission semantic schema: {versions}")
+            if not versions:
+                conn.execute("""CREATE TABLE mission_semantic_state (
+                    mission_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision >= 1),
+                    payload TEXT NOT NULL)""")
+                conn.execute("""CREATE TABLE mission_semantic_commits (
+                    commit_id TEXT PRIMARY KEY, mission_id TEXT NOT NULL, revision INTEGER NOT NULL,
+                    operation_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    UNIQUE(mission_id, revision), UNIQUE(mission_id, operation_id))""")
+                conn.execute("""CREATE TABLE mission_semantic_receipts (
+                    mission_id TEXT NOT NULL, operation_id TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY(mission_id, operation_id))""")
+                conn.execute("""CREATE TABLE mission_semantic_outbox (
+                    event_id TEXT PRIMARY KEY, mission_id TEXT NOT NULL, revision INTEGER NOT NULL,
+                    payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+                    UNIQUE(mission_id, revision))""")
+                conn.execute("INSERT INTO mission_semantic_schema(version) VALUES(1)")
+            conn.commit()
+
+    def commit_semantics(self, operation: MissionSemanticOperation) -> SemanticOperationResult:
+        self._require_semantic_schema()
+        operation = MissionSemanticOperation.model_validate(operation.model_dump())
+        fingerprint = request_fingerprint(operation)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT payload FROM mission_semantic_receipts WHERE mission_id=? AND operation_id=?",
+                               (operation.mission_id, operation.operation_id)).fetchone()
+            if row:
+                return replay(operation, fingerprint, SemanticOperationReceipt.model_validate_json(row[0]))
+            mission = conn.execute("SELECT payload FROM tasks WHERE mission_id=?", (operation.mission_id,)).fetchone()
+            if not mission:
+                raise KeyError(f"mission not found: {operation.mission_id}")
+            if RuntimeMissionRecord.model_validate_json(mission[0]).record_state == MissionRecordState.DELETED:
+                raise ValueError("deleted mission cannot accept semantic changes")
+            row = conn.execute("SELECT payload FROM mission_semantic_state WHERE mission_id=?",
+                               (operation.mission_id,)).fetchone()
+            old = MissionSemanticAggregate.model_validate_json(row[0]) if row else None
+            state, commit, receipt = prepare_commit(operation, fingerprint, old)
+            if commit:
+                if old is None:
+                    conn.execute("INSERT INTO mission_semantic_state VALUES(?,?,?)",
+                                 (operation.mission_id, state.mission_revision, state.model_dump_json(by_alias=True)))
+                else:
+                    updated = conn.execute("UPDATE mission_semantic_state SET revision=?, payload=? WHERE mission_id=? AND revision=?",
+                                           (state.mission_revision, state.model_dump_json(by_alias=True),
+                                            operation.mission_id, operation.expected_mission_revision))
+                    if updated.rowcount != 1:
+                        raise RuntimeError("semantic CAS lost its transaction boundary")
+                conn.execute("INSERT INTO mission_semantic_commits VALUES(?,?,?,?,?)",
+                             (commit.commit_id, operation.mission_id, commit.mission_revision,
+                              operation.operation_id, commit.model_dump_json(by_alias=True)))
+                self._append_semantic_outbox(conn, commit)
+            conn.execute("INSERT INTO mission_semantic_receipts VALUES(?,?,?)",
+                         (operation.mission_id, operation.operation_id, receipt.model_dump_json(by_alias=True)))
+            conn.commit()
+            return receipt.result
+
+    def _append_semantic_outbox(self, conn: sqlite3.Connection, commit: SemanticCommit) -> None:
+        conn.execute("INSERT INTO mission_semantic_outbox(event_id,mission_id,revision,payload) VALUES(?,?,?,?)",
+                     (commit.commit_id, commit.mission_id, commit.mission_revision,
+                      json.dumps(semantic_outbox(commit), ensure_ascii=False)))
+
+    def get_semantic_snapshot(self, mission_id: str) -> EffectiveMissionSnapshot:
+        self._require_semantic_schema()
+        with self._connect() as conn:
+            # One read statement gives a consistent Mission/state view.
+            row = conn.execute("""SELECT t.mission_id, s.payload FROM tasks t
+                LEFT JOIN mission_semantic_state s ON s.mission_id=t.mission_id
+                WHERE t.mission_id=?""", (mission_id,)).fetchone()
+            state = MissionSemanticAggregate.model_validate_json(row[1]) if row and row[1] else None
+            return snapshot(mission_id, row is not None, state)
+
+    def list_semantic_commits(self, mission_id: str) -> list[SemanticCommit]:
+        self._require_semantic_schema()
+        with self._connect() as conn:
+            return [SemanticCommit.model_validate_json(row[0]) for row in conn.execute(
+                "SELECT payload FROM mission_semantic_commits WHERE mission_id=? ORDER BY revision", (mission_id,))]
+
+    def get_semantic_receipt(self, mission_id: str, operation_id: str) -> SemanticOperationReceipt | None:
+        self._require_semantic_schema()
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload FROM mission_semantic_receipts WHERE mission_id=? AND operation_id=?",
+                               (mission_id, operation_id)).fetchone()
+            return SemanticOperationReceipt.model_validate_json(row[0]) if row else None
+
+    def list_semantic_outbox(self, mission_id: str) -> list[dict]:
+        self._require_semantic_schema()
+        with self._connect() as conn:
+            return [{**json.loads(row[0]), "status": row[1]} for row in conn.execute(
+                "SELECT payload,status FROM mission_semantic_outbox WHERE mission_id=? ORDER BY revision", (mission_id,))]
 
     def save_mission(self, task: RuntimeMissionRecord) -> None:
         """以任务标识 UPSERT JSON 快照并提交事务；SQLite 错误由驱动层原样抛出。"""
@@ -714,6 +832,7 @@ class SQLiteWorkflowStore(WorkflowStore):
         非终态运行拒绝删除；提交前验证不会留下缺失父任务的运行，任何异常都会使连接上下文回滚。
         """
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT mission_id, payload FROM runs WHERE run_id = ?", (run_id,)
@@ -738,6 +857,15 @@ class SQLiteWorkflowStore(WorkflowStore):
                     (mission_id,),
                 ).fetchone()
                 if referenced is None:
+                    # Explicit same-database purge, not FK cascade or retention.
+                    installed = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mission_semantic_schema'").fetchone()
+                    if installed:
+                        versions = conn.execute("SELECT version FROM mission_semantic_schema").fetchall()
+                        if [row[0] for row in versions] != [1]:
+                            raise RuntimeError("unsupported Mission semantic schema during purge")
+                        for table in ("mission_semantic_outbox", "mission_semantic_receipts",
+                                      "mission_semantic_commits", "mission_semantic_state"):
+                            conn.execute(f"DELETE FROM {table} WHERE mission_id = ?", (mission_id,))
                     conn.execute("DELETE FROM task_copilot_permissions WHERE mission_id = ?", (mission_id,))
                     cursor = conn.execute("DELETE FROM tasks WHERE mission_id = ?", (mission_id,))
                     mission_deleted = cursor.rowcount > 0

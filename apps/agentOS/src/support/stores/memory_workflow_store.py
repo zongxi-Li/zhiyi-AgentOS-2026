@@ -7,7 +7,16 @@ from typing import Dict, Sequence
 from copy import deepcopy
 import hashlib
 import json
+import threading
+from functools import wraps
+from contracts.mission_semantic import (
+    EffectiveMissionSnapshot, MissionSemanticAggregate, MissionSemanticOperation,
+    SemanticCommit, SemanticOperationReceipt, SemanticOperationResult,
+)
 
+from support.stores.mission_semantic_store import (
+    MissionSemanticStore, prepare_commit, replay, request_fingerprint, semantic_outbox, snapshot,
+)
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import (
     TERMINAL_RUN_STATUSES,
@@ -33,10 +42,23 @@ from support.stores.workflow_store import (
 )
 
 
-class MemoryWorkflowStore(WorkflowStore):
+def _mission_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._semantic_lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
+class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
     """面向本地开发和测试的内存 WorkflowStore 适配器。"""
 
     def __init__(self):
+        self._semantic_lock = threading.RLock()
+        self._semantic_states: dict[str, MissionSemanticAggregate] = {}
+        self._semantic_commits: dict[str, list[SemanticCommit]] = {}
+        self._semantic_receipts: dict[tuple[str, str], SemanticOperationReceipt] = {}
+        self._semantic_outbox: dict[str, list[dict]] = {}
         self._tasks: Dict[str, RuntimeMissionRecord] = {}
         self._runs: Dict[str, RuntimeRunRecord] = {}
         self._terminal_run_statuses: Dict[str, WorkflowStatus] = {}
@@ -44,6 +66,50 @@ class MemoryWorkflowStore(WorkflowStore):
         self._copilot_exchanges: dict[tuple[str, str], dict] = {}
         self._planning_inputs: dict[tuple[str, str], dict] = {}
         self._task_copilot_permissions: dict[str, str] = {}
+
+    @_mission_locked
+    def commit_semantics(self, operation: MissionSemanticOperation) -> SemanticOperationResult:
+        operation = MissionSemanticOperation.model_validate(operation.model_dump())
+        fingerprint = request_fingerprint(operation)
+        key = (operation.mission_id, operation.operation_id)
+        receipt = self._semantic_receipts.get(key)
+        if receipt:
+            return replay(operation, fingerprint, receipt)
+        mission = self.get_mission(operation.mission_id)
+        if mission.record_state == MissionRecordState.DELETED:
+            raise ValueError("deleted mission cannot accept semantic changes")
+        state, commit, receipt = prepare_commit(operation, fingerprint, self._semantic_states.get(operation.mission_id))
+        # Prepare all data before publication: exceptions leave every map intact.
+        states = dict(self._semantic_states)
+        commits = dict(self._semantic_commits)
+        receipts = dict(self._semantic_receipts)
+        outbox = dict(self._semantic_outbox)
+        if commit:
+            states[operation.mission_id] = state
+            commits[operation.mission_id] = [*commits.get(operation.mission_id, []), commit]
+            outbox[operation.mission_id] = [*outbox.get(operation.mission_id, []),
+                                           {**semantic_outbox(commit), "status": "pending"}]
+        receipts[key] = receipt
+        result = receipt.result.model_copy(deep=True)
+        (self._semantic_states, self._semantic_commits,
+         self._semantic_receipts, self._semantic_outbox) = states, commits, receipts, outbox
+        return result
+
+    @_mission_locked
+    def get_semantic_snapshot(self, mission_id: str) -> EffectiveMissionSnapshot:
+        return snapshot(mission_id, mission_id in self._tasks, deepcopy(self._semantic_states.get(mission_id)))
+
+    @_mission_locked
+    def list_semantic_commits(self, mission_id: str) -> list[SemanticCommit]:
+        return deepcopy(self._semantic_commits.get(mission_id, []))
+
+    @_mission_locked
+    def get_semantic_receipt(self, mission_id: str, operation_id: str) -> SemanticOperationReceipt | None:
+        return deepcopy(self._semantic_receipts.get((mission_id, operation_id)))
+
+    @_mission_locked
+    def list_semantic_outbox(self, mission_id: str) -> list[dict]:
+        return deepcopy(self._semantic_outbox.get(mission_id, []))
 
     def get_task_copilot_permission(self, mission_id: str) -> str:
         self.get_mission(mission_id)
@@ -87,6 +153,7 @@ class MemoryWorkflowStore(WorkflowStore):
             raise ValueError("conversation exchange already exists")
         self._copilot_exchanges[key] = deepcopy(payload)
 
+    @_mission_locked
     def save_mission(self, task: RuntimeMissionRecord) -> None:
         """按任务标识保存内存对象；调用方保留传入任务所有权。"""
         self._tasks[task.mission_id] = task
@@ -105,6 +172,7 @@ class MemoryWorkflowStore(WorkflowStore):
         except KeyError as exc:
             raise KeyError(f"task not found: {mission_id}") from exc
 
+    @_mission_locked
     def set_mission_record_state(
         self, mission_id: str, state: MissionRecordState
     ) -> tuple[RuntimeMissionRecord, int]:
@@ -124,10 +192,11 @@ class MemoryWorkflowStore(WorkflowStore):
         self._tasks[mission_id] = task.model_copy(deep=True)
         return task.model_copy(deep=True), len(runs)
 
+    @_mission_locked
     def save_run(self, run: RuntimeRunRecord) -> None:
         """深复制保存运行，并拒绝终态被不同状态或更旧快照覆盖。
 
-        失败到重试是唯一允许的终态回退兼容路径；该内存实现不提供线程同步。
+        失败到重试是唯一允许的终态回退兼容路径；与 Mission 清除共享锁。
         """
         if not self._save_run_snapshot(run):
             return
@@ -159,6 +228,7 @@ class MemoryWorkflowStore(WorkflowStore):
         self._runs[run.run_id] = run.model_copy(deep=True)
         return True
 
+    @_mission_locked
     def save_run_with_events(self, run: RuntimeRunRecord, events) -> None:
         outbox_snapshot = dict(self._lifecycle_outbox)
         run_snapshot = dict(self._runs)
@@ -185,6 +255,7 @@ class MemoryWorkflowStore(WorkflowStore):
             self._terminal_run_statuses = terminal_snapshot
             raise
 
+    @_mission_locked
     def save_graph_patch_transition(
         self, old_run: RuntimeRunRecord, new_run: RuntimeRunRecord, event: dict
     ) -> None:
@@ -254,6 +325,7 @@ class MemoryWorkflowStore(WorkflowStore):
         except KeyError as exc:
             raise KeyError(f"workflow run not found: {run_id}") from exc
 
+    @_mission_locked
     def delete_run(self, run_id: str, *, delete_orphan_mission: bool = True) -> RuntimeRunRecordDeleteResult:
         """删除终态运行，并可清理无剩余运行引用的任务；非终态时抛出专用错误。"""
         try:
@@ -266,22 +338,40 @@ class MemoryWorkflowStore(WorkflowStore):
             WorkflowStatus.CANCELLED,
         }:
             raise RuntimeRunRecordNotTerminalError(run_id, run.status)
-        self._runs.pop(run_id)
-        for key in [key for key in self._copilot_exchanges if key[0] == run_id]:
-            self._copilot_exchanges.pop(key)
-        for key in [key for key in self._planning_inputs if key[0] == run_id]:
-            self._planning_inputs.pop(key)
-        self._terminal_run_statuses.pop(run_id, None)
+        # Prepare the complete purge before publishing any mutation.
+        runs = dict(self._runs)
+        runs.pop(run_id)
+        exchanges = {key: value for key, value in self._copilot_exchanges.items() if key[0] != run_id}
+        inputs = {key: value for key, value in self._planning_inputs.items() if key[0] != run_id}
+        terminals = dict(self._terminal_run_statuses)
+        terminals.pop(run_id, None)
+        tasks = dict(self._tasks)
+        permissions = dict(self._task_copilot_permissions)
+        states = dict(self._semantic_states)
+        commits = dict(self._semantic_commits)
+        receipts = dict(self._semantic_receipts)
+        outbox = dict(self._semantic_outbox)
         mission_deleted = False
-        if delete_orphan_mission and not any(item.mission_id == run.mission_id for item in self._runs.values()):
-            mission_deleted = self._tasks.pop(run.mission_id, None) is not None
-            self._task_copilot_permissions.pop(run.mission_id, None)
-        return RuntimeRunRecordDeleteResult(
+        if delete_orphan_mission and not any(item.mission_id == run.mission_id for item in runs.values()):
+            mission_deleted = tasks.pop(run.mission_id, None) is not None
+            permissions.pop(run.mission_id, None)
+            states.pop(run.mission_id, None)
+            commits.pop(run.mission_id, None)
+            outbox.pop(run.mission_id, None)
+            receipts = {key: value for key, value in receipts.items() if key[0] != run.mission_id}
+        result = RuntimeRunRecordDeleteResult(
             run_id=run_id,
             mission_id=run.mission_id,
             mission_deleted=mission_deleted,
         )
+        (self._runs, self._copilot_exchanges, self._planning_inputs,
+         self._terminal_run_statuses, self._tasks, self._task_copilot_permissions,
+         self._semantic_states, self._semantic_commits, self._semantic_receipts,
+         self._semantic_outbox) = (runs, exchanges, inputs, terminals, tasks, permissions,
+                                  states, commits, receipts, outbox)
+        return result
 
+    @_mission_locked
     def set_run_record_state(self, run_id: str, state: RunRecordState) -> RuntimeRunRecord:
         """更新终态运行的用户管理状态；非终态抛专用错误，已删除不可再变更。"""
         try:
