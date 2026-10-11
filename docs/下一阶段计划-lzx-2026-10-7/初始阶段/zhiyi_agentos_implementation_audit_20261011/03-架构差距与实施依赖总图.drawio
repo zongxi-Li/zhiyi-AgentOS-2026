@@ -1,0 +1,256 @@
+<mxfile host="65bd71144e">
+    <diagram id="implementation-page-1" name="01 · CURRENT vs TARGET · 权威与代码差距">
+        <mxGraphModel dx="2227" dy="2336" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2300" pageHeight="1430" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="heading" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=30;align=center;verticalAlign=middle;spacing=9;" value="S00 / S02 / S03 / S07 / S09 · 工程存量与目标架构的权威边界" vertex="1">
+                    <mxGeometry height="85" width="2140" x="70" y="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="s00" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="S00 · Mission Semantic Authority" vertex="1">
+                    <mxGeometry height="85" width="395" x="70" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="s02" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="S02 · Planning Commit" vertex="1">
+                    <mxGeometry height="85" width="395" x="535" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="s03" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="S03 · Runtime / Graph" vertex="1">
+                    <mxGeometry height="85" width="395" x="1000" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="s07" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="S07 · Memory / Context" vertex="1">
+                    <mxGeometry height="85" width="395" x="1465" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="s09" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="S09 · Effect Ledger" vertex="1">
+                    <mxGeometry height="85" width="320" x="1930" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="old1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="CURRENT&#xa;RuntimeMissionRecord + MissionManager&#xa;SQLite tasks UPSERT" vertex="1">
+                    <mxGeometry height="175" width="390" x="70" y="325" as="geometry"/>
+                </mxCell>
+                <mxCell id="old2" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="CURRENT&#xa;TaskPlan/Patch + planning_loop&#xa;Run-local observation" vertex="1">
+                    <mxGeometry height="175" width="390" x="535" y="325" as="geometry"/>
+                </mxCell>
+                <mxCell id="old3" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="CURRENT&#xa;ACG Compiler / checkpoint&#xa;Replacement Run 清空执行字段" vertex="1">
+                    <mxGeometry height="175" width="390" x="1000" y="325" as="geometry"/>
+                </mxCell>
+                <mxCell id="old4" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="CURRENT&#xa;MemoryService / RRF&#xa;ContextAssembler / Capsule" vertex="1">
+                    <mxGeometry height="175" width="390" x="1465" y="325" as="geometry"/>
+                </mxCell>
+                <mxCell id="old5" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="CURRENT&#xa;Tool Allowlist / Adapter&#xa;HTTP Idempotency-Key" vertex="1">
+                    <mxGeometry height="175" width="320" x="1930" y="325" as="geometry"/>
+                </mxCell>
+                <mxCell id="s00-old1" edge="1" parent="1" source="s00" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="old1" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s02-old2" edge="1" parent="1" source="s02" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="old2" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s03-old3" edge="1" parent="1" source="s03" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="old3" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s07-old4" edge="1" parent="1" source="s07" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="old4" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s09-old5" edge="1" parent="1" source="s09" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="old5" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="new1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="TARGET&#xa;Semantic Aggregate + CAS&#xa;Commit History + Outbox&#xa;EffectiveSnapshot" vertex="1">
+                    <mxGeometry height="215" width="390" x="70" y="660" as="geometry"/>
+                </mxCell>
+                <mxCell id="new2" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="TARGET&#xa;commitId + commitmentRevision&#xa;Safe-Cut Horizon + S02 CAS&#xa;Commit Receipt" vertex="1">
+                    <mxGeometry height="215" width="390" x="535" y="660" as="geometry"/>
+                </mxCell>
+                <mxCell id="new3" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="TARGET&#xa;Materialize/ACTIVE CAS&#xa;LogicalWorkReceipt&#xa;Successor Run 安全继承" vertex="1">
+                    <mxGeometry height="215" width="390" x="1000" y="660" as="geometry"/>
+                </mxCell>
+                <mxCell id="new4" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="TARGET&#xa;Mission Overlay / ReadSet&#xa;ExactSource + CriticalBudget&#xa;Versioned Capsule" vertex="1">
+                    <mxGeometry height="215" width="390" x="1465" y="660" as="geometry"/>
+                </mxCell>
+                <mxCell id="new5" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="TARGET&#xa;EffectIntent / UNKNOWN&#xa;Provider Reconcile&#xa;补偿新授权操作" vertex="1">
+                    <mxGeometry height="215" width="320" x="1930" y="660" as="geometry"/>
+                </mxCell>
+                <mxCell id="old1-new1" edge="1" parent="1" source="old1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;dashed=1;dashPattern=7 6;" target="new1" value="需增量实施">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="old2-new2" edge="1" parent="1" source="old2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;dashed=1;dashPattern=7 6;" target="new2" value="需增量实施">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="old3-new3" edge="1" parent="1" source="old3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;dashed=1;dashPattern=7 6;" target="new3" value="需增量实施">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="old4-new4" edge="1" parent="1" source="old4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;dashed=1;dashPattern=7 6;" target="new4" value="需增量实施">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="old5-new5" edge="1" parent="1" source="old5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;dashed=1;dashPattern=7 6;" target="new5" value="需增量实施">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="risk" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FEF0EE;strokeColor=#BD6360;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=21;align=center;verticalAlign=middle;spacing=9;" value="HARD RULES: S00 只写正式语义；S02 写承诺；S03 写 ACTIVE/执行历史；S07 只写派生上下文；S09 写真实效果账本。&#xa;不能把旧 Run 的 completedStepIds 清空后误当已继承成果；不能将 mission.created lifecycle snapshot 当 Mission Semantic Commit。" vertex="1">
+                    <mxGeometry height="190" width="2010" x="100" y="1030" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="implementation-page-2" name="02 · PR 依赖与最小纵向闭环">
+        <mxGraphModel dx="2227" dy="2336" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2300" pageHeight="1430" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="header" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=27;align=center;verticalAlign=middle;spacing=9;" value="落地依赖图 · P0 Audit → S00 → S07/S02 → S03 → S09 → Successor Run" vertex="1">
+                    <mxGeometry height="90" width="2140" x="60" y="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="audit" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FFF5E8;strokeColor=#BB873F;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=21;align=center;verticalAlign=middle;spacing=9;" value="P0 · 工作区核验 / 写入口审计 / 测试基线" vertex="1">
+                    <mxGeometry height="105" width="570" x="875" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="a" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=22;align=center;verticalAlign=middle;spacing=9;" value="PR-S00-01 · Semantic CAS + History + Outbox" vertex="1">
+                    <mxGeometry height="110" width="650" x="835" y="340" as="geometry"/>
+                </mxCell>
+                <mxCell id="b" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=21;align=center;verticalAlign=middle;spacing=9;" value="PR-S00-02 · bootstrap + EffectiveSnapshot" vertex="1">
+                    <mxGeometry height="100" width="650" x="835" y="515" as="geometry"/>
+                </mxCell>
+                <mxCell id="c" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S00-03 · Decision/Fact + Cognitive Projection" vertex="1">
+                    <mxGeometry height="100" width="650" x="835" y="680" as="geometry"/>
+                </mxCell>
+                <mxCell id="audit-a" edge="1" parent="1" source="audit" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="a" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a-b" edge="1" parent="1" source="a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="b" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-c" edge="1" parent="1" source="b" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="c" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s07a" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S07-01 · Source Signature / Overlay" vertex="1">
+                    <mxGeometry height="110" width="540" x="80" y="875" as="geometry"/>
+                </mxCell>
+                <mxCell id="s07b" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F2EFFB;strokeColor=#7D6AAF;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S07-02/03 · Budget / Capsule" vertex="1">
+                    <mxGeometry height="110" width="540" x="80" y="1050" as="geometry"/>
+                </mxCell>
+                <mxCell id="s02" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S02-01 · Planning Commit / Horizon" vertex="1">
+                    <mxGeometry height="110" width="520" x="900" y="875" as="geometry"/>
+                </mxCell>
+                <mxCell id="s03" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S03-01 · Graph ACTIVE Fence" vertex="1">
+                    <mxGeometry height="110" width="520" x="900" y="1050" as="geometry"/>
+                </mxCell>
+                <mxCell id="s09" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FEF0EE;strokeColor=#BD6360;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S09-01 · Effect UNKNOWN Gate" vertex="1">
+                    <mxGeometry height="110" width="600" x="1580" y="875" as="geometry"/>
+                </mxCell>
+                <mxCell id="success" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FEF0EE;strokeColor=#BD6360;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="PR-S03-02 · Safe Successor / WorkReceipt" vertex="1">
+                    <mxGeometry height="110" width="600" x="1580" y="1050" as="geometry"/>
+                </mxCell>
+                <mxCell id="c-s07a" edge="1" parent="1" source="c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="s07a" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s07a-s07b" edge="1" parent="1" source="s07a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="s07b" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="c-s02" edge="1" parent="1" source="c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="s02" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s02-s03" edge="1" parent="1" source="s02" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="s03" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s03-s09" edge="1" parent="1" source="s03" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="s09" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="s09-success" edge="1" parent="1" source="s09" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="success" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="label" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="第一段上线目标：Mission create → semantic commit CAS → snapshot → restart/resume。后续所有模块以这个真实读权威继续演进。" vertex="1">
+                    <mxGeometry height="100" width="1850" x="260" y="1240" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="implementation-page-3" name="03 · PR-S00-01 SQLite 原子提交">
+        <mxGraphModel dx="2227" dy="2336" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2300" pageHeight="1430" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="header" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=29;align=center;verticalAlign=middle;spacing=9;" value="PR-S00-01 · Minimal Mission Semantic Authority / SQLite Atomic Boundary" vertex="1">
+                    <mxGeometry height="90" width="2150" x="70" y="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="entry" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Existing Runtime.create_mission&#xa;MissionManager / WorkflowStore&#xa;保持原 API 与状态机" vertex="1">
+                    <mxGeometry height="165" width="360" x="75" y="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="service" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="S00 SemanticService&#xa;expectedRevision / operationId&#xa;schema validation / no-op" vertex="1">
+                    <mxGeometry height="165" width="445" x="650" y="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="db" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="ONE SQLite Transaction (BEGIN IMMEDIATE)&#xa;1) CAS mission_semantic_state&#xa;2) APPEND mission_semantic_commits&#xa;3) APPEND semantic_outbox" vertex="1">
+                    <mxGeometry height="240" width="650" x="1330" y="165" as="geometry"/>
+                </mxCell>
+                <mxCell id="entry-service" edge="1" parent="1" source="entry" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="service" value="授权映射 / bootstrap">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="service-db" edge="1" parent="1" source="service" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="db" value="atomic CAS">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="existing" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="Existing SQLite DB&#xa;Tasks / Runs / lifecycle_outbox&#xa;IdentityV2 read projection" vertex="1">
+                    <mxGeometry height="190" width="450" x="72" y="555" as="geometry"/>
+                </mxCell>
+                <mxCell id="aggregate" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="MissionSemanticAggregate&#xa;missionRevision&#xa;objective / constraints / refs" vertex="1">
+                    <mxGeometry height="180" width="440" x="665" y="535" as="geometry"/>
+                </mxCell>
+                <mxCell id="history" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="Semantic Commit / Outbox&#xa;immutable history + event ID&#xa;same operationId → same receipt" vertex="1">
+                    <mxGeometry height="180" width="650" x="1330" y="535" as="geometry"/>
+                </mxCell>
+                <mxCell id="db-aggregate" edge="1" parent="1" source="db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="aggregate" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="db-history" edge="1" parent="1" source="db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="history" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="existing-aggregate" edge="1" parent="1" source="existing" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="aggregate" value="同 DB，不复制旧 Run">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="snapshot" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=20;align=center;verticalAlign=middle;spacing=9;" value="EffectiveMissionSnapshot&#xa;read revision / refs / source watermarks" vertex="1">
+                    <mxGeometry height="140" width="550" x="650" y="940" as="geometry"/>
+                </mxCell>
+                <mxCell id="fail" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FEF0EE;strokeColor=#BD6360;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="CONFLICT / NO-OP / CRASH&#xa;No partial write; stale revision rejected&#xa;history replay never invokes external effect" vertex="1">
+                    <mxGeometry height="170" width="650" x="1330" y="920" as="geometry"/>
+                </mxCell>
+                <mxCell id="aggregate-snapshot" edge="1" parent="1" source="aggregate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;" target="snapshot" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="history-fail" edge="1" parent="1" source="history" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=block;endFill=1;strokeColor=#67809B;strokeWidth=2.2;fontColor=#39506B;fontSize=15;labelBackgroundColor=#FFFFFF;dashed=1;dashPattern=7 6;" target="fail" value="故障注入">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="note" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;spacing=9;" value="不在本 PR 实施：全量 DecisionResolver、Planner ReAct/HTN、Graph Activation、跨 Run Receipt、Memory LLM 摘要与前端交互重构。" vertex="1">
+                    <mxGeometry height="125" width="2040" x="105" y="1210" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="implementation-page-4" name="04 · 发布门禁与风险地图">
+        <mxGraphModel dx="2227" dy="2336" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2300" pageHeight="1430" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="header" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=27;align=center;verticalAlign=middle;spacing=9;" value="实施验收 · 同库事务 / 跨域提交 / 外部副作用 / S07 事实保真" vertex="1">
+                    <mxGeometry height="90" width="2150" x="70" y="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="s0" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Gate 1 · Semantic State&#xa;同 ID 幂等 / CAS 冲突&#xa;History + Outbox 原子&#xa;旧 Mission 无损兼容" vertex="1">
+                    <mxGeometry height="200" width="485" x="70" y="210" as="geometry"/>
+                </mxCell>
+                <mxCell id="s1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EAF2FC;strokeColor=#4973A8;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Gate 2 · Cognitive Read&#xa;Decision scope / supersedes&#xa;来源版本 + STALE 显示&#xa;不把 Runtime 心跳算提交" vertex="1">
+                    <mxGeometry height="200" width="485" x="630" y="210" as="geometry"/>
+                </mxCell>
+                <mxCell id="s2" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FFF5E8;strokeColor=#BB873F;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Gate 3 · Runtime Safety&#xa;COMMITTED != ACTIVE&#xa;无 ACTIVE 不 DISPATCH&#xa;继任 Run 不盲目重跑" vertex="1">
+                    <mxGeometry height="200" width="485" x="1190" y="210" as="geometry"/>
+                </mxCell>
+                <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FEF0EE;strokeColor=#BD6360;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Gate 4 · Effect Safety&#xa;ACK lost → UNKNOWN&#xa;无证据不重试外部动作&#xa;不伪称 exactly-once" vertex="1">
+                    <mxGeometry height="200" width="485" x="1730" y="210" as="geometry"/>
+                </mxCell>
+                <mxCell id="s4" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#EDF5EE;strokeColor=#438567;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Regression Baseline&#xa;WorkflowStore / Mission Manager&#xa;Runtime Planning / Patch / IdentityV2&#xa;Memory / Context / Frontend E2E" vertex="1">
+                    <mxGeometry height="230" width="680" x="145" y="630" as="geometry"/>
+                </mxCell>
+                <mxCell id="s5" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FFF5E8;strokeColor=#BB873F;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Failure Injection&#xa;DB rollback / same operationId&#xa;Outbox replay / stale snapshot&#xa;Crash between Commit / Activate" vertex="1">
+                    <mxGeometry height="230" width="680" x="975" y="630" as="geometry"/>
+                </mxCell>
+                <mxCell id="s6" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#FEF0EE;strokeColor=#BD6360;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="Rollback&#xa;Feature flag / Schema additive&#xa;Preserve original history&#xa;Never replay Effect" vertex="1">
+                    <mxGeometry height="250" width="330" x="1800" y="610" as="geometry"/>
+                </mxCell>
+                <mxCell id="note" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#F0F2F5;strokeColor=#77889A;strokeWidth=1.8;fontColor=#24384C;fontFamily=Microsoft YaHei;fontSize=19;align=center;verticalAlign=middle;spacing=9;" value="验收证据包括命令、仓库 HEAD、真实测试日志和回滚演示。未运行测试一律标记 NOT RUN，禁止将设计验收用例当作通过证明。" vertex="1">
+                    <mxGeometry height="120" width="1940" x="170" y="1110" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
