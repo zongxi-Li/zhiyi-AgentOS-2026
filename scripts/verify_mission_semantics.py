@@ -2,6 +2,7 @@
 
 python scripts/verify_mission_semantics.py api
 python scripts/verify_mission_semantics.py core
+python scripts/verify_mission_semantics.py audit
 """
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ for path in [ROOT / "apps/agent", ROOT / "apps/agentOS", ROOT / "apps/agentOS/sr
 
 API = ["apps/agent/tests/test_mission_semantic_commands.py",
        "apps/agent/tests/test_mission_revision_decisions.py",
+       "apps/agent/tests/test_mission_semantic_audit.py",
        "apps/agent/tests/test_mission_semantic_convergence_boundary.py",
        "apps/agent/tests/test_workspace_semantic_boundary.py"]
 CORE = ["apps/agentOS/tests/support", "apps/agentOS/tests/runtime/test_mission_semantic_convergence.py",
@@ -23,10 +25,20 @@ CORE = ["apps/agentOS/tests/support", "apps/agentOS/tests/runtime/test_mission_s
         "apps/agentOS/tests/runtime/test_acg_run.py", "apps/agentOS/tests/runtime/test_planning_loop.py",
         "apps/agentOS/tests/runtime/test_semantic_patch.py", "apps/agentOS/tests/runtime/test_graph_patch.py",
         "apps/agentOS/tests/runtime/test_runtime_guards.py", "apps/agentOS/tests/runtime/v2"]
+AUDIT = list(dict.fromkeys([*CORE, *API,
+    "apps/agentOS/tests/runtime/test_cancellation_and_execution_exclusivity.py",
+    "apps/agentOS/tests/runtime/test_review_recovery_extraction.py",
+    "apps/agentOS/tests/runtime/test_fault_recovery.py",
+    "apps/agent/tests/test_agentos_v2_api.py", "apps/agent/tests/test_agentos_v2_workspace_api.py",
+    "apps/agent/tests/test_agentos_v2_artifact_api.py", "apps/agent/tests/test_execution_coordinator.py",
+    "apps/agent/tests/test_execution_runtime_application_wiring.py", "apps/agent/tests/test_internal_service_auth.py",
+]))
 
 if __name__ == "__main__":
     suite = sys.argv[1] if len(sys.argv) > 1 else "api"
-    paths = API if suite == "api" else CORE if suite == "core" else sys.argv[1:]
+    paths = API if suite == "api" else CORE if suite == "core" else AUDIT if suite == "audit" else sys.argv[1:]
+    if suite in {"api", "core", "audit"}:
+        paths = list(dict.fromkeys([*paths, *sys.argv[2:]]))
     with tempfile.TemporaryDirectory(prefix="kinlin-s00-", ignore_cleanup_errors=True) as directory:
         isolated = Path(directory)
         os.chdir(isolated)

@@ -2703,6 +2703,12 @@ def create_router(
                 _require_access(existing)
                 if existing.mission_id != mission_id or existing.idempotency_fingerprint != fingerprint:
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
+                if existing.record_state is RunRecordState.DELETED:
+                    raise HTTPException(status_code=404, detail="run not found")
+                try:
+                    await coordinator.submit(existing.run_id)
+                except Exception as exc:
+                    raise HTTPException(status_code=503, detail="run submission interrupted; retry the same clientRequestId and body") from exc
                 return project_control_run(existing)
         try:
             run_input = prepare_execution_input(
@@ -2731,6 +2737,8 @@ def create_router(
                 extra={"missionId": mission_id, "sourceRunId": request.source_run_id},
             )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (RuntimeError, SQLiteError) as exc:
+            raise HTTPException(status_code=503, detail="run preparation or submission interrupted; retry the same clientRequestId and body") from exc
 
     @router.post(
         "/runs/{run_id}/steps/{step_id}/retry",
@@ -2752,6 +2760,12 @@ def create_router(
             _require_access(existing)
             if existing.idempotency_fingerprint != fingerprint:
                 raise HTTPException(status_code=409, detail="clientRequestId conflict")
+            if existing.record_state is RunRecordState.DELETED:
+                raise HTTPException(status_code=404, detail="run not found")
+            try:
+                await coordinator.submit(existing.run_id)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="run submission interrupted; retry the same clientRequestId and body") from exc
             return project_control_run(existing)
         try:
             retry_run = runtime.prepare_single_step_retry(
@@ -2771,6 +2785,8 @@ def create_router(
                 extra={"sourceRunId": run_id, "stepId": step_id, "errorType": type(exc).__name__},
             )
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, SQLiteError) as exc:
+            raise HTTPException(status_code=503, detail="step retry preparation or submission interrupted; retry the same clientRequestId and body") from exc
 
     @router.get("/runs/{run_id}/artifacts/{manifest_id}/download")
     async def download_artifact(run_id: str, manifest_id: str):

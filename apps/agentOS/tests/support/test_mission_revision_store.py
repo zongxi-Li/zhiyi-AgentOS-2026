@@ -92,3 +92,42 @@ def test_explicit_purge_removes_only_source_decisions(store):
     store.delete_run(run.run_id, delete_orphan_mission=False)
     assert store.list_run_revision_decisions(run.mission_id, run.run_id) == []
     assert store.get_semantic_snapshot(run.mission_id).mission_revision == 2
+
+
+def test_explicit_upgrade_preserves_v1_data_and_is_idempotent(tmp_path):
+    from contracts.workflow import RuntimeMissionRecord
+    adapter = SQLiteWorkflowStore(tmp_path/'upgrade.sqlite3', enable_mission_semantics=True)
+    adapter.save_mission(RuntimeMissionRecord(missionId='mission_test', title='old input', input={'taskGoal':'legacy'}))
+    setup_run(adapter)
+    before = (adapter.get_mission('mission_test'), adapter.get_run('source'),
+        adapter.get_semantic_snapshot('mission_test'), adapter.list_semantic_commits('mission_test'),
+        adapter.get_semantic_receipt('mission_test','edit'), adapter.list_semantic_outbox('mission_test'))
+    with adapter._connect() as conn:
+        conn.execute('DROP TABLE mission_revision_decisions')
+    for _ in range(2):
+        adapter = SQLiteWorkflowStore(adapter.db_path, enable_mission_semantics=True)
+        after = (adapter.get_mission('mission_test'), adapter.get_run('source'),
+            adapter.get_semantic_snapshot('mission_test'), adapter.list_semantic_commits('mission_test'),
+            adapter.get_semantic_receipt('mission_test','edit'), adapter.list_semantic_outbox('mission_test'))
+        assert after == before
+        assert adapter.list_run_revision_decisions('mission_test','source') == []
+
+
+def test_decision_ddl_failure_rolls_back_without_touching_v1(tmp_path, monkeypatch):
+    import sqlite3
+    adapter = SQLiteWorkflowStore(tmp_path/'ddl.sqlite3', enable_mission_semantics=True)
+    with adapter._connect() as conn:
+        conn.execute('DROP TABLE mission_revision_decisions')
+    original = adapter._connect
+    def connection():
+        conn = original()
+        conn.set_authorizer(lambda action, name, *_: sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_CREATE_TABLE and name == 'mission_revision_decisions' else sqlite3.SQLITE_OK)
+        return conn
+    monkeypatch.setattr(adapter,'_connect',connection)
+    with pytest.raises(sqlite3.DatabaseError):
+        adapter._init_semantic_schema()
+    monkeypatch.setattr(adapter,'_connect',original)
+    with adapter._connect() as conn:
+        assert conn.execute('SELECT version FROM mission_semantic_schema').fetchall() == [(1,)]
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='mission_revision_decisions'").fetchone() is None

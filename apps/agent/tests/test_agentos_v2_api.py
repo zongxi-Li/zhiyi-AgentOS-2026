@@ -1967,7 +1967,10 @@ async def test_v2_single_step_retry_is_idempotent_and_enqueues_child_run(tmp_pat
     assert len(prepared) == 2
     assert prepared[0]["reuse_source_run"] is False
     assert prepared[1]["reuse_source_run"] is True
-    assert submitted == ["run_single_step_retry", "run_single_step_retry"]
+    # This spy records submission attempts, not managed execution tasks. A replay
+    # retries scheduling the same durable child; the real Coordinator deduplicates
+    # active tasks (covered by the production-wired recovery audit).
+    assert submitted == ["run_single_step_retry", "run_single_step_retry", "run_single_step_retry"]
 
 
 async def test_v2_deferred_planning_failure_is_classified_without_identity_backlog(tmp_path) -> None:
