@@ -41,6 +41,19 @@ class MissionSemanticService:
         """Recheck access without capturing current state, including Run replay."""
         self._require_access(principal, mission_id, "read")
 
+    def decide_run_revision(self, principal, mission_id, run_id, request):
+        from contracts.mission_revision import MissionRevisionDecision
+        principal = self._require_access(principal, mission_id, "write")
+        request = MissionRevisionDecision.model_validate(request.model_dump())
+        return self.store.decide_run_revision(principal, mission_id, run_id, request)
+
+    def require_write_access(self, principal, mission_id):
+        self._require_access(principal, mission_id, "write")
+
+    def list_run_revision_decisions(self, principal, mission_id, run_id):
+        self._require_access(principal, mission_id, "read")
+        return self.store.list_run_revision_decisions(mission_id, run_id)
+
     def list_commits(self, principal: SemanticPrincipal, mission_id: str) -> list[SemanticCommit]:
         self._require_access(principal, mission_id, "read")
         return self.store.list_semantic_commits(mission_id)

@@ -94,6 +94,24 @@ class AgentOsMissionControllerTest {
     }
 
     @Test
+    void revisionCommandsPreserveRunScopeAndOperation() throws Exception {
+        String base = "/ai/agentos/v2/missions/mission%20001/runs/run%201/revision";
+        gateway.getResponses.put(base, RecordingAgentOsGateway.response(200, Map.of("status", "REVISION_CHANGED")));
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/runs/{runId}/revision", "mission 001", "run 1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REVISION_CHANGED"));
+        Map<String, Object> body = Map.of("operationId", "op 1", "sourceRevision", 1, "targetRevision", 2, "decision", "CONTINUE");
+        gateway.postResponses.put(base, RecordingAgentOsGateway.response(409, Map.of("detail", "REVISION_CONFLICT")));
+        mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/runs/{runId}/revision", "mission 001", "run 1")
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isConflict());
+        assertEquals(body, gateway.lastPostBody);
+        gateway.postResponses.put(base + "/op%201/apply", RecordingAgentOsGateway.response(202, Map.of("runId", "successor")));
+        mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/runs/{runId}/revision/{operationId}/apply", "mission 001", "run 1", "op 1"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.runId").value("successor"));
+        assertEquals(base + "/op%201/apply", gateway.lastPostPath);
+    }
+
+    @Test
     void createMissionRejectsContractViolationsWithTheStableEnvelope() throws Exception {
         mockMvc.perform(post("/api/agentos/v2/missions")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -4,6 +4,15 @@ import { WorkflowApiContractError } from '../types'
 import type { MissionSemanticEditRequest, MissionSemanticResult } from '../types'
 
 export const createMissionApi = () => ({
+  async getRunRevision(missionId: string, runId: string): Promise<MissionRunRevision> {
+    return (await agentosRequest.get<MissionRunRevision>(revisionPath(missionId, runId))).data
+  },
+  async decideRunRevision(missionId: string, runId: string, payload: MissionRunRevisionDecision): Promise<MissionRunRevisionReceipt> {
+    return (await agentosRequest.post<MissionRunRevisionReceipt>(revisionPath(missionId, runId), payload)).data
+  },
+  async applyRunRevision(missionId: string, runId: string, operationId: string): Promise<{ status: string; runId: string }> {
+    return (await agentosRequest.post<{ status: string; runId: string }>(`${revisionPath(missionId, runId)}/${encodeURIComponent(operationId)}/apply`, {})).data
+  },
   async editMissionSemantics(missionId: string, payload: MissionSemanticEditRequest): Promise<MissionSemanticResult> {
     const response = await agentosRequest.post<MissionSemanticResult>(`/missions/${encodeURIComponent(missionId)}/semantics`, payload)
     return response.data
@@ -94,3 +103,30 @@ export const createMissionApi = () => ({
     return response.data
   }
 })
+
+const revisionPath = (missionId: string, runId: string) => `/missions/${encodeURIComponent(missionId)}/runs/${encodeURIComponent(runId)}/revision`
+export interface MissionRunRevisionDecision {
+  operationId: string
+  sourceRevision: number
+  targetRevision: number
+  decision: 'CONTINUE' | 'REQUEST_REPLAN'
+}
+export interface MissionRunRevisionReceipt extends MissionRunRevisionDecision {
+  missionId: string
+  runId: string
+  actorId: string
+  tenantId: string
+  createdAt: string
+}
+export interface MissionRunRevision {
+  missionId: string
+  runId: string
+  status: 'CURRENT' | 'REVISION_CHANGED' | 'LEGACY_UNBOUND'
+  sourceRevision: number
+  targetRevision: number
+  runStatus: string
+  impact: 'NOT_ANALYZED'
+  decisionStatus?: 'UNDECIDED' | 'DECISION_STALE' | 'CONTINUE_SELECTED' | 'REPLAN_REQUESTED' | 'SUCCESSOR_CREATED'
+  successorRunId?: string
+  decisions: MissionRunRevisionReceipt[]
+}

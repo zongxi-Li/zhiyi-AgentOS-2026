@@ -10,6 +10,11 @@
       <button v-if="projection.missionSemanticView && !editing" type="button" @click="beginEdit">{{ projection.missionSemanticView.semanticStatus === 'INITIALIZED' ? '编辑目标与约束' : '初始化正式语义' }}</button>
     </header>
 
+    <MissionRevisionNotice v-if="projection.missionSemanticView && projection.activeRun"
+      :mission-id="projection.mission.missionId" :run-id="projection.activeRun.runId"
+      :revision="projection.missionSemanticView.missionRevision" :run-status="projection.activeRun.status || ''"
+      @changed="emit('semanticsSaved')" />
+
     <form v-if="editing" class="mission-editor__meta" @submit.prevent="saveSemantics">
       <label>正式目标<textarea v-model="objective" aria-label="正式目标" :disabled="saving" required rows="6" /></label>
       <div v-for="(constraint, index) in constraints" :key="constraint.constraintId">
@@ -46,6 +51,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import MissionRevisionNotice from './MissionRevisionNotice.vue'
 import { agentosApi, type MissionSemanticEditRequest } from '@/services/api/agentos'
 import { missionDocumentContent, missionDisplayLabel, runDisplayObjective } from './missionSemanticDisplay'
 import { renderMarkdown } from '@/utils/markdown'

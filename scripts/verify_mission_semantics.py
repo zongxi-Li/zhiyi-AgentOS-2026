@@ -15,6 +15,7 @@ for path in [ROOT / "apps/agent", ROOT / "apps/agentOS", ROOT / "apps/agentOS/sr
     sys.path.insert(0, str(path))
 
 API = ["apps/agent/tests/test_mission_semantic_commands.py",
+       "apps/agent/tests/test_mission_revision_decisions.py",
        "apps/agent/tests/test_mission_semantic_convergence_boundary.py",
        "apps/agent/tests/test_workspace_semantic_boundary.py"]
 CORE = ["apps/agentOS/tests/support", "apps/agentOS/tests/runtime/test_mission_semantic_convergence.py",

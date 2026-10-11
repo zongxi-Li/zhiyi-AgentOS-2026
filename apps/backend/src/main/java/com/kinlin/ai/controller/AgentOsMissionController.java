@@ -66,6 +66,21 @@ public class AgentOsMissionController {
         return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/receipts/" + AgentOsPaths.segment(operationId)));
     }
 
+    @GetMapping("/missions/{missionId}/runs/{runId}/revision")
+    public ResponseEntity<Map<String, Object>> getRunRevision(@PathVariable String missionId, @PathVariable String runId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/runs/" + AgentOsPaths.segment(runId) + "/revision"));
+    }
+
+    @PostMapping("/missions/{missionId}/runs/{runId}/revision")
+    public ResponseEntity<Map<String, Object>> decideRunRevision(@PathVariable String missionId, @PathVariable String runId, @RequestBody Map<String, Object> request) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.mission(missionId) + "/runs/" + AgentOsPaths.segment(runId) + "/revision", request));
+    }
+
+    @PostMapping("/missions/{missionId}/runs/{runId}/revision/{operationId}/apply")
+    public ResponseEntity<Map<String, Object>> applyRunRevision(@PathVariable String missionId, @PathVariable String runId, @PathVariable String operationId) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.mission(missionId) + "/runs/" + AgentOsPaths.segment(runId) + "/revision/" + AgentOsPaths.segment(operationId) + "/apply", Map.of()));
+    }
+
     @GetMapping("/missions")
     public ResponseEntity<QueryResponse> listMissions(
             @RequestParam(required = false) String status,

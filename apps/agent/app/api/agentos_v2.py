@@ -14,6 +14,8 @@ from fastapi import APIRouter, File, Header, HTTPException, Query, Request, Uplo
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from contracts.mission_semantic import MissionSemanticContent, MissionSemanticEditRequest, MissionSemanticRequest
+from contracts.mission_revision import MissionRevisionDecision, MissionRevisionConflict, revision_observation, revision_successor_key
+import sqlite3
 from components.mission_manager.semantic_resolver import MissionSemanticResolver
 
 from app.execution.coordinator import RunExecutionCoordinator
@@ -2096,6 +2098,90 @@ def create_router(
             raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="mission not found") from exc
+
+    def revision_context(mission_id, run_id):
+        service, principal = require_semantic_service()
+        require_visible_semantic_mission(service, principal, mission_id)
+        run = load_run(run_id)
+        if run.mission_id != mission_id:
+            raise HTTPException(status_code=409, detail="MISSION_SCOPE_CONFLICT")
+        if run.record_state.value != "active":
+            raise HTTPException(status_code=404, detail="run not found")
+        return service, principal, run
+
+    @router.get("/missions/{mission_id}/runs/{run_id}/revision")
+    async def get_run_revision(mission_id: str, run_id: str):
+        service, principal, run = revision_context(mission_id, run_id)
+        try:
+            observation = revision_observation(run, service.get_effective_snapshot(principal, mission_id),
+                service.list_run_revision_decisions(principal, mission_id, run_id))
+            for decision in reversed(service.list_run_revision_decisions(principal, mission_id, run_id)):
+                successor = runtime.workflow_store.find_run_by_idempotency_key(revision_successor_key(decision)[0])
+                if successor:
+                    observation.update(decisionStatus="SUCCESSOR_CREATED", successorRunId=successor.run_id)
+                    break
+            return observation
+        except (RuntimeError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=503, detail="revision decision schema requires explicit upgrade") from exc
+
+    @router.post("/missions/{mission_id}/runs/{run_id}/revision")
+    async def decide_run_revision(mission_id: str, run_id: str, request: MissionRevisionDecision):
+        service, principal, _ = revision_context(mission_id, run_id)
+        try:
+            result = service.decide_run_revision(principal, mission_id, run_id, request)
+            return result.model_dump(by_alias=True, mode="json")
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+        except MissionRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=503, detail="revision decision storage unavailable; retry same operation") from exc
+
+    @router.post("/missions/{mission_id}/runs/{run_id}/revision/{operation_id}/apply", status_code=202)
+    async def apply_run_revision(mission_id: str, run_id: str, operation_id: str):
+        service, principal, source = revision_context(mission_id, run_id)
+        try:
+            service.require_write_access(principal, mission_id)
+            receipt = next((r for r in service.list_run_revision_decisions(principal, mission_id, run_id)
+                            if r.operation_id == operation_id), None)
+            if receipt is None:
+                raise HTTPException(status_code=404, detail="decision not found")
+            if receipt.actor_id != principal.actor_id or receipt.tenant_id != principal.tenant_id:
+                raise HTTPException(status_code=403, detail="decision principal mismatch")
+            if receipt.decision != "REQUEST_REPLAN":
+                raise HTTPException(status_code=409, detail="decision does not request replanning")
+            # Stable namespace is independent of URL encoding and process lifetime.
+            key, fingerprint = revision_successor_key(receipt)
+            existing = runtime.workflow_store.find_run_by_idempotency_key(key)
+            if existing is not None:
+                if existing.record_state.value != "active":
+                    raise HTTPException(status_code=409, detail="successor was deleted")
+                await coordinator.submit(existing.run_id)
+                return {"status": "SUCCESSOR_CREATED", "runId": existing.run_id}
+            if source.status.value != "cancelled":
+                raise HTTPException(status_code=409, detail="SOURCE_NOT_CANCELLED; explicitly cancel the source Run first")
+            if coordinator.is_active(run_id):
+                return {"status": "WAITING_CANCELLATION", "runId": run_id}
+            choices = service.list_run_revision_decisions(principal, mission_id, run_id)
+            if choices[-1].operation_id != operation_id:
+                raise HTTPException(status_code=409, detail="DECISION_SUPERSEDED")
+            # Original execution configuration, no inherited TaskPlan/ACG package.
+            run_input = {k: v for k, v in source.input.items()
+                         if k not in {"acgBlueprint", "taskPlan", "taskBindings"}}
+            _, successor = runtime.prepare_run(mission_id, semantic_principal=principal,
+                workflow_id=source.workflow_id, review_mode=source.review_mode,
+                idempotency_key=key, idempotency_fingerprint=fingerprint,
+                defer_acg_planning=True, input_override=run_input, parent_run_id=run_id,
+                execution_scope_override=source.execution_scope,
+                rerun_reason="mission_revision", mission_revision_decision=receipt.model_dump(by_alias=True, mode="json"))
+            await coordinator.submit(successor.run_id)
+            return {"status": "SUCCESSOR_CREATED", "runId": successor.run_id}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=503, detail="revision application unavailable; retry same operation") from exc
 
     @router.post("/missions/{mission_id}/semantics")
     async def edit_mission_semantics(mission_id: str, request: MissionSemanticEditRequest):

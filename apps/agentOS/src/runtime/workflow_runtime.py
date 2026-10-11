@@ -607,6 +607,7 @@ class ExecutionRuntime(CollaboratorAccess):
         execution_scope_override: RunExecutionScope | None = None,
         semantic_principal: SemanticPrincipal | None = None,
         inherit_parent_basis: bool = False,
+        mission_revision_decision: dict | None = None,
     ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
         """Freeze authorized Mission input before synchronous or deferred planning."""
         if self.mission_semantic_service is not None:
@@ -683,6 +684,11 @@ class ExecutionRuntime(CollaboratorAccess):
                     parent.acg_blueprint if k == "acgBlueprint" else parent.execution_state.get(k))
                     for k in ("acgBlueprint", "taskPlan", "taskBindings")):
                 raise ValueError("explicit semantic plans require an unchanged trusted parent package")
+        if mission_revision_decision is not None:
+            from contracts.mission_revision import MissionRevisionConflict
+            if (basis is None or basis.source_type != "SEMANTIC" or
+                    basis.source_revision != mission_revision_decision["targetRevision"]):
+                raise MissionRevisionConflict("REVISION_CONFLICT")
         if run_input.get("taskAcceptance") is None:
             run_input.pop("taskAcceptance", None)
         if "taskAcceptance" in run_input:
@@ -736,6 +742,7 @@ class ExecutionRuntime(CollaboratorAccess):
             executionScope=scope,
             legacyPluginScope=False,
             executionState={
+                **({"missionRevisionDecision": mission_revision_decision} if mission_revision_decision else {}),
                 **({"missionIntentBasis": basis.model_dump(by_alias=True, mode="json")} if basis is not None else {}),
                 **({"taskAcceptance": deepcopy(run_input["taskAcceptance"])} if "taskAcceptance" in run_input else {}),
                 **({"engineMigration": "langgraph_pending"} if is_acg else {}),

@@ -17,6 +17,13 @@ from contracts.workflow import utc_now
 
 
 class MissionSemanticStore(ABC):
+    def decide_run_revision(self, principal, mission_id, run_id, request):
+        """Atomically validate current Revision and source Run; persist immutable decision."""
+        raise NotImplementedError
+
+    def list_run_revision_decisions(self, mission_id, run_id):
+        raise NotImplementedError
+
     @abstractmethod
     def commit_semantics(self, operation: MissionSemanticOperation) -> SemanticOperationResult: ...
 

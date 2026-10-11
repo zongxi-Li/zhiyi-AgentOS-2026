@@ -59,6 +59,7 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         self._semantic_commits: dict[str, list[SemanticCommit]] = {}
         self._semantic_receipts: dict[tuple[str, str], SemanticOperationReceipt] = {}
         self._semantic_outbox: dict[str, list[dict]] = {}
+        self._revision_decisions: dict[tuple[str, str], object] = {}
         self._tasks: Dict[str, RuntimeMissionRecord] = {}
         self._runs: Dict[str, RuntimeRunRecord] = {}
         self._terminal_run_statuses: Dict[str, WorkflowStatus] = {}
@@ -98,6 +99,23 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
     @_mission_locked
     def get_semantic_snapshot(self, mission_id: str) -> EffectiveMissionSnapshot:
         return snapshot(mission_id, mission_id in self._tasks, deepcopy(self._semantic_states.get(mission_id)))
+
+    @_mission_locked
+    def decide_run_revision(self, principal, mission_id, run_id, request):
+        from contracts.mission_revision import MissionRevisionConflict, prepare_revision_decision
+        run = self.get_run(run_id)
+        if run.mission_id != mission_id or self.get_mission(mission_id).record_state != MissionRecordState.ACTIVE:
+            raise MissionRevisionConflict("MISSION_SCOPE_CONFLICT")
+        key = (run_id, request.operation_id)
+        receipt = prepare_revision_decision(run, self.get_semantic_snapshot(mission_id), request,
+            principal, self._revision_decisions.get(key))
+        self._revision_decisions[key] = deepcopy(receipt)
+        return deepcopy(receipt)
+
+    @_mission_locked
+    def list_run_revision_decisions(self, mission_id, run_id):
+        return deepcopy([r for r in self._revision_decisions.values()
+                         if r.mission_id == mission_id and r.run_id == run_id])
 
     @_mission_locked
     def list_semantic_commits(self, mission_id: str) -> list[SemanticCommit]:
@@ -188,6 +206,14 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
                 raise ValueError("run creation request conflict")
             return existing.model_copy(deep=True)
         runs, terminal, outbox = dict(self._runs), dict(self._terminal_run_statuses), deepcopy(self._lifecycle_outbox)
+        from contracts.mission_revision import validate_revision_successor
+        if run.execution_state.get("missionRevisionDecision"):
+            from contracts.mission_revision import MissionRevisionConflict
+            if self.get_mission(run.mission_id).record_state != MissionRecordState.ACTIVE:
+                raise MissionRevisionConflict("MISSION_NOT_ACTIVE")
+            validate_revision_successor(run, self._runs.get(run.execution_state.get("parentRunId")),
+                self.get_semantic_snapshot(run.mission_id),
+                self.list_run_revision_decisions(run.mission_id, run.execution_state.get("parentRunId")))
         try:
             self.save_run(run)
         except Exception:
@@ -375,6 +401,7 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         runs.pop(run_id)
         exchanges = {key: value for key, value in self._copilot_exchanges.items() if key[0] != run_id}
         inputs = {key: value for key, value in self._planning_inputs.items() if key[0] != run_id}
+        revision_decisions = {key: value for key, value in self._revision_decisions.items() if key[0] != run_id}
         terminals = dict(self._terminal_run_statuses)
         terminals.pop(run_id, None)
         tasks = dict(self._tasks)
@@ -401,6 +428,7 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
          self._semantic_states, self._semantic_commits, self._semantic_receipts,
          self._semantic_outbox) = (runs, exchanges, inputs, terminals, tasks, permissions,
                                   states, commits, receipts, outbox)
+        self._revision_decisions = revision_decisions
         return result
 
     @_mission_locked

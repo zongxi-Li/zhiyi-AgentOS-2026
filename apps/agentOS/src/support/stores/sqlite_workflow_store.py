@@ -100,7 +100,42 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                     payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
                     UNIQUE(mission_id, revision))""")
                 conn.execute("INSERT INTO mission_semantic_schema(version) VALUES(1)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS mission_revision_decisions (
+                mission_id TEXT NOT NULL, run_id TEXT NOT NULL, operation_id TEXT NOT NULL,
+                payload TEXT NOT NULL, PRIMARY KEY(run_id, operation_id))""")
             conn.commit()
+
+    def list_run_revision_decisions(self, mission_id, run_id):
+        from contracts.mission_revision import MissionRevisionReceipt
+        self._require_semantic_schema()
+        with self._connect() as conn:
+            return [MissionRevisionReceipt.model_validate_json(row[0]) for row in conn.execute(
+                "SELECT payload FROM mission_revision_decisions WHERE mission_id=? AND run_id=? ORDER BY rowid",
+                (mission_id, run_id))]
+
+    def decide_run_revision(self, principal, mission_id, run_id, request):
+        from contracts.mission_revision import MissionRevisionReceipt, MissionRevisionConflict, prepare_revision_decision
+        self._require_semantic_schema()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT payload FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            if not row:
+                raise KeyError(run_id)
+            run = RuntimeRunRecord.model_validate_json(row[0])
+            row = conn.execute("SELECT payload FROM tasks WHERE mission_id=?", (mission_id,)).fetchone()
+            if (run.mission_id != mission_id or not row or
+                    RuntimeMissionRecord.model_validate_json(row[0]).record_state != MissionRecordState.ACTIVE):
+                raise MissionRevisionConflict("MISSION_SCOPE_CONFLICT")
+            row = conn.execute("SELECT payload FROM mission_semantic_state WHERE mission_id=?", (mission_id,)).fetchone()
+            state = MissionSemanticAggregate.model_validate_json(row[0]) if row else None
+            row = conn.execute("SELECT payload FROM mission_revision_decisions WHERE run_id=? AND operation_id=?",
+                               (run_id, request.operation_id)).fetchone()
+            previous = MissionRevisionReceipt.model_validate_json(row[0]) if row else None
+            receipt = prepare_revision_decision(run, snapshot(mission_id, True, state), request, principal, previous)
+            if previous is None:
+                conn.execute("INSERT INTO mission_revision_decisions VALUES(?,?,?,?)",
+                    (mission_id, run_id, request.operation_id, receipt.model_dump_json(by_alias=True)))
+            return receipt
 
     def commit_semantics(self, operation: MissionSemanticOperation) -> SemanticOperationResult:
         self._require_semantic_schema()
@@ -222,6 +257,20 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                 if existing.mission_id != run.mission_id or existing.idempotency_fingerprint != run.idempotency_fingerprint:
                     raise ValueError("run creation request conflict")
                 return existing
+            if run.execution_state.get("missionRevisionDecision"):
+                from contracts.mission_revision import validate_revision_successor, MissionRevisionReceipt, MissionRevisionConflict
+                mission = conn.execute("SELECT payload FROM tasks WHERE mission_id=?", (run.mission_id,)).fetchone()
+                if not mission or RuntimeMissionRecord.model_validate_json(mission[0]).record_state != MissionRecordState.ACTIVE:
+                    raise MissionRevisionConflict("MISSION_NOT_ACTIVE")
+                source = conn.execute("SELECT payload FROM runs WHERE run_id=?",
+                    (run.execution_state.get("parentRunId"),)).fetchone()
+                state = conn.execute("SELECT payload FROM mission_semantic_state WHERE mission_id=?",
+                    (run.mission_id,)).fetchone()
+                validate_revision_successor(run, RuntimeRunRecord.model_validate_json(source[0]) if source else None,
+                    snapshot(run.mission_id, True, MissionSemanticAggregate.model_validate_json(state[0]) if state else None),
+                    [MissionRevisionReceipt.model_validate_json(r[0]) for r in conn.execute(
+                        "SELECT payload FROM mission_revision_decisions WHERE mission_id=? AND run_id=? ORDER BY rowid",
+                        (run.mission_id, run.execution_state.get("parentRunId")))])
             self._upsert_run(conn, run)
             event_type = lifecycle_run_event_type(run)
             if event_type:
@@ -907,6 +956,8 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
             conn.execute("DELETE FROM run_copilot_exchanges WHERE run_id = ?", (run_id,))
             conn.execute("DELETE FROM run_planning_inputs WHERE run_id = ?", (run_id,))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mission_revision_decisions'").fetchone():
+                conn.execute("DELETE FROM mission_revision_decisions WHERE run_id = ?", (run_id,))
             mission_deleted = False
             if delete_orphan_mission:
                 referenced = conn.execute(
