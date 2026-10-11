@@ -1,8 +1,13 @@
 import { agentosRequest } from '../client'
 import type { AsyncWorkflowStartRequest, ContentManifestSummary, InputAttachment, MissionListItem, MissionListQuery, MissionRecordMutation, PageResponse, WorkflowRun, WorkflowStartRequest } from '../types'
 import { WorkflowApiContractError } from '../types'
+import type { MissionSemanticEditRequest, MissionSemanticResult } from '../types'
 
 export const createMissionApi = () => ({
+  async editMissionSemantics(missionId: string, payload: MissionSemanticEditRequest): Promise<MissionSemanticResult> {
+    const response = await agentosRequest.post<MissionSemanticResult>(`/missions/${encodeURIComponent(missionId)}/semantics`, payload)
+    return response.data
+  },
   async createMaterial(content: string, mediaType = 'text/plain'): Promise<ContentManifestSummary> {
     const response = await agentosRequest.post<ContentManifestSummary>('/materials', { content, mediaType })
     return response.data

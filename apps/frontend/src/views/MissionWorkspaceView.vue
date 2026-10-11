@@ -65,6 +65,7 @@
           @cancel-run="cancelActiveRun"
           @content-ready="finishForegroundContent"
           @artifact-projection="artifactProjection = $event"
+          @semantics-saved="loadWorkspace(selectedRunId || undefined)"
         />
         <section v-else class="workspace-main-state" role="status">
           <img class="workspace-main-state__watermark" src="/logo.webp" alt="" aria-hidden="true" />

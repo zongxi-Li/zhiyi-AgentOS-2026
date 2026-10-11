@@ -25,10 +25,7 @@ class SemanticConstraint(SemanticModel):
         return value
 
 
-class MissionSemanticRequest(SemanticModel):
-    mission_id: StrictStr = Field(alias="missionId", min_length=1)
-    operation_id: StrictStr = Field(alias="operationId", min_length=1)
-    expected_mission_revision: int = Field(alias="expectedMissionRevision", ge=0, strict=True)
+class MissionSemanticContent(SemanticModel):
     objective: StrictStr = Field(min_length=1)
     constraints: list[SemanticConstraint]
     source_refs: list[StrictStr] = Field(default_factory=list, alias="sourceRefs")
@@ -49,6 +46,22 @@ class MissionSemanticRequest(SemanticModel):
         if any(not ref.strip() for ref in refs):
             raise ValueError("source reference must not be blank")
         return self
+
+
+class MissionSemanticEditRequest(MissionSemanticContent):
+    operation_id: StrictStr = Field(alias="operationId", min_length=1, max_length=200)
+    expected_mission_revision: int = Field(alias="expectedMissionRevision", ge=0, strict=True)
+
+    @field_validator("operation_id")
+    @classmethod
+    def operation_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("operationId must not be blank")
+        return value
+
+
+class MissionSemanticRequest(MissionSemanticEditRequest):
+    mission_id: StrictStr = Field(alias="missionId", min_length=1)
 
 
 class SemanticPrincipal(SemanticModel):

@@ -45,6 +45,27 @@ public class AgentOsMissionController {
         ));
     }
 
+    @PostMapping("/missions/{missionId}/semantics")
+    public ResponseEntity<Map<String, Object>> editSemantics(
+            @PathVariable String missionId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.mission(missionId) + "/semantics", body));
+    }
+
+    @GetMapping("/missions/{missionId}/semantics")
+    public ResponseEntity<Map<String, Object>> getSemantics(@PathVariable String missionId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics"));
+    }
+
+    @GetMapping("/missions/{missionId}/semantics/commits")
+    public ResponseEntity<Map<String, Object>> getSemanticCommits(@PathVariable String missionId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/commits"));
+    }
+
+    @GetMapping("/missions/{missionId}/semantics/receipts/{operationId}")
+    public ResponseEntity<Map<String, Object>> getSemanticReceipt(@PathVariable String missionId, @PathVariable String operationId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/receipts/" + AgentOsPaths.segment(operationId)));
+    }
+
     @GetMapping("/missions")
     public ResponseEntity<QueryResponse> listMissions(
             @RequestParam(required = false) String status,

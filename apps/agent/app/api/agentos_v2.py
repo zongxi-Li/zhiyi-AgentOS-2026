@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from sqlite3 import Error as SQLiteError
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
@@ -12,6 +13,8 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from contracts.mission_semantic import MissionSemanticContent, MissionSemanticEditRequest, MissionSemanticRequest
+from components.mission_manager.semantic_resolver import MissionSemanticResolver
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import current_trusted_user, current_semantic_principal
@@ -80,6 +83,7 @@ class MissionCreateRequest(BaseModel):
     material_refs: list[str] | None = Field(default=None, alias="materialRefs")
     attachment_ids: list[str] | None = Field(default=None, alias="attachmentIds")
     client_request_id: str | None = Field(default=None, alias="clientRequestId", max_length=200)
+    semantics: MissionSemanticContent | None = None
 
 
 class MissionRunCreateRequest(BaseModel):
@@ -642,6 +646,8 @@ def _idempotency(request: MissionCreateRequest | MissionRunCreateRequest) -> tup
     caller = f"{getattr(actor, 'tenant_id', '')}:{getattr(actor, 'user_id', '')}" if actor else "internal"
     key = hashlib.sha256(f"{caller}:agentos-v2:{request.client_request_id}".encode()).hexdigest()
     body = request.model_dump(by_alias=True, mode="json", exclude={"client_request_id"})
+    if isinstance(request, MissionCreateRequest) and request.semantics is None:
+        body.pop("semantics", None)  # Preserve pre-S00-03 legacy fingerprints.
     fingerprint = hashlib.sha256(
         json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -2069,6 +2075,81 @@ def create_router(
         require_mission_access(detail.origin.mission.mission_id)
         return provenance.model_dump(by_alias=True, mode="json")
 
+    def require_semantic_service():
+        service = getattr(runtime, "mission_semantic_service", None)
+        if service is None:
+            raise HTTPException(status_code=409, detail="mission semantics are disabled")
+        principal = current_semantic_principal()
+        if principal is None:
+            raise HTTPException(status_code=403, detail="trusted semantic principal is required")
+        return service, principal
+
+    def require_visible_semantic_mission(service, principal, mission_id):
+        # Authorization precedes existence checks; soft deletion hides public
+        # commands and receipts while internal semantic history is retained.
+        try:
+            service.require_read_access(principal, mission_id)
+            mission = runtime.workflow_store.get_mission(mission_id)
+            if mission.record_state is MissionRecordState.DELETED:
+                raise HTTPException(status_code=404, detail="mission not found")
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mission not found") from exc
+
+    @router.post("/missions/{mission_id}/semantics")
+    async def edit_mission_semantics(mission_id: str, request: MissionSemanticEditRequest):
+        service, principal = require_semantic_service()
+        require_visible_semantic_mission(service, principal, mission_id)
+        try:
+            result = service.commit(principal, MissionSemanticRequest(missionId=mission_id, **request.model_dump()))
+            if result.status in {"REVISION_CONFLICT", "OPERATION_CONFLICT"}:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=409, content=result.model_dump(by_alias=True, mode="json"))
+            return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mission not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="invalid semantic request") from exc
+        except (RuntimeError, SQLiteError) as exc:
+            raise HTTPException(status_code=503, detail="semantic commit interrupted; retry the same operationId and body") from exc
+
+    @router.get("/missions/{mission_id}/semantics")
+    async def get_mission_semantics(mission_id: str):
+        service, principal = require_semantic_service()
+        require_visible_semantic_mission(service, principal, mission_id)
+        try:
+            return MissionSemanticResolver.resolve(service.get_effective_snapshot(principal, mission_id))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mission not found") from exc
+        except (ValueError, RuntimeError, SQLiteError) as exc:
+            raise HTTPException(status_code=503, detail="mission semantic source unavailable") from exc
+
+    @router.get("/missions/{mission_id}/semantics/commits")
+    async def list_mission_semantic_commits(mission_id: str):
+        service, principal = require_semantic_service()
+        require_visible_semantic_mission(service, principal, mission_id)
+        try:
+            return {"items": service.list_commits(principal, mission_id)}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+
+    @router.get("/missions/{mission_id}/semantics/receipts/{operation_id}")
+    async def get_mission_semantic_receipt(mission_id: str, operation_id: str):
+        service, principal = require_semantic_service()
+        require_visible_semantic_mission(service, principal, mission_id)
+        try:
+            receipt = service.get_receipt(principal, mission_id, operation_id)
+            if receipt is None:
+                raise HTTPException(status_code=404, detail="semantic receipt not found")
+            return receipt
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+
     @router.post(
         "/missions",
         status_code=status.HTTP_202_ACCEPTED,
@@ -2076,18 +2157,35 @@ def create_router(
         response_model_by_alias=True,
     )
     async def create_mission(request: MissionCreateRequest):
+        service = getattr(runtime, "mission_semantic_service", None)
+        if service is not None:
+            require_semantic_service()
+        if service is not None and not runtime.allow_legacy_mission_intent and request.semantics is None:
+            raise HTTPException(status_code=422, detail="explicit semantics are required")
+        if request.semantics is not None and (not request.client_request_id or not request.client_request_id.strip()):
+            raise HTTPException(status_code=422, detail="clientRequestId is required for semantic creation")
         key, fingerprint = _idempotency(request)
         if key:
             existing = runtime.workflow_store.find_run_by_idempotency_key(key)
             if existing is not None:
                 _require_access(existing)
+                if existing.record_state is RunRecordState.DELETED:
+                    raise HTTPException(status_code=404, detail="run not found")
                 if existing.idempotency_fingerprint != fingerprint:
                     raise HTTPException(status_code=409, detail="clientRequestId conflict")
+                if service is not None:
+                    require_visible_semantic_mission(service, current_semantic_principal(), existing.mission_id)
+                try:
+                    await coordinator.submit(existing.run_id)
+                except Exception as exc:
+                    raise HTTPException(status_code=503, detail="run submission interrupted; retry the same clientRequestId and body") from exc
                 return project_control_run(existing, MissionResponse)
         try:
             mission_input = prepare_execution_input(
                 request.input, request.material_refs, request.attachment_ids
             )
+            # Stable creation key plus insert-only persistence is the durable recovery
+            # anchor. Identity projection and semantic receipt are replayed below.
             task = runtime.create_mission(
                 title=request.title,
                 domain=request.domain,
@@ -2098,7 +2196,14 @@ def create_router(
                 workflow_id=request.workflow_id,
                 enabled_plugin_ids=request.enabled_plugin_ids,
                 defer_identity_projection=True,
+                **({"creation_key": key, "creation_fingerprint": fingerprint} if key else {}),
             )
+            if service is not None and request.semantics is not None:
+                result = service.commit(current_semantic_principal(), MissionSemanticRequest(
+                    missionId=task.mission_id, operationId="create:" + key,
+                    expectedMissionRevision=0, **request.semantics.model_dump()))
+                if result.status not in {"COMMITTED", "NO_OP"}:
+                    raise HTTPException(status_code=409, detail=result.model_dump(by_alias=True, mode="json"))
             _, run = runtime.prepare_run(
                 task.mission_id,
                 semantic_principal=current_semantic_principal(),
@@ -2119,6 +2224,8 @@ def create_router(
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except (KeyError, ValueError) as exc:
+            if str(exc) == "mission creation request conflict":
+                raise HTTPException(status_code=409, detail="clientRequestId conflict") from exc
             logger.exception(
                 "mission_start_rejected",
                 extra={"errorType": type(exc).__name__},
@@ -2130,6 +2237,11 @@ def create_router(
             else:
                 detail = "invalid workflow request"
             raise HTTPException(status_code=422, detail=detail) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("mission_creation_interrupted")
+            raise HTTPException(status_code=503, detail="mission creation interrupted; retry the same clientRequestId and body") from exc
 
     @router.get("/runs")
     async def list_runs(

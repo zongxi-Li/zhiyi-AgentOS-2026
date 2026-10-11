@@ -194,6 +194,42 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             )
             conn.commit()
 
+    def create_mission_once(self, task: RuntimeMissionRecord) -> RuntimeMissionRecord:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT payload FROM tasks WHERE json_extract(payload, '$.creationKey')=?",
+                               (task.creation_key,)).fetchone() if task.creation_key else conn.execute(
+                                   "SELECT payload FROM tasks WHERE mission_id=?", (task.mission_id,)).fetchone()
+            if row is not None:
+                existing = RuntimeMissionRecord.model_validate_json(row[0])
+                if not task.creation_fingerprint or existing.creation_fingerprint != task.creation_fingerprint:
+                    raise ValueError("mission creation request conflict")
+                return existing
+            payload = task.model_dump_json(by_alias=True)
+            conn.execute("INSERT INTO tasks(mission_id,payload,updated_at) VALUES(?,?,?)",
+                         (task.mission_id, payload, task.updated_at.isoformat()))
+            self._append_outbox(conn, self._snapshot_event_id("mission.created", task.mission_id, payload),
+                                "mission.created", task.mission_id, payload)
+            return task.model_copy(deep=True)
+
+    def save_prepared_run_once(self, run: RuntimeRunRecord) -> RuntimeRunRecord:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT payload FROM runs WHERE json_extract(payload, '$.idempotencyKey')=?",
+                               (run.idempotency_key,)).fetchone() if run.idempotency_key else None
+            if row is not None:
+                existing = RuntimeRunRecord.model_validate_json(row[0])
+                if existing.mission_id != run.mission_id or existing.idempotency_fingerprint != run.idempotency_fingerprint:
+                    raise ValueError("run creation request conflict")
+                return existing
+            self._upsert_run(conn, run)
+            event_type = lifecycle_run_event_type(run)
+            if event_type:
+                payload = json.dumps(lifecycle_run_payload(run), ensure_ascii=False, sort_keys=True)
+                self._append_outbox(conn, self._snapshot_event_id(event_type, run.run_id, payload),
+                                    event_type, run.run_id, payload)
+            return run.model_copy(deep=True)
+
     def get_mission(self, mission_id: str) -> RuntimeMissionRecord:
         """读取并校验任务 JSON 快照；缺失时抛出 ``KeyError``。"""
         row = self._fetch_one("SELECT payload FROM tasks WHERE mission_id = ?", (mission_id,))

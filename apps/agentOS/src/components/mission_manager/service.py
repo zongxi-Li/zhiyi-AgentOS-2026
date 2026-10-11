@@ -53,6 +53,8 @@ class MissionManager:
         enabled_plugin_ids: Optional[list[str]] = None,
         allowed_workflow_ids: Optional[tuple[str, ...]] = None,
         mission_id: str | None = None,
+        creation_fingerprint: str | None = None,
+        creation_key: str | None = None,
     ) -> RuntimeMissionRecord:
         """创建并持久化任务，同时记录创建轨迹。
 
@@ -71,6 +73,8 @@ class MissionManager:
         task = RuntimeMissionRecord(
             **({"missionId": mission_id} if mission_id is not None else {}),
             title=title,
+            creationFingerprint=creation_fingerprint,
+            creationKey=creation_key,
             domain=task_domain,
             intent=task_intent,
             input=input or {},
@@ -81,7 +85,10 @@ class MissionManager:
                 list(enabled_plugin_ids) if enabled_plugin_ids is not None else None
             ),
         )
-        self.workflow_store.save_mission(task)
+        if creation_fingerprint:
+            task = self.workflow_store.create_mission_once(task)
+        else:
+            self.workflow_store.save_mission(task)
         self._record_task_event(
             task,
             TraceEventType.TASK_CREATED,

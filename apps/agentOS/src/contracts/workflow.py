@@ -160,6 +160,8 @@ class RuntimeMissionRecord(CoreModel):
     ``recommended_workflow`` 仅是推荐而非已绑定的工作流。
     """
     mission_id: str = Field(default_factory=lambda: new_id("mission"), alias="missionId")
+    creation_fingerprint: Optional[str] = Field(default=None, alias="creationFingerprint")
+    creation_key: Optional[str] = Field(default=None, alias="creationKey")
     title: str
     domain: str = "general"
     intent: str = "general"

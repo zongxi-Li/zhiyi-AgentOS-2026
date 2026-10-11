@@ -530,6 +530,8 @@ class ExecutionRuntime(CollaboratorAccess):
         workflow_id: Optional[str] = None,
         enabled_plugin_ids: Optional[list[str]] = None,
         defer_identity_projection: bool = False,
+        creation_fingerprint: str | None = None,
+        creation_key: str | None = None,
     ) -> RuntimeMissionRecord:
         """校验请求、解析插件范围并创建任务；合同或插件异常会向调用方明确传播。"""
         task_domain = (role_type or domain or "general").strip()
@@ -554,6 +556,8 @@ class ExecutionRuntime(CollaboratorAccess):
             enabled_plugin_ids=enabled_plugin_ids,
             allowed_workflow_ids=scope.workflow_ids,
             mission_id=(self.identity_lifecycle.new_mission_id() if self.identity_lifecycle else None),
+            creation_fingerprint=creation_fingerprint,
+            creation_key=creation_key,
         )
         if (
             self.identity_lifecycle is not None
@@ -779,7 +783,10 @@ class ExecutionRuntime(CollaboratorAccess):
             },
         )
         if persist_run:
-            self.workflow_store.save_run(run)
+            if idempotency_key:
+                run = self.workflow_store.save_prepared_run_once(run)
+            else:
+                self.workflow_store.save_run(run)
         if (
             persist_run
             and

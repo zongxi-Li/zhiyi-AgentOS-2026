@@ -187,6 +187,11 @@ export const buildWorkbenchStartRequest = (
 
   return {
     title: draft.title.trim(),
+    semantics: {
+      objective: draft.taskGoal,
+      constraints: draft.constraints.filter(text => text.trim()).map((text, index) => ({ constraintId: `constraint-${index + 1}`, text, sourceRefs: [] })),
+      sourceRefs: []
+    },
     domain,
     intent,
     workflowId,

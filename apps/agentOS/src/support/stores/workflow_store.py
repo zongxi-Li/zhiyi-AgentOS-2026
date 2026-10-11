@@ -266,6 +266,14 @@ class WorkflowStore(ABC):
         """持久化任务；实现应定义覆盖和并发语义。"""
         raise NotImplementedError
 
+    def create_mission_once(self, task: RuntimeMissionRecord) -> RuntimeMissionRecord:
+        """Atomically insert/replay by creation key and fingerprint; never overwrite a Mission."""
+        raise NotImplementedError
+
+    def save_prepared_run_once(self, run: RuntimeRunRecord) -> RuntimeRunRecord:
+        """Atomically deduplicate initial Run persistence by idempotency key."""
+        raise NotImplementedError
+
     @abstractmethod
     def get_mission(self, mission_id: str) -> RuntimeMissionRecord:
         """按标识读取任务；不存在时应抛出 ``KeyError``。"""

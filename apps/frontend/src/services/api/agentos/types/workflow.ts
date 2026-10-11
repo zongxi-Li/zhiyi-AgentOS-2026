@@ -208,6 +208,7 @@ export interface WorkflowTraceExport {
   events: TraceEvent[]
 }
 export interface WorkflowStartRequest {
+  semantics?: MissionSemanticContent
   title: string
   domain: string
   intent: string
@@ -219,6 +220,22 @@ export interface WorkflowStartRequest {
   enabledPluginIds?: string[] | null
   materialRefs?: string[]
   attachmentIds?: string[]
+}
+export interface MissionSemanticContent {
+  objective: string
+  constraints: Array<{ constraintId: string; text: string; sourceRefs?: string[] }>
+  sourceRefs: string[]
+}
+export interface MissionSemanticEditRequest extends MissionSemanticContent {
+  operationId: string
+  expectedMissionRevision: number
+}
+export interface MissionSemanticResult {
+  status: 'COMMITTED' | 'NO_OP' | 'REVISION_CONFLICT' | 'OPERATION_CONFLICT'
+  missionId: string
+  operationId: string
+  missionRevision: number
+  commitId?: string | null
 }
 export interface ContentManifestSummary {
   manifestId: string

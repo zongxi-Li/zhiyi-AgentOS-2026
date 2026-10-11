@@ -19,6 +19,8 @@ from runtime.v2 import (
 )
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 from support.acg.models import ACGBlueprint, StepNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+from contracts.workflow import RuntimeRunRecord
 
 
 @pytest.mark.asyncio
@@ -46,8 +48,10 @@ async def test_v2_artifact_api_is_binding_first_and_manifest_backed(tmp_path):
                 nodes=[StepNode(
                     nodeId="api-node",
                     name="生成 API 产物",
-                    agentName="api-agent",
                 )],
+                resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(
+                    stepId="api-node", plannedAgentId="api-agent",
+                ),)),
             ),
             task_bindings={task.task_id: "api-node"},
         )
@@ -98,9 +102,10 @@ async def test_v2_artifact_api_is_binding_first_and_manifest_backed(tmp_path):
         fake_runtime = SimpleNamespace(
             identity_lifecycle=bridge,
             content_manifest_store=content,
-            get_status=lambda run_id: SimpleNamespace(
+            get_status=lambda run_id: RuntimeRunRecord(
                 run_id=run_id,
                 mission_id=run.mission_id,
+                workflow_id="artifact-test", domain="general", runtime_engine="acg",
                 input={},
             ),
         )

@@ -52,6 +52,7 @@ class AgentOsMissionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "title", "合同审查",
+                                "semantics", Map.of("objective", "正式合同审查", "constraints", List.of()),
                                 "workflowId", "legal_contract_review_v1",
                                 "materialRefs", List.of("manifest_001"),
                                 "clientRequestId", "request-1"
@@ -66,6 +67,30 @@ class AgentOsMissionControllerTest {
         assertEquals("auto", request.reviewMode());
         assertEquals(Map.of(), request.input());
         assertEquals(List.of("manifest_001"), request.materialRefs());
+        assertEquals("正式合同审查", request.semantics().get("objective"));
+    }
+
+    @Test
+    void semanticCommandsPreserveCasConflictAndHistoryReceiptContracts() throws Exception {
+        String base = "/ai/agentos/v2/missions/mission%20001/semantics";
+        Map<String, Object> body = Map.of("operationId", "edit-1", "expectedMissionRevision", 1,
+                "objective", "updated goal", "constraints", List.of());
+        gateway.postResponses.put(base, RecordingAgentOsGateway.response(409, Map.of(
+                "status", "REVISION_CONFLICT", "missionRevision", 2, "operationId", "edit-1")));
+        mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/semantics", "mission 001")
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.status").value("REVISION_CONFLICT"));
+        assertEquals(base, gateway.lastPostPath);
+        assertEquals(body, gateway.lastPostBody);
+        gateway.getResponses.put(base, RecordingAgentOsGateway.response(200, Map.of("missionRevision", 2)));
+        gateway.getResponses.put(base + "/commits", RecordingAgentOsGateway.response(200, Map.of("items", List.of())));
+        gateway.getResponses.put(base + "/receipts/edit%201", RecordingAgentOsGateway.response(200, Map.of("result", Map.of("status", "COMMITTED"))));
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/semantics", "mission 001"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.missionRevision").value(2));
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/semantics/commits", "mission 001"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items").isArray());
+        mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/semantics/receipts/{operationId}", "mission 001", "edit 1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.result.status").value("COMMITTED"));
     }
 
     @Test

@@ -165,6 +165,36 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
             payload=payload,
         )
 
+    @_mission_locked
+    def create_mission_once(self, task: RuntimeMissionRecord) -> RuntimeMissionRecord:
+        existing = next((m for m in self._tasks.values() if m.creation_key == task.creation_key), None) if task.creation_key else self._tasks.get(task.mission_id)
+        if existing is not None:
+            if not task.creation_fingerprint or existing.creation_fingerprint != task.creation_fingerprint:
+                raise ValueError("mission creation request conflict")
+            return existing.model_copy(deep=True)
+        tasks, outbox = dict(self._tasks), deepcopy(self._lifecycle_outbox)
+        try:
+            self.save_mission(task.model_copy(deep=True))
+        except Exception:
+            self._tasks, self._lifecycle_outbox = tasks, outbox
+            raise
+        return task.model_copy(deep=True)
+
+    @_mission_locked
+    def save_prepared_run_once(self, run: RuntimeRunRecord) -> RuntimeRunRecord:
+        existing = self.find_run_by_idempotency_key(run.idempotency_key) if run.idempotency_key else None
+        if existing is not None:
+            if existing.mission_id != run.mission_id or existing.idempotency_fingerprint != run.idempotency_fingerprint:
+                raise ValueError("run creation request conflict")
+            return existing.model_copy(deep=True)
+        runs, terminal, outbox = dict(self._runs), dict(self._terminal_run_statuses), deepcopy(self._lifecycle_outbox)
+        try:
+            self.save_run(run)
+        except Exception:
+            self._runs, self._terminal_run_statuses, self._lifecycle_outbox = runs, terminal, outbox
+            raise
+        return run.model_copy(deep=True)
+
     def get_mission(self, mission_id: str) -> RuntimeMissionRecord:
         """读取任务引用；缺失时抛出带上下文的 ``KeyError``。"""
         try:

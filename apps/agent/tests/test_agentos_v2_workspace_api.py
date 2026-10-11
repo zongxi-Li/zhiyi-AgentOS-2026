@@ -13,11 +13,12 @@ from components.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
 from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
-from contracts.workflow import WorkflowStatus
+from contracts.workflow import RuntimeRunRecord, WorkflowStatus
 from domain.models import RunStatus
 from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge, PlannerIdentityBridge
 from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
 from support.acg.models import ACGBlueprint, StepNode
+from support.acg.planning import ACGResourcePlan, AgentBindingSpec
 
 
 @pytest.mark.asyncio
@@ -49,10 +50,12 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
                 nodes=[StepNode(
                     nodeId="api-step-node",
                     name="API step",
-                    agentName="api-agent",
                     capability="artifact_generation",
                     logicalRole="deliver",
                 )],
+                resourcePlan=ACGResourcePlan(bindings=(AgentBindingSpec(
+                    stepId="api-step-node", plannedAgentId="api-agent",
+                ),)),
             ),
             task_bindings={task.task_id: "api-step-node"},
         )
@@ -105,9 +108,11 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
             identity_lifecycle=bridge,
             workflow_store=SimpleNamespace(list_run_overviews=lambda **_kwargs: SimpleNamespace(items=[], total=0)),
             content_manifest_store=content,
-            get_status=lambda run_id: SimpleNamespace(
+            get_status=lambda run_id: RuntimeRunRecord(
                 run_id=run_id,
                 mission_id=mission.mission_id,
+                workflow_id="workspace-test", domain="general", runtime_engine="acg",
+                status=WorkflowStatus.COMPLETED,
                 input={},
                 execution_state={
                     "outputRefs": {"api-step-node": "output:api-step"},
@@ -220,9 +225,10 @@ async def test_workspace_api_prefers_terminal_runtime_status_over_stale_identity
         )
         repositories.runs.update_status(run.run_id, RunStatus.RUNNING)
         now = datetime.now(timezone.utc)
-        runtime_run = SimpleNamespace(
+        runtime_run = RuntimeRunRecord(
             run_id=run.run_id,
             mission_id=mission.mission_id,
+            workflow_id="workspace-test", domain="general", runtime_engine="acg",
             status=WorkflowStatus.FAILED,
             updated_at=now,
             execution_state={},

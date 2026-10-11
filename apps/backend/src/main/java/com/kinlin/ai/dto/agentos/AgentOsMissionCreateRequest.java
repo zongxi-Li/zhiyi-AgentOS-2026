@@ -20,7 +20,8 @@ public record AgentOsMissionCreateRequest(
         List<String> enabledPluginIds,
         List<String> materialRefs,
         List<String> attachmentIds,
-        @Size(max = 200) String clientRequestId
+        @Size(max = 200) String clientRequestId,
+        Map<String, Object> semantics
 ) {
     public AgentOsMissionCreateRequest {
         domain = domain == null ? "general" : domain;

@@ -4,10 +4,25 @@
       <div>
         <span class="editor-document__eyebrow">VIRTUAL DOCUMENT</span>
         <h1>mission.md</h1>
-        <p>Mission brief · read-only projection</p>
+        <p>{{ projection.missionSemanticView ? 'Mission brief · formal semantics' : 'Mission brief · read-only projection' }}</p>
       </div>
       <code>{{ projection.mission.missionId }}</code>
+      <button v-if="projection.missionSemanticView && !editing" type="button" @click="beginEdit">{{ projection.missionSemanticView.semanticStatus === 'INITIALIZED' ? '编辑目标与约束' : '初始化正式语义' }}</button>
     </header>
+
+    <form v-if="editing" class="mission-editor__meta" @submit.prevent="saveSemantics">
+      <label>正式目标<textarea v-model="objective" aria-label="正式目标" :disabled="saving" required rows="6" /></label>
+      <div v-for="(constraint, index) in constraints" :key="constraint.constraintId">
+        <label>约束 {{ index + 1 }}<textarea v-model="constraint.text" :aria-label="`约束 ${index + 1}`" :disabled="saving" required /></label>
+        <button type="button" :disabled="saving" @click="constraints.splice(index, 1)">移除约束</button>
+      </div>
+      <button type="button" :disabled="saving" @click="addConstraint">添加约束</button>
+      <p>修改作用于后续新 Run；所选 Run 继续使用历史依据。</p>
+      <p v-if="saveError" role="alert">{{ saveError }}</p>
+      <button type="submit" :disabled="saving || conflicted || !objective.trim()">{{ saving ? '保存中…' : '保存正式语义' }}</button>
+      <button v-if="conflicted" type="button" @click="emit('semanticsSaved'); editing = false">刷新当前版本</button>
+      <button type="button" :disabled="saving" @click="editing = false">取消</button>
+    </form>
 
     <div class="editor-document__body markdown-body" v-html="renderedContent" />
 
@@ -30,7 +45,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { agentosApi, type MissionSemanticEditRequest } from '@/services/api/agentos'
 import { missionDocumentContent, missionDisplayLabel, runDisplayObjective } from './missionSemanticDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
@@ -39,6 +55,49 @@ const props = defineProps<{
   projection: MissionWorkspaceProjection
   entry: WorkspaceEntry
 }>()
+const emit = defineEmits<{ semanticsSaved: [] }>()
+const editing = ref(false)
+const saving = ref(false)
+const conflicted = ref(false)
+const saveError = ref('')
+const objective = ref('')
+const constraints = ref<MissionSemanticEditRequest['constraints']>([])
+let expectedRevision = 0
+let sourceRefs: string[] = []
+let pending: MissionSemanticEditRequest | null = null
+const newOperationId = () => crypto.randomUUID()
+const beginEdit = () => {
+  const view = props.projection.missionSemanticView
+  objective.value = view?.objective || ''
+  constraints.value = (view?.constraints || []).map(item => ({ ...item, sourceRefs: [...(item.sourceRefs || [])] }))
+  sourceRefs = [...(view?.sourceReferences || [])]
+  expectedRevision = view?.missionRevision || 0
+  pending = null
+  saveError.value = ''
+  conflicted.value = false
+  editing.value = true
+}
+const addConstraint = () => constraints.value.push({ constraintId: newOperationId(), text: '', sourceRefs: [] })
+const saveSemantics = async () => {
+  if (saving.value || conflicted.value) return
+  const content = { objective: objective.value, constraints: constraints.value, sourceRefs }
+  if (!pending || JSON.stringify(content) !== JSON.stringify({ objective: pending.objective, constraints: pending.constraints, sourceRefs: pending.sourceRefs })) {
+    pending = JSON.parse(JSON.stringify({ ...content, expectedMissionRevision: expectedRevision, operationId: newOperationId() }))
+  }
+  saving.value = true
+  saveError.value = ''
+  try {
+    await agentosApi.editMissionSemantics(props.projection.mission.missionId, pending!)
+    editing.value = false
+    pending = null
+    emit('semanticsSaved')
+  } catch (error: any) {
+    conflicted.value = error?.response?.status === 409
+    saveError.value = conflicted.value ? '版本冲突，请刷新当前版本后重新编辑。' : '保存失败，可重试相同内容。'
+  } finally {
+    saving.value = false
+  }
+}
 
 const renderedContent = computed(() => {
   const source = props.projection.missionSemanticView
@@ -103,6 +162,8 @@ const formatBytes = (bytes: number) => bytes < 1024
 /* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
 .mission-editor__meta { width: min(100%, 820px); margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--wb-border-soft); }
+.mission-editor__meta textarea { display: block; width: 100%; margin: 8px 0; padding: 10px; color: var(--wb-text); background: var(--wb-surface-inset); border: 1px solid var(--wb-border-soft); font: inherit; }
+.mission-editor button { padding: 6px 10px; margin: 4px; color: var(--wb-text); background: var(--wb-surface-inset); border: 1px solid var(--wb-border-soft); cursor: pointer; }
 .property-row { display: flex; justify-content: space-between; gap: 24px; min-height: 30px; padding: 7px 0; color: var(--wb-text-secondary); font-size: 12px; }
 .property-row + .property-row { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
 .property-row code { color: var(--wb-text); font: 11px var(--font-mono, monospace); }

@@ -92,6 +92,7 @@
         @cancel-run="emit('cancelRun')"
         @content-ready="emit('contentReady', $event)"
         @artifact-projection="emit('artifactProjection', $event)"
+        @semantics-saved="emit('semanticsSaved')"
       />
       <div v-else class="editor-group__empty">
         <img class="editor-group__empty-watermark" src="/logo.webp" alt="" aria-hidden="true" />
@@ -148,6 +149,7 @@ const emit = defineEmits<{
   selectInspector: []
   selectAuxiliary: [viewId: string]
   cancelRun: []
+  semanticsSaved: []
   artifactProjection: [payload: { entryId: string; projection: ArtifactDocumentModel }]
 }>()
 

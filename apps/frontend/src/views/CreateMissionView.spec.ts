@@ -25,6 +25,30 @@ const workbenchLayoutStub = {
 describe('CreateMissionView', () => {
   afterEach(() => vi.resetAllMocks())
 
+  it('retries creation with the same request identity and complete semantic payload', async () => {
+    vi.mocked(workflowApi.startWorkflowAsync).mockRejectedValueOnce(new Error('lost response')).mockResolvedValueOnce({
+      missionId: 'mission_recovered', runId: 'run_recovered', status: 'pending'
+    } as any)
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/new', name: 'CreateMission', component: CreateMissionView },
+      { path: '/missions/:missionId', name: 'MissionWorkspace', component: { template: '<div />' } }
+    ] })
+    await router.push('/new')
+    await router.isReady()
+    const wrapper = mount(CreateMissionView, { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } })
+    await wrapper.find('#mission-goal').setValue('明确的新目标')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    const first = vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0]
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[1][0]).toEqual(first)
+    expect(first.semantics?.objective).toBe('明确的新目标')
+    expect(first.clientRequestId).toBeTruthy()
+    expect(router.currentRoute.value.params.missionId).toBe('mission_recovered')
+    wrapper.unmount()
+  })
+
   it('renders the mission launcher arrangement and restores runtime settings', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
@@ -192,6 +216,7 @@ describe('CreateMissionView', () => {
     expect(workflowApi.startWorkflowAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '输出可验收的实施方案',
+        semantics: { objective: '输出可验收的实施方案', constraints: [], sourceRefs: [] },
         input: expect.objectContaining({
           taskGoal: '输出可验收的实施方案',
           planningMode: 'template_preferred',
