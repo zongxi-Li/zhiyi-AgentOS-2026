@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.dto.agentos.AgentOsMissionCreateRequest;
 import com.kinlin.ai.exception.AgentOsGatewayExceptionHandler;
 import com.kinlin.ai.projection.mission.MissionQueryFixture;
+import com.kinlin.ai.projection.mission.MissionSemanticQueryFixture;
 import com.kinlin.ai.projection.mission.dto.MissionListQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -82,9 +83,9 @@ class AgentOsMissionControllerTest {
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.status").value("REVISION_CONFLICT"));
         assertEquals(base, gateway.lastPostPath);
         assertEquals(body, gateway.lastPostBody);
-        gateway.getResponses.put(base, RecordingAgentOsGateway.response(200, Map.of("missionRevision", 2)));
+        gateway.getResponses.put(base, RecordingAgentOsGateway.response(200, MissionSemanticQueryFixture.view()));
         gateway.getResponses.put(base + "/commits", RecordingAgentOsGateway.response(200, Map.of("items", List.of())));
-        gateway.getResponses.put(base + "/receipts/edit%201", RecordingAgentOsGateway.response(200, Map.of("result", Map.of("status", "COMMITTED"))));
+        gateway.getResponses.put(base + "/receipts/edit%201", RecordingAgentOsGateway.response(200, MissionSemanticQueryFixture.receipt()));
         mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/semantics", "mission 001"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.missionRevision").value(2));
         mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/semantics/commits", "mission 001"))
@@ -96,7 +97,7 @@ class AgentOsMissionControllerTest {
     @Test
     void revisionCommandsPreserveRunScopeAndOperation() throws Exception {
         String base = "/ai/agentos/v2/missions/mission%20001/runs/run%201/revision";
-        gateway.getResponses.put(base, RecordingAgentOsGateway.response(200, Map.of("status", "REVISION_CHANGED")));
+        gateway.getResponses.put(base, RecordingAgentOsGateway.response(200, MissionSemanticQueryFixture.revision()));
         mockMvc.perform(get("/api/agentos/v2/missions/{missionId}/runs/{runId}/revision", "mission 001", "run 1"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REVISION_CHANGED"));
         Map<String, Object> body = Map.of("operationId", "op 1", "sourceRevision", 1, "targetRevision", 2, "decision", "CONTINUE");
@@ -109,6 +110,45 @@ class AgentOsMissionControllerTest {
         mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/runs/{runId}/revision/{operationId}/apply", "mission 001", "run 1", "op 1"))
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.runId").value("successor"));
         assertEquals(base + "/op%201/apply", gateway.lastPostPath);
+    }
+
+    @Test
+    void semanticQueriesKeepCompleteWireBodiesWithoutDynamicExecutionFields() throws Exception {
+        Map<String, Map<String, Object>> responses = Map.of(
+                "/semantics", MissionSemanticQueryFixture.view(),
+                "/semantics/commits", MissionSemanticQueryFixture.commits(),
+                "/semantics/receipts/edit-1", MissionSemanticQueryFixture.receipt(),
+                "/runs/run-1/revision", MissionSemanticQueryFixture.revision());
+        for (var entry : responses.entrySet()) {
+            var expected = objectMapper.readTree(objectMapper.writeValueAsString(entry.getValue()));
+            entry.getValue().put("executionState", "INTERNAL-EXECUTION-STATE");
+            String upstream = "/ai/agentos/v2/missions/mission-1" + entry.getKey();
+            gateway.getResponses.put(upstream, RecordingAgentOsGateway.response(200, entry.getValue()));
+            var result = mockMvc.perform(get("/api/agentos/v2/missions/mission-1" + entry.getKey()))
+                    .andExpect(status().isOk()).andReturn();
+            assertEquals(expected, objectMapper.readTree(result.getResponse().getContentAsByteArray()));
+            assertEquals(upstream, gateway.lastGetPath);
+        }
+    }
+
+    @Test
+    void semanticQueryProjectionPreservesErrorsAndRejectsMalformedSuccess() throws Exception {
+        for (String suffix : List.of("/semantics", "/semantics/commits", "/semantics/receipts/edit-1", "/runs/run-1/revision")) {
+            String upstream = "/ai/agentos/v2/missions/mission-1" + suffix;
+            String endpoint = "/api/agentos/v2/missions/mission-1" + suffix;
+            for (int code : List.of(403, 404, 409, 503)) {
+                gateway.getResponses.put(upstream, RecordingAgentOsGateway.response(code, Map.of(
+                        "code", "AGENTOS_REQUEST_REJECTED", "message", "unavailable", "requestId", "trace-1")));
+                mockMvc.perform(get(endpoint)).andExpect(status().is(code))
+                        .andExpect(jsonPath("$.code").value("AGENTOS_REQUEST_REJECTED"))
+                        .andExpect(jsonPath("$.requestId").value("trace-1"))
+                        .andExpect(jsonPath("$._httpStatus").doesNotExist());
+            }
+            gateway.getResponses.put(upstream, RecordingAgentOsGateway.response(200, Map.of("executionState", "SECRET")));
+            mockMvc.perform(get(endpoint)).andExpect(status().isBadGateway())
+                    .andExpect(jsonPath("$.code").value("AGENTOS_CONTRACT_INVALID"))
+                    .andExpect(jsonPath("$.executionState").doesNotExist());
+        }
     }
 
     @Test

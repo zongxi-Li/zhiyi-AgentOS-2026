@@ -7,6 +7,7 @@ import com.kinlin.ai.dto.agentos.AgentOsMissionResponse;
 import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.mission.mapper.MissionProjectionMapper;
+import com.kinlin.ai.projection.mission.mapper.MissionSemanticProjectionMapper;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -52,23 +53,27 @@ public class AgentOsMissionController {
     }
 
     @GetMapping("/missions/{missionId}/semantics")
-    public ResponseEntity<Map<String, Object>> getSemantics(@PathVariable String missionId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics"));
+    public ResponseEntity<QueryResponse> getSemantics(@PathVariable String missionId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.mission(missionId) + "/semantics"),
+                MissionSemanticProjectionMapper::view);
     }
 
     @GetMapping("/missions/{missionId}/semantics/commits")
-    public ResponseEntity<Map<String, Object>> getSemanticCommits(@PathVariable String missionId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/commits"));
+    public ResponseEntity<QueryResponse> getSemanticCommits(@PathVariable String missionId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/commits"),
+                MissionSemanticProjectionMapper::commits);
     }
 
     @GetMapping("/missions/{missionId}/semantics/receipts/{operationId}")
-    public ResponseEntity<Map<String, Object>> getSemanticReceipt(@PathVariable String missionId, @PathVariable String operationId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/receipts/" + AgentOsPaths.segment(operationId)));
+    public ResponseEntity<QueryResponse> getSemanticReceipt(@PathVariable String missionId, @PathVariable String operationId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.mission(missionId) + "/semantics/receipts/" + AgentOsPaths.segment(operationId)),
+                MissionSemanticProjectionMapper::receipt);
     }
 
     @GetMapping("/missions/{missionId}/runs/{runId}/revision")
-    public ResponseEntity<Map<String, Object>> getRunRevision(@PathVariable String missionId, @PathVariable String runId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.mission(missionId) + "/runs/" + AgentOsPaths.segment(runId) + "/revision"));
+    public ResponseEntity<QueryResponse> getRunRevision(@PathVariable String missionId, @PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.mission(missionId) + "/runs/" + AgentOsPaths.segment(runId) + "/revision"),
+                MissionSemanticProjectionMapper::revision);
     }
 
     @PostMapping("/missions/{missionId}/runs/{runId}/revision")
