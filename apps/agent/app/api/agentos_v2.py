@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.execution.coordinator import RunExecutionCoordinator
-from app.security.internal_auth import current_trusted_user
+from app.security.internal_auth import current_trusted_user, current_semantic_principal
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RunRecordState, RuntimeRunRecord, StepStatus, WorkflowStatus
 from contracts.content import ContentKind
 from domain.models import MissionStatus, RunStatus
@@ -230,6 +230,8 @@ def _actor_input(payload: dict[str, Any]) -> dict[str, Any]:
     }
     if actor.tenant_id:
         result["authenticatedTenantId"] = actor.tenant_id
+    else:
+        result.pop("authenticatedTenantId", None)
     return result
 
 
@@ -791,7 +793,10 @@ def create_router(
         attachment_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Resolve actor ownership and sealed materials for a Mission or Run command."""
-
+        if runtime.mission_semantic_service is not None and current_semantic_principal() is None:
+            raise HTTPException(status_code=403, detail="trusted semantic principal is required")
+        if any(key in payload for key in ("missionIntentBasis", "missionIntentBasisRef", "semanticPrincipal", "inheritParentBasis")):
+            raise HTTPException(status_code=422, detail="semantic control fields cannot be supplied as input")
         execution_input = _actor_input(payload)
         refs = list(dict.fromkeys([
             *(material_refs or []),
@@ -2052,6 +2057,7 @@ def create_router(
             )
             _, run = runtime.prepare_run(
                 task.mission_id,
+                semantic_principal=current_semantic_principal(),
                 workflow_id=request.workflow_id,
                 review_mode=request.review_mode,
                 idempotency_key=key,
@@ -2066,6 +2072,8 @@ def create_router(
                 status_code=exc.status_code,
                 detail={"code": exc.code, "message": str(exc)},
             ) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except (KeyError, ValueError) as exc:
             logger.exception(
                 "mission_start_rejected",
@@ -2460,6 +2468,7 @@ def create_router(
             )
             _, run = runtime.prepare_run(
                 mission_id,
+                semantic_principal=current_semantic_principal(),
                 workflow_id=request.workflow_id or source_run.workflow_id,
                 review_mode=request.review_mode,
                 idempotency_key=key,
@@ -2472,6 +2481,8 @@ def create_router(
             )
             await coordinator.submit(run.run_id)
             return project_control_run(runtime.get_status(run.run_id))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except (KeyError, ValueError) as exc:
             logger.exception(
                 "agentos_v2_run_create_failed",
@@ -2836,6 +2847,7 @@ def create_router(
                 ).hexdigest()
                 _, run = runtime.prepare_run(
                     source_run.mission_id,
+                    semantic_principal=current_semantic_principal(),
                     workflow_id=source_run.workflow_id,
                     review_mode=source_run.review_mode,
                     idempotency_key=operation_key,
@@ -2847,6 +2859,8 @@ def create_router(
                     rerun_reason="review_rerun",
                 )
                 await coordinator.submit(run.run_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=409, detail="review conflict") from exc
         return project_control_run(

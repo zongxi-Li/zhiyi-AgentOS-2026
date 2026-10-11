@@ -389,10 +389,39 @@ def build_default_runtime(
         content_store=content_manifest_store,
         limits=attachment_limits,
     )
+    workflow_store = SQLiteWorkflowStore(workflow_path)
+    semantic_service = None
+    semantic_enabled = str(env.get("AGENTOS_MISSION_SEMANTIC_CONVERGENCE") or "false").lower() == "true"
+    if semantic_enabled:
+        from components.mission_manager.semantic_service import MissionSemanticService
+        # Activation never upgrades the business database. An operator must
+        # explicitly install the S00-01 schema before enabling this path.
+        workflow_store.enable_existing_mission_semantics()
+
+        def authorize_semantics(principal, mission_id, action):
+            mission = identity_service.repositories.missions.get(mission_id)
+            if mission is not None:
+                owner, tenant = mission.user_id, mission.metadata.get("tenantId")
+            else:
+                # Creation can defer Identity projection. Ownership here was
+                # stamped by the trusted HTTP boundary, never taken as a principal.
+                try:
+                    record = workflow_store.get_mission(mission_id)
+                except KeyError:
+                    return False
+                owner = record.input.get("authenticatedUserId")
+                tenant = record.input.get("authenticatedTenantId")
+            return bool(owner) and owner == principal.actor_id and (tenant or "__unscoped__") == principal.tenant_id
+
+        semantic_service = MissionSemanticService(store=workflow_store, authorize=authorize_semantics)
+    from app.security.internal_auth import current_semantic_principal
     runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
-        workflow_store=SQLiteWorkflowStore(workflow_path),
+        workflow_store=workflow_store,
+        mission_semantic_service=semantic_service,
+        semantic_principal_provider=current_semantic_principal,
+        allow_legacy_mission_intent=str(env.get("AGENTOS_ALLOW_LEGACY_MISSION_INTENT") or "false").lower() == "true",
         checkpoint_store=ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")),
         execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
         content_manifest_store=content_manifest_store,

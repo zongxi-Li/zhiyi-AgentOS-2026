@@ -47,6 +47,15 @@ def current_trusted_user() -> TrustedUserContext | None:
     return _trusted_user_context.get()
 
 
+def current_semantic_principal():
+    """Semantic authentication comes only from the validated request context."""
+    from contracts.mission_semantic import SemanticPrincipal
+    actor = current_trusted_user()
+    if actor is None:
+        return None
+    return SemanticPrincipal(actorId=actor.user_id, tenantId=actor.tenant_id or "__unscoped__")
+
+
 def is_valid_internal_token(value: str) -> bool:
     normalized = (value or "").strip()
     return len(normalized) >= MINIMUM_TOKEN_LENGTH and normalized.lower() not in FORBIDDEN_TOKEN_VALUES
