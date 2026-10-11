@@ -1,0 +1,594 @@
+"""PR-S01-01: Unified Planner 类型化动作网关（默认关闭，未接入生产装配）。
+
+本模块实现最小动作协议的 Runtime 侧权威：
+
+- 会话（session）由 Runtime 签发，绑定可信的 Mission/Run/Observation/PlanVersion；
+  模型侧请求没有任何身份字段，伪造身份、跨 Mission/Run 引用在合同层就不存在。
+- READ 走封闭投影（运行状态 / 能力目录 / 证据引用），只暴露必要字段，不携带
+  输出载荷、摘录、密钥或内部凭证。
+- PROPOSE 只在会话内登记候选（候选任务、方法建议、TaskPlan 修订草案），由
+  Runtime 分配 proposalId 与候选 semantic key；不写 taskPlan、taskBindings、
+  图或 Run，正式落库仍归 S02 的 SemanticRevisionService 链路。
+- 每个失败都以封闭拒绝码显式返回并写入审计Sink，绝不构造虚假成功。
+
+确定性检查顺序（submit 内固定不变）：
+
+1. 协议版本 → ``PROTOCOL_VERSION_UNSUPPORTED``
+2. 载荷严格校验 → ``INVALID_PAYLOAD``
+3. 会话存在 → ``UNKNOWN_SESSION``
+4. 会话未撤销 → ``SESSION_REVOKED``
+5. 预算（动作数/截止期）→ ``BUDGET_EXHAUSTED``
+6. 重复 request_ref：同指纹幂等重放，异指纹 → ``DUPLICATE_ACTION``
+7. 持久绑定 CAS（Run 存在、Mission 一致、非终态、observationId、planVersion）
+   → ``BINDING_MISMATCH`` / ``PLAN_VERSION_MISMATCH`` / ``STALE_OBSERVATION``
+8. READ 目标授权 → ``UNAUTHORIZED_TARGET``
+9. 执行（超出单动作时限 → ``TOOL_TIMEOUT``，结果丢弃）
+
+步骤 7 发现的世界变化会顺带撤销会话；其后提交统一得到 ``SESSION_REVOKED``。
+预算按“每个非重放提交计一次”扣减，拒绝同样计数。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Iterable
+from threading import Lock
+from time import monotonic as default_monotonic
+from typing import Any
+from uuid import uuid4
+
+from pydantic import ValidationError
+
+from contracts.planner_actions import (
+    PLANNER_ACTION_PROTOCOL_VERSION,
+    CapabilityCatalogProjection,
+    CapabilityProjection,
+    EvidenceCheckProjection,
+    EvidenceItemProjection,
+    EvidenceProjection,
+    PlannerActionRejection,
+    PlannerActionRequest,
+    PlannerActionOutcome,
+    PlannerCandidateTasksProposal,
+    PlannerMethodProposal,
+    PlannerPlanRevisionProposal,
+    PlannerProposalReceipt,
+    PlannerReadResult,
+    RegisteredProposal,
+    RunStateProjection,
+    RunStepProjection,
+    proposal_fingerprint,
+)
+from contracts.planning import TaskPlan
+from contracts.runtime_planning import RuntimePlanningState
+from contracts.workflow import RuntimeRunRecord, WorkflowStatus
+from support.acg.capabilities import CapabilityCatalog
+from support.stores.workflow_store import WorkflowStore
+
+
+ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs"})
+_TERMINAL_RUN_STATUSES = frozenset(
+    {WorkflowStatus.FAILED, WorkflowStatus.COMPLETED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}
+)
+_MAX_STEPS = 256
+_MAX_BLOCKERS = 64
+_MAX_CAPABILITIES = 256
+_MAX_EVIDENCE_ITEMS = 128
+_MAX_ARTIFACT_REFS = 16
+_MAX_CHECKS = 16
+
+
+def _new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid4().hex[:12]}"
+
+
+class RegisteredProposalRecord:
+    """会话内登记的候选数据；仅供未来 ReAct/HTN 循环按数据读取。"""
+
+    __slots__ = ("action_id", "proposal", "assigned_keys", "fingerprint")
+
+    def __init__(self, *, action_id: str, proposal: Any, assigned_keys: tuple[str, ...], fingerprint: str):
+        self.action_id = action_id
+        self.proposal = proposal
+        self.assigned_keys = assigned_keys
+        self.fingerprint = fingerprint
+
+
+class PlannerActionSession:
+    """Runtime 签发的可信会话；模型侧只见到 sessionId 字符串。"""
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        mission_id: str,
+        run_id: str,
+        graph_id: str,
+        graph_version: int,
+        plan_version: int,
+        observation_id: str,
+        allowed_reads: frozenset[str],
+        max_actions: int,
+        expires_at_monotonic: float,
+    ):
+        self.session_id = session_id
+        self.mission_id = mission_id
+        self.run_id = run_id
+        self.graph_id = graph_id
+        self.graph_version = graph_version
+        self.plan_version = plan_version
+        self.observation_id = observation_id
+        self.allowed_reads = allowed_reads
+        self.max_actions = max_actions
+        self.expires_at_monotonic = expires_at_monotonic
+        self.actions_used = 0
+        self.revoked = False
+        self.revoke_reason: str | None = None
+        # request_ref -> (payload fingerprint, terminal outcome)
+        self.journal: dict[str, tuple[str, PlannerActionOutcome]] = {}
+        self.registered_proposals: list[RegisteredProposalRecord] = []
+        # 串行化同一会话的提交/撤销：预算与幂等日志的 check-then-act 必须原子。
+        self.lock = Lock()
+
+    @property
+    def active(self) -> bool:
+        return not self.revoked
+
+
+class PlannerActionGateway:
+    """动作协议入口。默认关闭：生产装配不构造本类，亦无任何 LLM 调用。"""
+
+    def __init__(
+        self,
+        *,
+        workflow_store: WorkflowStore,
+        capability_catalog: CapabilityCatalog,
+        audit_sink: Callable[[dict[str, Any]], None] | None = None,
+        monotonic_clock: Callable[[], float] = default_monotonic,
+        per_action_timeout_seconds: float = 5.0,
+        default_max_actions: int = 16,
+        default_ttl_seconds: float = 600.0,
+    ):
+        self.workflow_store = workflow_store
+        self.capability_catalog = capability_catalog
+        self.audit_sink = audit_sink
+        self.monotonic = monotonic_clock
+        self.per_action_timeout_seconds = max(0.0, float(per_action_timeout_seconds))
+        self.default_max_actions = max(1, int(default_max_actions))
+        self.default_ttl_seconds = max(0.001, float(default_ttl_seconds))
+        self._sessions: dict[str, PlannerActionSession] = {}
+        self._registry_lock = Lock()
+
+    # ------------------------------------------------------------- session
+
+    def open_session(
+        self,
+        run_id: str,
+        *,
+        allowed_reads: Iterable[str] | None = None,
+        max_actions: int | None = None,
+        ttl_seconds: float | None = None,
+    ) -> PlannerActionSession:
+        """为持久的规划边界签发会话；Run 缺失、终态或无当前轮次时抛 ValueError。"""
+        run = self._load_run(run_id)
+        if run.status in _TERMINAL_RUN_STATUSES:
+            raise ValueError(f"planning action session requires a non-terminal run, got {run.status.value}")
+        loop = self._load_loop(run)
+        if loop.current is None:
+            raise ValueError("planning action session requires a persisted current planning round")
+        targets = frozenset(allowed_reads) if allowed_reads is not None else ALL_READ_TARGETS
+        unknown = targets - ALL_READ_TARGETS
+        if unknown:
+            raise ValueError("unknown read targets: " + ", ".join(sorted(unknown)))
+        session = PlannerActionSession(
+            session_id=_new_id("psess"),
+            mission_id=run.mission_id,
+            run_id=run.run_id,
+            graph_id=loop.current.observation.graph_id,
+            graph_version=loop.current.observation.graph_version,
+            plan_version=loop.current.observation.plan_version,
+            observation_id=loop.current.observation_id,
+            allowed_reads=targets,
+            max_actions=self.default_max_actions if max_actions is None else max(1, int(max_actions)),
+            expires_at_monotonic=self.monotonic() + (
+                self.default_ttl_seconds if ttl_seconds is None else max(0.001, float(ttl_seconds))
+            ),
+        )
+        with self._registry_lock:
+            self._sessions[session.session_id] = session
+        self._audit({"runtimeEvent": "planner.action.session_opened", "sessionId": session.session_id,
+                     "runId": session.run_id, "observationId": session.observation_id,
+                     "planVersion": session.plan_version, "allowedReads": sorted(targets),
+                     "maxActions": session.max_actions})
+        return session
+
+    def get_session(self, session_id: str) -> PlannerActionSession | None:
+        with self._registry_lock:
+            return self._sessions.get(session_id)
+
+    def revoke_session(self, session_id: str, reason: str) -> bool:
+        with self._registry_lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            return False
+        with session.lock:
+            if session.revoked:
+                return False
+            self._revoke(session, f"revoked by runtime: {reason[:200]}")
+            return True
+
+    # -------------------------------------------------------------- submit
+
+    def submit(
+        self,
+        session_id: str,
+        raw_request: Mapping[str, Any],
+        *,
+        protocol_version: int = PLANNER_ACTION_PROTOCOL_VERSION,
+    ) -> PlannerActionOutcome:
+        action_id = _new_id("pact")
+        started = self.monotonic()
+
+        def reject(code: str, reason: str, *, retryable: bool = True, request_ref: str | None = None) -> PlannerActionRejection:
+            return PlannerActionRejection(actionId=action_id, requestRef=request_ref, code=code,
+                                          reason=reason[:500], retryable=retryable)  # type: ignore[arg-type]
+
+        # 1. protocol version
+        if protocol_version != PLANNER_ACTION_PROTOCOL_VERSION:
+            outcome = reject("PROTOCOL_VERSION_UNSUPPORTED",
+                             f"unsupported protocol version {protocol_version}", retryable=False)
+            self._finish(action_id, None, "rejected", outcome, started)
+            return outcome
+        # 2. strict payload validation
+        try:
+            request = PlannerActionRequest.model_validate(dict(raw_request))
+        except (ValidationError, TypeError, ValueError) as exc:
+            errors = exc.errors()[:3] if isinstance(exc, ValidationError) else []
+            detail = "; ".join(
+                f"{'.'.join(str(p) for p in e.get('loc', ()))}: {e.get('msg')}" for e in errors
+            ) or f"{type(exc).__name__}: {str(exc)[:200]}"
+            best_effort_ref = raw_request.get("requestRef") if isinstance(raw_request, Mapping) else None
+            ref = best_effort_ref if isinstance(best_effort_ref, str) and best_effort_ref.strip() else None
+            outcome = reject("INVALID_PAYLOAD", f"request failed strict validation: {detail}", retryable=True,
+                             request_ref=ref[:128] if ref else None)
+            self._finish(action_id, None, "rejected", outcome, started)
+            return outcome
+        # 3. known session
+        with self._registry_lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            outcome = reject("UNKNOWN_SESSION", "session id was not issued by this runtime", retryable=False,
+                             request_ref=request.request_ref)
+            self._finish(action_id, None, "rejected", outcome, started)
+            return outcome
+        # 4-9 run under the session lock: budget, journal and revocation are
+        # check-then-act sequences that must stay atomic across threads.
+        with session.lock:
+            return self._submit_locked(action_id, session, request, started)
+
+    def _submit_locked(
+        self, action_id: str, session: PlannerActionSession, request: PlannerActionRequest, started: float,
+    ) -> PlannerActionOutcome:
+        def reject(code: str, reason: str, *, retryable: bool = True) -> PlannerActionRejection:
+            return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref, code=code,
+                                          reason=reason[:500], retryable=retryable)  # type: ignore[arg-type]
+
+        # 4. revoked
+        if session.revoked:
+            outcome = reject("SESSION_REVOKED", f"session revoked: {session.revoke_reason}", retryable=False)
+            self._finish(action_id, session, "rejected", outcome, started)
+            return outcome
+        # 5. budget (count + deadline): once exhausted the session is closed,
+        #    idempotent replays included; replays themselves never consume budget
+        fingerprint = self._request_fingerprint(request)
+        recorded = session.journal.get(request.request_ref)
+        replay = recorded is not None and recorded[0] == fingerprint
+        if session.actions_used >= session.max_actions:
+            outcome = reject("BUDGET_EXHAUSTED",
+                             f"action budget exhausted: {session.actions_used}/{session.max_actions}",
+                             retryable=False)
+            self._finish(action_id, session, "rejected", outcome, started)
+            return outcome
+        if self.monotonic() > session.expires_at_monotonic:
+            self._revoke(session, "session deadline exceeded")
+            outcome = reject("BUDGET_EXHAUSTED", "session deadline exceeded", retryable=False)
+            self._finish(action_id, session, "rejected", outcome, started)
+            return outcome
+        # 6. duplicate / idempotent replay
+        if recorded is not None:
+            if replay:
+                outcome = recorded[1].model_copy(update={"replayed": True})
+                self._finish(action_id, session, "replayed", outcome, started)
+                return outcome
+            session.actions_used += 1
+            outcome = reject("DUPLICATE_ACTION",
+                             "requestRef was already used with different content", retryable=False)
+            self._finish(action_id, session, "rejected", outcome, started)
+            return outcome
+        session.actions_used += 1
+        # 7. durable binding CAS
+        binding = self._check_binding(session, action_id, request.request_ref)
+        if isinstance(binding, PlannerActionRejection):
+            self._finish(action_id, session, "rejected", binding, started)
+            return binding
+        run, loop = binding
+        # 8-9. authorize + execute
+        if request.query is not None:
+            if request.query.target not in session.allowed_reads:
+                outcome = reject("UNAUTHORIZED_TARGET",
+                                 f"read target not granted to this session: {request.query.target}",
+                                 retryable=False)
+                self._finish(action_id, session, "rejected", outcome, started)
+                return outcome
+            outcome = self._execute_read(action_id, request, run, loop, started)
+        else:
+            outcome = self._execute_proposal(action_id, request, run, loop, session, started)
+        if isinstance(outcome, PlannerActionRejection):
+            self._finish(action_id, session, "rejected", outcome, started)
+            return outcome
+        session.journal[request.request_ref] = (fingerprint, outcome)
+        self._finish(action_id, session, "read" if isinstance(outcome, PlannerReadResult) else "registered",
+                     outcome, started)
+        return outcome
+
+    # -------------------------------------------------------------- checks
+
+    def _check_binding(
+        self, session: PlannerActionSession, action_id: str, request_ref: str,
+    ) -> tuple[RuntimeRunRecord, RuntimePlanningState] | PlannerActionRejection:
+        def rejection(code: str, reason: str) -> PlannerActionRejection:
+            return PlannerActionRejection(actionId=action_id, code=code, reason=reason[:500],
+                                          retryable=False, requestRef=request_ref)  # type: ignore[arg-type]
+
+        try:
+            run = self.workflow_store.get_run(session.run_id)
+        except KeyError:
+            self._revoke(session, "run record no longer exists")
+            return rejection("BINDING_MISMATCH", "bound run record no longer exists")
+        if run.mission_id != session.mission_id:
+            self._revoke(session, "run mission changed")
+            return rejection("BINDING_MISMATCH", "run belongs to a different Mission than the session")
+        if run.status in _TERMINAL_RUN_STATUSES:
+            self._revoke(session, f"run reached terminal status {run.status.value}")
+            return rejection("BINDING_MISMATCH", f"run reached terminal status {run.status.value}")
+        try:
+            loop = self._load_loop(run)
+        except ValueError as exc:
+            self._revoke(session, "planning loop disappeared")
+            return rejection("STALE_OBSERVATION", str(exc))
+        if loop.current is None:
+            self._revoke(session, "planning round cleared")
+            return rejection("STALE_OBSERVATION", "current planning round was cleared")
+        if loop.current.observation_id != session.observation_id:
+            self._revoke(session, "a newer planning observation exists")
+            return rejection("STALE_OBSERVATION",
+                             "session observation is no longer the current planning boundary")
+        raw_plan = run.execution_state.get("taskPlan")
+        try:
+            plan = TaskPlan.model_validate(raw_plan) if isinstance(raw_plan, dict) else None
+        except ValidationError:
+            plan = None
+        if plan is None or plan.plan_version != session.plan_version:
+            self._revoke(session, "task plan version changed")
+            return rejection("PLAN_VERSION_MISMATCH",
+                             f"task plan version changed from {session.plan_version}")
+        return run, loop
+
+    def _execute_read(
+        self, action_id: str, request: PlannerActionRequest, run: RuntimeRunRecord,
+        loop: RuntimePlanningState, started: float,
+    ) -> PlannerActionOutcome:
+        target = request.query.target  # type: ignore[union-attr]
+        deadline = started + self.per_action_timeout_seconds
+        try:
+            if target == "run_state":
+                projection: Any = self._read_run_state(run, loop)
+            elif target == "capability_catalog":
+                projection = self._read_capability_catalog()
+            else:
+                projection = self._read_evidence(loop)
+        except Exception as exc:  # provider failure is an explicit rejection, never fake success
+            return PlannerActionRejection(actionId=action_id, code="TOOL_FAILED",
+                                          reason=f"read provider failed: {type(exc).__name__}: {str(exc)[:200]}",
+                                          retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
+        if self.monotonic() > deadline:
+            return PlannerActionRejection(actionId=action_id, code="TOOL_TIMEOUT",
+                                          reason=f"read exceeded the {self.per_action_timeout_seconds}s action budget",
+                                          retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
+        result = PlannerReadResult(actionId=action_id, requestRef=request.request_ref, target=target)
+        if target == "run_state":
+            result = result.model_copy(update={"run_state": projection})
+        elif target == "capability_catalog":
+            result = result.model_copy(update={"capability_catalog": projection})
+        else:
+            result = result.model_copy(update={"evidence": projection})
+        return result
+
+    def _execute_proposal(
+        self, action_id: str, request: PlannerActionRequest, run: RuntimeRunRecord,
+        loop: RuntimePlanningState, session: PlannerActionSession, started: float,
+    ) -> PlannerActionOutcome:
+        proposal = request.proposal
+        assert proposal is not None
+        plan = TaskPlan.model_validate(run.execution_state["taskPlan"])
+        deadline = started + self.per_action_timeout_seconds
+        entries: list[RegisteredProposal] = []
+        if isinstance(proposal, PlannerCandidateTasksProposal):
+            for draft in proposal.tasks:
+                try:
+                    self.capability_catalog.resolve(draft.capability_id)
+                except KeyError:
+                    return self._payload_rejection(action_id, request,
+                        f"candidate capability is not in the visible catalog: {draft.capability_id}")
+            assigned = tuple(f"cand:{action_id}:{index}" for index in range(len(proposal.tasks)))
+            entries.append(RegisteredProposal(proposalId=_new_id("pprop"), kind="candidate_tasks",
+                                              contentFingerprint=proposal_fingerprint(proposal),
+                                              assignedKeys=assigned))
+            record_keys = assigned
+        elif isinstance(proposal, PlannerPlanRevisionProposal):
+            patch = proposal.patch
+            if patch.mission_id != session.mission_id:
+                return PlannerActionRejection(actionId=action_id, code="BINDING_MISMATCH",
+                    reason="revision patch belongs to a different Mission", retryable=False,
+                    requestRef=request.request_ref)  # type: ignore[arg-type]
+            if patch.base_plan_version != session.plan_version:
+                return PlannerActionRejection(actionId=action_id, code="PLAN_VERSION_MISMATCH",
+                    reason=f"revision patch bases on plan version {patch.base_plan_version}, session bound to {session.plan_version}",
+                    retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
+            entries.append(RegisteredProposal(proposalId=_new_id("pprop"), kind="plan_revision",
+                                              contentFingerprint=proposal_fingerprint(proposal)))
+            record_keys = ()
+        elif isinstance(proposal, PlannerMethodProposal):
+            if proposal.target_key not in {node.key for node in plan.nodes}:
+                return self._payload_rejection(action_id, request,
+                    f"method target is not a key of the current TaskPlan: {proposal.target_key}")
+            try:
+                self.capability_catalog.resolve(proposal.capability_id)
+            except KeyError:
+                return self._payload_rejection(action_id, request,
+                    f"method capability is not in the visible catalog: {proposal.capability_id}")
+            entries.append(RegisteredProposal(proposalId=_new_id("pprop"), kind="method",
+                                              contentFingerprint=proposal_fingerprint(proposal)))
+            record_keys = ()
+        else:  # pragma: no cover - closed union
+            return self._payload_rejection(action_id, request, "unsupported proposal kind")
+        if self.monotonic() > deadline:
+            return PlannerActionRejection(actionId=action_id, code="TOOL_TIMEOUT",
+                reason=f"proposal validation exceeded the {self.per_action_timeout_seconds}s action budget",
+                retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
+        for entry in entries:
+            session.registered_proposals.append(RegisteredProposalRecord(
+                action_id=action_id, proposal=proposal, assigned_keys=record_keys,
+                fingerprint=entry.content_fingerprint))
+        return PlannerProposalReceipt(actionId=action_id, requestRef=request.request_ref,
+                                      proposals=tuple(entries))
+
+    def _payload_rejection(self, action_id: str, request: PlannerActionRequest, reason: str) -> PlannerActionRejection:
+        return PlannerActionRejection(actionId=action_id, code="INVALID_PAYLOAD", reason=reason[:500],
+                                      retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------- readers
+
+    def _read_run_state(self, run: RuntimeRunRecord, loop: RuntimePlanningState) -> RunStateProjection:
+        observation = loop.current.observation
+        steps = tuple(
+            RunStepProjection(stepId=step.step_id, taskKey=step.task_key, status=step.status,
+                              auditOutcome=step.audit_outcome, verificationReport=step.verification_report,
+                              artifactCount=len(step.artifact_refs))
+            for step in observation.steps[:_MAX_STEPS]
+        )
+        blockers = tuple(str(item)[:200] for item in observation.completion_blockers[:_MAX_BLOCKERS])
+        return RunStateProjection(
+            missionId=observation.mission_id, runId=observation.run_id, runStatus=run.status.value,
+            graphId=observation.graph_id, graphVersion=observation.graph_version,
+            planVersion=observation.plan_version, observationId=loop.current.observation_id,
+            wakeReason=observation.wake_reason, steps=steps,
+            remainingStepIds=tuple(observation.remaining_step_ids[:_MAX_STEPS]),
+            completionBlockers=blockers, truncated=len(observation.steps) > _MAX_STEPS,
+        )
+
+    def _read_capability_catalog(self) -> CapabilityCatalogProjection:
+        descriptors = self.capability_catalog.available()
+        capabilities = tuple(
+            CapabilityProjection(
+                capabilityId=descriptor.capability_id, displayName=descriptor.display_name,
+                description=str(descriptor.description)[:1000],
+                planningStage=descriptor.planning_stage,
+                dependsOn=tuple(descriptor.depends_on),
+                optionalDependencies=tuple(descriptor.optional_dependencies),
+                producesArtifact=descriptor.produces_artifact,
+                requiresEvidence=descriptor.requires_evidence,
+                requiresReview=descriptor.requires_review,
+                riskLevelHint=str(descriptor.risk_level_hint),
+                domainHints=tuple(descriptor.domain_hints),
+            )
+            for descriptor in descriptors[:_MAX_CAPABILITIES]
+        )
+        return CapabilityCatalogProjection(capabilities=capabilities, count=len(descriptors),
+                                           truncated=len(descriptors) > _MAX_CAPABILITIES)
+
+    def _read_evidence(self, loop: RuntimePlanningState) -> EvidenceProjection:
+        items = []
+        for step in loop.current.observation.steps[:_MAX_EVIDENCE_ITEMS]:
+            checks = tuple(
+                EvidenceCheckProjection(check=str(check.check), outcome=str(check.outcome))
+                for evidence in step.artifact_evidence
+                for check in evidence.checks[:_MAX_CHECKS]
+            )
+            items.append(EvidenceItemProjection(
+                stepId=step.step_id, taskKey=step.task_key, commitId=step.commit_id,
+                auditRef=step.audit_ref, auditOutcome=step.audit_outcome,
+                artifactRefs=tuple(step.artifact_refs[:_MAX_ARTIFACT_REFS]), checks=checks,
+            ))
+        return EvidenceProjection(items=tuple(items),
+                                  truncated=len(loop.current.observation.steps) > _MAX_EVIDENCE_ITEMS)
+
+    # ------------------------------------------------------------- helpers
+
+    def _load_run(self, run_id: str) -> RuntimeRunRecord:
+        try:
+            return self.workflow_store.get_run(run_id)
+        except KeyError as exc:
+            raise ValueError(f"planning action session requires an existing run: {run_id}") from exc
+
+    @staticmethod
+    def _load_loop(run: RuntimeRunRecord) -> RuntimePlanningState:
+        raw = run.execution_state.get("planningLoop")
+        if not isinstance(raw, dict):
+            raise ValueError("run has no persisted planning loop")
+        return RuntimePlanningState.model_validate(raw)
+
+    @staticmethod
+    def _request_fingerprint(request: PlannerActionRequest) -> str:
+        if request.query is not None:
+            return _canonical({"kind": "read", **request.query.model_dump(by_alias=True, mode="json")})
+        assert request.proposal is not None
+        return proposal_fingerprint(request.proposal)
+
+    def _revoke(self, session: PlannerActionSession, reason: str) -> None:
+        session.revoked = True
+        session.revoke_reason = reason
+        self._audit({"runtimeEvent": "planner.action.session_revoked", "sessionId": session.session_id,
+                     "runId": session.run_id, "reason": reason[:200]})
+
+    def _finish(self, action_id: str, session: PlannerActionSession | None, outcome_kind: str,
+                outcome: PlannerActionOutcome, started: float) -> None:
+        duration_ms = int((self.monotonic() - started) * 1000)
+        event: dict[str, Any] = {
+            "runtimeEvent": "planner.action",
+            "protocolVersion": PLANNER_ACTION_PROTOCOL_VERSION,
+            "actionId": action_id,
+            "outcome": outcome_kind,
+            "durationMs": duration_ms,
+        }
+        if session is not None:
+            event.update({
+                "sessionId": session.session_id,
+                "actionsUsed": session.actions_used,
+                "sessionRevoked": session.revoked,
+            })
+        if isinstance(outcome, PlannerActionRejection):
+            event.update({"kind": "request", "code": outcome.code, "reason": outcome.reason[:200],
+                          "requestRef": (outcome.request_ref or "")[:128] or None})
+        elif isinstance(outcome, PlannerReadResult):
+            event.update({"kind": "read", "target": outcome.target,
+                          "requestRef": outcome.request_ref[:128], "replayed": outcome.replayed})
+        else:
+            event.update({"kind": "propose", "status": outcome.status,
+                          "requestRef": outcome.request_ref[:128],
+                          "proposalCount": len(outcome.proposals), "replayed": outcome.replayed})
+        self._audit(event)
+
+    def _audit(self, payload: dict[str, Any]) -> None:
+        if self.audit_sink is not None:
+            self.audit_sink(dict(payload))
+
+
+def _canonical(payload: dict) -> str:
+    import hashlib
+    import json
+
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+__all__ = ["PlannerActionGateway", "PlannerActionSession", "RegisteredProposalRecord", "ALL_READ_TARGETS"]
