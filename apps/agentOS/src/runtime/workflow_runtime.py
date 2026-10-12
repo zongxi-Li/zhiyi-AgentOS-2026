@@ -2169,22 +2169,63 @@ class ExecutionRuntime(CollaboratorAccess):
         )
 
     def _planning_engine_for_run(self, run: RuntimeRunRecord):
-        if run.execution_scope is None:
+        if run.execution_scope is None and not self._react_planning_active():
             return self.planning_engine
         from components.planner.service import PlanningEngine
 
-        return PlanningEngine(
-            workflow_registry=self.plugin_scope_resolver.scoped_workflows(
-                run.execution_scope
-            ),
-            agent_registry=self.plugin_scope_resolver.scoped_agents(
-                run.execution_scope
-            ),
-            capability_catalog=self.plugin_scope_resolver.scoped_catalog(
-                run.execution_scope
-            ),
-            intent_llm=self._intent_llm,
+        if run.execution_scope is None:
+            engine = PlanningEngine(
+                workflow_registry=self.workflow_registry,
+                agent_registry=self.agent_registry,
+                capability_catalog=self.capability_catalog,
+                intent_llm=self._intent_llm,
+            )
+        else:
+            engine = PlanningEngine(
+                workflow_registry=self.plugin_scope_resolver.scoped_workflows(
+                    run.execution_scope
+                ),
+                agent_registry=self.plugin_scope_resolver.scoped_agents(
+                    run.execution_scope
+                ),
+                capability_catalog=self.plugin_scope_resolver.scoped_catalog(
+                    run.execution_scope
+                ),
+                intent_llm=self._intent_llm,
+            )
+        return self._attach_react_loop(engine, run)
+
+    def _react_planning_active(self) -> bool:
+        """PR-S01-02 opt-in：环境开关打开且注入了意图 LLM 才激活 ReAct 循环。"""
+        from components.planner.react_loop import react_planning_enabled
+
+        return react_planning_enabled() and self._intent_llm is not None
+
+    def _attach_react_loop(self, engine, run: RuntimeRunRecord):
+        if not self._react_planning_active():
+            return engine
+        from components.planner.react_loop import BoundedReActPlanningLoop
+        from components.planner.unified_actions import PlannerActionGateway
+
+        def react_audit(payload: dict) -> None:
+            # 与 planning_loop._save 同款 Runtime Event；负载由循环侧保证
+            # 有界脱敏（拒绝码/目标/指纹），不携带提案原文或模型推理文本。
+            self.trace_store.append(
+                run,
+                TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                observation=f"ReAct planner {str(payload.get('runtimeEvent') or 'event')}",
+                payload=payload,
+            )
+
+        gateway = PlannerActionGateway(
+            workflow_store=self.workflow_store,
+            capability_catalog=engine.capability_catalog,
+            audit_sink=react_audit,
         )
+        engine.react_loop = BoundedReActPlanningLoop(
+            llm=self._intent_llm, gateway=gateway, audit_sink=react_audit
+        )
+        return engine
 
     def _workflow_for_run(self, run: RuntimeRunRecord) -> WorkflowDefinition:
         if run.execution_scope is None:

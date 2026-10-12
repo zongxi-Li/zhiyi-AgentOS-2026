@@ -24,6 +24,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 from contracts.identity import SemanticTaskKey
 from contracts.planning import TaskPlanPatch
+from contracts.runtime_planning import RuntimePlanningDecision
 
 
 PLANNER_ACTION_PROTOCOL_VERSION = 1
@@ -259,6 +260,44 @@ class PlannerProposalReceipt(PlannerActionContract):
 PlannerActionOutcome = PlannerReadResult | PlannerProposalReceipt | PlannerActionRejection
 
 
+class PlannerToolFeedback(PlannerActionContract):
+    """一次工具动作的有界反馈投影；作为不可信数据进入下一轮提示。
+
+    只携带封闭投影、指纹与拒绝码/理由，不携带提案原文、密钥或内部凭证。
+    """
+
+    request_ref: str = Field(min_length=1, max_length=128, alias="requestRef")
+    outcome: Literal["read", "registered", "rejected"]
+    replayed: bool = False
+    target: ReadTarget | None = None
+    run_state: RunStateProjection | None = Field(default=None, alias="runState")
+    capability_catalog: CapabilityCatalogProjection | None = Field(
+        default=None, alias="capabilityCatalog"
+    )
+    evidence: EvidenceProjection | None = None
+    registered: tuple[RegisteredProposal, ...] = ()
+    rejection_code: RejectionCode | None = Field(default=None, alias="rejectionCode")
+    rejection_reason: str | None = Field(default=None, max_length=400, alias="rejectionReason")
+
+
+class PlannerLoopTurn(PlannerActionContract):
+    """PR-S01-02：受限 ReAct 循环中模型每一轮的输出——恰好一个工具动作或最终决策。"""
+
+    turn_kind: Literal["use_tool", "decide"] = Field(alias="turnKind")
+    action_request: PlannerActionRequest | None = Field(default=None, alias="actionRequest")
+    final_decision: RuntimePlanningDecision | None = Field(default=None, alias="finalDecision")
+
+    @model_validator(mode="after")
+    def exactly_one_turn(self):
+        if self.turn_kind == "use_tool":
+            if self.action_request is None or self.final_decision is not None:
+                raise ValueError("use_tool requires exactly one actionRequest and no finalDecision")
+        else:
+            if self.final_decision is None or self.action_request is not None:
+                raise ValueError("decide requires exactly one finalDecision and no actionRequest")
+        return self
+
+
 def proposal_fingerprint(proposal: object) -> str:
     """不可信提案内容的规范指纹；回执与审计只携带指纹，不携带原文。"""
 
@@ -285,11 +324,13 @@ __all__ = [
     "PlannerActionRejection",
     "PlannerActionRequest",
     "PlannerCandidateTasksProposal",
+    "PlannerLoopTurn",
     "PlannerMethodProposal",
     "PlannerPlanRevisionProposal",
     "PlannerProposalReceipt",
     "PlannerReadQuery",
     "PlannerReadResult",
+    "PlannerToolFeedback",
     "PlannedTaskDraft",
     "RegisteredProposal",
     "RejectionCode",

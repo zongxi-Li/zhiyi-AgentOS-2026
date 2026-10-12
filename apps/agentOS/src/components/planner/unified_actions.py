@@ -205,6 +205,28 @@ class PlannerActionGateway:
         with self._registry_lock:
             return self._sessions.get(session_id)
 
+    def verify_binding(self, session: PlannerActionSession) -> PlannerActionRejection | None:
+        """决策交付前的绑定复核：世界已变则返回拒绝（并撤销会话），否则 None。"""
+        with self._registry_lock:
+            issued = self._sessions.get(session.session_id) is session
+        with session.lock:
+            code = None
+            if not issued:
+                code = "UNKNOWN_SESSION"
+            elif session.revoked:
+                code = "SESSION_REVOKED"
+            elif self.monotonic() > session.expires_at_monotonic:
+                self._revoke(session, "session deadline exceeded before decision hand-off")
+                code = "BUDGET_EXHAUSTED"
+            if code is not None:
+                return PlannerActionRejection(
+                    actionId=f"pact_verify_{session.session_id}", code=code,
+                    reason="planning session is no longer valid for decision hand-off",
+                    retryable=False,
+                )
+            outcome = self._check_binding(session, f"pact_verify_{session.session_id}", "")
+            return outcome if isinstance(outcome, PlannerActionRejection) else None
+
     def revoke_session(self, session_id: str, reason: str) -> bool:
         with self._registry_lock:
             session = self._sessions.get(session_id)

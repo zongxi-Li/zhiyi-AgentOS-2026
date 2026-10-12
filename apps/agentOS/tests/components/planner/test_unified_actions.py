@@ -497,8 +497,20 @@ def test_untrusted_proposal_text_never_reaches_audit_or_receipts(gateway):
 # ---------------------------------------------------------- default-off
 
 
-def test_new_protocol_is_not_wired_into_production_paths():
+def test_new_protocol_is_referenced_only_through_the_opt_in_seam():
+    """S01-01 不变量在 S01-02 演进：协议只允许经 opt-in 缝隙进入生产源码。
+
+    允许的引用点 = 协议自身两模块 + ReAct 循环 + PlanningEngine 显式参数 +
+    facade 的环境开关装配（默认关闭，见 test_react_loop 的行为级测试）。
+    """
     root = Path(__file__).resolve().parents[3] / "src"
+    allowed = {
+        "contracts/planner_actions.py",
+        "components/planner/unified_actions.py",
+        "components/planner/react_loop.py",
+        "components/planner/service.py",
+        "runtime/workflow_runtime.py",
+    }
     offenders = []
     for path in root.rglob("*.py"):
         try:
@@ -506,8 +518,8 @@ def test_new_protocol_is_not_wired_into_production_paths():
         except OSError:
             continue
         rel = path.relative_to(root).as_posix()
-        if rel in {"contracts/planner_actions.py", "components/planner/unified_actions.py"}:
+        if rel in allowed:
             continue
         if "planner_actions" in text or "unified_actions" in text:
             offenders.append(rel)
-    assert offenders == [], f"new protocol referenced outside its own modules: {offenders}"
+    assert offenders == [], f"protocol referenced outside the opt-in seam: {offenders}"
