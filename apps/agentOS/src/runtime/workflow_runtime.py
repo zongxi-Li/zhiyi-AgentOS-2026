@@ -2222,6 +2222,11 @@ class ExecutionRuntime(CollaboratorAccess):
             capability_catalog=engine.capability_catalog,
             audit_sink=react_audit,
         )
+        from components.planner.htn import HTNMethodSelector, build_native_htn_catalog, htn_planning_enabled
+
+        if htn_planning_enabled():
+            gateway.htn_selector = HTNMethodSelector(
+                catalog=build_native_htn_catalog(), capability_catalog=engine.capability_catalog)
         engine.react_loop = BoundedReActPlanningLoop(
             llm=self._intent_llm, gateway=gateway, audit_sink=react_audit
         )

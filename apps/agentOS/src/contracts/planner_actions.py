@@ -12,7 +12,7 @@
 - 请求/提案里的全部文本都是不可信数据：合同层只做类型与边界校验，结果合同
   只回显指纹，不把不可信内容拼接进任何指令通道。
 
-该协议默认关闭：没有任何生产装配引用本合同（见 components.planner.unified_actions）。
+该协议默认关闭：生产装配仅经受控 ReAct opt-in 缝隙引用，HTN 使用独立开关。
 """
 
 from __future__ import annotations
@@ -23,13 +23,14 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from contracts.identity import SemanticTaskKey
+from contracts.htn import HTNExpansionProposal, HTNMethodCatalogProjection
 from contracts.planning import TaskPlanPatch
 from contracts.runtime_planning import RuntimePlanningDecision
 
 
 PLANNER_ACTION_PROTOCOL_VERSION = 1
 
-ReadTarget = Literal["run_state", "capability_catalog", "evidence_refs"]
+ReadTarget = Literal["run_state", "capability_catalog", "evidence_refs", "method_catalog"]
 ProposalKind = Literal["candidate_tasks", "plan_revision", "method"]
 
 RejectionCode = Literal[
@@ -45,6 +46,10 @@ RejectionCode = Literal[
     "UNAUTHORIZED_TARGET",
     "TOOL_TIMEOUT",
     "TOOL_FAILED",
+    "HTN_DISABLED",
+    "HTN_REJECTED",
+    "HTN_CATALOG_CHANGED",
+    "PROPOSAL_ONLY",
 ]
 
 
@@ -70,9 +75,16 @@ class PlannerActionContract(BaseModel):
 
 
 class PlannerReadQuery(PlannerActionContract):
-    """封闭只读查询；v1 没有参数，投影由 Runtime 单方面定义。"""
+    """封闭只读查询；仅 HTN 方法目录需要语义 targetKey，投影由 Runtime 定义。"""
 
     target: ReadTarget
+    target_key: SemanticTaskKey | None = Field(default=None, alias="targetKey")
+
+    @model_validator(mode="after")
+    def method_query_target(self):
+        if (self.target == "method_catalog") != (self.target_key is not None):
+            raise ValueError("only method_catalog requires targetKey")
+        return self
 
 
 class PlannedTaskDraft(PlannerActionContract):
@@ -114,12 +126,26 @@ class PlannerPlanRevisionProposal(PlannerActionContract):
 
 
 class PlannerMethodProposal(PlannerActionContract):
-    """针对既有语义任务的方法建议；capability 必须在可见目录中解析。"""
+    """既有 capability 建议，或 opt-in HTN 目录方法选择；不能提交方法定义。"""
 
     kind: Literal["method"] = "method"
     target_key: SemanticTaskKey = Field(alias="targetKey")
-    capability_id: str = Field(min_length=1, max_length=128, alias="capabilityId")
+    capability_id: str | None = Field(default=None, min_length=1, max_length=128, alias="capabilityId")
+    method_id: SemanticTaskKey | None = Field(default=None, alias="methodId")
+    catalog_revision: str | None = Field(default=None, min_length=64, max_length=64, alias="catalogRevision")
+    preferred_method_ids: tuple[SemanticTaskKey, ...] = Field(default=(), max_length=16, alias="preferredMethodIds")
     rationale: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def method_selection_or_legacy_suggestion(self):
+        if self.method_id is None:
+            if self.capability_id is None or self.catalog_revision is not None or self.preferred_method_ids:
+                raise ValueError("legacy method suggestion requires only capabilityId")
+        elif self.capability_id is not None or self.catalog_revision is None:
+            raise ValueError("HTN selection requires methodId and catalogRevision, without capabilityId")
+        if len(set(self.preferred_method_ids)) != len(self.preferred_method_ids):
+            raise ValueError("preferredMethodIds must be unique")
+        return self
 
 
 class PlannerActionRequest(PlannerActionContract):
@@ -238,6 +264,7 @@ class PlannerReadResult(PlannerActionContract):
         default=None, alias="capabilityCatalog"
     )
     evidence: EvidenceProjection | None = None
+    method_catalog: HTNMethodCatalogProjection | None = Field(default=None, alias="methodCatalog")
 
 
 class RegisteredProposal(PlannerActionContract):
@@ -255,6 +282,7 @@ class PlannerProposalReceipt(PlannerActionContract):
     status: Literal["registered"] = "registered"
     replayed: bool = False
     proposals: tuple[RegisteredProposal, ...] = ()
+    expansion: HTNExpansionProposal | None = None
 
 
 PlannerActionOutcome = PlannerReadResult | PlannerProposalReceipt | PlannerActionRejection
@@ -263,7 +291,8 @@ PlannerActionOutcome = PlannerReadResult | PlannerProposalReceipt | PlannerActio
 class PlannerToolFeedback(PlannerActionContract):
     """一次工具动作的有界反馈投影；作为不可信数据进入下一轮提示。
 
-    只携带封闭投影、指纹与拒绝码/理由，不携带提案原文、密钥或内部凭证。
+    携带封闭投影、指纹、拒绝码及 Runtime 生成的 HTN 展开，不回灌模型 rationale。
+    HTN 定义与任务文本仍是数据，不授予执行权或来源已验证的事实。
     """
 
     request_ref: str = Field(min_length=1, max_length=128, alias="requestRef")
@@ -275,6 +304,8 @@ class PlannerToolFeedback(PlannerActionContract):
         default=None, alias="capabilityCatalog"
     )
     evidence: EvidenceProjection | None = None
+    method_catalog: HTNMethodCatalogProjection | None = Field(default=None, alias="methodCatalog")
+    expansion: HTNExpansionProposal | None = None
     registered: tuple[RegisteredProposal, ...] = ()
     rejection_code: RejectionCode | None = Field(default=None, alias="rejectionCode")
     rejection_reason: str | None = Field(default=None, max_length=400, alias="rejectionReason")

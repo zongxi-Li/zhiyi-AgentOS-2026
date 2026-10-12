@@ -1,4 +1,4 @@
-"""PR-S01-01: Unified Planner 类型化动作网关（默认关闭，未接入生产装配）。
+"""Unified Planner 类型化动作网关（S01-02/03 受控 opt-in 装配）。
 
 本模块实现最小动作协议的 Runtime 侧权威：
 
@@ -59,13 +59,15 @@ from contracts.planner_actions import (
     proposal_fingerprint,
 )
 from contracts.planning import TaskPlan
+from contracts.mission_semantic import run_intent_basis
+from components.planner.htn import HTNError, htn_planning_enabled
 from contracts.runtime_planning import RuntimePlanningState
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
 from support.acg.capabilities import CapabilityCatalog
 from support.stores.workflow_store import WorkflowStore
 
 
-ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs"})
+ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs", "method_catalog"})
 _TERMINAL_RUN_STATUSES = frozenset(
     {WorkflowStatus.FAILED, WorkflowStatus.COMPLETED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}
 )
@@ -84,13 +86,14 @@ def _new_id(prefix: str) -> str:
 class RegisteredProposalRecord:
     """会话内登记的候选数据；仅供未来 ReAct/HTN 循环按数据读取。"""
 
-    __slots__ = ("action_id", "proposal", "assigned_keys", "fingerprint")
+    __slots__ = ("action_id", "proposal", "assigned_keys", "fingerprint", "expansion")
 
-    def __init__(self, *, action_id: str, proposal: Any, assigned_keys: tuple[str, ...], fingerprint: str):
+    def __init__(self, *, action_id: str, proposal: Any, assigned_keys: tuple[str, ...], fingerprint: str, expansion=None):
         self.action_id = action_id
         self.proposal = proposal
         self.assigned_keys = assigned_keys
         self.fingerprint = fingerprint
+        self.expansion = expansion
 
 
 class PlannerActionSession:
@@ -123,6 +126,9 @@ class PlannerActionSession:
         self.actions_used = 0
         self.revoked = False
         self.revoke_reason: str | None = None
+        self.htn_catalog_revision: str | None = None
+        self.htn_context_fingerprint: str | None = None
+        self.htn_used = False
         # request_ref -> (payload fingerprint, terminal outcome)
         self.journal: dict[str, tuple[str, PlannerActionOutcome]] = {}
         self.registered_proposals: list[RegisteredProposalRecord] = []
@@ -135,7 +141,7 @@ class PlannerActionSession:
 
 
 class PlannerActionGateway:
-    """动作协议入口。默认关闭：生产装配不构造本类，亦无任何 LLM 调用。"""
+    """动作协议入口。默认关闭，仅经 ReAct opt-in 缝隙装配；HTN 独立门控。"""
 
     def __init__(
         self,
@@ -147,6 +153,7 @@ class PlannerActionGateway:
         per_action_timeout_seconds: float = 5.0,
         default_max_actions: int = 16,
         default_ttl_seconds: float = 600.0,
+        htn_selector: Any = None,
     ):
         self.workflow_store = workflow_store
         self.capability_catalog = capability_catalog
@@ -157,6 +164,7 @@ class PlannerActionGateway:
         self.default_ttl_seconds = max(0.001, float(default_ttl_seconds))
         self._sessions: dict[str, PlannerActionSession] = {}
         self._registry_lock = Lock()
+        self.htn_selector = htn_selector
 
     # ------------------------------------------------------------- session
 
@@ -175,7 +183,8 @@ class PlannerActionGateway:
         loop = self._load_loop(run)
         if loop.current is None:
             raise ValueError("planning action session requires a persisted current planning round")
-        targets = frozenset(allowed_reads) if allowed_reads is not None else ALL_READ_TARGETS
+        default_reads = ALL_READ_TARGETS if self.htn_selector is not None and htn_planning_enabled() else ALL_READ_TARGETS - {"method_catalog"}
+        targets = frozenset(allowed_reads) if allowed_reads is not None else default_reads
         unknown = targets - ALL_READ_TARGETS
         if unknown:
             raise ValueError("unknown read targets: " + ", ".join(sorted(unknown)))
@@ -193,6 +202,9 @@ class PlannerActionGateway:
                 self.default_ttl_seconds if ttl_seconds is None else max(0.001, float(ttl_seconds))
             ),
         )
+        session.htn_catalog_revision = self.htn_selector.catalog.revision if self.htn_selector is not None else None
+        if self.htn_selector is not None and htn_planning_enabled():
+            session.htn_context_fingerprint = self._htn_context_fingerprint(run)
         with self._registry_lock:
             self._sessions[session.session_id] = session
         self._audit({"runtimeEvent": "planner.action.session_opened", "sessionId": session.session_id,
@@ -224,7 +236,19 @@ class PlannerActionGateway:
                     reason="planning session is no longer valid for decision hand-off",
                     retryable=False,
                 )
+            if session.htn_used:
+                if not htn_planning_enabled() or self.htn_selector is None:
+                    return PlannerActionRejection(actionId=f"pact_verify_{session.session_id}",
+                        code="HTN_DISABLED", reason="HTN was disabled before hand-off", retryable=False)
+                if session.htn_catalog_revision != self.htn_selector.catalog.revision:
+                    return PlannerActionRejection(actionId=f"pact_verify_{session.session_id}",
+                        code="HTN_CATALOG_CHANGED", reason="HTN catalog changed before hand-off", retryable=False)
             outcome = self._check_binding(session, f"pact_verify_{session.session_id}", "")
+            if (session.htn_used and not isinstance(outcome, PlannerActionRejection)
+                    and not self._htn_observation_current(*outcome)):
+                self._revoke(session, "HTN observation changed before hand-off")
+                return PlannerActionRejection(actionId=f"pact_verify_{session.session_id}",
+                    code="STALE_OBSERVATION", reason="HTN observation changed before hand-off", retryable=False)
             return outcome if isinstance(outcome, PlannerActionRejection) else None
 
     def revoke_session(self, session_id: str, reason: str) -> bool:
@@ -315,9 +339,40 @@ class PlannerActionGateway:
             outcome = reject("BUDGET_EXHAUSTED", "session deadline exceeded", retryable=False)
             self._finish(action_id, session, "rejected", outcome, started)
             return outcome
+        is_htn = ((request.query is not None and request.query.target == "method_catalog")
+                  or (isinstance(request.proposal, PlannerMethodProposal) and request.proposal.method_id is not None))
+        if is_htn or session.htn_used:
+            # HTN replay rechecks bindings, feature and catalog before cached results.
+            problem = None
+            if not htn_planning_enabled() or self.htn_selector is None:
+                problem = reject("HTN_DISABLED", "HTN feature is disabled", retryable=False)
+            elif session.htn_catalog_revision != self.htn_selector.catalog.revision:
+                self._revoke(session, "HTN catalog changed")
+                problem = reject("HTN_CATALOG_CHANGED", "HTN catalog changed", retryable=False)
+            elif request.query is not None and request.query.target not in session.allowed_reads:
+                problem = reject("UNAUTHORIZED_TARGET", "read target is no longer granted", retryable=False)
+            elif is_htn and any(isinstance(r.proposal, PlannerPlanRevisionProposal) for r in session.registered_proposals):
+                problem = reject("PROPOSAL_ONLY", "HTN cannot share a revision-commit session", retryable=False)
+            else:
+                binding = self._check_binding(session, action_id, request.request_ref)
+                if isinstance(binding, PlannerActionRejection):
+                    problem = binding
+                elif not self._htn_observation_current(*binding):
+                    self._revoke(session, "HTN observation no longer matches persisted facts")
+                    problem = reject("STALE_OBSERVATION", "HTN observation no longer matches persisted facts", retryable=False)
+            if problem is not None:
+                session.actions_used += 1
+                self._finish(action_id, session, "rejected", problem, started)
+                return problem
+            session.htn_used = True
         # 6. duplicate / idempotent replay
         if recorded is not None:
             if replay:
+                if session.htn_used:
+                    problem = self._check_htn_result(session, action_id, request, started)
+                    if problem is not None:
+                        self._finish(action_id, session, "rejected", problem, started)
+                        return problem
                 outcome = recorded[1].model_copy(update={"replayed": True})
                 self._finish(action_id, session, "replayed", outcome, started)
                 return outcome
@@ -347,12 +402,60 @@ class PlannerActionGateway:
         if isinstance(outcome, PlannerActionRejection):
             self._finish(action_id, session, "rejected", outcome, started)
             return outcome
+        if session.htn_used:
+            # The provider may have taken time or observed a concurrent state change.
+            # Recheck before publishing feedback, journaling or registering proposals.
+            problem = self._check_htn_result(session, action_id, request, started)
+            if problem is not None:
+                self._finish(action_id, session, "rejected", problem, started)
+                return problem
+        if isinstance(outcome, PlannerProposalReceipt):
+            for entry in outcome.proposals:
+                session.registered_proposals.append(RegisteredProposalRecord(
+                    action_id=action_id, proposal=request.proposal, assigned_keys=entry.assigned_keys,
+                    fingerprint=entry.content_fingerprint, expansion=outcome.expansion))
         session.journal[request.request_ref] = (fingerprint, outcome)
         self._finish(action_id, session, "read" if isinstance(outcome, PlannerReadResult) else "registered",
                      outcome, started)
         return outcome
 
     # -------------------------------------------------------------- checks
+
+    def _check_htn_result(self, session, action_id, request, started):
+        """Session lock is already held; this does not acquire it recursively."""
+        def reject(code, reason):
+            return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                code=code, reason=reason, retryable=code == "TOOL_TIMEOUT")
+
+        if session.revoked:
+            return reject("SESSION_REVOKED", "session revoked before result publication")
+        if not htn_planning_enabled() or self.htn_selector is None:
+            return reject("HTN_DISABLED", "HTN disabled before result publication")
+        if session.htn_catalog_revision != self.htn_selector.catalog.revision:
+            self._revoke(session, "HTN catalog changed before result publication")
+            return reject("HTN_CATALOG_CHANGED", "HTN catalog changed before result publication")
+        if request.query is not None and request.query.target not in session.allowed_reads:
+            return reject("UNAUTHORIZED_TARGET", "read target withdrawn before result publication")
+        binding = self._check_binding(session, action_id, request.request_ref)
+        if isinstance(binding, PlannerActionRejection):
+            return binding
+        if not self._htn_observation_current(*binding):
+            self._revoke(session, "HTN observation changed before result publication")
+            return reject("STALE_OBSERVATION", "HTN observation changed before result publication")
+        # Persistence reads above may have blocked; sample volatile grants/catalog again.
+        if not htn_planning_enabled() or self.htn_selector is None:
+            return reject("HTN_DISABLED", "HTN disabled before result publication")
+        if session.htn_catalog_revision != self.htn_selector.catalog.revision:
+            self._revoke(session, "HTN catalog changed before result publication")
+            return reject("HTN_CATALOG_CHANGED", "HTN catalog changed before result publication")
+        if request.query is not None and request.query.target not in session.allowed_reads:
+            return reject("UNAUTHORIZED_TARGET", "read target withdrawn before result publication")
+        if self.monotonic() > session.expires_at_monotonic:
+            self._revoke(session, "session expired before result publication")
+            return reject("BUDGET_EXHAUSTED", "session expired before result publication")
+        if self.monotonic() > started + self.per_action_timeout_seconds:
+            return reject("TOOL_TIMEOUT", "HTN result verification exceeded the action deadline")
+        return None
 
     def _check_binding(
         self, session: PlannerActionSession, action_id: str, request_ref: str,
@@ -393,7 +496,31 @@ class PlannerActionGateway:
             self._revoke(session, "task plan version changed")
             return rejection("PLAN_VERSION_MISMATCH",
                              f"task plan version changed from {session.plan_version}")
+        if session.htn_used and session.htn_context_fingerprint != self._htn_context_fingerprint(run):
+            self._revoke(session, "HTN planning context changed")
+            return rejection("STALE_OBSERVATION", "HTN planning context changed without a new bound session")
         return run, loop
+
+    @staticmethod
+    def _htn_context_fingerprint(run) -> str:
+        """Ephemeral content fence, not a persisted planning state or commit token."""
+        return _canonical({
+            "plan": run.execution_state.get("taskPlan"), "graph": run.acg_blueprint,
+            "bindings": run.execution_state.get("taskBindings"),
+            "basis": run.execution_state.get("missionIntentBasis"),
+            "scope": run.execution_scope.model_dump(mode="json") if run.execution_scope is not None else None,
+            "runtimeRevision": run.runtime_revision, "runStatus": run.status.value,
+        })
+
+    @staticmethod
+    def _htn_observation_current(run, loop) -> bool:
+        observation = loop.current.observation
+        blueprint = run.acg_blueprint or {}
+        actual_status = {step.step_id: step.status.value for step in run.steps}
+        return (observation.fingerprint() == loop.current.observation_id
+                and blueprint.get("graphId") == observation.graph_id
+                and blueprint.get("version") == observation.graph_version
+                and all(actual_status.get(s.step_id) == s.status for s in observation.steps))
 
     def _execute_read(
         self, action_id: str, request: PlannerActionRequest, run: RuntimeRunRecord,
@@ -406,9 +533,20 @@ class PlannerActionGateway:
                 projection: Any = self._read_run_state(run, loop)
             elif target == "capability_catalog":
                 projection = self._read_capability_catalog()
+            elif target == "method_catalog":
+                projection = self.htn_selector.query(
+                    plan=TaskPlan.model_validate(run.execution_state["taskPlan"]),
+                    target_key=request.query.target_key, basis=run_intent_basis(run),
+                    observation=loop.current.observation)
             else:
                 projection = self._read_evidence(loop)
+        except HTNError as exc:
+            return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                code="HTN_REJECTED", reason=exc.code, retryable=False)
         except Exception as exc:  # provider failure is an explicit rejection, never fake success
+            if target == "method_catalog":
+                return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                    code="HTN_REJECTED", reason="HTN_INVALID_TRUSTED_CONTEXT", retryable=False)
             return PlannerActionRejection(actionId=action_id, code="TOOL_FAILED",
                                           reason=f"read provider failed: {type(exc).__name__}: {str(exc)[:200]}",
                                           retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
@@ -421,6 +559,8 @@ class PlannerActionGateway:
             result = result.model_copy(update={"run_state": projection})
         elif target == "capability_catalog":
             result = result.model_copy(update={"capability_catalog": projection})
+        elif target == "method_catalog":
+            result = result.model_copy(update={"method_catalog": projection})
         else:
             result = result.model_copy(update={"evidence": projection})
         return result
@@ -434,6 +574,7 @@ class PlannerActionGateway:
         plan = TaskPlan.model_validate(run.execution_state["taskPlan"])
         deadline = started + self.per_action_timeout_seconds
         entries: list[RegisteredProposal] = []
+        expansion = None
         if isinstance(proposal, PlannerCandidateTasksProposal):
             for draft in proposal.tasks:
                 try:
@@ -447,6 +588,9 @@ class PlannerActionGateway:
                                               assignedKeys=assigned))
             record_keys = assigned
         elif isinstance(proposal, PlannerPlanRevisionProposal):
+            if session.htn_used:
+                return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                    code="PROPOSAL_ONLY", reason="HTN rounds cannot register plan revisions", retryable=False)
             patch = proposal.patch
             if patch.mission_id != session.mission_id:
                 return PlannerActionRejection(actionId=action_id, code="BINDING_MISMATCH",
@@ -463,26 +607,36 @@ class PlannerActionGateway:
             if proposal.target_key not in {node.key for node in plan.nodes}:
                 return self._payload_rejection(action_id, request,
                     f"method target is not a key of the current TaskPlan: {proposal.target_key}")
-            try:
-                self.capability_catalog.resolve(proposal.capability_id)
-            except KeyError:
-                return self._payload_rejection(action_id, request,
-                    f"method capability is not in the visible catalog: {proposal.capability_id}")
+            if proposal.method_id is not None:
+                try:
+                    expansion = self.htn_selector.expand(plan=plan, target_key=proposal.target_key,
+                        basis=run_intent_basis(run), observation=loop.current.observation,
+                        method_id=proposal.method_id, catalog_revision=proposal.catalog_revision,
+                        preferred_method_ids=proposal.preferred_method_ids, deadline=deadline)
+                except HTNError as exc:
+                    return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                        code="HTN_CATALOG_CHANGED" if exc.code == "HTN_CATALOG_CHANGED" else "HTN_REJECTED",
+                        reason=exc.code, retryable=False)
+                except (ValueError, KeyError):
+                    return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                        code="HTN_REJECTED", reason="HTN_INVALID_TRUSTED_CONTEXT", retryable=False)
+            else:
+                try:
+                    self.capability_catalog.resolve(proposal.capability_id)
+                except KeyError:
+                    return self._payload_rejection(action_id, request,
+                        f"method capability is not in the visible catalog: {proposal.capability_id}")
+            record_keys = tuple(n.key for n in expansion.nodes if n.key != proposal.target_key) if expansion else ()
             entries.append(RegisteredProposal(proposalId=_new_id("pprop"), kind="method",
-                                              contentFingerprint=proposal_fingerprint(proposal)))
-            record_keys = ()
+                                              contentFingerprint=proposal_fingerprint(proposal), assignedKeys=record_keys))
         else:  # pragma: no cover - closed union
             return self._payload_rejection(action_id, request, "unsupported proposal kind")
         if self.monotonic() > deadline:
             return PlannerActionRejection(actionId=action_id, code="TOOL_TIMEOUT",
                 reason=f"proposal validation exceeded the {self.per_action_timeout_seconds}s action budget",
                 retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
-        for entry in entries:
-            session.registered_proposals.append(RegisteredProposalRecord(
-                action_id=action_id, proposal=proposal, assigned_keys=record_keys,
-                fingerprint=entry.content_fingerprint))
         return PlannerProposalReceipt(actionId=action_id, requestRef=request.request_ref,
-                                      proposals=tuple(entries))
+                                      proposals=tuple(entries), expansion=expansion)
 
     def _payload_rejection(self, action_id: str, request: PlannerActionRequest, reason: str) -> PlannerActionRejection:
         return PlannerActionRejection(actionId=action_id, code="INVALID_PAYLOAD", reason=reason[:500],
