@@ -218,6 +218,8 @@ class BoundedReActPlanningLoop:
                               "final decision does not bind the current observation")
         if session.htn_used and decision.action != "wait":
             return self._wait(observation_id, "HTN method selection is proposal-only; explicit review is required")
+        if session.horizon_used and decision.action != "wait":
+            return self._wait(observation_id, "Horizon selection is proposal-only; explicit review is required")
         if decision.action == "revise":
             if not self._is_registered_revision(session, decision):
                 return self._wait(
@@ -279,6 +281,15 @@ class BoundedReActPlanningLoop:
                 "The result is a hierarchy proposal, not a TaskPlanPatch. After using HTN tools, "
                 "finish with wait for review; revise/recover/continue/complete are not allowed in this round."
             )
+        if "planning_frontier" in session.allowed_reads or "candidate_horizon" in session.allowed_reads:
+            payload["horizonPolicy"] = (
+                "READ planning_frontier or candidate_horizon for deterministic trusted TaskPlan candidates. "
+                "PROPOSE kind=horizon with the exact inputFingerprint and selectedKeys, a dependency-closed "
+                "subset of candidateKeys. Never provide budgets, statuses, resources, method expansions or "
+                "permissions. Resource readiness is observation only, never a reservation. "
+                "HTN expansions are not Horizon inputs. After Horizon tools finish with wait for review; "
+                "no execution or planning commitment is authorized by this proposal."
+            )
         return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
@@ -288,11 +299,12 @@ class BoundedReActPlanningLoop:
                 requestRef=outcome.request_ref, outcome="read", replayed=outcome.replayed,
                 target=outcome.target, runState=outcome.run_state,
                 capabilityCatalog=outcome.capability_catalog, evidence=outcome.evidence,
-                methodCatalog=outcome.method_catalog)
+                methodCatalog=outcome.method_catalog, frontier=outcome.frontier, horizon=outcome.horizon)
         if isinstance(outcome, PlannerProposalReceipt):
             return PlannerToolFeedback(
                 requestRef=outcome.request_ref, outcome="registered",
-                replayed=outcome.replayed, registered=outcome.proposals, expansion=outcome.expansion)
+                replayed=outcome.replayed, registered=outcome.proposals, expansion=outcome.expansion,
+                horizon=outcome.horizon)
         assert isinstance(outcome, PlannerActionRejection)
         return PlannerToolFeedback(
             requestRef=str(outcome.request_ref or request.request_ref), outcome="rejected",

@@ -61,13 +61,16 @@ from contracts.planner_actions import (
 from contracts.planning import TaskPlan
 from contracts.mission_semantic import run_intent_basis
 from components.planner.htn import HTNError, htn_planning_enabled
+from components.planner.horizon import HorizonError, horizon_planning_enabled
+from contracts.horizon import HorizonSelection
 from contracts.runtime_planning import RuntimePlanningState
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
 from support.acg.capabilities import CapabilityCatalog
 from support.stores.workflow_store import WorkflowStore
 
 
-ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs", "method_catalog"})
+ALL_READ_TARGETS: frozenset[str] = frozenset({"run_state", "capability_catalog", "evidence_refs", "method_catalog", "planning_frontier", "candidate_horizon"})
+_HORIZON_READS = frozenset({"planning_frontier", "candidate_horizon"})
 _TERMINAL_RUN_STATUSES = frozenset(
     {WorkflowStatus.FAILED, WorkflowStatus.COMPLETED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}
 )
@@ -86,14 +89,15 @@ def _new_id(prefix: str) -> str:
 class RegisteredProposalRecord:
     """会话内登记的候选数据；仅供未来 ReAct/HTN 循环按数据读取。"""
 
-    __slots__ = ("action_id", "proposal", "assigned_keys", "fingerprint", "expansion")
+    __slots__ = ("action_id", "proposal", "assigned_keys", "fingerprint", "expansion", "horizon")
 
-    def __init__(self, *, action_id: str, proposal: Any, assigned_keys: tuple[str, ...], fingerprint: str, expansion=None):
+    def __init__(self, *, action_id: str, proposal: Any, assigned_keys: tuple[str, ...], fingerprint: str, expansion=None, horizon=None):
         self.action_id = action_id
         self.proposal = proposal
         self.assigned_keys = assigned_keys
         self.fingerprint = fingerprint
         self.expansion = expansion
+        self.horizon = horizon
 
 
 class PlannerActionSession:
@@ -129,6 +133,8 @@ class PlannerActionSession:
         self.htn_catalog_revision: str | None = None
         self.htn_context_fingerprint: str | None = None
         self.htn_used = False
+        self.horizon_used = False
+        self.horizon_policy_revision: str | None = None
         # request_ref -> (payload fingerprint, terminal outcome)
         self.journal: dict[str, tuple[str, PlannerActionOutcome]] = {}
         self.registered_proposals: list[RegisteredProposalRecord] = []
@@ -154,6 +160,8 @@ class PlannerActionGateway:
         default_max_actions: int = 16,
         default_ttl_seconds: float = 600.0,
         htn_selector: Any = None,
+        horizon_selector: Any = None,
+        cancellation_requested: Callable[[str], bool] | None = None,
     ):
         self.workflow_store = workflow_store
         self.capability_catalog = capability_catalog
@@ -165,6 +173,8 @@ class PlannerActionGateway:
         self._sessions: dict[str, PlannerActionSession] = {}
         self._registry_lock = Lock()
         self.htn_selector = htn_selector
+        self.horizon_selector = horizon_selector
+        self.cancellation_requested = cancellation_requested or (lambda _run_id: False)
 
     # ------------------------------------------------------------- session
 
@@ -183,7 +193,11 @@ class PlannerActionGateway:
         loop = self._load_loop(run)
         if loop.current is None:
             raise ValueError("planning action session requires a persisted current planning round")
-        default_reads = ALL_READ_TARGETS if self.htn_selector is not None and htn_planning_enabled() else ALL_READ_TARGETS - {"method_catalog"}
+        default_reads = ALL_READ_TARGETS - {"method_catalog"} - _HORIZON_READS
+        if self.htn_selector is not None and htn_planning_enabled():
+            default_reads = default_reads | {"method_catalog"}
+        if self.horizon_selector is not None and horizon_planning_enabled():
+            default_reads = default_reads | _HORIZON_READS
         targets = frozenset(allowed_reads) if allowed_reads is not None else default_reads
         unknown = targets - ALL_READ_TARGETS
         if unknown:
@@ -203,8 +217,11 @@ class PlannerActionGateway:
             ),
         )
         session.htn_catalog_revision = self.htn_selector.catalog.revision if self.htn_selector is not None else None
-        if self.htn_selector is not None and htn_planning_enabled():
+        if ((self.htn_selector is not None and htn_planning_enabled())
+                or (self.horizon_selector is not None and horizon_planning_enabled())):
             session.htn_context_fingerprint = self._htn_context_fingerprint(run)
+        if self.horizon_selector is not None:
+            session.horizon_policy_revision = self.horizon_selector.policy_revision
         with self._registry_lock:
             self._sessions[session.session_id] = session
         self._audit({"runtimeEvent": "planner.action.session_opened", "sessionId": session.session_id,
@@ -244,7 +261,11 @@ class PlannerActionGateway:
                     return PlannerActionRejection(actionId=f"pact_verify_{session.session_id}",
                         code="HTN_CATALOG_CHANGED", reason="HTN catalog changed before hand-off", retryable=False)
             outcome = self._check_binding(session, f"pact_verify_{session.session_id}", "")
-            if (session.htn_used and not isinstance(outcome, PlannerActionRejection)
+            if session.horizon_used:
+                problem = self._check_horizon_result(session, f"pact_verify_{session.session_id}", None, self.monotonic())
+                if problem is not None:
+                    return problem
+            if ((session.htn_used or session.horizon_used) and not isinstance(outcome, PlannerActionRejection)
                     and not self._htn_observation_current(*outcome)):
                 self._revoke(session, "HTN observation changed before hand-off")
                 return PlannerActionRejection(actionId=f"pact_verify_{session.session_id}",
@@ -341,6 +362,18 @@ class PlannerActionGateway:
             return outcome
         is_htn = ((request.query is not None and request.query.target == "method_catalog")
                   or (isinstance(request.proposal, PlannerMethodProposal) and request.proposal.method_id is not None))
+        is_horizon = ((request.query is not None and request.query.target in _HORIZON_READS)
+                      or isinstance(request.proposal, HorizonSelection))
+        if is_horizon or session.horizon_used:
+            problem = self._check_horizon_result(session, action_id, request, started)
+            if problem is None and is_horizon and any(
+                    isinstance(r.proposal, PlannerPlanRevisionProposal) for r in session.registered_proposals):
+                problem = reject("PROPOSAL_ONLY", "Horizon cannot share a revision-commit session", retryable=False)
+            if problem is not None:
+                session.actions_used += 1
+                self._finish(action_id, session, "rejected", problem, started)
+                return problem
+            session.horizon_used = True
         if is_htn or session.htn_used:
             # HTN replay rechecks bindings, feature and catalog before cached results.
             problem = None
@@ -370,6 +403,11 @@ class PlannerActionGateway:
             if replay:
                 if session.htn_used:
                     problem = self._check_htn_result(session, action_id, request, started)
+                    if problem is not None:
+                        self._finish(action_id, session, "rejected", problem, started)
+                        return problem
+                if session.horizon_used:
+                    problem = self._check_horizon_result(session, action_id, request, started)
                     if problem is not None:
                         self._finish(action_id, session, "rejected", problem, started)
                         return problem
@@ -409,17 +447,70 @@ class PlannerActionGateway:
             if problem is not None:
                 self._finish(action_id, session, "rejected", problem, started)
                 return problem
+        if session.horizon_used:
+            problem = self._check_horizon_result(session, action_id, request, started)
+            if problem is not None:
+                self._finish(action_id, session, "rejected", problem, started)
+                return problem
         if isinstance(outcome, PlannerProposalReceipt):
             for entry in outcome.proposals:
                 session.registered_proposals.append(RegisteredProposalRecord(
                     action_id=action_id, proposal=request.proposal, assigned_keys=entry.assigned_keys,
-                    fingerprint=entry.content_fingerprint, expansion=outcome.expansion))
+                    fingerprint=entry.content_fingerprint, expansion=outcome.expansion, horizon=outcome.horizon))
         session.journal[request.request_ref] = (fingerprint, outcome)
         self._finish(action_id, session, "read" if isinstance(outcome, PlannerReadResult) else "registered",
                      outcome, started)
         return outcome
 
     # -------------------------------------------------------------- checks
+
+    def _check_horizon_result(self, session, action_id, request, started):
+        """Revalidate before cache reuse and after computation, with the lock held."""
+        def reject(code, reason):
+            return PlannerActionRejection(actionId=action_id,
+                requestRef=request.request_ref if request else None, code=code,
+                reason=reason, retryable=code == "TOOL_TIMEOUT")
+
+        def permissions():
+            if self.cancellation_requested(session.run_id):
+                self._revoke(session, "Runtime cancellation requested")
+                return reject("BINDING_MISMATCH", "Runtime cancellation requested before Horizon publication")
+            if not horizon_planning_enabled() or self.horizon_selector is None:
+                return reject("HORIZON_DISABLED", "Horizon feature is disabled")
+            if session.horizon_policy_revision != self.horizon_selector.policy_revision:
+                self._revoke(session, "Horizon policy or capability catalog changed")
+                return reject("HORIZON_POLICY_CHANGED", "Horizon policy or capability catalog changed")
+            target = request.query.target if request and request.query else "candidate_horizon"
+            if target not in session.allowed_reads:
+                return reject("UNAUTHORIZED_TARGET", "Horizon read/selection permission withdrawn")
+            return None
+
+        if session.revoked:
+            return reject("SESSION_REVOKED", "session revoked before Horizon publication")
+        problem = permissions()
+        if problem is not None:
+            return problem
+        binding = self._check_binding(session, action_id, request.request_ref if request else "")
+        if isinstance(binding, PlannerActionRejection):
+            return binding
+        if (session.htn_context_fingerprint != self._htn_context_fingerprint(binding[0])
+                or not self._horizon_observation_current(*binding)):
+            self._revoke(session, "Horizon input snapshot changed")
+            return reject("STALE_OBSERVATION", "Horizon input snapshot changed")
+        problem = permissions()
+        if problem is not None:
+            return problem
+        if self.monotonic() > session.expires_at_monotonic:
+            self._revoke(session, "session expired before Horizon publication")
+            return reject("BUDGET_EXHAUSTED", "session expired before Horizon publication")
+        if self.monotonic() > started + self.per_action_timeout_seconds:
+            return reject("TOOL_TIMEOUT", "Horizon verification exceeded the action deadline")
+        # Policy serialization and persistence reads above can yield to cancel().
+        # Sample the sticky signal once more after all potentially blocking work.
+        if self.cancellation_requested(session.run_id):
+            self._revoke(session, "Runtime cancellation requested")
+            return reject("BINDING_MISMATCH", "Runtime cancellation requested before Horizon publication")
+        return None
 
     def _check_htn_result(self, session, action_id, request, started):
         """Session lock is already held; this does not acquire it recursively."""
@@ -496,7 +587,7 @@ class PlannerActionGateway:
             self._revoke(session, "task plan version changed")
             return rejection("PLAN_VERSION_MISMATCH",
                              f"task plan version changed from {session.plan_version}")
-        if session.htn_used and session.htn_context_fingerprint != self._htn_context_fingerprint(run):
+        if (session.htn_used or session.horizon_used) and session.htn_context_fingerprint != self._htn_context_fingerprint(run):
             self._revoke(session, "HTN planning context changed")
             return rejection("STALE_OBSERVATION", "HTN planning context changed without a new bound session")
         return run, loop
@@ -510,7 +601,43 @@ class PlannerActionGateway:
             "basis": run.execution_state.get("missionIntentBasis"),
             "scope": run.execution_scope.model_dump(mode="json") if run.execution_scope is not None else None,
             "runtimeRevision": run.runtime_revision, "runStatus": run.status.value,
+            "steps": [s.model_dump(mode="json", by_alias=True) for s in run.steps],
+            "completedStepIds": run.execution_state.get("completedStepIds"),
+            "executionInputs": {k: v for k, v in run.execution_state.items() if k != "planningLoop"},
         })
+
+    @staticmethod
+    def _horizon_observation_current(run, loop) -> bool:
+        """Check persisted observation identity against the actual execution mapping.
+
+        A new session must not bless a self-consistent observation fingerprint
+        whose step/task mapping no longer matches the Run's trusted bindings.
+        Receipt authority remains the existing Runtime observation builder.
+        """
+        if not PlannerActionGateway._htn_observation_current(run, loop):
+            return False
+        observation = loop.current.observation
+        bindings = run.execution_state.get("taskBindings") or []
+        if not isinstance(bindings, (list, tuple)) or any(not isinstance(b, dict) for b in bindings):
+            return False
+        mapping = {b.get("acgNodeId"): b.get("planNodeKey") for b in bindings}
+        actual_ids = {s.step_id for s in run.steps}
+        observed_ids = {s.step_id for s in observation.steps}
+        return (observation.run_id == run.run_id and observation.mission_id == run.mission_id
+                and len(mapping) == len(bindings) and set(mapping) == actual_ids
+                and len(observed_ids) == len(observation.steps) and observed_ids == actual_ids
+                and all(mapping[s.step_id] == s.task_key for s in observation.steps))
+
+    @staticmethod
+    def _horizon_review_keys(run, observation) -> tuple[str, ...]:
+        requiring_review = {s.step_id for s in run.steps if s.requires_review}
+        return tuple(s.task_key for s in observation.steps if s.step_id in requiring_review)
+
+    @staticmethod
+    def _horizon_control_barrier(run) -> bool:
+        # Presence is a conservative hold, not an interpretation of routes,
+        # control frames, parallel joins or iteration state. Runtime owns those.
+        return any(n.get("nodeType") == "control" for n in (run.acg_blueprint or {}).get("nodes", []))
 
     @staticmethod
     def _htn_observation_current(run, loop) -> bool:
@@ -538,8 +665,18 @@ class PlannerActionGateway:
                     plan=TaskPlan.model_validate(run.execution_state["taskPlan"]),
                     target_key=request.query.target_key, basis=run_intent_basis(run),
                     observation=loop.current.observation)
+            elif target in _HORIZON_READS:
+                operation = self.horizon_selector.frontier if target == "planning_frontier" else self.horizon_selector.propose
+                projection = operation(plan=TaskPlan.model_validate(run.execution_state["taskPlan"]),
+                    basis=run_intent_basis(run), observation=loop.current.observation,
+                    run_status=run.status.value, control_barrier=self._horizon_control_barrier(run),
+                    review_keys=self._horizon_review_keys(run, loop.current.observation), deadline=deadline)
             else:
                 projection = self._read_evidence(loop)
+        except HorizonError as exc:
+            return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                code="TOOL_TIMEOUT" if str(exc) == "HORIZON_DEADLINE_EXCEEDED" else "HORIZON_REJECTED",
+                reason=str(exc), retryable=False)
         except HTNError as exc:
             return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
                 code="HTN_REJECTED", reason=exc.code, retryable=False)
@@ -561,6 +698,8 @@ class PlannerActionGateway:
             result = result.model_copy(update={"capability_catalog": projection})
         elif target == "method_catalog":
             result = result.model_copy(update={"method_catalog": projection})
+        elif target in _HORIZON_READS:
+            result = result.model_copy(update={"frontier" if target == "planning_frontier" else "horizon": projection})
         else:
             result = result.model_copy(update={"evidence": projection})
         return result
@@ -575,6 +714,7 @@ class PlannerActionGateway:
         deadline = started + self.per_action_timeout_seconds
         entries: list[RegisteredProposal] = []
         expansion = None
+        horizon = None
         if isinstance(proposal, PlannerCandidateTasksProposal):
             for draft in proposal.tasks:
                 try:
@@ -588,7 +728,7 @@ class PlannerActionGateway:
                                               assignedKeys=assigned))
             record_keys = assigned
         elif isinstance(proposal, PlannerPlanRevisionProposal):
-            if session.htn_used:
+            if session.htn_used or session.horizon_used:
                 return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
                     code="PROPOSAL_ONLY", reason="HTN rounds cannot register plan revisions", retryable=False)
             patch = proposal.patch
@@ -603,6 +743,22 @@ class PlannerActionGateway:
             entries.append(RegisteredProposal(proposalId=_new_id("pprop"), kind="plan_revision",
                                               contentFingerprint=proposal_fingerprint(proposal)))
             record_keys = ()
+        elif isinstance(proposal, HorizonSelection):
+            try:
+                horizon = self.horizon_selector.propose(plan=plan, basis=run_intent_basis(run),
+                    observation=loop.current.observation, selected_keys=proposal.selected_keys,
+                    input_fingerprint=proposal.input_fingerprint, run_status=run.status.value,
+                    control_barrier=self._horizon_control_barrier(run),
+                    review_keys=self._horizon_review_keys(run, loop.current.observation), deadline=deadline)
+            except HorizonError as exc:
+                return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                    code="TOOL_TIMEOUT" if str(exc) == "HORIZON_DEADLINE_EXCEEDED" else "HORIZON_REJECTED",
+                    reason=str(exc), retryable=False)
+            except (ValueError, KeyError):
+                return PlannerActionRejection(actionId=action_id, requestRef=request.request_ref,
+                    code="HORIZON_REJECTED", reason="HORIZON_INVALID_TRUSTED_CONTEXT", retryable=False)
+            entries.append(RegisteredProposal(proposalId=_new_id("pprop"), kind="horizon",
+                contentFingerprint=proposal_fingerprint(proposal), assignedKeys=horizon.candidate_keys))
         elif isinstance(proposal, PlannerMethodProposal):
             if proposal.target_key not in {node.key for node in plan.nodes}:
                 return self._payload_rejection(action_id, request,
@@ -636,7 +792,7 @@ class PlannerActionGateway:
                 reason=f"proposal validation exceeded the {self.per_action_timeout_seconds}s action budget",
                 retryable=True, requestRef=request.request_ref)  # type: ignore[arg-type]
         return PlannerProposalReceipt(actionId=action_id, requestRef=request.request_ref,
-                                      proposals=tuple(entries), expansion=expansion)
+                                      proposals=tuple(entries), expansion=expansion, horizon=horizon)
 
     def _payload_rejection(self, action_id: str, request: PlannerActionRequest, reason: str) -> PlannerActionRejection:
         return PlannerActionRejection(actionId=action_id, code="INVALID_PAYLOAD", reason=reason[:500],
@@ -752,6 +908,16 @@ class PlannerActionGateway:
             event.update({"kind": "propose", "status": outcome.status,
                           "requestRef": outcome.request_ref[:128],
                           "proposalCount": len(outcome.proposals), "replayed": outcome.replayed})
+        if isinstance(outcome, (PlannerReadResult, PlannerProposalReceipt)):
+            horizon = outcome.horizon
+            frontier = horizon.frontier if horizon is not None else (
+                outcome.frontier if isinstance(outcome, PlannerReadResult) else None)
+            if frontier is not None:
+                event["horizonInputFingerprint"] = frontier.input_fingerprint
+            if horizon is not None:
+                event.update({"candidateCount": len(horizon.candidate_keys),
+                    "deferredCount": len(horizon.deferred), "usedCostUnits": horizon.used_cost_units,
+                    "usedRiskUnits": horizon.used_risk_units, "selectionBasis": horizon.selection_basis})
         self._audit(event)
 
     def _audit(self, payload: dict[str, Any]) -> None:

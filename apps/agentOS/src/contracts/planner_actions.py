@@ -24,14 +24,15 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 from contracts.identity import SemanticTaskKey
 from contracts.htn import HTNExpansionProposal, HTNMethodCatalogProjection
+from contracts.horizon import PlanningFrontier, HorizonProposal, HorizonSelection
 from contracts.planning import TaskPlanPatch
 from contracts.runtime_planning import RuntimePlanningDecision
 
 
 PLANNER_ACTION_PROTOCOL_VERSION = 1
 
-ReadTarget = Literal["run_state", "capability_catalog", "evidence_refs", "method_catalog"]
-ProposalKind = Literal["candidate_tasks", "plan_revision", "method"]
+ReadTarget = Literal["run_state", "capability_catalog", "evidence_refs", "method_catalog", "planning_frontier", "candidate_horizon"]
+ProposalKind = Literal["candidate_tasks", "plan_revision", "method", "horizon"]
 
 RejectionCode = Literal[
     "PROTOCOL_VERSION_UNSUPPORTED",
@@ -50,6 +51,9 @@ RejectionCode = Literal[
     "HTN_REJECTED",
     "HTN_CATALOG_CHANGED",
     "PROPOSAL_ONLY",
+    "HORIZON_DISABLED",
+    "HORIZON_REJECTED",
+    "HORIZON_POLICY_CHANGED",
 ]
 
 
@@ -155,7 +159,7 @@ class PlannerActionRequest(PlannerActionContract):
     query: PlannerReadQuery | None = None
     # 判别联合按 kind 收窄；字符串字段里的伪造 JSON 永远只是字符串。
     proposal: (
-        PlannerCandidateTasksProposal | PlannerPlanRevisionProposal | PlannerMethodProposal
+        PlannerCandidateTasksProposal | PlannerPlanRevisionProposal | PlannerMethodProposal | HorizonSelection
     ) | None = None
 
     @model_validator(mode="after")
@@ -265,6 +269,8 @@ class PlannerReadResult(PlannerActionContract):
     )
     evidence: EvidenceProjection | None = None
     method_catalog: HTNMethodCatalogProjection | None = Field(default=None, alias="methodCatalog")
+    frontier: PlanningFrontier | None = None
+    horizon: HorizonProposal | None = None
 
 
 class RegisteredProposal(PlannerActionContract):
@@ -283,6 +289,7 @@ class PlannerProposalReceipt(PlannerActionContract):
     replayed: bool = False
     proposals: tuple[RegisteredProposal, ...] = ()
     expansion: HTNExpansionProposal | None = None
+    horizon: HorizonProposal | None = None
 
 
 PlannerActionOutcome = PlannerReadResult | PlannerProposalReceipt | PlannerActionRejection
@@ -306,6 +313,8 @@ class PlannerToolFeedback(PlannerActionContract):
     evidence: EvidenceProjection | None = None
     method_catalog: HTNMethodCatalogProjection | None = Field(default=None, alias="methodCatalog")
     expansion: HTNExpansionProposal | None = None
+    frontier: PlanningFrontier | None = None
+    horizon: HorizonProposal | None = None
     registered: tuple[RegisteredProposal, ...] = ()
     rejection_code: RejectionCode | None = Field(default=None, alias="rejectionCode")
     rejection_reason: str | None = Field(default=None, max_length=400, alias="rejectionReason")
@@ -338,6 +347,8 @@ def proposal_fingerprint(proposal: object) -> str:
         payload = {"kind": "plan_revision", "patch": proposal.patch.model_dump(by_alias=True, mode="json")}
     elif isinstance(proposal, PlannerMethodProposal):
         payload = {"kind": "method", **proposal.model_dump(by_alias=True, mode="json")}
+    elif isinstance(proposal, HorizonSelection):
+        payload = proposal.model_dump(by_alias=True, mode="json")
     else:  # pragma: no cover - closed union
         raise TypeError(f"unsupported proposal type: {type(proposal).__name__}")
     return _canonical_fingerprint(payload)
