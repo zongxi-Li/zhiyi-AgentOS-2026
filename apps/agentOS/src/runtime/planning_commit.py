@@ -1,0 +1,358 @@
+"""Trusted Runtime proposal adapter. Accept facts; never lower or execute graphs."""
+from contextlib import nullcontext
+import hashlib
+import json
+from time import monotonic
+
+from components.planner.planning_commit import PlanningCommitService
+from components.planner.service import apply_task_plan_patch
+from components.planner.topology import EdgeOrigin, TopologyCompileError, validate_task_plan_for_execution
+from contracts.mission_semantic import run_intent_basis
+from contracts.planning import TaskPlan, TaskPlanPatch
+from contracts.planning_commit import (
+    FrozenPlanningSources, PlanningCommitRequest, PlanningCommitRejection,
+    PlanningCommitRejectionCode as Code,
+)
+from contracts.workflow import RuntimeRunRecord, RuntimeMissionRecord, MissionRecordState, WorkflowStatus
+from runtime.planner_input_adapter import planner_input
+from support.stores.planning_commit_store import content_fingerprint
+
+
+def fingerprint(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode()).hexdigest()
+
+
+class RuntimePlanningCommitProvider:
+    """One captured server candidate, with live SQLite sources inside acceptance.
+
+    Caller holds the Runtime Run lock before entering the ledger transaction.
+    BEGIN IMMEDIATE protects persisted Run/Mission sources; no reverse lock acquisition.
+    """
+    def __init__(self, authority, run_id, payload, initial, principal):
+        self.authority = authority
+        self.runtime = authority.runtime
+        self.store = authority.store
+        self.run_id = run_id
+        self.payload = payload
+        self.initial = initial
+        self.principal = principal
+
+    def planning_guard(self, mission_id):
+        return nullcontext()  # Runtime Run lock + store write transaction already held.
+
+    def run(self):
+        with self.store.connection() as conn:
+            row = conn.execute("SELECT payload FROM runs WHERE run_id=?", (self.run_id,)).fetchone()
+            if not row:
+                raise ValueError("planning Run unavailable")
+            return RuntimeRunRecord.model_validate_json(row[0])
+
+    def authorize(self, request=None):
+        run = self.run()
+        if (request is not None and run.mission_id != request.sources.mission_id) or self.principal is None:
+            return False
+        if self.runtime._run_cancellation_requested(run.run_id) or run.status in {
+                WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}:
+            return False
+        service = self.runtime.mission_semantic_service
+        if service is None or service.store is not self.runtime.workflow_store:
+            return False
+        try:
+            service.require_read_access(self.principal, run.mission_id)
+            service.require_write_access(self.principal, run.mission_id)
+            with self.store.connection() as conn:
+                row = conn.execute("SELECT payload FROM tasks WHERE mission_id=?", (run.mission_id,)).fetchone()
+            return bool(row and RuntimeMissionRecord.model_validate_json(row[0]).record_state == MissionRecordState.ACTIVE)
+        except (PermissionError, ValueError, KeyError):
+            return False
+
+    def get_current_sources(self, mission_id):
+        run = self.run()
+        basis = run_intent_basis(run)
+        if basis is None or basis.source_type != "SEMANTIC":
+            raise ValueError("formal frozen basis required")
+        with self.store.connection() as conn:
+            row = conn.execute("SELECT revision FROM mission_semantic_state WHERE mission_id=?", (mission_id,)).fetchone()
+        if not row:
+            raise ValueError("formal Mission unavailable")
+        loop = run.execution_state.get("planningLoop") or {}
+        current = loop.get("current") or {}
+        plan = run.execution_state.get("taskPlan")
+        graph = run.acg_blueprint
+        repositories = getattr(self.runtime.identity_lifecycle, "repositories", None)
+        latest = repositories.task_plans.latest(run.mission_id) if repositories is not None else None
+        context = {
+            "run": run.run_id, "input": run.input, "scope": run.execution_scope.model_dump(mode="json") if run.execution_scope else None,
+            "basis": basis.model_dump(mode="json"), "plan": plan, "graph": graph,
+            "bindings": run.execution_state.get("taskBindings"),
+            "steps": [s.model_dump(mode="json") for s in run.steps],
+            "runtimeRevision": None if self.initial else run.runtime_revision,
+            "state": {k: v for k, v in run.execution_state.items() if k != "planningLoop"},
+            "status": "preparing" if self.initial and run.status in {WorkflowStatus.PENDING, WorkflowStatus.PLANNING} else run.status.value,
+            "catalog": [d.model_dump(mode="json") for d in self.runtime.capability_catalog.available()],
+            "identityPlan": latest.model_dump(mode="json") if latest is not None else None,
+        }
+        return FrozenPlanningSources(missionId=run.mission_id, missionRevision=row[0],
+            sourceKind="initial" if self.initial else "runtime",
+            observationId=None if self.initial else current.get("observationId"),
+            observationFingerprint=None if self.initial else fingerprint_observation(current),
+            planVersion=None if self.initial else plan["planVersion"],
+            graphVersion=None if self.initial else graph["version"],
+            strategyFingerprint=fingerprint(context))
+
+    def get_proposal_payload(self, request):
+        return self.payload
+
+    def validate_proposal(self, request):
+        try:
+            return self._validate_proposal(request)
+        except (ValueError, KeyError, TopologyCompileError):
+            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="candidate failed deterministic semantic validation")
+
+    def _validate_proposal(self, request):
+        def reject(code, reason):
+            return PlanningCommitRejection(code=code, reason=reason)
+        run = self.run()
+        basis = run_intent_basis(run)
+        if not run.execution_state.get("planningCommitRequired"):
+            return reject(Code.INVALID_PROPOSAL, "Run requires an explicit durable acceptance fence")
+        if (basis is None or basis.source_type != "SEMANTIC"
+                or request.sources.mission_revision != basis.source_revision):
+            return reject(Code.STALE_MISSION, "proposal does not bind the frozen Run basis")
+        if self.runtime._run_cancellation_requested(run.run_id) or run.status in {
+                WorkflowStatus.CANCELLED, WorkflowStatus.COMPLETED, WorkflowStatus.SUPERSEDED}:
+            return reject(Code.AUTHORITY_DENIED, "Run is no longer available for acceptance")
+        if self.payload.mission_id != run.mission_id or content_fingerprint(self.payload) != request.proposal_fingerprint:
+            return reject(Code.INVALID_PROPOSAL, "candidate identity mismatch")
+        if len(self.payload.model_dump_json(by_alias=True)) > 300_000:
+            return reject(Code.INVALID_PROPOSAL, "candidate content exceeds acceptance bounds")
+        if run.active_step_ids or any(s.status.value in {"running", "retrying"} for s in run.steps):
+            return reject(Code.CONTROL_BARRIER_BLOCKED, "active work cannot be revised")
+        if self.initial:
+            if (request.proposal_type != "initial_plan" or not isinstance(self.payload, TaskPlan)
+                    or run.acg_blueprint or run.steps or run.execution_state.get("taskPlan")
+                    or not run.execution_state.get("planningDeferred")
+                    or run.status not in {WorkflowStatus.PENDING, WorkflowStatus.PLANNING}):
+                return reject(Code.INVALID_PROPOSAL, "initial acceptance requires an unmaterialized Run")
+            next_plan = self.payload
+        else:
+            try:
+                fingerprint_observation((run.execution_state.get("planningLoop") or {}).get("current") or {}, run)
+            except (ValueError, KeyError):
+                return reject(Code.STALE_OBSERVATION, "observation does not match this Run boundary")
+            if request.proposal_type != "plan_revision" or not isinstance(self.payload, TaskPlanPatch):
+                return reject(Code.INVALID_PROPOSAL, "unsupported revision candidate")
+            graph = run.acg_blueprint or {}
+            if any(n.get("nodeType") == "control" for n in graph.get("nodes", ())):
+                return reject(Code.CONTROL_BARRIER_BLOCKED, "control graph requires later safe-cut support")
+            current = TaskPlan.model_validate(run.execution_state["taskPlan"])
+            if len(current.nodes) + len(self.payload.add_nodes) > 512 or len(self.payload.relations) > 1024:
+                return reject(Code.INVALID_PROPOSAL, "revision input exceeds acceptance bounds")
+            protected = {b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())
+                if any(s.step_id == b["acgNodeId"] and (s.status.value != "pending" or s.output
+                       or s.resolved_input or s.started_at or s.completed_at or s.attempt > 0
+                       or s.step_id in run.completed_step_ids
+                       or (run.execution_state.get("outputRefs") or {}).get(s.step_id))
+                       for s in run.steps)}
+            parents = {n.key: n.parent_key for n in current.nodes if n.parent_key is not None}
+            parents.update({r.target_key: r.source_key for r in current.relations if r.relation_type.value == "parent"})
+            pending = list(protected)
+            while pending:
+                parent = parents.get(pending.pop())
+                if parent is not None and parent not in protected:
+                    protected.add(parent)
+                    pending.append(parent)
+            touched = set(self.payload.retire_keys) | set(self.payload.replace_keys)
+            touched |= {r.source_key for r in self.payload.remove_relations} | {r.target_key for r in self.payload.remove_relations}
+            touched |= {r.target_key for r in self.payload.relations}
+            if touched & protected:
+                return reject(Code.INVALID_PROPOSAL, "started or settled work cannot be changed")
+            if self.payload.base_plan_version != current.plan_version:
+                return reject(Code.STALE_PLAN, "patch bases on another formal plan")
+            next_plan = apply_task_plan_patch(current, self.payload, self.runtime.capability_catalog)
+            by_key = {n.key: n for n in current.nodes}
+            for node in self.payload.add_nodes:
+                prior = by_key.get(node.key)
+                if prior and (not set(prior.acceptance_criteria) <= set(node.acceptance_criteria)
+                        or not set(prior.source_refs) <= set(node.source_refs)
+                        or not set(prior.capability_requirements) <= set(node.capability_requirements)
+                        or not {fingerprint(c) for c in prior.constraints} <= {fingerprint(c) for c in node.constraints}):
+                    return reject(Code.INVALID_PROPOSAL, "replacement weakens existing task obligations")
+        if len(next_plan.nodes) > 256 or len(next_plan.relations) > 1024:
+            return reject(Code.INVALID_PROPOSAL, "candidate exceeds acceptance bounds")
+        if next_plan.control_policies:
+            return reject(Code.CONTROL_BARRIER_BLOCKED, "control policies require later safe-cut support")
+        validated = validate_task_plan_for_execution(capability_catalog=self.runtime.capability_catalog,
+            mission_id=run.mission_id, plan_version=next_plan.plan_version, nodes=next_plan.nodes,
+            relations=next_plan.relations, expected_artifacts=next_plan.expected_artifacts,
+            control_policies=next_plan.control_policies, relation_origin=EdgeOrigin.PLAN_PATCH,
+            metadata=next_plan.metadata) if self.initial else next_plan
+        if set(request.requested_scope) != {n.key for n in validated.nodes}:
+            return reject(Code.DEPENDENCY_NOT_CLOSED, "this phase accepts complete semantic candidates only")
+        if validated.metadata.get("missionIntentBasisRef") != basis.reference():
+            return reject(Code.INVALID_PROPOSAL, "candidate changed frozen basis reference")
+        for node in validated.nodes:
+            if node.workset:
+                node.workset.validate_sources(run.input.get("materialRefs") or ())
+            if run.execution_scope and not set(node.capability_requirements) <= set(run.execution_scope.capability_ids):
+                return reject(Code.AUTHORITY_DENIED, "candidate exceeds frozen capability scope")
+        obligations = {c.constraint_id: c.text for c in basis.constraints}
+        changed = validated.nodes if self.initial else self.payload.add_nodes
+        for node in changed:
+            for identifier, text in obligations.items():
+                if not any(c.get("constraintId") == identifier and (c.get("value") == text or c.get("text") == text)
+                           for c in node.constraints):
+                    return reject(Code.INVALID_PROPOSAL, "candidate omits a frozen Mission constraint")
+        return None
+
+
+def fingerprint_observation(current, run=None):
+    from contracts.runtime_planning import RuntimePlanningObservation
+    observed = RuntimePlanningObservation.model_validate(current["observation"])
+    if current.get("observationId") != observed.fingerprint():
+        raise ValueError("persisted observation fingerprint mismatch")
+    if run is None:
+        return observed.fingerprint()
+    if (observed.run_id != run.run_id or observed.mission_id != run.mission_id
+            or observed.plan_version != run.execution_state["taskPlan"]["planVersion"]
+            or observed.graph_version != run.acg_blueprint["version"]
+            or observed.graph_id != run.acg_blueprint["graphId"]):
+        raise ValueError("observation belongs to a different planning boundary")
+    bindings = {b["acgNodeId"]: b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())}
+    steps = {s.step_id: s for s in run.steps}
+    if len(observed.steps) != len(steps) or len({s.step_id for s in observed.steps}) != len(steps):
+        raise ValueError("observation must cover each Run step exactly once")
+    for step in observed.steps:
+        if (step.step_id not in steps or step.task_key != bindings.get(step.step_id)
+                or step.status != steps[step.step_id].status.value):
+            raise ValueError("observation step binding or state is stale")
+    return observed.fingerprint()
+
+
+class RuntimePlanningCommitAuthority:
+    def __init__(self, *, runtime, store):
+        if getattr(runtime.workflow_store, "db_path", None) is None or store.db_path != runtime.workflow_store.db_path.resolve():
+            raise ValueError("planning ledger must share the Workflow SQLite database")
+        self.runtime = runtime
+        self.store = store
+
+    def _provider(self, run_id, payload, initial):
+        principal = self.runtime.semantic_principal_provider() if self.runtime.semantic_principal_provider else None
+        return RuntimePlanningCommitProvider(self, run_id, payload, initial, principal)
+
+    def _request(self, provider, payload, proposal_id, key, captured_sources=None, expected=None):
+        sources = captured_sources or provider.get_current_sources(payload.mission_id)
+        run = provider.run()
+        basis = run_intent_basis(run)
+        # Sources in a request describe the frozen basis, not a silently adopted new Mission.
+        sources = sources.model_copy(update={"mission_revision": basis.source_revision})
+        if isinstance(payload, TaskPlan):
+            scope = tuple(n.key for n in payload.nodes)
+        else:
+            keys = {n["key"] for n in run.execution_state["taskPlan"]["nodes"]} - set(payload.retire_keys)
+            scope = tuple(keys | {n.key for n in payload.add_nodes})
+        parent = self.store.latest(run.mission_id)
+        return PlanningCommitRequest(proposalId=self.proposal_identity(provider.run_id, proposal_id),
+            proposalType="initial_plan" if provider.initial else "plan_revision",
+            proposalFingerprint=content_fingerprint(payload), sources=sources, requestedScope=scope,
+            idempotencyKey=key, expectedCommitmentRevision=expected if expected is not None else parent.commitment_revision if parent else 0)
+
+    @staticmethod
+    def proposal_identity(run_id, proposal_id):
+        return "runtime-candidate:" + fingerprint({"run": run_id, "proposal": proposal_id})
+
+    @staticmethod
+    def replay_request(record, key, fingerprint=None, proposal_id=None):
+        return PlanningCommitRequest(proposalId=proposal_id or record.proposal_id, proposalType=record.proposal_type,
+            proposalFingerprint=fingerprint or record.proposal_fingerprint, sources=record.sources,
+            requestedScope=record.requested_scope, idempotencyKey=key,
+            expectedCommitmentRevision=record.expected_commitment_revision)
+
+    def accept_patch_locked(self, run_id, patch, *, proposal_id, idempotency_key, graph_id=None, graph_version=None):
+        """Called with Runtime Run lock held; no nested RunLock acquisition."""
+        patch = TaskPlanPatch.model_validate(patch.model_dump(mode="json", by_alias=True))
+        provider = self._provider(run_id, patch, False)
+        service = PlanningCommitService(current_state_provider=provider, store=self.store)
+        if provider.authorize() is not True:
+            return PlanningCommitRejection(code=Code.AUTHORITY_DENIED, reason="planning acceptance not authorized")
+        run = provider.run()
+        if graph_id is not None and graph_id != run.acg_blueprint["graphId"]:
+            return PlanningCommitRejection(code=Code.STALE_GRAPH, reason="semantic request graph identity changed")
+        existing = self.store.get_by_idempotency_key(idempotency_key)
+        if existing:
+            if graph_version is not None and graph_version != existing.sources.graph_version:
+                return PlanningCommitRejection(code=Code.STALE_GRAPH, reason="idempotent semantic request graph version changed")
+            return service.accept(self.replay_request(existing, idempotency_key, content_fingerprint(patch),
+                self.proposal_identity(run_id, proposal_id)))
+        if (graph_id is not None and graph_id != run.acg_blueprint["graphId"]
+                or graph_version is not None and graph_version != run.acg_blueprint["version"]):
+            return PlanningCommitRejection(code=Code.STALE_GRAPH, reason="semantic request graph changed")
+        return service.accept(self._request(provider, patch, proposal_id, idempotency_key))
+
+    def accept_initial(self, run_id):
+        """Semantic planning happens outside Run lock and database write transaction."""
+        key = "initial-planning:" + run_id
+        with self.runtime.run_lock_manager.lock_for(run_id):
+            existing = self.store.get_by_idempotency_key(key)
+            if existing:
+                provider = self._provider(run_id, existing.proposal_payload, True)
+                service = PlanningCommitService(current_state_provider=provider, store=self.store)
+                problem = service.validate_sources(existing.sources)
+                return problem or service.accept(self.replay_request(existing, key))
+            provider = self._provider(run_id, None, True)
+            run = provider.run()
+            if provider.authorize() is not True:
+                return PlanningCommitRejection(code=Code.AUTHORITY_DENIED, reason="initial planning acceptance not authorized")
+            if not run.execution_state.get("planningCommitRequired"):
+                return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="initial Run requires an acceptance fence")
+            captured = provider.get_current_sources(run.mission_id)
+            basis = run_intent_basis(run)
+            if basis.source_revision != captured.mission_revision:
+                return PlanningCommitRejection(code=Code.STALE_MISSION, reason="initial proposal bases on an older Mission")
+            parent = self.store.latest(run.mission_id)
+            expected = parent.commitment_revision if parent else 0
+        engine = self.runtime._planning_engine_for_run(run)
+        workflow = self.runtime._workflow_for_run(run)
+        if workflow.planning_nodes:
+            plan = engine.semantic_planner.plan_template(mission_id=run.mission_id, workflow=workflow,
+                strategy="initial_commit_candidate")
+        else:
+            data = planner_input(basis, run.input)
+            if self.runtime.attachment_context_builder is not None:
+                data = self.runtime.attachment_context_builder.enrich(data)
+                data = planner_input(basis, data)
+            deadline = monotonic() + engine._planning_total_timeout_seconds()
+            profile = engine.intent_parser.parse(intent=basis.objective, domain=workflow.domain,
+                task_type=workflow.intent, task_input=data, use_llm=not bool(run.input.get("deterministicIntent")),
+                declared_capabilities=list(workflow.required_capabilities or ()), planning_deadline=deadline, run_id=run_id)
+            plan = engine.semantic_planner.plan_profile(mission_id=run.mission_id, profile=profile,
+                strategy="initial_commit_candidate", task_input=data,
+                existing_semantic_tasks=self.runtime._existing_semantic_task_catalog(run.mission_id),
+                use_llm=not bool(run.input.get("deterministicIntent")), planning_deadline=deadline, run_id=run_id)
+        # Server-owned immutable basis binds the candidate, including template planning.
+        nodes = tuple(n.model_copy(deep=True, update={"constraints": [*n.constraints,
+            *[dict(type="mission_constraint", value=c.text, constraintId=c.constraint_id,
+                   sourceRefs=list(c.source_refs)) for c in basis.constraints
+              if not any(x.get("constraintId") == c.constraint_id for x in n.constraints)]]}) for n in plan.nodes)
+        plan = plan.model_copy(deep=True, update={"nodes": nodes,
+            "metadata": {**plan.metadata, "missionIntentBasisRef": basis.reference()}})
+        resolve = getattr(self.runtime.identity_lifecycle, "resolve_task_plan_snapshot", None)
+        if callable(resolve):
+            plan = resolve(plan)
+        with self.runtime.run_lock_manager.lock_for(run_id):
+            provider = self._provider(run_id, plan, True)
+            request = self._request(provider, plan, key, key, captured, expected)
+            return PlanningCommitService(current_state_provider=provider, store=self.store).accept(request)
+
+    def get_commit(self, commit_id):
+        record = self.store.get(commit_id)
+        if record is None:
+            return None
+        principal = self.runtime.semantic_principal_provider() if self.runtime.semantic_principal_provider else None
+        if principal is None or self.runtime.mission_semantic_service is None:
+            raise PermissionError("planning commitment read not authorized")
+        self.runtime.mission_semantic_service.require_read_access(principal, record.mission_id)
+        if self.runtime.workflow_store.get_mission(record.mission_id).record_state != MissionRecordState.ACTIVE:
+            raise ValueError("planning commitment Mission unavailable")
+        return record

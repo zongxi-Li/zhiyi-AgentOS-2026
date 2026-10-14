@@ -1,4 +1,4 @@
-"""Isolated in-memory planning acceptance. No Runtime or storage integration.
+"""Provider-driven planning acceptance with pluggable record storage.
 
 The provider owns trusted proposal lookup, permission checks, source snapshots and
 semantic validation. Its guard must exclude changes to those inputs during acceptance.
@@ -53,6 +53,7 @@ class InMemoryPlanningCommitStore:
         self._records: dict[str, PlanningCommitRecord] = {}
         self._by_key: dict[str, str] = {}
         self._latest: dict[str, str] = {}
+        self.requires_durable_payload = False
 
     @contextmanager
     def _transaction(self):
@@ -61,21 +62,30 @@ class InMemoryPlanningCommitStore:
 
     def get(self, commit_id: str) -> PlanningCommitRecord | None:
         with self._lock:
-            return self._records.get(commit_id)
+            record = self._records.get(commit_id)
+            return PlanningCommitRecord.model_validate_json(record.model_dump_json(by_alias=True)) if record else None
 
     def get_by_idempotency_key(self, key: str) -> PlanningCommitRecord | None:
         with self._lock:
-            return self._records.get(self._by_key.get(key, ""))
+            return self.get(self._by_key.get(key, ""))
 
     def latest(self, mission_id: str) -> PlanningCommitRecord | None:
         with self._lock:
-            return self._records.get(self._latest.get(mission_id, ""))
+            return self.get(self._latest.get(mission_id, ""))
 
     def _append(self, key: str, record: PlanningCommitRecord) -> None:
         # Called only within the authority's transaction; no public arbitrary put.
         self._records[record.commit_id] = record
         self._by_key[key] = record.commit_id
         self._latest[record.mission_id] = record.commit_id
+
+    def _rollback_append(self, key, record, parent):
+        self._records.pop(record.commit_id, None)
+        self._by_key.pop(key, None)
+        if parent is None:
+            self._latest.pop(record.mission_id, None)
+        else:
+            self._latest[record.mission_id] = parent.commit_id
 
 
 class PlanningCommitService:
@@ -141,6 +151,12 @@ class PlanningCommitService:
             request = self._request(request)
         except ValidationError:
             return self._reject(Code.INVALID_PROPOSAL, "invalid planning commit request")
+        try:
+            return self._accept(request)
+        except Exception:
+            return self._reject(Code.STORAGE_UNAVAILABLE, "planning acceptance storage unavailable")
+
+    def _accept(self, request: PlanningCommitRequest) -> PlanningCommitReceipt:
         # Bind every accepted field, not just the claimed proposal fingerprint.
         payload = request.model_dump(mode="json", by_alias=True, exclude={"idempotency_key"})
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
@@ -175,6 +191,19 @@ class PlanningCommitService:
                     if replay is not None:
                         return replay
                     parent = self.store.latest(request.sources.mission_id)
+                    revision = parent.commitment_revision if parent else 0
+                    if (request.expected_commitment_revision is not None
+                            and request.expected_commitment_revision != revision):
+                        return self._reject(Code.STALE_COMMITMENT, "accepted planning head changed")
+                    proposal_payload = None
+                    if self.store.requires_durable_payload:
+                        if request.proposal_type not in {"initial_plan", "plan_revision"}:
+                            return self._reject(Code.INVALID_PROPOSAL, "unsupported durable proposal type")
+                        if request.expected_commitment_revision is None:
+                            return self._reject(Code.INVALID_PROPOSAL, "durable acceptance requires a commitment base")
+                        proposal_payload = self.provider.get_proposal_payload(request)
+                        if proposal_payload is None:
+                            return self._reject(Code.INVALID_PROPOSAL, "durable proposal content is required")
                     record = PlanningCommitRecord(commitId="pcommit_" + uuid4().hex,
                         missionId=request.sources.mission_id,
                         parentCommitId=parent.commit_id if parent else None,
@@ -182,7 +211,9 @@ class PlanningCommitService:
                         proposalId=request.proposal_id, proposalType=request.proposal_type,
                         proposalFingerprint=request.proposal_fingerprint,
                         sourceRevision=request.sources.mission_revision, sources=request.sources,
-                        requestedScope=request.requested_scope, requestFingerprint=digest)
+                        requestedScope=request.requested_scope, requestFingerprint=digest,
+                        expectedCommitmentRevision=request.expected_commitment_revision,
+                        proposalPayload=proposal_payload)
                     receipt = PlanningCommitReceipt(commitId=record.commit_id,
                         commitmentRevision=record.commitment_revision, status="ACCEPTED")
                     self.store._append(request.idempotency_key, record)
@@ -190,12 +221,7 @@ class PlanningCommitService:
                 # The store lock makes the provisional append invisible to other
                 # readers until guard exit; failed exits roll back all indexes.
                 if record is not None:
-                    self.store._records.pop(record.commit_id, None)
-                    self.store._by_key.pop(request.idempotency_key, None)
-                    if parent is None:
-                        self.store._latest.pop(request.sources.mission_id, None)
-                    else:
-                        self.store._latest[request.sources.mission_id] = parent.commit_id
+                    self.store._rollback_append(request.idempotency_key, record, parent)
                 if not isinstance(exc, Exception):
                     raise
                 return self._reject(Code.AUTHORITY_DENIED, "trusted planning authority unavailable")
