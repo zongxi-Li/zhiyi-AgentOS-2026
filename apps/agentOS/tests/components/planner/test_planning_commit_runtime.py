@@ -370,7 +370,11 @@ def test_unmarked_initial_run_cannot_leave_a_commit_without_restart_fence(ready_
     old = store.get_run(run_id)
     _, run = runtime.prepare_run(old.mission_id, workflow_id=old.workflow_id)
     run.execution_state.pop("planningCommitRequired")
-    store.save_run(run)
+    # Corrupt input bypasses the store's immutable mode fence deliberately;
+    # the acceptance entry must still reject this unmarked initial candidate.
+    with store._connect() as conn:
+        conn.execute("UPDATE runs SET payload=? WHERE run_id=?",
+                     (run.model_dump_json(by_alias=True), run.run_id))
     result = runtime.planning_commit_authority.accept_initial(run.run_id)
     assert result.code == Code.INVALID_PROPOSAL
     assert ledger.latest(run.mission_id) is None

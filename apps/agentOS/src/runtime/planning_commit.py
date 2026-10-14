@@ -9,11 +9,14 @@ from components.planner.service import apply_task_plan_patch
 from components.planner.topology import EdgeOrigin, TopologyCompileError, validate_task_plan_for_execution
 from contracts.mission_semantic import run_intent_basis
 from contracts.planning import TaskPlan, TaskPlanPatch
+from contracts import stable_checksum
+from contracts.compiled_acg import load_compiled_acg_package
 from contracts.planning_commit import (
     FrozenPlanningSources, PlanningCommitRequest, PlanningCommitRejection,
     PlanningCommitRejectionCode as Code,
 )
 from contracts.workflow import RuntimeRunRecord, RuntimeMissionRecord, MissionRecordState, WorkflowStatus
+from support.acg.schema import RuntimeBlueprintSpec
 from runtime.planner_input_adapter import planner_input
 from support.stores.planning_commit_store import content_fingerprint
 
@@ -87,6 +90,7 @@ class RuntimePlanningCommitProvider:
             "basis": basis.model_dump(mode="json"), "plan": plan, "graph": graph,
             "bindings": run.execution_state.get("taskBindings"),
             "steps": [s.model_dump(mode="json") for s in run.steps],
+            "nodeCommits": self.node_commits(run),
             "runtimeRevision": None if self.initial else run.runtime_revision,
             "state": {k: v for k, v in run.execution_state.items() if k != "planningLoop"},
             "status": "preparing" if self.initial and run.status in {WorkflowStatus.PENDING, WorkflowStatus.PLANNING} else run.status.value,
@@ -100,6 +104,12 @@ class RuntimePlanningCommitProvider:
             planVersion=None if self.initial else plan["planVersion"],
             graphVersion=None if self.initial else graph["version"],
             strategyFingerprint=fingerprint(context))
+
+    def node_commits(self, run):
+        if not run.steps:
+            return []  # Initial L1/L2 worker has no executable nodes or receipts.
+        return sorted(self.runtime.execution_value_store.list_node_commits(run_id=run.run_id),
+                      key=lambda receipt: str(receipt.get("commitId", "")))
 
     def get_proposal_payload(self, request):
         return self.payload
@@ -117,6 +127,8 @@ class RuntimePlanningCommitProvider:
         basis = run_intent_basis(run)
         if not run.execution_state.get("planningCommitRequired"):
             return reject(Code.INVALID_PROPOSAL, "Run requires an explicit durable acceptance fence")
+        if run.execution_scope is None:
+            return reject(Code.AUTHORITY_DENIED, "acceptance requires frozen capability scope")
         if (basis is None or basis.source_type != "SEMANTIC"
                 or request.sources.mission_revision != basis.source_revision):
             return reject(Code.STALE_MISSION, "proposal does not bind the frozen Run basis")
@@ -129,6 +141,11 @@ class RuntimePlanningCommitProvider:
             return reject(Code.INVALID_PROPOSAL, "candidate content exceeds acceptance bounds")
         if run.active_step_ids or any(s.status.value in {"running", "retrying"} for s in run.steps):
             return reject(Code.CONTROL_BARRIER_BLOCKED, "active work cannot be revised")
+        review = run.execution_state.get("reviewPayload")
+        if (any(s.status.value == "waiting_review" for s in run.steps)
+                or run.execution_state.get("controlFrames")
+                or (review is not None and (not isinstance(review, dict) or review.get("subjectType") != "planner"))):
+            return reject(Code.CONTROL_BARRIER_BLOCKED, "unresolved node or control review blocks acceptance")
         if self.initial:
             if (request.proposal_type != "initial_plan" or not isinstance(self.payload, TaskPlan)
                     or run.acg_blueprint or run.steps or run.execution_state.get("taskPlan")
@@ -147,6 +164,21 @@ class RuntimePlanningCommitProvider:
             if any(n.get("nodeType") == "control" for n in graph.get("nodes", ())):
                 return reject(Code.CONTROL_BARRIER_BLOCKED, "control graph requires later safe-cut support")
             current = TaskPlan.model_validate(run.execution_state["taskPlan"])
+            blueprint = RuntimeBlueprintSpec.model_validate(graph)
+            package = load_compiled_acg_package(run.execution_state["compiledACGPackage"])
+            if (package.blueprint_id != blueprint.graph_id or package.blueprint_version != blueprint.version
+                    or package.blueprint_hash != stable_checksum(blueprint.model_dump(by_alias=True, mode="json"))
+                    or package.run_id not in {None, run.run_id}
+                    or run.execution_state.get("taskPlanVersion") != current.plan_version):
+                return reject(Code.INVALID_PROPOSAL, "formal planning sources are inconsistent")
+            bindings = run.execution_state.get("taskBindings", ())
+            bound_steps = [b["acgNodeId"] for b in bindings]
+            bound_tasks = [b["planNodeKey"] for b in bindings]
+            if (len(set(bound_steps)) != len(bound_steps) or len(set(bound_tasks)) != len(bound_tasks)
+                    or set(bound_steps) != {s.step_id for s in run.steps}
+                    or not set(bound_tasks) <= {n.key for n in current.nodes}
+                    or not {n.key for n in current.nodes if n.capability_requirements} <= set(bound_tasks)):
+                return reject(Code.INVALID_PROPOSAL, "formal task bindings are inconsistent")
             if len(current.nodes) + len(self.payload.add_nodes) > 512 or len(self.payload.relations) > 1024:
                 return reject(Code.INVALID_PROPOSAL, "revision input exceeds acceptance bounds")
             protected = {b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())
@@ -155,6 +187,11 @@ class RuntimePlanningCommitProvider:
                        or s.step_id in run.completed_step_ids
                        or (run.execution_state.get("outputRefs") or {}).get(s.step_id))
                        for s in run.steps)}
+            receipts = self.node_commits(run)
+            protected.update(b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())
+                if any(str(r.get("commitId", "")).startswith(f"commit:{run.run_id}:{b['acgNodeId']}:")
+                       or r.get("commitId") == f"single-step-retry:{run.run_id}:{b['acgNodeId']}"
+                       for r in receipts))
             parents = {n.key: n.parent_key for n in current.nodes if n.parent_key is not None}
             parents.update({r.target_key: r.source_key for r in current.relations if r.relation_type.value == "parent"})
             pending = list(protected)
@@ -171,6 +208,14 @@ class RuntimePlanningCommitProvider:
             if self.payload.base_plan_version != current.plan_version:
                 return reject(Code.STALE_PLAN, "patch bases on another formal plan")
             next_plan = apply_task_plan_patch(current, self.payload, self.runtime.capability_catalog)
+            # The compiler may infer capability/terminal edges absent from the
+            # raw patch. Its validated result must preserve settled predecessors.
+            prior_incoming = {r for r in current.relations if r.target_key in protected}
+            next_incoming = {r for r in next_plan.relations if r.target_key in protected}
+            prior_nodes = {n.key: n for n in current.nodes if n.key in protected}
+            next_nodes = {n.key: n for n in next_plan.nodes if n.key in protected}
+            if prior_incoming != next_incoming or prior_nodes != next_nodes:
+                return reject(Code.INVALID_PROPOSAL, "compiled candidate changes started or settled work")
             by_key = {n.key: n for n in current.nodes}
             for node in self.payload.add_nodes:
                 prior = by_key.get(node.key)

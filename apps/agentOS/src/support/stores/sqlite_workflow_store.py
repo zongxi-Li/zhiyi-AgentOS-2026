@@ -401,6 +401,9 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             existing = RuntimeRunRecord.model_validate(json.loads(row["payload"]))
         from support.stores._policy import validate_intent_basis
         validate_intent_basis(existing, run)
+        if (existing is not None and existing.execution_state.get("planningCommitRequired")
+                and run.execution_state.get("planningCommitRequired") is not True):
+            raise ValueError("persisted Planning Commit mode cannot be removed or disabled")
         if existing is not None:
             if reject_terminal_overwrite(existing, run):
                 return False

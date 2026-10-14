@@ -1176,28 +1176,38 @@ class ExecutionRuntime(CollaboratorAccess):
         """Finish a durable acceptance barrier before refreshing volatile observations."""
         current = loop.current
         authority = self.planning_commit_authority
-        if (authority is None or current is None or current.status != "decided"
-                or current.decision is None or current.decision.action != "wait"
-                or current.decision.wait_for is not None or current.decision.question is not None
+        if (authority is None or current is None or current.status not in {"observed", "decided"}
+                or (current.decision is not None and (current.decision.action != "wait"
+                    or current.decision.wait_for is not None or current.decision.question is not None))
                 or not run.execution_state.get("planningCommitRequired")):
             return None
         record = authority.store.get_by_idempotency_key("runtime-planning:" + run.run_id + ":" + current.observation_id)
         if (record is None or record.mission_id != run.mission_id
                 or record.proposal_type != "plan_revision"
-                or record.sources.observation_id != current.observation_id):
+                or record.sources.observation_id != current.observation_id
+                or record.proposal_id != authority.proposal_identity(run.run_id, "runtime:" + current.observation_id)):
             return None
         self._validate_acg_state_references(run=run, state=state)
-        applied = loop.model_copy(update={"current": current.model_copy(update={"status": "applied"})})
-        return await self._apply_runtime_planning_decision(run, state, current.observation, current.decision, applied)
+        from contracts.runtime_planning import RuntimePlanningDecision
+        decision = current.decision or RuntimePlanningDecision(observationId=current.observation_id,
+            action="wait", reason=f"Planning Commit {record.commit_id} accepted; awaiting materialization")
+        applied = loop.model_copy(update={"current": current.model_copy(update={"status": "applied", "decision": decision})})
+        async with self.run_lock_manager.lock_for(run.run_id):
+            # Completing a plain wait neither accepts new facts nor executes work.
+            # Keep the independent operator inbox unconsumed for the next review;
+            # its arrival must not indefinitely block this crash-recovery barrier.
+            self._assert_runtime_planning_current(run, allow_unconsumed_operator_input=True)
+            return self.runtime_planning_application.apply(run, state, current.observation, decision, applied)
 
-    def _assert_runtime_planning_current(self, run: RuntimeRunRecord) -> None:
+    def _assert_runtime_planning_current(self, run: RuntimeRunRecord, *, allow_unconsumed_operator_input=False) -> None:
         latest = self.workflow_store.get_run(run.run_id)
         if latest.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run.run_id):
             raise ExecutionRunCancelled("runtime planning stopped by terminal lifecycle")
         if latest.runtime_revision != run.runtime_revision:
             raise ExecutionStateChanged("runtime changed while Planner was deciding")
         known = {(i.get("sourceRunId"), i.get("operationId")) for i in (run.execution_state.get("planningLoop") or {}).get("userInputs", [])}
-        if any((i["sourceRunId"], i["operationId"]) not in known for i in self.workflow_store.list_planning_inputs(run.run_id)):
+        if (not allow_unconsumed_operator_input
+                and any((i["sourceRunId"], i["operationId"]) not in known for i in self.workflow_store.list_planning_inputs(run.run_id))):
             raise ExecutionStateChanged("operator input arrived while Planner was deciding")
 
     async def _apply_runtime_planning_decision(self, run, state, observation, decision, loop) -> str:
