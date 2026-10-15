@@ -12,13 +12,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from contracts.identity import MissionId, SemanticTaskKey
 from contracts.planning import TaskPlan, TaskPlanPatch
+from contracts.graph_revision import GraphRevisionProposal, PlanningSourceProvenance
 
 
 Fingerprint = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
 Reference = Annotated[str, Field(strict=True, min_length=1, max_length=256)]
 ProposalType = Literal[
     "candidate_tasks", "plan_revision", "method", "htn_expansion", "horizon",
-    "initial_plan", "plan_expansion",
+    "initial_plan", "plan_expansion", "graph_revision",
 ]
 
 
@@ -128,7 +129,8 @@ class PlanningCommitRecord(PlanningCommitContract):
     request_fingerprint: Fingerprint = Field(alias="requestFingerprint")
     expected_commitment_revision: int | None = Field(default=None, strict=True, ge=0,
                                                     alias="expectedCommitmentRevision")
-    proposal_payload: TaskPlan | TaskPlanPatch | None = Field(default=None, alias="proposalPayload")
+    proposal_payload: TaskPlan | TaskPlanPatch | GraphRevisionProposal | None = Field(default=None, alias="proposalPayload")
+    source_provenance: PlanningSourceProvenance | None = Field(default=None, alias="sourceProvenance")
     materialization_status: Literal["COMMITTED_NOT_MATERIALIZED"] = Field(
         default="COMMITTED_NOT_MATERIALIZED", alias="materializationStatus")
 

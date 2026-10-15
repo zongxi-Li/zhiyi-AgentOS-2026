@@ -12,6 +12,7 @@ from threading import RLock, local
 
 from contracts.planning_commit import PlanningCommitRecord
 from contracts.planning import TaskPlan, TaskPlanPatch
+from contracts.graph_revision import GraphRevisionProposal
 
 
 def content_fingerprint(model):
@@ -38,6 +39,9 @@ class SQLitePlanningCommitStore:
             conn.execute("""CREATE TABLE IF NOT EXISTS planning_commit_outbox(
                 commit_id TEXT PRIMARY KEY, payload TEXT NOT NULL)""")
             conn.execute("INSERT OR IGNORE INTO planning_commit_schema(version) VALUES(1)")
+            conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS planning_graph_source_unique
+                ON planning_commit_records(json_extract(payload, '$.proposalPayload.sourceCommitId'))
+                WHERE json_extract(payload, '$.proposalType')='graph_revision'""")
             conn.commit()
 
     def __init__(self, db_path):
@@ -49,6 +53,8 @@ class SQLitePlanningCommitStore:
                 raise RuntimeError("planning schema requires explicit upgrade")
             for table in ("planning_commit_records", "planning_commit_outbox"):
                 conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
+            self.supports_graph_revisions = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name='planning_graph_source_unique'").fetchone() is not None
 
     def _connect(self):
         conn = sqlite3.connect(self.db_path.as_uri() + "?mode=rw", uri=True, timeout=5)
@@ -106,6 +112,11 @@ class SQLitePlanningCommitStore:
         return self._one("SELECT * FROM planning_commit_records WHERE mission_id=? ORDER BY revision DESC LIMIT 1",
                          (mission_id,))
 
+    def graph_revision_for(self, source_commit_id):
+        return self._one("""SELECT * FROM planning_commit_records
+            WHERE json_extract(payload, '$.proposalType')='graph_revision'
+            AND json_extract(payload, '$.proposalPayload.sourceCommitId')=?""", (source_commit_id,))
+
     def _append(self, key, record):
         record = PlanningCommitRecord.model_validate_json(record.model_dump_json(by_alias=True))
         payload = record.proposal_payload
@@ -115,7 +126,8 @@ class SQLitePlanningCommitStore:
             raise ValueError("candidate belongs to another Mission")
         if ((record.proposal_type == "initial_plan" and not isinstance(payload, TaskPlan))
                 or (record.proposal_type == "plan_revision" and not isinstance(payload, TaskPlanPatch))
-                or record.proposal_type not in {"initial_plan", "plan_revision"}):
+                or (record.proposal_type == "graph_revision" and not isinstance(payload, GraphRevisionProposal))
+                or record.proposal_type not in {"initial_plan", "plan_revision", "graph_revision"}):
             raise ValueError("unsupported durable proposal kind")
         conn = self._local.connection
         conn.execute("INSERT INTO planning_commit_records VALUES(?,?,?,?,?)", (

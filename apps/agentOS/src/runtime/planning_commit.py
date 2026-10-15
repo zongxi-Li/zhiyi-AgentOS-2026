@@ -17,6 +17,7 @@ from contracts.planning_commit import (
 )
 from contracts.workflow import RuntimeRunRecord, RuntimeMissionRecord, MissionRecordState, WorkflowStatus
 from support.acg.schema import RuntimeBlueprintSpec
+from support.acg.capabilities import CapabilityCatalog
 from runtime.planner_input_adapter import planner_input
 from support.stores.planning_commit_store import content_fingerprint
 
@@ -24,6 +25,31 @@ from support.stores.planning_commit_store import content_fingerprint
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
                                      ensure_ascii=False).encode()).hexdigest()
+
+
+def freeze_capability_catalog(catalog):
+    frozen = CapabilityCatalog(descriptor.model_copy(deep=True) for descriptor in catalog.available())
+    frozen.validate()
+    return frozen
+
+
+def with_semantic_ancestors(plan, keys):
+    """Protect every declared parent path without compiling execution topology."""
+    parents = {node.key: set() for node in plan.nodes}
+    for node in plan.nodes:
+        if node.parent_key is not None:
+            parents[node.key].add(node.parent_key)
+    for relation in plan.relations:
+        if relation.relation_type.value == "parent":
+            parents[relation.target_key].add(relation.source_key)
+    protected = set(keys)
+    pending = list(protected)
+    while pending:
+        for parent in parents.get(pending.pop(), ()):
+            if parent not in protected:
+                protected.add(parent)
+                pending.append(parent)
+    return protected
 
 
 class RuntimePlanningCommitProvider:
@@ -70,7 +96,7 @@ class RuntimePlanningCommitProvider:
         except (PermissionError, ValueError, KeyError):
             return False
 
-    def get_current_sources(self, mission_id):
+    def get_current_sources(self, mission_id, *, catalog_snapshot=None):
         run = self.run()
         basis = run_intent_basis(run)
         if basis is None or basis.source_type != "SEMANTIC":
@@ -94,7 +120,8 @@ class RuntimePlanningCommitProvider:
             "runtimeRevision": None if self.initial else run.runtime_revision,
             "state": {k: v for k, v in run.execution_state.items() if k != "planningLoop"},
             "status": "preparing" if self.initial and run.status in {WorkflowStatus.PENDING, WorkflowStatus.PLANNING} else run.status.value,
-            "catalog": [d.model_dump(mode="json") for d in self.runtime.capability_catalog.available()],
+            "catalog": [d.model_dump(mode="json") for d in
+                        (catalog_snapshot if catalog_snapshot is not None else self.runtime.capability_catalog).available()],
             "identityPlan": latest.model_dump(mode="json") if latest is not None else None,
         }
         return FrozenPlanningSources(missionId=run.mission_id, missionRevision=row[0],
@@ -113,6 +140,15 @@ class RuntimePlanningCommitProvider:
 
     def get_proposal_payload(self, request):
         return self.payload
+
+    def get_source_provenance(self, request):
+        if self.initial:
+            return None
+        from runtime.graph_revision import planning_inputs, source_provenance
+        run = self.run()
+        workflow, catalog, profiles = planning_inputs(self, run)
+        return source_provenance(self, run=run, inputs=(workflow,
+            getattr(self, "_validated_catalog", None) or catalog, profiles))
 
     def validate_proposal(self, request):
         try:
@@ -137,6 +173,12 @@ class RuntimePlanningCommitProvider:
             return reject(Code.AUTHORITY_DENIED, "Run is no longer available for acceptance")
         if self.payload.mission_id != run.mission_id or content_fingerprint(self.payload) != request.proposal_fingerprint:
             return reject(Code.INVALID_PROPOSAL, "candidate identity mismatch")
+        catalog = getattr(self, "validation_catalog", None)
+        if catalog is None:
+            catalog = freeze_capability_catalog(self.runtime.capability_catalog)
+        self._validated_catalog = catalog
+        if RuntimePlanningCommitProvider.get_current_sources(self, run.mission_id, catalog_snapshot=catalog) != request.sources:
+            return reject(Code.STALE_STRATEGY, "semantic validation inputs do not match frozen sources")
         if len(self.payload.model_dump_json(by_alias=True)) > 300_000:
             return reject(Code.INVALID_PROPOSAL, "candidate content exceeds acceptance bounds")
         if run.active_step_ids or any(s.status.value in {"running", "retrying"} for s in run.steps):
@@ -192,14 +234,7 @@ class RuntimePlanningCommitProvider:
                 if any(str(r.get("commitId", "")).startswith(f"commit:{run.run_id}:{b['acgNodeId']}:")
                        or r.get("commitId") == f"single-step-retry:{run.run_id}:{b['acgNodeId']}"
                        for r in receipts))
-            parents = {n.key: n.parent_key for n in current.nodes if n.parent_key is not None}
-            parents.update({r.target_key: r.source_key for r in current.relations if r.relation_type.value == "parent"})
-            pending = list(protected)
-            while pending:
-                parent = parents.get(pending.pop())
-                if parent is not None and parent not in protected:
-                    protected.add(parent)
-                    pending.append(parent)
+            protected = with_semantic_ancestors(current, protected)
             touched = set(self.payload.retire_keys) | set(self.payload.replace_keys)
             touched |= {r.source_key for r in self.payload.remove_relations} | {r.target_key for r in self.payload.remove_relations}
             touched |= {r.target_key for r in self.payload.relations}
@@ -207,7 +242,7 @@ class RuntimePlanningCommitProvider:
                 return reject(Code.INVALID_PROPOSAL, "started or settled work cannot be changed")
             if self.payload.base_plan_version != current.plan_version:
                 return reject(Code.STALE_PLAN, "patch bases on another formal plan")
-            next_plan = apply_task_plan_patch(current, self.payload, self.runtime.capability_catalog)
+            next_plan = apply_task_plan_patch(current, self.payload, catalog)
             # The compiler may infer capability/terminal edges absent from the
             # raw patch. Its validated result must preserve settled predecessors.
             prior_incoming = {r for r in current.relations if r.target_key in protected}
@@ -228,7 +263,7 @@ class RuntimePlanningCommitProvider:
             return reject(Code.INVALID_PROPOSAL, "candidate exceeds acceptance bounds")
         if next_plan.control_policies:
             return reject(Code.CONTROL_BARRIER_BLOCKED, "control policies require later safe-cut support")
-        validated = validate_task_plan_for_execution(capability_catalog=self.runtime.capability_catalog,
+        validated = validate_task_plan_for_execution(capability_catalog=catalog,
             mission_id=run.mission_id, plan_version=next_plan.plan_version, nodes=next_plan.nodes,
             relations=next_plan.relations, expected_artifacts=next_plan.expected_artifacts,
             control_policies=next_plan.control_policies, relation_origin=EdgeOrigin.PLAN_PATCH,
@@ -285,6 +320,10 @@ class RuntimePlanningCommitAuthority:
     def _provider(self, run_id, payload, initial):
         principal = self.runtime.semantic_principal_provider() if self.runtime.semantic_principal_provider else None
         return RuntimePlanningCommitProvider(self, run_id, payload, initial, principal)
+
+    def accept_graph_revision(self, run_id, source_commit_id, *, idempotency_key):
+        from runtime.graph_revision import accept_graph_revision
+        return accept_graph_revision(self, run_id, source_commit_id, idempotency_key)
 
     def _request(self, provider, payload, proposal_id, key, captured_sources=None, expected=None):
         sources = captured_sources or provider.get_current_sources(payload.mission_id)

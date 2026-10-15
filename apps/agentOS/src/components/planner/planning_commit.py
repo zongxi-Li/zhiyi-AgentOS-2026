@@ -179,7 +179,20 @@ class PlanningCommitService:
                         if not isinstance(problem, PlanningCommitRejection):
                             return self._reject(Code.INVALID_PROPOSAL, "invalid trusted proposal validation result")
                         return PlanningCommitRejection.model_validate(problem.model_dump(mode="json", by_alias=True))
-                    # Also catches provider callbacks that changed their own state while validating.
+                    # Capture every provider-owned payload/provenance before
+                    # closing the source/auth fences. These reads can perform IO.
+                    proposal_payload = None
+                    if self.store.requires_durable_payload:
+                        if request.proposal_type not in {"initial_plan", "plan_revision", "graph_revision"}:
+                            return self._reject(Code.INVALID_PROPOSAL, "unsupported durable proposal type")
+                        if request.expected_commitment_revision is None:
+                            return self._reject(Code.INVALID_PROPOSAL, "durable acceptance requires a commitment base")
+                        proposal_payload = self.provider.get_proposal_payload(request)
+                        if proposal_payload is None:
+                            return self._reject(Code.INVALID_PROPOSAL, "durable proposal content is required")
+                    source_provenance = (self.provider.get_source_provenance(request)
+                        if callable(getattr(self.provider, "get_source_provenance", None)) else None)
+                    # Also catches callbacks that changed state while capturing.
                     problem = self._validate_sources(request.sources)
                     if problem is not None:
                         return problem
@@ -195,15 +208,6 @@ class PlanningCommitService:
                     if (request.expected_commitment_revision is not None
                             and request.expected_commitment_revision != revision):
                         return self._reject(Code.STALE_COMMITMENT, "accepted planning head changed")
-                    proposal_payload = None
-                    if self.store.requires_durable_payload:
-                        if request.proposal_type not in {"initial_plan", "plan_revision"}:
-                            return self._reject(Code.INVALID_PROPOSAL, "unsupported durable proposal type")
-                        if request.expected_commitment_revision is None:
-                            return self._reject(Code.INVALID_PROPOSAL, "durable acceptance requires a commitment base")
-                        proposal_payload = self.provider.get_proposal_payload(request)
-                        if proposal_payload is None:
-                            return self._reject(Code.INVALID_PROPOSAL, "durable proposal content is required")
                     record = PlanningCommitRecord(commitId="pcommit_" + uuid4().hex,
                         missionId=request.sources.mission_id,
                         parentCommitId=parent.commit_id if parent else None,
@@ -213,7 +217,8 @@ class PlanningCommitService:
                         sourceRevision=request.sources.mission_revision, sources=request.sources,
                         requestedScope=request.requested_scope, requestFingerprint=digest,
                         expectedCommitmentRevision=request.expected_commitment_revision,
-                        proposalPayload=proposal_payload)
+                        proposalPayload=proposal_payload,
+                        sourceProvenance=source_provenance)
                     receipt = PlanningCommitReceipt(commitId=record.commit_id,
                         commitmentRevision=record.commitment_revision, status="ACCEPTED")
                     self.store._append(request.idempotency_key, record)

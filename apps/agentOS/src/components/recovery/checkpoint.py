@@ -125,15 +125,25 @@ class ACGCheckpointStore:
 
     def load(self, *, run_id: str, checkpoint_id: str) -> dict[str, Any] | None:
         """读取指定 run 的指定检查点；不存在返回 ``None``，不跨 run 回退查询。"""
-        row = self._connection.execute("SELECT state_json FROM acg_execution_checkpoints WHERE thread_id = ? AND checkpoint_id = ?", (run_id, checkpoint_id)).fetchone()
+        conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT state_json FROM acg_execution_checkpoints WHERE thread_id = ? AND checkpoint_id = ?", (run_id, checkpoint_id)).fetchone()
+        finally:
+            conn.close()
         return json.loads(row[0]) if row else None
 
     def load_latest(self, *, run_id: str) -> tuple[str, dict[str, Any]]:
         """读取一个 run/thread 最近写入的检查点，用于进程重启后的续跑。"""
-        row = self._connection.execute(
-            "SELECT checkpoint_id, state_json FROM acg_execution_checkpoints WHERE thread_id = ? ORDER BY version DESC LIMIT 1",
-            (run_id,),
-        ).fetchone()
+        # One SELECT observes the committed head and body together, including
+        # for proposal workers that cannot borrow the writer's thread connection.
+        conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT checkpoint_id, state_json FROM acg_execution_checkpoints WHERE thread_id = ? ORDER BY version DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        finally:
+            conn.close()
         if row is None:
             raise KeyError(f"no checkpoint found for run {run_id}")
         return str(row[0]), json.loads(row[1])

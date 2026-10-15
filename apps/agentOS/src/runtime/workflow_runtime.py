@@ -1125,6 +1125,15 @@ class ExecutionRuntime(CollaboratorAccess):
         from runtime.planning_commit import RuntimePlanningCommitAuthority
         self.planning_commit_authority = RuntimePlanningCommitAuthority(runtime=self, store=store)
 
+    def accept_graph_revision(self, run_id, source_commit_id, *, idempotency_key):
+        """Explicit server-side acceptance; never materialize or apply a graph."""
+        if self.planning_commit_authority is None:
+            from contracts.planning_commit import PlanningCommitRejection, PlanningCommitRejectionCode
+            return PlanningCommitRejection(code=PlanningCommitRejectionCode.AUTHORITY_DENIED,
+                                           reason="Planning Commit authority is unavailable")
+        return self.planning_commit_authority.accept_graph_revision(
+            run_id, source_commit_id, idempotency_key=idempotency_key)
+
     def _mark_planning_commit_required(self, run) -> None:
         """Orchestration fence, outside the Commit service; caller holds Run lock."""
         if run.execution_state.get("planningCommitRequired"):
