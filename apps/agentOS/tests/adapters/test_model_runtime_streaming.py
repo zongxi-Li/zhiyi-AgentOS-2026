@@ -83,11 +83,32 @@ def test_registered_model_runtime_closes_provider_iterator_on_consumer_cancel() 
 
 
 def test_private_provider_activity_keeps_stream_alive_until_public_json_arrives() -> None:
+    # provider 活动节奏用注入时钟表达：Windows 默认计时粒度（~15.6ms）下，
+    # 真实 sleep(0.01) 的唤醒延迟在 10~25.6ms 间随机分布，会以固定概率越过
+    # 20ms TTFT 窗口，把"provider 活动 10ms 后到达"的题设变成随机的
+    # MODEL_TTFT_TIMEOUT。clock/wait_for 是本运行时公开的确定性测试钩子
+    # （先例见 test_model_runtime.py 的 failover 超时测试）；deadline 数值、
+    # 事件序列与断言保持原语义。
+    clock_state = {"now": 0.0}
+
+    def fake_clock() -> float:
+        return clock_state["now"]
+
+    async def clocked_wait_for(awaitable, timeout: float):
+        # 以注入时钟执行 wait_for 的超时契约：awaitable 完成后若虚拟时间
+        # 已越过 deadline，等价于真实 wait_for 的 TimeoutError 路径。
+        started = clock_state["now"]
+        result = await awaitable
+        if clock_state["now"] - started > timeout:
+            raise asyncio.TimeoutError
+        return result
+
     class _ThinkingAdapter(_ClosingStreamingAdapter):
         def astream(self, request: ModelInvocationRequest):
             async def iterator():
                 for _ in range(4):
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0)
+                    clock_state["now"] += 0.01
                     yield ModelStreamEvent(
                         requestId=request.request_id, eventType="activity",
                         provider="fixture", model="fixture-model",
@@ -105,7 +126,13 @@ def test_private_provider_activity_keeps_stream_alive_until_public_json_arrives(
     adapter = _ThinkingAdapter()
     registry = ModelCompatibilityRegistry()
     registry.register(adapter)
-    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model")
+    runtime = RegisteredModelRuntime(
+        registry=registry,
+        provider="fixture",
+        model="fixture-model",
+        clock=fake_clock,
+        wait_for=clocked_wait_for,
+    )
 
     async def collect():
         return [event async for event in runtime.stream_generate_json(

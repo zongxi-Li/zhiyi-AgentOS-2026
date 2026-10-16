@@ -453,6 +453,7 @@ class ExecutionRuntime(CollaboratorAccess):
         self._run_cancel_guard = threading.Lock()
         self._run_cancel_events: dict[str, threading.Event] = {}
         self.planning_commit_authority = None
+        self.graph_materialization_authority = None
         if planning_commit_store is not None:
             self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
@@ -1124,6 +1125,19 @@ class ExecutionRuntime(CollaboratorAccess):
         """Explicitly attach an already-upgraded ledger; never run schema DDL."""
         from runtime.planning_commit import RuntimePlanningCommitAuthority
         self.planning_commit_authority = RuntimePlanningCommitAuthority(runtime=self, store=store)
+
+    def enable_graph_materialization(self, store) -> None:
+        """Explicit server assembly only; never initialize or migrate a database."""
+        from runtime.graph_materialization import GraphMaterializationAuthority
+        self.graph_materialization_authority = GraphMaterializationAuthority(self, store)
+
+    def materialize_graph_revision(self, commit_id, *, idempotency_key):
+        """Persist an inactive package; no graph activation or execution."""
+        if self.graph_materialization_authority is None:
+            from runtime.graph_materialization import rejected
+            from contracts.planning_commit import PlanningCommitRejectionCode
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "materialization authority unavailable")
+        return self.graph_materialization_authority.materialize(commit_id, idempotency_key=idempotency_key)
 
     def accept_graph_revision(self, run_id, source_commit_id, *, idempotency_key):
         """Explicit server-side acceptance; never materialize or apply a graph."""
