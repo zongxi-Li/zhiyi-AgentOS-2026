@@ -8,6 +8,9 @@ from contextlib import closing
 import sqlite3
 from contracts import stable_checksum
 from contracts.graph_activation import GraphActivationHead, GraphActivationRecord
+from contracts.graph_activation import activation_projection
+from contracts.graph_materialization import GraphMaterializationRecord
+from contracts.compiled_acg import load_compiled_acg_package
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
 
 TABLES = {
@@ -27,6 +30,88 @@ INDEXES = {
 
 def normalized(sql):
     return "".join(sql.lower().split())
+
+
+def validate_activation_run(conn, run):
+    """Validate the durable head chain using the caller's SQLite snapshot.
+
+    Ordinary writes call this inside BEGIN IMMEDIATE; reconciliation and the
+    execution gate use one read transaction. No registry, compiler or cache is
+    consulted. A missing legacy schema is compatible only without an activation
+    projection. Once a head exists, missing evidence is always an error.
+    """
+    def invalid():
+        raise ValueError("workflow run conflicts with the durable activation head")
+
+    try:
+        row = conn.execute("SELECT * FROM graph_activation_heads WHERE run_id=?", (run.run_id,)).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table: graph_activation_heads" not in str(exc):
+            raise
+        row = None
+    if row is None:
+        if "graphActivation" in run.execution_state:
+            invalid()
+        return None
+    try:
+        head = GraphActivationHead(runId=row["run_id"], missionId=row["mission_id"], graphId=row["graph_id"],
+                                   activeGraphVersion=row["active_graph_version"], activationId=row["activation_id"])
+        row = conn.execute("SELECT * FROM graph_activations WHERE activation_id=?", (head.activation_id,)).fetchone()
+        if row is None:
+            invalid()
+        record = SQLiteGraphActivationStore._decode_activation(row)
+        row = conn.execute("SELECT * FROM graph_materializations WHERE materialization_id=?",
+                           (record.materialization_id,)).fetchone()
+        if row is None:
+            invalid()
+        materialization = GraphMaterializationRecord.model_validate_json(row["payload"])
+        if (stable_checksum(materialization) != row["checksum"]
+                or materialization.materialization_id != row["materialization_id"]
+                or materialization.idempotency_key != row["idempotency_key"]
+                or materialization.source_commit_id != row["source_commit_id"]):
+            invalid()
+        if (record.status != "ACTIVATED_PAUSED"
+                or not (run.run_id == head.run_id == record.run_id == materialization.source_run_id)
+                or not (run.mission_id == head.mission_id == record.mission_id == materialization.mission_id)
+                or not (head.graph_id == record.graph_id == materialization.graph_id)
+                or not (head.active_graph_version == record.candidate_graph_version == materialization.candidate_graph_version)
+                or record.source_graph_version != materialization.source_graph_version
+                or record.source_commit_id != materialization.source_commit_id
+                or record.package_checksum != materialization.package_checksum
+                or record.commitment_fingerprint != materialization.commitment_fingerprint
+                or record.proof_fingerprint != materialization.proof_fingerprint):
+            invalid()
+        state, package = run.execution_state, materialization.package
+        if (stable_checksum(run.acg_blueprint) != package.blueprint_hash
+                or state.get("graphId") != head.graph_id
+                or type(state.get("graphVersion")) is not int
+                or state["graphVersion"] != head.active_graph_version
+                or load_compiled_acg_package(state.get("compiledACGPackage")) != package
+                or any(state.get(key) != value for key, value in {
+                    "compiledPackageId": package.package_id, "compiledPackageChecksum": package.checksum,
+                    "compiledPackageBlueprintHash": package.blueprint_hash,
+                    "compiledPackageVersion": package.package_version}.items())):
+            invalid()
+        # Pin the checkpoint to the already-persisted projection on ordinary
+        # writes. On the first v1->v2 write the old Run still owns its v1 head.
+        old = conn.execute("SELECT payload FROM runs WHERE run_id=?", (run.run_id,)).fetchone()
+        from contracts.workflow import RuntimeRunRecord
+        previous = RuntimeRunRecord.model_validate_json(old["payload"]) if old is not None else None
+        if previous is None:
+            invalid()
+        previous_projection = previous.execution_state.get("graphActivation")
+        checkpoint = (previous_projection.get("supersededCheckpointId")
+                      if isinstance(previous_projection, dict) and previous_projection.get("activationId") == record.activation_id
+                      else previous.execution_state.get("checkpointId"))
+        projection = state.get("graphActivation")
+        if (not isinstance(projection, dict)
+                or projection != activation_projection(record, superseded_checkpoint_id=checkpoint)
+                or type(projection.get("activeGraphVersion")) is not int
+                or type(projection.get("sourceGraphVersion")) is not int):
+            invalid()
+        return head
+    except (ValueError, TypeError, KeyError, sqlite3.Error) as exc:
+        raise ValueError("workflow run conflicts with the durable activation head") from exc
 
 
 class SQLiteGraphActivationStore(SQLiteGraphMaterializationStore):
@@ -65,6 +150,10 @@ class SQLiteGraphActivationStore(SQLiteGraphMaterializationStore):
             row = conn.execute(f"SELECT * FROM graph_activations WHERE {column}=?", (value,)).fetchone()
         if row is None:
             return None
+        return self._decode_activation(row)
+
+    @staticmethod
+    def _decode_activation(row):
         record = GraphActivationRecord.model_validate_json(row["payload"])
         if (stable_checksum(record) != row["checksum"] or record.activation_id != row["activation_id"]
                 or record.idempotency_key != row["idempotency_key"]

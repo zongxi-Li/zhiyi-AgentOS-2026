@@ -65,6 +65,9 @@ class GraphActivationAuthority:
         # source version of this exact Run, so a drifted blueprint or package is
         # reported as STALE_GRAPH before the expensive acceptance-chain rerun.
         run = _run_from_ledger(store, materialization.source_run_id)
+        with runtime._execution_slot_guard:
+            if run.run_id in runtime._active_execution_slots:
+                raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "execution slot occupies the activation cut")
         if run.mission_id != materialization.mission_id:
             raise GraphRevisionError(Code.STALE_GRAPH, "activation Run belongs to another Mission")
         blueprint = run.acg_blueprint or {}
@@ -209,7 +212,21 @@ class GraphActivationAuthority:
         source version, so the promotion may proceed. A receipt is returned for
         an already-committed activation; anything else is a hard reject.
         """
-        head = self.store.head(prepared.run_id)
+        # Replay is a read of a committed fact, not permission to execute. Keep
+        # head, checksummed journals and Run in the same SQLite snapshot.
+        from support.stores.graph_activation_store import validate_activation_run
+        with self.store.connection() as conn:
+            own_snapshot = not conn.in_transaction
+            if own_snapshot:
+                conn.execute("BEGIN")
+            try:
+                row = conn.execute("SELECT payload FROM runs WHERE run_id=?", (prepared.run_id,)).fetchone()
+                if row is None:
+                    raise ValueError("activation head source Run unavailable")
+                head = validate_activation_run(conn, RuntimeRunRecord.model_validate_json(row["payload"]))
+            finally:
+                if own_snapshot:
+                    conn.rollback()
         if head is None:
             return None
         if head.activation_id == prepared.activation_id:

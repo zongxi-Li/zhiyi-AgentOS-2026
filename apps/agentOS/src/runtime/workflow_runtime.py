@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from copy import deepcopy
 from datetime import datetime
 import json
@@ -1089,21 +1090,7 @@ class ExecutionRuntime(CollaboratorAccess):
             return run
         if run.execution_state.get("planningCommitRequired") and self.planning_commit_authority is None:
             return run
-        # 图激活栅栏：激活后的 GraphVersion 在获得显式执行许可前不得被任何
-        # 调度、审核续跑或恢复入口执行；同时拒绝持有激活前图版本快照的执行体。
-        latest = self.workflow_store.get_run(run.run_id)
-        activation = latest.execution_state.get("graphActivation")
-        if isinstance(activation, dict) and activation.get("executionPermit") is None:
-            raise ValueError(
-                f"graph {activation.get('activeGraphVersion')} of run {run.run_id} is "
-                "activated but paused; no execution permit has been issued"
-            )
-        if (isinstance(latest.acg_blueprint, dict) and isinstance(run.acg_blueprint, dict)
-                and latest.acg_blueprint.get("version") != run.acg_blueprint.get("version")):
-            raise ExecutionStateChanged("run graph version changed while the executor was starting")
-        frozen_task_acceptance(run)
-        if not self._claim_execution_slot(run.run_id):
-            raise ValueError(f"run {run.run_id} already has an active execution")
+        self._claim_acg_execution(run)
         while True:
             executed_run_id = run.run_id
             try:
@@ -1118,11 +1105,38 @@ class ExecutionRuntime(CollaboratorAccess):
                 run = result
             else:
                 return result
+            self._claim_acg_execution(run)
+            state = acg_execution_state_from_run(run)
+            command = None
+
+    def _claim_acg_execution(self, run: RuntimeRunRecord) -> None:
+        """Fence every initial/retry/successor execution before claiming a slot."""
+        # Serialize the durable execution fence and slot claim against activation.
+        # A head is authoritative even if its optional Run projection was lost.
+        with self.run_lock_manager.lock_for(run.run_id):
+            from support.stores.graph_activation_store import validate_activation_run
+            from support.stores.memory_workflow_store import MemoryWorkflowStore
+            if isinstance(self.workflow_store, MemoryWorkflowStore):
+                # This legacy backend has no durable activation capability. It
+                # cannot be used to resume an activation projection or authority.
+                latest = self.workflow_store.get_run(run.run_id)
+                if self.graph_activation_authority is not None or "graphActivation" in latest.execution_state:
+                    raise ValueError("durable activation evidence unavailable in the memory backend")
+            else:
+                with self.workflow_store._connect() as conn:
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("BEGIN")
+                    row = conn.execute("SELECT payload FROM runs WHERE run_id=?", (run.run_id,)).fetchone()
+                    latest = RuntimeRunRecord.model_validate_json(row["payload"])
+                    head = validate_activation_run(conn, latest)
+                    if head is not None:
+                        raise ValueError("activated but paused; no execution permit has been issued")
+            if (isinstance(latest.acg_blueprint, dict) and isinstance(run.acg_blueprint, dict)
+                    and latest.acg_blueprint.get("version") != run.acg_blueprint.get("version")):
+                raise ExecutionStateChanged("run graph version changed while the executor was starting")
             frozen_task_acceptance(run)
             if not self._claim_execution_slot(run.run_id):
                 raise ValueError(f"run {run.run_id} already has an active execution")
-            state = acg_execution_state_from_run(run)
-            command = None
 
     def _save_runtime_planning_round(self, run: RuntimeRunRecord) -> None:
         """Model calls run outside the lock; stale/cancelled decisions cannot commit."""

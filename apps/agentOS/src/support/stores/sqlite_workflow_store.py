@@ -386,27 +386,8 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
     @staticmethod
     def _upsert_run(conn: sqlite3.Connection, run: RuntimeRunRecord) -> bool:
         conn.row_factory = sqlite3.Row
-        # 激活头防线：一旦 Run 拥有正式激活的图版本头，任何普通快照都不得再
-        # 持久化其它 graphId/version 组合——持有激活前蓝图的旧执行线程写回时
-        # 在同一事务内被拒绝，防止旧图版本覆盖已激活版本。表尚未升级的既有
-        # 库保持 S03-02A 之前的行为，不设限。
-        try:
-            head = conn.execute(
-                "SELECT graph_id, active_graph_version FROM graph_activation_heads WHERE run_id = ?",
-                (run.run_id,),
-            ).fetchone()
-        except sqlite3.OperationalError as exc:
-            if "no such table" not in str(exc):
-                raise
-            head = None
-        if head is not None:
-            graph = run.acg_blueprint or {}
-            if (str(graph.get("graphId")) != str(head["graph_id"])
-                    or int(graph.get("version") or 0) != int(head["active_graph_version"])):
-                raise ValueError(
-                    "workflow run graph identity conflicts with the durable activation head: "
-                    f"{run.run_id}"
-                )
+        from support.stores.graph_activation_store import validate_activation_run
+        validate_activation_run(conn, run)
         task_row = conn.execute(
             "SELECT 1 FROM tasks WHERE mission_id = ?", (run.mission_id,)
         ).fetchone()
