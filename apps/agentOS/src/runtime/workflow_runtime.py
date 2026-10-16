@@ -454,6 +454,7 @@ class ExecutionRuntime(CollaboratorAccess):
         self._run_cancel_events: dict[str, threading.Event] = {}
         self.planning_commit_authority = None
         self.graph_materialization_authority = None
+        self.graph_activation_authority = None
         if planning_commit_store is not None:
             self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
@@ -1088,6 +1089,18 @@ class ExecutionRuntime(CollaboratorAccess):
             return run
         if run.execution_state.get("planningCommitRequired") and self.planning_commit_authority is None:
             return run
+        # 图激活栅栏：激活后的 GraphVersion 在获得显式执行许可前不得被任何
+        # 调度、审核续跑或恢复入口执行；同时拒绝持有激活前图版本快照的执行体。
+        latest = self.workflow_store.get_run(run.run_id)
+        activation = latest.execution_state.get("graphActivation")
+        if isinstance(activation, dict) and activation.get("executionPermit") is None:
+            raise ValueError(
+                f"graph {activation.get('activeGraphVersion')} of run {run.run_id} is "
+                "activated but paused; no execution permit has been issued"
+            )
+        if (isinstance(latest.acg_blueprint, dict) and isinstance(run.acg_blueprint, dict)
+                and latest.acg_blueprint.get("version") != run.acg_blueprint.get("version")):
+            raise ExecutionStateChanged("run graph version changed while the executor was starting")
         frozen_task_acceptance(run)
         if not self._claim_execution_slot(run.run_id):
             raise ValueError(f"run {run.run_id} already has an active execution")
@@ -1130,6 +1143,31 @@ class ExecutionRuntime(CollaboratorAccess):
         """Explicit server assembly only; never initialize or migrate a database."""
         from runtime.graph_materialization import GraphMaterializationAuthority
         self.graph_materialization_authority = GraphMaterializationAuthority(self, store)
+
+    def enable_graph_activation(self, store) -> None:
+        """Explicit server assembly only; never initialize or migrate a database."""
+        from runtime.graph_activation import GraphActivationAuthority
+        self.graph_activation_authority = GraphActivationAuthority(self, store)
+
+    def prepare_graph_activation(self, materialization_id, *, idempotency_key):
+        """Persist one verified activation preparation; never switch the graph."""
+        if self.graph_activation_authority is None:
+            from runtime.graph_activation import rejected
+            from contracts.planning_commit import PlanningCommitRejectionCode
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "graph activation authority unavailable")
+        return self.graph_activation_authority.prepare(materialization_id, idempotency_key=idempotency_key)
+
+    def commit_graph_activation(self, materialization_id, *, idempotency_key):
+        """Atomically switch the formal GraphVersion head and Run projection.
+
+        The activated graph stays paused: no execution permit is issued here
+        and every scheduling entry point keeps refusing the Run.
+        """
+        if self.graph_activation_authority is None:
+            from runtime.graph_activation import rejected
+            from contracts.planning_commit import PlanningCommitRejectionCode
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "graph activation authority unavailable")
+        return self.graph_activation_authority.commit(materialization_id, idempotency_key=idempotency_key)
 
     def materialize_graph_revision(self, commit_id, *, idempotency_key):
         """Persist an inactive package; no graph activation or execution."""
