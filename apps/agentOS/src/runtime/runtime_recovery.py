@@ -212,6 +212,18 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
 
         closed: list[str] = []
         for run in self.workflow_store.list_non_terminal_runs(limit=limit):
+            if "graphActivation" in run.execution_state:
+                # A durable pause is an intentional handoff boundary, not an
+                # orphan executor or a v1 planning round to restart. Validate
+                # its evidence even when this Runtime has no activation authority.
+                import sqlite3
+                from support.stores.graph_activation_store import validate_activation_run
+                with self.workflow_store._connect() as conn:
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("BEGIN")
+                    if validate_activation_run(conn, run) is None:
+                        raise ValueError("activation recovery evidence unavailable")
+                continue
             if run.status == WorkflowStatus.WAITING_REVIEW:
                 if self._normalize_waiting_review_after_restart(run):
                     run.updated_at = utc_now()

@@ -103,6 +103,8 @@ class IdentityProjectionReconciler:
             try:
                 task = workflow_store.get_mission(run.mission_id)
                 if self.adapter.repositories.runs.get(run.run_id) is None:
+                    if "graphActivation" in run.execution_state:
+                        raise ValueError("activation requires its existing source Identity Run")
                     raw_plan = run.execution_state.get("taskPlan")
                     raw_bindings = run.execution_state.get("taskBindings")
                     if (
@@ -273,6 +275,23 @@ class IdentityProjectionReconciler:
                     raw_bindings = runtime_run.execution_state.get("taskBindings")
                     if not isinstance(runtime_run.acg_blueprint, dict) or not isinstance(raw_plan, dict) or not isinstance(raw_bindings, list):
                         raise ValueError("execution run snapshot lacks Planner identity data")
+                    projection = dict(payload.get("executionState") or {})
+                    if "graphActivation" in runtime_run.execution_state:
+                        # A paused formal graph has not performed the Identity
+                        # execution handoff. Reconcile lifecycle only; never
+                        # replace the immutable v1 package identity implicitly.
+                        from support.stores.graph_activation_store import validate_activation_run
+                        with workflow_store._connect() as conn:
+                            import sqlite3
+                            conn.row_factory = sqlite3.Row
+                            conn.execute("BEGIN")
+                            if validate_activation_run(conn, runtime_run) is None:
+                                raise ValueError("activation lifecycle evidence unavailable")
+                        if missing_before:
+                            raise ValueError("activation requires its existing source Identity Run")
+                        for key in ("compiledPackageId", "compiledPackageChecksum",
+                                    "compiledPackageVersion", "compiledPackageBlueprintHash"):
+                            projection.pop(key, None)
                     if missing_before:
                         self.adapter.on_run_prepared(
                             task,
@@ -283,7 +302,7 @@ class IdentityProjectionReconciler:
                         )
                     self.adapter.on_run_snapshot(
                         runtime_run.run_id,
-                        dict(payload.get("executionState") or {}),
+                        projection,
                     )
                     status = str(getattr(runtime_run.status, "value", runtime_run.status))
                     if event["event_type"] == "run.superseded":

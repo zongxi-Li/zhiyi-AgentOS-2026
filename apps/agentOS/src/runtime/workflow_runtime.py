@@ -450,6 +450,7 @@ class ExecutionRuntime(CollaboratorAccess):
         # 原子认领执行槽，重复入口立即失败，而不是对同一批未提交步骤双跑。
         self._execution_slot_guard = threading.Lock()
         self._active_execution_slots: set[str] = set()
+        self._execution_fences = {}
         # 协作式取消信号：cancel() 写入，_execute_acg 的调度边界读取并清理。
         self._run_cancel_guard = threading.Lock()
         self._run_cancel_events: dict[str, threading.Event] = {}
@@ -1113,7 +1114,9 @@ class ExecutionRuntime(CollaboratorAccess):
         """Fence every initial/retry/successor execution before claiming a slot."""
         # Serialize the durable execution fence and slot claim against activation.
         # A head is authoritative even if its optional Run projection was lost.
-        with self.run_lock_manager.lock_for(run.run_id):
+        from contextlib import ExitStack
+        from support.run_execution_fence import acquire_run_fence
+        with self.run_lock_manager.lock_for(run.run_id), ExitStack() as lifetime:
             from support.stores.graph_activation_store import validate_activation_run
             from support.stores.memory_workflow_store import MemoryWorkflowStore
             if isinstance(self.workflow_store, MemoryWorkflowStore):
@@ -1123,6 +1126,10 @@ class ExecutionRuntime(CollaboratorAccess):
                 if self.graph_activation_authority is not None or "graphActivation" in latest.execution_state:
                     raise ValueError("durable activation evidence unavailable in the memory backend")
             else:
+                # Hold the same OS fence as activation BEFORE reading the Head,
+                # and retain it through the full executor lifetime. A snapshot
+                # write rejection after an external call is too late a fence.
+                lifetime.enter_context(acquire_run_fence(self.workflow_store.db_path, run.run_id))
                 with self.workflow_store._connect() as conn:
                     conn.row_factory = sqlite3.Row
                     conn.execute("BEGIN")
@@ -1137,6 +1144,8 @@ class ExecutionRuntime(CollaboratorAccess):
             frozen_task_acceptance(run)
             if not self._claim_execution_slot(run.run_id):
                 raise ValueError(f"run {run.run_id} already has an active execution")
+            with self._execution_slot_guard:
+                self._execution_fences[run.run_id] = lifetime.pop_all()
 
     def _save_runtime_planning_round(self, run: RuntimeRunRecord) -> None:
         """Model calls run outside the lock; stale/cancelled decisions cannot commit."""
@@ -1829,6 +1838,9 @@ class ExecutionRuntime(CollaboratorAccess):
     def _release_execution_slot(self, run_id: str) -> None:
         with self._execution_slot_guard:
             self._active_execution_slots.discard(run_id)
+            fence = self._execution_fences.pop(run_id, None)
+        if fence is not None:
+            fence.close()
 
     def _signal_run_cancellation(self, run_id: str) -> None:
         """写入协作式取消信号；执行侧在下一次调度边界感知并停止推进。"""

@@ -52,6 +52,13 @@ def validate_activation_run(conn, run):
     if row is None:
         if "graphActivation" in run.execution_state:
             invalid()
+        # A stale pre-activation snapshot must not erase the last durable
+        # marker when a previously installed Head/schema has been lost.
+        previous = conn.execute("SELECT payload FROM runs WHERE run_id=?", (run.run_id,)).fetchone()
+        if previous is not None:
+            from contracts.workflow import RuntimeRunRecord
+            if "graphActivation" in RuntimeRunRecord.model_validate_json(previous["payload"]).execution_state:
+                invalid()
         return None
     try:
         head = GraphActivationHead(runId=row["run_id"], missionId=row["mission_id"], graphId=row["graph_id"],
@@ -100,6 +107,23 @@ def validate_activation_run(conn, run):
         if previous is None:
             invalid()
         previous_projection = previous.execution_state.get("graphActivation")
+        if isinstance(previous_projection, dict) and previous_projection.get("activationId") == record.activation_id:
+            # ACTIVATED_PAUSED cannot produce execution or planning facts. Keep
+            # the accepted semantic projections and every execution channel pinned
+            # to the last durable Run, while allowing lifecycle/diagnostic/input
+            # updates (including cancellation). A future permit transition needs
+            # its own authority; ordinary save_run must not perform that handoff.
+            if (run.execution_state != previous.execution_state
+                    or run.steps != previous.steps
+                    or run.execution_scope != previous.execution_scope
+                    or run.workflow_id != previous.workflow_id
+                    or run.domain != previous.domain
+                    or run.runtime_engine != previous.runtime_engine
+                    or run.completed_step_ids != previous.completed_step_ids
+                    or run.active_step_ids != previous.active_step_ids
+                    or run.current_step_id != previous.current_step_id
+                    or (run.status.value in {"completed", "superseded"} and run.status != previous.status)):
+                invalid()
         checkpoint = (previous_projection.get("supersededCheckpointId")
                       if isinstance(previous_projection, dict) and previous_projection.get("activationId") == record.activation_id
                       else previous.execution_state.get("checkpointId"))

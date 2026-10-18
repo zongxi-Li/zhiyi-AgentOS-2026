@@ -26,10 +26,13 @@ from contracts.graph_activation import (
 )
 from contracts.graph_revision import Ref
 from contracts.planning_commit import PlanningCommitRejectionCode as Code
-from contracts.workflow import RuntimeRunRecord, utc_now
+from contracts.workflow import RuntimeRunRecord, WorkflowStatus, utc_now
+from contracts.execution import WorkflowProgressPhase
 from runtime.graph_revision import GraphRevisionError
 from runtime.semantic_revision import SemanticRevisionService
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+from support.stores.planning_commit_store import content_fingerprint
+from support.run_execution_fence import acquire_run_fence, RunFenceBusy
 
 
 def rejected(code, reason):
@@ -80,10 +83,16 @@ class GraphActivationAuthority:
         source_package = load_compiled_acg_package(persisted_package)
         if source_package.blueprint_version != materialization.source_graph_version:
             raise GraphRevisionError(Code.STALE_GRAPH, "Run package is not the activation source version")
+        receipts = runtime.execution_value_store.list_node_commits(run_id=run.run_id)
         graph, caller = runtime.graph_materialization_authority._validate(
             materialization.source_commit_id, expected=expected, principal=principal)
+        if any(receipt.get("stage") != "committed" for receipt in receipts):
+            raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "unsettled work receipts cannot prove an activation cut")
         proposal = graph.proposal_payload
-        if (proposal.candidate_graph.version != materialization.candidate_graph_version
+        if (materialization.commitment_fingerprint != content_fingerprint(graph)
+                or materialization.proof_fingerprint != content_fingerprint(proposal.safe_cut)
+                or materialization.sources != graph.sources
+                or proposal.candidate_graph.version != materialization.candidate_graph_version
                 or proposal.candidate_graph.graph_id != materialization.graph_id
                 or materialization.package.blueprint_hash != stable_checksum(
                     proposal.candidate_graph.model_dump(mode="json", by_alias=True))):
@@ -125,7 +134,8 @@ class GraphActivationAuthority:
             materialization = self.store.get_materialization(materialization_id)
             if materialization is None:
                 return rejected(Code.INVALID_PROPOSAL, "durable inactive materialization required")
-            with self.runtime.run_lock_manager.lock_for(materialization.source_run_id):
+            with self.runtime.run_lock_manager.lock_for(materialization.source_run_id), acquire_run_fence(
+                    self.store.db_path, materialization.source_run_id):
                 graph, _, principal = self._verify(materialization)
                 prepared = self._competition(key, materialization)
                 if prepared is not None:
@@ -157,6 +167,8 @@ class GraphActivationAuthority:
                                            activeGraphVersion=record.candidate_graph_version)
         except GraphRevisionError as exc:
             return rejected(exc.code, exc.reason)
+        except RunFenceBusy:
+            return rejected(Code.CONTROL_BARRIER_BLOCKED, "execution or activation occupies the cut")
         except (ValueError, KeyError, TypeError):
             return rejected(Code.INVALID_PROPOSAL, "invalid activation evidence")
         except (sqlite3.Error, RuntimeError):
@@ -174,7 +186,8 @@ class GraphActivationAuthority:
                 return rejected(Code.INVALID_PROPOSAL, "durable activation preparation required first")
             if prepared.idempotency_key != key:
                 return rejected(Code.DUPLICATE_CONFLICT, "activation key does not match the prepared fact")
-            with self.runtime.run_lock_manager.lock_for(materialization.source_run_id):
+            with self.runtime.run_lock_manager.lock_for(materialization.source_run_id), acquire_run_fence(
+                    self.store.db_path, materialization.source_run_id):
                 # Reconciliation first: once this activation owns the formal head,
                 # the Run projection legitimately holds the candidate version, so
                 # full source verification would (correctly) refuse. Replaying the
@@ -200,6 +213,8 @@ class GraphActivationAuthority:
                                            activeGraphVersion=prepared.candidate_graph_version)
         except GraphRevisionError as exc:
             return rejected(exc.code, exc.reason)
+        except RunFenceBusy:
+            return rejected(Code.CONTROL_BARRIER_BLOCKED, "execution or activation occupies the cut")
         except (ValueError, KeyError, TypeError):
             return rejected(Code.INVALID_PROPOSAL, "invalid activation evidence")
         except (sqlite3.Error, RuntimeError):
@@ -267,6 +282,14 @@ class GraphActivationAuthority:
                 prepared, superseded_checkpoint_id=activated.execution_state.get("checkpointId")),
         })
         activated.active_step_ids = []
+        if activated.status == WorkflowStatus.WAITING_REVIEW:
+            # The acknowledged v1 planner barrier has been superseded together
+            # with its checkpoint. Retain its history, but do not represent the
+            # v2 pause as a resumable v1 review. The durable Head still denies
+            # all execution until a separately verified permit handoff exists.
+            activated.status = self.runtime.state_machine.transition(activated.status, WorkflowStatus.RETRYING)
+            activated.lifecycle_phase = WorkflowProgressPhase.RECOVERY
+            activated.lifecycle_message = "Graph activated; awaiting verified execution handoff."
         activated.runtime_revision += 1
         activated.updated_at = utc_now()
         self.runtime._sync_run_steps_to_acg(activated, blueprint)
