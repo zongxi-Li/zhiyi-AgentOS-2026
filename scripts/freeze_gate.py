@@ -33,6 +33,9 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("apps/agent/app/api/agentos_v2.py", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py")),
+    ("src/examples/", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py", "tests/runtime/v2/test_workspace_projection.py")),
+    ("src/runtime/planning_loop.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
     ("src/adapters/agent_invocation.py", ("tests/components/planner/test_permit_recovery.py",)),
     ("src/runtime/permit_recovery.py", ("tests/components/planner/test_permit_recovery.py",)),
     ("src/runtime/graph_handoff.py", ("tests/components/planner/test_execution_permit.py",)),
@@ -59,6 +62,12 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/contracts/graph_handoff.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
 )
+
+EXTERNAL_SOURCES = ("apps/agent/app/api/agentos_v2.py",)
+
+
+def external_snapshot() -> dict[str, str]:
+    return {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in EXTERNAL_SOURCES}
 
 
 def utc_now() -> str:
@@ -113,7 +122,7 @@ def resolve_tests(changed_paths: list[str]) -> tuple[list[str], list[str]]:
     changed_sources = [
         path.removeprefix("apps/agentOS/")
         for path in changed_paths
-        if path.startswith("apps/agentOS/src/") and path.endswith(".py")
+        if (path.startswith("apps/agentOS/src/") or path in EXTERNAL_SOURCES) and path.endswith(".py")
     ]
     changed_tests = [
         path.removeprefix("apps/agentOS/")
@@ -228,7 +237,12 @@ def main() -> int:
     started = utc_now()
     wall_start = time.perf_counter()
     before = source_snapshot()
+    external_before = external_snapshot()
     changed, baseline_name = changed_python_paths(before, baseline_path)
+    external_changed = subprocess.check_output(
+        ["git", "diff", "--name-only", "HEAD", "--", *EXTERNAL_SOURCES], cwd=ROOT, text=True,
+    ).splitlines()
+    changed = sorted(set(changed + external_changed))
     selected, uncovered = resolve_tests(changed)
     missing = [path for path in selected if not (AGENTOS / path).is_file()]
     check_code, check_output = check_diff_whitespace()
@@ -240,6 +254,7 @@ def main() -> int:
         "baseline": baseline_name,
         "source_aggregate_sha256": before["aggregate"],
         "source_file_count": len(before["files"]),  # type: ignore[arg-type]
+        "external_source_sha256": external_before,
         "changed_agentos_python_files": changed,
         "selected_test_paths": selected,
         "uncovered_source_paths": uncovered,
@@ -340,6 +355,9 @@ def main() -> int:
     report["status"] = "INCOMPLETE_TIMEOUT" if timed_out else ("PASSED" if process and process.returncode == 0 else "FAILED")
     report["pytest_exit_code"] = process.returncode if process else None
     report["timed_out"] = timed_out
+    if source_snapshot()["aggregate"] != before["aggregate"] or external_snapshot() != external_before:
+        report["status"] = "INCOMPLETE_SOURCE_CHANGED"
+        return write_report(report, wall_start, 1, report_path)
     return write_report(report, wall_start, 0 if process and process.returncode == 0 and not timed_out else 1, report_path)
 
 

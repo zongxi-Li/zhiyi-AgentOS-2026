@@ -741,6 +741,36 @@ def create_router(
             raise HTTPException(status_code=404, detail="run not found")
         return run
 
+    def require_current_mission_read(mission_id: str, *, required: bool = False):
+        """Use the formal authority on every read; never cache a grant here."""
+        service = getattr(runtime, "mission_semantic_service", None)
+        if service is None:
+            if required:
+                raise HTTPException(status_code=503, detail="mission semantic source unavailable")
+            return None  # Existing, non-semantic legacy hosts retain their contract.
+        principal = current_semantic_principal()
+        if principal is None:
+            raise HTTPException(status_code=403, detail="trusted semantic principal is required")
+        try:
+            snapshot = service.get_effective_snapshot(principal, mission_id)
+            mission = runtime.workflow_store.get_mission(mission_id)
+            if mission.record_state is MissionRecordState.DELETED:
+                raise HTTPException(status_code=404, detail="mission not found")
+            return snapshot, mission
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mission not found") from exc
+        except (ValueError, RuntimeError, SQLiteError, AttributeError, TypeError) as exc:
+            raise HTTPException(status_code=503, detail="mission semantic source unavailable") from exc
+
+    def load_content_run(run_id: str) -> RuntimeRunRecord:
+        run = load_run(run_id, readonly=True)
+        require_current_mission_read(
+            run.mission_id, required="missionIntentBasis" in run.execution_state,
+        )
+        return run
+
     def project(run: RuntimeRunRecord) -> dict[str, Any]:
         try:
             title = runtime.workflow_store.get_mission(run.mission_id).title
@@ -767,7 +797,7 @@ def create_router(
         if manifest.owner_type == "user" and actor is not None and manifest.owner_id != actor.user_id:
             raise HTTPException(status_code=404, detail="content manifest not found")
         if manifest.owner_type == "run":
-            load_run(manifest.owner_id, readonly=True)
+            load_content_run(manifest.owner_id)
         return manifest
 
     def project_identity_artifact(detail: Any) -> dict[str, Any]:
@@ -779,6 +809,9 @@ def create_router(
             raise HTTPException(status_code=404, detail="artifact content not found") from exc
         if manifest.kind is not ContentKind.ARTIFACT or not manifest.sealed:
             raise HTTPException(status_code=404, detail="artifact content not found")
+        if manifest.owner_type != "run" or manifest.owner_id != artifact.origin_run_id:
+            raise HTTPException(status_code=404, detail="artifact content not found")
+        load_content_run(manifest.owner_id)
         return {
             **manifest.model_dump(by_alias=True, mode="json"),
             **artifact.model_dump(by_alias=True, mode="json"),
@@ -1554,23 +1587,12 @@ def create_router(
         mission_id: str,
         run_id: str | None = Query(default=None, alias="runId"),
     ):
-        semantic_service = getattr(runtime, "mission_semantic_service", None)
         semantic_view = None
-        if semantic_service is not None:
-            from components.mission_manager.semantic_resolver import MissionSemanticResolver
-            principal = current_semantic_principal()
-            if principal is None:
-                raise HTTPException(status_code=403, detail="trusted semantic principal is required")
+        semantic_read = require_current_mission_read(mission_id)
+        if semantic_read is not None:
+            snapshot, semantic_record = semantic_read
             try:
-                snapshot = semantic_service.get_effective_snapshot(principal, mission_id)
                 semantic_view = MissionSemanticResolver.resolve(snapshot)
-                semantic_record = runtime.workflow_store.get_mission(mission_id)
-                if semantic_record.record_state is MissionRecordState.DELETED:
-                    raise HTTPException(status_code=404, detail="mission not found")
-            except PermissionError as exc:
-                raise HTTPException(status_code=403, detail="semantic access denied") from exc
-            except KeyError as exc:
-                raise HTTPException(status_code=404, detail="mission not found") from exc
             except (ValueError, RuntimeError) as exc:
                 raise HTTPException(status_code=503, detail="mission semantic source unavailable") from exc
         mission_detail = require_mission_access(mission_id)
@@ -2562,20 +2584,18 @@ def create_router(
 
     @router.get("/runs/{run_id}/outputs/{output_ref}")
     async def get_output(run_id: str, output_ref: str):
-        # The output body already enforces both the owning run and the value kind.
-        # Prefer the compact V2 identity projection for access control so reading a
-        # small node result does not deserialize the complete Runtime Run snapshot
-        # (which can contain tens of thousands of trace events).  Keep the Runtime
-        # fallback for pre-identity/legacy runs and preserve its current-ref check.
+        # An output may contain the same artifact body. Recheck the Workflow
+        # record through the read-only cache: a lagging Identity projection must
+        # not hide deletion or downgrade a frozen Mission's read authority.
+        run = load_content_run(run_id)
         identity_run = (
             identity_repositories.runs.get(run_id)
             if identity_repositories is not None
             else None
         )
         if identity_run is not None:
-            require_mission_owner_access(identity_run.mission_id)
+            require_run_access(run_id)
         else:
-            run = load_run(run_id)
             allowed = set((_state(run).get("outputRefs") or {}).values())
             if output_ref not in allowed:
                 raise HTTPException(status_code=404, detail="output not found")
@@ -2623,7 +2643,7 @@ def create_router(
 
     @router.get("/runs/{run_id}/artifacts")
     async def list_artifacts(run_id: str):
-        load_run(run_id)
+        load_content_run(run_id)
         if identity_repositories is not None:
             identity_run = identity_repositories.runs.get(run_id)
             if identity_run is not None:
@@ -2642,7 +2662,7 @@ def create_router(
 
     @router.get("/runs/{run_id}/artifacts/{manifest_id}")
     async def get_artifact(run_id: str, manifest_id: str):
-        load_run(run_id, readonly=True)
+        load_content_run(run_id)
         if identity_repositories is not None:
             identity_run = identity_repositories.runs.get(run_id)
             if identity_run is not None:
@@ -2664,7 +2684,7 @@ def create_router(
         manifest = await get_artifact(run_id, manifest_id)
         try:
             page, next_cursor = runtime.content_manifest_store.read_page(
-                manifest_id, cursor=cursor, page_size=page_size
+                manifest["manifestId"], cursor=cursor, page_size=page_size
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2794,7 +2814,7 @@ def create_router(
 
         manifest = await get_artifact(run_id, manifest_id)
         return StreamingResponse(
-            runtime.content_manifest_store.stream_assembly(manifest_id),
+            runtime.content_manifest_store.stream_assembly(manifest["manifestId"]),
             media_type=manifest["mediaType"],
             headers={"Content-Disposition": f'attachment; filename="{manifest_id}.md"'},
         )
