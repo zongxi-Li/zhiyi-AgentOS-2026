@@ -16,6 +16,7 @@ import threading
 from time import monotonic
 from typing import Any
 
+from contracts import stable_checksum
 from contracts.identity import new_attempt_id, new_step_execution_id
 from contracts.artifacts import is_final_synthesis_role
 from support.acg.schema import RuntimeBlueprintSpec
@@ -72,6 +73,7 @@ from adapters.tool_adapter import configured_tool_runtime
 from support.stores._policy import acg_review_subject
 from runtime.execution_migration import ExecutionEngineMigratingError
 from runtime.ports import CollaboratorAccess, RuntimeCollaborators
+from runtime.binding import execution_requirements_for, requirements_match_manifest
 from runtime.state_persistence import ACGStatePersistenceService
 from contracts.runtime_events import TRANSIENT_RUNTIME_EVENT_TYPES
 
@@ -539,6 +541,22 @@ class ACGExecutionService(CollaboratorAccess):
     def _ready_node_runner(self, *, run: RuntimeRunRecord, runner: ACGNodeRunner):
         """Decorate NodeRunner after Executor readiness with binding and lease coordination."""
         raw_requirements = run.execution_state.get("bindingRequirements")
+        if "graphActivation" in run.execution_state:
+            # The activated package, not a mutable Run dictionary, is the
+            # source of execution eligibility. Require the persisted projection
+            # to match it exactly so ordinary Run writes cannot lower policy.
+            from contracts.compiled_acg import load_compiled_acg_package
+            raw_package = run.execution_state.get("compiledACGPackage")
+            if not isinstance(raw_package, dict):
+                raise ValueError("activated Run has no compiled binding package")
+            package = load_compiled_acg_package(raw_package)
+            workflow = self._load_workflow(run)
+            expected = execution_requirements_for(
+                package.binding_manifest, (step.step_id for step in run.steps),
+                domain=run.domain or workflow.domain,
+            )
+            if not requirements_match_manifest(raw_requirements, expected):
+                raise ValueError("activated Run binding requirements differ from its compiled package")
         if not isinstance(raw_requirements, dict):
             return runner
         # A recreated Runtime resumes an already-prepared run without repeating
@@ -554,6 +572,14 @@ class ACGExecutionService(CollaboratorAccess):
                 raise ExecutionRunCancelled(
                     f"run {run.run_id} cancelled before scheduling step {step_id}"
                 )
+            permit_authority = self.execution_permit_authority
+            if "graphActivation" in run.execution_state:
+                if permit_authority is None:
+                    raise ExecutionRunCancelled("execution permit authority unavailable")
+                try:
+                    permit_authority.assert_dispatchable(run)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise ExecutionRunCancelled("execution permit or authorization is stale") from exc
             payload = raw_requirements.get(step_id)
             if not isinstance(payload, dict):
                 raise ValueError(f"READY step has no binding requirement: {step_id}")
@@ -564,11 +590,22 @@ class ACGExecutionService(CollaboratorAccess):
             loop_key = ".".join(str(item) for item in loop_path) or "root"
             attempts = run.execution_state.setdefault("attemptIds", {})
             attempt_key = f"{step_id}:{attempt_number}:{loop_key}"
-            attempt_id = str(attempts.setdefault(
-                attempt_key,
-                new_attempt_id() if self.identity_lifecycle is not None
-                else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
-            ))
+            if state.execution_generation:
+                expected_attempt_id = "attempt_" + stable_checksum({
+                    "generation": state.execution_generation, "run": run.run_id,
+                    "step": step_id, "attempt": attempt_number, "loop": loop_key,
+                })[:12]
+                previous_attempt_id = attempts.get(attempt_key)
+                if previous_attempt_id is not None and previous_attempt_id != expected_attempt_id:
+                    raise ValueError("stored Attempt identity belongs to another execution generation")
+                attempts[attempt_key] = expected_attempt_id
+                attempt_id = expected_attempt_id
+            else:
+                attempt_id = str(attempts.setdefault(
+                    attempt_key,
+                    new_attempt_id() if self.identity_lifecycle is not None
+                    else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
+                ))
             allocation_deadline = monotonic() + self.scheduler_wait_timeout
             retry_delay = 0.05
             while True:
@@ -618,6 +655,12 @@ class ACGExecutionService(CollaboratorAccess):
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(1.0, retry_delay * 2)
             assert decision.binding is not None and decision.lease is not None
+            if permit_authority is not None and "graphActivation" in run.execution_state:
+                try:
+                    permit_authority.assert_dispatchable(run)
+                except (ValueError, KeyError, TypeError) as exc:
+                    self.resource_binder.release(decision.lease.lease_id)
+                    raise ExecutionRunCancelled("execution permit changed after resource allocation") from exc
             binding = decision.binding
             selected_resource_id = binding.resource_id
             remote_adapter = self._remote_runtime_adapter(selected_resource_id)
@@ -708,6 +751,11 @@ class ACGExecutionService(CollaboratorAccess):
             self.workflow_store.save_run_with_events(run, base_events)
             self._flush_identity_outbox()
             try:
+                if permit_authority is not None and "graphActivation" in run.execution_state:
+                    try:
+                        permit_authority.assert_dispatchable(run)
+                    except (ValueError, KeyError, TypeError) as exc:
+                        raise ExecutionRunCancelled("execution permit changed before node dispatch") from exc
                 execution_started = monotonic()
                 result = await runner(step_id, state)
                 execution_outcome = "completed"
@@ -905,6 +953,14 @@ class ACGExecutionService(CollaboratorAccess):
             raise ValueError(
                 f"checkpoint graphVersion {state.graph_version} does not match blueprint version {blueprint.version}"
             )
+        permit_projection = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
+        if isinstance(permit_projection, dict):
+            if (state.execution_permit_id != run.execution_state.get("executionPermitId")
+                    or state.execution_generation != run.execution_state.get("executionGeneration")
+                    or state.checkpoint_id != run.execution_state.get("checkpointId")):
+                raise ValueError("checkpoint permit, generation or recovery identity does not match Run")
+        elif state.execution_permit_id is not None or state.execution_generation is not None:
+            raise ValueError("checkpoint has an execution generation without a durable permit")
         source_blueprint_version = run.execution_state.get("sourceBlueprintVersion")
         if source_blueprint_version is not None and int(blueprint.version) != int(source_blueprint_version):
             raise ValueError(

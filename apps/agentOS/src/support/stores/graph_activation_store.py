@@ -11,7 +11,10 @@ from contracts.graph_activation import GraphActivationHead, GraphActivationRecor
 from contracts.graph_activation import activation_projection
 from contracts.graph_materialization import GraphMaterializationRecord
 from contracts.compiled_acg import load_compiled_acg_package
+from contracts.execution_permit import ExecutionPermitRecord, execution_permit_projection
+from contracts.graph_handoff import GraphHandoffRecord
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
+from support.stores.planning_commit_store import content_fingerprint
 
 TABLES = {
     "graph_activations": """CREATE TABLE graph_activations(
@@ -30,6 +33,45 @@ INDEXES = {
 
 def normalized(sql):
     return "".join(sql.lower().split())
+
+
+def _issued_permit(conn, projection, activation, materialization):
+    """Load and cross-check the immutable permit chain in the caller snapshot."""
+    if not isinstance(projection, dict) or not isinstance(projection.get("permitId"), str):
+        raise ValueError("execution permit projection is malformed")
+    try:
+        row = conn.execute("SELECT * FROM graph_execution_permits WHERE permit_id=?",
+                           (projection["permitId"],)).fetchone()
+        if row is None:
+            raise ValueError("execution permit record is missing")
+        permit = ExecutionPermitRecord.model_validate_json(row["payload"])
+        if (permit.permit_id != row["permit_id"] or permit.idempotency_key != row["idempotency_key"]
+                or permit.handoff_id != row["handoff_id"] or permit.activation_id != row["activation_id"]
+                or permit.run_id != row["run_id"] or permit.status != row["status"]
+                or stable_checksum(permit) != row["checksum"]):
+            raise ValueError("execution permit row index or checksum mismatch")
+        handoff_row = conn.execute("SELECT * FROM graph_handoffs WHERE handoff_id=?", (permit.handoff_id,)).fetchone()
+        if handoff_row is None:
+            raise ValueError("permit handoff record is missing")
+        handoff = GraphHandoffRecord.model_validate_json(handoff_row["payload"])
+        if (stable_checksum(handoff) != handoff_row["checksum"] or handoff.status != "STATE_PREPARED"
+                or handoff.handoff_id != permit.handoff_id or handoff.activation_id != permit.activation_id
+                or handoff.run_id != permit.run_id or content_fingerprint(handoff) != permit.handoff_fingerprint
+                or stable_checksum(handoff.candidate) != handoff.candidate_fingerprint
+                or handoff.candidate.checkpoint_id != permit.staged_checkpoint_id
+                or handoff.candidate.package_checksum != permit.package_checksum
+                or handoff.graph_version != permit.graph_version):
+            raise ValueError("permit does not match its confirmed handoff")
+        if (permit.status != "ISSUED" or permit.activation_id != activation.activation_id
+                or permit.run_id != activation.run_id or permit.mission_id != activation.mission_id
+                or permit.graph_id != activation.graph_id or permit.graph_version != activation.candidate_graph_version
+                or permit.package_checksum != materialization.package_checksum):
+            raise ValueError("execution permit is not issued for the formal activation head")
+        if projection != execution_permit_projection(permit):
+            raise ValueError("Run permit projection differs from durable permit")
+        return permit
+    except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("workflow run conflicts with the durable execution permit") from exc
 
 
 def validate_activation_run(conn, run):
@@ -107,30 +149,67 @@ def validate_activation_run(conn, run):
         if previous is None:
             invalid()
         previous_projection = previous.execution_state.get("graphActivation")
-        if isinstance(previous_projection, dict) and previous_projection.get("activationId") == record.activation_id:
-            # ACTIVATED_PAUSED cannot produce execution or planning facts. Keep
-            # the accepted semantic projections and every execution channel pinned
-            # to the last durable Run, while allowing lifecycle/diagnostic/input
-            # updates (including cancellation). A future permit transition needs
-            # its own authority; ordinary save_run must not perform that handoff.
-            if (run.execution_state != previous.execution_state
-                    or run.steps != previous.steps
-                    or run.execution_scope != previous.execution_scope
-                    or run.workflow_id != previous.workflow_id
-                    or run.domain != previous.domain
-                    or run.runtime_engine != previous.runtime_engine
-                    or run.completed_step_ids != previous.completed_step_ids
-                    or run.active_step_ids != previous.active_step_ids
-                    or run.current_step_id != previous.current_step_id
-                    or (run.status.value in {"completed", "superseded"} and run.status != previous.status)):
-                invalid()
         checkpoint = (previous_projection.get("supersededCheckpointId")
                       if isinstance(previous_projection, dict) and previous_projection.get("activationId") == record.activation_id
                       else previous.execution_state.get("checkpointId"))
         projection = state.get("graphActivation")
-        if (not isinstance(projection, dict)
-                or projection != activation_projection(record, superseded_checkpoint_id=checkpoint)
-                or type(projection.get("activeGraphVersion")) is not int
+        if not isinstance(projection, dict):
+            invalid()
+        permit_projection = projection.get("executionPermit")
+        expected_projection = activation_projection(record, superseded_checkpoint_id=checkpoint)
+        if permit_projection is None:
+            if projection != expected_projection:
+                invalid()
+            if isinstance(previous_projection, dict) and previous_projection.get("activationId") == record.activation_id:
+                if previous_projection.get("executionPermit") is not None:
+                    invalid()
+                # ACTIVATED_PAUSED remains immutable until the permit authority
+                # installs its durable ISSUED record and exact Run transition.
+                if (run.execution_state != previous.execution_state
+                        or run.steps != previous.steps
+                        or run.execution_scope != previous.execution_scope
+                        or run.workflow_id != previous.workflow_id
+                        or run.domain != previous.domain
+                        or run.runtime_engine != previous.runtime_engine
+                        or run.completed_step_ids != previous.completed_step_ids
+                        or run.active_step_ids != previous.active_step_ids
+                        or run.current_step_id != previous.current_step_id
+                        or (run.status.value in {"completed", "superseded"} and run.status != previous.status)):
+                    invalid()
+        else:
+            permit = _issued_permit(conn, permit_projection, record, materialization)
+            expected_projection["executionPermit"] = execution_permit_projection(permit)
+            if projection != expected_projection:
+                invalid()
+            if previous_projection is None or previous_projection.get("activationId") != record.activation_id:
+                invalid()
+            previous_permit = previous_projection.get("executionPermit")
+            if previous_permit is None:
+                if content_fingerprint(previous) != permit.source_run_fingerprint:
+                    invalid()
+                if (run.execution_state.get("executionPermitId") != permit.permit_id
+                        or run.execution_state.get("executionGeneration") != permit.attempt_generation
+                        or run.execution_state.get("checkpointId") != permit.promoted_checkpoint_id):
+                    invalid()
+                expected = previous.model_copy(deep=True)
+                expected_projection_state = dict(expected.execution_state["graphActivation"])
+                expected_projection_state["executionPermit"] = execution_permit_projection(permit)
+                expected.execution_state.update({
+                    "graphActivation": expected_projection_state,
+                    "executionPermitId": permit.permit_id,
+                    "executionGeneration": permit.attempt_generation,
+                    "checkpointId": permit.promoted_checkpoint_id,
+                })
+                expected.runtime_revision = run.runtime_revision
+                expected.updated_at = run.updated_at
+                if expected != run:
+                    invalid()
+            else:
+                if (previous_permit != execution_permit_projection(permit)
+                        or run.execution_state.get("executionPermitId") != permit.permit_id
+                        or run.execution_state.get("executionGeneration") != permit.attempt_generation):
+                    invalid()
+        if (type(projection.get("activeGraphVersion")) is not int
                 or type(projection.get("sourceGraphVersion")) is not int):
             invalid()
         return head

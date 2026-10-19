@@ -165,7 +165,10 @@ class ACGNodeRunner:
         step = self.steps[step_id]
         agent = self.agents[step_id]
         loop_path = tuple(state.loop_paths.get(step_id, ()))
-        commit_id = self._commit_id(state.run_id, step_id, step.attempt, loop_path=loop_path)
+        commit_id = self._commit_id(
+            state.run_id, step_id, step.attempt, loop_path=loop_path,
+            execution_generation=state.execution_generation,
+        )
         committed = self.value_store.get_node_commit(run_id=state.run_id, commit_id=commit_id)
         if committed is not None and committed.get("stage") == "committed":
             # 重启恢复或投影中断后再次调度同一步骤时，提交记录是唯一真源。它只返回
@@ -208,7 +211,12 @@ class ACGNodeRunner:
         self.value_store.prepare_node_commit(run_id=state.run_id, commit_id=commit_id)
         execution_record = NodeExecutionRecord(
             operationId=commit_id,
-            executionInstanceId=f"{state.run_id}:{step_id}:{step.attempt}:{'.'.join(map(str, loop_path)) or 'root'}",
+            executionInstanceId=(
+                f"{state.execution_generation}:{state.run_id}:{step_id}:{step.attempt}:"
+                f"{'.'.join(map(str, loop_path)) or 'root'}"
+                if state.execution_generation else
+                f"{state.run_id}:{step_id}:{step.attempt}:{'.'.join(map(str, loop_path)) or 'root'}"
+            ),
             runId=state.run_id,
             stepId=step_id,
             attemptId=self.attempt_ids.get(
@@ -1086,10 +1094,14 @@ class ACGNodeRunner:
         return descriptors
 
     @staticmethod
-    def _commit_id(run_id: str, step_id: str, attempt: int, *, loop_path: tuple[int, ...] = ()) -> str:
+    def _commit_id(
+        run_id: str, step_id: str, attempt: int, *, loop_path: tuple[int, ...] = (),
+        execution_generation: str | None = None,
+    ) -> str:
         """生成步骤尝试的稳定提交标识；重试次数变化才会开启新的副作用边界。"""
         suffix = f":loop:{'.'.join(map(str, loop_path))}" if loop_path else ""
-        return f"commit:{run_id}:{step_id}:{max(0, attempt)}{suffix}"
+        generation = f":generation:{execution_generation}" if execution_generation else ""
+        return f"commit:{run_id}:{step_id}:{max(0, attempt)}{generation}{suffix}"
 
     def _inject_fault(self, stage: str) -> None:
         """执行测试专用中断钩子；未注入时是零行为的私有空操作。"""

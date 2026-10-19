@@ -458,6 +458,7 @@ class ExecutionRuntime(CollaboratorAccess):
         self.graph_materialization_authority = None
         self.graph_activation_authority = None
         self.graph_handoff_authority = None
+        self.execution_permit_authority = None
         if planning_commit_store is not None:
             self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
@@ -1036,6 +1037,22 @@ class ExecutionRuntime(CollaboratorAccess):
                 )
                 else None
             )
+            permit_projection = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
+            if isinstance(permit_projection, dict):
+                checkpoint_id = run.execution_state.get("checkpointId")
+                if not isinstance(checkpoint_id, str) or checkpoint_id != permit_projection.get("checkpointId"):
+                    # Once execution has advanced, the Run may reference a later
+                    # checkpoint; the immutable permit remains bound to the
+                    # promoted initial checkpoint and generation in every state.
+                    if not isinstance(checkpoint_id, str):
+                        raise ValueError("permitted Run has no explicit recovery checkpoint")
+                payload = self.checkpoint_store.load(run_id=run.run_id, checkpoint_id=checkpoint_id)
+                if payload is None:
+                    raise ValueError("permitted Run checkpoint is missing")
+                retry_state = ACGExecutionState.model_validate(payload)
+                if (retry_state.execution_permit_id != run.execution_state.get("executionPermitId")
+                        or retry_state.execution_generation != run.execution_state.get("executionGeneration")):
+                    raise ValueError("permitted Run checkpoint belongs to another execution generation")
             return await self._execute_acg(run, state=retry_state)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
@@ -1138,7 +1155,13 @@ class ExecutionRuntime(CollaboratorAccess):
                     latest = RuntimeRunRecord.model_validate_json(row["payload"])
                     head = validate_activation_run(conn, latest)
                     if head is not None:
-                        raise ValueError("activated but paused; no execution permit has been issued")
+                        if self.execution_permit_authority is None:
+                            raise ValueError("activated but paused; no execution permit authority is attached")
+                        self.execution_permit_authority.assert_dispatchable(latest)
+                        supplied_permit = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
+                        current_permit = (latest.execution_state.get("graphActivation") or {}).get("executionPermit")
+                        if supplied_permit != current_permit:
+                            raise ExecutionStateChanged("execution permit changed while the executor was starting")
             if (isinstance(latest.acg_blueprint, dict) and isinstance(run.acg_blueprint, dict)
                     and latest.acg_blueprint.get("version") != run.acg_blueprint.get("version")):
                 raise ExecutionStateChanged("run graph version changed while the executor was starting")
@@ -1177,6 +1200,25 @@ class ExecutionRuntime(CollaboratorAccess):
         """Attach explicitly upgraded handoff stores; never issue a permit."""
         from runtime.graph_handoff import GraphHandoffAuthority
         self.graph_handoff_authority = GraphHandoffAuthority(self, store, staged_checkpoint_store)
+
+    def enable_execution_permit(self, store) -> None:
+        """Attach an explicitly upgraded permit ledger; no DDL or auto-issuance."""
+        from runtime.execution_permit import ExecutionPermitAuthority
+        self.execution_permit_authority = ExecutionPermitAuthority(self, store)
+
+    def issue_execution_permit(self, handoff_id, *, idempotency_key):
+        """Promote a verified staged checkpoint and issue one explicit graph permit."""
+        if self.execution_permit_authority is None:
+            from runtime.execution_permit import rejected
+            return rejected("AUTHORITY_DENIED", "execution permit authority unavailable")
+        return self.execution_permit_authority.issue(handoff_id, idempotency_key=idempotency_key)
+
+    def prepare_graph_handoff(self, activation_id, *, idempotency_key):
+        """Prepare a staged execution state; no recovery head or Run mutation."""
+        if self.graph_handoff_authority is None:
+            from runtime.graph_handoff import rejected
+            return rejected("AUTHORITY_DENIED", "graph handoff authority unavailable")
+        return self.graph_handoff_authority.prepare(activation_id, idempotency_key=idempotency_key)
 
     def prepare_graph_activation(self, materialization_id, *, idempotency_key):
         """Persist one verified activation preparation; never switch the graph."""

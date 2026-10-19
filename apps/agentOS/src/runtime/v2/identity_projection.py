@@ -418,6 +418,68 @@ class IdentityProjectionBridge:
                 task_binding_patch,
             )
 
+    def on_execution_permit_blueprint_promoted(
+        self,
+        run: Any,
+        blueprint: RuntimeBlueprintSpec,
+        task_plan: TaskPlan,
+        task_bindings: Sequence[TaskImplementationBinding],
+        permit_id: str,
+    ) -> None:
+        """Promote the existing Identity Run only under the durable permit saga.
+
+        This projection intentionally does not create or supersede a Run. The
+        permit authority first records PREPARING and retries this idempotent
+        event if a process exits between Identity and Workflow commits.
+        """
+        payload = {
+            "permitId": permit_id,
+            "missionId": run.mission_id,
+            "runId": run.run_id,
+            "blueprint": blueprint.model_dump(by_alias=True, mode="json"),
+            "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
+            "taskBindings": [item.model_dump(by_alias=True, mode="json") for item in task_bindings],
+        }
+        with self._projection(
+            f"execution.permit.identity:{permit_id}",
+            "execution.permit.identity.promoted",
+            run.run_id,
+            payload,
+        ):
+            self._promote_execution_permit_identity(run, blueprint, task_plan, task_bindings)
+
+    def _promote_execution_permit_identity(
+        self,
+        run: Any,
+        blueprint: RuntimeBlueprintSpec,
+        task_plan: TaskPlan,
+        task_bindings: Sequence[TaskImplementationBinding],
+    ) -> None:
+        domain_run = self._run(run.run_id)
+        if domain_run.mission_id != run.mission_id:
+            raise IdentityConflictError("execution permit candidate belongs to another Mission")
+        prior = self.repositories.blueprints.get(domain_run.blueprint_id)
+        if prior is None:
+            raise EntityNotFoundError("source Identity Blueprint is missing")
+        current_plan = self.repositories.task_plans.latest(run.mission_id)
+        if (prior.graph == blueprint.model_dump(by_alias=True, mode="json")
+                and current_plan == task_plan and domain_run.graph_version == blueprint.version):
+            return
+        prior_graph = RuntimeBlueprintSpec.model_validate(prior.graph)
+        if not {node.node_id for node in prior_graph.step_nodes()} <= {node.node_id for node in blueprint.step_nodes()}:
+            raise IdentityConflictError("execution permit cannot remove executable Identity nodes")
+        if task_plan.mission_id != run.mission_id or task_plan.plan_version != int(prior.metadata.get("plannerPlanVersion") or 1) + 1:
+            raise IdentityConflictError("execution permit TaskPlan must extend the current Identity plan")
+        persisted = PlannerIdentityBridge(self.lifecycle_service, self.capability_catalog).record_task_plan(task_plan)
+        by_key = {item.plan_node_key: item.acg_node_id for item in task_bindings}
+        if set(by_key) != {node.key for node in task_plan.nodes}:
+            raise IdentityConflictError("execution permit bindings must cover the accepted TaskPlan")
+        task_bindings_by_id = {persisted[key].task_id: by_key[key] for key in by_key}
+        revised = self._ensure_blueprint(
+            run.mission_id, blueprint, task_bindings_by_id, plan_version=task_plan.plan_version
+        )
+        self.repositories.runs.update_blueprint(run.run_id, revised.blueprint_id, revised.version)
+
     def on_graph_patch_prepared(
         self,
         task: Any,
@@ -1481,6 +1543,14 @@ class IdentityProjectionBridge:
                     if payload.get("taskBindingPatch") is not None
                     else None
                 ),
+            )
+            return
+        if event_type == "execution.permit.identity.promoted":
+            self._promote_execution_permit_identity(
+                SimpleNamespace(run_id=payload["runId"], mission_id=payload["missionId"]),
+                RuntimeBlueprintSpec.model_validate(payload["blueprint"]),
+                TaskPlan.model_validate(payload["taskPlan"]),
+                tuple(TaskImplementationBinding.model_validate(item) for item in payload["taskBindings"]),
             )
             return
         if event_type == "attempt.ensured":

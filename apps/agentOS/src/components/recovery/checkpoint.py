@@ -123,6 +123,51 @@ class ACGCheckpointStore:
             raise
         return identifier
 
+    def save_promoted(
+        self,
+        *,
+        run_id: str,
+        checkpoint_id: str,
+        state: dict[str, Any],
+        expected_source_version: int,
+    ) -> tuple[str, int]:
+        """Promote one verified staged checkpoint with a source-head CAS.
+
+        This is deliberately a separate API from ordinary execution checkpoint
+        writes. Replaying the same immutable checkpoint is idempotent; another
+        writer advancing the head causes a conflict instead of overwrite.
+        """
+        payload = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            existing = self._connection.execute(
+                "SELECT state_json,version FROM acg_execution_checkpoints WHERE thread_id=? AND checkpoint_id=?",
+                (run_id, checkpoint_id),
+            ).fetchone()
+            if existing is not None:
+                if str(existing[0]) != payload or int(existing[1]) != expected_source_version + 1:
+                    raise CheckpointConflictError("promoted checkpoint identity conflicts with persisted content")
+                self._connection.commit()
+                return checkpoint_id, int(existing[1])
+            row = self._connection.execute(
+                "SELECT COALESCE(MAX(version),0) FROM acg_execution_checkpoints WHERE thread_id=?", (run_id,)
+            ).fetchone()
+            current_version = int(row[0] or 0)
+            if current_version != expected_source_version:
+                raise CheckpointConflictError(
+                    f"checkpoint source version {expected_source_version} does not match current version {current_version}"
+                )
+            promoted_version = expected_source_version + 1
+            self._connection.execute(
+                "INSERT INTO acg_execution_checkpoints(thread_id,checkpoint_id,state_json,version) VALUES(?,?,?,?)",
+                (run_id, checkpoint_id, payload, promoted_version),
+            )
+            self._connection.commit()
+            return checkpoint_id, promoted_version
+        except Exception:
+            self._connection.rollback()
+            raise
+
     def load(self, *, run_id: str, checkpoint_id: str) -> dict[str, Any] | None:
         """读取指定 run 的指定检查点；不存在返回 ``None``，不跨 run 回退查询。"""
         conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)

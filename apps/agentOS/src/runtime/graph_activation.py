@@ -293,6 +293,17 @@ class GraphActivationAuthority:
         activated.runtime_revision += 1
         activated.updated_at = utc_now()
         self.runtime._sync_run_steps_to_acg(activated, blueprint)
+        # Candidate package additions (for example a newly accepted Step D)
+        # must carry their compiled eligibility requirements before the
+        # separate Permit allows the Scheduler to inspect the graph. This is
+        # a pure projection: it neither reserves nor binds a Runtime.
+        from runtime.binding import execution_requirements_for
+        workflow = self.runtime._workflow_for_run(run)
+        activated.execution_state["bindingRequirements"] = execution_requirements_for(
+            materialization.package.binding_manifest,
+            (step.step_id for step in activated.steps),
+            domain=run.domain or workflow.domain,
+        )
         return activated
 
 
