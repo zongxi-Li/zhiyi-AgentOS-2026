@@ -242,6 +242,7 @@ def _execute_child(folder, definition, run_id, cut, entered, release, results):
 
 
 @pytest.mark.parametrize("cut", ["claimed", "running_persisted"])
+@pytest.mark.slow_multiprocess
 def test_real_process_execution_activation_interleaving(ready_boundary, cut):
     runtime, workflow, journal, run_id, mat_id, _ = chain(ready_boundary, prepare_key="act")
     definition = runtime._workflow_for_run(workflow.get_run(run_id)).model_dump(mode="json", by_alias=True)
@@ -295,6 +296,7 @@ def _prepare_crash_child(folder, definition, mat_id, cut):
 
 
 @pytest.mark.parametrize("cut", ["before_insert", "after_insert", "after_commit"])
+@pytest.mark.slow_fault_injection
 def test_real_process_death_at_preparation_cuts(ready_boundary, cut):
     runtime, workflow, journal, run_id, mat_id, agent = chain(ready_boundary)
     before = workflow.get_run(run_id)
@@ -314,6 +316,7 @@ def test_real_process_death_at_preparation_cuts(ready_boundary, cut):
     assert agent.calls == []
 
 
+@pytest.mark.slow_multiprocess
 def test_two_spawned_processes_commit_one_formal_head(ready_boundary):
     runtime, workflow, journal, run_id, mat_id, _ = chain(ready_boundary, prepare_key="act")
     definition = runtime._workflow_for_run(workflow.get_run(run_id)).model_dump(mode="json", by_alias=True)
